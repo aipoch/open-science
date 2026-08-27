@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { anchorRangeTrigger, isBackwardSelection } from './annotation-trigger-anchor'
+import {
+  anchorRangeTrigger,
+  isBackwardSelection,
+  isRangeTriggerVisible
+} from './annotation-trigger-anchor'
 
 const rect = (left: number, top: number, right: number, bottom: number): DOMRect =>
   ({
@@ -97,5 +101,119 @@ describe('anchorRangeTrigger', () => {
       left: 206,
       top: 236
     })
+  })
+})
+
+describe('isRangeTriggerVisible', () => {
+  const viewport = { width: 500, height: 300 }
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+    document.getSelection()?.removeAllRanges()
+  })
+
+  const selectWithRects = (rects: DOMRect[], bounding: DOMRect): Range => {
+    const paragraph = document.createElement('p')
+    paragraph.textContent = 'selectable agent reply'
+    document.body.appendChild(paragraph)
+    const text = paragraph.firstChild!
+    const range = document.createRange()
+    range.setStart(text, 0)
+    range.setEnd(text, 10)
+    Object.defineProperty(range, 'getClientRects', {
+      configurable: true,
+      value: () => rects
+    })
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => bounding
+    })
+    return range
+  }
+
+  it('keeps the trigger when geometry methods are missing', () => {
+    const paragraph = document.createElement('p')
+    paragraph.textContent = 'selectable agent reply'
+    document.body.appendChild(paragraph)
+    const range = document.createRange()
+    range.selectNodeContents(paragraph.firstChild!)
+    Object.defineProperty(range, 'getClientRects', { configurable: true, value: undefined })
+    Object.defineProperty(range, 'getBoundingClientRect', { configurable: true, value: undefined })
+
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
+  })
+
+  it('keeps the trigger when jsdom reports a zero-size rectangle', () => {
+    const range = selectWithRects([], new DOMRect())
+
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
+  })
+
+  it('keeps the trigger when client rects are empty boxes and only the bounding box is empty', () => {
+    const range = selectWithRects([new DOMRect()], new DOMRect())
+
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
+  })
+
+  it('keeps the trigger when the selection intersects the window', () => {
+    const range = selectWithRects([rect(100, 20, 180, 40)], rect(100, 20, 180, 40))
+
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
+  })
+
+  it('hides the trigger when the selection leaves the window', () => {
+    const range = selectWithRects([rect(100, 400, 180, 420)], rect(100, 400, 180, 420))
+
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(false)
+  })
+
+  it('hides the trigger when an overflow ancestor clips the selection', () => {
+    const viewportElement = document.createElement('div')
+    viewportElement.style.overflow = 'auto'
+    const paragraph = document.createElement('p')
+    paragraph.textContent = 'selectable agent reply'
+    viewportElement.appendChild(paragraph)
+    document.body.appendChild(viewportElement)
+    Object.defineProperty(viewportElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(0, 0, 200, 80)
+    })
+    const range = document.createRange()
+    range.selectNodeContents(paragraph.firstChild!)
+    Object.defineProperty(range, 'getClientRects', {
+      configurable: true,
+      value: () => [rect(10, 120, 120, 140)]
+    })
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(10, 120, 120, 140)
+    })
+
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(false)
+  })
+
+  it('keeps the trigger when an overflow ancestor still contains the selection', () => {
+    const viewportElement = document.createElement('div')
+    viewportElement.style.overflow = 'auto'
+    const paragraph = document.createElement('p')
+    paragraph.textContent = 'selectable agent reply'
+    viewportElement.appendChild(paragraph)
+    document.body.appendChild(viewportElement)
+    Object.defineProperty(viewportElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(0, 0, 200, 80)
+    })
+    const range = document.createRange()
+    range.selectNodeContents(paragraph.firstChild!)
+    Object.defineProperty(range, 'getClientRects', {
+      configurable: true,
+      value: () => [rect(10, 20, 120, 40)]
+    })
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(10, 20, 120, 40)
+    })
+
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
   })
 })

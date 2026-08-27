@@ -21,11 +21,17 @@ type SelectionTriggerViewport = Readonly<{
 const TRIGGER_ANCHOR_OFFSET = 6
 const TRIGGER_VIEWPORT_MARGIN = 8
 
+const hasUsableAnchorGeometry = (rect: Pick<DOMRect, 'width' | 'height'>): boolean =>
+  rect.width > 0 || rect.height > 0
+
 const rangeAnchorRect = (range: Range, backward: boolean): DOMRect | undefined => {
-  const rects = typeof range.getClientRects === 'function' ? Array.from(range.getClientRects()) : []
+  const rects = (
+    typeof range.getClientRects === 'function' ? Array.from(range.getClientRects()) : []
+  ).filter(hasUsableAnchorGeometry)
   const bounding =
     typeof range.getBoundingClientRect === 'function' ? range.getBoundingClientRect() : undefined
-  return rects.length > 0 ? (backward ? rects[0] : rects[rects.length - 1]) : bounding
+  const anchor = rects.length > 0 ? (backward ? rects[0] : rects[rects.length - 1]) : bounding
+  return anchor && hasUsableAnchorGeometry(anchor) ? anchor : undefined
 }
 
 const rectsIntersect = (
@@ -43,8 +49,9 @@ const isRangeTriggerVisible = (
   viewport: Pick<SelectionTriggerViewport, 'width' | 'height'>
 ): boolean => {
   const anchorRect = rangeAnchorRect(range, backward)
-  // Geometry is unavailable for detached and jsdom ranges. Placement keeps its
-  // existing fallback there; live browser ranges always provide a rectangle.
+  // Geometry is unavailable for detached and jsdom ranges. Those environments
+  // often still expose a zero-size DOMRect; treat that as missing so placement
+  // keeps its existing fallback. Live browser text selections provide a box.
   if (!anchorRect) return true
   if (
     !rectsIntersect(anchorRect, { left: 0, right: viewport.width, top: 0, bottom: viewport.height })
