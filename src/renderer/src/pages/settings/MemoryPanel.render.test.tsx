@@ -369,6 +369,26 @@ describe('MemoryPanel', () => {
     expect(onOpenProject).toHaveBeenCalledWith('project-a')
   })
 
+  it('separates category navigation from project navigation', async () => {
+    useMemoryStore.setState({ projects: [memoryProject()] })
+    await renderMemoryPanel()
+
+    const categoryNavigation = container.querySelector('[aria-label="Memory categories"]')
+    const separator = container.querySelector('[data-slot="separator"]')
+    const projectNavigation = container.querySelector('[aria-label="Project memory"]')
+
+    expect(separator).not.toBeNull()
+    expect(separator?.getAttribute('data-orientation')).toBe('horizontal')
+    expect(separator?.classList.contains('h-px')).toBe(true)
+    expect(separator?.classList.contains('w-full')).toBe(true)
+    expect(categoryNavigation?.compareDocumentPosition(separator!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(separator?.compareDocumentPosition(projectNavigation!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+  })
+
   it('creates a manual note inside the selected project without a global category', async () => {
     const createEntry = vi.fn().mockResolvedValue(undefined)
     useMemoryStore.setState({

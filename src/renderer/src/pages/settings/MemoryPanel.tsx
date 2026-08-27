@@ -47,6 +47,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -610,28 +611,34 @@ const MemoryList = ({
               </button>
             </nav>
             {projects.length > 0 ? (
-              <nav aria-label={t('Project memory')} className="mt-4 space-y-1">
-                {projects.map((project) => (
-                  <button
-                    key={project.projectId}
-                    type="button"
-                    aria-current={
-                      project.projectId === selectedProject?.projectId ? 'page' : undefined
-                    }
-                    className={cn(
-                      'flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted',
-                      project.projectId === selectedProject?.projectId && 'bg-muted font-medium'
-                    )}
-                    onClick={() => selectProject(project.projectId)}
-                  >
-                    <Folder className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                    <span className="text-xs tabular-nums text-muted-foreground">
-                      {project.entries.length}
-                    </span>
-                  </button>
-                ))}
-              </nav>
+              <>
+                <Separator className="my-2 h-px w-full" />
+                <nav aria-label={t('Project memory')} className="space-y-1">
+                  {projects.map((project) => (
+                    <button
+                      key={project.projectId}
+                      type="button"
+                      aria-current={
+                        project.projectId === selectedProject?.projectId ? 'page' : undefined
+                      }
+                      className={cn(
+                        'flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted',
+                        project.projectId === selectedProject?.projectId && 'bg-muted font-medium'
+                      )}
+                      onClick={() => selectProject(project.projectId)}
+                    >
+                      <Folder
+                        className="size-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                      <span className="text-xs tabular-nums text-muted-foreground">
+                        {project.entries.length}
+                      </span>
+                    </button>
+                  ))}
+                </nav>
+              </>
             ) : null}
           </aside>
 
