@@ -348,7 +348,8 @@ describe('ComputeService job workflow facade', () => {
     const result = await service.getJobResult(submitted.job_id)
     await service.setSessionConcurrencyLimit('session-1', 7)
     const concurrency = await service.getSessionConcurrencyStatus('session-1')
-    service.handleJobUpdated(storedJob!)
+    const publishJobUpdate = service.handleJobUpdated
+    publishJobUpdate(storedJob!)
 
     expect(submitted.status).toBe('queued')
     expect(status).toMatchObject({ job_id: submitted.job_id, status: 'queued' })
