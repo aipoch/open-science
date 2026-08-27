@@ -509,6 +509,73 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
+  it('sends a background turn without changing the visible Session', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'session-provider',
+      activeModel: 'session-model',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'session-provider',
+          type: 'custom',
+          name: 'Session',
+          apiEndpoints: ['anthropic'],
+          baseUrl: 'https://example.test/v1',
+          model: 'session-model',
+          models: ['session-model'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    const configuration = {
+      providerId: 'session-provider',
+      model: 'session-model',
+      reasoningEffort: 'low' as const
+    }
+    for (const sessionId of ['visible-session', 'background-session']) {
+      useSessionStore.getState().appendUserMessage({
+        sessionId,
+        content: 'Earlier turn',
+        cwd: workspacePath,
+        projectId: 'project-1',
+        agentFrameworkId: 'claude-code',
+        agentConfiguration: configuration
+      })
+      useSessionStore.getState().finishRun(sessionId)
+    }
+    useSessionStore.setState({ selectedSessionId: 'visible-session' })
+    const runtime = createRuntime(createSnapshot({ sessionIds: ['background-session'] }))
+    runtimeMock.current = runtime
+    await render()
+
+    await act(async () => {
+      await latest.sendMessage({
+        sessionId: 'background-session',
+        text: 'Analyze the completed Compute Job.',
+        preserveSelection: true
+      })
+    })
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('visible-session')
+    expect(
+      useSessionStore
+        .getState()
+        .sessions.find((session) => session.id === 'background-session')
+        ?.messages.at(-1)?.content
+    ).toBe('Analyze the completed Compute Job.')
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('routes live events into Workspace before snapshot reconciliation', async () => {
     const pending = useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',

@@ -494,7 +494,8 @@ const sendIntentKeys = [
   'specialistId',
   'enabledComputeHosts',
   'selectedComputeHosts',
-  'agentConfiguration'
+  'agentConfiguration',
+  'preserveSelection'
 ] as const
 const ownerDependencyNames = (path: string): string[] => {
   const targets = new Set(importsFrom(path).map((reference) => reference.target))

@@ -13,6 +13,10 @@
 import { useEffect, useEffectEvent } from 'react'
 
 import { useWorkspaceAgentRuntime } from '../acp/useWorkspaceAgentRuntime'
+import {
+  hydratePersistedSessionIfPresent,
+  loadPersistedSession
+} from '../session-persistence/session-persistence'
 import { useSessionJobStore } from '../../stores/session-job-store'
 import { useSessionStore } from '../../stores/session-store'
 import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
@@ -23,6 +27,7 @@ type SendMessageFn = (input: {
   text: string
   cwd?: string
   projectId?: string
+  preserveSelection?: boolean
 }) => Promise<{ sessionId: string; messageId: string } | undefined>
 
 type UseJobAnalysisEffectOptions = {
@@ -57,14 +62,25 @@ export const useJobAnalysisEffect = ({
       },
       sendPrompt: async (sessionId, text) => {
         if (!isActive) return undefined
-        const session = useSessionStore
+        let session = useSessionStore
           .getState()
           .sessions.find((candidate) => candidate.id === sessionId)
+        if (!session) return undefined
+        if (session.contentLoaded === false) {
+          const persisted = await loadPersistedSession({
+            projectId: session.projectId,
+            sessionId
+          })
+          if (!isActive || !persisted) return undefined
+          session = hydratePersistedSessionIfPresent(persisted)
+          if (!session) return undefined
+        }
         return sendLatestMessage({
           sessionId,
           text,
-          cwd: session?.cwd,
-          projectId: session?.projectId
+          cwd: session.cwd,
+          projectId: session.projectId,
+          preserveSelection: true
         })
       },
       markConsumed: async (sessionId, jobIds) => {

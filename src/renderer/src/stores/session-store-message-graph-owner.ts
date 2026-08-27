@@ -46,7 +46,6 @@ const createPendingSessionId = (): string => {
   pendingSessionSequence += 1
   return `pending-session-${Date.now()}-${pendingSessionSequence}`
 }
-
 const createSessionBranchSource = (
   source: ChatSession,
   headMessageId?: string
@@ -226,7 +225,8 @@ export const createSessionMessageGraphOwner = <
     isPending,
     specialistId,
     enabledComputeHosts,
-    selectedComputeHosts
+    selectedComputeHosts,
+    preserveSelection
   }) => {
     const trimmedContent = content.trim()
     const normalizedAgentBackendId = agentBackendId?.trim() || undefined
@@ -265,7 +265,7 @@ export const createSessionMessageGraphOwner = <
             )
           : [...existingSession.messages, userMessage]
       set({
-        selectedSessionId: sessionId,
+        selectedSessionId: preserveSelection ? state.selectedSessionId : sessionId,
         sessions: state.sessions.map((session) =>
           session.id === sessionId
             ? {
@@ -343,7 +343,7 @@ export const createSessionMessageGraphOwner = <
       )
 
       set({
-        selectedSessionId: sessionId,
+        selectedSessionId: preserveSelection ? state.selectedSessionId : sessionId,
         sessions: [newSession, ...state.sessions]
       } as Partial<State>)
     }

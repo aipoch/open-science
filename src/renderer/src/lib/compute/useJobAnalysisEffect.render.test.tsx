@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { JobSummary } from '../../../../shared/compute'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import { createInitialSessionJobState, useSessionJobStore } from '../../stores/session-job-store'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 import { useJobAnalysisEffect } from './useJobAnalysisEffect'
@@ -40,6 +41,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
   const jobsPendingNotification = vi.fn().mockResolvedValue([makeCompletedJob()])
   const jobsMarkConsumed = vi.fn().mockResolvedValue(undefined)
   const jobsList = vi.fn().mockResolvedValue([])
+  const loadOne = vi.fn().mockResolvedValue(undefined)
 
   type AnalysisSendMessage = Parameters<typeof useJobAnalysisEffect>[0]['sendMessage']
 
@@ -62,18 +64,34 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     jobsPendingNotification.mockClear()
     jobsMarkConsumed.mockClear()
     jobsList.mockClear()
+    loadOne.mockReset().mockResolvedValue(undefined)
     useSessionJobStore.setState({
       ...createInitialSessionJobState(),
       hydratedSessionId: 'session-1',
       isLoaded: true
     })
-    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-a',
+          title: 'Ready',
+          cwd: '/workspace/project-a',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
     window.api = {
       compute: {
         jobsPendingNotification,
         jobsMarkConsumed,
         jobsList
-      }
+      },
+      sessions: { loadOne }
     } as unknown as Window['api']
   })
 
@@ -231,20 +249,58 @@ describe('useJobAnalysisEffect persistence readiness', () => {
   })
 
   it('recovers pending analysis across all Sessions from the App-level owner', async () => {
+    const persistedBackground: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Background Session',
+      cwd: '/workspace/project-a',
+      status: 'idle',
+      agentFrameworkId: 'claude-code',
+      agentConfiguration: {
+        providerId: 'session-provider',
+        model: 'session-model',
+        reasoningEffort: 'high'
+      },
+      messages: [
+        {
+          id: 'earlier-message',
+          role: 'user',
+          content: 'Earlier question',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    loadOne.mockResolvedValueOnce(persistedBackground)
     useSessionStore.setState({
-      ...createInitialSessionState(),
       sessions: [
+        {
+          id: 'visible-session',
+          projectId: 'project-a',
+          title: 'Visible Session',
+          cwd: '/workspace/visible',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 3
+        },
         {
           id: 'session-1',
           projectId: 'project-a',
           title: 'Background Session',
-          cwd: '/workspace/project-a',
+          cwd: '',
           status: 'idle',
           messages: [],
           createdAt: 1,
-          updatedAt: 1
+          updatedAt: 2,
+          contentLoaded: false
         }
-      ]
+      ],
+      selectedSessionId: 'visible-session'
     })
 
     await act(async () => {
@@ -253,13 +309,25 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     })
 
     expect(jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
+    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-a', sessionId: 'session-1' })
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-1',
         cwd: '/workspace/project-a',
-        projectId: 'project-a'
+        projectId: 'project-a',
+        preserveSelection: true
       })
     )
+    expect(useSessionStore.getState().selectedSessionId).toBe('visible-session')
+    const hydratedBackground = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'session-1')
+    expect(hydratedBackground?.contentLoaded).not.toBe(false)
+    expect(hydratedBackground).toMatchObject({
+      cwd: '/workspace/project-a',
+      agentConfiguration: persistedBackground.agentConfiguration,
+      messages: [{ id: 'earlier-message', content: 'Earlier question' }]
+    })
   })
 
   it('adds pending-scan jobs to the local store before dispatching analysis', async () => {

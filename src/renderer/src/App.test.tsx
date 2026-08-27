@@ -43,7 +43,7 @@ const mocks = vi.hoisted(() => {
       .fn()
       .mockResolvedValue({ sessionId: 'session-1', messageId: 'analysis-message' }),
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
-    sessions: [] as Array<{ id: string }>,
+    sessions: [] as Array<{ id: string } & Record<string, unknown>>,
     appendRoutedUserMessage: vi.fn(),
     sideChatRelayBox,
     environment: {
@@ -519,6 +519,18 @@ describe('App startup routing', () => {
 
   it('keeps the remote-job analysis owner active while Home is presented', async () => {
     mocks.settings.isLoaded = true
+    mocks.sessions = [
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Background Session',
+        cwd: '/workspace/project-1',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
     mocks.compute.jobsPendingNotification.mockResolvedValueOnce([
       {
         job_id: 'job-1',
@@ -547,7 +559,7 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
     expect(mocks.compute.jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
     expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'session-1' })
+      expect.objectContaining({ sessionId: 'session-1', preserveSelection: true })
     )
   })
 
