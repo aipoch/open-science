@@ -67,6 +67,31 @@ describe('configured model catalog', () => {
     ])
   })
 
+  it('checks each official model against its documented protocol', () => {
+    const entries = buildConfiguredModelCatalog({
+      providers: [
+        provider('opencode-zen', ['kimi-k2.7-code', 'gpt-5.6-sol', 'claude-opus-5'], {
+          type: 'official',
+          vendorId: 'opencode'
+        })
+      ],
+      frameworkId: 'opencode',
+      frameworkEndpoints: ['anthropic', 'openai']
+    })
+
+    expect(
+      entries.map(({ model, selectable, unavailableReason }) => [
+        model,
+        selectable,
+        unavailableReason
+      ])
+    ).toEqual([
+      ['kimi-k2.7-code', true, undefined],
+      ['gpt-5.6-sol', false, 'framework-incompatible'],
+      ['claude-opus-5', true, undefined]
+    ])
+  })
+
   it('projects xAI subscription models as image-capable', () => {
     const [entry] = buildConfiguredModelCatalog({
       providers: [

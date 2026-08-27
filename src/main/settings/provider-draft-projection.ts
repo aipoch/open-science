@@ -1,11 +1,10 @@
-import type { ChatApiEndpoint, ProviderDraft } from '../../shared/settings'
+import type { ProviderDraft } from '../../shared/settings'
 import {
   defaultVendorModel,
   isOfficialVendorId,
-  isVendorModelResponsesSupported,
   resolveCustomModelContextWindow,
-  resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
+  resolveVendorModelApiEndpoints,
   resolveVendorOpenAiBaseUrl
 } from '../../shared/provider-registry'
 import type { ResolvedProvider } from './provider-env'
@@ -14,12 +13,6 @@ import { resolveCustomTokenLimits } from './provider-token-limits'
 export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => {
   if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
     const draftModel = draft.model ?? defaultVendorModel(draft.vendorId)
-    const vendorEndpoints = resolveVendorApiEndpoints(draft.vendorId)
-    const draftEndpoints: ChatApiEndpoint[] =
-      !vendorEndpoints.includes('responses') &&
-      isVendorModelResponsesSupported(draft.vendorId, draftModel)
-        ? [...vendorEndpoints, 'responses']
-        : vendorEndpoints
     return {
       type: 'custom',
       vendorId: draft.vendorId,
@@ -27,7 +20,7 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
       openaiBaseUrl: resolveVendorOpenAiBaseUrl(draft.vendorId, draft.region),
       model: draftModel,
       key: draft.key,
-      apiEndpoints: draftEndpoints
+      apiEndpoints: resolveVendorModelApiEndpoints(draft.vendorId, draftModel)
     }
   }
   const tokenLimits = draft.type === 'custom' ? resolveCustomTokenLimits(draft) : undefined
