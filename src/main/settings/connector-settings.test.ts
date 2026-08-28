@@ -174,6 +174,17 @@ describe('ConnectorSettingsModule', () => {
     expect((await repository.getSettings()).connectors?.openAlexApiKeyRef).toBeUndefined()
   })
 
+  it('accepts a rate-limited OpenAlex key as valid', async () => {
+    const rateLimitedService = new ConnectorSettingsModule(
+      repository,
+      vi.fn<typeof fetch>().mockResolvedValue(new Response('{}', { status: 429 }))
+    )
+
+    await expect(
+      rateLimitedService.validateOpenAlexCredential({ apiKey: 'rate-limited-key' })
+    ).resolves.toEqual({ valid: true })
+  })
+
   it('classifies rejected, malformed, and unavailable OpenAlex validation attempts', async () => {
     const rejectedFetch = vi
       .fn<typeof fetch>()

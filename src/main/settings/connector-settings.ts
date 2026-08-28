@@ -329,7 +329,7 @@ class ConnectorSettingsModule {
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(10_000)
       })
-      if (response.ok) return { valid: true }
+      if (response.ok || response.status === 429) return { valid: true }
       if (response.status === 401 || response.status === 403) {
         return { valid: false, reason: 'rejected' }
       }
