@@ -3623,6 +3623,9 @@
     "Source preview: {{title}}": "Quellenvorschau: {{title}}",
     "Could not load this source": "Diese Quelle konnte nicht geladen werden",
     "Only HTTPS sources can be previewed": "Vorschau nur für HTTPS-Quellen verfügbar",
-    "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}"
+    "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
+    "Tencent's coding agent for the terminal.": "Tencents Programmieragent für die Befehlszeile.",
+    "CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.": "Für dieses Framework ist CodeBuddy erforderlich. Installieren Sie CodeBuddy über die Optionen unten oder manuell und starten Sie anschließend die Erkennung erneut.",
+    "Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.": "Lädt CodeBuddy in die von der App verwaltete Laufzeit herunter und führt es dort aus – Node.js und npm müssen nicht global installiert sein."
   }
 }
