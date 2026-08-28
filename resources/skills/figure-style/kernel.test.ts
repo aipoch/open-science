@@ -23,10 +23,10 @@ describe('figure-style skill contract', () => {
     const skill = await readFile(skillPath, 'utf8')
 
     expect(skill).toContain('helperModules: ["figure-style"]')
-    for (const name of helperExports) expect(skill).toMatch(new RegExp(`\\b${name}\\(`))
+    expect(skill).toMatch(/Every Python cell that calls this skill's helpers/i)
+    expect(skill).toMatch(/Repeat `helperModules:/i)
+    for (const name of helperExports) expect(skill).toMatch(new RegExp(`\\b${name}\\b`))
     expect(skill).toMatch(/data shape/i)
-    expect(skill).toMatch(/return/i)
-    expect(skill).toMatch(/error/i)
     expect(skill).toMatch(/do not (?:read|import|exec|copy)/i)
     expect(skill).not.toMatch(/(?:open|read_text|read)\([^\n]*kernel\.py/i)
     expect(skill).not.toMatch(/(?:sys\.path|importlib|spec_from_file|runpy)/i)

@@ -197,8 +197,11 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('notebook_execute')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('append code deltas')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('finish the cell')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('repeat them on every dependent cell')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('once per live kernel')
     const executeTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_execute')
     expect(executeTool?.description).toContain('producerRunId')
+    expect(executeTool?.description).toContain('every dependent call')
   })
 
   it('exposes only the single-step execute tool for writing and running code', () => {

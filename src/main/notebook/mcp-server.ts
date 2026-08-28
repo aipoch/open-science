@@ -34,7 +34,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Guidance only applies when using open-science-notebook tools.',
   'For materially different interpretations, app-owned `ask_user_question` must be the first tool call; do not inspect or use other tools first or print choices. Put all 1-3 known questions in one call with 2-4 options each. Infer reversible details; omit Other (UI adds custom, agent-decide, Skip). UI asks sequentially; Finish continues. Pending ends the turn.',
   'Notebook preview is for code/results only; keep explanations and diagnosis in chat.',
-  'Use `notebook_execute` once per persistent Python/R cell; reuse `cellId` to rerun. Data kernels cannot call connectors; use `repl_execute` for `host.capabilities`/`host.llm`/`host.mcp`/`host.compute`/`host.agents`/`host.skills`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL, then read it from Python/R.',
+  'Use `notebook_execute` once per persistent Python/R cell; reuse `cellId` to rerun. When code calls registered Python helper exports, include their IDs in `helperModules` on that same call and repeat them on every dependent cell; the host initializes each helper once per live kernel. Data kernels cannot call connectors; use `repl_execute` for `host.capabilities`/`host.llm`/`host.mcp`/`host.compute`/`host.agents`/`host.skills`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL, then read it from Python/R.',
   HOST_SDK_DISCOVERY_GUIDANCE,
   '`manage_environments` creates separate runtimes and returns canonical `created.runtimeId`.',
   'The notebook already runs inside a writable session workspace. cwd is the session data dir; use plain relative paths. Connector handoff is outside cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
@@ -67,7 +67,12 @@ const executeToolSchema = {
   code: z.string(),
   cellId: z.string().min(1).optional(),
   language: z.enum(['python', 'r']).optional(),
-  helperModules: z.array(z.string().min(1).max(128)).optional(),
+  helperModules: z
+    .array(z.string().min(1).max(128))
+    .optional()
+    .describe(
+      'Registered Python helpers used by this cell. Include each helper ID on every call whose code uses its exports; repeated declarations are safe because the host initializes once per live kernel.'
+    ),
   artifactVersionInputs: z.array(z.string().min(1).max(256)).max(64).optional()
   // No `environment`: the env is the session's bound runtime (notebook_bind_runtime), not a per-call
   // argument. To run in a different env, bind/switch to it first.
@@ -1248,7 +1253,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_execute',
     title: 'Execute notebook code',
     description:
-      "Run persistent Python/R code; reuse cellId. helperModules accepts registered Python helper IDs, not paths/source/digests. artifactVersionInputs accepts immutable Artifact Version IDs, not paths, as this Run's provenance inputs. Binding selects runtime. Keep final artifact runId as producerRunId.",
+      "Run persistent Python/R code; reuse cellId. helperModules declares registered Python helpers used by this cell, not paths/source/digests; include them on every dependent call, and the host initializes each helper once per live kernel. artifactVersionInputs accepts immutable Artifact Version IDs, not paths, as this Run's provenance inputs. Binding selects runtime. Keep final artifact runId as producerRunId.",
     method: 'execute',
     inputSchema: executeToolSchema,
     mapResult: compactNotebookExecutionResult,

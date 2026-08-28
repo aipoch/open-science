@@ -12,46 +12,19 @@ itself: a manuscript (or abstract), figure captions, and the current full deck.
 
 ## Open Science helper interface
 
-For deterministic Python work, declare the registered helper on the same
-`notebook_execute` request as the producer code:
+Every Python cell that calls this skill's helpers declares the registered helper
+on the same `notebook_execute` request as its code:
 
 ```json
 { "helperModules": ["paper-narrative"], "code": "print(paper_brief_schema())" }
 ```
 
-In shorthand, use `helperModules: ["paper-narrative"]`. The host injects only
-the three public callables below. Call them directly; do not read, import,
-`exec`, copy, or rewrite the helper implementation, and never ask for its path
-or digest. Brief reasoning and deck review do not run in the Python data
-kernel. Use `repl_execute` and the existing camelCase JavaScript Host API; do
-not invent a Python Host, Connector, LLM, or delegation bridge.
-
-### Public Python methods
-
-- `paper_brief_schema()` takes no arguments and returns the JSON Schema for a
-  paper brief. The result is a mapping with required string `pitch`, required
-  string `vision`, optional string `audience`, optional string
-  `most_arresting_asset`, and required `figures`. Each figure requires string
-  `key` and `claim`; string `composite_vid` is optional. The method performs no
-  I/O and raises no domain-specific errors.
-- `narrative_review_schema()` takes no arguments and returns the JSON Schema for
-  the handling-editor result. It requires `hook_verdict`, `figure_moves`,
-  `missing_panels`, `kill_list`, `arc`, and `boldest_defensible_fig1`.
-  `would_send_for_review` is `yes`, `weak`, or `no`; arc roles are `hook`,
-  `mechanism`, `evidence`, `application`, or `supplement`. A hook verdict must
-  include both `fig1_is` and `fig1_should_be`; every missing panel must include
-  a source-oriented `data_hint`. The method performs no I/O and raises no
-  domain-specific errors.
-- `narrative_review_task(brief, deck_vid, rules_vid)` returns the complete
-  handling-editor task string. `brief` is a mapping shaped by
-  `paper_brief_schema()`; `deck_vid` and `rules_vid` are immutable Artifact
-  Version identities. Missing optional brief fields use display defaults;
-  non-mapping inputs and malformed figure entries surface normal Python
-  `AttributeError` or iteration errors. The method performs no Host calls.
-
-The former Host-backed brief helper is intentionally absent. Model reasoning
-belongs to the JavaScript control plane, where its provenance and limitations
-remain visible.
+Repeat `helperModules: ["paper-narrative"]` on each dependent call; the host
+reuses the helper within the live kernel. Call helper names as referenced below
+directly. Do not read, import, `exec`, copy, or rewrite `kernel.py`, and never
+ask for its path or digest. Brief reasoning and deck review run from
+`repl_execute` through the existing camelCase JavaScript Host API; do not invent
+a Python Host, Connector, LLM, or delegation bridge.
 
 ## Required inputs and trust labels
 

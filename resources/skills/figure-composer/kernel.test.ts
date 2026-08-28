@@ -24,7 +24,7 @@ describe('figure-composer skill contract', () => {
     const skill = await readFile(skillPath, 'utf8')
 
     expect(skill).toContain('helperModules: ["figure-composer"]')
-    for (const name of helperExports) expect(skill).toMatch(new RegExp(`\\b${name}\\(`))
+    for (const name of helperExports) expect(skill).toMatch(new RegExp(`\\b${name}\\b`))
     for (const capability of ['llm', 'delegate', 'collect', 'artifacts', 'viewImage']) {
       expect(skill).toContain(`caps.${capability} !== true`)
     }

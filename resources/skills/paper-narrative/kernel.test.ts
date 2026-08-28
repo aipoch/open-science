@@ -23,7 +23,7 @@ describe('paper-narrative skill contract', () => {
     const skill = await readFile(skillPath, 'utf8')
 
     expect(skill).toContain('helperModules: ["paper-narrative"]')
-    for (const name of helperExports) expect(skill).toMatch(new RegExp(`\\b${name}\\(`))
+    for (const name of helperExports) expect(skill).toMatch(new RegExp(`\\b${name}\\b`))
     expect(skill).toContain('host.llm(')
     expect(skill).toContain('host.delegate(')
     expect(skill).toContain('outputSchema')

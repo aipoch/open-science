@@ -4,14 +4,11 @@
     {
       "id": "figure-composer",
       "language": "python",
-      "interfaceRevision": 2,
+      "interfaceRevision": 3,
       "implementation": "kernel.py",
       "exports": [
         "figure_outline_schema",
         "validate_figure_outline",
-        "grid_geom",
-        "panel_px",
-        "panel_xy",
         "panel_task",
         "compose_crops",
         "compose_figure",

@@ -12,91 +12,20 @@ parameters. Once loaded, call `apply_figure_style()` before plotting._
 
 ## Open Science helper interface
 
-For a final-deliverable Python figure, declare the registered helper on the
-same `notebook_execute` request as the producer code:
+Every Python cell that calls this skill's helpers declares the registered helper
+on the same `notebook_execute` request as its code:
 
 ```json
 { "helperModules": ["figure-style"], "code": "apply_figure_style()\n..." }
 ```
 
-In shorthand, the required request field is `helperModules: ["figure-style"]`.
-The host injects the public callables before the producer cell runs. Call them
-directly; do not read, import, `exec`, copy, or hand-write a substitute for the
-helper implementation. Never ask for an implementation path, source, or digest.
-Ordinary producer imports such as `matplotlib.pyplot` and `numpy` remain visible
-in the cell so its own data preparation is readable. Image inspection, judgment,
+Repeat `helperModules: ["figure-style"]` on each dependent call; the host reuses
+the helper within the live kernel. Call helper names as referenced below
+directly. Do not read, import, `exec`, copy, or rewrite `kernel.py`, and never
+ask for its path or digest. Keep ordinary producer imports such as
+`matplotlib.pyplot` and `numpy` visible in the cell. Image inspection, judgment,
 and revision reasoning stay in the Agent's existing JS control plane; there is
 no Python `host` bridge.
-
-The public interface is below. “Sequence” means an ordered Python sequence.
-These helpers preserve the source implementation's ordinary Python `zip`
-semantics: zipped parallel inputs stop at the shortest sequence; there is no
-additional equal-length validation. Inputs passed together to NumPy or
-matplotlib can still raise those libraries' normal shape/type errors. Plotting
-functions import their optional dependencies only when called. A missing
-`matplotlib`, `numpy`, or `scipy` (only for `ci95`) dependency surfaces its
-normal Python import error; inspect or manage the bound Runtime Environment,
-then retry.
-
-- `apply_figure_style(*, frame="open", font=None, sizes=(8, 7, 6), grid=False)`
-  sets matplotlib `rcParams` and returns `None`. `frame` is `"open"`, `"boxed"`,
-  or `"none"`; any other value raises `ValueError`. `font` is a sans-serif family
-  name or `None`; `sizes` is a three-item `(base, secondary, tick)` iterable;
-  other lengths raise `ValueError`. `grid` is truthy/falsy. It sets 300-dpi saved
-  output and Type-42 PDF/PS fonts.
-- `set_frame(ax, style="open")` mutates and returns no value. `ax` is a
-  matplotlib `Axes`; `style` has the same three frame values. An unknown style
-  raises `KeyError`.
-- `panel_letter(ax, letter, dx=-0.18, dy=1.02, case="lower", fontsize=None)`
-  adds a bold axes-relative label and returns `None`. `letter` is string-like;
-  `dx`/`dy` are axes coordinates; `case="lower"` lowercases and other values
-  uppercase; `fontsize=None` uses the base rc font size plus one.
-- `focal_palette(labels, focal, focal_color, other="muted", base_colors=None)`
-  returns one color string per label. `labels` is a sequence of hashable labels;
-  `focal` is one string or an iterable of focal labels; `focal_color` is any
-  matplotlib color. `other` supports `"muted"`, `"grey"`, or `"ordinal"`;
-  `base_colors` is an optional non-empty color sequence. It raises `ValueError`
-  when no focal label occurs in `labels` or `other` is unsupported, and
-  matplotlib raises for invalid colors.
-- `bar_with_points(ax, x, ymat, labels, colors, jitter=0.08,
-show_points=True, errorbar=None, point_alpha=0.5, point_size=8)` returns `ax`.
-  `x` must be a one-dimensional sequence of **numeric bar positions**, such as
-  `np.arange(len(labels))`; passing category strings raises `TypeError`. Put
-  category names in `labels`. `labels` and `colors` are one-dimensional sequences; `ymat` is a sequence
-  of numeric one-dimensional replicate sequences. Bars show means. Matplotlib
-  consumes the bar inputs with its normal broadcasting/color-cycling behavior;
-  the raw-point overlay pairs `x` and `ymat` with `zip`, so unmatched trailing
-  entries are ignored. Tick-label count errors and other incompatible shapes
-  remain normal NumPy/matplotlib errors. Every non-empty replicate sequence,
-  including `n=1`, shows its raw point when
-  `show_points=True`; otherwise `errorbar="sd"` or `"ci95"` draws the sample SD
-  or t-distribution 95% CI. Any other non-empty `errorbar` value raises
-  `ValueError` when points are hidden.
-- `strip_with_median(ax, groups, values, colors=None, jitter=0.12)` returns `ax`.
-  `groups` is a one-dimensional label sequence and `values` a sequence of
-  numeric one-dimensional replicate sequences. `values` and `colors` are paired
-  with `zip`, so an explicitly shorter sequence silently limits the plotted
-  groups; `groups` still supplies all x tick labels. `colors=None` supplies one
-  dark-gray color per group. Each plotted group gets jittered raw points and a
-  median tick; an empty replicate sequence follows NumPy's empty-slice
-  warning/NaN behavior.
-- `goodness_arrow(ax, text="higher = better", loc="upper left", axis="y",
-fontsize=None)` adds an upright cue and returns `None`. `loc` is `"upper left"`,
-  `"upper right"`, `"lower left"`, or `"lower right"` (otherwise `KeyError`);
-  `axis="y"` uses an up arrow and other values use a right arrow.
-- `two_tier_label(name, meta)` returns the string `"{name}\n{meta}"`.
-- `end_of_line_labels(ax, xs, ys, labels, colors=None, dx=0.01,
-fontsize=None)` adds direct labels and returns `None`. `xs`, `ys`, `labels`,
-  and the effective `colors` sequence are paired with `zip`; unmatched trailing
-  entries are silently ignored. Each consumed x/y series must be non-empty or
-  indexing its endpoint raises `IndexError`; other bad types surface normal
-  matplotlib errors.
-- `panel_crops(fig, dpi=None, pad_px=6, bbox_inches=None, pad_inches=None)` returns
-  `{panel_letter: (x0, y0, x1, y1)}` integer crop boxes in saved-PNG pixel space,
-  origin at top left. `fig` is a rendered matplotlib `Figure`; `dpi=None` and
-  `bbox_inches=None` follow savefig settings. Without panel letters, keys are axes
-  indices as strings. `pad_px` must be a non-negative integer. `bbox_inches` must
-  be `None`, `"tight"`, or a matplotlib `Bbox`; invalid values raise `TypeError`.
 
 ## §0 Scope
 

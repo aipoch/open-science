@@ -15,9 +15,6 @@ EXPORTS = tuple(json.loads(DESCRIPTOR_PATH.read_text(encoding="utf-8"))["helpers
 SIGNATURES = {
     "figure_outline_schema": "()",
     "validate_figure_outline": "(outline)",
-    "grid_geom": "(outline, dpi=300, gutter_mm=4)",
-    "panel_px": "(outline, letter, dpi=300, gutter_mm=4)",
-    "panel_xy": "(outline, letter, dpi=300, gutter_mm=4)",
     "panel_task": "(outline, letter, fig_label='Figure', rules_ref='(load `figure-style`)')",
     "compose_crops": "(outline, dpi=300, gutter_mm=4, pad_px=4)",
     "compose_figure": "(outline, panel_paths, out_path, dpi=300, gutter_mm=4, letter_font='DejaVuSans-Bold.ttf', letter_pt=9, letter_case='lower')",

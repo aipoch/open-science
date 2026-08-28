@@ -12,83 +12,19 @@ paper-level figure sequence is still undecided.
 
 ## Open Science helper interface
 
-For deterministic Python work, declare the registered helper on the same
-`notebook_execute` request as the producer code:
+Every Python cell that calls this skill's helpers declares the registered helper
+on the same `notebook_execute` request as its code:
 
 ```json
-{ "helperModules": ["figure-composer"], "code": "print(panel_px(outline, 'B'))" }
+{ "helperModules": ["figure-composer"], "code": "print(figure_outline_schema())" }
 ```
 
-In shorthand, use `helperModules: ["figure-composer"]`. The host injects only
-the public callables below. Call them directly; do not read, import, `exec`, copy,
-or rewrite the helper implementation, and never ask for its path or digest.
-`fc_sdk` and `derive_outline` are deliberately not part of this interface.
-There is no Python-to-JavaScript bridge: reasoning, delegation, collection, and
-image inspection run from `repl_execute` through the existing camelCase Host API.
-
-### Public Python methods
-
-- `figure_outline_schema()` returns a JSON Schema object. An outline is a mapping
-  with string `claim`, numeric `width_mm`, integer `ncol`, numeric
-  `row_heights_mm`, and ordered `panels`. Each panel requires a single ASCII
-  alphabetic `letter`,
-  `role`, `message`, `chart_family`, and `ask`, plus integer `row`, `col`, and
-  `colspan`; optional fields are `rowspan`, `label_budget`, and `data_desc`.
-  `data_vid` may be omitted or null only for a `schematic`; every other role
-  requires a non-empty Version ID. Bad outlines are rejected by whichever
-  schema validator the producer uses; this helper only returns the schema.
-- `validate_figure_outline(outline)` returns the same outline after checking the
-  cross-field invariants JSON Schema cannot express: unique letters, in-bounds
-  positive spans, non-overlapping cells, and a non-empty `data_vid` for every
-  non-schematic panel. It raises `ValueError` before geometry or fan-out when an
-  invariant fails.
-- `grid_geom(outline, dpi=300, gutter_mm=4)` returns
-  `(width_px, ncol, col_width_px, row_heights_px, row_y_px, gutter_px)`. Geometry
-  uses integer truncation and zero-based rows/columns. Cross-field outline errors
-  raise `ValueError`; missing or ill-typed mapping values may surface normal
-  `KeyError`, `TypeError`, or arithmetic errors.
-- `panel_px(outline, letter, dpi=300, gutter_mm=4)` returns `(width_px, height_px)`
-  for the first exact matching panel letter. `rowspan` defaults to one. An unknown
-  letter raises `StopIteration`; malformed geometry surfaces the errors above.
-- `panel_xy(outline, letter, dpi=300, gutter_mm=4)` returns the panel's `(x, y)`
-  top-left pixel position. It has the same letter and geometry errors as
-  `panel_px`.
-- `panel_task(outline, letter, fig_label="Figure", rules_ref="(load
-`figure-style`)")` returns the complete panel-worker task string, including the
-  immutable data Artifact reference, exact 300-dpi box, label budget, neighbors,
-  and rendering constraints. It has the same lookup/geometry errors as
-  `panel_px`.
-- `compose_crops(outline, dpi=300, gutter_mm=4, pad_px=4)` returns an ordered
-  mapping `{letter: (left, top, right, bottom)}` in composed-PNG pixels, origin at
-  top left and clipped to the canvas. Invalid outlines surface geometry errors.
-- `compose_figure(outline, panel_paths, out_path, dpi=300, gutter_mm=4,
-letter_font="DejaVuSans-Bold.ttf", letter_pt=9, letter_case="lower")` reads one
-  image path per panel letter, rejects images whose pixels do not exactly match
-  their slots, alpha composites them in outline order, stamps letters, saves an
-  RGB PNG with the requested DPI metadata, and returns
-  `(out_path, (width_px, height_px))`. Missing keys/files and unsupported images
-  surface normal `KeyError`, `FileNotFoundError`, or Pillow errors. A missing font
-  falls back to Pillow's default font.
-- `group_fixes_by_panel(review)` returns `{letter: markdown}` for `BLOCKER` and
-  `MAJOR` violations only. Missing optional fields become empty text; a violation
-  without `panel_letter` falls back to the first character of `location`.
-- `review_schema(per_panel=True)` returns the structured composite-review JSON
-  Schema. With `per_panel=True`, every violation requires `panel_letter`; false
-  omits that property and requirement.
-- `composite_review_task(composite_vid, outline, rules_vid, prev_vid=None,
-round_no=1, min_floor=None)` returns the whole-figure reviewer task. Version
-  arguments are immutable Artifact Version identities. `prev_vid=None` omits the
-  regression reference. Unless explicitly overridden, `round_no` selects 5, 4,
-  then 3 independent rule areas to inspect; it never requires manufacturing a
-  minimum number of violations. The task includes every panel data Version.
-- `apply_outline_revisions(outline, revisions)` returns the set union of every
-  revision's `affected_panels`. It intentionally does not mutate `outline`; the
-  Agent applies the reviewed change explicitly. Missing `affected_panels` means
-  no affected panel.
-
-Pillow is imported only when `compose_figure` is called. If unavailable, its
-normal `ImportError` is returned; inspect or manage the bound Runtime Environment
-and retry.
+Repeat `helperModules: ["figure-composer"]` on each dependent call; the host
+reuses the helper within the live kernel. Call helper names as referenced below
+directly. Do not read, import, `exec`, copy, or rewrite `kernel.py`, and never
+ask for its path or digest. Reasoning, delegation, collection, and image
+inspection run from `repl_execute` through the existing camelCase Host API;
+there is no Python-to-JavaScript bridge.
 
 ## Inputs
 
