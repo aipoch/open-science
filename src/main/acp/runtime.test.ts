@@ -42,11 +42,13 @@ import { SIDE_CHAT_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
 import { SkillRegistry } from '../skills/registry'
 import {
   claudeCodeFramework,
+  codeBuddyFramework,
   codexFramework,
   opencodeFramework,
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
 } from '../agent-framework'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { CODEX_BRIDGE_MODEL } from '../agent-framework/codex'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
@@ -776,6 +778,7 @@ const startPermissionProbeAgent = (
     toolTitle: string
     toolKind?: 'other' | 'execute' | 'read' | null
     toolRawInput?: unknown
+    permissionRawInput?: unknown
     providerToolName?: string
     announcedProviderToolName?: string
     codexMcpIdentity?: {
@@ -919,7 +922,9 @@ const startPermissionProbeAgent = (
           ...(options.toolKind === null
             ? {}
             : { kind: options.toolKind ?? (options.sparseCodexMcpApproval ? 'execute' : 'other') }),
-          ...(options.toolRawInput === undefined ? {} : { rawInput: options.toolRawInput }),
+          ...((options.permissionRawInput ?? options.toolRawInput) === undefined
+            ? {}
+            : { rawInput: options.permissionRawInput ?? options.toolRawInput }),
           ...(!options.sparseCodexMcpApproval && options.providerToolName
             ? { _meta: { claudeCode: { toolName: options.providerToolName } } }
             : {})
@@ -8079,6 +8084,77 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().agentPromptInFlightSessionIds).toEqual([])
   })
 
+  it('reactivates the target CodeBuddy session before compacting in a shared process', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['codebuddy-session-1', 'codebuddy-session-2'], {
+      supportsResume: true
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codeBuddyFramework
+    })
+    const first = await runtime.createSession({ cwd: '/workspace/first' })
+    await runtime.createSession({ cwd: '/workspace/second' })
+
+    await runtime.compactSession({ sessionId: first.sessionId })
+
+    expect(agent.resumedSessions.at(-1)).toMatchObject({
+      sessionId: 'codebuddy-session-1',
+      cwd: '/workspace/first'
+    })
+    expect(agent.prompts.at(-1)).toEqual({
+      sessionId: 'codebuddy-session-1',
+      text: '/compact'
+    })
+  })
+
+  it('serializes CodeBuddy compaction behind a prompt in another session', async () => {
+    const process = new FakeAgentProcess()
+    const promptGate = createDeferred<PromptResponse>()
+    const agent = startFakeAgent(process, ['codebuddy-session-1', 'codebuddy-session-2'], {
+      supportsResume: true,
+      onPrompt: ({ sessionId, text }) =>
+        sessionId === 'codebuddy-session-1' && text.endsWith('long prompt')
+          ? promptGate.promise
+          : undefined
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codeBuddyFramework
+    })
+    const first = await runtime.createSession({ cwd: '/workspace/first' })
+    const second = await runtime.createSession({ cwd: '/workspace/second' })
+
+    const prompting = runtime.sendPrompt({ sessionId: first.sessionId, text: 'long prompt' })
+    await vi.waitFor(() =>
+      expect(
+        agent.prompts.some(
+          ({ sessionId, text }) =>
+            sessionId === 'codebuddy-session-1' && text.endsWith('long prompt')
+        )
+      ).toBe(true)
+    )
+    const compacting = runtime.compactSession({ sessionId: second.sessionId })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(agent.prompts).not.toContainEqual({
+      sessionId: 'codebuddy-session-2',
+      text: '/compact'
+    })
+
+    promptGate.resolve({ stopReason: 'end_turn' })
+    await expect(prompting).resolves.toEqual({ stopReason: 'end_turn' })
+    await expect(compacting).resolves.toEqual({ stopReason: 'end_turn' })
+    expect(agent.prompts.at(-1)).toEqual({
+      sessionId: 'codebuddy-session-2',
+      text: '/compact'
+    })
+  })
+
   it('drops estimated pre-compaction categories when no fresh usage update arrives', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'])
@@ -10001,6 +10077,233 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.resumedSessions[0]._meta).toMatchObject({
       systemPrompt: { append: expect.stringContaining(connectorInstructions) }
     })
+  })
+
+  it('preloads a routed CodeBuddy PubMed Skill before Notebook execution', async () => {
+    const events: AcpRuntimeEvent[] = []
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['codebuddy-session-1'], { supportsResume: true })
+    const runtimeRoot = join(await createTemporaryRoot(), 'codebuddy', 'skill-runtime')
+    const pubmedPath = join(runtimeRoot, '.claude', 'skills', 'mcp-pubmed', 'SKILL.md')
+    await mkdir(join(runtimeRoot, '.claude', 'skills', 'mcp-pubmed'), { recursive: true })
+    await writeFile(
+      pubmedPath,
+      '---\nname: mcp-pubmed\ndescription: Search PubMed literature.\nsource: connector\n---\n\nPUBMED_RUNTIME_ROUTE_SENTINEL\n'
+    )
+    const pubmed = {
+      name: 'mcp-pubmed',
+      description: 'Search PubMed literature.',
+      path: pubmedPath,
+      source: 'connector' as const
+    }
+    const selectSkills = vi.fn(async () => [pubmed])
+    const getRpcConnection = vi.fn(async () => ({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'session-token'
+    }))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codeBuddyFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codebuddy',
+        env: {},
+        persistentSystemPrompt:
+          'Load `mcp-pubmed`, then call host.mcp("pubmed", "search_articles", args).',
+        providerTransportLease: {
+          setTarget: () => false,
+          selectSkills,
+          release: async () => undefined
+        },
+        sessionOptions: {
+          [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+            command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+            entryPath: '/app/out/main/index.js',
+            root: runtimeRoot
+          }
+        }
+      }),
+      notebook: {
+        projectId: 'project-1',
+        mcpEntryPath: '/app/out/main/index.js',
+        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+        getRpcConnection
+      },
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        descriptorsForIds: async () => [],
+        catalogForCodeBuddyRoot: async () => [pubmed]
+      },
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const created = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+    await runtime.sendPrompt({
+      sessionId: created.sessionId,
+      text: 'Find recent peer-reviewed papers on immune checkpoint resistance.'
+    })
+    await runtime.resumeSession({ sessionId: 'codebuddy-session-2', cwd: '/workspace' })
+
+    for (const servers of [
+      fakeAgent.newSessions[0].mcpServers,
+      fakeAgent.resumedSessions[1].mcpServers
+    ]) {
+      expect(servers.map((server) => (server as { name: string }).name)).toEqual([
+        'open-science-notebook'
+      ])
+    }
+    const routedServers = fakeAgent.resumedSessions[0].mcpServers
+    expect(routedServers.map((server) => (server as { name: string }).name)).toEqual([
+      'open-science-notebook'
+    ])
+    expect(selectSkills).toHaveBeenCalledOnce()
+    expect(fakeAgent.prompts[0].text).toContain('already loaded by Open Science')
+    expect(fakeAgent.prompts[0].text).toContain('PUBMED_RUNTIME_ROUTE_SENTINEL')
+    expect(fakeAgent.prompts[0].text).not.toContain(
+      'Before any Notebook or Connector call, call `mcp__skills__load_skill`'
+    )
+    expect(fakeAgent.prompts[0].text).toContain('Do not use Notebook `host.skills`')
+    expect(fakeAgent.prompts[0].text).not.toContain('Use the following skill(s)')
+    const skillEvents = events.filter((event) => event.providerToolName === 'skill')
+    expect(skillEvents.map(({ title, status }) => ({ title, status }))).toEqual([
+      { title: 'Loaded skill: mcp-pubmed', status: 'in_progress' },
+      { title: 'Loaded skill: mcp-pubmed', status: 'completed' }
+    ])
+    expect(JSON.stringify(skillEvents)).not.toContain(pubmedPath)
+    expect(JSON.stringify(skillEvents)).not.toContain('PUBMED_RUNTIME_ROUTE_SENTINEL')
+    expect(fakeAgent.resumedSessions.map((session) => session.sessionId)).toEqual([
+      'codebuddy-session-1',
+      'codebuddy-session-2'
+    ])
+    expect(getRpcConnection).toHaveBeenCalledTimes(2)
+  })
+
+  it('projects CodeBuddy inline thinking separately from visible assistant content', async () => {
+    const events: AcpRuntimeEvent[] = []
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['codebuddy-session-1'], {
+      replyForPrompt: () => '<think>private analysis</think>Visible answer.'
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codeBuddyFramework,
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const created = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: created.sessionId, text: 'Summarize the result.' })
+
+    const generated = events.filter(
+      (event) =>
+        event.kind === 'thought' || (event.kind === 'message' && event.role === 'assistant')
+    )
+    expect(generated).toMatchObject([
+      { kind: 'thought', text: 'private analysis', raw: undefined },
+      { kind: 'message', text: 'Visible answer.', raw: undefined }
+    ])
+    expect(
+      generated
+        .filter((event) => event.kind === 'message')
+        .map((event) => event.text)
+        .join('')
+    ).not.toContain('private analysis')
+  })
+
+  it('retains CodeBuddy Plan arguments supplied by the permission request', async () => {
+    const process = new FakeAgentProcess()
+    const toolCallId = 'codebuddy-plan-call'
+    const permissionRequests: AcpPermissionRequest[] = []
+    const planInput = {
+      task_summary: 'Prepare a research package',
+      phases: [
+        {
+          name: 'Research',
+          delegations: [
+            {
+              name: 'Evidence',
+              steps: [{ title: 'Review sources', description: 'Assess the available evidence.' }]
+            }
+          ]
+        }
+      ],
+      desired_outputs: ['Research package'],
+      feasibility: { confidence: 'high', rationale: 'The required sources are available.' }
+    }
+    startPermissionProbeAgent(process, {
+      newSessionId: 'codebuddy-plan-session',
+      toolCallId,
+      toolTitle: 'open-science-plan/generate_plan',
+      toolKind: 'other',
+      permissionRawInput: planInput,
+      providerToolName: 'open-science-plan/generate_plan',
+      announceToolCall: true,
+      announcedProviderToolName: 'open-science-plan/generate_plan'
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codeBuddyFramework,
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          void runtime.respondToPermission({
+            requestId: request.requestId,
+            optionId: request.options[0]?.optionId
+          })
+        }
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Create a plan.' })
+
+    expect(permissionRequests).toContainEqual(expect.objectContaining({ rawInput: planInput }))
+    expect(runtime.getSnapshot().events).toContainEqual(
+      expect.objectContaining({ kind: 'tool', toolCallId, rawInput: planInput })
+    )
+  })
+
+  it('fails the CodeBuddy turn closed when Skill discovery is unavailable', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['codebuddy-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codeBuddyFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codebuddy',
+        env: {},
+        providerTransportLease: {
+          setTarget: () => false,
+          selectSkills: async () => {
+            throw new Error('Skill selection failed (missing-function-call).')
+          },
+          release: async () => undefined
+        }
+      }),
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        descriptorsForIds: async () => [],
+        catalogForCodeBuddyRoot: async () => [
+          {
+            name: 'literature-review',
+            description: 'Search and review literature.',
+            path: '/skills/literature-review/SKILL.md'
+          }
+        ]
+      }
+    })
+
+    const created = await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: created.sessionId, text: 'find recent cancer papers' })
+    ).rejects.toThrow('CodeBuddy Skill routing failed (selector-error).')
+    expect(fakeAgent.prompts).toHaveLength(0)
   })
 
   it('keeps backend-persistent Codex guidance out while adding current turn scope', async () => {
@@ -23629,6 +23932,52 @@ describe('ACP runtime — model hot switch', () => {
     expect(process.killed).toBe(false)
   })
 
+  it('adapts CodeBuddy default effort while hot-switching models', async () => {
+    const process = new FakeAgentProcess()
+    const effortOption = {
+      type: 'select',
+      id: 'effort',
+      name: 'Effort',
+      category: 'thought_level',
+      currentValue: 'high',
+      options: ['enabled', 'high'].map((value) => ({ value, name: value }))
+    } as SessionConfigOption
+    const fakeAgent = startFakeAgent(process, ['s-codebuddy-default-effort'], {
+      configOptions: [modelOption(), effortOption]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codeBuddyFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'codebuddy:provider-a',
+        modelRoute: 'codebuddy-openai',
+        executablePath: '/bin/codebuddy',
+        env: {},
+        sessionModel: 'model-a',
+        sessionEffort: 'high',
+        supportsImageInput: true,
+        contextUsageModel: 'model-a'
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    await runtime.applyModelChange(
+      modelTarget('model-b', {
+        frameworkId: 'codebuddy',
+        backendId: 'codebuddy:provider-a',
+        route: 'codebuddy-openai'
+      })
+    )
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-codebuddy-default-effort', configId: 'model', value: 'model-b' },
+      { sessionId: 's-codebuddy-default-effort', configId: 'effort', value: 'enabled' }
+    ])
+    expect(process.killed).toBe(false)
+  })
+
   it('keeps the generating message on its model and applies only the latest queued selection', async () => {
     const process = new FakeAgentProcess()
     const promptStarted = createDeferred()
@@ -23961,6 +24310,36 @@ describe('ACP runtime — session effort', () => {
     expect(fakeAgent.configChanges).toEqual([
       { sessionId: 's-effort', configId: 'effort', value: 'high' }
     ])
+  })
+
+  it('applies CodeBuddy effort aliases through its framework adapter', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-codebuddy-effort'], {
+      configOptions: [thoughtLevelOption(['disabled', 'high', 'enabled'])]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codeBuddyFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codebuddy',
+        env: {},
+        sessionEffort: 'none'
+      })
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-codebuddy-effort', configId: 'effort', value: 'disabled' }
+    ])
+
+    await expect(runtime.applyReasoningEffortChange('default')).resolves.toBe(true)
+    expect(fakeAgent.configChanges[1]).toEqual({
+      sessionId: 's-codebuddy-effort',
+      configId: 'effort',
+      value: 'enabled'
+    })
   })
 
   it('sends no set_config_option request when the resolved backend carries no effort', async () => {

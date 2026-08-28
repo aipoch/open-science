@@ -106,7 +106,10 @@ export class AcpConnectionResourceOwner {
   }
 
   get bridgeSkillsAvailable(): boolean {
-    return Boolean(this.currentResource()?.bridgeLease?.selectSkills)
+    const resource = this.currentResource()
+    return Boolean(
+      resource?.bridgeLease?.selectSkills ?? resource?.providerTransportLease?.selectSkills
+    )
   }
 
   get anthropicBridgeAvailable(): boolean {
@@ -337,9 +340,16 @@ export class AcpConnectionResourceOwner {
   async selectBridgeSkills(
     text: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[0],
     catalog: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[1],
-    signal?: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[2]
+    signal?: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[2],
+    observeUsage?: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[3]
   ): Promise<Awaited<ReturnType<NonNullable<ResponsesBridgeLease>['selectSkills']>> | undefined> {
-    return this.currentResource()?.bridgeLease?.selectSkills(text, catalog, signal)
+    const resource = this.currentResource()
+    const selectSkills =
+      resource?.bridgeLease?.selectSkills ?? resource?.providerTransportLease?.selectSkills
+    if (!selectSkills) return undefined
+    return observeUsage
+      ? selectSkills(text, catalog, signal, observeUsage)
+      : selectSkills(text, catalog, signal)
   }
 
   private async reapProcessTree(process: ChildProcessWithoutNullStreams): Promise<void> {

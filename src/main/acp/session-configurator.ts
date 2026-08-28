@@ -70,7 +70,8 @@ export class AcpSessionConfigurator {
     if (effort) {
       const selection = resolveSessionEffortOption(
         modelApplication.configOptions ?? configOptionsOf(input.session),
-        effort
+        effort,
+        input.backend.framework.adaptSessionEffort
       )
       if (selection) await this.sendEffort(input, input.session, selection)
       else log.info('no session effort option to apply', this.deps.diagnosticContext(input.backend))
@@ -100,7 +101,11 @@ export class AcpSessionConfigurator {
     let reconnectRequired = false
     let appliedToAny = false
     for (const candidate of input.sessions) {
-      const selection = resolveSessionEffortOption(candidate.configOptions, input.effort)
+      const selection = resolveSessionEffortOption(
+        candidate.configOptions,
+        input.effort,
+        input.backend.framework.adaptSessionEffort
+      )
       if (!selection) {
         log.info('no session effort option to apply', this.deps.diagnosticContext(input.backend))
         continue

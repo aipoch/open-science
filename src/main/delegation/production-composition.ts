@@ -12,6 +12,7 @@ import type { SpecialistProfileView } from '../../shared/specialist'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { DelegatedQuestionAnswer } from '../../shared/session-persistence'
+import { getAgentFramework } from '../agent-framework'
 import {
   createDelegatedArtifactEvidence,
   type DelegatedArtifactEvidenceOptions
@@ -538,6 +539,11 @@ const createProductionDelegatedWorkComposition = (
       await Promise.all(
         durableSessions
           .filter((session) => session.id === sessionId)
+          .filter(
+            (session) =>
+              session.agentFrameworkId === undefined ||
+              getAgentFramework(session.agentFrameworkId).supportsDelegatedWork
+          )
           // A pre-framework-identity Session cannot contain app-owned delegated work. Let its ACP
           // resume return the resolved framework so the existing renderer persistence path can
           // durably adopt it. If delegated state exists, keep createScopedWork's strict identity

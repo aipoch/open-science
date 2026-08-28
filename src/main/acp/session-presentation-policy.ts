@@ -1,5 +1,6 @@
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
+import type { McpServer } from '@agentclientprotocol/sdk'
 import type { AgentFramework, SessionSetup } from '../agent-framework/types'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { AcpPromptRequest } from '../../shared/acp'
@@ -24,6 +25,7 @@ type AcpSessionSetupPresentationInput = Readonly<{
 
 type AcpSessionSetupPresentation = Readonly<{
   metaArg: Readonly<{ _meta?: Readonly<Record<string, unknown>> }>
+  mcpServers?: readonly McpServer[]
   promptPrefix?: string
   persistentSystemPrompt?: string
 }>
@@ -228,6 +230,9 @@ class AcpSessionPresentationPolicy {
         codexSkillInputs: input.codexSkillInputs.map(({ name, path }) => ({ name, path }))
       })
     }
+    if (input.frameworkId === 'codebuddy') {
+      return Object.freeze({ text: input.text, codexSkillInputs: Object.freeze([]) })
+    }
 
     const text =
       input.skillNames.length > 0
@@ -243,6 +248,7 @@ class AcpSessionPresentationPolicy {
     const persistentSystemPrompt = installedPersistentSystemPrompt ?? setup.persistentSystemPrompt
     return immutableCopy({
       metaArg: setup.meta ? { _meta: setup.meta } : {},
+      ...(setup.mcpServers ? { mcpServers: setup.mcpServers } : {}),
       ...(setup.promptPrefix ? { promptPrefix: setup.promptPrefix } : {}),
       ...(persistentSystemPrompt ? { persistentSystemPrompt } : {})
     })

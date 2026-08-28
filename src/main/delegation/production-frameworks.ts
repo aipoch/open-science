@@ -20,6 +20,10 @@ import {
   type CodexRuntimeIdentity,
   type PreparedCodexDelegateExecution
 } from './codex-execution'
+import {
+  createCodeBuddyDelegateExecution,
+  type PreparedCodeBuddyDelegateExecution
+} from './codebuddy-execution'
 import type { DelegateExecution, DelegateExecutionInput } from './execution-port'
 import {
   createOpenCodeDelegateExecution,
@@ -42,6 +46,7 @@ type ProductionFrameworkCertification = Readonly<{
   frameworkId: AgentFrameworkId
   codexRuntime?: CodexRuntimeIdentity
   codexFramework?: Pick<AgentFramework, 'spawn'>
+  codebuddyFramework?: Pick<AgentFramework, 'spawn'>
   assertProviderAvailable(): Promise<void> | void
   prepare(
     input: DelegateExecutionInput
@@ -137,6 +142,24 @@ const createProductionDelegatedFrameworks = (
         frameworkId,
         execution: codex.execution,
         assertAvailable: codex.assertAvailable
+      })
+    }
+
+    if (frameworkId === 'codebuddy') {
+      const execution = createCodeBuddyDelegateExecution({
+        capacity: options.capacity,
+        framework: certification.codebuddyFramework,
+        prepare: (input) =>
+          certification.prepare(input) as Promise<PreparedCodeBuddyDelegateExecution>,
+        createRuntime: (scope, callbacks, agentProcess) =>
+          certification.createRuntime(scope, callbacks, agentProcess)
+      })
+      return Object.freeze({
+        frameworkId,
+        execution,
+        async assertAvailable() {
+          await certification.assertProviderAvailable()
+        }
       })
     }
 

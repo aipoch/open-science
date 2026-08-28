@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ACP_STEERING_METHOD,
+  CODEBUDDY_STEER_METHOD,
   STEERING_IDLE_BEHAVIOR,
   buildAcpSteeringParams,
+  buildCodeBuddySteerParams,
   buildOpenCodeHttpFollowUpBody,
   contentBlocksToOpenCodeFollowUpParts,
   interpretSteerOutcome,
   parseOpenCodeHttpFollowUp,
+  parseCodeBuddySteer,
   parseSteerOutcome,
   readSteeringAdvertisement,
   resolveNativeFollowUpRoute,
@@ -40,6 +43,7 @@ describe('native follow-up compatibility layer', () => {
       steering: true
     })
     expect(retainInitializeCapabilities(CODEX_STEERING_INITIALIZE).steering).toBe(true)
+    expect(retainInitializeCapabilities({ agentCapabilities: {} }, 'codebuddy').resume).toBe(true)
     expect(
       readSteeringAdvertisement({
         protocolVersion: 1,
@@ -85,6 +89,15 @@ describe('native follow-up compatibility layer', () => {
         text: 'focus on tests'
       })
     ).toEqual({ transport: 'opencode-http' })
+    expect(
+      resolveNativeFollowUpRoute({
+        advertisedSteering: false,
+        hasLivePrompt: true,
+        frameworkId: 'codebuddy',
+        hasOpenCodeHttp: false,
+        text: 'focus on tests'
+      })
+    ).toEqual({ transport: 'codebuddy-acp-steer' })
     expect(
       resolveNativeFollowUpRoute({
         advertisedSteering: false,
@@ -169,6 +182,13 @@ describe('native follow-up compatibility layer', () => {
       _meta: { steering: { idleBehavior: STEERING_IDLE_BEHAVIOR } }
     })
     expect(ACP_STEERING_METHOD).toBe('_session/steering')
+    expect(CODEBUDDY_STEER_METHOD).toBe('session/steer')
+    expect(buildCodeBuddySteerParams('sess_1', [{ type: 'text', text: 'focus' }])).toEqual({
+      sessionId: 'sess_1',
+      contentBlocks: [{ type: 'text', text: 'focus' }]
+    })
+    expect(parseCodeBuddySteer({ steered: true })).toBe(true)
+    expect(parseCodeBuddySteer({ steered: false, reason: 'no active prompt' })).toBe(false)
     expect(buildOpenCodeHttpFollowUpBody([{ type: 'text', text: 'http-steer' }])).toEqual({
       parts: [{ type: 'text', text: 'http-steer' }],
       noReply: true

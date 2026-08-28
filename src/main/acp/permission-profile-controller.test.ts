@@ -84,4 +84,19 @@ describe('permission profile controller', () => {
       autoReviewStrategy: 'conservative'
     })
   })
+
+  it('recognizes a framework-specific full access mode update', () => {
+    const state = resolvePermissionProfileApplication(
+      'ask',
+      createModes(['default', 'fullAccess'])
+    ).state
+
+    expect(
+      applyCurrentModeUpdate(state, 'fullAccess', { fullAccessModeId: 'fullAccess' })
+    ).toMatchObject({
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      currentModeId: 'fullAccess'
+    })
+  })
 })

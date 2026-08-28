@@ -202,6 +202,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'cancel-xai-oauth-login',
     'get-github-token-status',
     'install-claude',
+    'install-codebuddy',
     'install-codex',
     'install-opencode',
     'login-isolated-claude',
@@ -223,6 +224,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-network-proxy',
     'set-project-files-filter',
     'uninstall-claude',
+    'uninstall-codebuddy',
     'uninstall-codex',
     'uninstall-opencode',
     'wait-xai-oauth-login'

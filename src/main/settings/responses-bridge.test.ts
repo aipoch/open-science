@@ -1932,6 +1932,12 @@ describe('Responses bridge Skill selector', () => {
       upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>
       return new Response(
         JSON.stringify({
+          id: 'selector-call-1',
+          usage: {
+            prompt_tokens: 45,
+            prompt_tokens_details: { cached_tokens: 5 },
+            completion_tokens: 3
+          },
           choices: [
             {
               message: {
@@ -1964,9 +1970,25 @@ describe('Responses bridge Skill selector', () => {
       upstreamFetch
     )
 
-    const selected = await bridge.selectSkills('查找肿瘤免疫相关的生物医学文献', catalog)
+    const observeUsage = vi.fn()
+    const selected = await bridge.selectSkills(
+      'Compare evidence sources for seasonal migration patterns.',
+      catalog,
+      undefined,
+      observeUsage
+    )
 
     expect(selected).toEqual(catalog.slice(0, 3).map(({ name, path }) => ({ name, path })))
+    expect(observeUsage).toHaveBeenCalledWith({
+      usage: {
+        inputTokens: 40,
+        cacheTokens: 5,
+        cachedReadTokens: 5,
+        cachedWriteTokens: 0,
+        outputTokens: 3
+      },
+      sourceInvocationId: 'selector-call-1'
+    })
     expect(upstreamUrl).toBe('https://vendor.example/v1/chat/completions')
     expect(upstreamHeaders).toMatchObject({ authorization: 'Bearer secret-key' })
     expect(upstreamBody).toMatchObject({
@@ -1974,9 +1996,10 @@ describe('Responses bridge Skill selector', () => {
       stream: false,
       temperature: 0,
       max_tokens: 512,
+      tool_choice: { type: 'function', function: { name: 'select_skills' } },
       messages: [
         expect.objectContaining({ role: 'system' }),
-        { role: 'user', content: '查找肿瘤免疫相关的生物医学文献' }
+        { role: 'user', content: 'Compare evidence sources for seasonal migration patterns.' }
       ],
       tools: [
         {
@@ -1992,7 +2015,6 @@ describe('Responses bridge Skill selector', () => {
         }
       ]
     })
-    expect(upstreamBody).not.toHaveProperty('tool_choice')
     const serialized = JSON.stringify(upstreamBody)
     expect(serialized).toContain('Search biomedical literature.')
     expect(serialized.match(/mcp-pubmed/g)).toHaveLength(1)
@@ -2007,9 +2029,9 @@ describe('Responses bridge Skill selector', () => {
       upstreamFetch
     )
 
-    await expect(bridge.selectSkills('用 PubMed 搜索肿瘤免疫文章', catalog)).resolves.toEqual([
-      { name: 'mcp-pubmed', path: '/private/pubmed/SKILL.md' }
-    ])
+    await expect(
+      bridge.selectSkills('Use PubMed to find articles about protein folding.', catalog)
+    ).resolves.toEqual([{ name: 'mcp-pubmed', path: '/private/pubmed/SKILL.md' }])
     expect(upstreamFetch).not.toHaveBeenCalled()
   })
 
@@ -2082,16 +2104,154 @@ describe('Responses bridge Skill selector', () => {
       }
     ]
 
-    await expect(bridge.selectSkills('用 PubMed 搜索文章', largeCatalog)).resolves.toEqual([
-      { name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }
-    ])
+    await expect(
+      bridge.selectSkills('Use PubMed to find articles about microbial ecology.', largeCatalog)
+    ).resolves.toEqual([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
     expect(upstreamFetch).not.toHaveBeenCalled()
+  })
+
+  it('accepts strict JSON content when the model ignores forced tool choice', async () => {
+    const upstreamFetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '```json\n{"skill_names":["mcp-pubmed"]}\n```' } }]
+          })
+        )
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch
+    )
+
+    await expect(bridge.selectSkills('find biomedical papers', catalog)).resolves.toEqual([
+      { name: 'mcp-pubmed', path: '/private/pubmed/SKILL.md' }
+    ])
+    expect(upstreamFetch).toHaveBeenCalledOnce()
+  })
+
+  it('disables provider-native reasoning for bounded Skill routing', async () => {
+    let upstreamBody: Record<string, unknown> = {}
+    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'select_skills',
+                      arguments: JSON.stringify({ skill_names: ['literature-review'] })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      )
+    })
+    const bridge = new ResponsesBridge(
+      {
+        baseUrl: 'https://vendor.example/v1',
+        model: 'MiniMax-M3',
+        vendorId: 'minimax'
+      },
+      upstreamFetch
+    )
+
+    await expect(
+      bridge.selectSkills('Prepare a compact evidence map for river restoration options.', catalog)
+    ).resolves.toEqual([{ name: 'literature-review', path: '/private/review/SKILL.md' }])
+    expect(upstreamBody).toMatchObject({ thinking: { type: 'disabled' } })
+    expect(upstreamBody).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('retries without tools when forced tool choice produces ordinary content', async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      return new Response(
+        JSON.stringify({
+          id: `selector-${requests.length}`,
+          usage: { prompt_tokens: 10 * requests.length, completion_tokens: requests.length },
+          choices: [
+            {
+              message: {
+                content:
+                  requests.length === 1
+                    ? 'I will inspect the catalog first.'
+                    : '{"skill_names":["literature-review"]}'
+              }
+            }
+          ]
+        })
+      )
+    })
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch
+    )
+    const observeUsage = vi.fn()
+
+    await expect(
+      bridge.selectSkills('find recent papers', catalog, undefined, observeUsage)
+    ).resolves.toEqual([{ name: 'literature-review', path: '/private/review/SKILL.md' }])
+    expect(requests).toHaveLength(2)
+    expect(requests[0]).toHaveProperty('tool_choice')
+    expect(requests[1]).not.toHaveProperty('tools')
+    expect(requests[1]).not.toHaveProperty('tool_choice')
+    expect(observeUsage.mock.calls.map(([observation]) => observation)).toEqual([
+      {
+        usage: {
+          inputTokens: 10,
+          cacheTokens: 0,
+          cachedReadTokens: 0,
+          cachedWriteTokens: 0,
+          outputTokens: 1
+        },
+        sourceInvocationId: 'selector-1'
+      },
+      {
+        usage: {
+          inputTokens: 20,
+          cacheTokens: 0,
+          cachedReadTokens: 0,
+          cachedWriteTokens: 0,
+          outputTokens: 2
+        },
+        sourceInvocationId: 'selector-2'
+      }
+    ])
   })
 
   it.each([
     ['an upstream error', new Response('provider unavailable', { status: 503 })],
-    ['a malformed function result', new Response(JSON.stringify({ choices: [{ message: {} }] }))]
-  ])('fails open for %s', async (_label, response) => {
+    ['a malformed function result', new Response(JSON.stringify({ choices: [{ message: {} }] }))],
+    [
+      'a Skill outside the offered catalog',
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'select_skills',
+                      arguments: '{"skill_names":["not-offered"]}'
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      )
+    ]
+  ])('keeps Codex Skill selection fail-open for %s', async (_label, response) => {
     const bridge = new ResponsesBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       vi.fn(async () => response.clone())
@@ -2157,7 +2317,7 @@ describe('Responses bridge Skill selector', () => {
     expect(Buffer.byteLength(upstreamBody, 'utf8')).toBeLessThan(300 * 1024)
   })
 
-  it('fails open when the selection deadline expires', async () => {
+  it('keeps Codex Skill selection fail-open when the selection deadline expires', async () => {
     const upstreamFetch = vi.fn(
       async (_input: string | URL | Request, init?: RequestInit): Promise<Response> =>
         new Promise((_resolve, reject) => {
@@ -2171,6 +2331,18 @@ describe('Responses bridge Skill selector', () => {
     )
 
     await expect(bridge.selectSkills('hello', catalog)).resolves.toEqual([])
+  })
+
+  it('lets CodeBuddy opt into a fail-closed selector', async () => {
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      vi.fn(async () => new Response('provider unavailable', { status: 503 })),
+      { skillSelectorFailureMode: 'throw' }
+    )
+
+    await expect(bridge.selectSkills('hello', catalog)).rejects.toThrow(
+      'Skill selector failed (invalid-response).'
+    )
   })
 
   it('aborts the upstream selection when the caller cancels the turn', async () => {

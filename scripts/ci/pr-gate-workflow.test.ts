@@ -434,10 +434,10 @@ describe('PR Gate workflow', () => {
     expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(macosRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey',
-        'npm run test:e2e:workspace',
+        'npm run test:e2e:journey -- --fail-on-flaky-tests',
+        'npm run test:e2e:workspace -- --fail-on-flaky-tests',
         'npm run test:e2e:accessibility:signal',
-        'npm run test:e2e:visual'
+        'npm run test:e2e:visual -- --fail-on-flaky-tests'
       ])
     )
 
@@ -445,9 +445,9 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey -- --workers=2',
-        'npm run test:e2e:workspace -- --workers=2',
-        'npm run test:e2e:accessibility'
+        'npm run test:e2e:journey -- --workers=2 --fail-on-flaky-tests',
+        'npm run test:e2e:workspace -- --workers=2 --fail-on-flaky-tests',
+        'npm run test:e2e:accessibility -- --fail-on-flaky-tests'
       ])
     )
   })
@@ -468,7 +468,7 @@ describe('PR Gate workflow', () => {
     expect(compatibility).toMatchObject({
       id: 'e2e_accessibility_windows',
       'continue-on-error': true,
-      run: 'npm run test:e2e:accessibility'
+      run: 'npm run test:e2e:accessibility -- --fail-on-flaky-tests'
     })
     expect(compatibility?.if).toContain(
       "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows')"
@@ -503,7 +503,7 @@ describe('PR Gate workflow', () => {
     )
 
     expect(macosStep?.run).toBe('npm run test:e2e:accessibility:signal')
-    expect(windowsStep?.run).toBe('npm run test:e2e:accessibility')
+    expect(windowsStep?.run).toBe('npm run test:e2e:accessibility -- --fail-on-flaky-tests')
   })
 
   it('collects independent bundle failures before failing the shared runner', () => {

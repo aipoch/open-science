@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
 import { sanitizeToolActivity } from '../../shared/session-persistence'
-import { extractToolFailureText, toAcpRuntimeEvent } from './runtime-events'
+import {
+  extractProviderToolName,
+  extractToolFailureText,
+  toAcpRuntimeEvent
+} from './runtime-events'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 
 describe('ACP runtime event normalization', () => {
@@ -119,10 +123,11 @@ describe('ACP runtime event normalization', () => {
   })
 
   it('maps tool calls into compact runtime events', () => {
-    const notification: SessionNotification = {
+    const notification = {
       sessionId: 'session-1',
       update: {
         sessionUpdate: 'tool_call',
+        messageId: 'provider-message-1',
         toolCallId: 'tool-1',
         title: 'Read file',
         kind: 'read',
@@ -133,7 +138,7 @@ describe('ACP runtime event normalization', () => {
           preview_tool_kind: 'mcp-component'
         }
       }
-    }
+    } as unknown as SessionNotification
 
     const event = toAcpRuntimeEvent(notification, 'event-2', 1710000000001)
 
@@ -142,6 +147,7 @@ describe('ACP runtime event normalization', () => {
       timestamp: 1710000000001,
       kind: 'tool',
       sessionId: 'session-1',
+      messageId: 'provider-message-1',
       toolCallId: 'tool-1',
       title: 'Read file',
       providerToolName: 'read_file',
@@ -152,6 +158,12 @@ describe('ACP runtime event normalization', () => {
     expect(event).not.toHaveProperty('toolCategory')
     expect(event).not.toHaveProperty('mcpServerId')
     expect(event).not.toHaveProperty('previewToolKind')
+  })
+
+  it('extracts CodeBuddy tool identity metadata', () => {
+    expect(
+      extractProviderToolName({ _meta: { 'codebuddy.ai/toolName': ' mcp__skills__load_skill ' } })
+    ).toBe('mcp__skills__load_skill')
   })
 
   it('maps Codex context-compaction tool calls into the shared compaction lifecycle', () => {

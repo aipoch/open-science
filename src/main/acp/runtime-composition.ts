@@ -280,7 +280,8 @@ const createAcpRuntime = ({
           namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids),
           descriptorsForIds: (ids, codexHome) =>
             settingsService.codexSkillDescriptorsForIds(ids, codexHome),
-          catalogForCodexHome: (codexHome) => settingsService.codexSkillCatalog(codexHome)
+          catalogForCodexHome: (codexHome) => settingsService.codexSkillCatalog(codexHome),
+          catalogForCodeBuddyRoot: (root) => settingsService.codeBuddySkillCatalog(root)
         },
         ...(!delegatedNotebookConnection || delegatedArtifactCurrentRunFile
           ? {

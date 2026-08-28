@@ -6,6 +6,7 @@ import {
   CODEX_ISOLATED_PROVIDER_ID,
   CODEX_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  getCodeBuddyInstallSources,
   getCodexInstallSources,
   getOpencodeInstallSources,
   isProviderCompatibleWith,
@@ -81,6 +82,22 @@ describe('provider endpoint compatibility', () => {
     )
   })
 
+  it('uses a Chat compatibility transport for CodeBuddy only when OpenAI Chat is absent', () => {
+    const codebuddy = { id: 'codebuddy' as const, supportedApiTypes: ['openai'] as const }
+
+    expect(requiresChatCompletionsBridge({ apiEndpoints: ['responses'] }, codebuddy)).toBe(true)
+    expect(requiresChatCompletionsBridge({ apiEndpoints: ['anthropic'] }, codebuddy)).toBe(true)
+    expect(
+      requiresChatCompletionsBridge({ apiEndpoints: ['openai', 'responses'] }, codebuddy)
+    ).toBe(false)
+    expect(
+      isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['responses'] }, codebuddy)
+    ).toBe(true)
+    expect(
+      isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['anthropic'] }, codebuddy)
+    ).toBe(true)
+  })
+
   it('marks a vendor model bridge-unsupported only when the registry lists it', () => {
     // Custom providers (no vendorId) are always assumed compatible — the key is what gets tested.
     expect(isModelBridgeSupported({}, 'deepseek-v4-flash')).toBe(true)
@@ -145,6 +162,15 @@ describe('getCodexInstallSources', () => {
     expect(sources.map((source) => source.id)).toEqual(['managed', 'npm'])
     expect(sources[0]?.requiresNpm).toBe(false)
     expect(sources[1]?.displayCommand).toBe('npm i -g @agentclientprotocol/codex-acp')
+  })
+})
+
+describe('getCodeBuddyInstallSources', () => {
+  it('offers only the app-managed install', () => {
+    const sources = getCodeBuddyInstallSources()
+
+    expect(sources.map((source) => source.id)).toEqual(['managed'])
+    expect(sources[0]?.requiresNpm).toBe(false)
   })
 })
 

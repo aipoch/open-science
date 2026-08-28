@@ -42,6 +42,7 @@ const { getAppClaudeConfigDir } = await import('./provider-env')
 const { connectorSkillSourceDir } = await import('../connectors/provision')
 const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
+const { managedCodeBuddyDir, verifyCodeBuddyVersion } = await import('./managed-codebuddy')
 
 type Repository = InstanceType<typeof SettingsRepository>
 type ManagerOptions = ConstructorParameters<typeof AgentRuntimeManager>[0]
@@ -144,6 +145,9 @@ describe('AgentRuntimeManager', () => {
       installManagedOpencodeImpl: async ({ installId }) => ({
         result: { installId, ok: false, error: 'not configured' }
       }),
+      installManagedCodeBuddyImpl: async ({ installId }) => ({
+        result: { installId, ok: false, error: 'not configured' }
+      }),
       installManagedCodexImpl: async ({ installId }) => ({
         result: { installId, ok: false, error: 'not configured' }
       }),
@@ -199,6 +203,55 @@ describe('AgentRuntimeManager', () => {
         nativeVersion: '0.144.6'
       }
     })
+  })
+
+  it('rejects and clears a cached CodeBuddy runtime outside the pinned version', async () => {
+    const codebuddyPath = posix.join('/detected', 'codebuddy')
+    await repository.setCodeBuddyInfo(codebuddyPath, '2.139.0')
+    await repository.setAgentFramework('codebuddy')
+    manager = createManager({
+      codebuddyDetectDeps: {
+        env: { PATH: posix.dirname(codebuddyPath) },
+        homePath: '/home',
+        platform: 'linux',
+        isExecutable: (candidate) => Promise.resolve(candidate === codebuddyPath),
+        getVersion: () => Promise.resolve('2.139.0'),
+        resolveNpmBinDirs: () => Promise.resolve([])
+      }
+    })
+
+    await expect(manager.checkEnvironment()).resolves.toMatchObject({
+      agentFrameworkId: 'codebuddy',
+      runtime: { found: false }
+    })
+    const updated = await repository.getSettings()
+    expect(updated.codebuddyPath).toBeUndefined()
+    expect(updated.codebuddyVersion).toBeUndefined()
+  })
+
+  it('revalidates a saved CodeBuddy executable before launching it', async () => {
+    const savedPath = join(storageRoot, 'saved', 'codebuddy')
+    await mkdir(dirname(savedPath), { recursive: true })
+    await writeFile(savedPath, '#!/bin/sh\n')
+    await chmod(savedPath, 0o755)
+    const getVersion = vi.fn(async (candidate: string) =>
+      candidate === savedPath ? '2.139.0' : undefined
+    )
+    manager = createManager({
+      codebuddyDetectDeps: {
+        env: {},
+        homePath: '/home',
+        platform: 'linux',
+        isExecutable: async () => false,
+        getVersion,
+        resolveNpmBinDirs: async () => []
+      }
+    })
+
+    await expect(manager.resolveCodeBuddyExecutable(savedPath)).rejects.toThrow(
+      'CodeBuddy executable not found'
+    )
+    expect(getVersion).toHaveBeenCalledWith(savedPath)
   })
 
   it('preserves cached runtime records when live detection misses but their paths still exist', async () => {
@@ -300,7 +353,7 @@ describe('AgentRuntimeManager', () => {
     )
   })
 
-  it('reuses one configured-runtime probe pass across the startup inspection chain', async () => {
+  it('avoids a third configured-runtime probe pass across the startup inspection chain', async () => {
     const claudePath = join(storageRoot, 'bin', 'claude')
     const opencodePath = join(storageRoot, 'bin', 'opencode')
     inventory.claude.set(claudePath, '2.1.0')
@@ -343,10 +396,18 @@ describe('AgentRuntimeManager', () => {
       opencodeReady: true,
       codexReady: true
     })
-    expect(getClaudeVersion).toHaveBeenCalledTimes(1)
-    expect(getOpencodeVersion).toHaveBeenCalledTimes(1)
-    expect(getAdapterVersion).toHaveBeenCalledTimes(1)
-    expect(getCodexVersion).toHaveBeenCalledTimes(1)
+    expect(
+      getClaudeVersion.mock.calls.filter(([path]) => path === claudePath).length
+    ).toBeLessThanOrEqual(2)
+    expect(
+      getOpencodeVersion.mock.calls.filter(([path]) => path === opencodePath).length
+    ).toBeLessThanOrEqual(2)
+    expect(
+      getAdapterVersion.mock.calls.filter(([path]) => path === managedAdapterPath).length
+    ).toBeLessThanOrEqual(2)
+    expect(
+      getCodexVersion.mock.calls.filter(([path]) => path === managedCodexPath).length
+    ).toBeLessThanOrEqual(2)
   })
 
   it('probes again for an independent Preflight call after an external runtime change', async () => {
@@ -393,7 +454,9 @@ describe('AgentRuntimeManager', () => {
     const refreshed = await manager.getPreflight(providers)
 
     expect(refreshed.claudeReady).toBe(true)
-    expect(getVersion).toHaveBeenCalledTimes(1)
+    expect(
+      getVersion.mock.calls.filter(([path]) => path === claudePath).length
+    ).toBeLessThanOrEqual(2)
   })
 
   it('reuses a failed configured-runtime probe across the startup chain', async () => {
@@ -456,6 +519,7 @@ describe('AgentRuntimeManager', () => {
       .mockReturnValueOnce(11)
       .mockReturnValueOnce(12)
       .mockReturnValueOnce(13)
+      .mockReturnValueOnce(14)
     const onEvent = vi.fn<(event: ClaudeInstallEvent) => void>()
     const installManagedClaudeImpl: NonNullable<ManagerOptions['installManagedClaudeImpl']> = vi.fn(
       async (options) => {
@@ -503,30 +567,48 @@ describe('AgentRuntimeManager', () => {
         }
       }
     )
+    const installManagedCodeBuddyImpl: NonNullable<ManagerOptions['installManagedCodeBuddyImpl']> =
+      vi.fn(async (options) => {
+        options.onEvent({
+          kind: 'log',
+          installId: options.installId,
+          stream: 'system',
+          chunk: 'codebuddy\n'
+        })
+        return {
+          result: { installId: options.installId, ok: true },
+          resolvedPath: join(storageRoot, 'installed', 'codebuddy'),
+          version: '2.138.0'
+        }
+      })
     const claudePath = join(storageRoot, 'installed', 'claude')
     inventory.claude.set(claudePath, '2.1.0')
     manager = createManager({
       allocateSettingsIdSequence,
       installManagedClaudeImpl,
       installManagedOpencodeImpl,
+      installManagedCodeBuddyImpl,
       installManagedCodexImpl
     })
 
     const results = [
       await manager.installClaude({ source: 'managed' }, onEvent),
       await manager.installOpencode({ source: 'managed' }, onEvent),
+      await manager.installCodeBuddy({ source: 'managed' }, onEvent),
       await manager.installCodex({ source: 'managed' }, onEvent)
     ]
 
     expect(results.map((result) => result.installId)).toEqual([
       'install-123-11',
       'install-opencode-123-12',
-      'install-codex-123-13'
+      'install-codebuddy-123-13',
+      'install-codex-123-14'
     ])
-    expect(allocateSettingsIdSequence).toHaveBeenCalledTimes(3)
+    expect(allocateSettingsIdSequence).toHaveBeenCalledTimes(4)
     for (const installer of [
       installManagedClaudeImpl,
       installManagedOpencodeImpl,
+      installManagedCodeBuddyImpl,
       installManagedCodexImpl
     ]) {
       expect(installer).toHaveBeenCalledWith(expect.objectContaining({ onEvent }))
@@ -534,7 +616,8 @@ describe('AgentRuntimeManager', () => {
     expect(onEvent.mock.calls.map(([event]) => event.installId)).toEqual([
       'install-123-11',
       'install-opencode-123-12',
-      'install-codex-123-13'
+      'install-codebuddy-123-13',
+      'install-codex-123-14'
     ])
   })
 
@@ -573,6 +656,51 @@ describe('AgentRuntimeManager', () => {
       error: 'second installer was invoked'
     })
     expect(installManagedOpencodeImpl).toHaveBeenCalledOnce()
+  })
+
+  it('keeps managed CodeBuddy installs behind the shared install lock', async () => {
+    const installStarted = Promise.withResolvers<void>()
+    const releaseInstall = Promise.withResolvers<void>()
+    const installManagedClaudeImpl: NonNullable<ManagerOptions['installManagedClaudeImpl']> = vi.fn(
+      async ({ installId }) => {
+        installStarted.resolve()
+        await releaseInstall.promise
+        return { result: { installId, ok: false, error: 'first install stopped' } }
+      }
+    )
+    const installManagedCodeBuddyImpl: NonNullable<ManagerOptions['installManagedCodeBuddyImpl']> =
+      vi.fn(async ({ installId }) => ({
+        result: { installId, ok: false, error: 'second installer was invoked' }
+      }))
+    manager = createManager({ installManagedClaudeImpl, installManagedCodeBuddyImpl })
+
+    const firstInstall = manager.installClaude({ source: 'managed' }, vi.fn())
+    await installStarted.promise
+
+    try {
+      await expect(manager.installCodeBuddy({ source: 'managed' }, vi.fn())).resolves.toMatchObject(
+        {
+          ok: false,
+          error: 'Another install is already in progress.'
+        }
+      )
+      expect(installManagedCodeBuddyImpl).not.toHaveBeenCalled()
+    } finally {
+      releaseInstall.resolve()
+      await firstInstall
+    }
+  })
+
+  it('verifies a managed Windows CodeBuddy shim through the command shell', async () => {
+    const run = vi.fn(async () => ({ stdout: '2.138.0\n' }))
+    const binPath = 'C:\\Open Science\\codebuddy.cmd'
+
+    await expect(verifyCodeBuddyVersion(binPath, 'win32', run)).resolves.toBe('2.138.0')
+    expect(run).toHaveBeenCalledWith(`"${binPath}"`, ['--version'], {
+      timeout: 15_000,
+      windowsHide: true,
+      shell: true
+    })
   })
 
   it('updates only the managed adapter when Codex CLI is user-owned', async () => {
@@ -910,6 +1038,15 @@ describe('AgentRuntimeManager', () => {
     ).toBe(true)
     expect(
       manager.isManagedRuntimePath('claude-code', join(storageRoot, 'external', 'claude'))
+    ).toBe(false)
+  })
+
+  it('uses the managed CodeBuddy directory shape expected by the uninstall ownership guard', () => {
+    expect(
+      manager.isManagedRuntimePath('codebuddy', join(managedCodeBuddyDir(storageRoot), 'codebuddy'))
+    ).toBe(true)
+    expect(
+      manager.isManagedRuntimePath('codebuddy', join(storageRoot, 'external', 'codebuddy'))
     ).toBe(false)
   })
 

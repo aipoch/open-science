@@ -299,7 +299,8 @@ class AcpModelChangeWorkflow {
           if (shouldApplyEffort) {
             const effortSelection = resolveSessionEffortOption(
               configOptions,
-              target.reasoningEffort
+              target.reasoningEffort,
+              backend.framework.adaptSessionEffort
             )
             if (!effortSelection) return false
             const response = (await connection.agent.request(

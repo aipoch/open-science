@@ -18,7 +18,7 @@ const disabledNativeEntryPoints = [
 ]
 
 describe('delegated-work framework certification', () => {
-  it('advertises every framework whose complete certification ticket passed', () => {
+  it('advertises certification status for every framework', () => {
     expect(
       listAgentFrameworks().map(({ id, supportsDelegatedWork }) => ({
         id,
@@ -27,7 +27,8 @@ describe('delegated-work framework certification', () => {
     ).toEqual([
       { id: 'claude-code', supportsDelegatedWork: true },
       { id: 'opencode', supportsDelegatedWork: true },
-      { id: 'codex', supportsDelegatedWork: true }
+      { id: 'codex', supportsDelegatedWork: true },
+      { id: 'codebuddy', supportsDelegatedWork: true }
     ])
   })
 

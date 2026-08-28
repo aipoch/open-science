@@ -13,9 +13,11 @@ import {
 import {
   releaseResolvedAgentBackendLeases,
   type AgentModelConfig,
+  type AgentSpawnInput,
   type ResolvedAgentBackend,
   type SessionSetup
 } from '../agent-framework'
+import { isolateCodeBuddyEnvironment } from '../agent-framework/codebuddy'
 import { createAcpRuntime, type AcpRuntimeCompositionOptions } from '../acp/runtime-composition'
 import type { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
@@ -80,6 +82,16 @@ const sessionSetup = (backend: ResolvedAgentBackend): SessionSetup =>
     ],
     ...(backend.sessionOptions ? { sessionOptions: backend.sessionOptions } : {})
   })
+
+const prepareCodeBuddyDelegateSpawn = async (
+  backend: ResolvedAgentBackend,
+  runtimeHome: string
+): Promise<AgentSpawnInput> => ({
+  executablePath: backend.executablePath,
+  args: [...(backend.args ?? [])],
+  env: await isolateCodeBuddyEnvironment(backend.env, join(runtimeHome, 'codebuddy')),
+  proxyEnvironmentMode: backend.proxyEnvironmentMode
+})
 
 const createProductionDelegatedFrameworkRuntime = (
   options: ProductionFrameworkRuntimeOptions
@@ -211,6 +223,12 @@ const createProductionDelegatedFrameworkRuntime = (
               }
             }
           }
+          if (frameworkId === 'codebuddy') {
+            return {
+              ...base,
+              spawn: await prepareCodeBuddyDelegateSpawn(backend, runtimeHome)
+            }
+          }
           const unsupported: never = frameworkId
           throw new Error(`Unsupported delegated-work framework: ${String(unsupported)}`)
         } catch (error) {
@@ -262,6 +280,7 @@ const createProductionDelegatedFrameworkRuntime = (
 export {
   createProductionDelegatedFrameworkRuntime,
   DELEGATED_CHILD_SYSTEM_PROMPT_APPEND,
+  prepareCodeBuddyDelegateSpawn,
   withDelegatedChildContext
 }
 export type { ProductionFrameworkRuntimeOptions }

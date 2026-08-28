@@ -211,17 +211,12 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
     await this.writeVersions(skillsDir, versions)
   }
 
-  // Claude discovers Skills from additional workspace roots without a plugin namespace when they
-  // live under `<root>/.claude/skills/<frontmatter-name>`. This projection is built only inside a
-  // fresh content-addressed staging root, so it needs neither app-owned `os-*` directory identities
-  // nor a version manifest. Keeping both out of the tree prevents those implementation details from
-  // appearing in Claude's Skill tool names or base-directory context.
+  // Agent-facing projections are app-owned trees keyed by canonical public names. Rebuild the tree
+  // on each sync so persistent consumers such as CodeBuddy stay idempotent across reconnects and
+  // settings changes without exposing app-owned `os-*` identities or a version manifest.
   private async syncAgentFacing(configDir: string, enabled: BundledSkill[]): Promise<void> {
     const skillsDir = join(configDir, 'skills')
     await mkdir(skillsDir, { recursive: true })
-    if ((await readdir(skillsDir)).length !== 0) {
-      throw new Error('Agent-facing Skill projection must be materialized into an empty directory.')
-    }
 
     const names = new Set<string>()
     for (const skill of enabled) {
@@ -232,7 +227,15 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
         throw new Error(`Refusing to project duplicate Agent-facing Skill name: ${skill.name}`)
       }
       names.add(skill.name)
+    }
 
+    for (const name of await readdir(skillsDir)) {
+      const stale = join(skillsDir, name)
+      await chmodTree(stale, 'writable')
+      await rm(stale, { recursive: true, force: true })
+    }
+
+    for (const skill of enabled) {
       const target = join(skillsDir, skill.name)
       try {
         await this.copySkill(target, skill, { synthesizeFrontmatter: true })

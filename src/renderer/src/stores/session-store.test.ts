@@ -3807,6 +3807,43 @@ describe('session store', () => {
     expect(session.activities?.[0]).toMatchObject({ status: 'failed' })
   })
 
+  it('keeps preceding CodeBuddy prose before a later tool call', () => {
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'codebuddy-tool-order',
+      content: 'Create and save a plot',
+      agentFrameworkId: 'codebuddy'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'codebuddy-tool-order',
+      streamId: 'provider-message-1',
+      eventId: 'message-event-1',
+      promptMessageId: prompt?.messageId,
+      content: 'The plot is ready.'
+    })
+    vi.advanceTimersByTime(1)
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'codebuddy-tool-order',
+      toolCallId: 'write-artifact-1',
+      eventId: 'tool-event-1',
+      timestamp: Date.now(),
+      promptMessageId: prompt?.messageId,
+      providerToolName: 'open-science-artifacts/write_artifact_file',
+      status: 'in_progress'
+    })
+
+    const session = useSessionStore.getState().sessions[0]
+    const message = session.messages.find((item) => item.role === 'agent')
+    const activity = session.activities?.[0]
+    expect(message).toBeDefined()
+    expect(activity).toBeDefined()
+    expect(message?.sortIndex).toBeLessThan(activity?.sortIndex ?? 0)
+
+    const persisted = toPersistedSession(session)
+    expect(persisted.messages.find((item) => item.role === 'agent')?.createdAt).toBeLessThan(
+      persisted.activities?.[0]?.createdAt ?? 0
+    )
+  })
+
   it('keeps pending Plan approval available when the active run is interrupted', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

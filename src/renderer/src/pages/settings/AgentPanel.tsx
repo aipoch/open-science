@@ -11,6 +11,7 @@ import type {
   ClaudeInstallSourceInfo
 } from '../../../../shared/settings'
 import {
+  getCodeBuddyInstallSources,
   getClaudeInstallSources,
   getCodexInstallSources,
   getOpencodeInstallSources
@@ -29,7 +30,7 @@ import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
 
 // The agent frameworks the settings page manages, keyed by their short name (used for the
 // uninstall dialog target and the framework card descriptors).
-type FrameworkKey = 'claude' | 'opencode' | 'codex'
+type FrameworkKey = 'claude' | 'opencode' | 'codex' | 'codebuddy'
 
 type AgentPanelProps = {
   variant?: 'settings' | 'onboarding'
@@ -66,19 +67,26 @@ const AgentPanel = ({
   const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
   const detectCodex = useSettingsStore((state) => state.detectCodex)
   const installCodex = useSettingsStore((state) => state.installCodex)
+  const codebuddy = useSettingsStore((state) => state.codebuddy)
+  const isDetectingCodeBuddy = useSettingsStore((state) => state.isDetectingCodeBuddy)
+  const detectCodeBuddy = useSettingsStore((state) => state.detectCodeBuddy)
+  const installCodeBuddy = useSettingsStore((state) => state.installCodeBuddy)
   // Per-runtime install slices: each card renders only its own progress/logs/error (issue #278).
   const claudeInstall = useSettingsStore((state) => state.installStates['claude-code'])
   const opencodeInstall = useSettingsStore((state) => state.installStates.opencode)
   const codexInstall = useSettingsStore((state) => state.installStates.codex)
+  const codebuddyInstall = useSettingsStore((state) => state.installStates.codebuddy)
   // Any install running locks the framework selector and every card's uninstall button.
   const anyInstalling = useSettingsStore(selectAnyInstalling)
   const npmAvailable = useSettingsStore((state) => state.npmAvailable)
   const claudeManaged = useSettingsStore((state) => state.claudeManaged)
   const opencodeManaged = useSettingsStore((state) => state.opencodeManaged)
   const codexManaged = useSettingsStore((state) => state.codexManaged)
+  const codebuddyManaged = useSettingsStore((state) => state.codebuddyManaged)
   const uninstallClaude = useSettingsStore((state) => state.uninstallClaude)
   const uninstallOpencode = useSettingsStore((state) => state.uninstallOpencode)
   const uninstallCodex = useSettingsStore((state) => state.uninstallCodex)
+  const uninstallCodeBuddy = useSettingsStore((state) => state.uninstallCodeBuddy)
   const detectClaude = useSettingsStore((state) => state.detectClaude)
   const installClaude = useSettingsStore((state) => state.installClaude)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
@@ -148,7 +156,8 @@ const AgentPanel = ({
     try {
       if (pendingUninstall === 'claude') await uninstallClaude()
       else if (pendingUninstall === 'opencode') await uninstallOpencode()
-      else await uninstallCodex()
+      else if (pendingUninstall === 'codex') await uninstallCodex()
+      else await uninstallCodeBuddy()
 
       setPendingUninstall(null)
     } finally {
@@ -259,7 +268,8 @@ const AgentPanel = ({
     const readyByFramework: Record<AgentFrameworkId, boolean> = {
       'claude-code': preflight.claudeReady,
       opencode: preflight.opencodeReady,
-      codex: codexReady
+      codex: codexReady,
+      codebuddy: preflight.codebuddyReady
     }
     if (readyByFramework[agentFrameworkId]) return
 
@@ -274,19 +284,26 @@ const AgentPanel = ({
     isOnboarding,
     preflight.claudeReady,
     codexReady,
+    preflight.codebuddyReady,
     preflight.opencodeReady,
     queueOnboardingSwitch
   ])
 
-  // The section-level Re-detect re-scans all three frameworks at once; the per-card detect buttons
+  // The section-level Re-detect re-scans all frameworks at once; the per-card detect buttons
   // were removed in favor of this single action.
-  const isDetectingAnyFramework = isDetectingClaude || isDetectingOpencode || isDetectingCodex
+  const isDetectingAnyFramework =
+    isDetectingClaude || isDetectingOpencode || isDetectingCodex || isDetectingCodeBuddy
   const handleDetectAllFrameworks = async (): Promise<void> => {
     setFrameworkDetectionError(undefined)
     setInstallActionError(undefined)
     // A non-selected runtime may be broken independently of the framework the user is configuring.
     // Wait for every detector, then refresh the selected environment even when one detector rejected.
-    const results = await Promise.allSettled([detectClaude(), detectOpencode(), detectCodex()])
+    const results = await Promise.allSettled([
+      detectClaude(),
+      detectOpencode(),
+      detectCodex(),
+      detectCodeBuddy()
+    ])
     await checkEnvironment({ force: true })
 
     const failure = results.find(
@@ -312,6 +329,7 @@ const AgentPanel = ({
     icon: React.ReactNode
     description: string
     ready: boolean
+    installed: boolean
     updateRequired?: boolean
     minimumVersion?: string
     version?: string
@@ -336,6 +354,7 @@ const AgentPanel = ({
       icon: <AgentFrameworkIcon frameworkId="claude-code" size={24} />,
       description: t("Anthropic's agentic coding tool for the terminal."),
       ready: preflight.claudeReady,
+      installed: Boolean(claude.resolvedPath),
       version: claude.version,
       path: claude.resolvedPath,
       sourceLabel: 'anthropics/claude-code',
@@ -360,6 +379,7 @@ const AgentPanel = ({
       icon: <AgentFrameworkIcon frameworkId="opencode" size={24} />,
       description: t('Open-source coding agent for the terminal.'),
       ready: preflight.opencodeReady,
+      installed: Boolean(opencode.resolvedPath),
       version: opencode.version,
       path: opencode.resolvedPath,
       sourceLabel: 'anomalyco/opencode',
@@ -387,6 +407,7 @@ const AgentPanel = ({
       icon: <AgentFrameworkIcon frameworkId="codex" size={24} />,
       description: t("OpenAI's coding agent, connected through the Codex ACP adapter."),
       ready: codexReady,
+      installed: Boolean(codex.resolvedPath),
       updateRequired: Boolean(
         codex.resolvedPath && codex.version && !isSupportedCodexAcpVersion(codex.version)
       ),
@@ -420,11 +441,39 @@ const AgentPanel = ({
         if (source !== 'official-script') return installCodex(source)
         return Promise.resolve(undefined)
       }
+    },
+    {
+      key: 'codebuddy',
+      frameworkId: 'codebuddy',
+      name: 'CodeBuddy',
+      icon: <AgentFrameworkIcon frameworkId="codebuddy" size={24} />,
+      description: t("Tencent's coding agent for the terminal."),
+      ready: preflight.codebuddyReady,
+      installed: Boolean(codebuddy.resolvedPath),
+      version: codebuddy.version,
+      path: codebuddy.resolvedPath,
+      sourceLabel: '@tencent-ai/codebuddy-code',
+      sourceUrl: 'https://codebuddy.ai/docs/cli/acp',
+      notReadyHint: t(
+        'CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.'
+      ),
+      uninstallCommand: 'npm uninstall -g @tencent-ai/codebuddy-code',
+      managed: codebuddyManaged,
+      installSources: getCodeBuddyInstallSources(),
+      install: codebuddyInstall,
+      onInstall: (source) => {
+        if (source === 'managed') return installCodeBuddy(source)
+        return Promise.resolve(undefined)
+      }
     }
   ]
 
-  const installedFrameworks = frameworkCards.filter((card) => card.ready || card.updateRequired)
-  const availableFrameworks = frameworkCards.filter((card) => !card.ready && !card.updateRequired)
+  const installedFrameworks = frameworkCards.filter(
+    (card) => card.ready || card.installed || card.updateRequired
+  )
+  const availableFrameworks = frameworkCards.filter(
+    (card) => !card.ready && !card.installed && !card.updateRequired
+  )
 
   // Environment blockers disable only the sources they invalidate. Official scripts remain a
   // usable fallback when managed registry access or the local managed installer is unavailable.
@@ -549,6 +598,7 @@ const AgentPanel = ({
       name={card.name}
       description={card.description}
       ready={card.ready}
+      installed={card.installed}
       updateRequired={card.updateRequired}
       minimumVersion={card.minimumVersion}
       needsRepair={cardNeedsRepair(card)}
@@ -574,7 +624,9 @@ const AgentPanel = ({
       isUninstalling={isUninstalling && pendingUninstall === card.key}
       isDetecting={isDetectingAnyFramework}
       promptInFlight={promptInFlight}
-      onUninstall={() => setPendingUninstall(card.key)}
+      onUninstall={() => {
+        setPendingUninstall(card.key)
+      }}
       showUninstall={!isOnboarding}
       installSources={card.installSources}
       install={card.install}
@@ -697,7 +749,9 @@ const AgentPanel = ({
               <div className="space-y-3">{availableFrameworks.map(renderFrameworkCard)}</div>
             </div>
           ) : null}
-          {activeFramework && !activeFramework.supportsSkills ? (
+          {activeFramework &&
+          activeFramework.id !== 'codebuddy' &&
+          !activeFramework.supportsSkills ? (
             <p className="text-xs text-muted-foreground">
               {t(
                 "Skills aren't available with {{name}}; use Claude Code for skill-based workflows.",

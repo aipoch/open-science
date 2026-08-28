@@ -205,6 +205,38 @@ describe('resolveSessionEffortOption', () => {
     })
   })
 
+  it('uses a framework adapter only when the exact effort name is absent', () => {
+    const options = [effortOption(['none', 'disabled', 'enabled', 'high'])]
+    const adaptCodeBuddyEffort = (effort: string): string =>
+      effort === 'none' ? 'disabled' : effort === 'default' ? 'enabled' : effort
+
+    expect(resolveSessionEffortOption(options, 'none', adaptCodeBuddyEffort)).toEqual({
+      configId: 'thought_level',
+      value: 'none'
+    })
+    expect(
+      resolveSessionEffortOption(
+        [effortOption(['disabled', 'enabled', 'high'])],
+        'none',
+        adaptCodeBuddyEffort
+      )
+    ).toEqual({ configId: 'thought_level', value: 'disabled' })
+    expect(
+      resolveSessionEffortOption(
+        [effortOption(['disabled', 'enabled', 'high'])],
+        'default',
+        adaptCodeBuddyEffort
+      )
+    ).toEqual({ configId: 'thought_level', value: 'enabled' })
+    expect(
+      resolveSessionEffortOption(
+        [effortOption(['disabled', 'enabled', 'high'])],
+        'high',
+        adaptCodeBuddyEffort
+      )
+    ).toEqual({ configId: 'thought_level', value: 'high' })
+  })
+
   it('returns undefined when there is nothing usable to apply', () => {
     // Only the 'default' sentinel advertised: no exact concrete value is available.
     expect(resolveSessionEffortOption([effortOption(['default'])], 'high')).toBeUndefined()

@@ -298,6 +298,7 @@ describe('Settings backend ownership architecture', () => {
       'type:ResponsesBridgeConnection',
       'type:ResponsesBridgeModelTarget',
       'type:ResponsesBridgeNamespacedTool',
+      'type:ResponsesBridgeOptions',
       'type:ResponsesBridgeSkillCandidate',
       'type:ResponsesBridgeSkillInput',
       'type:ResponsesBridgeTarget',
@@ -340,6 +341,7 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.repository, 'SettingsRepository')).toEqual([
       'addComputeGrant',
       'addCustomServer',
+      'clearCodeBuddyInfo',
       'clearCodexInfo',
       'clearComputeGrants',
       'clearGrantedLocalRoots',
@@ -358,6 +360,7 @@ describe('Settings backend ownership architecture', () => {
       'setAppIconVariant',
       'setClaudeInfo',
       'setClosePreference',
+      'setCodeBuddyInfo',
       'setCodexInfo',
       'setComputeBookmarks',
       'setConnectorAutoAllow',
@@ -463,13 +466,13 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
         addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel authenticateCustomServer buildCustomServerTemplateExport
-        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codexSkillCatalog
-        codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodex
+        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
+        codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotificationsEnabled getPackageMirror
         getPreflight getRuntimeEnablement getRuntimeSelection getSettingsView getSkillDetail
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
-        importSkillZipBatch installClaude installCodex installOpencode isEncryptionAvailable
+        importSkillZipBatch installClaude installCodeBuddy installCodex installOpencode isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
         loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
@@ -484,7 +487,7 @@ describe('Settings backend ownership architecture', () => {
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
         setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSessionDetailsModel setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
-        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodex
+        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodeBuddy uninstallCodex
         uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
@@ -534,6 +537,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/backend-route-planner.ts',
       'src/main/settings/backend-selection-owner.ts',
+      'src/main/settings/codebuddy-skill-selector-transport.ts',
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
@@ -567,6 +571,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/agent-framework/types.ts',
       'src/main/reviewer/bridge-tools.ts',
       'src/main/settings/backend-route-planner.ts',
+      'src/main/settings/codebuddy-skill-selector-transport.ts',
       'src/main/settings/native-responses-compatibility.ts',
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/validate.ts'
@@ -650,6 +655,8 @@ describe('Settings backend ownership architecture', () => {
       'claude',
       'claudeSubscriptionProviderId',
       'closePreference',
+      'codebuddyPath',
+      'codebuddyVersion',
       'codex',
       'computeBookmarks',
       'computeGrants',

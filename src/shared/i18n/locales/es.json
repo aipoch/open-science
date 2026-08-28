@@ -3802,6 +3802,9 @@
     "Stop comparing {{name}}": "Dejar de comparar {{name}}",
     "View latest version": "Ver la última versión",
     "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
-    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "La configuración de la sesión cambió a {{framework}} · {{model}} · {{effort}}"
+    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "La configuración de la sesión cambió a {{framework}} · {{model}} · {{effort}}",
+    "Tencent's coding agent for the terminal.": "Agente de programación de Tencent para la terminal.",
+    "CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.": "Se requiere CodeBuddy para este framework. Instálelo a continuación o instálelo manualmente y vuelva a detectarlo.",
+    "Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.": "Descarga CodeBuddy en el entorno de ejecución gestionado por la aplicación y lo ejecuta con el entorno de la aplicación; no se requieren Node.js ni npm globales."
   }
 }

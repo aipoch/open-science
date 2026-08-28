@@ -39,6 +39,7 @@ type FakeSettingsService = Record<
   | 'installCodex'
   | 'uninstallClaude'
   | 'uninstallOpencode'
+  | 'uninstallCodeBuddy'
   | 'uninstallCodex'
   | 'setAgentFramework'
   | 'setReasoningEffort'
@@ -111,6 +112,10 @@ const createFakeService = (): FakeSettingsService => ({
   }),
   uninstallOpencode: vi.fn().mockResolvedValue({
     snapshot: { claude: {}, providers: [], agentFrameworkId: 'opencode' },
+    activeBackendAffected: true
+  }),
+  uninstallCodeBuddy: vi.fn().mockResolvedValue({
+    snapshot: { claude: {}, providers: [], agentFrameworkId: 'codebuddy' },
     activeBackendAffected: true
   }),
   uninstallCodex: vi.fn().mockResolvedValue({
@@ -725,6 +730,7 @@ describe('settings IPC handlers', () => {
   it.each([
     ['claude', 'opencode'],
     ['opencode', 'codex'],
+    ['codebuddy', 'claude-code'],
     ['codex', 'claude-code']
   ] as const)(
     'rotates the runtime after uninstalling active %s auto-switches frameworks',
@@ -736,7 +742,9 @@ describe('settings IPC handlers', () => {
           ? 'uninstallClaude'
           : channel === 'opencode'
             ? 'uninstallOpencode'
-            : 'uninstallCodex'
+            : channel === 'codebuddy'
+              ? 'uninstallCodeBuddy'
+              : 'uninstallCodex'
       ].mockResolvedValue({
         snapshot: { claude: {}, providers: [], agentFrameworkId: fallbackFramework },
         activeBackendAffected: true

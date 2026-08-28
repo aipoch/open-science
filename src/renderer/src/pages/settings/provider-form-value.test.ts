@@ -18,6 +18,7 @@ describe('defaultProviderKindKey', () => {
     expect(defaultProviderKindKey('claude-code')).toBe('official:anthropic')
     expect(defaultProviderKindKey('codex')).toBe('official:openai')
     expect(defaultProviderKindKey('opencode')).toBe('official:deepseek')
+    expect(defaultProviderKindKey('codebuddy')).toBe('official:minimax')
   })
 })
 
@@ -158,6 +159,13 @@ describe('provider-kind helpers', () => {
     expect(providerFormModelForFramework(zen, ['anthropic'])).toBe('claude-fable-5')
     expect(providerFormModelForFramework(zen, ['responses'])).toBe('gpt-5.6-sol')
     expect(providerFormModelForFramework(zen, ['anthropic', 'openai'])).toBe('kimi-k2.7-code')
+
+    const minimax = createEmptyProviderFormValue({
+      type: 'official',
+      vendorId: 'minimax',
+      region: 'global'
+    })
+    expect(providerFormModelForFramework(minimax, ['openai'])).toBe('MiniMax-M3')
   })
 
   it('groups each subscription on its own, official vendors under API, and custom under Other', () => {

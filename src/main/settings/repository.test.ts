@@ -391,6 +391,25 @@ describe('settings repository', () => {
     expect(settings.opencodeVersion).toBe('1.18.3')
   })
 
+  it('persists the CodeBuddy selection and path across a sanitized read and reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setAgentFramework('codebuddy')
+    await repository.setCodeBuddyInfo('/opt/homebrew/bin/codebuddy', '2.138.0')
+
+    expect(await repository.getSettings()).toMatchObject({
+      agentFrameworkId: 'codebuddy',
+      codebuddyPath: '/opt/homebrew/bin/codebuddy',
+      codebuddyVersion: '2.138.0'
+    })
+    await expect(new SettingsRepository(root).getSettings()).resolves.toMatchObject({
+      agentFrameworkId: 'codebuddy',
+      codebuddyPath: '/opt/homebrew/bin/codebuddy',
+      codebuddyVersion: '2.138.0'
+    })
+  })
+
   it('persists the reasoning effort across a sanitized read and a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

@@ -6,6 +6,7 @@ import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { AgentConfigFile, AgentFrameworkId } from '../agent-framework'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { ResolvedProvider } from './provider-env'
 import type { ProviderRuntimeTarget, RuntimeProviderModelSelection } from './provider-accounts'
 import type { StoredProvider, StoredSettings } from './types'
@@ -240,6 +241,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const runtime = {
     resolveClaudeExecutable: vi.fn(async () => '/runtime/claude'),
     resolveOpencodeExecutable: vi.fn(async () => '/runtime/opencode'),
+    resolveCodeBuddyExecutable: vi.fn(async () => '/runtime/codebuddy'),
     resolveCodexExecutable: vi.fn(async () => '/runtime/codex-acp'),
     probeCodexNativeVersion: vi.fn(async () => '0.144.6'),
     provisionClaudeRuntimeConfig: vi.fn(async () => ({
@@ -1533,6 +1535,76 @@ describe('AgentBackendResolver bridge predicates', () => {
       await backend.providerTransportLease?.release()
     }
   )
+
+  it('provisions an isolated Connector Skill runtime for CodeBuddy', async () => {
+    const harness = makeHarness({ connectorIds: ['pubmed'] })
+
+    const backend = await harness.resolver.resolveExplicitTarget({
+      frameworkId: 'codebuddy',
+      providerId: 'provider-a',
+      model: { kind: 'provider-default' },
+      reasoningEffort: 'high'
+    })
+
+    expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledWith(
+      expect.any(Object),
+      join('/storage', 'codebuddy', 'skill-runtime', '.claude'),
+      new Set(),
+      { directoryLayout: 'agent-facing' }
+    )
+    expect(backend.sessionOptions).toEqual({
+      [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+        command: process.execPath,
+        entryPath: '/app/main.js',
+        root: join('/storage', 'codebuddy', 'skill-runtime')
+      }
+    })
+    expect(backend.persistentSystemPrompt).toContain('`mcp-pubmed`')
+    expect(backend.persistentSystemPrompt).not.toContain('search_articles')
+    expect(backend.env).toMatchObject({
+      CODEBUDDY_API_KEY: 'openai-bridge-token-0',
+      CODEBUDDY_BASE_URL: 'http://127.0.0.1:42000/v1',
+      OPEN_SCIENCE_CODEBUDDY_CHAT_COMPLETIONS_URL: 'http://127.0.0.1:42000/v1/chat/completions'
+    })
+    expect(harness.createOpenAiProviderBridge).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          wire: 'chat-completions',
+          endpoint: 'https://gateway.example/v1/chat/completions',
+          key: 'plain:provider-a-key-ref',
+          model: 'model-a',
+          adaptRequest: expect.any(Function)
+        })
+      ],
+      expect.any(String)
+    )
+    await backend.providerTransportLease?.release()
+    expect(harness.openAiProviderBridges[0]?.close).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the isolated CodeBuddy Skill runtime available without enabled Connectors', async () => {
+    const harness = makeHarness({ connectorIds: [] })
+
+    const backend = await harness.resolver.resolveExplicitTarget({
+      frameworkId: 'codebuddy',
+      providerId: 'provider-a',
+      model: { kind: 'provider-default' },
+      reasoningEffort: 'high'
+    })
+
+    expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledWith(
+      expect.any(Object),
+      join('/storage', 'codebuddy', 'skill-runtime', '.claude'),
+      new Set(),
+      { directoryLayout: 'agent-facing' }
+    )
+    expect(backend.sessionOptions).toHaveProperty(
+      OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
+      expect.objectContaining({ root: join('/storage', 'codebuddy', 'skill-runtime') })
+    )
+    expect(backend.persistentSystemPrompt).toBeUndefined()
+    await backend.providerTransportLease?.release()
+  })
 
   it.each([
     { name: 'OpenCode', frameworkId: 'opencode' as const, target: {} },

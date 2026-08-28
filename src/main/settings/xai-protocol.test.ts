@@ -43,13 +43,15 @@ describe('xAI protocol projection', () => {
           { role: 'system', content: 'Use evidence.' },
           { role: 'tool', tool_call_id: 'call_1', content: '42' }
         ],
-        reasoning_effort: 'xhigh'
+        reasoning_effort: 'xhigh',
+        tool_choice: { type: 'function', function: { name: 'lookup' } }
       },
       'grok-4.6'
     )
     expect(request).toMatchObject({
       instructions: 'Use evidence.',
       reasoning: { effort: 'xhigh' },
+      tool_choice: { type: 'function', name: 'lookup' },
       input: [{ type: 'function_call_output', call_id: 'call_1', output: '42' }]
     })
   })
@@ -92,7 +94,12 @@ describe('xAI protocol projection', () => {
         { type: 'message', content: [{ type: 'output_text', text: 'Answer' }] },
         { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"q":"x"}' }
       ],
-      usage: { input_tokens: 10, output_tokens: 5 }
+      usage: {
+        input_tokens: 10,
+        input_tokens_details: { cached_tokens: 4 },
+        output_tokens: 5,
+        output_tokens_details: { reasoning_tokens: 2 }
+      }
     }
     expect(responsesToAnthropic(response, 'grok-4.6')).toMatchObject({
       type: 'message',
@@ -104,7 +111,11 @@ describe('xAI protocol projection', () => {
     expect(responsesToChat(response, 'grok-4.6')).toMatchObject({
       object: 'chat.completion',
       choices: [{ finish_reason: 'tool_calls' }],
-      usage: { total_tokens: 15 }
+      usage: {
+        total_tokens: 15,
+        prompt_tokens_details: { cached_tokens: 4 },
+        completion_tokens_details: { reasoning_tokens: 2 }
+      }
     })
   })
 

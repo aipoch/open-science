@@ -1,10 +1,11 @@
 import type { AgentFrameworkId } from '../../shared/settings'
 
-const PRODUCTION_DELEGATED_WORK_FRAMEWORKS = Object.freeze([
+const PRODUCTION_DELEGATED_WORK_FRAMEWORKS: readonly AgentFrameworkId[] = Object.freeze([
   'claude-code',
   'opencode',
-  'codex'
-] satisfies AgentFrameworkId[])
+  'codex',
+  'codebuddy'
+])
 
 const productionDelegatedWorkFrameworks = (): readonly AgentFrameworkId[] =>
   PRODUCTION_DELEGATED_WORK_FRAMEWORKS

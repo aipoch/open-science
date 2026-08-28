@@ -321,7 +321,8 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (
     agentFrameworkId === 'claude-code' ||
     agentFrameworkId === 'opencode' ||
-    agentFrameworkId === 'codex'
+    agentFrameworkId === 'codex' ||
+    agentFrameworkId === 'codebuddy'
   ) {
     settings.agentFrameworkId = agentFrameworkId
   }
@@ -354,6 +355,13 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.opencodePath = opencodePath
     const opencodeVersion = asString(value.opencodeVersion)
     if (opencodeVersion) settings.opencodeVersion = opencodeVersion
+  }
+
+  const codebuddyPath = asString(value.codebuddyPath)
+  if (codebuddyPath) {
+    settings.codebuddyPath = codebuddyPath
+    const codebuddyVersion = asString(value.codebuddyVersion)
+    if (codebuddyVersion) settings.codebuddyVersion = codebuddyVersion
   }
 
   const notebookRuntimes = sanitizeNotebookRuntimes(value.notebookRuntimes)

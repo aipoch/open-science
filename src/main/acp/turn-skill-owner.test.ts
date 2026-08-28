@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { codexFramework, opencodeFramework } from '../agent-framework'
+import { codeBuddyFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { AcpTurnSkillOwner, followUpPromptText } from './turn-skill-owner'
 
 const reloadTestScope = {
@@ -378,6 +382,55 @@ describe('AcpTurnSkillOwner', () => {
     )
   })
 
+  it('preserves the active CodeBuddy Skill route when a follow-up has no Skill chip', async () => {
+    const selectSkills = vi.fn(async () => [])
+    const catalogForCodeBuddyRoot = vi.fn(async () => [])
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        catalogForCodeBuddyRoot
+      },
+      requestSkillsReload: vi.fn()
+    })
+
+    const presented = await owner.presentFollowUp({
+      frameworkId: codeBuddyFramework.id,
+      text: 'continue the current search',
+      selectedSkillIds: [],
+      codebuddy: { root: '/skills', selectorAvailable: true, selectSkills }
+    })
+
+    expect(presented).toEqual({ text: 'continue the current search', codexSkillInputs: [] })
+    expect(catalogForCodeBuddyRoot).not.toHaveBeenCalled()
+    expect(selectSkills).not.toHaveBeenCalled()
+  })
+
+  it('loads an explicitly selected CodeBuddy Skill for a live follow-up', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codebuddy-follow-up-skill-'))
+    onTestFinished(() => rm(root, { recursive: true, force: true }))
+    const skillPath = join(root, '.claude', 'skills', 'mcp-pubmed', 'SKILL.md')
+    await mkdir(join(root, '.claude', 'skills', 'mcp-pubmed'), { recursive: true })
+    await writeFile(skillPath, 'FOLLOW_UP_SKILL_SENTINEL', 'utf8')
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => ['mcp-pubmed']
+      },
+      requestSkillsReload: vi.fn()
+    })
+
+    const presented = await owner.presentFollowUp({
+      frameworkId: codeBuddyFramework.id,
+      text: 'use PubMed for the follow-up',
+      selectedSkillIds: ['mcp-pubmed'],
+      codebuddy: { root, selectorAvailable: true, selectSkills: async () => [] }
+    })
+
+    expect(presented.skillActivityInputs).toEqual([{ name: 'mcp-pubmed', path: skillPath }])
+    expect(presented.skillScopeGuidance).toContain('FOLLOW_UP_SKILL_SENTINEL')
+  })
+
   it('propagates follow-up Skill preparation failures instead of dropping selected Skills', async () => {
     const owner = new AcpTurnSkillOwner({
       skills: {
@@ -541,5 +594,278 @@ describe('AcpTurnSkillOwner', () => {
 
     expect(selectSkills).toHaveBeenCalledOnce()
     expect(prepared.codexSkillInputs).toEqual([])
+  })
+
+  it('pre-routes a CodeBuddy connector and exposes only that Skill for the turn', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codebuddy-turn-skill-'))
+    onTestFinished(() => rm(root, { recursive: true, force: true }))
+    const pubmedPath = join(root, '.claude', 'skills', 'mcp-pubmed', 'SKILL.md')
+    await mkdir(join(root, '.claude', 'skills', 'mcp-pubmed'), { recursive: true })
+    await writeFile(
+      pubmedPath,
+      [
+        '---',
+        'name: mcp-pubmed',
+        'description: Search PubMed literature.',
+        'source: connector',
+        '---',
+        '',
+        'PUBMED_ROUTE_SENTINEL: call host.mcp("pubmed", "search_articles", args).',
+        'PACKAGE_DIR=${CLAUDE_SKILL_DIR}'
+      ].join('\n')
+    )
+    const pubmed = {
+      name: 'mcp-pubmed',
+      description: 'Search PubMed literature.',
+      path: pubmedPath,
+      source: 'connector' as const
+    }
+    const biomart = {
+      name: 'mcp-biomart',
+      description: 'Query Ensembl BioMart.',
+      path: '/codebuddy/.claude/skills/mcp-biomart/SKILL.md',
+      source: 'connector' as const
+    }
+    const selectSkills = vi.fn(async () => [pubmed])
+    const catalogForCodeBuddyRoot = vi.fn(async () => [biomart, pubmed])
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        catalogForCodeBuddyRoot
+      },
+      requestSkillsReload: vi.fn()
+    })
+    const handle = await owner.authorize({})
+
+    const requestText = 'Use PubMed to review recent studies of circadian metabolism.'
+    const prepared = await handle.prepareProvider({
+      frameworkId: codeBuddyFramework.id,
+      selectionText: requestText,
+      promptText: requestText,
+      codebuddy: {
+        root,
+        selectorAvailable: true,
+        selectSkills
+      }
+    })
+
+    expect(catalogForCodeBuddyRoot).toHaveBeenCalledWith(root)
+    expect(selectSkills).toHaveBeenCalledWith(requestText, [biomart, pubmed], undefined, undefined)
+    expect(prepared.skillRuntimeAllowlist).toEqual([])
+    expect(prepared.codexSkillInputs).toEqual([])
+    expect(prepared.skillActivityInputs).toEqual([{ name: 'mcp-pubmed', path: pubmedPath }])
+    expect(prepared.skillScopeGuidance).toContain('mcp-pubmed')
+    expect(prepared.skillScopeGuidance).toContain('already loaded by Open Science')
+    expect(prepared.skillScopeGuidance).toContain('PUBMED_ROUTE_SENTINEL')
+    expect(prepared.skillScopeGuidance).toContain(
+      'PACKAGE_DIR=${CODEBUDDY_CONFIG_DIR}/skill-runtime/.claude/skills/mcp-pubmed'
+    )
+    expect(prepared.skillScopeGuidance).toContain(
+      'Resolve every relative reference, script, or asset path'
+    )
+    expect(prepared.skillScopeGuidance).not.toContain('${CLAUDE_SKILL_DIR}')
+    expect(prepared.skillScopeGuidance).not.toContain(root)
+    expect(prepared.skillScopeGuidance).not.toContain(
+      'Before any Notebook or Connector call, call `mcp__skills__load_skill`'
+    )
+    expect(prepared.skillScopeGuidance).toContain('Do not use Notebook `host.skills`')
+    expect(prepared.skillScopeGuidance).toContain('do not guess Connector names or methods')
+    expect(prepared.text).toBe(requestText)
+  })
+
+  it('loads a selected CodeBuddy Skill from its Agent-facing projection', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codebuddy-projected-skill-'))
+    const sourceDir = join(root, 'source')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(
+      join(sourceDir, 'SKILL.md'),
+      '---\nname: paper-review\ndescription: Review papers.\n---\n\nPROJECTED_SKILL_SENTINEL',
+      'utf8'
+    )
+    await new ClaudeCodeSkillMaterializer().sync(
+      join(root, '.claude'),
+      [
+        {
+          id: 'featured-paper-review',
+          name: 'paper-review',
+          displayName: 'Paper review',
+          description: 'Review papers.',
+          source: 'featured',
+          updatedAt: '',
+          sourceDir
+        }
+      ],
+      { directoryLayout: 'agent-facing' }
+    )
+    const projectedPath = join(root, '.claude', 'skills', 'paper-review', 'SKILL.md')
+    onTestFinished(async () => {
+      await chmod(projectedPath, 0o644)
+      await chmod(join(root, '.claude', 'skills', 'paper-review'), 0o755)
+      await rm(root, { recursive: true, force: true })
+    })
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => ['paper-review'],
+        catalogForCodeBuddyRoot: async () => [
+          {
+            name: 'paper-review',
+            description: 'Review papers.',
+            path: projectedPath
+          }
+        ]
+      },
+      requestSkillsReload: vi.fn()
+    })
+    const handle = await owner.authorize({ selectedSkillIds: ['featured-paper-review'] })
+
+    const prepared = await handle.prepareProvider({
+      frameworkId: codeBuddyFramework.id,
+      selectionText: 'review papers',
+      promptText: 'review papers',
+      codebuddy: { root, selectorAvailable: false, selectSkills: async () => [] }
+    })
+
+    expect(prepared.skillActivityInputs).toEqual([{ name: 'paper-review', path: projectedPath }])
+    expect(prepared.skillScopeGuidance).toContain('PROJECTED_SKILL_SENTINEL')
+  })
+
+  it('stops CodeBuddy before dispatch when its projected Skill document cannot be loaded', async () => {
+    const pubmed = {
+      name: 'mcp-pubmed',
+      description: 'Search PubMed literature.',
+      path: '/missing/.claude/skills/mcp-pubmed/SKILL.md',
+      source: 'connector' as const
+    }
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        catalogForCodeBuddyRoot: async () => [pubmed]
+      },
+      requestSkillsReload: vi.fn()
+    })
+    const handle = await owner.authorize({})
+
+    await expect(
+      handle.prepareProvider({
+        frameworkId: codeBuddyFramework.id,
+        selectionText: 'use pubmed',
+        promptText: 'use pubmed',
+        codebuddy: {
+          root: '/missing',
+          selectorAvailable: true,
+          selectSkills: async () => [pubmed]
+        }
+      })
+    ).rejects.toThrow('CodeBuddy Skill routing failed (document-error).')
+  })
+
+  it('stops CodeBuddy before dispatch when semantic Skill selection fails', async () => {
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        catalogForCodeBuddyRoot: async () => [
+          {
+            name: 'literature-review',
+            description: 'Search and review literature.',
+            path: '/skills/literature-review/SKILL.md'
+          }
+        ]
+      },
+      requestSkillsReload: vi.fn()
+    })
+    const handle = await owner.authorize({})
+
+    await expect(
+      handle.prepareProvider({
+        frameworkId: codeBuddyFramework.id,
+        selectionText: 'find the latest papers',
+        promptText: 'find the latest papers',
+        codebuddy: {
+          root: '/skills',
+          selectorAvailable: true,
+          selectSkills: async () => {
+            throw new Error('missing-function-call')
+          }
+        }
+      })
+    ).rejects.toThrow('CodeBuddy Skill routing failed (selector-error).')
+  })
+
+  it('continues CodeBuddy when the selector validly chooses no Skill', async () => {
+    const selectSkills = vi.fn(async () => [])
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        catalogForCodeBuddyRoot: async () => [
+          {
+            name: 'literature-review',
+            description: 'Search and review literature.',
+            path: '/skills/literature-review/SKILL.md'
+          }
+        ]
+      },
+      requestSkillsReload: vi.fn()
+    })
+    const handle = await owner.authorize({})
+
+    const prepared = await handle.prepareProvider({
+      frameworkId: codeBuddyFramework.id,
+      selectionText: 'explain this local function',
+      promptText: 'explain this local function',
+      codebuddy: {
+        root: '/skills',
+        selectorAvailable: true,
+        selectSkills
+      }
+    })
+
+    expect(selectSkills).toHaveBeenCalledTimes(2)
+    expect((selectSkills.mock.calls[1] as unknown as [string])[0]).toContain(
+      '<open_science_skill_route_verification>'
+    )
+    expect(prepared.skillActivityInputs).toEqual([])
+    expect(prepared.skillScopeGuidance).toContain('No Skill is routed for this turn.')
+  })
+
+  it('loads a CodeBuddy Skill when empty-route confirmation finds a false negative', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codebuddy-turn-skill-confirm-'))
+    onTestFinished(() => rm(root, { recursive: true, force: true }))
+    const skillDirectory = join(root, '.claude', 'skills', 'mcp-pubmed')
+    const pubmedPath = join(skillDirectory, 'SKILL.md')
+    await mkdir(skillDirectory, { recursive: true })
+    await writeFile(pubmedPath, 'PUBMED_ROUTE_SENTINEL')
+    const pubmed = {
+      name: 'mcp-pubmed',
+      description: 'Search PubMed literature.',
+      path: pubmedPath,
+      source: 'connector' as const
+    }
+    const selectSkills = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([pubmed])
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        catalogForCodeBuddyRoot: async () => [pubmed]
+      },
+      requestSkillsReload: vi.fn()
+    })
+    const handle = await owner.authorize({})
+
+    const prepared = await handle.prepareProvider({
+      frameworkId: codeBuddyFramework.id,
+      selectionText: 'find recent biomedical papers',
+      promptText: 'find recent biomedical papers',
+      codebuddy: { root, selectorAvailable: true, selectSkills }
+    })
+
+    expect(selectSkills).toHaveBeenCalledTimes(2)
+    expect(selectSkills.mock.calls[1]?.[0]).toContain('<open_science_skill_route_verification>')
+    expect(prepared.skillActivityInputs).toEqual([{ name: 'mcp-pubmed', path: pubmedPath }])
+    expect(prepared.skillScopeGuidance).toContain('PUBMED_ROUTE_SENTINEL')
   })
 })

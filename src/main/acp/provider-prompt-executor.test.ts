@@ -252,6 +252,125 @@ describe('AcpProviderPromptExecutor', () => {
     })
   })
 
+  it('routes CodeBuddy usage updates into exact per-call facts', async () => {
+    const codeBuddyUsage: SessionNotification = {
+      sessionId: 'provider-1',
+      update: {
+        sessionUpdate: 'usage_update',
+        used: 0,
+        size: 128_000,
+        _meta: {
+          'codebuddy.ai/messageId': 'codebuddy-call-1',
+          usage: {
+            prompt_tokens: 120,
+            prompt_tokens_details: { cached_tokens: 20 },
+            completion_tokens: 10
+          }
+        }
+      }
+    }
+    const response: PromptResponse = { stopReason: 'end_turn' }
+    const fixture = setup([
+      {
+        kind: 'session_update',
+        notification: codeBuddyUsage,
+        update: codeBuddyUsage.update
+      },
+      stop(response)
+    ])
+
+    await expect(
+      fixture.executor.execute({ ...fixture.input, frameworkId: 'codebuddy' })
+    ).resolves.toEqual({
+      kind: 'stopped',
+      response,
+      facts: {
+        turnUsage: {
+          inputTokens: 100,
+          cacheTokens: 20,
+          cachedReadTokens: 20,
+          cachedWriteTokens: 0,
+          outputTokens: 10
+        },
+        modelTurnCount: 1,
+        modelCalls: [
+          {
+            inputTokens: 100,
+            cacheTokens: 20,
+            cachedReadTokens: 20,
+            cachedWriteTokens: 0,
+            outputTokens: 10,
+            sourceInvocationId: 'codebuddy-call-1'
+          }
+        ],
+        contextUsedTokens: 120,
+        lastModelStepUsage: {
+          inputTokens: 100,
+          cacheTokens: 20,
+          cachedReadTokens: 20,
+          cachedWriteTokens: 0,
+          outputTokens: 10
+        }
+      }
+    })
+    expect(fixture.routeNotification).toHaveBeenCalledWith(codeBuddyUsage)
+  })
+
+  it('includes a semantic Skill selector call in CodeBuddy turn totals but keeps main-call context', async () => {
+    const codeBuddyUsage: SessionNotification = {
+      sessionId: 'provider-1',
+      update: {
+        sessionUpdate: 'usage_update',
+        used: 0,
+        size: 128_000,
+        _meta: {
+          'codebuddy.ai/messageId': 'codebuddy-call-1',
+          usage: { prompt_tokens: 120, completion_tokens: 10 }
+        }
+      }
+    }
+    const fixture = setup([
+      { kind: 'session_update', notification: codeBuddyUsage, update: codeBuddyUsage.update },
+      stop({ stopReason: 'end_turn' })
+    ])
+
+    const outcome = await fixture.executor.execute({
+      ...fixture.input,
+      frameworkId: 'codebuddy',
+      preDispatchModelCalls: [
+        {
+          inputTokens: 40,
+          cacheTokens: 5,
+          cachedReadTokens: 5,
+          cachedWriteTokens: 0,
+          outputTokens: 3,
+          sourceInvocationId: 'selector-call-1',
+          contextUsedTokens: 45
+        }
+      ]
+    })
+
+    expect(outcome).toMatchObject({
+      kind: 'stopped',
+      facts: {
+        turnUsage: {
+          inputTokens: 160,
+          cacheTokens: 5,
+          cachedReadTokens: 5,
+          cachedWriteTokens: 0,
+          outputTokens: 13
+        },
+        modelTurnCount: 2,
+        modelCalls: [
+          expect.objectContaining({ sourceInvocationId: 'selector-call-1' }),
+          expect.objectContaining({ sourceInvocationId: 'codebuddy-call-1' })
+        ],
+        contextUsedTokens: 120,
+        lastModelStepUsage: expect.objectContaining({ inputTokens: 120, outputTokens: 10 })
+      }
+    })
+  })
+
   it('preserves prompt rejection before acceptance and cancels its probe once', async () => {
     const fixture = setup()
     const rejection = new Error('provider rejected')

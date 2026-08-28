@@ -198,7 +198,7 @@ class AcpConnectionLifecycleWorkflow {
         }
       }
 
-      const handle = attempt.publish(retainInitializeCapabilities(initResult))
+      const handle = attempt.publish(retainInitializeCapabilities(initResult, spawnedFramework))
       log.info('agent initialized', {
         protocolVersion: initResult.protocolVersion,
         supportsSessionClose: handle.capabilities.close,

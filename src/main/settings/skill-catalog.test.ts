@@ -895,6 +895,40 @@ describe('SkillCatalogModule', () => {
     ])
   })
 
+  it('reads CodeBuddy selector candidates only from its isolated Skill projection', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-codebuddy-catalog-'))
+    const bundleRoot = await mkdtemp(join(tmpdir(), 'settings-codebuddy-bundle-'))
+    roots.push(storageRoot, bundleRoot)
+    await writeFile(join(bundleRoot, 'manifest.json'), JSON.stringify({ version: 1, skills: [] }))
+    const runtimeRoot = join(storageRoot, 'codebuddy', 'skill-runtime')
+    const skillsRoot = join(runtimeRoot, '.claude', 'skills')
+    await mkdir(join(skillsRoot, 'mcp-pubmed'), { recursive: true })
+    await writeFile(
+      join(skillsRoot, 'mcp-pubmed', 'SKILL.md'),
+      '---\nname: mcp-pubmed\ndescription: Search PubMed.\nsource: connector\n---\n'
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: new SkillRegistry(bundleRoot)
+    })
+    const connectors = [
+      { directory: 'mcp-pubmed', name: 'mcp-pubmed', source: 'connector' as const }
+    ]
+
+    await expect(catalog.codeBuddySkillCatalog(runtimeRoot, connectors)).resolves.toEqual([
+      {
+        name: 'mcp-pubmed',
+        description: 'Search PubMed.',
+        path: join(skillsRoot, 'mcp-pubmed', 'SKILL.md'),
+        source: 'connector'
+      }
+    ])
+    await expect(
+      catalog.codeBuddySkillCatalog(join(storageRoot, 'untrusted'), connectors)
+    ).resolves.toEqual([])
+  })
+
   it('exports a personal Skill as a portable ZIP archive', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({

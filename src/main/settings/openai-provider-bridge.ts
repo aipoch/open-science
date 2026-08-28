@@ -46,6 +46,7 @@ export type OpenAiProviderBridgeTarget = Readonly<{
   endpoint: string
   key?: string
   model: string
+  adaptRequest?: (request: Record<string, unknown>) => Record<string, unknown>
 }>
 
 export type OpenAiProviderBridgeConnection = Readonly<{
@@ -168,14 +169,14 @@ export class OpenAiProviderBridge {
       return
     }
 
-    const parsed = await request.readJsonObject()
-
     const target = this.target
+    const parsed = await request.readJsonObject()
+    const adapted = target.adaptRequest?.(parsed) ?? parsed
     const endpoint = new URL(target.endpoint)
     if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
       throw new Error('The OpenAI provider target has no valid endpoint URL.')
     }
-    const body = JSON.stringify({ ...parsed, model: target.model })
+    const body = JSON.stringify({ ...adapted, model: target.model })
     const headersToForward = requestHeaders(request, target.key)
     const replayKey = providerRequestFingerprint(
       target.id,

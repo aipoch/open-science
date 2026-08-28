@@ -122,6 +122,7 @@ export type ResolvedSubagentModelSnapshot = Readonly<{
     | 'claude-anthropic'
     | 'opencode-anthropic'
     | 'opencode-openai'
+    | 'codebuddy-openai'
     | 'codex-responses'
     | 'codex-responses-compatibility'
     | 'codex-bridge'
@@ -782,7 +783,12 @@ export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app
 export const INTERRUPTED_TURN_ERROR = 'This turn was interrupted. Resume to continue.'
 
 const MESSAGE_ROLES = new Set<PersistedMessageRole>(['user', 'agent'])
-const AGENT_FRAMEWORK_IDS = new Set<AgentFrameworkId>(['claude-code', 'opencode', 'codex'])
+const AGENT_FRAMEWORK_IDS = new Set<AgentFrameworkId>([
+  'claude-code',
+  'opencode',
+  'codex',
+  'codebuddy'
+])
 const MESSAGE_STATUSES = new Set<PersistedMessageStatus>(['complete', 'streaming', 'error'])
 const TOOL_ACTIVITY_STATUSES = new Set<PersistedToolActivityStatus>([
   'pending',
@@ -1477,6 +1483,7 @@ const SUBAGENT_MODEL_ROUTES = new Set<ResolvedSubagentModelSnapshot['modelRoute'
   'claude-anthropic',
   'opencode-anthropic',
   'opencode-openai',
+  'codebuddy-openai',
   'codex-responses',
   'codex-responses-compatibility',
   'codex-bridge'

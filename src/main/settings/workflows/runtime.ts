@@ -16,6 +16,7 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'getSettingsView'
   | 'uninstallClaude'
   | 'uninstallOpencode'
+  | 'uninstallCodeBuddy'
   | 'uninstallCodex'
   | 'upsertProvider'
   | 'deleteProvider'
@@ -40,7 +41,8 @@ type RuntimeSettingsWorkflowEffects = {
   requestAgentFrameworkSwitch: (frameworkId?: AgentFrameworkId) => void
 }
 
-type RuntimeUninstallMethod = 'uninstallClaude' | 'uninstallOpencode' | 'uninstallCodex'
+type RuntimeUninstallMethod =
+  'uninstallClaude' | 'uninstallOpencode' | 'uninstallCodeBuddy' | 'uninstallCodex'
 
 const affectedProviderIds = (providerId: string): readonly string[] =>
   providerId === CLAUDE_SHARED_PROVIDER_ID || providerId === CLAUDE_ISOLATED_PROVIDER_ID

@@ -131,6 +131,7 @@ import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import {
+  codeBuddySkillRuntimeRoot,
   followUpPromptText,
   type AcpTurnSkillHooks,
   type AcpTurnSkillOwner
@@ -1165,6 +1166,7 @@ class AcpRuntime {
       request.sessionId,
       referencedSessions.map((reference) => reference.sessionId)
     )
+    const livePrompt = this.sessionInteractions.current(request.sessionId)
     const presented = await this.turnSkills.presentFollowUp({
       frameworkId: this.framework.id,
       text: request.text,
@@ -1172,9 +1174,24 @@ class AcpRuntime {
       role: this.sessionEnvironment.role(),
       specialistId: this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot()
         .specialistId,
-      codexHome: this.backendGeneration.current.adapter.codexHome
+      codexHome: this.backendGeneration.current.adapter.codexHome,
+      ...(this.framework.id === 'codebuddy'
+        ? {
+            codebuddy: {
+              root: codeBuddySkillRuntimeRoot(this.backendGeneration.current.session.options),
+              selectorAvailable: this.connectionResources.bridgeSkillsAvailable,
+              selectSkills: async (text, catalog, signal, observeUsage) =>
+                (await this.connectionResources.selectBridgeSkills(
+                  text,
+                  catalog,
+                  signal,
+                  observeUsage
+                )) ?? [],
+              ...(livePrompt?.kind === 'prompt' ? { signal: livePrompt.signal } : {})
+            }
+          }
+        : {})
     })
-    const livePrompt = this.sessionInteractions.current(request.sessionId)
     const supportsImageInput = this.backendGeneration.current.context.supportsImageInput
     const imageCompatibility = this.options.imageInputCompatibility
     const prepared = await this.promptContent.prepare({
@@ -2382,11 +2399,13 @@ class AcpRuntime {
     const target =
       backend.framework.id === 'opencode'
         ? 'opencode'
-        : backend.framework.id === 'codex'
-          ? backend.modelRoute === 'codex-bridge'
-            ? 'codex-bridge'
-            : 'codex-response'
-          : 'claude-code'
+        : backend.framework.id === 'codebuddy'
+          ? 'codebuddy'
+          : backend.framework.id === 'codex'
+            ? backend.modelRoute === 'codex-bridge'
+              ? 'codex-bridge'
+              : 'codex-response'
+            : 'claude-code'
     return {
       target,
       ...(backend.context.window ? { contextWindow: backend.context.window } : {})

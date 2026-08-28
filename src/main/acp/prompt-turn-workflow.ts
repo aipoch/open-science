@@ -8,6 +8,7 @@ import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
 } from '../../shared/permission-profiles'
+import type { AgentFramework } from '../agent-framework'
 import { createLogger, errorLogFields } from '../logger'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
@@ -25,6 +26,7 @@ import {
 } from './prompt-outcome-finalizer'
 import type { AcpPromptPreparationOwner, PreparedPromptHandle } from './prompt-preparation-owner'
 import type { AcpProviderPromptExecutor, ProviderPromptOutcome } from './provider-prompt-executor'
+import type { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
 import type { AcpSessionToolingAvailability } from './session-presentation-policy'
@@ -94,6 +96,13 @@ type AcpPromptTurnEnvironment = Readonly<{
     text: string
     attribution?: MessageAttribution
   }) => void
+  beforePromptDispatch?: (input: {
+    appSessionId: string
+    framework: AgentFramework
+    providerSessionId: string
+    cwd: string
+    skillRuntimeAllowlist?: readonly string[]
+  }) => Promise<void>
 }>
 
 type AcpPromptTurnArtifacts = Readonly<{
@@ -154,6 +163,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   skills: Pick<AcpTurnSkillOwner, 'authorize'>
   preparation: Pick<AcpPromptPreparationOwner, 'prepare'>
   executor: Pick<AcpProviderPromptExecutor, 'execute'>
+  serialization: Pick<AcpProviderPromptSerializationOwner, 'run'>
   contextUsage: Pick<ContextUsageTracker, 'reconcileUsed'>
   providerReconnectPending: () => boolean
   finalizer: Pick<AcpPromptOutcomeFinalizer, 'finalize'>
@@ -381,64 +391,83 @@ class AcpPromptTurnWorkflow {
           : {})
       })
       if (prepared.status === 'cancelled') return Object.freeze({ kind: 'not-dispatched' })
-      skillInputs = [...prepared.skillActivityInputs]
-      context = prepared.transferContextTurn()
+      const readyPrepared = prepared
+      skillInputs = [...readyPrepared.skillActivityInputs]
+      context = readyPrepared.transferContextTurn()
       emitUserMessage()
       if (skillInputs.length > 0) {
         env.emitSkillActivities(sessionId, promptTurn, skillInputs, 'in_progress')
         skillStarted = true
       }
       const promptSnapshot = registry.lookup(sessionId)?.aggregate.snapshot()
-      return executor.execute({
-        session,
-        content: prepared.content,
-        cwd: promptSnapshot?.cwd ?? this.options.currentCwd(),
-        frameworkId: promptSnapshot?.frameworkId ?? env.backend().framework.id,
-        isCurrent: () => this.isCurrent(turn),
-        beforeDispatch: async () => {
-          if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
-          if (request.historyPreamble) {
-            log.info('session transcript replay dispatched', {
-              sessionId,
-              historyTextLength: request.historyPreamble.length,
-              historyAttachmentCount: request.historyAttachments?.length ?? 0,
-              historyImageCount: request.historyImages?.length ?? 0,
-              ...env.diagnosticContext()
+      const promptBackend = env.backend()
+      const framework = promptBackend.framework
+      const cwd = promptSnapshot?.cwd ?? this.options.currentCwd()
+      const executeProviderTurn = (): Promise<ProviderPromptOutcome> =>
+        executor.execute({
+          session,
+          content: readyPrepared.content,
+          cwd,
+          frameworkId: promptSnapshot?.frameworkId ?? framework.id,
+          ...(readyPrepared.preDispatchModelCalls
+            ? { preDispatchModelCalls: readyPrepared.preDispatchModelCalls }
+            : {}),
+          isCurrent: () => this.isCurrent(turn),
+          beforeDispatch: async () => {
+            if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
+            await env.beforePromptDispatch?.({
+              appSessionId: sessionId,
+              framework,
+              providerSessionId: session.sessionId,
+              cwd,
+              ...(readyPrepared.skillRuntimeAllowlist
+                ? { skillRuntimeAllowlist: readyPrepared.skillRuntimeAllowlist }
+                : {})
             })
-          }
-          return 'active'
-        },
-        captureStop: () => interactions.captureTerminal(interaction, 'stop'),
-        onAccepted: async () => {
-          if (sideChatRelay && !sideChatRelaySettled) {
-            sideChatRelaySettled = true
-            try {
-              await sideChatRelay.commit(request.provenanceContext?.promptMessageId)
-            } catch (error) {
-              log.warn('side chat advisory persistence failed after provider admission', {
+            if (request.historyPreamble) {
+              log.info('session transcript replay dispatched', {
                 sessionId,
-                ...errorLogFields(error)
+                historyTextLength: request.historyPreamble.length,
+                historyAttachmentCount: request.historyAttachments?.length ?? 0,
+                historyImageCount: request.historyImages?.length ?? 0,
+                ...env.diagnosticContext()
               })
             }
-          }
-          this.safeCallback('provider-prompt-accepted callback failed', () =>
-            env.onProviderPromptAccepted?.(sessionId, turn.mode.promptAttemptId)
-          )
-          if (skillStarted && !skillFinalized) {
-            env.emitSkillActivities(sessionId, promptTurn, skillInputs, 'completed')
-            skillFinalized = true
-          }
-        },
-        routeNotification: (notification) => {
-          if (turn.mode.kind !== 'application') env.routeNotification(notification, sessionId)
-        },
-        reportBestEffortFailure: (stage, error) =>
-          log.warn('provider prompt observation failed', {
-            sessionId,
-            stage,
-            ...errorLogFields(error)
-          })
-      })
+            return 'active'
+          },
+          captureStop: () => interactions.captureTerminal(interaction, 'stop'),
+          onAccepted: async () => {
+            if (sideChatRelay && !sideChatRelaySettled) {
+              sideChatRelaySettled = true
+              try {
+                await sideChatRelay.commit(request.provenanceContext?.promptMessageId)
+              } catch (error) {
+                log.warn('side chat advisory persistence failed after provider admission', {
+                  sessionId,
+                  ...errorLogFields(error)
+                })
+              }
+            }
+            this.safeCallback('provider-prompt-accepted callback failed', () =>
+              env.onProviderPromptAccepted?.(sessionId, turn.mode.promptAttemptId)
+            )
+            if (skillStarted && !skillFinalized) {
+              env.emitSkillActivities(sessionId, promptTurn, skillInputs, 'completed')
+              skillFinalized = true
+            }
+          },
+          routeNotification: (notification) => {
+            if (turn.mode.kind !== 'application') env.routeNotification(notification, sessionId)
+          },
+          reportBestEffortFailure: (stage, error) =>
+            log.warn('provider prompt observation failed', {
+              sessionId,
+              stage,
+              ...errorLogFields(error)
+            })
+        })
+
+      return this.options.serialization.run(framework, executeProviderTurn)
     }
     let outcome: AcpPromptFinalizationOutcome
     try {
