@@ -248,7 +248,13 @@ const NotificationBellContent = ({
     }
 
     const trigger = triggerRef.current
-    if (trigger?.isConnected && !trigger.closest('[inert]')) trigger.focus()
+    const returnFocusTarget =
+      trigger?.isConnected && !trigger.closest('[inert], [aria-hidden="true"]')
+        ? trigger
+        : Array.from(
+            document.querySelectorAll<HTMLElement>('[data-notification-bell-trigger="true"]')
+          ).find(isVisibleNotificationBell)
+    returnFocusTarget?.focus()
   }, [isMobile, open])
 
   useEffect(() => {

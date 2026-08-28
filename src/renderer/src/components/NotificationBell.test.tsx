@@ -626,4 +626,48 @@ describe('NotificationBell', () => {
     await act(async () => dismiss?.click())
     expect(document.activeElement).toBe(trigger)
   })
+
+  it('restores a visible bell when the mobile opener becomes inert', async () => {
+    stubMobileViewport()
+    container.id = 'root'
+    await act(async () =>
+      root.render(
+        <>
+          <div data-testid="mobile-sidebar">
+            <NotificationBell
+              onOpen={() =>
+                container.querySelector('[data-testid="mobile-sidebar"]')?.setAttribute('inert', '')
+              }
+            />
+          </div>
+          <NotificationBell />
+        </>
+      )
+    )
+
+    const [sidebarTrigger, visibleTrigger] = container.querySelectorAll<HTMLButtonElement>(
+      '[data-notification-bell-trigger="true"]'
+    )
+    const visibleRect = (): DOMRect =>
+      ({
+        x: 0,
+        y: 0,
+        width: 36,
+        height: 36,
+        top: 0,
+        right: 36,
+        bottom: 36,
+        left: 0,
+        toJSON: () => ({})
+      }) as DOMRect
+    sidebarTrigger!.getBoundingClientRect = visibleRect
+    visibleTrigger!.getBoundingClientRect = visibleRect
+    sidebarTrigger?.focus()
+    await act(async () => sidebarTrigger?.click())
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(document.activeElement).toBe(visibleTrigger)
+  })
 })
