@@ -368,9 +368,15 @@ const SessionHoverPreview = ({
             event.relatedTarget instanceof Node &&
             contentRef.current?.contains(event.relatedTarget)
           ) {
+            // Internal focus transition; preventDefault also skips Radix's composed trigger-blur
+            // close (composeEventHandlers honors defaultPrevented).
+            event.preventDefault()
             return
           }
-          requestClose()
+          // Defer the close decision until focus settles: document.activeElement then reflects the
+          // destination even when relatedTarget is null (programmatic focus moves), and
+          // requestClose keeps the card open while focus stays inside it.
+          setTimeout(requestClose, 0)
         }}
       >
         {children}

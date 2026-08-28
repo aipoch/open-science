@@ -614,6 +614,7 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('keeps the preview open when focus moves from the row into the card', async () => {
+    vi.useFakeTimers()
     const { SessionHoverPreview, SessionHoverPreviewProvider } =
       await import('./SessionHoverPreview')
     const container = document.createElement('div')
@@ -627,11 +628,12 @@ describe('WorkspaceSidebar accessible render', () => {
             <SessionHoverPreview session={{ id: 'focus', title: 'Focus Session' }} canRename>
               <button type="button">Focus trigger</button>
             </SessionHoverPreview>
+            <button type="button">Outside</button>
           </SessionHoverPreviewProvider>
         )
       })
-      const trigger = container.querySelector('button')
-      if (!trigger) throw new Error('Session preview trigger did not render')
+      const [trigger, outside] = Array.from(container.querySelectorAll('button'))
+      if (!trigger || !outside) throw new Error('Session preview triggers did not render')
 
       await act(async () => trigger.focus())
       const titleButton = document.body.querySelector<HTMLElement>(
@@ -639,24 +641,36 @@ describe('WorkspaceSidebar accessible render', () => {
       )
       if (!titleButton) throw new Error('Session preview title button did not render')
 
-      // Focus moving into the portaled card is an internal transition: the card stays open.
+      // Internal transition with an explicit relatedTarget: Radix's composed trigger-blur close
+      // is skipped and the card stays open past the close delay.
       await act(async () =>
         trigger.dispatchEvent(
           new FocusEvent('focusout', { bubbles: true, relatedTarget: titleButton })
         )
       )
+      await act(async () => vi.advanceTimersByTime(400))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
+
+      // Programmatic focus into the card can carry a null relatedTarget; the deferred close
+      // decision still sees the focus destination and keeps the card open.
+      act(() => titleButton.focus())
+      await act(async () =>
+        trigger.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+      )
+      await act(async () => vi.advanceTimersByTime(400))
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
       // Focus leaving the hover region entirely closes the card.
+      act(() => outside.focus())
       await act(async () =>
-        trigger.dispatchEvent(
-          new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body })
-        )
+        trigger.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
       )
+      await act(async () => vi.advanceTimersByTime(400))
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
     } finally {
       act(() => root.unmount())
       container.remove()
+      vi.useRealTimers()
     }
   })
 
