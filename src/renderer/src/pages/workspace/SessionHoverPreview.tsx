@@ -267,19 +267,21 @@ const SessionHoverPreview = ({
   onPreviewRequest,
   canRename = false,
   onRenameTitle,
+  previewSuppressed = false,
   children
 }: {
   session: SessionPreviewDetails
   onPreviewRequest?: SessionPreviewRequest
   canRename?: boolean
   onRenameTitle?: SessionRenameRequest
+  previewSuppressed?: boolean
   children: ReactElement
 }): React.JSX.Element => {
   const context = useContext(SessionHoverPreviewContext)
   if (!context) throw new Error('SessionHoverPreview must be inside SessionHoverPreviewProvider')
 
   const { activeSessionId, closeNow, requestOpen } = context
-  const open = activeSessionId === session.id
+  const open = !previewSuppressed && activeSessionId === session.id
   const onPreviewRequestRef = useRef(onPreviewRequest)
   // Radix types the trigger ref as its default anchor element; with asChild the rendered element
   // is the caller's child, and only Element-level APIs (contains/matches) are used here.
@@ -310,6 +312,10 @@ const SessionHoverPreview = ({
 
   useEffect(() => () => closeNow(session.id), [closeNow, session.id])
 
+  useEffect(() => {
+    if (previewSuppressed) closeNow(session.id)
+  }, [closeNow, previewSuppressed, session.id])
+
   const requestClose = useCallback((): void => {
     if (editingRef.current) return
     // Focus moved into the portaled card (e.g. Tab from the row to the rename control): keep the
@@ -336,7 +342,7 @@ const SessionHoverPreview = ({
       openDelay={SESSION_HOVER_PREVIEW_DELAY_MS}
       closeDelay={SESSION_HOVER_PREVIEW_SKIP_DELAY_MS}
       onOpenChange={(nextOpen) => {
-        if (nextOpen) {
+        if (nextOpen && !previewSuppressed) {
           requestOpen(session.id)
           return
         }
@@ -346,7 +352,9 @@ const SessionHoverPreview = ({
       <HoverCardTrigger
         ref={triggerRef}
         asChild
-        onPointerEnter={() => requestOpen(session.id)}
+        onPointerEnter={() => {
+          if (!previewSuppressed) requestOpen(session.id)
+        }}
         onPointerLeave={(event) => {
           if (event.currentTarget.matches(':focus-visible')) return
           if (
@@ -357,7 +365,13 @@ const SessionHoverPreview = ({
           }
           requestClose()
         }}
-        onFocus={() => requestOpen(session.id)}
+        onFocus={(event) => {
+          if (!(event.target instanceof Element) || !event.target.matches(':focus-visible')) {
+            event.preventDefault()
+            return
+          }
+          if (!previewSuppressed) requestOpen(session.id)
+        }}
         onBlur={(event) => {
           if (event.currentTarget.matches(':hover')) return
           if (
