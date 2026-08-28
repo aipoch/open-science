@@ -131,6 +131,7 @@
         "src/main/notebook/environment-discovery.ts",
         "src/main/notebook/environment-state-tracker.ts",
         "src/main/notebook/execution-owner.ts",
+        "src/main/notebook/helper-module-validator.ts",
         "src/main/notebook/kernel-executor.ts",
         "src/main/notebook/local-rpc-server.ts",
         "src/main/notebook/managed-runtime-guard.ts",
