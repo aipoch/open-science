@@ -237,14 +237,7 @@ const NotificationBellContent = ({
     }
   }, [isMobile, open])
 
-  useEffect(() => {
-    if (open && isMobile) {
-      mobileWasOpenRef.current = true
-      return
-    }
-    if (open || !mobileWasOpenRef.current) return
-    mobileWasOpenRef.current = false
-
+  const restoreMobileFocus = useCallback((): void => {
     const activeElement = document.activeElement
     if (
       activeElement instanceof HTMLElement &&
@@ -262,7 +255,17 @@ const NotificationBellContent = ({
             document.querySelectorAll<HTMLElement>('[data-notification-bell-trigger="true"]')
           ).find(isVisibleNotificationBell)
     returnFocusTarget?.focus()
-  }, [isMobile, open])
+  }, [])
+
+  useEffect(() => {
+    if (open && isMobile) {
+      mobileWasOpenRef.current = true
+      return
+    }
+    if (open || !mobileWasOpenRef.current) return
+    mobileWasOpenRef.current = false
+    restoreMobileFocus()
+  }, [isMobile, open, restoreMobileFocus])
 
   useEffect(() => {
     const openFromLiveToast = (event: Event): void => {
@@ -394,7 +397,10 @@ const NotificationBellContent = ({
                 onMountAutoFocus={(event) => {
                   if (!isMobile) event.preventDefault()
                 }}
-                onUnmountAutoFocus={(event) => event.preventDefault()}
+                onUnmountAutoFocus={(event) => {
+                  event.preventDefault()
+                  if (isMobile) restoreMobileFocus()
+                }}
               >
                 <div
                   className={cn(

@@ -700,6 +700,44 @@ describe('NotificationBell', () => {
     expect(document.activeElement).toBe(visibleTrigger)
   })
 
+  it('restores a visible bell when an open mobile message center unmounts', async () => {
+    stubMobileViewport()
+    container.id = 'root'
+    await act(async () =>
+      root.render(
+        <>
+          <NotificationBell key="route-bell" />
+          <NotificationBell key="persistent-bell" />
+        </>
+      )
+    )
+
+    const [routeTrigger, persistentTrigger] = container.querySelectorAll<HTMLButtonElement>(
+      '[data-notification-bell-trigger="true"]'
+    )
+    persistentTrigger!.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        width: 36,
+        height: 36,
+        top: 0,
+        right: 36,
+        bottom: 36,
+        left: 0,
+        toJSON: () => ({})
+      }) as DOMRect
+    routeTrigger?.focus()
+    await act(async () => routeTrigger?.click())
+
+    await act(async () => root.render(<NotificationBell key="persistent-bell" />))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(document.activeElement).toBe(persistentTrigger)
+  })
+
   it('moves focus into an open message center when the viewport becomes mobile', async () => {
     const viewport = stubMutableViewport()
     container.id = 'root'
