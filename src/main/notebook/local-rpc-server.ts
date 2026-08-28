@@ -1949,9 +1949,17 @@ class NotebookLocalRpcServer {
 
     if (method === 'llmCall') {
       if (!this.hostModel) throw new Error('host.llm is not configured.')
-      const { sessionId: _sessionId, projectId: _projectId, ...input } = params
+      const {
+        sessionId: _sessionId,
+        projectId: _projectId,
+        provenanceContext: _provenanceContext,
+        registeredInputFiles: _registeredInputFiles,
+        ...input
+      } = params
       void _sessionId
       void _projectId
+      void _provenanceContext
+      void _registeredInputFiles
       return this.hostModel.call(input as HostLlmCallInput, signal)
     }
 
