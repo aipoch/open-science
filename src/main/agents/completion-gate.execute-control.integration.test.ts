@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import type { AcpStateSnapshot } from '../../shared/acp'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRunRepository } from '../notebook/repository'
@@ -52,9 +52,9 @@ type ExecuteControlHarness = {
 const createExecuteControlHarness = async (
   options: {
     onApproval?: (
-      current: SpecialistProfileView | undefined,
+      current: SpecialistView | undefined,
       approvalIndex: number
-    ) => SpecialistProfileView | undefined
+    ) => SpecialistView | undefined
     connectorCall?: () => Promise<unknown>
     approvalGateway?: ApprovalGateway
     runtime?: CompletionGateRuntime
@@ -605,12 +605,12 @@ describe('completion gate through the real host.agents SDK and executeControl se
   it.each([
     {
       drift: 'rename',
-      mutate: (current: SpecialistProfileView | undefined) =>
+      mutate: (current: SpecialistView | undefined) =>
         current ? { ...current, name: 'Renamed Specialist' } : undefined
     },
     {
       drift: 'disable',
-      mutate: (current: SpecialistProfileView | undefined) =>
+      mutate: (current: SpecialistView | undefined) =>
         current ? { ...current, enabled: false } : undefined
     },
     {
@@ -619,12 +619,12 @@ describe('completion gate through the real host.agents SDK and executeControl se
     },
     {
       drift: 'revision',
-      mutate: (current: SpecialistProfileView | undefined) =>
+      mutate: (current: SpecialistView | undefined) =>
         current ? { ...current, revision: current.revision + 1 } : undefined
     },
     {
       drift: 'identity replacement',
-      mutate: (current: SpecialistProfileView | undefined) =>
+      mutate: (current: SpecialistView | undefined) =>
         current ? { ...current, id: 'replacement-specialist' } : undefined
     }
   ])(

@@ -53,7 +53,7 @@ const computeScope = (
   context: ComputeGrantContext,
   decision: ComputeApprovalDecision
 ): PermissionGrantScope | undefined => {
-  if (decision === 'conversation') {
+  if (decision === 'session') {
     return { kind: 'session', projectId: context.projectId, sessionId: context.sessionId }
   }
   if (decision === 'project') return { kind: 'project', projectId: context.projectId }

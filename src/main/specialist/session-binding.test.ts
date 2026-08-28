@@ -1,14 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
 import { SessionBindingService } from './session-binding'
-import type { ProfileService } from './service'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistService } from './service'
+import type { SpecialistView } from '../../shared/specialist'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const makeProfile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+const makeProfile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'uuid-sp1',
   name: 'DEBUGGER',
   displayName: 'Debugger',
@@ -22,7 +22,7 @@ const makeProfile = (overrides: Partial<SpecialistProfileView> = {}): Specialist
   ...overrides
 })
 
-const makeService = (profiles: Map<string, SpecialistProfileView> = new Map()): ProfileService => {
+const makeService = (profiles: Map<string, SpecialistView> = new Map()): SpecialistService => {
   return {
     getById: vi.fn(async (id: string) => {
       const p = profiles.get(id)
@@ -34,7 +34,7 @@ const makeService = (profiles: Map<string, SpecialistProfileView> = new Map()): 
       if (!p) throw new Error(`Runnable Specialist ${id} not found.`)
       return p
     })
-  } as unknown as ProfileService
+  } as unknown as SpecialistService
 }
 
 // ---------------------------------------------------------------------------
@@ -79,20 +79,20 @@ describe('SessionBindingService.setBinding', () => {
 describe('SessionBindingService.resolve', () => {
   it('resolves builtin bindings through the runnable catalog instead of the custom repository query', async () => {
     const builtin = makeProfile({ id: 'builtin-curator', name: 'BUILTIN_CURATOR', revision: 0 })
-    const profileService = {
+    const specialistService = {
       getById: vi.fn(async () => {
         throw new Error('custom-only query must not be used')
       }),
       resolveRunnableById: vi.fn(async () => builtin)
-    } as unknown as ProfileService
-    const svc = new SessionBindingService(profileService)
+    } as unknown as SpecialistService
+    const svc = new SessionBindingService(specialistService)
     svc.setBinding('restored-session', builtin.id)
 
     await expect(svc.resolve('restored-session')).resolves.toEqual({
       kind: 'bound',
       profile: builtin
     })
-    expect(profileService.getById).not.toHaveBeenCalled()
+    expect(specialistService.getById).not.toHaveBeenCalled()
   })
 
   it("returns 'main' when no binding is recorded", async () => {
@@ -220,7 +220,7 @@ describe('SessionBindingService — None clears binding', () => {
 describe('SessionBindingService — lazy profile update', () => {
   it('reads the latest profile on each resolve (not a cached snapshot)', async () => {
     const profile = makeProfile({ revision: 1, systemPrompt: 'v1' })
-    const catalog = new Map<string, SpecialistProfileView>([['uuid-sp1', profile]])
+    const catalog = new Map<string, SpecialistView>([['uuid-sp1', profile]])
     const svc = new SessionBindingService(makeService(catalog))
     svc.setBinding('session-a', 'uuid-sp1')
 
@@ -246,7 +246,7 @@ describe('SessionBindingService — lazy profile update', () => {
     // changes. Correct behavior: each resolve() call reads the latest catalog on demand; the service
     // holds no subscriber that iterates sessions or triggers any resume operation.
     const profile = makeProfile({ id: 'uuid-sp1', revision: 1 })
-    const catalog = new Map<string, SpecialistProfileView>([['uuid-sp1', profile]])
+    const catalog = new Map<string, SpecialistView>([['uuid-sp1', profile]])
     const svc = new SessionBindingService(makeService(catalog))
     svc.setBinding('session-a', 'uuid-sp1')
 
@@ -275,9 +275,9 @@ describe('SessionBindingService — lazy profile update', () => {
 
 describe('SessionBindingService.resolve — I/O failure discrimination', () => {
   it("returns 'unavailable' with an I/O reason for non-not-found errors", async () => {
-    const brokenService: ProfileService = {
+    const brokenService: SpecialistService = {
       getById: vi.fn().mockRejectedValue(new Error('EACCES: permission denied'))
-    } as unknown as ProfileService
+    } as unknown as SpecialistService
     const svc = new SessionBindingService(brokenService)
     svc.setBinding('session-a', 'uuid-sp1')
 
@@ -339,7 +339,7 @@ describe('SessionBindingService.clearSession — deletion wiring', () => {
 describe('SessionBindingService — restart round-trip simulation', () => {
   it('binding is the new UUID after simulated restart (re-create service with persisted UUID)', async () => {
     const profile = makeProfile({ id: 'uuid-sp2', name: 'RESEARCHER' })
-    const catalog = new Map<string, SpecialistProfileView>([['uuid-sp2', profile]])
+    const catalog = new Map<string, SpecialistView>([['uuid-sp2', profile]])
 
     // First service instance — represents the running app.
     const svc1 = new SessionBindingService(makeService(catalog))

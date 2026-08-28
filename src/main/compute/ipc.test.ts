@@ -2245,6 +2245,45 @@ describe('installComputeIpcHandlers', () => {
     await expect(decision).resolves.toBe('deny')
   })
 
+  it('normalizes the legacy conversation approval scope at the Electron boundary', async () => {
+    const broker = new ComputeApprovalBroker({
+      broadcast: vi.fn(),
+      generateId: () => 'approval-1',
+      setTimer: vi.fn(() => 1 as never),
+      clearTimer: vi.fn()
+    })
+    const computeHandlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({}),
+      broker
+    )
+    installComputeIpcHandlers({
+      handlers: computeHandlers,
+      enabledHosts: {
+        get: vi.fn(() => []),
+        set: vi.fn(),
+        setHostEnabled: vi.fn(),
+        setHostSelected: vi.fn()
+      }
+    })
+    const decision = broker.request({
+      provider_id: 'ssh:biowulf',
+      provider_name: 'biowulf',
+      shape: 'direct_ssh',
+      intent: 'Inspect the environment',
+      command_preview: 'env',
+      command_full: 'env'
+    })
+
+    await invokeHandler('compute:approval-respond', {
+      id: 'approval-1',
+      decision: 'conversation'
+    })
+
+    await expect(decision).resolves.toBe('session')
+  })
+
   it('routes enabled-hosts IPC through the authoritative owner and publishes its result', async () => {
     const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
     const session: PersistedChatSession = {

@@ -268,10 +268,15 @@ export type ComputeCallError = {
   retry_after_user_action: boolean
 }
 
-// Broker-owned durable scopes. `conversation` remains the wire value for compatibility, but is
-// presented and persisted as a Session grant; Agent ACP adapters still receive only allow-once.
-export type ComputeApprovalScope = 'once' | 'conversation' | 'project' | 'global'
+// Broker-owned durable scopes. Legacy clients may still submit `conversation`; transport adapters
+// normalize it to `session` before the decision enters the broker.
+export type ComputeApprovalScope = 'once' | 'session' | 'project' | 'global'
 export type ComputeApprovalDecision = ComputeApprovalScope | 'deny'
+export type ComputeApprovalDecisionInput = ComputeApprovalDecision | 'conversation'
+
+export const normalizeComputeApprovalDecision = (
+  decision: ComputeApprovalDecisionInput
+): ComputeApprovalDecision => (decision === 'conversation' ? 'session' : decision)
 
 // Approval request broadcast from main to the renderer for a compute:call_command invocation.
 // provider_name is the human-readable display name; shape is the host topology string.

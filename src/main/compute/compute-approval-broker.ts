@@ -66,9 +66,9 @@ type PendingComputeApproval = {
 // open (a Promise) while the user decides; auto-denies after timeoutMs to prevent indefinite hangs.
 // Follows the same promise + broadcast + IPC-respond pattern as ApprovalBroker in connectors.
 //
-// The wire protocol retains `conversation`, but the production adapter translates it to a durable
-// Session grant. Project and Global use the same Registry; settings.json is read only for lazy legacy
-// Project migration. Callers without the adapter retain the older in-memory/test hooks below.
+// Session-scoped decisions become durable grants in production. Project and Global use the same
+// Registry; settings.json is read only for lazy legacy Project migration. Callers without the
+// adapter retain the older in-memory/test hooks below.
 //
 // Use request() for legacy callers that do not supply context (only 'once'/'deny' can result).
 // Use requestWithContext() to enable grant memory.
@@ -89,7 +89,7 @@ export class ComputeApprovalBroker {
   >()
 
   // Legacy fallback used only when no durable adapter is supplied.
-  private readonly conversationGrants = new Set<string>()
+  private readonly sessionGrants = new Set<string>()
 
   private readonly timeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -154,7 +154,7 @@ export class ComputeApprovalBroker {
     for (const entry of this.pending.values()) replay(entry.request, entry.context)
   }
 
-  // Like request(), but checks conversation and project grants first. If a grant matches, resolves
+  // Like request(), but checks Session and Project grants first. If a grant matches, resolves
   // immediately without broadcasting. When the user responds with a scope that has memory, records it.
   requestWithContext(
     info: Omit<ComputeApprovalRequest, 'id'>,
@@ -210,7 +210,7 @@ export class ComputeApprovalBroker {
           providerGeneration
         )
         if (requestWasCancelled() || !providerIsCurrent) return 'deny'
-        if (durableScope === 'session') return 'conversation'
+        if (durableScope === 'session') return 'session'
         return durableScope
       }
     }
@@ -230,16 +230,16 @@ export class ComputeApprovalBroker {
       }
     }
 
-    // ── conversation grant check (session in-memory) ───────────────────────────────
-    const convKey = `${sessionId}:${operation}:${providerId}`
-    if (!requiresExplicitApproval && this.conversationGrants.has(convKey)) {
+    // ── Session grant check (in-memory fallback) ───────────────────────────────────
+    const sessionGrantKey = `${sessionId}:${operation}:${providerId}`
+    if (!requiresExplicitApproval && this.sessionGrants.has(sessionGrantKey)) {
       const providerIsCurrent = await this.isProviderCurrent(
         providerId,
         ctx.ownerId,
         providerGeneration
       )
       if (requestWasCancelled() || !providerIsCurrent) return 'deny'
-      return 'conversation'
+      return 'session'
     }
 
     // ── no grant — show approval card ─────────────────────────────────────────────
@@ -274,8 +274,8 @@ export class ComputeApprovalBroker {
         { sessionId, projectId, operation, providerId },
         decision
       )
-    } else if (decision === 'conversation') {
-      this.conversationGrants.add(convKey)
+    } else if (decision === 'session') {
+      this.sessionGrants.add(sessionGrantKey)
     } else if (decision === 'project' && this.deps.saveProjectGrant) {
       await this.deps.saveProjectGrant({ projectId, operation, providerId })
     }
@@ -323,8 +323,8 @@ export class ComputeApprovalBroker {
     this.cancellingSessions.add(sessionId)
     this.completingSessionCancellations.delete(sessionId)
     this.pausedSessions.delete(sessionId)
-    for (const key of this.conversationGrants) {
-      if (key.startsWith(`${sessionId}:`)) this.conversationGrants.delete(key)
+    for (const key of this.sessionGrants) {
+      if (key.startsWith(`${sessionId}:`)) this.sessionGrants.delete(key)
     }
     for (const [id, entry] of this.pending) {
       if (entry.context?.sessionId === sessionId) this.settle(id, 'deny', 'cancelled')
@@ -342,7 +342,7 @@ export class ComputeApprovalBroker {
       if (!entry.context) this.settle(id, 'deny', 'cancelled')
     }
     this.pausedSessions.clear()
-    this.conversationGrants.clear()
+    this.sessionGrants.clear()
   }
 
   completeGlobalCancellation(): void {
@@ -385,8 +385,8 @@ export class ComputeApprovalBroker {
   async invalidateProvider(providerId: string): Promise<void> {
     this.invalidatingProviders.add(providerId)
     this.providerGenerations.set(providerId, (this.providerGenerations.get(providerId) ?? 0) + 1)
-    for (const key of this.conversationGrants) {
-      if (key.endsWith(`:${providerId}`)) this.conversationGrants.delete(key)
+    for (const key of this.sessionGrants) {
+      if (key.endsWith(`:${providerId}`)) this.sessionGrants.delete(key)
     }
     for (const [id, entry] of this.pending) {
       if (entry.providerId === providerId) this.settle(id, 'deny', 'cancelled')

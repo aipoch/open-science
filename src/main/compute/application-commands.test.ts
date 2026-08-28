@@ -283,6 +283,19 @@ describe('Compute application commands', () => {
     expect(dependencies.bookmarks.set).toHaveBeenCalledWith('ssh:cluster', ['/work'])
   })
 
+  it('normalizes the legacy conversation approval scope at the command boundary', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerComputeApplicationCommands(router.registrar, dependencies)
+
+    await router.dispatcher.invoke(
+      computeApplicationCommands.approvalRespond,
+      invocation([{ id: 'approval-1', decision: 'conversation' }])
+    )
+
+    expect(dependencies.compute.approvalRespond).toHaveBeenCalledWith('approval-1', 'session')
+  })
+
   it('serializes RemoteFsError details for both remote filesystem commands', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()

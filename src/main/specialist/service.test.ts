@@ -4,25 +4,25 @@ import { mkdir, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import { ProfileService } from './service'
+import { SpecialistService } from './service'
 import { SpecialistRepository } from './repository'
 import type { BuiltinSpecialistRegistryEntry } from '../../shared/specialist-package'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
 
 let tmpDir: string
-let service: ProfileService
+let service: SpecialistService
 
 beforeEach(async () => {
   tmpDir = join(tmpdir(), `profile-service-${randomUUID()}`)
   await mkdir(tmpDir, { recursive: true })
-  service = new ProfileService(new SpecialistRepository(tmpDir))
+  service = new SpecialistService(new SpecialistRepository(tmpDir))
 })
 
 afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true })
 })
 
-describe('ProfileService.list', () => {
+describe('SpecialistService.list', () => {
   it('fails the whole runnable catalog with structured diagnostics when any builtin is invalid', async () => {
     const diagnostic = {
       severity: 'error' as const,
@@ -31,7 +31,7 @@ describe('ProfileService.list', () => {
       path: 'manifest.json',
       relatedId: 'missing-skill'
     }
-    const guarded = new ProfileService(new SpecialistRepository(tmpDir), {
+    const guarded = new SpecialistService(new SpecialistRepository(tmpDir), {
       load: async () => ({ entries: [], diagnostics: [diagnostic] })
     })
 
@@ -59,7 +59,7 @@ describe('ProfileService.list', () => {
       fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
       selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
     }
-    const withBuiltin = new ProfileService(new SpecialistRepository(tmpDir), {
+    const withBuiltin = new SpecialistService(new SpecialistRepository(tmpDir), {
       load: async () => ({ entries: [builtin], diagnostics: [] })
     })
     const custom = await withBuiltin.create({ name: 'CUSTOM_CURATOR' })
@@ -89,7 +89,7 @@ describe('ProfileService.list', () => {
   })
 })
 
-describe('ProfileService.create', () => {
+describe('SpecialistService.create', () => {
   it('returns structured read-only errors for builtin and Reviewer mutation targets', async () => {
     const builtin: BuiltinSpecialistRegistryEntry = {
       kind: 'builtin',
@@ -104,7 +104,7 @@ describe('ProfileService.create', () => {
       fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
       selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
     }
-    const guarded = new ProfileService(new SpecialistRepository(tmpDir), {
+    const guarded = new SpecialistService(new SpecialistRepository(tmpDir), {
       load: async () => ({ entries: [builtin], diagnostics: [] })
     })
     const builtinError = { code: 'SPECIALIST_READ_ONLY', targetKind: 'builtin' }
@@ -268,7 +268,7 @@ describe('ProfileService.create', () => {
   })
 })
 
-describe('ProfileService.getById', () => {
+describe('SpecialistService.getById', () => {
   it('returns the specialist by id', async () => {
     const created = await service.create({ name: 'RNA-seq Reviewer' })
     const found = await service.getById(created.id)
@@ -280,7 +280,7 @@ describe('ProfileService.getById', () => {
   })
 })
 
-describe('ProfileService.getByName', () => {
+describe('SpecialistService.getByName', () => {
   it('returns specialist by name', async () => {
     const created = await service.create({ name: 'RNA-seq Reviewer' })
     const found = await service.getByName(created.name)
@@ -292,7 +292,7 @@ describe('ProfileService.getByName', () => {
   })
 })
 
-describe('ProfileService.setEnabled', () => {
+describe('SpecialistService.setEnabled', () => {
   it('toggles enabled state', async () => {
     const created = await service.create({ name: 'My Bot' })
     const disabled = await service.setEnabled(created.id, false)
@@ -348,7 +348,7 @@ describe('ProfileService.setEnabled', () => {
   })
 })
 
-describe('ProfileService.update', () => {
+describe('SpecialistService.update', () => {
   it('allows only appearance edits for Marketplace-managed Specialists', async () => {
     const repo = new SpecialistRepository(tmpDir)
     await repo.insert({
@@ -495,7 +495,7 @@ describe('ProfileService.update', () => {
     })
 
     expect(updated).toMatchObject({ packageVersion: '1.0.0', revision: created.revision + 1 })
-    const restarted = new ProfileService(new SpecialistRepository(tmpDir))
+    const restarted = new SpecialistService(new SpecialistRepository(tmpDir))
     await expect(restarted.getById(created.id)).resolves.toMatchObject({ packageVersion: '1.0.0' })
   })
 
@@ -516,7 +516,7 @@ describe('ProfileService.update', () => {
       revision: created.revision + 1
     })
 
-    const restarted = new ProfileService(new SpecialistRepository(tmpDir))
+    const restarted = new SpecialistService(new SpecialistRepository(tmpDir))
     await expect(restarted.getById(created.id)).resolves.toMatchObject({
       name: 'My Bot',
       displayName: 'My Disabled Bot',
@@ -699,7 +699,7 @@ describe('ProfileService.update', () => {
   })
 })
 
-describe('ProfileService.listForSettings', () => {
+describe('SpecialistService.listForSettings', () => {
   it('includes custom specialists', async () => {
     await service.create({ name: 'My Bot' })
     const items = await service.listForSettings()
@@ -719,7 +719,7 @@ describe('ProfileService.listForSettings', () => {
   })
 })
 
-describe('ProfileService.subscribe', () => {
+describe('SpecialistService.subscribe', () => {
   it('notifies listener after create', async () => {
     const listener = vi.fn()
     service.subscribe(listener)
@@ -744,7 +744,7 @@ describe('ProfileService.subscribe', () => {
   })
 })
 
-describe('ProfileService lifecycle mutations', () => {
+describe('SpecialistService lifecycle mutations', () => {
   it('rejects malformed delete payloads without removing the profile', async () => {
     const created = await service.create({ name: 'Safe Bot' })
 
@@ -805,7 +805,7 @@ describe('ProfileService lifecycle mutations', () => {
   })
 })
 
-describe('ProfileService restart persistence', () => {
+describe('SpecialistService restart persistence', () => {
   it('persists enabled=false across a service restart (re-create from same store)', async () => {
     const created = await service.create({ name: 'PERSISTENT_BOT' })
     expect(created.enabled).toBe(true)
@@ -813,7 +813,7 @@ describe('ProfileService restart persistence', () => {
     await service.setEnabled(created.id, false)
 
     // Simulate restart: create a new service instance from the same storage directory.
-    const restarted = new ProfileService(new SpecialistRepository(tmpDir))
+    const restarted = new SpecialistService(new SpecialistRepository(tmpDir))
     const afterRestart = await restarted.getById(created.id)
     expect(afterRestart.enabled).toBe(false)
   })
@@ -827,7 +827,7 @@ describe('ProfileService restart persistence', () => {
       selectedCapabilities: { skillIds: ['skill-x'], connectorIds: ['conn-y'], connectorTools: [] }
     })
 
-    const restarted = new ProfileService(new SpecialistRepository(tmpDir))
+    const restarted = new SpecialistService(new SpecialistRepository(tmpDir))
     const found = await restarted.getById(created.id)
 
     expect(found.id).toBe(created.id)
@@ -839,7 +839,7 @@ describe('ProfileService restart persistence', () => {
   })
 })
 
-describe('ProfileService session binding with stable IDs', () => {
+describe('SpecialistService session binding with stable IDs', () => {
   it('keeps the UUID stable after a display-name edit — a stored session binding still resolves', async () => {
     const created = await service.create({ name: 'RNA_REVIEWER' })
     const originalId = created.id
@@ -874,7 +874,7 @@ describe('ProfileService session binding with stable IDs', () => {
   })
 })
 
-describe('ProfileService stable Skill/Connector references', () => {
+describe('SpecialistService stable Skill/Connector references', () => {
   it('skill attachment tracks by ID — renamed display name does not break the binding', async () => {
     // Attach a skill by stable ID. In a real app the skill catalog has a stable id
     // and a separate display name. Profile stores the id, never the display name.

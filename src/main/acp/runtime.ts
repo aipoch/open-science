@@ -258,7 +258,7 @@ type AcpRuntimeOptions = {
   // Injectable only for the authenticated OpenCode loopback usage snapshots; production uses fetch.
   opencodeUsageFetch?: typeof fetch
   // Resolves the identity-inject text for a specialist UUID at session-creation time.
-  // The main process reads the latest Profile from ProfileService; the runtime never caches it.
+  // The main process reads the latest Profile from SpecialistService; the runtime never caches it.
   // Returns undefined when the specialist is not found, disabled, or its Profile is corrupt —
   // the caller should have validated before calling createSession.
   resolveSpecialistIdentity?: (

@@ -371,7 +371,7 @@ import type {
   SetSpecialistEnabledRequest,
   DuplicateSpecialistRequest,
   SpecialistCatalogSnapshot,
-  SpecialistProfileView,
+  SpecialistView,
   SetSessionSpecialistRequest,
   SetSessionSpecialistResponse,
   ResolveSessionSpecialistRequest,
@@ -1824,9 +1824,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'specialist.cancelPackage': callable<
     (request: SpecialistPackageInstallRequest) => Promise<void>
   >()('specialist', ['specialist:package-cancel', ELECTRON]),
-  'specialist.create': callable<
-    (request: CreateSpecialistRequest) => Promise<SpecialistProfileView>
-  >()('specialist', ['specialist:create', ELECTRON]),
+  'specialist.create': callable<(request: CreateSpecialistRequest) => Promise<SpecialistView>>()(
+    'specialist',
+    ['specialist:create', ELECTRON]
+  ),
   'specialist.delete': callable<
     (request: SpecialistDeleteRequest) => Promise<SpecialistDeleteResult>
   >()('specialist', ['specialist:delete', ELECTRON]),
@@ -1900,14 +1901,15 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     () => Promise<{ cancelled: true } | SpecialistPackageCandidatePreview>
   >()('specialist', ['specialist:package-select', ELECTRON]),
   'specialist.setEnabled': callable<
-    (request: SetSpecialistEnabledRequest) => Promise<SpecialistProfileView>
+    (request: SetSpecialistEnabledRequest) => Promise<SpecialistView>
   >()('specialist', ['specialist:set-enabled', ELECTRON]),
   'specialist.setSessionSpecialist': callable<
     (request: SetSessionSpecialistRequest) => Promise<SetSessionSpecialistResponse>
   >()('specialist', ['specialist:set-session-specialist', ELECTRON]),
-  'specialist.update': callable<
-    (request: UpdateSpecialistRequest) => Promise<SpecialistProfileView>
-  >()('specialist', ['specialist:update', ELECTRON]),
+  'specialist.update': callable<(request: UpdateSpecialistRequest) => Promise<SpecialistView>>()(
+    'specialist',
+    ['specialist:update', ELECTRON]
+  ),
   'storage.cancelMigrate': callable<() => Promise<void>>()('storage', [
     'storage:cancel-migrate',
     LOCAL

@@ -8,7 +8,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import { APP } from '../../../../shared/app-config'
 import type { ProviderView } from '../../../../shared/settings'
-import type { SpecialistProfileView } from '../../../../shared/specialist'
+import type { SpecialistView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
@@ -3183,7 +3183,7 @@ describe('SettingsPage layout', () => {
   it('opens directly on a specialist editor when the store has a pending specialist', async () => {
     // The switch approval card deep-links to one specialist's editor: the intent is published
     // before the dialog opens, and the catalog resolves that profile.
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-1',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3225,7 +3225,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('navigates from a specialist capability row to the skill detail and back', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-1',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3278,7 +3278,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('navigates from a Skill usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-usage',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3331,7 +3331,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('navigates from a Connector usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-connector-usage',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3382,7 +3382,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('routes connector capability rows to detail or edit by server kind', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-2',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3503,7 +3503,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('keeps unsaved specialist edits across a capability detail round trip', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-3',
       name: 'RESEARCHER',
       displayName: 'Researcher',

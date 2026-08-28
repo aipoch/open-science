@@ -796,7 +796,7 @@ describe('authenticated delegatedWorkCall route', () => {
 
     expect(response.status).toBe(200)
     expect(delegate).toHaveBeenCalledWith(
-      expect.objectContaining({ parentSpecialistProfileId: 'trusted-specialist' }),
+      expect.objectContaining({ parentSpecialistId: 'trusted-specialist' }),
       { task: 'Inherit trusted identity', name: 'Inherit trusted identity' },
       {}
     )

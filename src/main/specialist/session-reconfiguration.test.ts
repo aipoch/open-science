@@ -14,8 +14,8 @@ vi.mock('../logger', async (importOriginal) => {
   }
 })
 
-import type { SpecialistProfileView } from '../../shared/specialist'
-import type { ProfileService } from './service'
+import type { SpecialistView } from '../../shared/specialist'
+import type { SpecialistService } from './service'
 import { SessionBindingService } from './session-binding'
 import { SessionSpecialistReconfiguration } from './session-reconfiguration'
 
@@ -29,12 +29,12 @@ const profile = {
   fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
   selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
   revision: 1
-} satisfies SpecialistProfileView
+} satisfies SpecialistView
 
 const bindingService = (): SessionBindingService =>
   new SessionBindingService({
     resolveRunnableById: vi.fn().mockResolvedValue(profile)
-  } as unknown as ProfileService)
+  } as unknown as SpecialistService)
 
 const deferred = (): { promise: Promise<void>; resolve: () => void } => {
   let resolve!: () => void

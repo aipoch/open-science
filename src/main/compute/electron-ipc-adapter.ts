@@ -1,16 +1,17 @@
 import type { IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 
-import type {
-  ChangeComputeHostAuthenticationRequest,
-  ComputeApprovalDecision,
-  ComputeJobsListFilter,
-  ComputeJobsPendingNotificationFilter,
-  CreateComputeHostRequest,
-  CreatePasswordComputeHostRequest,
-  DeleteComputeHostRequest,
-  DetailsAuthor,
-  ResetPasswordComputeHostRequest
+import {
+  normalizeComputeApprovalDecision,
+  type ChangeComputeHostAuthenticationRequest,
+  type ComputeApprovalDecisionInput,
+  type ComputeJobsListFilter,
+  type ComputeJobsPendingNotificationFilter,
+  type CreateComputeHostRequest,
+  type CreatePasswordComputeHostRequest,
+  type DeleteComputeHostRequest,
+  type DetailsAuthor,
+  type ResetPasswordComputeHostRequest
 } from '../../shared/compute'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import type { DownloadDest, SerializableRemoteFsError } from '../../shared/remote-fs'
@@ -96,9 +97,9 @@ const downloadDestSchema = z.discriminatedUnion('kind', [
 const computeApprovalResponseSchema = z
   .object({
     id: z.string(),
-    decision: z.enum(['once', 'conversation', 'project', 'global', 'deny'])
+    decision: z.enum(['once', 'session', 'conversation', 'project', 'global', 'deny'])
   })
-  .strict() satisfies z.ZodType<{ id: string; decision: ComputeApprovalDecision }>
+  .strict() satisfies z.ZodType<{ id: string; decision: ComputeApprovalDecisionInput }>
 
 const computeJobsListFilterSchema = z.union([
   z.object({ sessionId: z.string(), status: stringArraySchema.optional() }).strict(),
@@ -243,10 +244,10 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   handleComputeIpc('compute:reveal-in-folder', (_event, filePath) => {
     handlers.revealInFolder(filePath)
   })
-  // Renderer responds to an in-flight approval card (issue 04/05). Decision now carries the
-  // chosen scope: 'once' | 'conversation' | 'project' | 'global' | 'deny'.
+  // Renderer responds to an in-flight approval card. Legacy `conversation` input is normalized at
+  // this transport boundary; the broker only receives the canonical Session scope.
   handleComputeIpc('compute:approval-respond', (_event, request) => {
-    handlers.approvalRespond(request.id, request.decision)
+    handlers.approvalRespond(request.id, normalizeComputeApprovalDecision(request.decision))
   })
   handleComputeIpc('compute:approval-replay', (_event, id) => handlers.approvalReplay(id))
   handleComputeIpc('compute:approval-replay-pending', () => handlers.approvalReplayPending())

@@ -2,12 +2,12 @@
 // The profile specializes the common Open Science Agent identity. Capability enforcement remains
 // separate and authoritative.
 
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 
 // Sentinel retained in both delivery forms so diagnostics and compatibility tests can detect it.
 export const SPECIALIST_IDENTITY_TAG = '[open-science:specialist-identity]'
 
-const buildSpecialistIdentity = (profile: SpecialistProfileView): string => {
+const buildSpecialistIdentity = (profile: SpecialistView): string => {
   const prompt = profile.systemPrompt.trim()
   if (!prompt) return ''
 
@@ -25,12 +25,12 @@ const buildSpecialistIdentity = (profile: SpecialistProfileView): string => {
 
 // Builds the system-prompt APPEND text for Claude Code (preset 'claude_code', append mode).
 // Returns an empty string when there is nothing to inject (no systemPrompt set).
-export const buildSpecialistIdentityAppend = (profile: SpecialistProfileView): string => {
+export const buildSpecialistIdentityAppend = (profile: SpecialistView): string => {
   return buildSpecialistIdentity(profile)
 }
 
 // Builds the per-turn PROMPT PREFIX text for Codex and OpenCode (no session-meta append channel).
 // Returns an empty string when there is nothing to inject (no systemPrompt set).
-export const buildSpecialistIdentityPrefix = (profile: SpecialistProfileView): string => {
+export const buildSpecialistIdentityPrefix = (profile: SpecialistView): string => {
   return buildSpecialistIdentity(profile)
 }

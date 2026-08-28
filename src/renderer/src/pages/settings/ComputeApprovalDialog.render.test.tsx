@@ -139,7 +139,7 @@ describe('ComputeApprovalDialog', () => {
   it.each([
     ['Deny', 'deny'],
     ['Once', 'once'],
-    ['This session', 'conversation']
+    ['This session', 'session']
   ] as const)('keeps the %s approval decision', (label, decision) => {
     useComputeStore.setState({ pendingApprovals: [request] })
     act(() => root.render(<ComputeApprovalDialog />))

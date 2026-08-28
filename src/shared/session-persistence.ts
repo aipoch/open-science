@@ -652,7 +652,7 @@ export type PersistedChatSession = {
   // value; only the dedicated archive command changes it.
   archivedAt?: number
   // Desired Specialist ID for this Session. Absent means Main Agent. The Profile is resolved fresh
-  // from ProfileService before every turn via the ID.
+  // from SpecialistService before every turn via the ID.
   specialistId?: string
   // Main-owned commit marker. True means the desired binding above is durable, but the live Agent
   // runtime has not yet confirmed that it applied the same target. User prompts fail closed until
@@ -3878,7 +3878,7 @@ const sanitizeSession = (
   if (hasSelectedComputeHosts || enabledComputeHosts.length > 0) {
     sanitized.selectedComputeHosts = selectedComputeHosts
   }
-  // Specialist ID: accept any non-empty string. The main process validates it against ProfileService
+  // Specialist ID: accept any non-empty string. The main process validates it against SpecialistService
   // at send time; the sanitizer only ensures the value is safe to re-persist.
   const specialistId = asString(session.specialistId)
   if (specialistId) sanitized.specialistId = specialistId

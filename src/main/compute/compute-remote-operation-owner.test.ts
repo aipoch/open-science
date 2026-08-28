@@ -1179,7 +1179,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     }
     const broker: ComputeApprovalBroker = {
       request: vi.fn(() => Promise.resolve('once')),
-      requestWithContext: vi.fn(() => Promise.resolve('conversation')),
+      requestWithContext: vi.fn(() => Promise.resolve('session')),
       respond: vi.fn()
     } as unknown as ComputeApprovalBroker
 

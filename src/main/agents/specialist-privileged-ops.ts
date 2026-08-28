@@ -4,7 +4,7 @@
 // host.agents.update (including renames) is an ordinary chat-reviewed mutation handled by the issue
 // 03 module; only DELETE passes through this approval-gated module (issue 04). It is deliberately
 // standalone and independently testable: it consumes ONLY issue 02's ApprovalGateway contract and
-// the existing ProfileService. It does NOT import issue 03 (ordinary mutation) or issue 05 (switch)
+// the existing SpecialistService. It does NOT import issue 03 (ordinary mutation) or issue 05 (switch)
 // implementation modules. Issue 08 composes it into the dispatcher.
 //
 // Design rules mirrored from design.md §8/§10 and the issue 04 acceptance criteria:
@@ -23,12 +23,12 @@ import type {
   ApprovalResult,
   TrustedCallingSession
 } from '../../shared/agents-contract'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import type {
   SpecialistDeleteRequest,
   SpecialistDeleteResult
 } from '../../shared/specialist-package'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistService } from '../specialist/service'
 import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 
 class PrivilegedOpError extends AgentsSafeError {
@@ -65,13 +65,13 @@ export type DeleteResult = AgentDeletedResult | AgentDeclinedResult
 // the ONLY authority is this re-resolution, performed after approval.
 const reResolveForMutation = async (
   method: string,
-  profileService: ProfileService,
+  specialistService: SpecialistService,
   currentName: string,
   reviewedRevision: number
-): Promise<SpecialistProfileView> => {
-  let current: SpecialistProfileView
+): Promise<SpecialistView> => {
+  let current: SpecialistView
   try {
-    current = await profileService.resolveCustomMutationByName(currentName)
+    current = await specialistService.resolveCustomMutationByName(currentName)
   } catch (error) {
     // Target was renamed or deleted after card creation.
     throw new PrivilegedOpError(method, error)
@@ -92,7 +92,7 @@ const reResolveForMutation = async (
 // ---------------------------------------------------------------------------
 
 export type PrivilegedOpDeps = {
-  profileService: ProfileService
+  specialistService: SpecialistService
   // The injected approval gateway (issue 02 contract). Real production wiring is the ACP-backed
   // gateway; tests pass fakes. A decline is a normal result, never a thrown error.
   decide: (request: Parameters<ApprovalGateway['decide']>[0]) => Promise<ApprovalResult>
@@ -122,12 +122,12 @@ export type ApplyDeleteDeps = PrivilegedOpDeps & {
 }
 
 // Approves and deletes a Specialist. On approval, re-resolves name -> ID, verifies the reviewed
-// revision, deletes through ProfileService, verifies absence, invalidates the catalog, and returns
+// revision, deletes through SpecialistService, verifies absence, invalidates the catalog, and returns
 // `{ status: "deleted", name }`. Session ID bindings are NEVER cleared or rewritten. On decline,
 // returns `{ status: "declined", operation: "delete" }` with NO mutation. On drift/failure, throws a
 // sanitized `host.agents.delete:` error.
 export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> => {
-  const { profileService, currentName, reviewedRevision, clearSessionBindings } = deps
+  const { specialistService, currentName, reviewedRevision, clearSessionBindings } = deps
 
   const decision = await deps.decide({
     operation: 'delete',
@@ -144,7 +144,7 @@ export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> 
 
   const current = await reResolveForMutation(
     'delete',
-    profileService,
+    specialistService,
     currentName,
     reviewedRevision
   )
@@ -158,7 +158,7 @@ export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> 
       })
       if (result.status === 'failed') throw agentsPublicError(result.code)
     } else {
-      await profileService.delete(current.id, current.revision)
+      await specialistService.delete(current.id, current.revision)
     }
   } catch (error) {
     throw new PrivilegedOpError('delete', error)
@@ -169,7 +169,7 @@ export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> 
   // is diagnosable instead of being silently misreported as a successful deletion.
   let stillPresent = false
   try {
-    await profileService.getByName(currentName)
+    await specialistService.getByName(currentName)
     stillPresent = true
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

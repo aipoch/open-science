@@ -1,4 +1,8 @@
-import type { ComputeApprovalDecision, DeleteComputeHostRequest } from '../../shared/compute'
+import {
+  normalizeComputeApprovalDecision,
+  type ComputeApprovalDecisionInput,
+  type DeleteComputeHostRequest
+} from '../../shared/compute'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
@@ -168,7 +172,7 @@ const computeApplicationCommands = Object.freeze({
   >('compute:reveal-in-folder'),
   approvalRespond: defineApplicationCommand<
     'compute:approval-respond',
-    readonly [{ id: string; decision: ComputeApprovalDecision }],
+    readonly [{ id: string; decision: ComputeApprovalDecisionInput }],
     OwnerResult<ComputeCommandOwner, 'approvalRespond'>
   >('compute:approval-respond'),
   approvalReplay: defineApplicationCommand<
@@ -358,7 +362,10 @@ const registerComputeApplicationCommands = (
         if (!canSatisfyHumanApproval(callerContext)) {
           throw new Error('Only a current human caller can respond to compute approval requests.')
         }
-        return dependencies.compute.approvalRespond(args[0].id, args[0].decision)
+        return dependencies.compute.approvalRespond(
+          args[0].id,
+          normalizeComputeApprovalDecision(args[0].decision)
+        )
       },
       'compute:approval-replay': ({ args, callerContext }) => {
         if (!canSatisfyHumanApproval(callerContext)) {

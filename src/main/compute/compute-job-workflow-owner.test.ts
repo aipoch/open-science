@@ -428,7 +428,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     const { repo: jobRepo } = makeJobRepo()
     const { repo } = makeRepo()
 
-    const requestWithContext = vi.fn(() => Promise.resolve('conversation' as const))
+    const requestWithContext = vi.fn(() => Promise.resolve('session' as const))
     const broker = {
       request: vi.fn(),
       requestWithContext,

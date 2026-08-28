@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { AgentComputeService } from '../compute/agent-compute-service'
 import { ConnectorService } from '../connectors/service'
 import { NotebookLocalRpcServer } from './local-rpc-server'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 
 const fakeConnector = {
   call: async (s: string, m: string, a: Record<string, unknown>) => ({ s, m, a })
@@ -122,7 +122,7 @@ describe('mcpCall RPC', () => {
   })
 
   it('rejects a tool name passed as the server without reporting a Specialist permission denial', async () => {
-    const specialist: SpecialistProfileView = {
+    const specialist: SpecialistView = {
       id: 'literature-specialist',
       name: 'Literature Specialist',
       description: '',

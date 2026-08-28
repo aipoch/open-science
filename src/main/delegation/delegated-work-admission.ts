@@ -171,7 +171,7 @@ class DelegatedWorkAdmissionPolicy {
 
   async admit(
     requestOrRequests: DurableDelegateRequest | readonly DurableDelegateRequest[],
-    parentSpecialistProfileId?: string
+    parentSpecialistId?: string
   ): Promise<
     Readonly<{
       requests: readonly DurableDelegateRequest[]
@@ -191,9 +191,9 @@ class DelegatedWorkAdmissionPolicy {
         : prepareStructuredOutputSchema(request.outputSchema)
     )
     const inheritedAgent = requests.some((request) => request.profile === undefined)
-      ? parentSpecialistProfileId === undefined
+      ? parentSpecialistId === undefined
         ? ({ kind: 'main' } as const)
-        : await this.resolveAgent(parentSpecialistProfileId)
+        : await this.resolveAgent(parentSpecialistId)
       : undefined
     const resolvedAgents = await Promise.all(
       requests.map((request) =>

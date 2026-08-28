@@ -3,11 +3,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { applyDelete } from './specialist-privileged-ops'
 import type { AgentDeletedResult, AgentDeclinedResult } from './specialist-privileged-ops'
 import type { ApprovalResult } from '../../shared/agents-contract'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import type { SpecialistDeleteResult } from '../../shared/specialist-package'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistService } from '../specialist/service'
 
-const profile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+const profile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'sp-1',
   name: 'DATA_ANALYST',
   displayName: 'Data Analyst',
@@ -42,21 +42,21 @@ const specialistDeleteFailureCodes = [
 ] as const satisfies readonly SpecialistDeleteFailureCode[]
 
 type FakeService = {
-  service: ProfileService
+  service: SpecialistService
   calls: {
     update: Array<{ id: string; patch: Record<string, unknown>; revision: number }>
     delete: Array<{ id: string; revision?: number }>
     getByName: string[]
   }
-  getStore: () => SpecialistProfileView[]
-  setStore: (s: SpecialistProfileView[]) => void
+  getStore: () => SpecialistView[]
+  setStore: (s: SpecialistView[]) => void
 }
 
-// A ProfileService fake that records mutations and lets tests simulate drift (revision mismatch,
+// A SpecialistService fake that records mutations and lets tests simulate drift (revision mismatch,
 // rename, deletion) between card creation and approval.
 const makeService = (opts: {
-  initial?: SpecialistProfileView[]
-  onUpdate?: (id: string, patch: Record<string, unknown>, revision: number) => SpecialistProfileView
+  initial?: SpecialistView[]
+  onUpdate?: (id: string, patch: Record<string, unknown>, revision: number) => SpecialistView
   onDelete?: (id: string, revision?: number) => void
 }): FakeService => {
   let store = opts.initial ? [...opts.initial] : []
@@ -101,13 +101,13 @@ const makeService = (opts: {
       }
       store = store.filter((p) => p.id !== id)
     })
-  } as unknown as ProfileService
+  } as unknown as SpecialistService
   service.resolveCustomMutationByName = vi.fn(async (name: string) => service.getByName(name))
   return {
     service,
     calls,
     getStore: () => store,
-    setStore: (s: SpecialistProfileView[]) => (store = s)
+    setStore: (s: SpecialistView[]) => (store = s)
   }
 }
 
@@ -116,7 +116,7 @@ describe('applyDelete — approved delete', () => {
     const bindingClearCalls: string[] = []
     const { service, calls } = makeService({ initial: [profile()] })
     const result = await applyDelete({
-      profileService: service,
+      specialistService: service,
       decide: async () => fakeApproved(),
       currentName: 'DATA_ANALYST',
       reviewedRevision: 3,
@@ -135,7 +135,7 @@ describe('applyDelete — approved delete', () => {
   it('returns a structured declined result {operation:"delete"} with no mutation', async () => {
     const { service, calls } = makeService({ initial: [profile()] })
     const result = await applyDelete({
-      profileService: service,
+      specialistService: service,
       decide: async () => fakeDeclined('delete'),
       currentName: 'DATA_ANALYST',
       reviewedRevision: 3
@@ -148,7 +148,7 @@ describe('applyDelete — approved delete', () => {
     const { service } = makeService({ initial: [profile()] })
     // Provide a no-op binding sink; the contract is that delete NEVER clears/rewrites it.
     await applyDelete({
-      profileService: service,
+      specialistService: service,
       decide: async () => fakeApproved(),
       currentName: 'DATA_ANALYST',
       reviewedRevision: 3,
@@ -169,7 +169,7 @@ describe('applyDelete — approved delete', () => {
       .mockRejectedValue(new Error('I/O error: corrupt specialist store'))
     await expect(
       applyDelete({
-        profileService: service,
+        specialistService: service,
         decide: async () => fakeApproved(),
         currentName: 'DATA_ANALYST',
         reviewedRevision: 3
@@ -183,7 +183,7 @@ describe('applyDelete — approved delete', () => {
       const { service } = makeService({ initial: [profile()] })
       await expect(
         applyDelete({
-          profileService: service,
+          specialistService: service,
           decide: async () => fakeApproved(),
           currentName: 'DATA_ANALYST',
           reviewedRevision: 3,
@@ -197,7 +197,7 @@ describe('applyDelete — approved delete', () => {
     const { service } = makeService({ initial: [profile()] })
     await expect(
       applyDelete({
-        profileService: service,
+        specialistService: service,
         decide: async () => fakeApproved(),
         currentName: 'DATA_ANALYST',
         reviewedRevision: 3,
@@ -212,7 +212,7 @@ describe('applyDelete — approved delete', () => {
     const { service } = makeService({ initial: [profile({ revision: 4 })] })
     await expect(
       applyDelete({
-        profileService: service,
+        specialistService: service,
         decide: async () => fakeApproved(),
         currentName: 'DATA_ANALYST',
         reviewedRevision: 3
@@ -224,7 +224,7 @@ describe('applyDelete — approved delete', () => {
     const { service } = makeService({ initial: [profile()] })
     const seen: unknown[] = []
     await applyDelete({
-      profileService: service,
+      specialistService: service,
       decide: async (request) => {
         seen.push(request.session)
         return fakeApproved()
@@ -245,7 +245,7 @@ describe('no-state-change guarantees on decline', () => {
     const invalidated = vi.fn()
     const { service, calls } = makeService({ initial: [profile()] })
     await applyDelete({
-      profileService: service,
+      specialistService: service,
       decide: async () => fakeDeclined('delete'),
       currentName: 'DATA_ANALYST',
       reviewedRevision: 3,
@@ -259,7 +259,7 @@ describe('no-state-change guarantees on decline', () => {
     const invalidated = vi.fn()
     const { service } = makeService({ initial: [profile()] })
     await applyDelete({
-      profileService: service,
+      specialistService: service,
       decide: async () => fakeApproved(),
       currentName: 'DATA_ANALYST',
       reviewedRevision: 3,

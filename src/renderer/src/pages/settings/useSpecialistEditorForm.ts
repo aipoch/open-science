@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
-import type { CreateSpecialistInput, SpecialistProfileView } from '../../../../shared/specialist'
+import type { CreateSpecialistInput, SpecialistView } from '../../../../shared/specialist'
 import {
   CREATE_SPECIALIST_DRAFT_KEY,
   useSpecialistStore,
@@ -8,7 +8,7 @@ import {
 
 // Seeds a form from a stored profile. Used both at mount (edit mode) and after an
 // explicit Reload following a revision conflict.
-export const formFromProfile = (profile: SpecialistProfileView): SpecialistEditorFormDraft => ({
+export const formFromProfile = (profile: SpecialistView): SpecialistEditorFormDraft => ({
   id: profile.id,
   name: profile.displayName ?? profile.name,
   packageVersion: profile.packageVersion ?? '0.1.0',
@@ -45,7 +45,7 @@ export const formFromCreateInput = (
 })
 
 type UseSpecialistEditorFormOptions = {
-  editSpecialist?: SpecialistProfileView
+  editSpecialist?: SpecialistView
   initialInput?: CreateSpecialistInput
 }
 

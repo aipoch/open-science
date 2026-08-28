@@ -7,13 +7,13 @@
 // structured decline result, and the sanitized `host.agents.<method>:` errors — without depending on
 // the not-yet-built mutation modules (issues 03/04/05).
 //
-// The fake is intentionally faithful to the CONTRACT, not to ProfileService internals: it owns its
+// The fake is intentionally faithful to the CONTRACT, not to SpecialistService internals: it owns its
 // own minimal profile records and catalogs. Behavior mirrors the rules in design.md §5 (capability
 // semantics), §8 (revision + read-back), §10 (delete leaves bindings unavailable).
 
 import type {
-  AgentDetailReadModel,
-  AgentSummaryReadModel,
+  SpecialistDetailReadModel,
+  SpecialistSummaryReadModel,
   ConnectorReadModel,
   SkillCatalogReadModel
 } from '../agents-service'
@@ -119,7 +119,7 @@ export class FakeHostAgents {
     }
   }
 
-  private projectSummary(profile: FakeProfileRecord): AgentSummaryReadModel {
+  private projectSummary(profile: FakeProfileRecord): SpecialistSummaryReadModel {
     return {
       id: profile.id,
       name: profile.name,
@@ -129,7 +129,7 @@ export class FakeHostAgents {
     }
   }
 
-  private project(profile: FakeProfileRecord): AgentDetailReadModel {
+  private project(profile: FakeProfileRecord): SpecialistDetailReadModel {
     return {
       id: profile.id,
       name: profile.name,
@@ -156,13 +156,13 @@ export class FakeHostAgents {
 
   // ----- public read surface -----------------------------------------------------
 
-  async list(): Promise<AgentSummaryReadModel[]> {
+  async list(): Promise<SpecialistSummaryReadModel[]> {
     return Array.from(this.profiles.values())
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((profile) => this.projectSummary(profile))
   }
 
-  async get(name: string): Promise<AgentDetailReadModel> {
+  async get(name: string): Promise<SpecialistDetailReadModel> {
     const profile = this.profiles.get(name)
     if (!profile) throw agentsError('get', `Specialist "${name}" not found.`)
     return this.project(profile)
@@ -191,7 +191,7 @@ export class FakeHostAgents {
     unrestricted?: boolean
     skillNames?: string[]
     connectorNames?: string[]
-  }): Promise<AgentDetailReadModel> {
+  }): Promise<SpecialistDetailReadModel> {
     const method = 'create'
     const name = input.name
     if (!name || typeof name !== 'string') throw agentsError(method, 'name is required')
@@ -241,7 +241,7 @@ export class FakeHostAgents {
       connectorNames?: string[]
       revision?: number
     }
-  ): Promise<AgentDetailReadModel> {
+  ): Promise<SpecialistDetailReadModel> {
     const method = 'update'
     const existing = this.profiles.get(name)
     if (!existing) throw agentsError(method, `Specialist "${name}" not found.`)
@@ -281,7 +281,7 @@ export class FakeHostAgents {
     name: string,
     skillRef: string,
     options: { revision?: number } = {}
-  ): Promise<AgentDetailReadModel> {
+  ): Promise<SpecialistDetailReadModel> {
     return this.mutateCollection(name, 'skill', skillRef, 'attach', options.revision)
   }
 
@@ -289,7 +289,7 @@ export class FakeHostAgents {
     name: string,
     skillRef: string,
     options: { revision?: number } = {}
-  ): Promise<AgentDetailReadModel> {
+  ): Promise<SpecialistDetailReadModel> {
     return this.mutateCollection(name, 'skill', skillRef, 'detach', options.revision)
   }
 
@@ -297,7 +297,7 @@ export class FakeHostAgents {
     name: string,
     connectorRef: string,
     options: { revision?: number } = {}
-  ): Promise<AgentDetailReadModel> {
+  ): Promise<SpecialistDetailReadModel> {
     return this.mutateCollection(name, 'connector', connectorRef, 'attach', options.revision)
   }
 
@@ -305,7 +305,7 @@ export class FakeHostAgents {
     name: string,
     connectorRef: string,
     options: { revision?: number } = {}
-  ): Promise<AgentDetailReadModel> {
+  ): Promise<SpecialistDetailReadModel> {
     return this.mutateCollection(name, 'connector', connectorRef, 'detach', options.revision)
   }
 
@@ -315,7 +315,7 @@ export class FakeHostAgents {
     ref: string,
     action: 'attach' | 'detach',
     revision: number | undefined
-  ): AgentDetailReadModel {
+  ): SpecialistDetailReadModel {
     const method = `${action}${kind[0].toUpperCase()}${kind.slice(1)}`
     const existing = this.profiles.get(name)
     if (!existing) throw agentsError(method, `Specialist "${name}" not found.`)

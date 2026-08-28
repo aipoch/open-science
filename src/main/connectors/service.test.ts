@@ -3,7 +3,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
 import { ParserEngine } from './engine'
 import { McpClientManager, McpToolCallError } from './mcp-client-manager'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 
 const internal = { origin: 'internal' as const }
@@ -1603,7 +1603,7 @@ describe('ConnectorService', () => {
 })
 
 describe('ConnectorService specialist capability gate', () => {
-  const specialist = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+  const specialist = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
     id: 'specialist-1',
     name: 'Connector Bot',
     description: '',

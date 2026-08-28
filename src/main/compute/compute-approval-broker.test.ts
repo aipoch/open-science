@@ -743,8 +743,8 @@ describe('ComputeApprovalBroker', () => {
     expect(broadcast).not.toHaveBeenCalled()
   })
 
-  // ── conversation scope ────────────────────────────────────────────────────────────
-  it('records a conversation grant and skips the card on a matching second request', async () => {
+  // ── session scope ────────────────────────────────────────────────────────────
+  it('records a session grant and skips the card on a matching second request', async () => {
     const timer = makeTimer()
     let broadcastCount = 0
     let n = 0
@@ -761,19 +761,19 @@ describe('ComputeApprovalBroker', () => {
     const req = makeRequest({ provider_id: 'ssh:biowulf' })
     const ctx = { sessionId: 'session-A', projectId: 'proj-1', operation: 'call_command' }
 
-    // First request: user approves with 'conversation' scope.
+    // First request: user approves with 'session' scope.
     const firstPromise = broker.requestWithContext(req, ctx)
     // requestWithContext calls checkProjectGrant (async), then request(). We must wait for the
     // broadcast before responding. Use setImmediate to let the microtask queue drain.
     await Promise.resolve()
-    broker.respond('id-1', 'conversation')
+    broker.respond('id-1', 'session')
     const first = await firstPromise
-    expect(first).toBe('conversation')
+    expect(first).toBe('session')
     expect(broadcastCount).toBe(1)
 
-    // Second request: same (operation, provider_id) → conversation grant hits, no broadcast.
+    // Second request: same (operation, provider_id) → session grant hits, no broadcast.
     const second = await broker.requestWithContext(req, ctx)
-    expect(second).toBe('conversation')
+    expect(second).toBe('session')
     expect(broadcastCount).toBe(1) // still only 1 broadcast
   })
 
@@ -837,7 +837,7 @@ describe('ComputeApprovalBroker', () => {
     await decision
   })
 
-  it('does NOT persist conversation grants across broker instances (session boundary)', async () => {
+  it('does NOT persist session grants across broker instances (session boundary)', async () => {
     // A new ComputeApprovalBroker has no in-memory grants → must show card again.
     const timer = makeTimer()
     let broadcastCount = 0
@@ -1009,7 +1009,7 @@ describe('ComputeApprovalBroker — download operation', () => {
     await expect(decision).resolves.toBe('once')
   })
 
-  it('conversation grant for (download, provider) skips card on repeat', async () => {
+  it('session grant for (download, provider) skips card on repeat', async () => {
     const timer = makeTimer()
     let broadcastCount = 0
     let n = 0
@@ -1028,13 +1028,13 @@ describe('ComputeApprovalBroker — download operation', () => {
 
     const firstPromise = broker.requestWithContext(req, ctx)
     await Promise.resolve()
-    broker.respond('id-1', 'conversation')
-    await expect(firstPromise).resolves.toBe('conversation')
+    broker.respond('id-1', 'session')
+    await expect(firstPromise).resolves.toBe('session')
     expect(broadcastCount).toBe(1)
 
-    // Second download request: conversation grant for (download, ssh:biowulf) → no card.
+    // Second download request: session grant for (download, ssh:biowulf) → no card.
     const second = await broker.requestWithContext(req, ctx)
-    expect(second).toBe('conversation')
+    expect(second).toBe('session')
     expect(broadcastCount).toBe(1)
   })
 
@@ -1049,12 +1049,12 @@ describe('ComputeApprovalBroker — download operation', () => {
       checkProjectGrant: () => Promise.resolve(false)
     })
 
-    // Grant conversation scope for call_command.
+    // Grant session scope for call_command.
     const cmdReq = makeRequest({ provider_id: 'ssh:biowulf' })
     const cmdCtx = { sessionId: 'sess', projectId: 'p', operation: 'call_command' }
     const p1 = broker.requestWithContext(cmdReq, cmdCtx)
     await Promise.resolve()
-    broker.respond('id-1', 'conversation')
+    broker.respond('id-1', 'session')
     await p1
 
     // download for same provider must still show card (different operation key).

@@ -2658,12 +2658,12 @@ class NotebookLocalRpcServer {
       if (!projectId || !sessionId || !frameId || !originMessageId || !toolInvocationId) {
         throw new RpcHttpError(403, 'delegated-work caller identity is incomplete.')
       }
-      const parentSpecialistProfileId = this.sessionSpecialists.get(sessionId)
+      const parentSpecialistId = this.sessionSpecialists.get(sessionId)
       const caller: AuthenticatedDelegateCaller = {
         session: { projectId, sessionId },
         frameId,
         role,
-        ...(parentSpecialistProfileId ? { parentSpecialistProfileId } : {}),
+        ...(parentSpecialistId ? { parentSpecialistId } : {}),
         ...(attemptId ? { attemptId } : {}),
         originMessageId,
         toolInvocationId: delegationCallId

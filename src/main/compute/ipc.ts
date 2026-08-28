@@ -185,8 +185,7 @@ type ComputeHandlers = {
   computeService: ComputeService
   connectionBroker: ComputeConnectionBroker
   concurrencyManager?: ConcurrencyManager
-  // Responds to a pending approval request from the renderer. Decision now includes
-  // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
+  // Responds to a pending approval request from the renderer with a canonical app-owned scope.
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
   approvalReplay: (id: string) => ComputeApprovalRequest | null
   approvalReplayPending: () => void

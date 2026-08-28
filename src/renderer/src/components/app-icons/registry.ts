@@ -70,7 +70,7 @@ import { MoleculeIcon, PetriDishIcon } from './custom-glyphs'
 // Lucide export when one fits; add a hand-drawn glyph in ./custom-glyphs otherwise.
 //
 // Icons are chosen to read as a Specialist's identity (a role or discipline), not as
-// app features. Icon keys are persisted (e.g. SpecialistProfileView.iconKey) and must
+// app features. Icon keys are persisted (e.g. SpecialistView.iconKey) and must
 // never be renamed or removed; unknown keys resolve to DEFAULT_APP_ICON. Labels are
 // i18n keys: render them through t(entry.label) — every label needs catalog entries in
 // es / fr / ja / ko / ru / zh-Hans / zh-Hant (the English literal below anchors the

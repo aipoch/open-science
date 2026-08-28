@@ -4,7 +4,7 @@ import type { ApplicationModule } from '../application-runtime'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type { ConnectorApplicationSettingsCapabilities } from '../settings/service-capabilities'
 import type { UploadRepository } from '../uploads/repository'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import type {
   ConnectorApprovalRequest,
   ConversationSkillImportApprovalRequest
@@ -35,7 +35,7 @@ export type ConnectorApplicationDeps = {
   fetchImpl: typeof fetch
   resolveApiKey: (ref?: string) => string | undefined
   permissionGrantRegistry?: PermissionGrantRegistry
-  resolveSpecialistProfile: (specialistId: string) => Promise<SpecialistProfileView | undefined>
+  resolveSpecialistProfile: (specialistId: string) => Promise<SpecialistView | undefined>
   localToolHandlers?: Record<
     string,
     (

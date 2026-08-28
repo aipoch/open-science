@@ -15,12 +15,12 @@ import {
   type KernelLoopResponse
 } from '../notebook/kernel-protocol'
 import { AgentsService, type AgentsCatalogSource, type AgentsReadOp } from './agents-service'
-import { createProfileService, type ProfileService } from '../specialist/service'
+import { createSpecialistService, type SpecialistService } from '../specialist/service'
 import type { StoredConnectors } from '../settings/types'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/agents/agents-repl.integration.test.ts
 // Exercises the real resources/notebook/repl_loop.js against a real NotebookLocalRpcServer wired
-// to a real AgentsService + ProfileService, covering the full host.agents tracer bullet.
+// to a real AgentsService + SpecialistService, covering the full host.agents tracer bullet.
 const gate = process.env.RUN_KERNEL ? describe : describe.skip
 
 const LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
@@ -122,8 +122,8 @@ gate('host.agents repl integration', () => {
   beforeAll(async () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-profile-'))
     runtimeStorage = await mkdtemp(join(tmpdir(), 'os-agents-runtime-'))
-    const profileService = createProfileService(profileStorage)
-    agentsService = new AgentsService({ profileService, catalog: stubCatalog })
+    const specialistService = createSpecialistService(profileStorage)
+    agentsService = new AgentsService({ specialistService, catalog: stubCatalog })
     const notebookService = new NotebookRuntimeService({
       configRoot: runtimeStorage,
       dataRoot: runtimeStorage,
@@ -161,8 +161,8 @@ gate('host.agents repl integration', () => {
     token = connection.token
     releaseControl = connection.release
 
-    // Seed a specialist profile directly through the authoritative ProfileService.
-    await profileService.create({
+    // Seed a specialist profile directly through the authoritative SpecialistService.
+    await specialistService.create({
       name: 'Bio Expert',
       description: 'secret: apikey=XYZ',
       systemPrompt: 'RPC SYSTEM PROMPT SENTINEL',
@@ -390,13 +390,13 @@ gate('host.agents repl integration', () => {
   it('redacts dependency error details before they reach the Agent sandbox', async () => {
     const originalService = agentsService
     agentsService = new AgentsService({
-      profileService: {
+      specialistService: {
         list: async () => {
           throw new Error(
             'request failed: token=secret-token path=/Users/alice/project params={"prompt":"private"} HOME=/Users/alice'
           )
         }
-      } as unknown as ProfileService,
+      } as unknown as SpecialistService,
       catalog: stubCatalog
     })
     const { child, send } = startLoop({

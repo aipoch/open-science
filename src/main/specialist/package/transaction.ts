@@ -3,7 +3,7 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { SpecialistPackageValidationPlan } from '../../../shared/specialist-package'
-import type { SpecialistProfileView } from '../../../shared/specialist'
+import type { SpecialistView } from '../../../shared/specialist'
 import { emptyFullAccessConfig } from '../../../shared/specialist'
 import { createLogger } from '../../logger'
 import { SpecialistRepository } from '../repository'
@@ -45,7 +45,7 @@ export class SpecialistPackageRecoveryError extends Error {
 export class SpecialistPackageRevisionConflictError extends Error {}
 export class SpecialistPackageRollbackError extends Error {}
 
-const toView = (stored: StoredSpecialist): SpecialistProfileView => ({
+const toView = (stored: StoredSpecialist): SpecialistView => ({
   ...stored,
   displayName: stored.displayName ?? stored.name,
   modifiedSinceImport:
@@ -135,7 +135,7 @@ export class SpecialistPackageTransaction {
     overwrite?: { expectedRevision: number },
     assertApprovedImpact?: (document: Readonly<StoredSpecialists>) => Promise<void>,
     options?: { activateAfterInstall?: boolean; origin?: SpecialistOrigin }
-  ): Promise<SpecialistProfileView> {
+  ): Promise<SpecialistView> {
     const run = this.queue.then(async () => {
       await this.recover()
       const before = await this.repository.getAll()

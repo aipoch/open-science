@@ -69,7 +69,7 @@ export function ComputeApprovalDialog({
   }
   const deny = (): void => submitResponse('deny')
   const approveOnce = (): void => submitResponse('once')
-  const approveSession = (): void => submitResponse('conversation')
+  const approveSession = (): void => submitResponse('session')
   const confirmBroadScope = (): void => {
     if (!pendingBroadScope) return
     const { requestId, scope } = pendingBroadScope

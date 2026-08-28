@@ -168,7 +168,7 @@ const registerWithFakes = (overrides?: {
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
   beforeSessionDelete?: (sessionId: string) => Promise<void>
-  profileService?: { resolveRunnableById: (id: string) => Promise<unknown> }
+  specialistService?: { resolveRunnableById: (id: string) => Promise<unknown> }
   specialistSkillCatalog?: Array<{ id: string; frameworkName: string; displayName: string }>
   provisionedConnectorSkillNames?: string[]
   customMcpServers?: Array<{ id: string; name: string }>
@@ -211,7 +211,7 @@ const registerWithFakes = (overrides?: {
     onAllSessionsCancellationRequested: overrides?.onAllSessionsCancellationRequested,
     beforeSessionDelete: overrides?.beforeSessionDelete,
     initializationBarrier: overrides?.initializationBarrier,
-    profileService: overrides?.profileService as never,
+    specialistService: overrides?.specialistService as never,
     memory: overrides?.memory,
     delegatedNotebookConnection: overrides?.delegatedNotebookConnection
   }
@@ -659,15 +659,15 @@ describe('ACP runtime composition — memory eligibility', () => {
 })
 
 describe('ACP runtime composition — Specialist identity resolver', () => {
-  it('passes a ProfileService-backed resolver into each runtime', async () => {
+  it('passes a SpecialistService-backed resolver into each runtime', async () => {
     const profile = {
       name: 'RNA-seq Reviewer',
       systemPrompt: 'Review RNA-seq quality.',
       enabled: true
     }
-    const profileService = { resolveRunnableById: vi.fn().mockResolvedValue(profile) }
+    const specialistService = { resolveRunnableById: vi.fn().mockResolvedValue(profile) }
 
-    registerWithFakes({ profileService })
+    registerWithFakes({ specialistService })
 
     const options = AcpRuntimeMock.mock.calls.at(-1)?.[0] as {
       resolveSpecialistIdentity?: (id: string, framework: string) => Promise<unknown>
@@ -679,11 +679,11 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       append: expect.stringContaining('RNA-seq Reviewer'),
       prefix: ''
     })
-    expect(profileService.resolveRunnableById).toHaveBeenCalledWith('uuid-1')
+    expect(specialistService.resolveRunnableById).toHaveBeenCalledWith('uuid-1')
   })
 
-  it('wires the production ProfileService and live catalog into the Specialist Skill resolver', async () => {
-    const profileService = {
+  it('wires the production SpecialistService and live catalog into the Specialist Skill resolver', async () => {
+    const specialistService = {
       resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
@@ -692,7 +692,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       })
     }
     registerWithFakes({
-      profileService,
+      specialistService,
       specialistSkillCatalog: [
         { id: 'main-disabled', frameworkName: 'Main Disabled', displayName: 'Main Disabled' }
       ]
@@ -709,7 +709,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
   })
 
   it('merges only the specialist-allowed connector skills into the whitelist (selected mode)', async () => {
-    const profileService = {
+    const specialistService = {
       resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
@@ -722,7 +722,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       })
     }
     registerWithFakes({
-      profileService,
+      specialistService,
       specialistSkillCatalog: [{ id: 'skill-a', frameworkName: 'Skill A', displayName: 'Skill A' }],
       provisionedConnectorSkillNames: ['mcp-chemistry', 'mcp-literature']
     })
@@ -737,7 +737,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
   })
 
   it('projects a custom Connector UUID to its public runtime skill name', async () => {
-    const profileService = {
+    const specialistService = {
       resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
@@ -750,7 +750,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       })
     }
     registerWithFakes({
-      profileService,
+      specialistService,
       provisionedConnectorSkillNames: ['mcp-public-route'],
       customMcpServers: [{ id: 'custom-server-uuid', name: 'public-route' }]
     })
@@ -765,7 +765,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
   })
 
   it('excludes full-access blocked connectors from the whitelist (full mode)', async () => {
-    const profileService = {
+    const specialistService = {
       resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'full',
@@ -778,7 +778,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       })
     }
     registerWithFakes({
-      profileService,
+      specialistService,
       specialistSkillCatalog: [],
       provisionedConnectorSkillNames: ['mcp-chemistry', 'mcp-literature']
     })

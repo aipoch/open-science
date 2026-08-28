@@ -2,7 +2,7 @@
 //
 // Responsibilities:
 //   • Record a mutable Specialist ID binding for each app session (in memory).
-//   • Resolve that binding against the live ProfileService catalog to produce a
+//   • Resolve that binding against the live SpecialistService catalog to produce a
 //     SessionSpecialistResolution (main | bound | unavailable).
 //   • Act as the named seam for the reconfigure barrier: the future SDK
 //     host.agents.switch() will resolve name→UUID and call setBinding() here,
@@ -13,8 +13,8 @@
 // live in-memory view and the resolution logic.
 
 import { createLogger } from '../logger'
-import type { ProfileService } from './service'
-import type { SessionSpecialistResolution, SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistService } from './service'
+import type { SessionSpecialistResolution, SpecialistView } from '../../shared/specialist'
 
 const log = createLogger('specialist.session-binding')
 
@@ -22,7 +22,7 @@ export class SessionBindingService {
   // sessionId → specialist UUID (undefined = no binding = main agent)
   private readonly bindings = new Map<string, string | undefined>()
 
-  constructor(private readonly profileService: ProfileService) {}
+  constructor(private readonly specialistService: SpecialistService) {}
 
   // Records (or clears) the specialist UUID for one session. Persisting the
   // UUID to the session file is the caller's responsibility (IPC handler writes
@@ -56,9 +56,9 @@ export class SessionBindingService {
     const specialistId = overrideSpecialistId ?? this.bindings.get(sessionId)
     if (!specialistId) return { kind: 'main' }
 
-    let profile: SpecialistProfileView | undefined
+    let profile: SpecialistView | undefined
     try {
-      profile = await this.profileService.resolveRunnableById(specialistId)
+      profile = await this.specialistService.resolveRunnableById(specialistId)
     } catch (error) {
       // Distinguish a genuine not-found (profile deleted) from a transient I/O failure (corrupt
       // store, permission error). getById throws "Specialist <id> not found." for missing profiles;

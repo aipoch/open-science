@@ -16,7 +16,7 @@ import { ConnectorPermissionBroker } from '../permission-grants/connector-broker
 import type { ConnectorPermissionRequest } from '../permission-grants/connector-broker'
 import type { PermissionGrantScope } from '../../shared/permission-grants'
 import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 
 type McpClientManagerLike = {
   listTools(config: CustomMcpServerConfig, signal?: AbortSignal): Promise<Array<{ name: string }>>
@@ -68,7 +68,7 @@ type ConnectorServiceDeps = {
   // Resolves the current specialist profile immediately before agent dispatch. This is intentionally
   // a function (rather than a session-start snapshot) so edited/deleted profiles take effect on the
   // next connector call.
-  resolveSpecialistProfile?: (specialistId: string) => Promise<SpecialistProfileView | undefined>
+  resolveSpecialistProfile?: (specialistId: string) => Promise<SpecialistView | undefined>
   onCustomServerAvailabilityChanged?: (
     serverId: string,
     availability: CustomMcpFailureAvailability | undefined

@@ -10,7 +10,7 @@ import {
 import { AcpRuntime } from '../acp/runtime.test-utils'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import * as acp from '@agentclientprotocol/sdk'
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -171,7 +171,7 @@ const startFakeAgentWithModes = (
 // Profile helpers
 // ---------------------------------------------------------------------------
 
-const makeProfile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+const makeProfile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'uuid-sp1',
   name: 'RNA-seq Reviewer',
   description: 'Reviews RNA-seq analysis quality.',
