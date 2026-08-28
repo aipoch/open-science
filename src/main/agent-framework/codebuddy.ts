@@ -52,9 +52,7 @@ const recordValue = (value: unknown): Record<string, unknown> =>
 // lifecycle, Skill routing, Connector ownership, and permission owners.
 const CODEBUDDY_LOCAL_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep']
 const CODEBUDDY_CLEANUP_PERIOD_DAYS = 7
-const CODEBUDDY_BASH_DENY_RULES = [
-  'Bash(python:*)',
-  'Bash(python3:*)',
+const CODEBUDDY_NETWORK_DENY_RULES = [
   'Bash(curl:*)',
   'Bash(wget:*)',
   'Bash(aria2c:*)',
@@ -78,14 +76,6 @@ const CODEBUDDY_BASH_DENY_RULES = [
   'Bash(git ls-remote:*)',
   'Bash(git submodule:*)'
 ] as const
-
-const codeBuddyTools = (platform: NodeJS.Platform): string =>
-  [
-    ...CODEBUDDY_LOCAL_TOOLS,
-    // CodeBuddy's OS-level Bash sandbox is available only on macOS and Linux. Keep every shell
-    // tool absent on Windows rather than relying on a prompt to prevent direct network access.
-    ...(platform === 'win32' ? [] : ['Bash'])
-  ].join(',')
 
 export const codeBuddyStorageDir = (storageRoot: string): string => join(storageRoot, 'codebuddy')
 
@@ -229,9 +219,11 @@ export const createCodeBuddyFramework = ({
         '--setting-sources',
         'user',
         '--tools',
-        codeBuddyTools(platform),
+        // Shell execution stays on the app-owned Notebook tool so Python/R requests follow its
+        // kernel-routing contract instead of CodeBuddy's prefix-bypassable native Bash rules.
+        CODEBUDDY_LOCAL_TOOLS.join(','),
         '--disallowedTools',
-        ...CODEBUDDY_BASH_DENY_RULES,
+        ...CODEBUDDY_NETWORK_DENY_RULES,
         ...(persistentSystemPrompt ? ['--system-prompt-file', systemPromptPath] : [])
       ],
       sessionModel: provider.model,
