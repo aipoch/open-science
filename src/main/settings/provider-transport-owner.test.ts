@@ -445,6 +445,12 @@ describe('ProviderTransportOwner generations', () => {
       ANTHROPIC_AUTH_TOKEN: 'anthropic-bridge-token',
       ANTHROPIC_API_KEY: 'anthropic-bridge-token'
     })
+    expect(generation.providerConfiguration).toEqual({
+      providerId: 'main',
+      apiType: 'anthropic',
+      baseUrl: 'http://127.0.0.1:43000',
+      headers: { authorization: 'Bearer anthropic-bridge-token' }
+    })
     expect(generation.environment?.NO_PROXY).toBe(generation.environment?.no_proxy)
     expect(generation.anthropicBridgeLease?.setTarget('provider-a/model-a')).toBe(true)
     await generation.release()

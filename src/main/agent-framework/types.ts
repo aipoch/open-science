@@ -48,12 +48,24 @@ export type AgentAuthentication = {
 // providerId is invalid_params on 1.6.2 (`only "openai" is configurable`).
 export const CODEX_ACP_CONFIGURABLE_PROVIDER_ID = 'openai' as const
 
-export type AgentProviderConfiguration = {
-  providerId: typeof CODEX_ACP_CONFIGURABLE_PROVIDER_ID
-  apiType: 'openai'
-  baseUrl: string
-  headers: Record<string, string>
-}
+// claude-agent-acp exposes its active Anthropic-compatible provider as `main`.
+// Configuring that slot makes the loopback route programmatic settings, which
+// takes precedence over a user's persisted Claude settings.json environment.
+export const CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID = 'main' as const
+
+export type AgentProviderConfiguration =
+  | {
+      providerId: typeof CODEX_ACP_CONFIGURABLE_PROVIDER_ID
+      apiType: 'openai'
+      baseUrl: string
+      headers: Record<string, string>
+    }
+  | {
+      providerId: typeof CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID
+      apiType: 'anthropic'
+      baseUrl: string
+      headers: Record<string, string>
+    }
 
 // How the app's provider maps onto a framework's native model configuration. Claude reads env
 // (ANTHROPIC_*); opencode reads a generated config file referenced by OPENCODE_CONFIG. Fields are

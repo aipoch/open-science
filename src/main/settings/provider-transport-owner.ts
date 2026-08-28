@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { netFetchStandard } from '../skills/net-fetch'
-import type { AgentModelCatalogEntry, ResolvedAgentBackend } from '../agent-framework'
+import {
+  CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
+  type AgentModelCatalogEntry,
+  type AgentProviderConfiguration,
+  type ResolvedAgentBackend
+} from '../agent-framework'
 import { normalizeResponsesBaseUrl } from '../agent-framework/codex'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import {
@@ -109,6 +114,7 @@ type ProviderTransportGeneration = Readonly<{
   providerModelCatalog?: readonly AgentModelCatalogEntry[]
   responsesBridge?: LeasedResponsesBridgeConnection
   environment?: Record<string, string>
+  providerConfiguration?: AgentProviderConfiguration
   anthropicBridgeLease?: NonNullable<ResolvedAgentBackend['anthropicBridgeLease']>
   providerTransportLease?: NonNullable<ResolvedAgentBackend['providerTransportLease']>
   release: () => Promise<void>
@@ -521,6 +527,12 @@ class ProviderTransportOwner {
             input.activeTarget.provider.type === 'xai-subscription'
           ),
           ...loopbackProxyBypassEnvironment(process.env)
+        },
+        providerConfiguration: {
+          providerId: CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
+          apiType: 'anthropic',
+          baseUrl: connection.baseUrl,
+          headers: { authorization: `Bearer ${connection.token}` }
         },
         anthropicBridgeLease: {
           setTarget: (targetId: string) => bridge.setTarget(targetId),

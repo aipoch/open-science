@@ -383,6 +383,7 @@ export class AgentBackendResolver {
         contextWindow,
         ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: target.effectiveModel,
+        providerConfiguration: transport.providerConfiguration,
         systemPromptAppends: [userSkillDirectoryGuidance, connectorInstructions].filter(
           (append): append is string => Boolean(append)
         ),
