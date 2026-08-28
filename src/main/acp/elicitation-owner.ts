@@ -19,6 +19,7 @@ import {
   type AgentTurnProvenanceContext,
   type PendingElicitationRequest
 } from '../../shared/elicitation'
+import { isRecord } from './value-guards'
 
 type ElicitationRoute = {
   sessionId: string
@@ -46,9 +47,6 @@ type DurableChoiceContext = {
   promptMessageId?: string
   provenanceContext?: AgentTurnProvenanceContext
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const KNOWN_FIELD_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'array'])
 const KNOWN_STRING_FORMATS = new Set(['email', 'uri', 'date', 'date-time'])

@@ -4,6 +4,7 @@ import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { resolveMessageBranchPath } from '../../shared/conversation-graph'
 import { fuzzyScore } from '../../shared/fuzzy-match'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { isRecord } from './value-guards'
 
 type HostSessionReadContext = Readonly<{
   projectId: string
@@ -52,9 +53,6 @@ type ListCursor = {
 const DEFAULT_LIST_LIMIT = 20
 const MAX_LIST_LIMIT = 100
 const LIST_OPTION_KEYS = new Set(['archived', 'search', 'limit', 'cursor'])
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const optionalString = (
   value: Record<string, unknown>,

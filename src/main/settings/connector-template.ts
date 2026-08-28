@@ -12,6 +12,7 @@ import type {
 import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
+import { isRecord } from './value-guards'
 
 export type ConnectorTemplateSource = {
   id: string
@@ -105,9 +106,6 @@ const connectorTemplateDigest = (contents: string): string => {
   }
   return digest
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const diagnostic = (
   diagnostics: ConnectorTemplateDiagnostic[],

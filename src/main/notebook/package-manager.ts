@@ -55,6 +55,7 @@ import {
   resolveEnvName,
   runtimeRoot
 } from './runtime-paths'
+import { toErrorMessage } from '../error-message'
 
 export type InstallRequest = OptionalProjectIdScope & {
   language: NotebookLanguage
@@ -903,9 +904,9 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
     return Promise.resolve({
       code: 1,
       stdout: '',
-      stderr: `Failed to create the temporary micromamba JSON capture; not spawning: ${
-        error instanceof Error ? error.message : String(error)
-      }`
+      stderr: `Failed to create the temporary micromamba JSON capture; not spawning: ${toErrorMessage(
+        error
+      )}`
     })
   }
   return new Promise((resolve, reject) => {
@@ -916,9 +917,7 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
       resolve({
         code: 1,
         stdout: '',
-        stderr: `Failed to record the spawn intent; not spawning: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        stderr: `Failed to record the spawn intent; not spawning: ${toErrorMessage(error)}`
       })
       return
     }
@@ -930,7 +929,7 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
       resolve({
         code: 1,
         stdout: '',
-        stderr: error instanceof Error ? error.message : String(error)
+        stderr: toErrorMessage(error)
       })
       return
     }
@@ -947,9 +946,7 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
             resolve({
               code: 1,
               stdout: '',
-              stderr: `Failed to record the installer worker; aborted: ${
-                error instanceof Error ? error.message : String(error)
-              }`
+              stderr: `Failed to record the installer worker; aborted: ${toErrorMessage(error)}`
             })
           } else {
             reject(
@@ -1263,9 +1260,7 @@ export async function installPackages(
     if (cleanupError) {
       return {
         ...result,
-        stderr:
-          `${result.stderr}\nCache cleanup failure:\n` +
-          `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
+        stderr: `${result.stderr}\nCache cleanup failure:\n` + `${toErrorMessage(cleanupError)}`
       }
     }
     if (!recovered) return result

@@ -36,6 +36,7 @@ import {
   withTrustedNativeToolIdentity
 } from './permission-policy'
 import { extractProviderToolName, toAcpRuntimeEvent } from './runtime-events'
+import { isRecord } from './value-guards'
 
 const log = createLogger('acp')
 
@@ -240,9 +241,6 @@ const errorMessage = (error: unknown): string => {
     return 'unknown error'
   }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const isOpenCodeNativeSkillToolCall = (update: SessionNotification['update']): boolean => {
   if (update.sessionUpdate !== 'tool_call' || update.kind !== 'other') return false

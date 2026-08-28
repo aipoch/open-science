@@ -38,6 +38,7 @@ import {
   MAX_REVIEW_SUBMISSION_BYTES,
   reviewSubmissionByteLength
 } from './submission-limits'
+import { toErrorMessage } from '../error-message'
 
 const log = createLogger('reviewer:mcp')
 
@@ -309,7 +310,7 @@ export class ReviewerMcpServer {
         log.error('reviewer MCP request failed', { error })
         if (!res.headersSent) {
           res.writeHead(500, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
+          res.end(JSON.stringify({ error: toErrorMessage(error) }))
         } else {
           res.destroy(error instanceof Error ? error : undefined)
         }
@@ -510,7 +511,7 @@ export class ReviewerMcpServer {
         try {
           parsed = submitFindingsInputSchema.parse(input)
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err)
+          const message = toErrorMessage(err)
           log.warn('submit_findings validation failed', { error: message })
           return {
             content: [{ type: 'text', text: `Validation error: ${message}` }],
@@ -543,7 +544,7 @@ export class ReviewerMcpServer {
         try {
           validateReviewerEvidenceAccess(trackedChecks, this.scope, this.evidenceAccess)
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err)
+          const message = toErrorMessage(err)
           log.warn('submit_findings evidence access validation failed', { error: message })
           return {
             content: [{ type: 'text', text: `Validation error: ${message}` }],
@@ -557,7 +558,7 @@ export class ReviewerMcpServer {
         try {
           newChecks = mapChecksToScope(trackedChecks, this.scope)
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err)
+          const message = toErrorMessage(err)
           log.warn('submit_findings locator out of scope', { error: message })
           return {
             content: [{ type: 'text', text: `Validation error: ${message}` }],
@@ -615,7 +616,7 @@ export class ReviewerMcpServer {
     content: Array<{ type: 'text'; text: string }>
     isError: true
   } {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = toErrorMessage(error)
     return { content: [{ type: 'text', text: message }], isError: true }
   }
 
@@ -646,7 +647,7 @@ export class ReviewerMcpServer {
           res.once('finish', () => req.destroy())
         }
         res.writeHead(exceeded ? 413 : 400, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
+        res.end(JSON.stringify({ error: toErrorMessage(error) }))
         return
       }
     }

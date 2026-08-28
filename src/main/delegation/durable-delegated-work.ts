@@ -64,6 +64,7 @@ import type {
 import { submitStructuredOutput } from './structured-output-submission'
 import { ReliableMessageDeliveryOwner } from './message-delivery-owner'
 import { DelegatedUserQuestionOwner } from './delegated-user-question-owner'
+import { toErrorMessage } from '../error-message'
 
 const createDurableDelegatedWork = (
   options: CreateDurableDelegatedWorkOptions
@@ -297,12 +298,7 @@ const createDurableDelegatedWork = (
         }
       } catch (error) {
         rejectHandle(
-          handle
-            ? error
-            : new DelegateMessagePreAcceptanceError(
-                error instanceof Error ? error.message : String(error),
-                error
-              )
+          handle ? error : new DelegateMessagePreAcceptanceError(toErrorMessage(error), error)
         )
         try {
           const latest = await snapshotChild(child.frameId)
@@ -393,10 +389,7 @@ const createDurableDelegatedWork = (
       await options.assertAvailable?.(caller)
     } catch (error) {
       if (error instanceof DurableDelegatedWorkError) throw error
-      throw new DurableDelegatedWorkError(
-        'unsupported_framework',
-        error instanceof Error ? error.message : String(error)
-      )
+      throw new DurableDelegatedWorkError('unsupported_framework', toErrorMessage(error))
     }
     const resolvedAgent =
       previous.resolvedAgent.kind === 'main'
@@ -416,10 +409,7 @@ const createDurableDelegatedWork = (
       if (error instanceof DelegateExecutionError) {
         throw new DurableDelegatedWorkError(error.code, error.message)
       }
-      throw new DurableDelegatedWorkError(
-        'capacity',
-        error instanceof Error ? error.message : String(error)
-      )
+      throw new DurableDelegatedWorkError('capacity', toErrorMessage(error))
     }
     const attemptId = createId('attempt')
     const command: DurableMessageCommand = { ...draft, continuationAttemptId: attemptId }
@@ -690,7 +680,7 @@ const createDurableDelegatedWork = (
       if (error instanceof DurableDelegatedWorkError) throw error
       throw new DurableDelegatedWorkError(
         'unsupported_framework',
-        error instanceof Error ? error.message : String(error),
+        toErrorMessage(error),
         'Delegated work is unavailable for this Agent framework configuration. Open Settings and choose a certified configuration.'
       )
     }
@@ -722,10 +712,7 @@ const createDurableDelegatedWork = (
       if (error instanceof DelegateExecutionError) {
         throw new DurableDelegatedWorkError(error.code, error.message)
       }
-      throw new DurableDelegatedWorkError(
-        'capacity',
-        error instanceof Error ? error.message : String(error)
-      )
+      throw new DurableDelegatedWorkError('capacity', toErrorMessage(error))
     }
     try {
       await withAdmissionLock(async () => {

@@ -7,6 +7,7 @@ import type {
   HostArtifactsResult
 } from '../../shared/project-files'
 import { createUploadVersionReference } from '../../shared/uploads'
+import { isRecord } from './value-guards'
 
 type HostArtifactCatalog = {
   readHostArtifactCatalog(request: {
@@ -76,9 +77,6 @@ const VALID_MIME_TOP_LEVELS = new Set([
   'video'
 ])
 const MIME_FILTER_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(?:[a-z0-9][a-z0-9!#$&^_.+-]*)?$/u
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const optionalString = (
   options: Record<string, unknown>,

@@ -22,6 +22,7 @@ import {
   assertWithinResourceBudget,
   readBoundedJsonBody
 } from '../resource-budget'
+import { toErrorMessage } from '../error-message'
 
 // One readable block as returned by host.read_turn().
 export type OrderedBlock = {
@@ -159,7 +160,7 @@ export class ReviewerHostServer {
         res.writeHead(error instanceof ResourceBudgetExceededError ? 413 : 500, {
           'content-type': 'application/json'
         })
-        res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
+        res.end(JSON.stringify({ error: toErrorMessage(error) }))
       })
     })
   }
@@ -339,7 +340,7 @@ export class ReviewerHostServer {
       if (error instanceof ArtifactVersionChecksumMismatchError) throw error
       throw new Error(
         `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-          `${error instanceof Error ? error.message : String(error)}`
+          `${toErrorMessage(error)}`
       )
     }
 
@@ -361,7 +362,7 @@ export class ReviewerHostServer {
       this.artifactVerifications.delete(id)
       throw new Error(
         `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-          `${error instanceof Error ? error.message : String(error)}`
+          `${toErrorMessage(error)}`
       )
     }
     const read = {
