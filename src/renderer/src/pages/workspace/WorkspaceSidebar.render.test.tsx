@@ -241,9 +241,9 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(SESSION_HOVER_PREVIEW_DELAY_MS).toBe(0)
     expect(SESSION_HOVER_PREVIEW_SKIP_DELAY_MS).toBe(300)
-    expect(desktopSessionButton?.getAttribute('data-state')).toBe('closed')
+    expect(desktopSessionButton?.closest('div.group')?.getAttribute('data-state')).toBe('closed')
     expect(desktopSessionButton?.closest('[title="Analysis session"]')).toBeNull()
-    expect(mobileSessionButton?.getAttribute('data-state')).toBeNull()
+    expect(mobileSessionButton?.closest('div.group')?.getAttribute('data-state')).toBeNull()
     expect(mobileSessionButton?.closest('[title="Analysis session"]')).not.toBeNull()
   })
 
@@ -330,7 +330,9 @@ describe('WorkspaceSidebar accessible render', () => {
       await act(async () => trigger.dispatchEvent(pointerOver))
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
-      const hoverRegion = document.body.querySelector<HTMLElement>('[data-slot="tooltip-content"]')
+      const hoverRegion = document.body.querySelector<HTMLElement>(
+        '[data-slot="hovercard-content"]'
+      )
       if (!hoverRegion) throw new Error('Session preview hover region did not render')
       const leaveTrigger = new MouseEvent('pointerout', {
         bubbles: true,
@@ -430,6 +432,248 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('renames a Session from the hover card title and commits on Enter', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const onRenameTitle = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview
+              session={{ id: 'renamed', title: 'Old title' }}
+              canRename
+              onRenameTitle={onRenameTitle}
+            >
+              <button type="button">Rename trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+      await act(async () => trigger.dispatchEvent(pointerOver))
+
+      const titleButton = document.body.querySelector<HTMLElement>(
+        '[data-slot="session-hover-preview-title-button"]'
+      )
+      if (!titleButton) throw new Error('Session preview title button did not render')
+      await act(async () => titleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+
+      const input = document.body.querySelector<HTMLInputElement>(
+        '[data-slot="hovercard-content"] [data-slot="input"]'
+      )
+      if (!input) throw new Error('Session preview title editor did not render')
+      expect(input.value).toBe('Old title')
+      expect(input.maxLength).toBe(80)
+
+      input.value = '  Renamed title  '
+      await act(async () =>
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      )
+
+      expect(onRenameTitle).toHaveBeenCalledWith('Renamed title')
+      expect(onRenameTitle).toHaveBeenCalledOnce()
+      expect(
+        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+      ).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
+  it('cancels the hover card title edit on Escape without renaming', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const onRenameTitle = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview
+              session={{ id: 'cancelled', title: 'Keep me' }}
+              canRename
+              onRenameTitle={onRenameTitle}
+            >
+              <button type="button">Cancel trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      const titleButton = document.body.querySelector<HTMLElement>(
+        '[data-slot="session-hover-preview-title-button"]'
+      )
+      if (!titleButton) throw new Error('Session preview title button did not render')
+      await act(async () => titleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+
+      const input = document.body.querySelector<HTMLInputElement>(
+        '[data-slot="hovercard-content"] [data-slot="input"]'
+      )
+      if (!input) throw new Error('Session preview title editor did not render')
+      input.value = 'Discarded title'
+      await act(async () =>
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      )
+
+      expect(onRenameTitle).not.toHaveBeenCalled()
+      expect(
+        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+      ).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
+  it('commits the hover card title edit on blur and ignores blank titles', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const onRenameTitle = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const openEditor = async (): Promise<HTMLInputElement> => {
+      const titleButton = document.body.querySelector<HTMLElement>(
+        '[data-slot="session-hover-preview-title-button"]'
+      )
+      if (!titleButton) throw new Error('Session preview title button did not render')
+      await act(async () => titleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+      const input = document.body.querySelector<HTMLInputElement>(
+        '[data-slot="hovercard-content"] [data-slot="input"]'
+      )
+      if (!input) throw new Error('Session preview title editor did not render')
+      return input
+    }
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview
+              session={{ id: 'blurred', title: 'Blur title' }}
+              canRename
+              onRenameTitle={onRenameTitle}
+            >
+              <button type="button">Blur trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      const blankInput = await openEditor()
+      blankInput.value = '   '
+      await act(async () => blankInput.blur())
+      expect(onRenameTitle).not.toHaveBeenCalled()
+
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      const committedInput = await openEditor()
+      committedInput.value = 'Blurred rename'
+      await act(async () => committedInput.blur())
+      expect(onRenameTitle).toHaveBeenCalledWith('Blurred rename')
+      expect(onRenameTitle).toHaveBeenCalledOnce()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
+  it('keeps the hover card title read-only unless renaming is available', async () => {
+    const { SessionHoverPreviewCard } = await import('./SessionHoverPreview')
+    const readOnly = renderToStaticMarkup(
+      <SessionHoverPreviewCard session={{ title: 'Read only title' }} />
+    )
+    const editable = renderToStaticMarkup(
+      <SessionHoverPreviewCard session={{ title: 'Editable title' }} canRename />
+    )
+
+    expect(readOnly).toContain('<p class="truncate text-sm font-semibold leading-5">')
+    expect(readOnly).not.toContain('session-hover-preview-title-button')
+    expect(editable).toContain('data-slot="session-hover-preview-title-button"')
+    expect(editable).toContain('aria-label="Rename session title"')
+  })
+
+  it('keeps the preview open when focus moves from the row into the card', async () => {
+    vi.useFakeTimers()
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview session={{ id: 'focus', title: 'Focus Session' }} canRename>
+              <button type="button">Focus trigger</button>
+            </SessionHoverPreview>
+            <button type="button">Outside</button>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const [trigger, outside] = Array.from(container.querySelectorAll('button'))
+      if (!trigger || !outside) throw new Error('Session preview triggers did not render')
+
+      await act(async () => trigger.focus())
+      const titleButton = document.body.querySelector<HTMLElement>(
+        '[data-slot="session-hover-preview-title-button"]'
+      )
+      if (!titleButton) throw new Error('Session preview title button did not render')
+
+      // Internal transition with an explicit relatedTarget: Radix's composed trigger-blur close
+      // is skipped and the card stays open past the close delay.
+      await act(async () =>
+        trigger.dispatchEvent(
+          new FocusEvent('focusout', { bubbles: true, relatedTarget: titleButton })
+        )
+      )
+      await act(async () => vi.advanceTimersByTime(400))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
+
+      // Programmatic focus into the card can carry a null relatedTarget; the deferred close
+      // decision still sees the focus destination and keeps the card open.
+      act(() => titleButton.focus())
+      await act(async () =>
+        trigger.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+      )
+      await act(async () => vi.advanceTimersByTime(400))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
+
+      // Focus leaving the hover region entirely closes the card.
+      act(() => outside.focus())
+      await act(async () =>
+        trigger.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+      )
+      await act(async () => vi.advanceTimersByTime(400))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+      vi.useRealTimers()
+    }
+  })
+
   it('truncates long Session titles to one line and Descriptions to three lines', async () => {
     const { SessionHoverPreviewCard } = await import('./SessionHoverPreview')
     const html = renderToStaticMarkup(
@@ -447,7 +691,9 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('data-slot="session-hover-preview"')
     expect(html).toContain('Complete analysis title')
     expect(html).toContain('Compare both cohorts.')
-    expect(html).toContain('class="truncate ')
+    expect(html).toContain('class="truncate text-sm font-semibold leading-5"')
+    expect(html).toContain('text-xs leading-4')
+    expect(html).not.toContain('text-[15px]')
     expect(html.match(/line-clamp-3/g)).toHaveLength(1)
     expect(withoutDescription).toContain('Title only')
     expect(withoutDescription).not.toContain('<p class="mt-2')

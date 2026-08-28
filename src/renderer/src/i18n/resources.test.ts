@@ -3068,7 +3068,9 @@ describe('European Portuguese safety copy', () => {
       'Session configuration changed to {{framework}} · {{model}} · {{effort}}',
       'A configuração da sessão foi alterada para {{framework}} · {{model}} · {{effort}}'
     ],
-    ['{{framework}} · {{model}} · {{effort}}', '{{framework}} · {{model}} · {{effort}}']
+    ['{{framework}} · {{model}} · {{effort}}', '{{framework}} · {{model}} · {{effort}}'],
+    ['Session title', 'Título da sessão'],
+    ['Rename session title', 'Alterar o título da sessão']
   ])('uses reviewed European Portuguese copy for newly merged surface %s', (key, expected) => {
     expect(catalog('pt-PT')[key]).toBe(expected)
   })
