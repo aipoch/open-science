@@ -1425,6 +1425,149 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it('rebases a completed turn across consecutive Main Session-details revisions', async () => {
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Summarize the deterministic fixture.',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const partial = {
+      id: 'agent-message-1',
+      role: 'agent' as const,
+      content: 'Deterministic reply',
+      status: 'streaming' as const,
+      streamId: 'run-1',
+      responseToMessageId: prompt.id,
+      eventIds: ['event-1'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        status: 'running',
+        activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+        messages: [prompt, partial],
+        sessionDetailsGenerationEligible: true
+      })
+    )
+    const queuedDetails = {
+      ...base,
+      revision: 9,
+      sessionDetailsGenerationEligible: undefined,
+      sessionDetailsSource: 'fallback' as const,
+      sessionDetailsGeneration: {
+        status: 'queued' as const,
+        sourceMessageId: prompt.id,
+        requestId: `${prompt.id}:session-details`,
+        queuedAt: 3
+      },
+      updatedAt: base.updatedAt + 1
+    }
+    const runningDetails = {
+      ...queuedDetails,
+      revision: 10,
+      sessionDetailsGeneration: {
+        ...queuedDetails.sessionDetailsGeneration,
+        status: 'running' as const,
+        startedAt: 4,
+        frameworkId: 'opencode' as const,
+        model: 'e2e-model',
+        reasoningEffort: 'low' as const
+      },
+      updatedAt: queuedDetails.updatedAt + 1
+    }
+    const terminalDetails = {
+      ...runningDetails,
+      revision: 11,
+      sessionDetailsGeneration: {
+        ...runningDetails.sessionDetailsGeneration,
+        status: 'failed' as const,
+        completedAt: 5,
+        usageUnavailable: true
+      },
+      updatedAt: runningDetails.updatedAt + 1
+    }
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockRejectedValueOnce(new SessionRevisionConflictError(9, 10))
+      .mockRejectedValueOnce(new SessionRevisionConflictError(10, 11))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 12 }))
+    const api = createApi({
+      loadOne: vi
+        .fn()
+        .mockResolvedValueOnce(queuedDetails)
+        .mockResolvedValueOnce(runningDetails)
+        .mockResolvedValueOnce(terminalDetails),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().finishRun(base.id, undefined, prompt.id)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(api.loadOne).toHaveBeenCalledTimes(3)
+    expect(saveSession).toHaveBeenCalledTimes(4)
+    expect(saveSession.mock.calls[3][0]).toMatchObject({
+      revision: 11,
+      status: 'idle',
+      activeRun: undefined,
+      messages: [
+        expect.objectContaining({ id: prompt.id }),
+        expect.objectContaining({ id: partial.id, status: 'complete' })
+      ],
+      sessionDetailsGeneration: { status: 'failed' }
+    })
+  })
+
+  it('stops rebasing when Main authority keeps advancing past the bounded retry window', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({ projectId: 'project-a', revision: 1 })
+    )
+    const authorities = [2, 3, 4].map((revision) => ({
+      ...base,
+      revision,
+      runtimeContext: { version: 1 as const, revision },
+      updatedAt: base.updatedAt + revision
+    }))
+    const conflicts = [
+      new SessionRevisionConflictError(1, 2),
+      new SessionRevisionConflictError(2, 3),
+      new SessionRevisionConflictError(3, 4),
+      new SessionRevisionConflictError(4, 5)
+    ]
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(conflicts[0])
+      .mockRejectedValueOnce(conflicts[1])
+      .mockRejectedValueOnce(conflicts[2])
+      .mockRejectedValueOnce(conflicts[3])
+    const api = createApi({
+      loadOne: vi
+        .fn()
+        .mockResolvedValueOnce(authorities[0])
+        .mockResolvedValueOnce(authorities[1])
+        .mockResolvedValueOnce(authorities[2]),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().togglePinned(base.id)
+
+    await expect(save(useSessionStore.getState())).rejects.toBe(conflicts[3])
+    expect(api.loadOne).toHaveBeenCalledTimes(3)
+    expect(saveSession).toHaveBeenCalledTimes(4)
+  })
+
   it('retries a pending tool activity save over disjoint concurrent Main graph changes', async () => {
     const base = materializeSessionConversationGraph(
       createPersistedSession({

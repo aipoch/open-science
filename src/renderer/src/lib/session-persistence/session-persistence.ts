@@ -498,6 +498,47 @@ const rebaseSessionAfterRevisionConflict = (
   return rebased
 }
 
+// Session details can legitimately advance through queued, running, and terminal Main-owned
+// revisions while a renderer transcript save is in flight. Rebase each observed authority in
+// sequence, but keep a hard cap so a genuinely active second writer cannot livelock persistence.
+const MAX_SESSION_REVISION_REBASE_ATTEMPTS = 3
+
+const saveAfterSessionRevisionConflict = async (
+  initialError: unknown,
+  initialBase: PersistedChatSession,
+  initialSubmitted: PersistedChatSession,
+  loadLatest: () => Promise<PersistedChatSession | undefined>,
+  save: (session: PersistedChatSession) => Promise<PersistedChatSession>
+): Promise<PersistedChatSession> => {
+  if (!isSessionRevisionConflictError(initialError)) throw initialError
+  let conflict: unknown = initialError
+  let base = initialBase
+  let submitted = initialSubmitted
+
+  for (let attempt = 0; attempt < MAX_SESSION_REVISION_REBASE_ATTEMPTS; attempt += 1) {
+    let latest: PersistedChatSession | undefined
+    try {
+      latest = await loadLatest()
+    } catch {
+      throw conflict
+    }
+    if (!latest) throw conflict
+    const rebased = rebaseSessionAfterRevisionConflict(base, submitted, latest)
+    if (!rebased) throw conflict
+
+    try {
+      return await save(rebased)
+    } catch (error) {
+      if (!isSessionRevisionConflictError(error)) throw error
+      conflict = error
+      base = latest
+      submitted = rebased
+    }
+  }
+
+  throw conflict
+}
+
 const mergeSaveSessionOptions = (
   previous: SaveSessionOptions | undefined,
   next: SaveSessionOptions | undefined
@@ -714,24 +755,20 @@ const saveSessionInOrder = async (
         if (!isSessionRevisionConflictError(error)) throw error
         const base = persistence.getAcknowledgedSession(submitted.id)
         if (!base) throw error
-
-        let latest: PersistedChatSession | undefined
-        try {
-          latest = await loadPersistedSession(
-            {
-              projectId: submitted.projectId,
-              sessionId: submitted.id
-            },
-            api
-          )
-        } catch {
-          throw error
-        }
-        const rebased = latest
-          ? rebaseSessionAfterRevisionConflict(base, submitted, latest)
-          : undefined
-        if (!rebased) throw error
-        return retry(rebased)
+        return saveAfterSessionRevisionConflict(
+          error,
+          base,
+          submitted,
+          () =>
+            loadPersistedSession(
+              {
+                projectId: submitted.projectId,
+                sessionId: submitted.id
+              },
+              api
+            ),
+          retry
+        )
       }
     )
     unresolvedSessionRevisionConflictTargets.delete(target)
@@ -1093,22 +1130,20 @@ const createStoreSaver = (
     if (!isSessionRevisionConflictError(error)) throw error
     const base = acknowledgedSessions.get(submitted.id)
     if (!base) throw error
-    let latest: PersistedChatSession | undefined
-    try {
-      latest = await loadPersistedSession(
-        {
-          projectId: submitted.projectId,
-          sessionId: submitted.id
-        },
-        api
-      )
-    } catch {
-      throw error
-    }
-    if (!latest) throw error
-    const rebased = rebaseSessionAfterRevisionConflict(base, submitted, latest)
-    if (!rebased) throw error
-    return options ? save(rebased, options) : save(rebased)
+    return saveAfterSessionRevisionConflict(
+      error,
+      base,
+      submitted,
+      () =>
+        loadPersistedSession(
+          {
+            projectId: submitted.projectId,
+            sessionId: submitted.id
+          },
+          api
+        ),
+      (rebased) => (options ? save(rebased, options) : save(rebased))
+    )
   }
 
   return (state, options) => {
