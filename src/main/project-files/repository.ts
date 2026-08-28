@@ -84,6 +84,7 @@ class ManagedFileIndexRepository {
   async readHostArtifactCatalog(request: {
     projectId: string
     versionId?: string
+    finalizedArtifactsOnly?: boolean
   }): Promise<HostArtifactCatalogItem[]> {
     return this.queryOwner.readHostArtifactCatalog(request)
   }

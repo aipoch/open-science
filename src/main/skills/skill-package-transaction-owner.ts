@@ -41,12 +41,17 @@ export type StagedSkillPackage = Readonly<{
 // bytes mean; this owner decides when they become live and how an interrupted replace is recovered.
 export class SkillPackageTransactionOwner {
   private readonly mutationOwner: SkillMutationOwner
+  private validatePromoted?: (staged: StagedSkillPackage) => Promise<void>
 
   constructor(
     private readonly storageRoot: string,
     mutationOwner: SkillMutationOwner = skillMutationOwnerFor(storageRoot)
   ) {
     this.mutationOwner = mutationOwner
+  }
+
+  setPromotedValidator(validate: (staged: StagedSkillPackage) => Promise<void>): void {
+    this.validatePromoted = validate
   }
 
   runExclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -103,6 +108,14 @@ export class SkillPackageTransactionOwner {
           }
         }
         throw swapError
+      }
+
+      try {
+        await this.validatePromoted?.(staged)
+      } catch (validationError) {
+        await rm(live, { recursive: true, force: true })
+        if (hadExisting) await rename(backup, live)
+        throw validationError
       }
 
       if (hadExisting) await rm(backup, { recursive: true, force: true }).catch(() => {})

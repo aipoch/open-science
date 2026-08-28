@@ -10,6 +10,7 @@ import { isArtifactNotebookProducer } from '../../shared/artifact-provenance'
 import type {
   NotebookEnvironmentManifest,
   NotebookEnvironmentPackage,
+  NotebookHelperModuleEvidence,
   NotebookOutput,
   NotebookRunEnvironmentCapture,
   NotebookRunInputFile,
@@ -20,12 +21,19 @@ import {
   decodeArtifactExecutionSnapshot,
   parseArtifactExecutionSnapshot
 } from './provenance-execution-snapshot-decoder'
+import {
+  decodeNotebookHelperEvidence,
+  notebookHelperEvidenceKey
+} from '../notebook/helper-evidence'
 
 const MAX_EXECUTION_SNAPSHOT_BYTES = 4 * 1024 * 1024
 const MAX_EXECUTION_SNAPSHOT_RUNS = 128
 const MAX_EXECUTION_SNAPSHOT_OUTPUTS = 256
 const MAX_EXECUTION_SNAPSHOT_INPUTS = 256
 const MAX_EXECUTION_OUTPUT_BYTES = 64 * 1024
+
+type EligibleNotebookRun = { run: NotebookRunRecord; runIndex: number }
+type HelperEvidenceReason = 'source-missing' | 'source-corrupt' | 'payload-limit'
 
 const clipText = (value: string, maxLength = 16_000): string =>
   value.length <= maxLength ? value : `${value.slice(0, maxLength)}\n…[truncated]`
@@ -126,7 +134,8 @@ const sanitizeOutput = (output: NotebookOutput): ProvenanceNotebookOutput[] => {
 const sanitizeRun = (
   run: NotebookRunRecord,
   runIndex: number,
-  outputs: ProvenanceNotebookOutput[] = run.outputs.flatMap(sanitizeOutput)
+  outputs: ProvenanceNotebookOutput[] = run.outputs.flatMap(sanitizeOutput),
+  helperModuleKeys: string[] = []
 ): ProvenanceNotebookRun => {
   const script = clipText(run.script)
   return {
@@ -136,6 +145,7 @@ const sanitizeRun = (
     messageBranchId: run.messageBranchId ?? '',
     runtimeSegmentId: run.runtimeSegmentId ?? '',
     promptMessageId: run.promptMessageId ?? '',
+    ...(run.kernelEpochId ? { kernelEpochId: run.kernelEpochId } : {}),
     kernelKind: run.kernelKind,
     ...(run.environment ? { environmentName: run.environment } : {}),
     script,
@@ -149,13 +159,12 @@ const sanitizeRun = (
       sourceKind: input.sourceKind,
       inputFileVersionId: input.inputFileVersionId
     })),
-    ...(run.workingFiles.length > 0 ? { hasOmittedFiles: true } : {})
+    ...(run.workingFiles.length > 0 ? { hasOmittedFiles: true } : {}),
+    ...(helperModuleKeys.length ? { helperModuleKeys } : {})
   }
 }
 
-const mergeExecutionInputs = (
-  runs: Array<{ run: NotebookRunRecord; runIndex: number }>
-): NotebookRunInputFile[] => {
+const mergeExecutionInputs = (runs: EligibleNotebookRun[]): NotebookRunInputFile[] => {
   const inputs = new Map<string, NotebookRunInputFile>()
   for (const { run } of runs) {
     for (const input of run.inputFiles ?? []) {
@@ -173,10 +182,97 @@ const mergeExecutionInputs = (
   return [...inputs.values()]
 }
 
+function collectHelperEvidence(eligibleRuns: EligibleNotebookRun[]): {
+  helperModulesByKey: Map<string, NotebookHelperModuleEvidence>
+  helperEvidenceReasons: Set<HelperEvidenceReason>
+  runHelperKeys: Map<string, string[]>
+} {
+  const helperModulesByKey = new Map<string, NotebookHelperModuleEvidence>()
+  const helperEvidenceReasons = new Set<HelperEvidenceReason>()
+  const runHelperKeys = new Map<string, string[]>()
+
+  for (const { run } of eligibleRuns) {
+    const rawHelpers = run.helperModules as unknown
+    const rawStatus = recordValue(run.helperEvidenceStatus)
+    if (rawStatus?.state === 'incomplete' && Array.isArray(rawStatus.reasons)) {
+      for (const reason of rawStatus.reasons) {
+        if (
+          reason === 'source-missing' ||
+          reason === 'source-corrupt' ||
+          reason === 'payload-limit'
+        ) {
+          helperEvidenceReasons.add(reason)
+        } else {
+          helperEvidenceReasons.add('source-corrupt')
+        }
+      }
+    } else if (rawStatus !== undefined && rawStatus.state !== 'complete') {
+      helperEvidenceReasons.add('source-corrupt')
+    }
+    if (rawStatus?.state === 'complete' && rawHelpers === undefined) {
+      helperEvidenceReasons.add('source-missing')
+    }
+    if (rawHelpers !== undefined && run.helperEvidenceStatus === undefined) {
+      helperEvidenceReasons.add('source-missing')
+    }
+    if (rawHelpers === undefined) continue
+    if (!Array.isArray(rawHelpers)) {
+      helperEvidenceReasons.add('source-missing')
+      continue
+    }
+
+    const keys: string[] = []
+    for (const rawHelper of rawHelpers) {
+      const decodedHelper = decodeNotebookHelperEvidence(rawHelper)
+      if (decodedHelper.state === 'invalid') {
+        helperEvidenceReasons.add(decodedHelper.reason)
+        continue
+      }
+      const helper = decodedHelper.value
+      const key = notebookHelperEvidenceKey(helper)
+      const existing = helperModulesByKey.get(key)
+      if (
+        existing &&
+        canonicalJson(existing as unknown as CanonicalJson) !==
+          canonicalJson(helper as unknown as CanonicalJson)
+      ) {
+        helperEvidenceReasons.add('source-corrupt')
+        continue
+      }
+      helperModulesByKey.set(key, helper)
+      keys.push(key)
+    }
+    if (keys.length) runHelperKeys.set(run.runId, [...new Set(keys)].sort())
+  }
+
+  return { helperModulesByKey, helperEvidenceReasons, runHelperKeys }
+}
+
+function helperEvidenceFields(
+  helperModules: NotebookHelperModuleEvidence[],
+  registeredHelperCount: number,
+  reasons: Set<HelperEvidenceReason>
+): Pick<PersistedArtifactExecutionSnapshot, 'helperModules' | 'helperEvidenceStatus'> {
+  const fields = helperModules.length > 0 ? { helperModules } : {}
+  if (registeredHelperCount === 0 && reasons.size === 0) return fields
+  if (reasons.size > 0) {
+    return {
+      ...fields,
+      helperEvidenceStatus: { state: 'incomplete', reasons: [...reasons].sort() }
+    }
+  }
+  return { ...fields, helperEvidenceStatus: { state: 'complete' } }
+}
+
 const buildBoundedExecutionSnapshot = (
   base: Omit<PersistedArtifactExecutionSnapshot, 'inputFiles' | 'runs' | 'truncation'>,
-  eligibleRuns: Array<{ run: NotebookRunRecord; runIndex: number }>
+  eligibleRuns: EligibleNotebookRun[]
 ): PersistedArtifactExecutionSnapshot => {
+  const { helperModulesByKey, helperEvidenceReasons, runHelperKeys } =
+    collectHelperEvidence(eligibleRuns)
+  let helperModules = [...helperModulesByKey.values()].sort((left, right) =>
+    notebookHelperEvidenceKey(left).localeCompare(notebookHelperEvidenceKey(right))
+  )
   let omittedLeadingRunCount = Math.max(0, eligibleRuns.length - MAX_EXECUTION_SNAPSHOT_RUNS)
   let omittedOutputCount = 0
   const selectedRuns = eligibleRuns.slice(-MAX_EXECUTION_SNAPSHOT_RUNS)
@@ -200,7 +296,7 @@ const buildBoundedExecutionSnapshot = (
   let inputFiles = allInputs.slice(0, MAX_EXECUTION_SNAPSHOT_INPUTS)
   let omittedInputCount = allInputs.length - inputFiles.length
   const materializedRuns = runs.map(({ run, runIndex, outputs }) => {
-    const materialized = sanitizeRun(run, runIndex, outputs)
+    const materialized = sanitizeRun(run, runIndex, outputs, runHelperKeys.get(run.runId))
     const omittedForRun = run.outputs.flatMap(sanitizeOutput).length - outputs.length
     if (omittedForRun > 0) materialized.omittedOutputCount = omittedForRun
     return materialized
@@ -224,6 +320,7 @@ const buildBoundedExecutionSnapshot = (
     ...base,
     inputFiles,
     runs: materializedRuns,
+    ...helperEvidenceFields(helperModules, helperModulesByKey.size, helperEvidenceReasons),
     ...(omittedLeadingRunCount > 0 || omittedOutputCount > 0 || omittedInputCount > 0
       ? {
           truncation: {
@@ -253,6 +350,12 @@ const buildBoundedExecutionSnapshot = (
     inputFiles = inputFiles.slice(0, Math.floor(inputFiles.length / 2))
     omittedInputCount = allInputs.length - inputFiles.length
     filterRunInputKeys()
+  }
+  if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
+    while (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES && helperModules.length > 0) {
+      helperModules = helperModules.slice(0, -1)
+      helperEvidenceReasons.add('payload-limit')
+    }
   }
   if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
     const producer = materializedRuns.at(-1)

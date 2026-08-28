@@ -283,6 +283,10 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('notebook_execute')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('append code deltas')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('finish the cell')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('repeat kernelSkillIds per dependent cell')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call directly in code')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('never import')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toMatch(/host registry|injected exports|live kernel/i)
     const executeTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_execute')
     expect(executeTool?.description).toContain('producerRunId')
   })
@@ -611,6 +615,46 @@ describe('notebook_execute tool', () => {
     expect(() => schema.parse({ code: 'x', language: 'julia' })).toThrow()
   })
 
+  it('accepts only stable kernel Skill IDs and never implementation descriptors', () => {
+    const schema = z.object(tool?.inputSchema ?? {})
+
+    expect(
+      schema.parse({ code: 'public_add(2)', kernelSkillIds: ['registered-test-helper'] })
+    ).toEqual({ code: 'public_add(2)', kernelSkillIds: ['registered-test-helper'] })
+    expect(() =>
+      schema.parse({
+        code: 'public_add(2)',
+        kernelSkillIds: [
+          { id: 'registered-test-helper', path: '/tmp/kernel.py', source: 'x', digest: 'x' }
+        ]
+      })
+    ).toThrow()
+    expect(schema.parse({ code: 'public_add(2)', helperModules: ['legacy-name'] })).toEqual({
+      code: 'public_add(2)'
+    })
+    expect(tool?.inputSchema.kernelSkillIds?.description).toContain('called functions')
+    expect(tool?.inputSchema.kernelSkillIds?.description).toContain('per dependent cell')
+    expect(tool?.inputSchema.kernelSkillIds?.description).toContain('call directly, never import')
+  })
+
+  it('accepts bounded Artifact Version identities as explicit Run inputs', () => {
+    const schema = z.object(tool?.inputSchema ?? {})
+
+    expect(
+      schema.parse({
+        code: 'compose_figure(...)',
+        artifactVersionInputs: ['panel-a-v1', 'panel-b-v1']
+      })
+    ).toEqual({
+      code: 'compose_figure(...)',
+      artifactVersionInputs: ['panel-a-v1', 'panel-b-v1']
+    })
+    expect(() =>
+      schema.parse({ code: 'x', artifactVersionInputs: [{ versionId: 'panel-a-v1' }] })
+    ).toThrow()
+    expect(tool?.description).toContain("this Run's provenance inputs")
+  })
+
   it('has no per-call environment param — the env is the session-bound runtime (v4)', () => {
     expect(tool).toBeDefined()
     // The env is the session's bound runtime (notebook_bind_runtime), not a per-call argument, so the
@@ -630,7 +674,7 @@ describe('notebook_execute tool', () => {
     expect(schema.parse({ code: 'print(1)', timeoutMs: 5 })).toEqual({ code: 'print(1)' })
   })
 
-  it('forwards the selected language straight through to the execute RPC call', async () => {
+  it('forwards language, helper IDs, and Artifact Version inputs to the execute RPC call', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
@@ -655,6 +699,8 @@ describe('notebook_execute tool', () => {
       {
         code: '1 + 1',
         language: 'r',
+        kernelSkillIds: ['registered-test-helper'],
+        artifactVersionInputs: ['panel-a-v1', 'panel-b-v1'],
         projectId: 'forged-project',
         sessionId: 'forged-session'
       },
@@ -664,9 +710,17 @@ describe('notebook_execute tool', () => {
     expect(result).toEqual({ ok: true })
     expect(fetchCalls).toHaveLength(1)
     const sentBody = JSON.parse(fetchCalls[0].body) as {
-      params: { language?: string; projectId?: string; sessionId?: string }
+      params: {
+        language?: string
+        kernelSkillIds?: string[]
+        artifactVersionInputs?: string[]
+        projectId?: string
+        sessionId?: string
+      }
     }
     expect(sentBody.params.language).toBe('r')
+    expect(sentBody.params.kernelSkillIds).toEqual(['registered-test-helper'])
+    expect(sentBody.params.artifactVersionInputs).toEqual(['panel-a-v1', 'panel-b-v1'])
     expect(sentBody.params.projectId).toBe('default-project')
     expect(sentBody.params.sessionId).toBe('session-1')
   })

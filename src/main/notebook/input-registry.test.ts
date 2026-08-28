@@ -318,6 +318,79 @@ describe('NotebookInputRegistry', () => {
     expect(() => lease.getRunInputFiles()).toThrow(/closed/i)
   })
 
+  it('adds validated workflow Artifact Versions to a run and de-duplicates turn inputs', async () => {
+    const registry = await setup()
+    await createArtifact({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      artifactId: 'panel-a',
+      versionId: 'panel-a-v1',
+      filename: 'panel_A.png',
+      content: 'panel-a'
+    })
+    await createArtifact({
+      projectId: 'project-1',
+      sessionId: 'source-session-2',
+      artifactId: 'panel-b',
+      versionId: 'panel-b-v1',
+      filename: 'panel_B.png',
+      content: 'panel-b'
+    })
+    const turn = {
+      projectId: 'project-1',
+      appSessionId: 'active-session',
+      promptMessageId: 'prompt-1'
+    }
+    await registry.registerTurn({
+      ...turn,
+      uploads: [],
+      references: [
+        {
+          id: 'panel-a',
+          versionId: 'panel-a-v1',
+          source: 'artifact',
+          name: 'panel_A.png',
+          path: '/ignored'
+        }
+      ]
+    })
+
+    const lease = await registry.openRun({
+      ...turn,
+      artifactVersionInputs: ['panel-a-v1', 'panel-b-v1', 'panel-b-v1']
+    })
+    expect(
+      lease.getRunInputFiles().map(({ sourceKind, inputFileVersionId, association }) => ({
+        sourceKind,
+        inputFileVersionId,
+        association
+      }))
+    ).toEqual([
+      {
+        sourceKind: 'artifact-version',
+        inputFileVersionId: 'panel-a-v1',
+        association: 'turn-attached'
+      },
+      {
+        sourceKind: 'artifact-version',
+        inputFileVersionId: 'panel-b-v1',
+        association: 'turn-attached'
+      }
+    ])
+  })
+
+  it('fails closed when a workflow Artifact Version is unavailable in the Project', async () => {
+    const registry = await setup()
+    await expect(
+      registry.openRun({
+        projectId: 'project-1',
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-1',
+        artifactVersionInputs: ['missing-panel-version']
+      })
+    ).rejects.toThrow('Artifact Version is unavailable in this Project: missing-panel-version')
+  })
+
   it(
     'rechecks Version state and immutable metadata before a run',
     async () => {

@@ -51,7 +51,12 @@ const requestByMethod = {
   appendCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1', delta: 'print(1)' },
   finishCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1' },
   runCell: { ...request, cellId: 'cell-1' },
-  execute: { ...request, code: 'print(1)', language: 'python' },
+  execute: {
+    ...request,
+    code: 'print(1)',
+    language: 'python',
+    kernelSkillIds: ['figure-style']
+  },
   executeControl: { ...request, code: 'return 1' },
   executeShell: { ...request, command: 'echo hi' },
   state: request,
@@ -108,7 +113,7 @@ describe('notebook local RPC adapter', () => {
     }
   })
 
-  it.each(NOTEBOOK_LOCAL_RPC_METHODS)(
+  it.each(NOTEBOOK_LOCAL_RPC_METHODS.filter((method) => method !== 'execute'))(
     'preserves request, result and error identity for %s',
     async (method) => {
       const capability = createCapability()
@@ -138,6 +143,22 @@ describe('notebook local RPC adapter', () => {
       await expect(handler(methodRequest)).rejects.toBe(failure)
     }
   )
+
+  it('maps Agent-facing kernel Skill IDs to the runtime request at the adapter boundary', async () => {
+    const capability = createCapability()
+    const methodRequest = requestByMethod.execute
+    const handler = resolveNotebookLocalRpcHandler(capability, 'execute', methodRequest)
+
+    await handler(methodRequest)
+
+    const runtimeRequest = vi.mocked(capability.execute).mock.calls[0]?.[0]
+    expect(runtimeRequest).toMatchObject({
+      code: 'print(1)',
+      language: 'python',
+      helperModules: ['figure-style']
+    })
+    expect(runtimeRequest).not.toHaveProperty('kernelSkillIds')
+  })
 
   it.each(['bindRuntime', 'switchRuntime'] as const)(
     'forwards the service-owned failure receipt for %s without deriving a target',
@@ -173,7 +194,17 @@ describe('notebook local RPC adapter', () => {
         ) => Promise<unknown>
       )(methodRequest, cancellation.signal)
 
-      expect(capability[method]).toHaveBeenCalledWith(methodRequest, cancellation.signal)
+      if (method === 'execute') {
+        expect(capability.execute).toHaveBeenCalledWith(
+          expect.objectContaining({ helperModules: ['figure-style'] }),
+          cancellation.signal
+        )
+        expect(vi.mocked(capability.execute).mock.calls[0]?.[0]).not.toHaveProperty(
+          'kernelSkillIds'
+        )
+      } else {
+        expect(capability.runCell).toHaveBeenCalledWith(methodRequest, cancellation.signal)
+      }
     }
   )
 

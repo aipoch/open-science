@@ -212,10 +212,12 @@ describe('Codex approved handoff', () => {
               notebookRpcServer.releaseSessionCapabilities(sessionId),
             registerSessionSpecialist: (sessionId, specialistId) =>
               notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
-            setArtifactProvenanceContext: (sessionId, context) => {
-              notebookRpcServer.setArtifactProvenanceContext(sessionId, context)
-              if (context) notebookPromptMessageIds.push(context.promptMessageId)
-            }
+            setArtifactTurnBinding: (sessionId, binding) => {
+              notebookRpcServer.setArtifactTurnBinding(sessionId, binding)
+              notebookPromptMessageIds.push(binding.provenanceContext.promptMessageId)
+            },
+            clearArtifactTurnBinding: (sessionId, ownerExecutionId) =>
+              notebookRpcServer.clearArtifactTurnBinding(sessionId, ownerExecutionId)
           },
           resolveSpecialistIdentity: async (specialistId) => {
             const selected = resolveSpecialist(specialistId)

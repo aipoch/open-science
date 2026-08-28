@@ -41,6 +41,7 @@ import {
   decodeArtifactMessageSnapshot,
   decodeReviewScopeSnapshot
 } from './provenance-snapshot-decoder'
+import { projectPublicArtifactExecutionSnapshot } from './provenance-execution-projection'
 import { readOptionalFile, resolveStorageKey } from './provenance-storage'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
 
@@ -134,6 +135,14 @@ type VersionDescriptorRecord = PersistedVersionFileRecord & {
   messageId: string | null
 }
 
+type ResolvedArtifactExecutionSnapshot = Omit<PersistedArtifactExecutionSnapshot, 'inputFiles'> & {
+  inputFiles: ProvenanceExecutionInputFile[]
+}
+
+type ArtifactVersionReconstructionProvenance = Omit<ArtifactVersionProvenance, 'execution'> & {
+  execution?: ResolvedArtifactExecutionSnapshot
+}
+
 type ArtifactProvenanceReadModelOptions = {
   storageRoot: string
   getClient: () => Promise<PrismaClient>
@@ -217,12 +226,22 @@ class ArtifactProvenanceReadModel {
 
   async getVersionProvenance(
     request: GetArtifactVersionProvenanceRequest,
+    sections?: { execution: boolean; messages: boolean; review: boolean }
+  ): Promise<ArtifactVersionProvenance>
+  async getVersionProvenance(
+    request: GetArtifactVersionProvenanceRequest,
+    sections: { execution: boolean; messages: boolean; review: boolean },
+    options: { includePrivateHelperSource: true }
+  ): Promise<ArtifactVersionReconstructionProvenance>
+  async getVersionProvenance(
+    request: GetArtifactVersionProvenanceRequest,
     sections: { execution: boolean; messages: boolean; review: boolean } = {
       execution: true,
       messages: true,
       review: true
-    }
-  ): Promise<ArtifactVersionProvenance> {
+    },
+    options?: { includePrivateHelperSource?: boolean }
+  ): Promise<ArtifactVersionProvenance | ArtifactVersionReconstructionProvenance> {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'app session id')
     const artifactId = assertSafeSegment(request.artifactId, 'artifact id')
@@ -278,7 +297,7 @@ class ArtifactProvenanceReadModel {
         throw error
       })
 
-    let execution: ArtifactExecutionSnapshot | undefined
+    let execution: ArtifactExecutionSnapshot | ResolvedArtifactExecutionSnapshot | undefined
     if (
       sections.execution &&
       version.executionSnapshotJson &&
@@ -303,12 +322,12 @@ class ArtifactProvenanceReadModel {
         evidence
       })
       validateArtifactExecutionInputs(persistedExecution, evidence, version.inputs)
-      execution = {
-        ...persistedExecution,
-        inputFiles: await Promise.all(
-          persistedExecution.inputFiles.map((input) => this.projectExecutionInput(input))
-        )
-      }
+      const projectedInputs = await Promise.all(
+        persistedExecution.inputFiles.map((input) => this.projectExecutionInput(input))
+      )
+      execution = options?.includePrivateHelperSource
+        ? { ...persistedExecution, inputFiles: projectedInputs }
+        : projectPublicArtifactExecutionSnapshot(persistedExecution, projectedInputs)
     }
 
     let messages: ArtifactVersionProvenance['messages'] = {
@@ -512,7 +531,7 @@ class ArtifactProvenanceReadModel {
       }
     }
 
-    return {
+    const result = {
       descriptor: await this.options.projectVersionDescriptor(
         version,
         projectId,
@@ -524,6 +543,9 @@ class ArtifactProvenanceReadModel {
       messages,
       review
     }
+    return options?.includePrivateHelperSource
+      ? (result as ArtifactVersionReconstructionProvenance)
+      : (result as ArtifactVersionProvenance)
   }
 
   async getVersionCore(
@@ -632,5 +654,6 @@ class ArtifactProvenanceReadModel {
   }
 }
 
-export { ArtifactProvenanceReadModel }
+export { ArtifactProvenanceReadModel, projectPublicArtifactExecutionSnapshot }
+export type { ArtifactVersionReconstructionProvenance, ResolvedArtifactExecutionSnapshot }
 export type { ArtifactProvenanceReadModelOptions }

@@ -9720,7 +9720,7 @@ describe('ACP runtime session management', () => {
     const servers = fakeAgent.newSessions[0].mcpServers as Array<{ name?: string }>
     expect(servers.map((server) => server.name)).toEqual(['open-science-notebook'])
     expect(fakeAgent.prompts[0].text).toContain(
-      'Notebook tool instructions (only applies when using open-science-notebook tools)'
+      '<open_science_notebook_instructions>\nGuidance only applies when using open-science-notebook tools.'
     )
     expect(fakeAgent.prompts[0].text).toContain('`ask_user_question`')
     expect(fakeAgent.prompts[0].text).toContain('app-owned `ask_user_question`')
@@ -20208,7 +20208,7 @@ describe('ACP runtime session management', () => {
         type: 'preset',
         preset: 'claude_code',
         append: expect.stringContaining(
-          'Notebook tool instructions (only applies when using open-science-notebook tools)'
+          '<open_science_notebook_instructions>\nGuidance only applies when using open-science-notebook tools.'
         )
       }
     })

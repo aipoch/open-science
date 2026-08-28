@@ -337,6 +337,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     const publicRun = { ...run } as Partial<NotebookRunRecord>
     delete publicRun.kernelDispatched
     delete publicRun.runtimeId
+    delete publicRun.helperModules
     const inputFiles = (run.inputFiles ?? []).map((input) => {
       const publicInput = { ...input } as Partial<typeof input>
       delete publicInput.storageKey

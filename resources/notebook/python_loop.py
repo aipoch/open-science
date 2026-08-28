@@ -111,11 +111,31 @@ def _guard_path(value):
         raise TypeError("the file descriptor cannot be resolved to a path")
     return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(value))))
 
-_protected_dirs = [
-    _guard_path(entry)
-    for entry in os.environ.get("OPEN_SCIENCE_PROTECTED_DIRS", "").split(os.pathsep)
-    if entry
-]
+def _install_protected_paths_policy(entries):
+    guard_path = _guard_path
+    protected_dirs = frozenset(
+        guard_path(entry)
+        for entry in entries
+        if isinstance(entry, str) and entry
+    )
+    if not protected_dirs:
+        return
+
+    def audit(event, args):
+        if event != "open" or not args:
+            return
+        target = args[0]
+        if target is None or isinstance(target, int):
+            return
+        try:
+            resolved = guard_path(target)
+        except (TypeError, ValueError):
+            return
+        for directory in protected_dirs:
+            if resolved == directory or resolved.startswith(directory + os.sep):
+                raise PermissionError("Access to protected application files is not allowed.")
+
+    sys.addaudithook(audit)
 _runtime_dir_value = os.environ.get("OPEN_SCIENCE_RUNTIME_DIR", "")
 _managed_runtime_dir = _guard_path(_runtime_dir_value) if _runtime_dir_value else ""
 
@@ -370,10 +390,6 @@ def _protected_paths_audit(event, args):
         resolved == _managed_runtime_dir or resolved.startswith(_managed_runtime_dir + os.sep)
     ):
         _blocked_environment_mutation()
-    for directory in _protected_dirs:
-        if resolved == directory or resolved.startswith(directory + os.sep):
-            raise PermissionError("Access to protected application files is not allowed.")
-
 sys.addaudithook(_protected_paths_audit)
 
 # `venv.create` is pure Python and can otherwise be reached through dynamically assembled names that
@@ -655,6 +671,13 @@ def _run(code):
 
 
 def main():
+    # Install read-protection hooks before producer code can run, then remove the factory from the
+    # producer namespace. Every update registers a new immutable root snapshot; no mutable policy
+    # state or updater is retained in producer globals, function defaults, or an exposed closure.
+    install_protected_paths_policy = _globals.pop("_install_protected_paths_policy")
+    install_protected_paths_policy(
+        os.environ.get("OPEN_SCIENCE_PROTECTED_DIRS", "").split(os.pathsep)
+    )
     # The Node host always frames requests as UTF-8 JSON. On Windows, a piped stdin otherwise uses
     # the active ANSI code page (for example GBK with surrogateescape), which corrupts non-ASCII
     # source before it reaches ast.parse.
@@ -676,6 +699,7 @@ def main():
             if request.get("operation") == "inspect_namespace":
                 response = {"namespace": _inspect_namespace(request.get("include_private") is True)}
             else:
+                install_protected_paths_policy(request.get("protected_dirs", []))
                 response = _run(request.get("code", ""))
             response["req_id"] = req_id
             _protocol_out.write(json.dumps(response, separators=(",", ":")) + "\n")

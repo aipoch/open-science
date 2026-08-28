@@ -10,6 +10,12 @@ import {
 import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import type { NotebookRunProvenanceContext } from '../../shared/notebook'
+import type { HostArtifactCatalogItem } from '../../shared/project-files'
+import {
+  createArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from '../../shared/artifact-provenance'
+import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
 import type { NotebookRpcConnection } from './mcp-server'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
 import {
@@ -68,8 +74,13 @@ import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { HostLlmCallInput, HostLlmResult, HostLlmBatchItem } from './host-model-service'
 import type {
   AuthenticatedDelegateCaller,
+  DurableDelegateRequest,
   DurableDelegatedWork
 } from '../delegation/durable-delegated-work'
+import {
+  assertDelegateInputShape,
+  assertDelegateRequestShape
+} from '../delegation/delegated-work-admission'
 import { hostSdkHelp } from '../host-sdk/help'
 import {
   projectHostCapabilities,
@@ -101,6 +112,7 @@ type NotebookLocalRpcServerOptions = {
   now?: () => number
   onSessionReleased?: (sessionId: string) => void
   isHostSkillsAvailable?: (sessionId: string) => boolean
+  resolveSpecialistSkillIds?: (specialistId: string) => Promise<readonly string[]>
   transport?: LocalRpcListenOptions['transport']
   connectorService?: {
     call(
@@ -225,6 +237,13 @@ type NotebookLocalRpcServerOptions = {
       context: { projectId: string; sessionId: string }
     ): Promise<string>
   }
+  delegationInputCatalog?: {
+    readHostArtifactCatalog(request: {
+      projectId: string
+      versionId: string
+      finalizedArtifactsOnly: true
+    }): Promise<HostArtifactCatalogItem[]>
+  }
   hostLineage?: {
     graph(
       versionId: unknown,
@@ -346,6 +365,12 @@ type NotebookExecutionAuthorization = Readonly<{
   inputFingerprint: string
 }>
 
+type ActiveArtifactTurnBinding = Readonly<{
+  ownerExecutionId: string
+  projectId: string
+  provenanceContext: NotebookRunProvenanceContext
+}>
+
 type DelegatedNotebookConnectionRequest = Readonly<{
   projectId: string
   sessionId: string
@@ -452,6 +477,26 @@ const notebookExecutionInputFingerprint = (
           ? input.timeoutMs
           : NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
         : null
+  // Match host request normalization: omission and [] are equivalent, duplicates collapse, and
+  // first-request order remains significant because it is also skill initialization order.
+  const kernelSkillIds =
+    method !== 'execute' || input?.kernelSkillIds === undefined
+      ? []
+      : Array.isArray(input.kernelSkillIds) &&
+          input.kernelSkillIds.every((skillId): skillId is string => typeof skillId === 'string')
+        ? [...new Set(input.kernelSkillIds)]
+        : undefined
+  if (kernelSkillIds === undefined) return undefined
+  const artifactVersionInputs =
+    method !== 'execute' || input?.artifactVersionInputs === undefined
+      ? []
+      : Array.isArray(input.artifactVersionInputs) &&
+          input.artifactVersionInputs.every(
+            (versionId): versionId is string => typeof versionId === 'string'
+          )
+        ? [...new Set(input.artifactVersionInputs)]
+        : undefined
+  if (artifactVersionInputs === undefined) return undefined
 
   return createHash('sha256')
     .update(
@@ -464,7 +509,9 @@ const notebookExecutionInputFingerprint = (
           : method === 'execute'
             ? 'python'
             : null,
-        method === 'execute' && typeof input?.cellId === 'string' ? input.cellId : null
+        method === 'execute' && typeof input?.cellId === 'string' ? input.cellId : null,
+        kernelSkillIds,
+        artifactVersionInputs
       ])
     )
     .digest('hex')
@@ -503,6 +550,7 @@ class NotebookLocalRpcServer {
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly hostArtifacts: NotebookLocalRpcServerOptions['hostArtifacts']
+  private readonly delegationInputCatalog: NotebookLocalRpcServerOptions['delegationInputCatalog']
   private readonly hostLineage: NotebookLocalRpcServerOptions['hostLineage']
   private readonly hostFrames: NotebookLocalRpcServerOptions['hostFrames']
   private readonly hostSessions: NotebookLocalRpcServerOptions['hostSessions']
@@ -511,6 +559,7 @@ class NotebookLocalRpcServer {
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private readonly hostModel: NotebookLocalRpcServerOptions['hostModel']
   private readonly hostViewImage: NotebookLocalRpcServerOptions['hostViewImage']
+  private readonly resolveSpecialistSkillIds: NotebookLocalRpcServerOptions['resolveSpecialistSkillIds']
   private server: Server | undefined
   private serverLifecycle: NotebookRpcServerLifecycle | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
@@ -524,8 +573,7 @@ class NotebookLocalRpcServer {
   // notebook process. Keeping it here prevents an agent from selecting another Specialist's scope
   // by forging an RPC parameter.
   private readonly sessionSpecialists = new Map<string, string>()
-  private readonly artifactProvenanceContexts = new Map<string, NotebookRunProvenanceContext>()
-  private readonly activeTurnProjectIds = new Map<string, string>()
+  private readonly activeArtifactTurnBindings = new Map<string, ActiveArtifactTurnBinding>()
   private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
   private readonly inputRunLeaseIds = new WeakMap<NotebookInputRunLease, string>()
   private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
@@ -550,6 +598,7 @@ class NotebookLocalRpcServer {
     this.now = options.now ?? Date.now
     this.onSessionReleased = options.onSessionReleased
     this.isHostSkillsAvailable = options.isHostSkillsAvailable
+    this.resolveSpecialistSkillIds = options.resolveSpecialistSkillIds
     this.transport = options.transport
     this.connectorService = options.connectorService
     this.memoryService = options.memoryService
@@ -561,6 +610,7 @@ class NotebookLocalRpcServer {
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
     this.hostArtifacts = options.hostArtifacts
+    this.delegationInputCatalog = options.delegationInputCatalog
     this.hostLineage = options.hostLineage
     this.hostFrames = options.hostFrames
     this.hostSessions = options.hostSessions
@@ -766,7 +816,7 @@ class NotebookLocalRpcServer {
   // Remembers the final ACP session id for notebook aliases created before session start.
   registerSessionAlias(aliasSessionId: string, sessionId: string): void {
     this.sessionAliases.set(aliasSessionId, sessionId)
-    const activeRootContext = this.artifactProvenanceContexts.get(sessionId)
+    const activeRootContext = this.activeArtifactTurnBindings.get(sessionId)?.provenanceContext
     const canonicalRootFrameId =
       activeRootContext && activeRootContext.agentFrameId === activeRootContext.rootFrameId
         ? activeRootContext.agentFrameId
@@ -877,7 +927,7 @@ class NotebookLocalRpcServer {
     )
     if (
       !inputFingerprint ||
-      this.artifactProvenanceContexts.get(sessionId)?.promptMessageId !==
+      this.activeArtifactTurnBindings.get(sessionId)?.provenanceContext.promptMessageId !==
         authorization.promptMessageId ||
       this.consumedExecutionToolCalls.get(sessionId)?.has(authorization.toolCallId)
     ) {
@@ -927,13 +977,75 @@ class NotebookLocalRpcServer {
     consumed.add(authorization.toolCallId)
     this.consumedExecutionToolCalls.set(sessionId, consumed)
     if (
-      this.artifactProvenanceContexts.get(sessionId)?.promptMessageId !==
+      this.activeArtifactTurnBindings.get(sessionId)?.provenanceContext.promptMessageId !==
         authorization.promptMessageId ||
       notebookExecutionInputFingerprint(method, params) !== authorization.inputFingerprint
     ) {
       return undefined
     }
     return authorization.executionInvocationId
+  }
+
+  private async canonicalizeDelegationInputs(
+    requestOrRequests: DurableDelegateRequest | readonly DurableDelegateRequest[],
+    caller: AuthenticatedDelegateCaller
+  ): Promise<DurableDelegateRequest | readonly DurableDelegateRequest[]> {
+    const requests = assertDelegateRequestShape(requestOrRequests)
+    assertDelegateInputShape(requests)
+    const bareIdentityLookups = new Map<string, Promise<string>>()
+    const canonicalizeBareIdentity = (identity: string): Promise<string> => {
+      const pending = bareIdentityLookups.get(identity)
+      if (pending) return pending
+      const lookup = (async () => {
+        if (!this.delegationInputCatalog) {
+          throw new Error(
+            'delegation inputs must be immutable Upload or Artifact Version identities'
+          )
+        }
+        const candidates = await this.delegationInputCatalog.readHostArtifactCatalog({
+          projectId: caller.session.projectId,
+          versionId: identity,
+          finalizedArtifactsOnly: true
+        })
+        const item = candidates.length === 1 ? candidates[0] : undefined
+        if (
+          !item ||
+          item.projectId !== caller.session.projectId ||
+          item.sessionId !== caller.session.sessionId
+        ) {
+          throw new Error(
+            'delegation inputs must be immutable Upload or Artifact Version identities'
+          )
+        }
+        return item.source === 'upload'
+          ? createUploadVersionReference(item.versionId, {
+              projectId: item.projectId,
+              sessionId: item.sessionId
+            })
+          : createArtifactVersionLocator({
+              projectId: item.projectId,
+              appSessionId: item.sessionId,
+              artifactId: item.sourceFileId,
+              versionId: item.versionId
+            })
+      })()
+      bareIdentityLookups.set(identity, lookup)
+      return lookup
+    }
+    const canonicalized = await Promise.all(
+      requests.map(async (request) => {
+        if (!Array.isArray(request.inputs) || request.inputs.length === 0) return request
+        const inputs = await Promise.all(
+          request.inputs.map((identity) =>
+            parseUploadVersionReference(identity) || parseArtifactVersionLocator(identity)
+              ? identity
+              : canonicalizeBareIdentity(identity)
+          )
+        )
+        return { ...request, inputs }
+      })
+    )
+    return Array.isArray(requestOrRequests) ? canonicalized : canonicalized[0]
   }
 
   async issueSessionConnection(
@@ -1197,46 +1309,47 @@ class NotebookLocalRpcServer {
     else this.sessionSpecialists.delete(sessionId)
   }
 
-  // Pins Notebook executions to the app-owned active turn. The MCP caller cannot submit or override
-  // these graph locators; clearing the turn removes the binding for later user-run cells.
-  setArtifactProvenanceContext(
-    sessionId: string,
-    context: NotebookRunProvenanceContext | undefined
-  ): void {
-    if (context) {
-      const previousPromptMessageId =
-        this.artifactProvenanceContexts.get(sessionId)?.promptMessageId
-      if (previousPromptMessageId && previousPromptMessageId !== context.promptMessageId) {
-        this.executionAuthorizations.delete(sessionId)
-        this.consumedExecutionToolCalls.delete(sessionId)
-      }
-      this.artifactProvenanceContexts.set(sessionId, context)
-      if (context.agentFrameId === context.rootFrameId) {
-        for (const binding of this.sessionRpcCapabilities.values()) {
-          if (
-            (!binding.allowedMethods || binding.allowedMethods === CONTROL_RPC_METHODS) &&
-            !binding.delegatedNotebook &&
-            binding.delegatedWorkRole !== 'delegate' &&
-            (this.sessionAliases.get(binding.sessionId) ?? binding.sessionId) === sessionId &&
-            binding.agentFrameId === `root-frame-${binding.sessionId}`
-          ) {
-            binding.sessionId = sessionId
-            binding.agentFrameId = context.agentFrameId
-          }
-        }
-      }
-    } else {
-      this.artifactProvenanceContexts.delete(sessionId)
-      this.activeTurnProjectIds.delete(sessionId)
+  // Pins Notebook executions to one app-owned active Artifact turn. Project authority is installed
+  // with provenance at turn activation, independently of whether the prompt carried attachments.
+  setArtifactTurnBinding(sessionId: string, binding: ActiveArtifactTurnBinding): void {
+    const previous = this.activeArtifactTurnBindings.get(sessionId)
+    if (
+      previous &&
+      (previous.ownerExecutionId !== binding.ownerExecutionId ||
+        previous.provenanceContext.promptMessageId !== binding.provenanceContext.promptMessageId)
+    ) {
       this.executionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
     }
+    this.activeArtifactTurnBindings.set(sessionId, binding)
+    const context = binding.provenanceContext
+    if (context.agentFrameId === context.rootFrameId) {
+      for (const capability of this.sessionRpcCapabilities.values()) {
+        if (
+          (!capability.allowedMethods || capability.allowedMethods === CONTROL_RPC_METHODS) &&
+          !capability.delegatedNotebook &&
+          capability.delegatedWorkRole !== 'delegate' &&
+          (this.sessionAliases.get(capability.sessionId) ?? capability.sessionId) === sessionId &&
+          capability.agentFrameId === `root-frame-${capability.sessionId}`
+        ) {
+          capability.sessionId = sessionId
+          capability.agentFrameId = context.agentFrameId
+        }
+      }
+    }
+  }
+
+  clearArtifactTurnBinding(sessionId: string, ownerExecutionId: string): void {
+    if (this.activeArtifactTurnBindings.get(sessionId)?.ownerExecutionId !== ownerExecutionId)
+      return
+    this.activeArtifactTurnBindings.delete(sessionId)
+    this.executionAuthorizations.delete(sessionId)
+    this.consumedExecutionToolCalls.delete(sessionId)
   }
 
   async registerNotebookTurnInputs(request: RegisterNotebookTurnInputsRequest): Promise<void> {
     if (!this.inputRegistry) return
     await this.inputRegistry.registerTurn(request)
-    this.activeTurnProjectIds.set(request.appSessionId, request.projectId)
   }
 
   private acquireArtifactRpcRequest(
@@ -1674,7 +1787,8 @@ class NotebookLocalRpcServer {
                   agentId: this.sessionSpecialists.get(sessionBinding.sessionId),
                   turnId:
                     sessionBinding.activeControlInvocation?.turnId ??
-                    this.artifactProvenanceContexts.get(sessionBinding.sessionId)?.promptMessageId
+                    this.activeArtifactTurnBindings.get(sessionBinding.sessionId)?.provenanceContext
+                      .promptMessageId
                 }
               : {})
           }
@@ -1696,6 +1810,7 @@ class NotebookLocalRpcServer {
       if (method === 'planCall' && lifecycle.closing) disconnect.abort()
       let resolvedParams = { ...this.resolveSessionAlias(params) }
       delete resolvedParams.executionInvocationId
+      delete resolvedParams.registeredHelperSkillIds
       const authenticatedBinding = authenticatedSessionBinding
       if (authenticatedBinding?.delegatedNotebook && isNotebookLocalRpcMethod(method)) {
         resolvedParams = {
@@ -1711,7 +1826,7 @@ class NotebookLocalRpcServer {
         const resolvedSessionId = resolvedParams.sessionId
         const activeContext =
           typeof resolvedSessionId === 'string'
-            ? this.artifactProvenanceContexts.get(resolvedSessionId)
+            ? this.activeArtifactTurnBindings.get(resolvedSessionId)?.provenanceContext
             : undefined
         const hasProvenRootOwner =
           typeof resolvedSessionId === 'string' &&
@@ -2418,10 +2533,10 @@ class NotebookLocalRpcServer {
         ? (this.sessionAliases.get(sessionId) ?? sessionId)
         : undefined
       const provenanceContext = resolvedSessionId
-        ? this.artifactProvenanceContexts.get(resolvedSessionId)
+        ? this.activeArtifactTurnBindings.get(resolvedSessionId)?.provenanceContext
         : undefined
       const projectId = resolvedSessionId
-        ? this.activeTurnProjectIds.get(resolvedSessionId)
+        ? this.activeArtifactTurnBindings.get(resolvedSessionId)?.projectId
         : undefined
       const registeredInputs =
         provenanceContext && projectId && resolvedSessionId
@@ -2659,7 +2774,8 @@ class NotebookLocalRpcServer {
       }
       if (op !== 'delegate') throw new Error('Delegated Work operation is invalid.')
       const call = parseDelegateRpcCall(params)
-      return this.delegatedWorkService.delegate(caller, call.request, call.options)
+      const request = await this.canonicalizeDelegationInputs(call.request, caller)
+      return this.delegatedWorkService.delegate(caller, request, call.options)
     }
 
     // skillsCall: native host.skills lifecycle. Authentication and session ownership are identical
@@ -2675,11 +2791,24 @@ class NotebookLocalRpcServer {
       )
     }
 
-    const handler = resolveNotebookLocalRpcHandler(this.service, method, params)
+    let trustedParams = params
+    if (method === 'execute' && typeof params.sessionId === 'string') {
+      const specialistId = this.sessionSpecialists.get(params.sessionId)
+      if (specialistId) {
+        const allowedSkillIds = this.resolveSpecialistSkillIds
+          ? await this.resolveSpecialistSkillIds(specialistId).catch(() => [])
+          : []
+        trustedParams = {
+          ...params,
+          registeredHelperSkillIds: [...allowedSkillIds]
+        }
+      }
+    }
+    const handler = resolveNotebookLocalRpcHandler(this.service, method, trustedParams)
 
     const projectId =
       typeof params.sessionId === 'string'
-        ? this.activeTurnProjectIds.get(params.sessionId)
+        ? this.activeArtifactTurnBindings.get(params.sessionId)?.projectId
         : undefined
     const provenanceContext = params.provenanceContext
     const opensInputRun = opensNotebookInputRun(method)
@@ -2694,7 +2823,10 @@ class NotebookLocalRpcServer {
       const lease = await this.inputRegistry.openRun({
         projectId,
         appSessionId: sessionId,
-        promptMessageId: provenanceContext.promptMessageId
+        promptMessageId: provenanceContext.promptMessageId,
+        ...(method === 'execute' && Array.isArray(params.artifactVersionInputs)
+          ? { artifactVersionInputs: params.artifactVersionInputs as string[] }
+          : {})
       })
       const leases = this.activeInputRunLeases.get(sessionId) ?? new Set<NotebookInputRunLease>()
       const inputRunLeaseId = randomUUID()
@@ -2704,7 +2836,7 @@ class NotebookLocalRpcServer {
       try {
         return await handler(
           {
-            ...params,
+            ...trustedParams,
             registeredInputFiles: lease.getRunInputFiles(),
             inputRunLeaseId
           },
@@ -2718,7 +2850,17 @@ class NotebookLocalRpcServer {
       }
     }
 
-    return handler(params, signal)
+    if (
+      method === 'execute' &&
+      Array.isArray(params.artifactVersionInputs) &&
+      params.artifactVersionInputs.length > 0
+    ) {
+      throw new Error(
+        'artifactVersionInputs requires an active Artifact provenance context and input registry.'
+      )
+    }
+
+    return handler(trustedParams, signal)
   }
 
   // Rewrites the temporary notebook session id to the final ACP session id when needed.
@@ -2730,8 +2872,9 @@ class NotebookLocalRpcServer {
     }
 
     const resolvedSessionId = this.sessionAliases.get(sessionId) ?? sessionId
-    const provenanceContext = this.artifactProvenanceContexts.get(resolvedSessionId)
-    const projectId = this.activeTurnProjectIds.get(resolvedSessionId)
+    const activeTurn = this.activeArtifactTurnBindings.get(resolvedSessionId)
+    const provenanceContext = activeTurn?.provenanceContext
+    const projectId = activeTurn?.projectId
     const registeredInputFiles =
       provenanceContext && projectId
         ? this.inputRegistry?.getTurnInputs({

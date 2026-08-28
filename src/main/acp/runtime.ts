@@ -331,10 +331,15 @@ type AcpRuntimeNotebookOptions = {
     method: NotebookExecutionRpcMethod
     rawInput?: unknown
   }) => string | undefined
-  setArtifactProvenanceContext?: (
+  setArtifactTurnBinding?: (
     sessionId: string,
-    context: import('../../shared/notebook').NotebookRunProvenanceContext | undefined
+    binding: {
+      ownerExecutionId: string
+      projectId: string
+      provenanceContext: import('../../shared/notebook').NotebookRunProvenanceContext
+    }
   ) => void
+  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
   registerTurnInputs?: (request: {
     projectId: string
     appSessionId: string

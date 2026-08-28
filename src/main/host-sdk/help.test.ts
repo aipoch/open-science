@@ -99,6 +99,21 @@ describe('Host SDK help', () => {
     expect(request).toMatch(/path relative to the current execution workspace/u)
     expect(request).toMatch(/same relative path used to save it/u)
     expect(request).not.toMatch(/Notebook/u)
+    expect(named(fields(help.options), 'crop').description).toMatch(/top-left-origin/iu)
+    const constraints = help.constraints.join('\n')
+    expect(constraints).toMatch(/metadata, not image bytes/u)
+    expect(constraints).toMatch(/only after the enclosing repl_execute succeeds/u)
+    expect(constraints).toMatch(/at most four images per repl_execute invocation/u)
+    expect(constraints).toMatch(/Only PNG and JPEG sources/u)
+    expect(constraints).toMatch(/long edge is at most 1568 pixels/u)
+    expect(help.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Inspect an Artifact crop',
+          code: expect.stringMatching(/versionId.*unit: 'pixels'/u)
+        })
+      ])
+    )
   })
 
   it('documents the zero-argument model introspection contracts independently', () => {

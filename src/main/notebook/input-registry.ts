@@ -24,7 +24,9 @@ type ResolveNotebookInputPreviewRequest = {
   inputFileVersionId: string
 }
 
-type OpenNotebookInputRunRequest = GetNotebookTurnInputsRequest
+type OpenNotebookInputRunRequest = GetNotebookTurnInputsRequest & {
+  artifactVersionInputs?: readonly string[]
+}
 
 type ResolveNotebookInputRunRequest = Pick<
   NotebookRunInputFile,
@@ -153,8 +155,22 @@ class NotebookInputRegistry {
 
   async openRun(request: OpenNotebookInputRunRequest): Promise<NotebookInputRunLease> {
     const registered = this.turns.get(turnKey(request))?.inputs ?? []
+    const workflowArtifacts = await Promise.all(
+      [...new Set(request.artifactVersionInputs ?? [])].map((inputFileVersionId) =>
+        this.resolveVersion({
+          projectId: request.projectId,
+          sourceKind: 'artifact-version',
+          inputFileVersionId
+        })
+      )
+    )
+    const requested = [
+      ...new Map(
+        [...registered, ...workflowArtifacts].map((input) => [versionKey(input), input])
+      ).values()
+    ]
     const inputs = await Promise.all(
-      registered.map(async (input) => {
+      requested.map(async (input) => {
         const validation = await this.options.inputAuthority.validateVersion(
           request.projectId,
           input

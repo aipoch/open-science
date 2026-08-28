@@ -94,7 +94,7 @@ describe('UserSkillCatalogObserver', () => {
     finishInitialScan?.([])
 
     await waitForCalls(list, 2)
-    await waitForCalls(onCatalogChanged, 1)
+    await waitForCalls(onCatalogChanged, 2)
     observer.dispose()
   })
 
@@ -137,19 +137,20 @@ describe('UserSkillCatalogObserver', () => {
     await observer.start()
     await waitForCalls(list, 1)
     await list.mock.results[0].value
+    await waitForCalls(onCatalogChanged, 1)
 
     const direct = join(storageRoot, 'skills', 'personal', 'direct')
     await mkdir(direct, { recursive: true })
     watcher.emitChange()
     await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(onCatalogChanged).not.toHaveBeenCalled()
+    expect(onCatalogChanged).toHaveBeenCalledOnce()
 
     await writeFile(
       join(direct, 'SKILL.md'),
       '---\nname: direct\ndescription: Directly installed.\n---\nUse this Skill.\n'
     )
     watcher.emitChange()
-    await waitForCalls(onCatalogChanged, 1)
+    await waitForCalls(onCatalogChanged, 2)
 
     observer.dispose()
     expect(watcher.close).toHaveBeenCalledOnce()
@@ -180,15 +181,59 @@ describe('UserSkillCatalogObserver', () => {
     await observer.start()
     await waitForCalls(list, 1)
     await list.mock.results[0].value
+    await waitForCalls(onCatalogChanged, 1)
 
     watcher.emitChange()
     await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(onCatalogChanged).not.toHaveBeenCalled()
+    expect(onCatalogChanged).toHaveBeenCalledOnce()
 
     await writeFile(join(skillDirectory, 'scripts', 'run.js'), 'console.log("v2")\n')
     watcher.emitChange()
+    await waitForCalls(onCatalogChanged, 2)
+
+    observer.dispose()
+  })
+
+  it('publishes helper descriptor changes even without a package compatibility fingerprint', async () => {
+    const watcher = fakeWatcher()
+    const base = {
+      id: 'personal-plot',
+      name: 'plot',
+      displayName: 'Plot',
+      description: 'Plot helper.',
+      source: 'personal' as const,
+      updatedAt: '2026-08-25T00:00:00.000Z',
+      sourceDir: '/skills/personal/plot'
+    }
+    const descriptor = {
+      id: 'plot-helper',
+      language: 'python' as const,
+      interfaceRevision: 1,
+      implementation: 'kernel.py',
+      exports: ['plot'],
+      dependencies: []
+    }
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([{ ...base, helpers: [descriptor] }])
+      .mockResolvedValue([{ ...base, helpers: [{ ...descriptor, exports: ['plot_v2'] }] }])
+    const onCatalogChanged = vi.fn()
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged,
+      watchDirectory: watcher.watchDirectory,
+      debounceMs: 1,
+      reconcileIntervalMs: 60_000
+    })
+    await observer.start()
+    await waitForCalls(list, 1)
+    await list.mock.results[0].value
     await waitForCalls(onCatalogChanged, 1)
 
+    watcher.emitChange()
+
+    await waitForCalls(onCatalogChanged, 2)
     observer.dispose()
   })
 
@@ -207,7 +252,7 @@ describe('UserSkillCatalogObserver', () => {
 
     await observer.notifyCatalogChanged()
 
-    expect(onCatalogChanged).toHaveBeenCalledOnce()
+    expect(onCatalogChanged).toHaveBeenCalledTimes(2)
     observer.dispose()
   })
 
@@ -267,7 +312,7 @@ describe('UserSkillCatalogObserver', () => {
     await forced
 
     expect(list).toHaveBeenCalledTimes(3)
-    expect(onCatalogChanged).toHaveBeenCalledOnce()
+    expect(onCatalogChanged).toHaveBeenCalledTimes(2)
     observer.dispose()
   })
 
@@ -336,7 +381,7 @@ describe('UserSkillCatalogObserver', () => {
     await observer.notifyCatalogChanged()
 
     expect(list).toHaveBeenCalledTimes(3)
-    expect(onCatalogChanged).toHaveBeenCalledTimes(2)
+    expect(onCatalogChanged).toHaveBeenCalledTimes(3)
     observer.dispose()
   })
 })

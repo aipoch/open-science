@@ -478,7 +478,7 @@ describe('Settings backend ownership architecture', () => {
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
-        provisionedConnectorSkillNames publishHostSkill refreshProviderModels removeCustomServer removeGitHubToken
+        provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog removeCustomServer removeGitHubToken
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
         resolveAdmittedSubagentBackend resolveAgentBackend resolveExplicitAgentBackend resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
         scanRepoSkills setActiveProvider setAgentFramework setAppIconVariant setClosePreference

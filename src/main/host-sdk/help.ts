@@ -714,7 +714,8 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         name: 'crop',
         type: "{ unit: 'pixels' | 'fraction', left, top, right, bottom }",
         required: false,
-        description: 'Explicit crop applied before resize.'
+        description:
+          'Top-left-origin crop in the oriented original image, applied before resize. Pixel coordinates are non-negative integers; fraction coordinates are between 0 and 1. Both forms require left < right and top < bottom and must stay within the image.'
       },
       {
         name: 'maxSize',
@@ -744,12 +745,19 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   },
   constraints: [
     'Available only during an active repl_execute on a certified visual route.',
-    'Bytes are transient and attach atomically only if repl_execute succeeds.'
+    'The returned JavaScript object is attachment metadata, not image bytes. Images reach the Agent only after the enclosing repl_execute succeeds; a failed invocation discards every image it staged.',
+    'Attach at most four images per repl_execute invocation. Split larger sets across successful invocations.',
+    'Only PNG and JPEG sources are supported.',
+    'The output long edge is at most 1568 pixels and is never upscaled. Omit maxSize for the maximum available resolution; use a crop whose long edge is at most 1568 pixels when native pixels are required.'
   ],
   examples: [
     {
       title: 'Inspect a workspace image',
       code: "await host.viewImage({ path: 'results/plot.png' }, { maxSize: 1200 })"
+    },
+    {
+      title: 'Inspect an Artifact crop',
+      code: "await host.viewImage({ versionId: compositeVersionId }, { crop: { unit: 'pixels', left: 0, top: 0, right: 800, bottom: 600 } })"
     }
   ],
   resolveAvailability: ({ capabilities }) =>

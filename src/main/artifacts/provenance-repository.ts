@@ -55,6 +55,7 @@ import type { HostLineageDependencyRelation, HostLineageDirection } from '../../
 import { LOCAL_RESOURCE_BUDGETS, type LocalResourceBudgetOverrides } from '../resource-budget'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import { digestFileWithinBudget } from '../bounded-file-io'
+import { bindArtifactReconstructionEvidence } from './provenance-reconstruction-evidence'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -170,6 +171,13 @@ class ArtifactProvenanceRepository {
       resolveVersionDerivedPath: (request, filename) =>
         this.resolveVersionDerivedPath(request, filename)
     })
+    bindArtifactReconstructionEvidence(this, (request) =>
+      this.readModel.getVersionProvenance(
+        request,
+        { execution: true, messages: false, review: false },
+        { includePrivateHelperSource: true }
+      )
+    )
     this.producerCapture = new ArtifactProvenanceProducerCapture({
       inputAuthority,
       notebookRepository,

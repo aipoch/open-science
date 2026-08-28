@@ -138,6 +138,7 @@ describe('Notebook runtime facade architecture', () => {
       'NotebookEnvironmentOperations',
       'NotebookExecutionOwner',
       'NotebookExportReader',
+      'NotebookHelperModuleHost',
       'NotebookPackageOperations',
       'NotebookRecoveryCoordinator',
       'NotebookRunTerminalizationOwner',

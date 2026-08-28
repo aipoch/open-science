@@ -22,6 +22,7 @@ import {
 import { readSpecialistPackageSkillMetadata } from './specialist-package-adapter'
 import type { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
 import { SAFE_SKILL_NAME, SKILL_NAME_MAX_LENGTH, assertUsableSkillName } from './skill-name'
+import { readSkillHelperDescriptors } from './registered-helper-catalog'
 
 const log = createLogger('skills')
 
@@ -208,7 +209,8 @@ export class UserSkillStore {
         compatibility: compatibility.compatibility,
         author: fields.author,
         license: fields.license,
-        thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty
+        thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty,
+        helpers: await readSkillHelperDescriptors(sourceDir)
       })
     }
 

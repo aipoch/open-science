@@ -38,6 +38,16 @@ const catalogFingerprint = (skills: readonly BundledSkill[]): string =>
         source: skill.source,
         updatedAt: skill.updatedAt,
         compatibility: skill.compatibility,
+        helpers: skill.helpers
+          ?.map((helper) => ({
+            id: helper.id,
+            language: helper.language,
+            interfaceRevision: helper.interfaceRevision,
+            implementation: helper.implementation,
+            exports: [...helper.exports].sort(),
+            dependencies: [...helper.dependencies].sort()
+          }))
+          .sort((left, right) => left.id.localeCompare(right.id)),
         author: skill.author,
         license: skill.license,
         thirdParty: skill.thirdParty
@@ -57,7 +67,6 @@ class UserSkillCatalogObserver {
   private reconcileDrain: Promise<void> | undefined
   private reconcilePending = false
   private reconcileForcePending = false
-  private initialReconciliationFailed = false
   private disposed = false
 
   constructor(private readonly options: UserSkillCatalogObserverOptions) {}
@@ -148,7 +157,6 @@ class UserSkillCatalogObserver {
         await this.reconcile(force)
       } catch (error) {
         failure ??= error
-        if (this.fingerprint === undefined) this.initialReconciliationFailed = true
         log.warn('user skill catalog reconciliation failed', diagnosticErrorFields(error))
       }
     }
@@ -159,12 +167,10 @@ class UserSkillCatalogObserver {
     if (this.disposed) return
     const fingerprint = catalogFingerprint(await this.options.catalog.list())
     if (this.disposed) return
-    const changed = this.fingerprint !== undefined && fingerprint !== this.fingerprint
-    const recoveredInitialReconciliation =
-      this.fingerprint === undefined && this.initialReconciliationFailed
+    const firstSuccessfulReconciliation = this.fingerprint === undefined
+    const changed = !firstSuccessfulReconciliation && fingerprint !== this.fingerprint
     this.fingerprint = fingerprint
-    this.initialReconciliationFailed = false
-    if (changed || recoveredInitialReconciliation || force) await this.options.onCatalogChanged()
+    if (firstSuccessfulReconciliation || changed || force) await this.options.onCatalogChanged()
   }
 }
 

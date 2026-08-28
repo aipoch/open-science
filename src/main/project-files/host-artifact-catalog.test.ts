@@ -42,7 +42,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     versionId: string,
     versionNumber = 1,
     agentFrameId = 'agent-frame',
-    rootFrameId = `root-${versionId}`
+    rootFrameId = `root-${versionId}`,
+    state: 'pending' | 'finalized' = 'finalized'
   ): Promise<void> => {
     await client.artifactLineage.upsert({
       where: {
@@ -75,7 +76,7 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       messageBranchId: 'branch',
       runtimeSegmentId: 'runtime',
       promptMessageId: 'prompt',
-      state: 'finalized',
+      state,
       contentStorageKey: `artifacts/${projectId}/${sessionId}/${versionId}/content`,
       evidenceStorageKey: `artifacts/${projectId}/${sessionId}/${versionId}/evidence.json`,
       contentType: 'text/csv',
@@ -240,6 +241,33 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     await expect(
       repository.readHostArtifactCatalog({ projectId: 'project-a', versionId: 'collision' })
     ).rejects.toThrow('ambiguous across generated Artifacts and Uploads')
+  })
+
+  it('excludes pending Artifact Versions from finalized-only exact identity lookups', async () => {
+    await createArtifactVersion(
+      'project-a',
+      'session-a',
+      'pending-artifact',
+      'pending-version',
+      1,
+      'child-frame',
+      'root-frame',
+      'pending'
+    )
+
+    await expect(
+      repository.readHostArtifactCatalog({
+        projectId: 'project-a',
+        versionId: 'pending-version'
+      })
+    ).resolves.toHaveLength(1)
+    await expect(
+      repository.readHostArtifactCatalog({
+        projectId: 'project-a',
+        versionId: 'pending-version',
+        finalizedArtifactsOnly: true
+      })
+    ).resolves.toEqual([])
   })
 
   it('projects producer provenance from the latest generated Version only', async () => {

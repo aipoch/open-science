@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest, type ClientRequest, type Server } from 'node:http'
@@ -8,15 +9,23 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ABOUT_YOU_MEMORY_CATEGORY_ID } from '../../shared/memory'
-import type { NotebookRunInputFile } from '../../shared/notebook'
+import type { NotebookRunInputFile, NotebookRunProvenanceContext } from '../../shared/notebook'
 import { PlanCommandError } from '../../shared/session-plan/contract'
+import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
+import { ArtifactRepository } from '../artifacts/repository'
+import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { MemoryRepository } from '../memory/repository'
 import { MemoryService } from '../memory/service'
 import { createProjectDbClient } from '../projects/prisma-client'
+import { createNotebookArtifactSourceScopeProvider } from './artifact-source-scope'
 import { NotebookLocalRpcServer } from './local-rpc-server'
-import { NotebookControlCompletionCapturedError, NotebookRuntimeService } from './runtime-service'
+import {
+  NotebookControlCompletionCapturedError,
+  NotebookRuntimeService,
+  type NotebookExecutionRequest
+} from './runtime-service'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import type { NotebookInputRunLease } from './input-registry'
 import {
@@ -28,6 +37,8 @@ import {
 } from './runtime-paths'
 
 let storageRoot: string | undefined
+
+const helperDigest = (source: string): string => createHash('sha256').update(source).digest('hex')
 
 const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notebook-rpc-'))
@@ -676,7 +687,8 @@ describe('notebook local RPC server', () => {
     const connections: Array<Awaited<ReturnType<typeof server.issueSessionConnection>>> = []
     const dispatch = async (
       sessionId: string,
-      code = 'print(1)'
+      code = 'print(1)',
+      kernelSkillIds?: string[]
     ): Promise<Record<string, unknown>> => {
       const connection = await server.issueSessionConnection(
         sessionId,
@@ -698,7 +710,9 @@ describe('notebook local RPC server', () => {
               sessionId: 'forged',
               workspaceCwd: '/workspace',
               code,
-              executionInvocationId: 'caller-controlled'
+              ...(kernelSkillIds ? { kernelSkillIds } : {}),
+              executionInvocationId: 'caller-controlled',
+              registeredHelperSkillIds: ['forged-skill']
             }
           })
         },
@@ -710,12 +724,16 @@ describe('notebook local RPC server', () => {
     }
 
     const setTurn = (sessionId: string, promptMessageId = 'prompt-1'): void =>
-      server.setArtifactProvenanceContext(sessionId, {
-        rootFrameId: `root-frame-${sessionId}`,
-        agentFrameId: `root-frame-${sessionId}`,
-        messageBranchId: 'branch-1',
-        runtimeSegmentId: 'runtime-1',
-        promptMessageId
+      server.setArtifactTurnBinding(sessionId, {
+        ownerExecutionId: `execution-${sessionId}`,
+        projectId: 'project-1',
+        provenanceContext: {
+          rootFrameId: `root-frame-${sessionId}`,
+          agentFrameId: `root-frame-${sessionId}`,
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-1',
+          promptMessageId
+        }
       })
 
     try {
@@ -728,7 +746,9 @@ describe('notebook local RPC server', () => {
         rawInput: { code: 'print(1)' }
       })
       expect(freshId).toEqual(expect.any(String))
-      expect(await dispatch('fresh')).toMatchObject({ executionInvocationId: freshId })
+      const fresh = await dispatch('fresh')
+      expect(fresh).toMatchObject({ executionInvocationId: freshId })
+      expect(fresh).not.toHaveProperty('registeredHelperSkillIds')
 
       setTurn('missing')
       expect(await dispatch('missing')).not.toHaveProperty('executionInvocationId')
@@ -783,6 +803,30 @@ describe('notebook local RPC server', () => {
       })
       expect(await dispatch('mismatch', 'print(2)')).not.toHaveProperty('executionInvocationId')
       expect(await dispatch('mismatch')).not.toHaveProperty('executionInvocationId')
+
+      setTurn('helper-mismatch')
+      server.authorizeExecution({
+        sessionId: 'helper-mismatch',
+        toolCallId: 'tool-helper-mismatch',
+        promptMessageId: 'prompt-1',
+        method: 'execute',
+        rawInput: { code: 'print(1)', kernelSkillIds: ['helper-a'] }
+      })
+      expect(await dispatch('helper-mismatch', 'print(1)', ['helper-b'])).not.toHaveProperty(
+        'executionInvocationId'
+      )
+
+      setTurn('helper-normalized')
+      const normalizedHelperId = server.authorizeExecution({
+        sessionId: 'helper-normalized',
+        toolCallId: 'tool-helper-normalized',
+        promptMessageId: 'prompt-1',
+        method: 'execute',
+        rawInput: { code: 'print(1)', kernelSkillIds: ['helper-a', 'helper-a'] }
+      })
+      expect(await dispatch('helper-normalized', 'print(1)', ['helper-a'])).toMatchObject({
+        executionInvocationId: normalizedHelperId
+      })
 
       setTurn('repl-default')
       const replId = server.authorizeExecution({
@@ -867,6 +911,67 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('does not claim a delayed execution authorization after the owning turn is replaced', async () => {
+    const execute = vi.fn(async (request: unknown) => request)
+    const server = new NotebookLocalRpcServer({ execute } as never, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection('session-1', 'project-1', 'root-frame-1')
+    const provenanceContext: NotebookRunProvenanceContext = {
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'root-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'shared-prompt'
+    }
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'project-1',
+      provenanceContext
+    })
+    const staleInvocationId = server.authorizeExecution({
+      sessionId: 'session-1',
+      toolCallId: 'tool-from-execution-1',
+      promptMessageId: 'shared-prompt',
+      method: 'execute',
+      rawInput: { code: 'print(1)' }
+    })
+    expect(staleInvocationId).toEqual(expect.any(String))
+
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-2',
+      projectId: 'project-1',
+      provenanceContext
+    })
+
+    try {
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: '/workspace',
+              code: 'print(1)'
+            }
+          })
+        },
+        'delayed stale execution authorization test'
+      )
+
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as { result: Record<string, unknown> }
+      expect(payload.result).not.toHaveProperty('executionInvocationId')
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
   it('fails closed when a Session capability omits its Frame owner', async () => {
     const server = new NotebookLocalRpcServer({} as never)
 
@@ -890,12 +995,16 @@ describe('notebook local RPC server', () => {
       'default-project',
       'root-frame-session-1'
     )
-    server.setArtifactProvenanceContext('session-1', {
-      rootFrameId: 'root-frame-session-1',
-      agentFrameId: 'child-frame-1',
-      messageBranchId: 'branch-child',
-      runtimeSegmentId: 'runtime-child',
-      promptMessageId: 'message-child'
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'child-frame-1',
+        messageBranchId: 'branch-child',
+        runtimeSegmentId: 'runtime-child',
+        promptMessageId: 'message-child'
+      }
     })
 
     try {
@@ -1663,28 +1772,48 @@ describe('notebook local RPC server', () => {
 
   it('requires a bearer token and dispatches notebook execute calls', async () => {
     const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
+      helperModuleCatalog: {
+        resolve: async (id) => ({
+          id,
+          language: 'python',
+          source: 'def public_add(value):\n    return value + 1',
+          sourceDigest: helperDigest('def public_add(value):\n    return value + 1'),
+          exports: ['public_add'],
+          skillIdentity: 'skill:rpc-helper',
+          packageOrigin: 'personal',
+          interfaceRevision: '1',
+          registeredGeneration: 'generation-1'
+        })
+      },
       executorFactory: () => ({
-        execute: async (request) => ({
-          status: 'completed',
-          stdout: '2\n',
-          stderr: '',
-          traceback: '',
-          cwdAfter: request.cwd,
-          outputs: [],
-          workingFiles: []
-        }),
+        execute: async (request) => {
+          executions.push(request)
+          return {
+            status: 'completed' as const,
+            stdout: '2\n',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [],
+            workingFiles: []
+          }
+        },
         shutdown: async () => ({ reaped: true })
       })
     })
+    const resolveSpecialistSkillIds = vi.fn(async () => ['registered-test-skill'])
     const server = new NotebookLocalRpcServer(service, {
       transport: 'tcp',
-      token: 'secret-token'
+      token: 'secret-token',
+      resolveSpecialistSkillIds
     })
+    server.registerSessionSpecialist('session-1', 'specialist-1')
     const connection = await server.ensureStarted()
 
     try {
@@ -1711,7 +1840,8 @@ describe('notebook local RPC server', () => {
             projectId: 'default-project',
             sessionId: 'session-1',
             workspaceCwd: '/workspace',
-            code: 'print(1 + 1)'
+            code: 'print(1 + 1)',
+            kernelSkillIds: ['registered-test-helper']
           }
         })
       })
@@ -1726,6 +1856,11 @@ describe('notebook local RPC server', () => {
           stdout: '2\n'
         }
       })
+      expect(executions[0]).toMatchObject({
+        code: 'print(1 + 1)',
+        helperModules: [{ id: 'registered-test-helper', exports: ['public_add'] }]
+      })
+      expect(resolveSpecialistSkillIds).toHaveBeenCalledWith('specialist-1')
     } finally {
       await server.close()
     }
@@ -1985,12 +2120,16 @@ describe('notebook local RPC server', () => {
     )
 
     server.registerSessionAlias('notebook-session-1', 'real-session-1')
-    server.setArtifactProvenanceContext('real-session-1', {
-      rootFrameId: 'root-frame-real-session-1',
-      agentFrameId: 'root-frame-real-session-1',
-      messageBranchId: 'message-branch-real-session-1',
-      runtimeSegmentId: 'runtime-segment-real-session-1',
-      promptMessageId: 'prompt-1'
+    server.setArtifactTurnBinding('real-session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-real-session-1',
+        agentFrameId: 'root-frame-real-session-1',
+        messageBranchId: 'message-branch-real-session-1',
+        runtimeSegmentId: 'runtime-segment-real-session-1',
+        promptMessageId: 'prompt-1'
+      }
     })
 
     try {
@@ -2037,12 +2176,16 @@ describe('notebook local RPC server', () => {
       'default-project',
       'root-frame-notebook-session-1'
     )
-    server.setArtifactProvenanceContext('real-session-1', {
-      rootFrameId: 'root-frame-real-session-1',
-      agentFrameId: 'root-frame-real-session-1',
-      messageBranchId: 'message-branch-real-session-1',
-      runtimeSegmentId: 'runtime-segment-real-session-1',
-      promptMessageId: 'prompt-1'
+    server.setArtifactTurnBinding('real-session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-real-session-1',
+        agentFrameId: 'root-frame-real-session-1',
+        messageBranchId: 'message-branch-real-session-1',
+        runtimeSegmentId: 'runtime-segment-real-session-1',
+        promptMessageId: 'prompt-1'
+      }
     })
 
     try {
@@ -2086,12 +2229,16 @@ describe('notebook local RPC server', () => {
       'root-frame-stale-session'
     )
     server.registerSessionAlias('notebook-session-1', 'real-session-1')
-    server.setArtifactProvenanceContext('real-session-1', {
-      rootFrameId: 'durable-root-frame',
-      agentFrameId: 'durable-root-frame',
-      messageBranchId: 'message-branch-real-session-1',
-      runtimeSegmentId: 'runtime-segment-real-session-1',
-      promptMessageId: 'prompt-1'
+    server.setArtifactTurnBinding('real-session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'durable-root-frame',
+        agentFrameId: 'durable-root-frame',
+        messageBranchId: 'message-branch-real-session-1',
+        runtimeSegmentId: 'runtime-segment-real-session-1',
+        promptMessageId: 'prompt-1'
+      }
     })
 
     try {
@@ -2164,12 +2311,16 @@ describe('notebook local RPC server', () => {
       'default-project',
       'root-frame-trusted-session'
     )
-    server.setArtifactProvenanceContext('trusted-session', {
-      rootFrameId: 'root-1',
-      agentFrameId: 'agent-1',
-      messageBranchId: 'branch-1',
-      runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'prompt-1'
+    server.setArtifactTurnBinding('trusted-session', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-1',
+        agentFrameId: 'agent-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
     })
     await server.registerNotebookTurnInputs({
       projectId: 'default-project',
@@ -2830,6 +2981,31 @@ describe('notebook local RPC server', () => {
     let rpcEndpoint = ''
     let rpcToken = ''
     const leasedInput: NotebookRunInputFile = { ...registeredInput }
+    const workflowArtifact: NotebookRunInputFile = {
+      inputFileVersionId: 'panel-a-v1',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'panel-a',
+      sourceVersionNumber: 1,
+      sourceProjectId: 'default-project',
+      sourceSessionId: 'panel-worker-1',
+      filename: 'panel_A.png',
+      contentType: 'image/png',
+      sizeBytes: 20,
+      checksum: 'b'.repeat(64),
+      storageKey: 'artifacts/default-project/panel-worker-1/panel-a-v1/content',
+      association: 'turn-attached'
+    }
+    const openRun = vi.fn(
+      async () =>
+        ({
+          getRunInputFiles: () => [leasedInput, workflowArtifact],
+          resolve: async () => {
+            leasedInput.association = 'resolver-accessed'
+            return '/managed/groups.csv'
+          },
+          close: () => [{ ...leasedInput }, { ...workflowArtifact }]
+        }) as never
+    )
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -2876,27 +3052,23 @@ describe('notebook local RPC server', () => {
       inputRegistry: {
         registerTurn: async () => undefined,
         getTurnInputs: () => [registeredInput],
-        openRun: async () =>
-          ({
-            getRunInputFiles: () => [leasedInput],
-            resolve: async () => {
-              leasedInput.association = 'resolver-accessed'
-              return '/managed/groups.csv'
-            },
-            close: () => [{ ...leasedInput }]
-          }) as never,
+        openRun,
         clearSession: () => undefined
       }
     })
     const connection = await server.ensureStarted()
     rpcEndpoint = connection.endpoint
     rpcToken = connection.token
-    server.setArtifactProvenanceContext('session-1', {
-      rootFrameId: 'root-frame-1',
-      agentFrameId: 'root-frame-1',
-      messageBranchId: 'branch-1',
-      runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'message-user-1'
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'root-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'message-user-1'
+      }
     })
     await server.registerNotebookTurnInputs({
       projectId: 'default-project',
@@ -2919,7 +3091,8 @@ describe('notebook local RPC server', () => {
             projectId: 'default-project',
             sessionId: 'session-1',
             workspaceCwd: '/workspace',
-            code: 'print("ok")'
+            code: 'print("ok")',
+            artifactVersionInputs: ['panel-a-v1']
           }
         })
       })
@@ -2934,16 +3107,314 @@ describe('notebook local RPC server', () => {
         messageBranchId: 'branch-1',
         runtimeSegmentId: 'runtime-1',
         promptMessageId: 'message-user-1',
-        inputFiles: [{ ...registeredInput, association: 'resolver-accessed' }]
+        inputFiles: [{ ...registeredInput, association: 'resolver-accessed' }, workflowArtifact]
+      })
+      expect(openRun).toHaveBeenCalledWith({
+        projectId: 'default-project',
+        appSessionId: 'session-1',
+        promptMessageId: 'message-user-1',
+        artifactVersionInputs: ['panel-a-v1']
       })
       const payload = (await response.json()) as {
         result: { inputFiles: Array<Record<string, unknown>> }
       }
       expect(payload.result.inputFiles).toEqual([
-        expect.objectContaining({ inputFileVersionId: 'upload-version-1' })
+        expect.objectContaining({ inputFileVersionId: 'upload-version-1' }),
+        expect.objectContaining({ inputFileVersionId: 'panel-a-v1' })
       ])
       expect(payload.result.inputFiles[0]).not.toHaveProperty('storageKey')
     } finally {
+      await server.close()
+    }
+  })
+
+  it('opens workflow Artifact Version inputs from an attachment-free active root turn', async () => {
+    const registerTurn = vi.fn()
+    const openRun = vi.fn(
+      async () =>
+        ({
+          getRunInputFiles: () => [],
+          resolve: vi.fn(),
+          close: vi.fn()
+        }) as never
+    )
+    const execute = vi.fn(async (request: unknown) => request)
+    const server = new NotebookLocalRpcServer({ execute } as never, {
+      transport: 'tcp',
+      inputRegistry: {
+        registerTurn,
+        getTurnInputs: () => [],
+        openRun,
+        clearSession: vi.fn()
+      }
+    })
+    const connection = await server.issueSessionConnection('session-1', 'project-1', 'root-frame-1')
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'project-1',
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'root-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'message-user-1'
+      }
+    })
+
+    try {
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: '/workspace',
+              code: 'print("ok")',
+              artifactVersionInputs: ['panel-a-v1']
+            }
+          })
+        },
+        'attachment-free Artifact Version input test'
+      )
+
+      expect(response.status).toBe(200)
+      expect(openRun).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        promptMessageId: 'message-user-1',
+        artifactVersionInputs: ['panel-a-v1']
+      })
+      expect(registerTurn).not.toHaveBeenCalled()
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it('carries the root Artifact owner Project binding into the public notebook RPC seam', async () => {
+    const root = await createStorageRoot()
+    const openRun = vi.fn(
+      async () => ({ getRunInputFiles: () => [], resolve: vi.fn(), close: vi.fn() }) as never
+    )
+    const server = new NotebookLocalRpcServer(
+      { execute: vi.fn(async (request: unknown) => request) } as never,
+      {
+        transport: 'tcp',
+        inputRegistry: {
+          registerTurn: vi.fn(),
+          getTurnInputs: () => [],
+          openRun,
+          clearSession: vi.fn()
+        }
+      }
+    )
+    const owner = new ArtifactTurnOwner({
+      dataRoot: root,
+      repository: new ArtifactRepository(root),
+      runRegistry: new ArtifactRunRegistry(),
+      notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(root),
+      notebook: {
+        setArtifactTurnBinding: (sessionId, binding) =>
+          server.setArtifactTurnBinding(sessionId, binding),
+        clearArtifactTurnBinding: (sessionId, ownerExecutionId) =>
+          server.clearArtifactTurnBinding(sessionId, ownerExecutionId)
+      }
+    })
+    const turn = await owner.openRootExecution({
+      executionId: 'execution-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'session-1',
+      projectId: 'project-from-root-owner',
+      agentName: 'Codex',
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'root-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'project-from-root-owner',
+      'root-frame-1'
+    )
+
+    try {
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: '/workspace',
+              code: 'print("ok")',
+              artifactVersionInputs: ['panel-a-v1']
+            }
+          })
+        },
+        'root Artifact owner Project binding test'
+      )
+
+      expect(response.status).toBe(200)
+      expect(openRun).toHaveBeenCalledWith({
+        projectId: 'project-from-root-owner',
+        appSessionId: 'session-1',
+        promptMessageId: 'prompt-1',
+        artifactVersionInputs: ['panel-a-v1']
+      })
+    } finally {
+      connection.release?.()
+      await owner.dispose(turn)
+      await server.close()
+    }
+  })
+
+  it('does not let stale turn cleanup erase a replacement Artifact binding', async () => {
+    const openRun = vi.fn(
+      async () => ({ getRunInputFiles: () => [], resolve: vi.fn(), close: vi.fn() }) as never
+    )
+    const server = new NotebookLocalRpcServer(
+      { execute: vi.fn(async (request: unknown) => request) } as never,
+      {
+        transport: 'tcp',
+        inputRegistry: {
+          registerTurn: vi.fn(),
+          getTurnInputs: () => [],
+          openRun,
+          clearSession: vi.fn()
+        }
+      }
+    )
+    const connection = await server.issueSessionConnection('session-1', 'project-1', 'root-frame-1')
+    const provenanceContext = (promptMessageId: string): NotebookRunProvenanceContext => ({
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'root-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId
+    })
+    const execute = (): Promise<Response> =>
+      fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: '/workspace',
+              code: 'print("ok")',
+              artifactVersionInputs: ['panel-a-v1']
+            }
+          })
+        },
+        'replacement Artifact binding test'
+      )
+
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'project-1',
+      provenanceContext: provenanceContext('prompt-1')
+    })
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-2',
+      projectId: 'project-1',
+      provenanceContext: provenanceContext('prompt-2')
+    })
+    server.clearArtifactTurnBinding('session-1', 'execution-1')
+
+    try {
+      await expect(execute()).resolves.toMatchObject({ status: 200 })
+      expect(openRun).toHaveBeenLastCalledWith(
+        expect.objectContaining({ promptMessageId: 'prompt-2' })
+      )
+
+      server.clearArtifactTurnBinding('session-1', 'execution-2')
+      const cleared = await execute()
+      expect(cleared.status).toBe(500)
+      await expect(cleared.json()).resolves.toEqual({
+        error:
+          'artifactVersionInputs requires an active Artifact provenance context and input registry.'
+      })
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it('rejects an unavailable workflow Version before notebook code can run', async () => {
+    const execute = vi.fn(async () => ({ status: 'completed' }))
+    const openRun = vi.fn(async () => {
+      throw new Error('Artifact Version is unavailable in this Project: cross-project-version')
+    })
+    const server = new NotebookLocalRpcServer({ execute } as never, {
+      transport: 'tcp',
+      inputRegistry: {
+        registerTurn: vi.fn(),
+        getTurnInputs: () => [],
+        openRun,
+        clearSession: vi.fn()
+      }
+    })
+    const connection = await server.issueSessionConnection('session-1', 'project-1', 'root-frame-1')
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'project-1',
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'root-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+
+    try {
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: '/workspace',
+              code: 'write_sentinel()',
+              artifactVersionInputs: ['cross-project-version']
+            }
+          })
+        },
+        'unavailable Artifact Version input test'
+      )
+
+      expect(response.status).toBe(500)
+      await expect(response.json()).resolves.toEqual({
+        error: 'Artifact Version is unavailable in this Project: cross-project-version'
+      })
+      expect(execute).not.toHaveBeenCalled()
+    } finally {
+      connection.release?.()
       await server.close()
     }
   })
@@ -2978,12 +3449,16 @@ describe('notebook local RPC server', () => {
       }
     })
     const connection = await server.ensureStarted()
-    server.setArtifactProvenanceContext('session-1', {
-      rootFrameId: 'root-frame-1',
-      agentFrameId: 'root-frame-1',
-      messageBranchId: 'branch-1',
-      runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'message-user-1'
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'root-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'message-user-1'
+      }
     })
     await server.registerNotebookTurnInputs({
       projectId: 'default-project',

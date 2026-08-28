@@ -17,6 +17,7 @@ type NotebookApplicationDeps = Pick<
   | 'locale'
   | 'appVersion'
   | 'translate'
+  | 'helperModuleCatalog'
 > &
   ProjectIdScope & {
     events: ApplicationEventPublisher

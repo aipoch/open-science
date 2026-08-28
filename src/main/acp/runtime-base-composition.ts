@@ -152,7 +152,8 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
                   options.artifacts.dataRoot
                 ),
                 notebook: {
-                  setArtifactProvenanceContext: options.notebook.setArtifactProvenanceContext
+                  setArtifactTurnBinding: options.notebook.setArtifactTurnBinding,
+                  clearArtifactTurnBinding: options.notebook.clearArtifactTurnBinding
                 }
               }
             : {})

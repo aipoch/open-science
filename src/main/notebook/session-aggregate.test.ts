@@ -36,6 +36,12 @@ describe('NotebookSessionAggregate', () => {
     const first = session.kernelEpochId('python:default-python')
     expect(session.kernelEpochId('python:default-python')).toBe(first)
 
+    const managed = session.kernelEpoch('python:default-python', false, '')
+    expect(session.kernelEpoch('python:default-python', false, '')).toBe(managed)
+    expect(session.kernelEpoch('python:default-python', false, '/usr/bin/python3')).not.toBe(
+      managed
+    )
+
     await session.terminateExecutor('python', 'default-python')
 
     expect(terminate).toHaveBeenCalledWith('python', 'default-python')
