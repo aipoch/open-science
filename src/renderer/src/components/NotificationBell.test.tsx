@@ -584,4 +584,46 @@ describe('NotificationBell', () => {
     await act(async () => close?.click())
     expect(trigger?.getAttribute('aria-expanded')).toBe('false')
   })
+
+  it('keeps mobile message-center focus modal and restores its trigger on dismissal', async () => {
+    stubMobileViewport()
+    container.id = 'root'
+    await act(async () =>
+      root.render(
+        <>
+          <button type="button">Background action</button>
+          <NotificationBell />
+        </>
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')
+    trigger?.focus()
+    await act(async () => trigger?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[aria-label="Message center"]')
+    expect(container.inert).toBe(true)
+    expect(container.getAttribute('aria-hidden')).toBe('true')
+    expect(dialog?.contains(document.activeElement)).toBe(true)
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button')?.focus()
+    })
+    expect(dialog?.contains(document.activeElement)).toBe(true)
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(document.activeElement).toBe(trigger)
+    expect(container.inert).toBe(false)
+    expect(container.getAttribute('aria-hidden')).toBeNull()
+
+    trigger?.focus()
+    await act(async () => trigger?.click())
+    const dismiss = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Dismiss messages"]'
+    )
+    await act(async () => dismiss?.click())
+    expect(document.activeElement).toBe(trigger)
+  })
 })
