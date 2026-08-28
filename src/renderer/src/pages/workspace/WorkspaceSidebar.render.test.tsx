@@ -471,6 +471,7 @@ describe('WorkspaceSidebar accessible render', () => {
       )
       if (!input) throw new Error('Session preview title editor did not render')
       expect(input.value).toBe('Old title')
+      expect(input.maxLength).toBe(80)
 
       input.value = '  Renamed title  '
       await act(async () =>
@@ -610,6 +611,53 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(readOnly).not.toContain('session-hover-preview-title-button')
     expect(editable).toContain('data-slot="session-hover-preview-title-button"')
     expect(editable).toContain('aria-label="Rename session title"')
+  })
+
+  it('keeps the preview open when focus moves from the row into the card', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview session={{ id: 'focus', title: 'Focus Session' }} canRename>
+              <button type="button">Focus trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+
+      await act(async () => trigger.focus())
+      const titleButton = document.body.querySelector<HTMLElement>(
+        '[data-slot="session-hover-preview-title-button"]'
+      )
+      if (!titleButton) throw new Error('Session preview title button did not render')
+
+      // Focus moving into the portaled card is an internal transition: the card stays open.
+      await act(async () =>
+        trigger.dispatchEvent(
+          new FocusEvent('focusout', { bubbles: true, relatedTarget: titleButton })
+        )
+      )
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
+
+      // Focus leaving the hover region entirely closes the card.
+      await act(async () =>
+        trigger.dispatchEvent(
+          new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body })
+        )
+      )
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
   })
 
   it('truncates long Session titles to one line and Descriptions to three lines', async () => {

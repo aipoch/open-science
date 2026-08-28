@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { SESSION_DETAILS_TITLE_MAX_LENGTH } from '../../../../shared/session-persistence'
 
 const SESSION_HOVER_PREVIEW_DELAY_MS = 0
 // Radix-internal close grace while the pointer crosses from the row onto the card; the explicit
@@ -180,6 +181,7 @@ const SessionHoverPreviewTitle = ({
         ref={inputRef}
         defaultValue={title}
         autoFocus
+        maxLength={SESSION_DETAILS_TITLE_MAX_LENGTH}
         aria-label={t('Session title')}
         className="h-auto rounded-sm px-1 py-0 text-sm font-semibold leading-5"
         onFocus={(event) => event.currentTarget.select()}
@@ -314,6 +316,9 @@ const SessionHoverPreview = ({
 
   const requestClose = useCallback((): void => {
     if (editingRef.current) return
+    // Focus moved into the portaled card (e.g. Tab from the row to the rename control): keep the
+    // interactive card open until that focus leaves the card.
+    if (contentRef.current?.contains(document.activeElement)) return
     closeNow(session.id)
   }, [closeNow, session.id])
 
@@ -359,6 +364,12 @@ const SessionHoverPreview = ({
         onFocus={() => requestOpen(session.id)}
         onBlur={(event) => {
           if (event.currentTarget.matches(':hover')) return
+          if (
+            event.relatedTarget instanceof Node &&
+            contentRef.current?.contains(event.relatedTarget)
+          ) {
+            return
+          }
           requestClose()
         }}
       >
