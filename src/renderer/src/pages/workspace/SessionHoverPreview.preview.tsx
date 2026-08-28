@@ -1,4 +1,4 @@
-/* Hallmark · SessionHoverPreview 8-state development preview; not mounted in production. */
+/* SessionHoverPreview 8-state development preview; not mounted in production. */
 import { LoaderCircle } from 'lucide-react'
 
 import { SessionHoverPreviewCard } from './SessionHoverPreview'

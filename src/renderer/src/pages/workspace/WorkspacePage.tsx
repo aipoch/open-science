@@ -959,6 +959,7 @@ const WorkspacePage = ({
             onOpenFiles={openFilesPreview}
             onOpenSession={openSessionWithoutExportError}
             onRenameSession={sessionController.actions.openEdit}
+            onRenameSessionTitle={sessionController.actions.renameTitle}
             canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
             onDownloadArtifacts={sessionController.actions.openDownloadArtifacts}
             onViewNotebook={sessionController.actions.openNotebook}
