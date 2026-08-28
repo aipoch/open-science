@@ -7,6 +7,8 @@ import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import {
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   normalizeClaudeCodeRefusalText
 } from '../../shared/acp'
 import type {
@@ -178,8 +180,21 @@ type TaskRunnerDependencies = {
   now: () => number
 }
 
+type PendingTaskRunActivity = Omit<PersistedToolActivity, 'sortIndex'>
+
+type TaskRunEventAccumulator = {
+  assistantOutput: string
+  assistantEventIds: string[]
+  images: PersistedMessageImage[]
+  imageBytes: number
+  terminalStop?: Pick<AcpRuntimeEvent, 'turnUsage' | 'modelCallUsage'>
+  runtimeError?: Pick<AcpRuntimeEvent, 'text' | 'providerError'>
+  activities: Map<string, PendingTaskRunActivity>
+  artifactClaimIds: string[]
+}
+
 type MutableTaskRun = TaskRun & {
-  events: AcpRuntimeEvent[]
+  eventAccumulator?: TaskRunEventAccumulator
   completion: Promise<void>
   promptMessageId: string
   progressPhase: TaskRunProgressPhase
@@ -224,6 +239,91 @@ const isVisibleProviderEvent = (event: AcpRuntimeEvent): boolean =>
   event.role !== 'user' &&
   VISIBLE_PROVIDER_EVENT_KINDS.has(event.kind) &&
   Boolean(event.text?.trim() || event.title?.trim() || getAcpRuntimeEventImage(event))
+
+const createTaskRunEventAccumulator = (): TaskRunEventAccumulator => ({
+  assistantOutput: '',
+  assistantEventIds: [],
+  images: [],
+  imageBytes: 0,
+  activities: new Map(),
+  artifactClaimIds: []
+})
+
+const accumulateToolActivity = (
+  accumulator: TaskRunEventAccumulator,
+  event: AcpRuntimeEvent
+): void => {
+  if (event.kind !== 'tool' || !event.toolCallId) return
+  const existing = accumulator.activities.get(event.toolCallId)
+  const isTerminal = existing?.status === 'completed' || existing?.status === 'failed'
+  const eventIds = existing?.eventIds ?? []
+  eventIds.push(event.id)
+  accumulator.activities.set(event.toolCallId, {
+    id: event.toolCallId,
+    kind: 'tool',
+    title: event.title?.trim() || existing?.title || 'Tool call',
+    status: isTerminal
+      ? existing.status
+      : event.status === 'failed'
+        ? 'failed'
+        : event.status === 'completed'
+          ? 'completed'
+          : 'in_progress',
+    eventIds,
+    providerToolName: event.providerToolName ?? existing?.providerToolName,
+    toolKind: event.toolKind ?? existing?.toolKind,
+    toolContent: event.toolContent ?? existing?.toolContent,
+    toolLocations: event.toolLocations ?? existing?.toolLocations,
+    rawInput: event.rawInput ?? existing?.rawInput,
+    rawOutput: event.rawOutput ?? existing?.rawOutput,
+    terminalOutput: event.terminalOutput ?? existing?.terminalOutput,
+    terminalExitCode: event.terminalExitCode ?? existing?.terminalExitCode,
+    createdAt: existing?.createdAt ?? event.timestamp,
+    updatedAt: isTerminal ? existing.updatedAt : event.timestamp
+  })
+}
+
+const accumulateTaskRunEvent = (
+  accumulator: TaskRunEventAccumulator,
+  event: AcpRuntimeEvent
+): void => {
+  if (event.kind === 'message' && event.role === 'assistant') {
+    accumulator.assistantOutput += getAcpRuntimeEventText(event) ?? ''
+    accumulator.assistantEventIds.push(event.id)
+    const image = getAcpRuntimeEventImage(event)
+    if (
+      image &&
+      accumulator.images.length < MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE &&
+      accumulator.imageBytes + image.byteLength <= MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE
+    ) {
+      accumulator.images.push({ id: event.id, ...image })
+      accumulator.imageBytes += image.byteLength
+    }
+  }
+  if (event.kind === 'stop') {
+    accumulator.terminalStop = {
+      turnUsage: event.turnUsage,
+      modelCallUsage: event.modelCallUsage
+    }
+  }
+  if (event.kind === 'error' && event.text?.trim()) {
+    accumulator.runtimeError = { text: event.text, providerError: event.providerError }
+  }
+  if (event.kind === 'artifact' && event.artifactClaimId) {
+    accumulator.artifactClaimIds.push(event.artifactClaimId)
+  }
+  accumulateToolActivity(accumulator, event)
+}
+
+const createTaskRunActivities = (
+  accumulator: TaskRunEventAccumulator,
+  now: number
+): PersistedToolActivity[] =>
+  [...accumulator.activities.values()].map((activity, index) => ({
+    ...activity,
+    eventIds: [...activity.eventIds],
+    sortIndex: now + index
+  }))
 
 const cloneRun = (run: MutableTaskRun): TaskRun => ({
   id: run.id,
@@ -732,7 +832,7 @@ class TaskRunner {
       preferredComputeHostIds: [
         ...(session.selectedComputeHosts ?? session.enabledComputeHosts ?? [])
       ],
-      events: [],
+      eventAccumulator: createTaskRunEventAccumulator(),
       promptMessageId: session.activeRun!.promptMessageId,
       progressPhase: 'accepted' as const,
       providerAccepted: false,
@@ -1051,7 +1151,7 @@ class TaskRunner {
     let completed: CompletedTaskSession | undefined
     let completionError: unknown
     try {
-      completed = await this.completeSession(acceptedSession, run.events)
+      completed = await this.completeSession(acceptedSession, run.eventAccumulator!)
     } catch (error) {
       if (error instanceof PartialTaskCompletionError) {
         completed = error.completion
@@ -1067,6 +1167,7 @@ class TaskRunner {
     const failure = completionError ?? (promptFailureWasCancelled ? undefined : promptError)
     if (failure) {
       await this.failRun(run, acceptedSession, completed, failure)
+      run.eventAccumulator = undefined
       return
     }
 
@@ -1074,8 +1175,10 @@ class TaskRunner {
       await this.dependencies.sessions.save(completed!.session)
     } catch (error) {
       await this.failRun(run, acceptedSession, completed, error)
+      run.eventAccumulator = undefined
       return
     }
+    run.eventAccumulator = undefined
     if (!this.disposed && !run.cancellation && completed!.session.autoReviewEnabled === true) {
       const reviewedMessage = [...completed!.session.messages]
         .reverse()
@@ -1127,9 +1230,7 @@ class TaskRunner {
     completed: CompletedTaskSession | undefined,
     failure: unknown
   ): Promise<void> {
-    const runtimeError = [...run.events]
-      .reverse()
-      .find((event) => event.kind === 'error' && event.text?.trim())
+    const runtimeError = run.eventAccumulator?.runtimeError
     const message = runtimeError?.text?.trim() || toErrorMessage(failure)
     const failed: PersistedChatSession = {
       ...(completed?.session ?? session),
@@ -1152,26 +1253,15 @@ class TaskRunner {
 
   private async completeSession(
     session: PersistedChatSession,
-    events: AcpRuntimeEvent[]
+    accumulator: TaskRunEventAccumulator
   ): Promise<CompletedTaskSession> {
     const now = this.dependencies.now()
-    const assistantEvents = events.filter(
-      (event) => event.kind === 'message' && event.role === 'assistant'
-    )
-    const terminalStopEvent = [...events].reverse().find((event) => event.kind === 'stop')
-    const streamedOutput = assistantEvents
-      .map((event) => getAcpRuntimeEventText(event) ?? '')
-      .join('')
     const output =
       session.agentFrameworkId === 'claude-code'
-        ? normalizeClaudeCodeRefusalText(streamedOutput)
-        : streamedOutput
-    const images = assistantEvents
-      .map((event) => {
-        const image = getAcpRuntimeEventImage(event)
-        return image ? ({ id: event.id, ...image } satisfies PersistedMessageImage) : undefined
-      })
-      .filter((image): image is PersistedMessageImage => Boolean(image))
+        ? normalizeClaudeCodeRefusalText(accumulator.assistantOutput)
+        : accumulator.assistantOutput
+    const images = accumulator.images.map((image) => ({ ...image }))
+    const terminalStopEvent = accumulator.terminalStop
     const assistantMessageId = this.dependencies.createId()
     const assistantMessage: PersistedChatMessage = {
       id: assistantMessageId,
@@ -1179,7 +1269,7 @@ class TaskRunner {
       content: output,
       status: 'complete',
       responseToMessageId: session.activeRun?.promptMessageId,
-      eventIds: assistantEvents.map((event) => event.id),
+      eventIds: [...accumulator.assistantEventIds],
       images: images.length ? images : undefined,
       ...(terminalStopEvent?.turnUsage
         ? {
@@ -1194,7 +1284,7 @@ class TaskRunner {
       createdAt: now,
       updatedAt: now
     }
-    const activities = this.createActivities(events, now)
+    const activities = createTaskRunActivities(accumulator, now)
     const finalizedArtifacts: ArtifactFile[] = []
     const buildCompletion = (): CompletedTaskSession => {
       const uniqueArtifacts = [
@@ -1232,11 +1322,10 @@ class TaskRunner {
       }
     }
     let ownershipSessionPersisted = false
-    for (const event of events) {
-      if (event.kind !== 'artifact' || !event.artifactClaimId) continue
+    for (const artifactClaimId of accumulator.artifactClaimIds) {
       try {
         const request = {
-          claimId: event.artifactClaimId,
+          claimId: artifactClaimId,
           messageId: assistantMessageId
         }
         let result = await this.dependencies.artifacts.finalizeRun(request)
@@ -1264,40 +1353,6 @@ class TaskRunner {
     return buildCompletion()
   }
 
-  private createActivities(events: AcpRuntimeEvent[], now: number): PersistedToolActivity[] {
-    const activities = new Map<string, PersistedToolActivity>()
-    for (const event of events) {
-      if (event.kind !== 'tool' || !event.toolCallId) continue
-      const existing = activities.get(event.toolCallId)
-      const isTerminal = existing?.status === 'completed' || existing?.status === 'failed'
-      activities.set(event.toolCallId, {
-        id: event.toolCallId,
-        kind: 'tool',
-        title: event.title?.trim() || existing?.title || 'Tool call',
-        status: isTerminal
-          ? existing.status
-          : event.status === 'failed'
-            ? 'failed'
-            : event.status === 'completed'
-              ? 'completed'
-              : 'in_progress',
-        sortIndex: existing?.sortIndex ?? now + activities.size,
-        eventIds: [...(existing?.eventIds ?? []), event.id],
-        providerToolName: event.providerToolName ?? existing?.providerToolName,
-        toolKind: event.toolKind ?? existing?.toolKind,
-        toolContent: event.toolContent ?? existing?.toolContent,
-        toolLocations: event.toolLocations ?? existing?.toolLocations,
-        rawInput: event.rawInput ?? existing?.rawInput,
-        rawOutput: event.rawOutput ?? existing?.rawOutput,
-        terminalOutput: event.terminalOutput ?? existing?.terminalOutput,
-        terminalExitCode: event.terminalExitCode ?? existing?.terminalExitCode,
-        createdAt: existing?.createdAt ?? event.timestamp,
-        updatedAt: isTerminal ? existing.updatedAt : event.timestamp
-      })
-    }
-    return [...activities.values()]
-  }
-
   private captureEvent(event: AcpRuntimeEvent): void {
     if (!event.sessionId) return
     for (const run of this.runs.values()) {
@@ -1305,7 +1360,7 @@ class TaskRunner {
       if (event.promptMessageId !== undefined && event.promptMessageId !== run.promptMessageId) {
         continue
       }
-      run.events.push(event)
+      if (run.eventAccumulator) accumulateTaskRunEvent(run.eventAccumulator, event)
       if (event.kind === 'plan' && event.planProjection) {
         run.attention =
           event.planProjection.lifecycle === 'awaiting_approval'

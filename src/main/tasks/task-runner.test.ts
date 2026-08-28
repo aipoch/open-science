@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
+import { queryObjects } from 'node:v8'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -47,6 +48,8 @@ const session: PersistedChatSession = {
   createdAt: 1,
   updatedAt: 2
 }
+
+class RetainedRunEventPayload {}
 
 type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'sessions'> & {
   sessions?: Omit<Partial<TaskSessionPort>, 'save'> & {
@@ -101,6 +104,52 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it('does not retain raw runtime event payloads during or after a Run', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-created' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'thought-event',
+            timestamp: 10,
+            kind: 'thought',
+            level: 'info',
+            sessionId: 'session-created',
+            text: 'Working',
+            raw: new RetainedRunEventPayload()
+          })
+          await promptGate
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Review these papers.' })
+    try {
+      expect(queryObjects(RetainedRunEventPayload)).toBe(0)
+    } finally {
+      finishPrompt?.()
+      await runner.waitForRun(started.id)
+    }
+
+    expect(queryObjects(RetainedRunEventPayload)).toBe(0)
+  })
+
   it('returns the Session authority Compute preference from start, get, and wait', async () => {
     const saved: PersistedChatSession[] = []
     const runner = createRunner({
@@ -2241,6 +2290,111 @@ describe('TaskRunner', () => {
     })
     expect(savedSessions.at(-1)?.artifacts).toEqual([
       expect.objectContaining({ id: 'artifact-file', createdAt: 10 })
+    ])
+  })
+
+  it('freezes completion projections before asynchronous artifact finalization', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let signalFinalizeStarted: (() => void) | undefined
+    let finishFinalize: (() => void) | undefined
+    const finalizeStarted = new Promise<void>((resolve) => {
+      signalFinalizeStarted = resolve
+    })
+    const finalizeGate = new Promise<void>((resolve) => {
+      finishFinalize = resolve
+    })
+    const savedSessions: PersistedChatSession[] = []
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-artifact-gate' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'assistant-before-finalize',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-artifact-gate',
+            role: 'assistant',
+            text: 'Before finalize.'
+          })
+          emitEvent?.({
+            id: 'tool-before-finalize',
+            timestamp: 11,
+            kind: 'tool',
+            level: 'info',
+            sessionId: 'session-artifact-gate',
+            toolCallId: 'tool-finalize',
+            status: 'in_progress'
+          })
+          emitEvent?.({
+            id: 'artifact-before-finalize',
+            timestamp: 12,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: 'session-artifact-gate',
+            artifactClaimId: 'claim-finalize'
+          })
+        }
+      },
+      artifacts: {
+        finalizeRun: async () => {
+          signalFinalizeStarted?.()
+          await finalizeGate
+          return { ok: true, artifacts: [] }
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Create a report.' })
+    await finalizeStarted
+    emitEvent?.({
+      id: 'assistant-during-finalize',
+      timestamp: 13,
+      kind: 'message',
+      level: 'info',
+      sessionId: 'session-artifact-gate',
+      role: 'assistant',
+      text: 'During finalize.'
+    })
+    emitEvent?.({
+      id: 'tool-during-finalize',
+      timestamp: 14,
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'session-artifact-gate',
+      toolCallId: 'tool-finalize',
+      status: 'completed'
+    })
+    finishFinalize?.()
+    await runner.waitForRun(started.id)
+
+    expect(savedSessions.at(-1)?.messages.at(-1)).toMatchObject({
+      content: 'Before finalize.',
+      eventIds: ['assistant-before-finalize']
+    })
+    expect(savedSessions.at(-1)?.activities).toEqual([
+      expect.objectContaining({
+        id: 'tool-finalize',
+        status: 'in_progress',
+        eventIds: ['tool-before-finalize']
+      })
     ])
   })
 

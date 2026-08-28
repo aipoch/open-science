@@ -118,14 +118,26 @@ export const claudeCodeFramework: AgentFramework = {
           Skill: LOAD_SKILL_TOOL_CALLABLE_NAME
         }
       : sessionOptions.toolAliases
-    const allowedTools = skillRuntimeEnabled
-      ? [
-          ...new Set([
-            ...stringArrayValue(sessionOptions.allowedTools),
-            LOAD_SKILL_TOOL_CALLABLE_NAME
-          ])
-        ]
-      : sessionOptions.allowedTools
+    const sessionHooks = recordValue(sessionOptions.hooks)
+    const hooks = skillRuntimeEnabled
+      ? {
+          ...sessionHooks,
+          PreToolUse: [
+            ...(Array.isArray(sessionHooks.PreToolUse) ? sessionHooks.PreToolUse : []),
+            {
+              matcher: LOAD_SKILL_TOOL_CALLABLE_NAME,
+              hooks: [
+                async () => ({
+                  hookSpecificOutput: {
+                    hookEventName: 'PreToolUse' as const,
+                    permissionDecision: 'allow' as const
+                  }
+                })
+              ]
+            }
+          ]
+        }
+      : sessionOptions.hooks
     const disallowedTools = Object.freeze([
       ...new Set([
         ...stringArrayValue(sessionOptions.disallowedTools),
@@ -154,7 +166,7 @@ export const claudeCodeFramework: AgentFramework = {
           ...sessionOptions,
           ...(mcpServers !== undefined ? { mcpServers } : {}),
           ...(toolAliases !== undefined ? { toolAliases } : {}),
-          ...(allowedTools !== undefined ? { allowedTools } : {}),
+          ...(hooks !== undefined ? { hooks } : {}),
           disallowedTools,
           managedSettings,
           env,
