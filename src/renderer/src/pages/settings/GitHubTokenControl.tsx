@@ -149,6 +149,11 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
             setToken(value)
             setFeedback(null)
           }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter') return
+            event.preventDefault()
+            void save()
+          }}
         />
         <p className="text-xs text-muted-foreground">
           {t('Used only for GitHub Skill requests and encrypted with system credential storage.')}{' '}

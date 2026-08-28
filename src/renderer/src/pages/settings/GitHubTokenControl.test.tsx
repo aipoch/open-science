@@ -88,7 +88,13 @@ describe('GitHubTokenControl', () => {
 
     enterToken('github_pat_verified')
     expect(save?.disabled).toBe(false)
-    await click('Verify and save')
+    await act(async () => {
+      document.body
+        .querySelector<HTMLInputElement>('#github-token')
+        ?.dispatchEvent(
+          new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' })
+        )
+    })
     await flush()
 
     expect(settingsApi.saveGitHubToken).toHaveBeenCalledWith({ token: 'github_pat_verified' })
