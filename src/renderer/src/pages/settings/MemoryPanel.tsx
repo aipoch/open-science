@@ -383,10 +383,7 @@ const EntryRow = ({
   const [copied, setCopied] = useState(false)
   const entryCategoryName =
     entry.categoryId === ABOUT_YOU_MEMORY_CATEGORY_ID ? t('About you') : entry.categoryName
-  const categoryLabel =
-    viewKind === 'project'
-      ? (entryCategoryName ?? (entry.origin === 'agent' ? t('Uncategorized') : null))
-      : null
+  const categoryLabel = viewKind === 'project' ? entryCategoryName : null
   const projectLabel = viewKind === 'category' ? entry.projectName : null
   const showMetadata = entry.origin === 'agent' || categoryLabel || projectLabel
 

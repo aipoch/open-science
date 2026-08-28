@@ -416,6 +416,37 @@ describe('MemoryPanel', () => {
     expect(onOpenProject).toHaveBeenCalledWith('project-a')
   })
 
+  it('omits the category tag for uncategorized project-only memory', async () => {
+    useMemoryStore.setState({
+      projects: [
+        memoryProject({
+          entries: [
+            memoryEntry({
+              id: 'entry-project-only',
+              categoryId: null,
+              categoryName: null,
+              projectId: 'project-a',
+              projectName: 'Project A',
+              content: 'This memory only belongs to Project A.',
+              origin: 'agent'
+            })
+          ]
+        })
+      ]
+    })
+    await renderMemoryPanel()
+
+    fireEvent.click(
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+        button.textContent?.includes('Project A')
+      )!
+    )
+
+    expect(
+      container.querySelector('[data-slot="memory-entry-metadata"]')?.textContent?.trim()
+    ).toBe('auto')
+  })
+
   it('separates category navigation from project navigation', async () => {
     useMemoryStore.setState({ projects: [memoryProject()] })
     await renderMemoryPanel()

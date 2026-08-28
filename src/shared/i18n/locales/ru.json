@@ -3935,7 +3935,6 @@
     "This category and all {{count}} notes in it will be deleted from current app data. Restoring a database backup may restore older memory._other": "Эта категория и {{count}} заметки в ней будут удалены из текущих данных приложения. При восстановлении резервной копии базы данных старые записи памяти могут появиться снова.",
     "Edit category": "Редактировать категорию",
     "Create": "Создать",
-    "Uncategorized": "Без категории",
     "Project memory": "Память проекта",
     "Archived project memories.": "Память архивного проекта.",
     "Project memories.": "Память проекта.",

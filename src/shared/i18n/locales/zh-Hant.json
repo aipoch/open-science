@@ -3519,7 +3519,6 @@
     "This category and all {{count}} notes in it will be deleted from current app data. Restoring a database backup may restore older memory._other": "此分類及其中的全部 {{count}} 則筆記將從目前的應用程式資料中刪除。還原資料庫備份時，舊記憶可能會一併還原。",
     "Edit category": "編輯分類",
     "Create": "建立",
-    "Uncategorized": "未分類",
     "Project memory": "專案記憶",
     "Archived project memories.": "已封存專案的記憶。",
     "Project memories.": "專案記憶。",
