@@ -2293,6 +2293,111 @@ describe('TaskRunner', () => {
     ])
   })
 
+  it('freezes completion projections before asynchronous artifact finalization', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let signalFinalizeStarted: (() => void) | undefined
+    let finishFinalize: (() => void) | undefined
+    const finalizeStarted = new Promise<void>((resolve) => {
+      signalFinalizeStarted = resolve
+    })
+    const finalizeGate = new Promise<void>((resolve) => {
+      finishFinalize = resolve
+    })
+    const savedSessions: PersistedChatSession[] = []
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-artifact-gate' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'assistant-before-finalize',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-artifact-gate',
+            role: 'assistant',
+            text: 'Before finalize.'
+          })
+          emitEvent?.({
+            id: 'tool-before-finalize',
+            timestamp: 11,
+            kind: 'tool',
+            level: 'info',
+            sessionId: 'session-artifact-gate',
+            toolCallId: 'tool-finalize',
+            status: 'in_progress'
+          })
+          emitEvent?.({
+            id: 'artifact-before-finalize',
+            timestamp: 12,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: 'session-artifact-gate',
+            artifactClaimId: 'claim-finalize'
+          })
+        }
+      },
+      artifacts: {
+        finalizeRun: async () => {
+          signalFinalizeStarted?.()
+          await finalizeGate
+          return { ok: true, artifacts: [] }
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Create a report.' })
+    await finalizeStarted
+    emitEvent?.({
+      id: 'assistant-during-finalize',
+      timestamp: 13,
+      kind: 'message',
+      level: 'info',
+      sessionId: 'session-artifact-gate',
+      role: 'assistant',
+      text: 'During finalize.'
+    })
+    emitEvent?.({
+      id: 'tool-during-finalize',
+      timestamp: 14,
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'session-artifact-gate',
+      toolCallId: 'tool-finalize',
+      status: 'completed'
+    })
+    finishFinalize?.()
+    await runner.waitForRun(started.id)
+
+    expect(savedSessions.at(-1)?.messages.at(-1)).toMatchObject({
+      content: 'Before finalize.',
+      eventIds: ['assistant-before-finalize']
+    })
+    expect(savedSessions.at(-1)?.activities).toEqual([
+      expect.objectContaining({
+        id: 'tool-finalize',
+        status: 'in_progress',
+        eventIds: ['tool-before-finalize']
+      })
+    ])
+  })
+
   it('settles a run as failed when final session persistence fails', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let saveCount = 0

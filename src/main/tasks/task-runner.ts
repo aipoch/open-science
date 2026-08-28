@@ -321,6 +321,7 @@ const createTaskRunActivities = (
 ): PersistedToolActivity[] =>
   [...accumulator.activities.values()].map((activity, index) => ({
     ...activity,
+    eventIds: [...activity.eventIds],
     sortIndex: now + index
   }))
 
@@ -1259,7 +1260,7 @@ class TaskRunner {
       session.agentFrameworkId === 'claude-code'
         ? normalizeClaudeCodeRefusalText(accumulator.assistantOutput)
         : accumulator.assistantOutput
-    const images = accumulator.images
+    const images = accumulator.images.map((image) => ({ ...image }))
     const terminalStopEvent = accumulator.terminalStop
     const assistantMessageId = this.dependencies.createId()
     const assistantMessage: PersistedChatMessage = {
@@ -1268,7 +1269,7 @@ class TaskRunner {
       content: output,
       status: 'complete',
       responseToMessageId: session.activeRun?.promptMessageId,
-      eventIds: accumulator.assistantEventIds,
+      eventIds: [...accumulator.assistantEventIds],
       images: images.length ? images : undefined,
       ...(terminalStopEvent?.turnUsage
         ? {
