@@ -446,6 +446,7 @@ const createApplicationModules = async (
     capability: new SettingsService({
       repository: settingsRepository,
       skillRuntimeMcpEntryPath: mainEntryPath,
+      openAlexFetch: netFetchStandard,
       applyNetworkProxy: (settings) => networkProxyRuntime.apply(settings).then(() => undefined),
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
@@ -1455,6 +1456,11 @@ const createApplicationModules = async (
       },
       replayConnectorApproval: (request) =>
         broadcastToRenderers('connectors:approval-request', request),
+      broadcastCredentialRequest: (request) =>
+        broadcastToRenderers('connectors:credential-request', request),
+      replayCredentialRequest: (request) =>
+        broadcastToRenderers('connectors:credential-request', request),
+      onCredentialRequestSettled: (id) => broadcastToRenderers('connectors:credential-settled', id),
       broadcastSkillImportApproval: buildSkillImportApprovalBroadcast({
         broadcastToRenderers,
         taskNotifications,
@@ -1486,6 +1492,7 @@ const createApplicationModules = async (
     mcpClientManager,
     skillImporter: conversationSkillImporter,
     connectorApprovals: approvalBroker,
+    credentialRequests: credentialRequestBroker,
     skillImportApprovals: skillImportApprovalBroker
   } = connectorApplication
   composition.phase('connectors')
@@ -2130,6 +2137,14 @@ const createApplicationModules = async (
       typeof id === 'string' ? approvalBroker.getPending(id) : null
     )
     ipcMainHandle('connectors:approval-replay-pending', () => approvalBroker.replayPending())
+    ipcMainHandle(
+      'connectors:credential-respond',
+      (_event, request: { id: string; configured: boolean }) =>
+        credentialRequestBroker.respond(request.id, request.configured)
+    )
+    ipcMainHandle('connectors:credential-replay-pending', () =>
+      credentialRequestBroker.replayPending()
+    )
     ipcMainHandle(
       'skills:conversation-import-respond',
       (_event, response: ConversationSkillImportApprovalResponse) => {
@@ -3354,6 +3369,7 @@ const createApplicationModules = async (
       skills: settingsWorkflows.skills,
       connectors: settingsWorkflows.connectors,
       connectorApprovals: approvalBroker,
+      credentialRequests: credentialRequestBroker,
       skillImportApprovals: skillImportApprovalBroker
     },
     settingsRuntime: { workflows: settingsWorkflows.runtime },

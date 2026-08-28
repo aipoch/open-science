@@ -63,6 +63,8 @@ const createCommands = (): ConnectorCommands => ({
   setConnectorAutoAllow: vi.fn(async () => snapshot()),
   setToolPermission: vi.fn(async () => detail),
   setNcbiCredentials: vi.fn(async () => snapshot()),
+  setOpenAlexCredential: vi.fn(async () => snapshot()),
+  validateOpenAlexCredential: vi.fn(async () => ({ valid: true as const })),
   addCustomServer: vi.fn(async () => snapshot()),
   updateCustomServer: vi.fn(async () => snapshot()),
   authenticateCustomServer: vi.fn(async () => snapshot()),
@@ -71,7 +73,8 @@ const createCommands = (): ConnectorCommands => ({
   cancelCustomServerAuthentication: vi.fn(async () => undefined),
   setCustomServerEnabled: vi.fn(async () => snapshot()),
   removeCustomServer: vi.fn(async () => snapshot()),
-  respondConnectorApproval: vi.fn(async () => undefined)
+  respondConnectorApproval: vi.fn(async () => undefined),
+  respondConnectorCredentialRequest: vi.fn(async () => undefined)
 })
 
 const createHarness = (

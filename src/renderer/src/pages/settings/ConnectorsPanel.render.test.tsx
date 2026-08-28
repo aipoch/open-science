@@ -945,18 +945,14 @@ describe('ConnectorsPanel (groups)', () => {
 })
 
 describe('ConnectorsPanel (contact email)', () => {
-  it('saves the entered contact email on Edit then Save', () => {
+  it('opens the centralized credentials editor', () => {
+    const onOpenCredentials = vi.fn()
     act(() => {
-      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} onOpenCredentials={onOpenCredentials} />)
     })
 
-    clickButtonByText('Edit')
-    setValue('Contact email', 'me@example.com')
-    clickButtonByText('Save')
+    clickButtonByText('Manage credentials')
 
-    expect(useSettingsStore.getState().setNcbiCredentials).toHaveBeenCalledWith({
-      contactEmail: 'me@example.com',
-      apiKey: undefined
-    })
+    expect(onOpenCredentials).toHaveBeenCalledOnce()
   })
 })

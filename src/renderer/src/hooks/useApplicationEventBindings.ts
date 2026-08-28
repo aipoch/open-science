@@ -87,6 +87,11 @@ const useApplicationEventBindings = ({
   )
   const enqueueConnectorApproval = useSettingsStore((state) => state.enqueueApproval)
   const dismissConnectorApproval = useSettingsStore((state) => state.dismissApproval)
+  const hasCredentialRequest = useSettingsStore(
+    (state) => state.pendingCredentialRequests.length > 0
+  )
+  const enqueueCredentialRequest = useSettingsStore((state) => state.enqueueCredentialRequest)
+  const dismissCredentialRequest = useSettingsStore((state) => state.dismissCredentialRequest)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
   const dismissComputeApproval = useComputeStore((state) => state.dismissApproval)
   const hasComputeApproval = useComputeStore((state) =>
@@ -141,6 +146,7 @@ const useApplicationEventBindings = ({
           update: isUpdateDialogOpen,
           computeApproval: hasComputeApproval,
           connectorApproval: hasConnectorApproval,
+          credentialRequest: hasCredentialRequest,
           skillImportApproval: hasSkillImportApproval,
           globalSearch: isGlobalSearchOpen,
           settings: isSettingsOpen,
@@ -150,6 +156,7 @@ const useApplicationEventBindings = ({
     [
       hasComputeApproval,
       hasConnectorApproval,
+      hasCredentialRequest,
       hasDataRootRecovery,
       hasLegacyDataMove,
       hasSkillImportApproval,
@@ -284,6 +291,16 @@ const useApplicationEventBindings = ({
       removeRequest()
     }
   }, [dismissConnectorApproval, enqueueConnectorApproval])
+
+  useEffect(() => {
+    const removeRequest = window.api.settings.onConnectorCredentialRequest(enqueueCredentialRequest)
+    const removeSettled = window.api.settings.onConnectorCredentialSettled(dismissCredentialRequest)
+    void window.api.settings.replayPendingConnectorCredentialRequests().catch(() => undefined)
+    return () => {
+      removeSettled()
+      removeRequest()
+    }
+  }, [dismissCredentialRequest, enqueueCredentialRequest])
 
   useEffect(
     () => window.api.settings.onSkillImportApprovalRequest(enqueueSkillImport),

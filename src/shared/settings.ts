@@ -1328,6 +1328,9 @@ export type ConnectorDetailView = ConnectorView & {
 // NCBI / research-service credential state surfaced to the renderer (never the plaintext key).
 export type NcbiCredentialsView = { contactEmail?: string; hasApiKey: boolean }
 
+// Renderer-safe OpenAlex state. The key itself never crosses the main-process boundary.
+export type OpenAlexCredentialView = { hasApiKey: boolean }
+
 // Transport for a user-added custom MCP server: stdio (local command) or a remote HTTP variant.
 export type CustomServerTransport = 'stdio' | 'streamable_http' | 'sse'
 
@@ -1352,6 +1355,7 @@ export type CustomServerView = {
   args?: string[]
   url?: string
   hasHeaders?: boolean
+  hasEnv?: boolean
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
@@ -1371,12 +1375,18 @@ export type ConnectorsSnapshot = {
   // Local IDs reserved until interrupted custom Connector deletion cleanup completes.
   reservedCustomServerIds?: string[]
   ncbi: NcbiCredentialsView
+  // Optional only for compatibility with an older main process during local development.
+  openAlex?: OpenAlexCredentialView
 }
 
 export type SetConnectorEnabledRequest = { id: string; enabled: boolean }
 export type SetConnectorAutoAllowRequest = { id: string; autoAllow: boolean }
 export type SetToolPermissionRequest = { toolId: string; permission: ToolPermission }
 export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string }
+export type SetOpenAlexCredentialRequest = { apiKey: string }
+export type ValidateOpenAlexCredentialRequest = { apiKey: string }
+export type OpenAlexCredentialValidation =
+  { valid: true } | { valid: false; reason: 'invalid-format' | 'rejected' | 'unavailable' }
 
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
@@ -1513,6 +1523,17 @@ export type ConnectorApprovalRequest = {
 export type ConnectorApprovalScope = 'once' | 'session' | 'project' | 'global'
 export type ApprovalDecision = ConnectorApprovalScope | 'deny'
 export type RespondApprovalRequest = { id: string; decision: ApprovalDecision }
+
+export type ConnectorCredentialRequestInfo = {
+  credentialId: 'openalex'
+  connector: string
+  method: string
+  sessionId?: string
+}
+
+// Public metadata for a parked Connector call. The credential value is never sent on this event.
+export type ConnectorCredentialRequest = ConnectorCredentialRequestInfo & { id: string }
+export type RespondConnectorCredentialRequest = { id: string; configured: boolean }
 
 // Minimal settings slice the remote-file-browser bookmark helpers depend on. Declared here in
 // src/shared (not src/main) so src/shared/remote-fs.ts stays within the shared layer — the full

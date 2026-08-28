@@ -31,6 +31,9 @@ import type {
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetOpenAlexCredentialRequest,
+  ValidateOpenAlexCredentialRequest,
+  OpenAlexCredentialValidation,
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
   SetSkillEnabledRequest,
@@ -148,6 +151,8 @@ export type SettingsServiceOptions = {
   skillRegistry?: SkillRegistry
   userSkills?: UserSkillRepository
   githubFetch?: FetchLike
+  // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
+  openAlexFetch?: typeof fetch
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
   // One-shot managed Claude installer, injectable so tests avoid real network/fs.
@@ -207,7 +212,7 @@ class SettingsService {
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
-    this.connectors = new ConnectorSettingsModule(this.repository)
+    this.connectors = new ConnectorSettingsModule(this.repository, options.openAlexFetch)
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     const userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skills = new SkillCatalogModule({
@@ -950,6 +955,16 @@ class SettingsService {
   // Sets or clears the shared contact email and NCBI API key (encrypted at rest), returning state.
   async setNcbiCredentials(request: SetNcbiCredentialsRequest): Promise<ConnectorsSnapshot> {
     return this.connectors.setNcbiCredentials(request)
+  }
+
+  async setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<ConnectorsSnapshot> {
+    return this.connectors.setOpenAlexCredential(request)
+  }
+
+  async validateOpenAlexCredential(
+    request: ValidateOpenAlexCredentialRequest
+  ): Promise<OpenAlexCredentialValidation> {
+    return this.connectors.validateOpenAlexCredential(request)
   }
 
   // Adds a user-provided custom MCP server (add-time trust is the caller's responsibility). The

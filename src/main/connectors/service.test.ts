@@ -12,6 +12,62 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it('parks an OpenAlex call for credential recovery and resumes the exact call after save', async () => {
+    let connectors = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      openAlexApiKeyRef: undefined as string | undefined
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ meta: { count: 0 }, results: [] }))
+    const requestCredential = vi.fn(async () => {
+      connectors = { ...connectors, openAlexApiKeyRef: 'encrypted-ref' }
+      return true
+    })
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => connectors,
+      getConnectorsFresh: async () => connectors,
+      resolveApiKey: (ref) => (ref === 'encrypted-ref' ? 'OPENALEX_KEY' : undefined),
+      requestCredential
+    })
+
+    await svc.call(
+      'literature',
+      'openalex_search_works',
+      { query: 'CRISPR', max_records: 1 },
+      { origin: 'internal', sessionId: 'session-1' }
+    )
+
+    expect(requestCredential).toHaveBeenCalledWith(
+      {
+        credentialId: 'openalex',
+        connector: 'literature',
+        method: 'openalex_search_works',
+        sessionId: 'session-1'
+      },
+      undefined
+    )
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(new URL(String(fetchImpl.mock.calls[0][0])).searchParams.get('api_key')).toBe(
+      'OPENALEX_KEY'
+    )
+  })
+
+  it('does not dispatch OpenAlex when credential recovery is declined', async () => {
+    const fetchImpl = vi.fn()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
+      resolveApiKey: () => undefined,
+      requestCredential: vi.fn().mockResolvedValue(false)
+    })
+
+    await expect(
+      svc.call('literature', 'openalex_search_works', { query: 'CRISPR', max_records: 1 }, internal)
+    ).rejects.toThrow(/credential_required/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('rejects calls to a disabled connector', async () => {
     const svc = new ConnectorService({
       getConnectors: () => ({

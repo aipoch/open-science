@@ -216,6 +216,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-close-preference',
     'set-default-permission-profile',
     'set-notifications-enabled',
+    'set-openalex-credential',
     'set-package-mirror',
     'set-network-proxy',
     'set-project-files-filter',
@@ -223,6 +224,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'uninstall-codebuddy',
     'uninstall-codex',
     'uninstall-opencode',
+    'validate-openalex-credential',
     'wait-xai-oauth-login'
   ],
   storage: [

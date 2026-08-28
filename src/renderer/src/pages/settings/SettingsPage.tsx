@@ -9,6 +9,7 @@ import {
   ChartNoAxesCombined,
   Cloud,
   Globe,
+  KeyRound,
   LockKeyhole,
   Maximize2,
   Menu,
@@ -73,6 +74,7 @@ import { ConnectorsNavIcon } from './connector-icons'
 import type { ComputeView } from './ComputePanel'
 import type { ArchivedView } from './ArchivedPanel'
 import type { MemoryView } from './MemoryPanel'
+import type { CredentialsView } from './CredentialsPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
 import {
@@ -192,6 +194,9 @@ const PermissionsPanel = lazy(async () => {
   )
   return { default: module.PermissionsPanel }
 })
+const CredentialsPanel = lazy(async () => ({
+  default: (await import('./CredentialsPanel')).CredentialsPanel
+}))
 const ArchivedPanel = lazy(async () => ({
   default: (await import('./ArchivedPanel')).ArchivedPanel
 }))
@@ -274,6 +279,7 @@ const PANEL_NAME_LOWER = {
   Compute: 'compute',
   Specialists: 'specialists',
   Memory: 'memory',
+  Credentials: 'credentials',
   Archived: 'archived'
 } as const
 
@@ -307,6 +313,7 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'agent', labelKey: 'Agent', Icon: Bot },
       { id: 'tags', labelKey: 'Tags', Icon: TagsIcon },
       { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
+      { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound },
       { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
@@ -552,6 +559,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     currentRoute.panel === 'archived' ? currentRoute.view : { kind: 'list' }
   const memoryView: MemoryView =
     currentRoute.panel === 'memory' ? currentRoute.view : { kind: 'list' }
+  const credentialsView: CredentialsView =
+    currentRoute.panel === 'credentials' ? currentRoute.view : { kind: 'list' }
   const activeTagId = currentRoute.panel === 'tags' ? currentRoute.tagId : undefined
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
@@ -620,6 +629,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     navigate({ panel: 'archived', view: archived })
 
   const navigateMemory = (memory: MemoryView): void => navigate({ panel: 'memory', view: memory })
+
+  const navigateCredentials = (credentials: CredentialsView): void =>
+    navigate({ panel: 'credentials', view: credentials })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
   // panel title shows). Covers both the skills and model panels.
@@ -753,6 +765,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         rootLabelKey: 'Memory',
         rootTo: { panel: 'memory', view: { kind: 'list' } },
         leaf: memoryView.kind === 'create' ? t('New category') : t('Edit category')
+      }
+    }
+    if (activePanel === 'credentials' && credentialsView.kind === 'service') {
+      const leaf =
+        credentialsView.serviceId === 'github'
+          ? t('GitHub')
+          : credentialsView.serviceId === 'openalex'
+            ? t('OpenAlex')
+            : t('Literature access')
+      return {
+        rootLabelKey: 'Credentials',
+        rootTo: { panel: 'credentials', view: { kind: 'list' } },
+        leaf
       }
     }
     if (activePanel === 'archived' && archivedView.kind === 'project') {
@@ -1281,6 +1306,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     <SkillsPanel
                       view={skillsView}
                       onNavigate={navigateSkills}
+                      onOpenGitHubCredential={() =>
+                        navigate({
+                          panel: 'credentials',
+                          view: { kind: 'service', serviceId: 'github' }
+                        })
+                      }
                       onOpenTag={navigateTag}
                       onOpenSpecialist={(usage) =>
                         navigate({
@@ -1369,6 +1400,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           key={connectorsView.id}
                           id={connectorsView.id}
                           onManagePermissions={() => navigatePanel('permissions')}
+                          onManageCredentials={() =>
+                            navigate({
+                              panel: 'credentials',
+                              view: { kind: 'service', serviceId: 'openalex' }
+                            })
+                          }
                         />
                       </div>
                     ) : connectorsView.kind === 'add' ? (
@@ -1415,6 +1452,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     ) : (
                       <ConnectorsPanel
                         onNavigate={navigateConnectors}
+                        onOpenCredentials={() =>
+                          navigate({
+                            panel: 'credentials',
+                            view: { kind: 'service', serviceId: 'literature' }
+                          })
+                        }
                         onOpenTag={navigateTag}
                         onOpenSpecialist={(usage) =>
                           navigate({
@@ -1442,6 +1485,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     ) : (
                       <ComputePanel onNavigate={navigateCompute} />
                     )
+                  ) : activePanel === 'credentials' ? (
+                    <CredentialsPanel
+                      view={credentialsView}
+                      onNavigate={navigateCredentials}
+                      onOpenConnector={(id) =>
+                        navigate({ panel: 'connectors', view: { kind: 'edit', id } })
+                      }
+                      onOpenProvider={(provider) => openEdit(provider)}
+                    />
                   ) : activePanel === 'storage' ? (
                     <StoragePanel
                       onContinueToAgent={() => {

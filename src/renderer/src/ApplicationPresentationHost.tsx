@@ -23,6 +23,7 @@ import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { ComputeApprovalDialog } from '@/pages/settings/ComputeApprovalDialog'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
+import { ConnectorCredentialDialog } from '@/pages/settings/ConnectorCredentialDialog'
 import { SettingsPage, type SettingsPageHandle } from '@/pages/settings/SettingsPage'
 import { SkillImportApprovalDialog } from '@/pages/settings/SkillImportApprovalDialog'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
@@ -218,6 +219,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         active={activePresentation === 'connectorApproval'}
         blockedSessionIds={events.blockedApprovalSessionIds}
       />
+      <ConnectorCredentialDialog active={activePresentation === 'credentialRequest'} />
       <SkillImportApprovalDialog
         active={activePresentation === 'skillImportApproval'}
         blockedSessionIds={events.blockedApprovalSessionIds}

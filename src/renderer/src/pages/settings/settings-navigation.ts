@@ -1,6 +1,7 @@
 import type { EnvironmentCheckId, EnvironmentCheckItem } from '../../../../shared/settings'
 import type { ArchivedView } from './ArchivedPanel'
 import type { ComputeView } from './ComputePanel'
+import type { CredentialsView } from './CredentialsPanel'
 import type { ConnectorsView } from './ConnectorsPanel'
 import type { MemoryView } from './MemoryPanel'
 import type { SkillsView } from './SkillsPanel'
@@ -16,6 +17,7 @@ export type SettingsPanelId =
   | 'tags'
   | 'compute'
   | 'permissions'
+  | 'credentials'
   | 'archived'
   | 'usage'
   | 'general'
@@ -41,15 +43,17 @@ export type SettingsRoute = {
           ? { panel: Panel; view: NetworkView }
           : Panel extends 'compute'
             ? { panel: Panel; view: ComputeView }
-            : Panel extends 'specialists'
-              ? { panel: Panel; view: SpecialistsView }
-              : Panel extends 'archived'
-                ? { panel: Panel; view: ArchivedView }
-                : Panel extends 'memory'
-                  ? { panel: Panel; view: MemoryView }
-                  : Panel extends 'tags'
-                    ? { panel: Panel; tagId?: string }
-                    : { panel: Panel }
+            : Panel extends 'credentials'
+              ? { panel: Panel; view: CredentialsView }
+              : Panel extends 'specialists'
+                ? { panel: Panel; view: SpecialistsView }
+                : Panel extends 'archived'
+                  ? { panel: Panel; view: ArchivedView }
+                  : Panel extends 'memory'
+                    ? { panel: Panel; view: MemoryView }
+                    : Panel extends 'tags'
+                      ? { panel: Panel; tagId?: string }
+                      : { panel: Panel }
 }[SettingsPanelId]
 
 export const INITIAL_SETTINGS_ROUTE: SettingsRoute = {
@@ -64,6 +68,7 @@ export const settingsPanelRoute = (panel: SettingsPanelId): SettingsRoute => {
     case 'connectors':
     case 'network':
     case 'compute':
+    case 'credentials':
     case 'specialists':
     case 'archived':
     case 'memory':

@@ -10,6 +10,7 @@ import {
 } from '../application-command-router'
 import { canSatisfyHumanApproval, type CallerContext } from '../caller-context'
 import type { ApprovalBroker } from '../connectors/approval-broker'
+import type { CredentialRequestBroker } from '../connectors/credential-request-broker'
 import type { SkillImportApprovalBroker } from '../skills/conversation-import'
 import { readConversationSkillImportEnabled } from './transport-validation'
 import type { ConnectorSettingsWorkflows } from './workflows/connectors'
@@ -34,6 +35,8 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
   | 'setNcbiCredentials'
+  | 'setOpenAlexCredential'
+  | 'validateOpenAlexCredential'
   | 'addCustomServer'
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
@@ -127,6 +130,16 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'setNcbiCredentials'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'setNcbiCredentials'>
   >('settings:set-ncbi-credentials'),
+  setOpenAlexCredential: defineApplicationCommand<
+    'settings:set-openalex-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'setOpenAlexCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'setOpenAlexCredential'>
+  >('settings:set-openalex-credential'),
+  validateOpenAlexCredential: defineApplicationCommand<
+    'settings:validate-openalex-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'validateOpenAlexCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'validateOpenAlexCredential'>
+  >('settings:validate-openalex-credential'),
   addCustomServer: defineApplicationCommand<
     'settings:add-custom-server',
     OwnerArgs<ConnectorIntegrationWorkflows, 'addCustomServer'>,
@@ -177,6 +190,16 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     readonly [],
     ReturnType<ApprovalBroker['replayPending']>
   >('connectors:approval-replay-pending'),
+  respondConnectorCredentialRequest: defineApplicationCommand<
+    'connectors:credential-respond',
+    readonly [request: { id: string; configured: boolean }],
+    ReturnType<CredentialRequestBroker['respond']>
+  >('connectors:credential-respond'),
+  replayPendingConnectorCredentialRequests: defineApplicationCommand<
+    'connectors:credential-replay-pending',
+    readonly [],
+    ReturnType<CredentialRequestBroker['replayPending']>
+  >('connectors:credential-replay-pending'),
   respondSkillImportApproval: defineApplicationCommand<
     'skills:conversation-import-respond',
     readonly [response: ConversationSkillImportApprovalResponse],
@@ -208,6 +231,8 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.setConnectorAutoAllow,
     settingsIntegrationApplicationCommands.setToolPermission,
     settingsIntegrationApplicationCommands.setNcbiCredentials,
+    settingsIntegrationApplicationCommands.setOpenAlexCredential,
+    settingsIntegrationApplicationCommands.validateOpenAlexCredential,
     settingsIntegrationApplicationCommands.addCustomServer,
     settingsIntegrationApplicationCommands.setCustomServerEnabled,
     settingsIntegrationApplicationCommands.removeCustomServer,
@@ -224,6 +249,8 @@ const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.respondConnectorApproval,
     settingsIntegrationApplicationCommands.replayConnectorApproval,
     settingsIntegrationApplicationCommands.replayPendingConnectorApprovals,
+    settingsIntegrationApplicationCommands.respondConnectorCredentialRequest,
+    settingsIntegrationApplicationCommands.replayPendingConnectorCredentialRequests,
     settingsIntegrationApplicationCommands.respondSkillImportApproval,
     settingsIntegrationApplicationCommands.replayPendingSkillImportApprovals
   ] as const
@@ -233,6 +260,7 @@ type IntegrationSettingsApplicationCommandDependencies = Readonly<{
   skills: SkillIntegrationWorkflows
   connectors: ConnectorIntegrationWorkflows
   connectorApprovals: Pick<ApprovalBroker, 'getPending' | 'replayPending' | 'respond'>
+  credentialRequests: Pick<CredentialRequestBroker, 'replayPending' | 'respond'>
   skillImportApprovals: Pick<SkillImportApprovalBroker, 'respond' | 'replayPending'>
 }>
 
@@ -267,6 +295,14 @@ const registerIntegrationSettingsApplicationCommands = (
         dependencies.connectors.setToolPermission(args[0]),
       'settings:set-ncbi-credentials': ({ args }) =>
         dependencies.connectors.setNcbiCredentials(args[0]),
+      'settings:set-openalex-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-openalex-credential')
+        return dependencies.connectors.setOpenAlexCredential(args[0])
+      },
+      'settings:validate-openalex-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:validate-openalex-credential')
+        return dependencies.connectors.validateOpenAlexCredential(args[0])
+      },
       'settings:add-custom-server': ({ args }) => dependencies.connectors.addCustomServer(args[0]),
       'settings:set-custom-server-enabled': ({ args }) =>
         dependencies.connectors.setCustomServerEnabled(args[0]),
@@ -305,6 +341,18 @@ const registerIntegrationSettingsApplicationCommands = (
           throw new Error('Only a current human caller can reopen connector approval requests.')
         }
         return dependencies.connectorApprovals.replayPending()
+      },
+      'connectors:credential-respond': ({ args, callerContext }) => {
+        if (!canSatisfyHumanApproval(callerContext)) {
+          throw new Error('Only a current human caller can respond to credential requests.')
+        }
+        return dependencies.credentialRequests.respond(args[0].id, args[0].configured)
+      },
+      'connectors:credential-replay-pending': ({ callerContext }) => {
+        if (!canSatisfyHumanApproval(callerContext)) {
+          throw new Error('Only a current human caller can reopen credential requests.')
+        }
+        return dependencies.credentialRequests.replayPending()
       },
       'skills:conversation-import-respond': ({ args, callerContext }) => {
         if (!canSatisfyHumanApproval(callerContext)) {

@@ -310,15 +310,20 @@ import type {
   SetConnectorAutoAllowRequest,
   SetToolPermissionRequest,
   SetNcbiCredentialsRequest,
+  SetOpenAlexCredentialRequest,
+  ValidateOpenAlexCredentialRequest,
+  OpenAlexCredentialValidation,
   AddCustomServerRequest,
   AuthenticateCustomServerRequest,
   SetCustomServerEnabledRequest,
   RemoveCustomServerRequest,
   UpdateCustomServerRequest,
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest,
   ConversationSkillImportApprovalResponse,
   RespondApprovalRequest,
+  RespondConnectorCredentialRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult
@@ -1607,6 +1612,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.onConnectorApprovalSettled': callable<
     (listener: AcpListener<string>) => RemoveListener
   >()('settings', ['connectors:approval-settled', EVENT], { optionalMember: true }),
+  'settings.onConnectorCredentialRequest': callable<
+    (listener: AcpListener<ConnectorCredentialRequest>) => RemoveListener
+  >()('settings', ['connectors:credential-request', EVENT]),
+  'settings.onConnectorCredentialSettled': callable<
+    (listener: AcpListener<string>) => RemoveListener
+  >()('settings', ['connectors:credential-settled', EVENT]),
   'settings.onConnectorRuntimeChanged': callable<
     (listener: AcpListener<undefined>) => RemoveListener
   >()('settings', ['settings:connector-runtime-changed', EVENT]),
@@ -1652,12 +1663,18 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     ['connectors:approval-replay-pending'],
     { optionalMember: true }
   ),
+  'settings.replayPendingConnectorCredentialRequests': callable<() => Promise<void>>()('settings', [
+    'connectors:credential-replay-pending'
+  ]),
   'settings.replayPendingSkillImportApprovals': callable<() => Promise<void>>()('settings', [
     'skills:conversation-import-replay-pending'
   ]),
   'settings.respondConnectorApproval': callable<
     (request: RespondApprovalRequest) => Promise<void>
   >()('settings', ['connectors:approval-respond']),
+  'settings.respondConnectorCredentialRequest': callable<
+    (request: RespondConnectorCredentialRequest) => Promise<void>
+  >()('settings', ['connectors:credential-respond']),
   'settings.respondSkillImportApproval': callable<
     (response: ConversationSkillImportApprovalResponse) => Promise<void>
   >()('settings', ['skills:conversation-import-respond']),
@@ -1704,6 +1721,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.setNcbiCredentials': callable<
     (request: SetNcbiCredentialsRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-ncbi-credentials']),
+  'settings.setOpenAlexCredential': callable<
+    (request: SetOpenAlexCredentialRequest) => Promise<ConnectorsSnapshot>
+  >()('settings', ['settings:set-openalex-credential', LOCAL]),
+  'settings.validateOpenAlexCredential': callable<
+    (request: ValidateOpenAlexCredentialRequest) => Promise<OpenAlexCredentialValidation>
+  >()('settings', ['settings:validate-openalex-credential', LOCAL]),
   'settings.setNetworkProxy': callable<
     (request: SetNetworkProxyRequest) => Promise<NetworkProxySettings>
   >()('settings', ['settings:set-network-proxy', LOCAL]),

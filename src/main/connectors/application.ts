@@ -7,10 +7,12 @@ import type { UploadRepository } from '../uploads/repository'
 import type { SpecialistView } from '../../shared/specialist'
 import type {
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from '../skills/conversation-import'
 import { ApprovalBroker } from './approval-broker'
+import { CredentialRequestBroker } from './credential-request-broker'
 import { ParserEngine } from './engine'
 import { McpClientManager } from './mcp-client-manager'
 import { toCustomMcpConfig } from './custom-mcp-bootstrap'
@@ -28,6 +30,9 @@ export type ConnectorApplicationDeps = {
     id: string,
     state: 'resolved' | 'rejected' | 'expired' | 'cancelled'
   ) => void
+  broadcastCredentialRequest: (request: ConnectorCredentialRequest) => void
+  replayCredentialRequest: (request: ConnectorCredentialRequest) => void
+  onCredentialRequestSettled: (id: string) => void
   broadcastSkillImportApproval: (request: ConversationSkillImportApprovalRequest) => void
   onSkillImportSettled: (id: string) => void
   onSkillImportLifecycleSettled: (id: string, state: 'resolved' | 'expired' | 'cancelled') => void
@@ -47,6 +52,7 @@ export type ConnectorApplicationDeps = {
   onSkillsChanged?: () => void
   mcpClientManager?: McpClientManager
   connectorApprovals?: ApprovalBroker
+  credentialRequests?: CredentialRequestBroker
   skillImportApprovals?: SkillImportApprovalBroker
 }
 
@@ -56,6 +62,7 @@ type ConnectorApplication = {
   mcpClientManager: McpClientManager
   skillImporter: ConversationSkillImporter
   connectorApprovals: ApprovalBroker
+  credentialRequests: CredentialRequestBroker
   skillImportApprovals: SkillImportApprovalBroker
 }
 
@@ -112,6 +119,14 @@ const createConnectorApplication = (
       onSettled: deps.onSkillImportSettled,
       onLifecycleSettled: deps.onSkillImportLifecycleSettled
     })
+  const credentialRequests =
+    deps.credentialRequests ??
+    new CredentialRequestBroker({
+      generateId: () => randomUUID(),
+      broadcast: deps.broadcastCredentialRequest,
+      replay: deps.replayCredentialRequest,
+      onSettled: deps.onCredentialRequestSettled
+    })
 
   const skillImporter = new ConversationSkillImporter({
     uploads: deps.uploads,
@@ -146,6 +161,7 @@ const createConnectorApplication = (
         },
         signal
       ),
+    requestCredential: (request, signal) => credentialRequests.request(request, signal),
     resolveSpecialistProfile: deps.resolveSpecialistProfile,
     onCustomServerAvailabilityChanged: (serverId, availability) =>
       runtimeSettings.setCustomServerDispatchAvailability(serverId, availability),
@@ -158,6 +174,7 @@ const createConnectorApplication = (
     mcpClientManager,
     skillImporter,
     connectorApprovals,
+    credentialRequests,
     skillImportApprovals
   }
 }
@@ -173,10 +190,14 @@ export const createConnectorApplicationModule = async (
     })
 
   try {
+    const capability = createConnectorApplication(deps, mcpClientManager)
     return {
       name: 'connector-application',
-      capability: createConnectorApplication(deps, mcpClientManager),
-      dispose: () => mcpClientManager.closeAll()
+      capability,
+      dispose: async () => {
+        capability.credentialRequests.cancelAll()
+        await mcpClientManager.closeAll()
+      }
     }
   } catch (error) {
     try {

@@ -44,6 +44,8 @@ const expectedConnectorChannels = [
   'settings:set-connector-auto-allow',
   'settings:set-tool-permission',
   'settings:set-ncbi-credentials',
+  'settings:set-openalex-credential',
+  'settings:validate-openalex-credential',
   'settings:add-custom-server',
   'settings:set-custom-server-enabled',
   'settings:remove-custom-server',
@@ -57,6 +59,8 @@ const expectedApprovalChannels = [
   'connectors:approval-respond',
   'connectors:approval-replay',
   'connectors:approval-replay-pending',
+  'connectors:credential-respond',
+  'connectors:credential-replay-pending',
   'skills:conversation-import-respond',
   'skills:conversation-import-replay-pending'
 ] as const
@@ -125,6 +129,7 @@ const createDependencies = (): Readonly<{
         replayPending: vi.fn(),
         respond: vi.fn()
       },
+      credentialRequests: { respond: vi.fn(), replayPending: vi.fn() },
       skillImportApprovals: { respond: vi.fn(), replayPending: vi.fn() }
     },
     skillMethod: skills.method,
@@ -133,7 +138,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 25-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 29-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -167,7 +172,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(25)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(29)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -176,14 +181,16 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(25)
+    expect(integrationContracts).toHaveLength(29)
     expect(
       integrationContracts
         ?.filter(
           (contract) =>
             contract.channel !== 'settings:authenticate-custom-server' &&
             contract.channel !== 'settings:cancel-custom-server-authentication' &&
-            contract.channel !== 'settings:retry-custom-server'
+            contract.channel !== 'settings:retry-custom-server' &&
+            contract.channel !== 'settings:set-openalex-credential' &&
+            contract.channel !== 'settings:validate-openalex-credential'
         )
         .every(
           (contract) =>
@@ -198,7 +205,9 @@ describe('Settings integration application commands', () => {
           (contract) =>
             contract.channel === 'settings:authenticate-custom-server' ||
             contract.channel === 'settings:cancel-custom-server-authentication' ||
-            contract.channel === 'settings:retry-custom-server'
+            contract.channel === 'settings:retry-custom-server' ||
+            contract.channel === 'settings:set-openalex-credential' ||
+            contract.channel === 'settings:validate-openalex-credential'
         )
         .every(
           (contract) =>
@@ -390,7 +399,7 @@ describe('Settings integration application commands', () => {
     })
   })
 
-  it('allows authentication and runtime retry only from the local app', async () => {
+  it('allows authentication, secret writes, validation, and runtime retry only locally', async () => {
     const { connectorMethod, dependencies } = createDependencies()
     const router = createApplicationCommandRouter()
     registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
@@ -414,6 +423,22 @@ describe('Settings integration application commands', () => {
       invocation([{ id: 'server-1' }] as const, createWebCallerContext('local-human'))
     )
     expect(connectorMethod('retryCustomServer')).toHaveBeenCalledWith({ id: 'server-1' })
+
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.setOpenAlexCredential,
+      invocation([{ apiKey: 'openalex-key' }] as const, createWebCallerContext('local-human'))
+    )
+    expect(connectorMethod('setOpenAlexCredential')).toHaveBeenCalledWith({
+      apiKey: 'openalex-key'
+    })
+
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.validateOpenAlexCredential,
+      invocation([{ apiKey: 'openalex-key' }] as const, createWebCallerContext('local-human'))
+    )
+    expect(connectorMethod('validateOpenAlexCredential')).toHaveBeenCalledWith({
+      apiKey: 'openalex-key'
+    })
 
     await expect(
       router.dispatcher.invoke(
@@ -448,6 +473,28 @@ describe('Settings integration application commands', () => {
         )
       )
     ).rejects.toThrow('Channel only available from the local app: settings:retry-custom-server')
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.setOpenAlexCredential,
+        invocation(
+          [{ apiKey: 'openalex-key' }] as const,
+          createWebCallerContext('remote-human', { location: 'remote' })
+        )
+      )
+    ).rejects.toThrow('Channel only available from the local app: settings:set-openalex-credential')
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.validateOpenAlexCredential,
+        invocation(
+          [{ apiKey: 'openalex-key' }] as const,
+          createWebCallerContext('remote-human', { location: 'remote' })
+        )
+      )
+    ).rejects.toThrow(
+      'Channel only available from the local app: settings:validate-openalex-credential'
+    )
   })
 
   it('allows only current human callers to settle Connector and Skill-import approvals', async () => {

@@ -56,6 +56,7 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.connectors.every((c) => !c.autoAllow)).toBe(true)
     expect(snapshot.customServers).toEqual([])
     expect(snapshot.ncbi).toEqual({ contactEmail: undefined, hasApiKey: false })
+    expect(snapshot.openAlex).toEqual({ hasApiKey: false })
   })
 
   it('disables and re-enables one connector', async () => {
@@ -138,6 +139,62 @@ describe('ConnectorSettingsModule', () => {
 
     snapshot = await service.setNcbiCredentials({ contactEmail: 'second@lab.org', apiKey: '' })
     expect(snapshot.ncbi).toEqual({ contactEmail: 'second@lab.org', hasApiKey: false })
+  })
+
+  it('encrypts OpenAlex at rest and exposes only configured state', async () => {
+    let snapshot = await service.setOpenAlexCredential({ apiKey: 'openalex-secret' })
+    expect(snapshot.openAlex).toEqual({ hasApiKey: true })
+    expect(JSON.stringify(snapshot)).not.toContain('openalex-secret')
+
+    const raw = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(raw).not.toContain('openalex-secret')
+    expect(JSON.parse(raw).connectors.openAlexApiKeyRef).toMatch(/^enc:/)
+
+    snapshot = await service.setOpenAlexCredential({ apiKey: '' })
+    expect(snapshot.openAlex).toEqual({ hasApiKey: false })
+  })
+
+  it('validates an OpenAlex key without persisting or returning the secret', async () => {
+    const openAlexFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response('{}', { status: 200 }))
+    const validatingService = new ConnectorSettingsModule(repository, openAlexFetch)
+
+    const result = await validatingService.validateOpenAlexCredential({
+      apiKey: 'openalex-secret'
+    })
+
+    expect(result).toEqual({ valid: true })
+    const requestUrl = openAlexFetch.mock.calls[0]?.[0]
+    expect(requestUrl).toBeInstanceOf(URL)
+    expect((requestUrl as URL).origin).toBe('https://api.openalex.org')
+    expect((requestUrl as URL).pathname).toBe('/rate-limit')
+    expect((requestUrl as URL).searchParams.get('api_key')).toBe('openalex-secret')
+    expect(JSON.stringify(result)).not.toContain('openalex-secret')
+    expect((await repository.getSettings()).connectors?.openAlexApiKeyRef).toBeUndefined()
+  })
+
+  it('classifies rejected, malformed, and unavailable OpenAlex validation attempts', async () => {
+    const rejectedFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response('{}', { status: 401 }))
+    const rejectedService = new ConnectorSettingsModule(repository, rejectedFetch)
+    await expect(
+      rejectedService.validateOpenAlexCredential({ apiKey: 'rejected-key' })
+    ).resolves.toEqual({ valid: false, reason: 'rejected' })
+
+    await expect(
+      rejectedService.validateOpenAlexCredential({ apiKey: 'contains spaces' })
+    ).resolves.toEqual({ valid: false, reason: 'invalid-format' })
+    expect(rejectedFetch).toHaveBeenCalledTimes(1)
+
+    const unavailableService = new ConnectorSettingsModule(
+      repository,
+      vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'))
+    )
+    await expect(
+      unavailableService.validateOpenAlexCredential({ apiKey: 'openalex-key' })
+    ).resolves.toEqual({ valid: false, reason: 'unavailable' })
   })
 
   it('throws for an unknown connector id', async () => {

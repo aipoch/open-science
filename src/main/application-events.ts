@@ -26,6 +26,7 @@ import type {
 import type {
   ClaudeInstallEvent,
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest,
   SettingsSnapshot
 } from '../shared/settings'
@@ -66,6 +67,8 @@ export type ApplicationEventMap = {
   'memory:changed': MemoryChangedEvent
   'connectors:approval-request': ConnectorApprovalRequest
   'connectors:approval-settled': string
+  'connectors:credential-request': ConnectorCredentialRequest
+  'connectors:credential-settled': string
   'skills:conversation-import-request': ConversationSkillImportApprovalRequest
   'skills:conversation-import-settled': string
   'skills:catalog-changed': undefined

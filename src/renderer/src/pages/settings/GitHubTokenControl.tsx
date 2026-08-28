@@ -35,9 +35,13 @@ const feedbackCopy = (feedback: Feedback, t: TFunction): string => {
 const isLocalOnlyActionError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes('only available in the local desktop app')
 
-const GitHubTokenControl = (): React.JSX.Element | null => {
+const GitHubTokenControl = ({
+  defaultExpanded = false
+}: {
+  defaultExpanded?: boolean
+} = {}): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(defaultExpanded)
   const [token, setToken] = useState('')
   const [status, setStatus] = useState<GitHubTokenStatus | null>(null)
   const [availability, setAvailability] = useState<Availability>('checking')

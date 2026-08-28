@@ -38,6 +38,8 @@ import {
   type SetConnectorAutoAllowRequest,
   type SetConnectorEnabledRequest,
   type SetNcbiCredentialsRequest,
+  type SetOpenAlexCredentialRequest,
+  type ValidateOpenAlexCredentialRequest,
   type SetPackageMirrorRequest,
   type SetNetworkProxyRequest,
   type SetClosePreferenceRequest,
@@ -426,6 +428,16 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
     workflows.connectors.setNcbiCredentials(request)
+  )
+  ipcMainHandle(
+    'settings:set-openalex-credential',
+    (_event, request: SetOpenAlexCredentialRequest) =>
+      workflows.connectors.setOpenAlexCredential(request)
+  )
+  ipcMainHandle(
+    'settings:validate-openalex-credential',
+    (_event, request: ValidateOpenAlexCredentialRequest) =>
+      workflows.connectors.validateOpenAlexCredential(request)
   )
   ipcMainHandle('settings:add-custom-server', (_event, request: AddCustomServerRequest) =>
     workflows.connectors.addCustomServer(request)

@@ -586,6 +586,14 @@ class SettingsRepository {
     })
   }
 
+  // Sets or clears the OpenAlex API-key reference. Plaintext is encrypted by the Connector settings
+  // owner before this repository boundary.
+  async setOpenAlexCredential(apiKeyRef: string | undefined): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      connectors.openAlexApiKeyRef = apiKeyRef || undefined
+    })
+  }
+
   async setGitHubToken(
     tokenRef: string | undefined,
     tokenMask: string | undefined

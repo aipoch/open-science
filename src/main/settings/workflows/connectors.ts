@@ -5,8 +5,10 @@ import type {
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetOpenAlexCredentialRequest,
   SetToolPermissionRequest,
-  UpdateCustomServerRequest
+  UpdateCustomServerRequest,
+  ValidateOpenAlexCredentialRequest
 } from '../../../shared/settings'
 import { wireConnectorReload } from '../../connector-reload'
 import type { CustomServerSecurityChangeGuard } from '../connector-settings'
@@ -19,6 +21,8 @@ type ConnectorSettingsWorkflowStore = Pick<
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
   | 'setNcbiCredentials'
+  | 'setOpenAlexCredential'
+  | 'validateOpenAlexCredential'
   | 'addCustomServer'
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
@@ -70,6 +74,18 @@ class ConnectorSettingsWorkflows {
     request: SetNcbiCredentialsRequest
   ): WorkflowResult<'setNcbiCredentials'> {
     return this.afterConnectorsChanged(() => this.settings.setNcbiCredentials(request))
+  }
+
+  async setOpenAlexCredential(
+    request: SetOpenAlexCredentialRequest
+  ): WorkflowResult<'setOpenAlexCredential'> {
+    return this.afterConnectorsChanged(() => this.settings.setOpenAlexCredential(request))
+  }
+
+  async validateOpenAlexCredential(
+    request: ValidateOpenAlexCredentialRequest
+  ): WorkflowResult<'validateOpenAlexCredential'> {
+    return this.settings.validateOpenAlexCredential(request)
   }
 
   async addCustomServer(request: AddCustomServerRequest): WorkflowResult<'addCustomServer'> {

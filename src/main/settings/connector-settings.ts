@@ -10,14 +10,18 @@ import type {
   ConnectorView,
   CustomServerView,
   NcbiCredentialsView,
+  OpenAlexCredentialView,
+  OpenAlexCredentialValidation,
   RemoveCustomServerRequest,
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetCustomServerEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetOpenAlexCredentialRequest,
   SetToolPermissionRequest,
   ToolPermission,
-  UpdateCustomServerRequest
+  UpdateCustomServerRequest,
+  ValidateOpenAlexCredentialRequest
 } from '../../shared/settings'
 import { inferResourceId, validateResourceId } from '../../shared/resource-id'
 import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
@@ -90,7 +94,10 @@ class ConnectorSettingsModule {
     isRefreshing: () => false
   }
 
-  constructor(private readonly repository: SettingsRepository) {}
+  constructor(
+    private readonly repository: SettingsRepository,
+    private readonly openAlexFetch: typeof fetch = fetch
+  ) {}
 
   setCustomServerRuntimeProjectionProvider(provider: CustomServerRuntimeProjectionProvider): void {
     this.customServerRuntimeProjectionProvider = provider
@@ -301,6 +308,35 @@ class ConnectorSettingsModule {
     await this.repository.setNcbiCredentials(request.contactEmail?.trim() || undefined, apiKeyRef)
 
     return this.connectorsSnapshot()
+  }
+
+  async setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<ConnectorsSnapshot> {
+    const apiKey = request.apiKey.trim()
+    await this.repository.setOpenAlexCredential(apiKey ? encryptKey(apiKey) : undefined)
+    return this.connectorsSnapshot()
+  }
+
+  async validateOpenAlexCredential(
+    request: ValidateOpenAlexCredentialRequest
+  ): Promise<OpenAlexCredentialValidation> {
+    const apiKey = request.apiKey.trim()
+    if (!apiKey || /\s/u.test(apiKey)) return { valid: false, reason: 'invalid-format' }
+
+    try {
+      const url = new URL('https://api.openalex.org/rate-limit')
+      url.searchParams.set('api_key', apiKey)
+      const response = await this.openAlexFetch(url, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(10_000)
+      })
+      if (response.ok) return { valid: true }
+      if (response.status === 401 || response.status === 403) {
+        return { valid: false, reason: 'rejected' }
+      }
+      return { valid: false, reason: 'unavailable' }
+    } catch {
+      return { valid: false, reason: 'unavailable' }
+    }
   }
 
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
@@ -589,6 +625,10 @@ class ConnectorSettingsModule {
     return { contactEmail: connectors?.contactEmail, hasApiKey: !!connectors?.ncbiApiKeyRef }
   }
 
+  private openAlexView(connectors: StoredConnectors | undefined): OpenAlexCredentialView {
+    return { hasApiKey: Boolean(connectors?.openAlexApiKeyRef) }
+  }
+
   private toCustomServerViews(connectors: StoredConnectors | undefined): CustomServerView[] {
     const customServers = connectors?.customMcpServers ?? []
     return customServers
@@ -629,6 +669,9 @@ class ConnectorSettingsModule {
                 hasHeaders: Boolean(Object.keys(server.headerRefs ?? server.headers ?? {}).length)
               }
             : {}),
+          ...(server.transport === 'stdio'
+            ? { hasEnv: Boolean(Object.keys(server.envRefs ?? server.env ?? {}).length) }
+            : {}),
           ...(server.oauth
             ? {
                 oauth: {
@@ -660,7 +703,8 @@ class ConnectorSettingsModule {
       connectors: this.toConnectorViews(connectors),
       customServers: this.toCustomServerViews(connectors),
       reservedCustomServerIds: connectors?.pendingCustomServerDeletionIds ?? [],
-      ncbi: this.ncbiView(connectors)
+      ncbi: this.ncbiView(connectors),
+      openAlex: this.openAlexView(connectors)
     }
   }
 }
