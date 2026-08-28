@@ -1882,6 +1882,72 @@ describe('workspace agent message sending', () => {
     vi.restoreAllMocks()
   })
 
+  it('does not pin a catalog fallback model onto an unpinned send target', async () => {
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'continue on the account default',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription',
+      agentModel: 'gpt-5.4',
+      agentConfiguration: {
+        providerId: 'builtin-codex-subscription',
+        reasoningEffort: 'default'
+      }
+    })
+
+    const target = useSessionStore.getState().sessions[0].messages[0]?.agentTarget
+    expect(target).toEqual({
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription',
+      providerId: 'builtin-codex-subscription',
+      reasoningEffort: 'default'
+    })
+    expect(target).not.toHaveProperty('model')
+  })
+
+  it('stamps an explicit configuration model onto the send target', async () => {
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'pin a model',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription',
+      agentModel: 'gpt-5.4',
+      agentConfiguration: {
+        providerId: 'builtin-codex-subscription',
+        model: 'gpt-5.4',
+        reasoningEffort: 'high'
+      }
+    })
+
+    expect(useSessionStore.getState().sessions[0].messages[0]?.agentTarget).toEqual({
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription',
+      providerId: 'builtin-codex-subscription',
+      model: 'gpt-5.4',
+      reasoningEffort: 'high'
+    })
+  })
+
   it('forwards and durably stores Plan first for an existing Session', async () => {
     const runtime = {
       state: createSnapshot(['transport-session-1']),

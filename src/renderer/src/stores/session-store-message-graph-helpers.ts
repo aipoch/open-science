@@ -43,6 +43,8 @@ export type AppendUserMessageInput = {
   agentModel?: string
   agentConfiguration?: PersistedChatSession['agentConfiguration']
   memoryEnabled?: boolean
+  // Resolved send target stamped onto the user Message; drives config-change timeline markers.
+  agentTarget?: PersistedChatMessage['agentTarget']
   isPending?: boolean
   specialistId?: string
   enabledComputeHosts?: string[]
@@ -66,6 +68,7 @@ export type BranchInNewSessionInput = {
   agentModel?: string
   agentConfiguration?: PersistedChatSession['agentConfiguration']
   memoryEnabled?: boolean
+  agentTarget?: PersistedChatMessage['agentTarget']
   specialistId?: string | null
 }
 

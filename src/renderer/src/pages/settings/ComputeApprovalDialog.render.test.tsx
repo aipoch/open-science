@@ -96,6 +96,18 @@ describe('ComputeApprovalDialog', () => {
     expect(document.body.textContent).toContain('python ...')
   })
 
+  it('warns without blocking approval when job data will be stored unencrypted', () => {
+    useComputeStore.setState({
+      pendingApprovals: [{ ...request, willPersistUnencrypted: true }]
+    })
+    act(() => root.render(<ComputeApprovalDialog />))
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption."
+    )
+    expect(findButton('Once')?.disabled).toBe(false)
+  })
+
   it('shows the full command without changing approval state', () => {
     useComputeStore.setState({ pendingApprovals: [request] })
     act(() => root.render(<ComputeApprovalDialog />))

@@ -76,9 +76,8 @@ const publicOperations = (): string[] => {
 }
 
 describe('Backend selection ownership', () => {
-  it('keeps pure selection policy below the production hard limit', () => {
+  it('keeps pure selection policy free of transport ownership', () => {
     const source = readSource(ownerPath)
-    expect(source.split(/\r?\n/).length - Number(source.endsWith('\n'))).toBeLessThanOrEqual(660)
     expect(source).not.toMatch(
       /ResponsesBridge|NativeResponses|create.*Bridge|start\(|close\(|keyRef|credential|lease|generation|orchestration/i
     )

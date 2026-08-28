@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
@@ -9,6 +9,7 @@ import type {
   ChatSession,
   SessionActionabilityProjection
 } from '@/stores/session-store'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
 import {
@@ -46,6 +47,13 @@ type DraftSubmitIntent = {
 }
 
 type RestoredPlanResponse = { decision: 'approved' | 'rejected' } | { feedback: string }
+
+type PlanProjectionRecoveryPorts = {
+  getProjection: (projectId: string, sessionId: string) => Promise<ActivePlanProjection | null>
+  getSession: (sessionId: string) => ChatSession | undefined
+  setProjection: (sessionId: string, projection: ActivePlanProjection) => void
+  finishRun: (sessionId: string) => void
+}
 
 type ConversationComposer = {
   view: Pick<
@@ -106,10 +114,12 @@ type WorkspaceConversationControllerOptions = {
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
   subscribeSessionChanges: (listener: () => void) => () => void
+  planProjectionRecovery?: PlanProjectionRecoveryPorts
 }
 
 type WorkspaceConversationController = {
   optimisticMessage: ChatMessage | undefined
+  planProjectionRecoveryError: boolean
   availability: {
     submit: boolean
     submitMode: 'send' | 'queue' | undefined
@@ -138,6 +148,71 @@ type WorkspaceConversationController = {
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+const usePlanProjectionRecovery = (
+  activeSession: ChatSession | undefined,
+  ports: PlanProjectionRecoveryPorts | undefined
+): boolean => {
+  const [errorSessionId, setErrorSessionId] = useState<string>()
+  const sessionId = activeSession?.id
+  const projectId = activeSession?.projectId
+  const status = activeSession?.status
+  const projection = activeSession?.activePlanProjection
+  const hasRuntimePlan = Boolean(activeSession?.runtimeContext?.plan)
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      !projectId ||
+      projection ||
+      !ports ||
+      (status !== 'waiting-plan-approval' && !hasRuntimePlan)
+    ) {
+      return
+    }
+    let cancelled = false
+    let retryTimer: number | undefined
+    let retryAttempt = 0
+    const refresh = async (): Promise<void> => {
+      try {
+        const currentProjection = await ports.getProjection(projectId, sessionId)
+        if (cancelled) return
+        setErrorSessionId((current) => (current === sessionId ? undefined : current))
+        if (currentProjection) {
+          ports.setProjection(sessionId, currentProjection)
+          return
+        }
+        const currentSession = ports.getSession(sessionId)
+        if (
+          currentSession?.status === 'waiting-plan-approval' &&
+          !currentSession.activePlanProjection
+        ) {
+          ports.finishRun(sessionId)
+        }
+      } catch {
+        if (cancelled) return
+        setErrorSessionId(sessionId)
+        retryTimer = window.setTimeout(
+          () => void refresh(),
+          Math.min(1_000 * 2 ** retryAttempt++, 30_000)
+        )
+      }
+    }
+    void refresh()
+    return () => {
+      cancelled = true
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+    }
+  }, [hasRuntimePlan, ports, projectId, projection, sessionId, status])
+
+  return Boolean(
+    ports &&
+    sessionId &&
+    !projection &&
+    (status === 'waiting-plan-approval' || hasRuntimePlan) &&
+    errorSessionId === sessionId
+  )
+}
 
 const hasRuntimeInteraction = (options: WorkspaceConversationControllerOptions): boolean => {
   const sessionId = options.activeSession?.id
@@ -264,6 +339,10 @@ const useWorkspaceConversationController = (
   }, [options])
   const inFlightDraftKeysRef = useRef(new Set<string>())
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
+  const planProjectionRecoveryError = usePlanProjectionRecovery(
+    options.activeSession,
+    options.planProjectionRecovery
+  )
   const messageQueue = useWorkspaceMessageQueueController({
     activeSession: options.activeSession,
     promptInFlightSessionIds: options.promptInFlightSessionIds,
@@ -571,6 +650,7 @@ const useWorkspaceConversationController = (
     optimisticMessage: options.activeSession
       ? optimisticMessages[options.activeSession.id]
       : undefined,
+    planProjectionRecoveryError,
     availability: {
       submit: submitImmediately || queueDraft,
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,

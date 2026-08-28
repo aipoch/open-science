@@ -574,7 +574,8 @@ model ReviewScopeSnapshot {
 // lifecycle: submitted → running → success/failed/timeout/error.
 // Columns for harvest (harvestedAt, outputManifest) and concurrency (queued) are included now per
 // design.md §1 to avoid a schema change in 3b/3c — they are null until those phases fill them.
-// Security: no credentials are stored; command is stored for audit; commandHash for dedup.
+// Security: free-form execution data is encrypted when OS secure storage is available; commandHash
+// remains plaintext for deduplication. Credentials use the separate ComputeCredential store.
 model ComputeJob {
   id                     String    @id @default(cuid())
   providerId             String
@@ -585,6 +586,9 @@ model ComputeJob {
   intent                 String
   command                String
   commandHash            String
+  // NULL marks historical plaintext rows; false marks disclosed plaintext fallback; true marks
+  // rows whose free-form execution data must be decrypted through OS secure storage.
+  sensitiveDataEncrypted Boolean?
   environment            String?
   resourceRequest        String?
   inputManifest          String?

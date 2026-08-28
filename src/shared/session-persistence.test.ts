@@ -554,6 +554,108 @@ describe('message attribution persistence', () => {
   })
 })
 
+describe('message agent target persistence', () => {
+  const agentTarget = {
+    frameworkId: 'claude-code',
+    backendId: 'claude-anthropic',
+    providerId: 'provider-a',
+    model: 'model-a',
+    reasoningEffort: 'high'
+  }
+
+  const normalizeWithMessages = (messages: unknown[]): ReturnType<typeof normalizeSessionFile> =>
+    normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages
+    })
+
+  it('preserves a valid send-target snapshot on a user Message', () => {
+    const session = normalizeWithMessages([
+      {
+        id: 'message-1',
+        role: 'user',
+        content: 'Run the analysis',
+        status: 'complete',
+        eventIds: [],
+        agentTarget,
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ])
+
+    expect(session?.messages[0]?.agentTarget).toEqual(agentTarget)
+    expect(
+      session &&
+        materializeSessionConversationGraph(session).conversationGraph?.messages[0]?.agentTarget
+    ).toEqual(agentTarget)
+  })
+
+  it('omits optional backend and model fields when absent', () => {
+    const session = normalizeWithMessages([
+      {
+        id: 'message-1',
+        role: 'user',
+        content: 'Run the analysis',
+        status: 'complete',
+        eventIds: [],
+        agentTarget: {
+          frameworkId: 'opencode',
+          providerId: 'provider-a',
+          reasoningEffort: 'default'
+        },
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ])
+
+    expect(session?.messages[0]?.agentTarget).toEqual({
+      frameworkId: 'opencode',
+      providerId: 'provider-a',
+      reasoningEffort: 'default'
+    })
+  })
+
+  it.each([
+    ['an unknown framework', { ...agentTarget, frameworkId: 'not-a-framework' }],
+    ['a missing provider', { ...agentTarget, providerId: '' }],
+    ['an unknown effort', { ...agentTarget, reasoningEffort: 'extreme' }],
+    ['a non-object value', 'claude-code']
+  ])('drops %s without dropping the Message', (_label, candidate) => {
+    const session = normalizeWithMessages([
+      {
+        id: 'message-1',
+        role: 'user',
+        content: 'Run the analysis',
+        status: 'complete',
+        eventIds: [],
+        agentTarget: candidate,
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ])
+
+    expect(session?.messages[0]).toMatchObject({ id: 'message-1', role: 'user' })
+    expect(session?.messages[0]).not.toHaveProperty('agentTarget')
+  })
+
+  it('drops snapshots from agent Messages', () => {
+    const session = normalizeWithMessages([
+      {
+        id: 'message-1',
+        role: 'agent',
+        content: 'Done',
+        status: 'complete',
+        eventIds: [],
+        agentTarget,
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ])
+
+    expect(session?.messages[0]).not.toHaveProperty('agentTarget')
+  })
+})
+
 describe('message part persistence', () => {
   it('preserves valid structured annotations on annotation-only user Messages', () => {
     const restored = normalizeSessionFile({

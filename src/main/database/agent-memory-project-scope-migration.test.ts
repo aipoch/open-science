@@ -9,7 +9,7 @@ import { ABOUT_YOU_MEMORY_CATEGORY_ID, MEMORY_SETTINGS_ID } from '../../shared/m
 import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase, verifyCurrentApplicationSchema } from './migration-service'
 
-const CURRENT_AGENT_MEMORY_MIGRATION_ID = '0016_agent_memory_project_scope'
+const CURRENT_AGENT_MEMORY_MIGRATION_ID = '0017_agent_memory_project_scope'
 const MEMORY_AUXILIARY_SCHEMA_NAMES = [
   'MemoryEntryFts',
   'MemoryEntry_fts_insert',

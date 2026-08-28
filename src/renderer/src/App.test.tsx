@@ -950,7 +950,7 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="onboarding-page"]')).toBeNull()
   })
 
-  it('shows a settings load error and retries the complete initialization', async () => {
+  it('shows a settings load error in the standard error notice and retries initialization', async () => {
     mocks.settings.loadError = 'settings IPC unavailable'
     mocks.settings.load.mockReset().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
 
@@ -958,15 +958,14 @@ describe('App startup routing', () => {
 
     const shell = container.querySelector('[role="alert"]')
     expect(shell?.textContent).toContain('settings IPC unavailable')
+    expect(shell?.querySelector('section > svg[aria-hidden="true"]')).not.toBeNull()
     expect(shell?.classList.contains('min-h-svh')).toBe(true)
     expect(shell?.classList.contains('h-screen')).toBe(false)
     expect(shell?.classList.contains('text-foreground')).toBe(true)
     expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
     expect(mocks.settings.checkEnvironment).not.toHaveBeenCalled()
 
-    const retry = container.querySelector<HTMLButtonElement>(
-      '[data-testid="settings-startup-retry"]'
-    )
+    const retry = container.querySelector<HTMLButtonElement>('button')
     expect(retry).not.toBeNull()
     expect(retry?.dataset.slot).toBe('button')
     expect(retry?.className).toContain('focus-visible:ring-3')

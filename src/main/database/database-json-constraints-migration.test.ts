@@ -10,6 +10,10 @@ import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-serv
 import { applySqliteMigrationOperations } from './sqlite-schema-migrations'
 
 const MIGRATION_ID = '0008_database_json_constraints'
+// Hosted Windows runners rebuild tables and copy SQLite backups under disk
+// contention. The Windows full-test workflow default is 60s; these suites
+// finish later without hanging.
+const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
 
 const createDatabaseAtMigration0007 = async (client: PrismaClient): Promise<void> => {
   const migration0008Index = MIGRATION_MANIFEST.findIndex(
@@ -117,142 +121,158 @@ describe('database JSON constraints migration', () => {
     if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   })
 
-  it('preserves valid rows, indexes, foreign keys, and AUTOINCREMENT boundaries', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-json-0008-'))
-    const databasePath = join(storageRoot, 'open-science.db')
-    client = createProjectDbClient(storageRoot)
-    await createDatabaseAtMigration0007(client)
-    await seedValidAffectedRows(client)
-    await client.$executeRawUnsafe(
-      `INSERT INTO "NotificationInboxItem" ("sequence","id","dedupeKey","kind","originId","title","summary") VALUES (41,'deleted-notification','deleted-notification','task.completed','deleted-origin','Title','Summary')`
-    )
-    await client.$executeRawUnsafe(
-      `DELETE FROM "NotificationInboxItem" WHERE "id" = 'deleted-notification'`
-    )
-    await client.$executeRawUnsafe(`DELETE FROM "ManagedFile"`)
-    await client.$executeRawUnsafe(
-      `INSERT INTO "ManagedFile" (
+  it(
+    'preserves valid rows, indexes, foreign keys, and AUTOINCREMENT boundaries',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-json-0008-'))
+      const databasePath = join(storageRoot, 'open-science.db')
+      client = createProjectDbClient(storageRoot)
+      await createDatabaseAtMigration0007(client)
+      await seedValidAffectedRows(client)
+      await client.$executeRawUnsafe(
+        `INSERT INTO "NotificationInboxItem" ("sequence","id","dedupeKey","kind","originId","title","summary") VALUES (41,'deleted-notification','deleted-notification','task.completed','deleted-origin','Title','Summary')`
+      )
+      await client.$executeRawUnsafe(
+        `DELETE FROM "NotificationInboxItem" WHERE "id" = 'deleted-notification'`
+      )
+      await client.$executeRawUnsafe(`DELETE FROM "ManagedFile"`)
+      await client.$executeRawUnsafe(
+        `INSERT INTO "ManagedFile" (
         "seq","source","sourceFileId","projectId","sessionId","displayName","storageKey",
         "sizeBytes","sortAtMs","updatedAt"
       ) VALUES (43,'upload','deleted-file','project','session','deleted.txt','deleted-content',0,0,CURRENT_TIMESTAMP)`
-    )
-    await client.$executeRawUnsafe(`DELETE FROM "ManagedFile"`)
+      )
+      await client.$executeRawUnsafe(`DELETE FROM "ManagedFile"`)
 
-    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
-      adoptedLegacy: false,
-      applied: [
-        MIGRATION_ID,
-        '0009_vision_evidence',
-        '0010_compute_password_auth',
-        '0011_cross_resource_tags',
-        '0012_tag_ordering',
-        '0013_session_projection',
-        '0014_review_query_indexes',
-        '0015_session_model_call_usage',
-        '0016_agent_memory_project_scope'
-      ],
-      from: '0007_notification_attention_metadata',
-      to: '0016_agent_memory_project_scope'
-    })
-    await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
-      code: 'ENOENT'
-    })
-    await expect(
-      access(`${databasePath}.before-0011_cross_resource_tags.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).rejects.toMatchObject({
-      code: 'ENOENT'
-    })
-    await expect(
-      access(`${databasePath}.before-0013_session_projection.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0014_review_query_indexes.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0015_session_model_call_usage.backup`)
-    ).resolves.toBeUndefined()
-    await expect(
-      access(`${databasePath}.before-0016_agent_memory_project_scope.backup`)
-    ).resolves.toBeUndefined()
+      await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
+        adoptedLegacy: false,
+        applied: [
+          MIGRATION_ID,
+          '0009_vision_evidence',
+          '0010_compute_password_auth',
+          '0011_cross_resource_tags',
+          '0012_tag_ordering',
+          '0013_session_projection',
+          '0014_review_query_indexes',
+          '0015_session_model_call_usage',
+          '0016_compute_job_sensitive_data_encryption',
+          '0017_agent_memory_project_scope'
+        ],
+        from: '0007_notification_attention_metadata',
+        to: '0017_agent_memory_project_scope'
+      })
+      await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      await expect(
+        access(`${databasePath}.before-0011_cross_resource_tags.backup`)
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).rejects.toMatchObject(
+        {
+          code: 'ENOENT'
+        }
+      )
+      await expect(
+        access(`${databasePath}.before-0013_session_projection.backup`)
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        access(`${databasePath}.before-0014_review_query_indexes.backup`)
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        access(`${databasePath}.before-0015_session_model_call_usage.backup`)
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
+      ).resolves.toBeUndefined()
+      await expect(
+        access(`${databasePath}.before-0017_agent_memory_project_scope.backup`)
+      ).resolves.toBeUndefined()
 
-    await expect(
-      client.$queryRaw<Array<{ scope: string; reviewerLog: string }>>`
+      await expect(
+        client.$queryRaw<Array<{ scope: string; reviewerLog: string }>>`
         SELECT "scope", "reviewerLog" FROM "Review" WHERE "id" = 'review'
       `
-    ).resolves.toEqual([
-      { scope: '{"paths":["result.txt"]}', reviewerLog: '[{"event":"started"}]' }
-    ])
-    await expect(
-      client.$queryRaw<Array<{ evidenceJson: string; strongestAssociation: string }>>`
+      ).resolves.toEqual([
+        { scope: '{"paths":["result.txt"]}', reviewerLog: '[{"event":"started"}]' }
+      ])
+      await expect(
+        client.$queryRaw<Array<{ evidenceJson: string; strongestAssociation: string }>>`
         SELECT "ArtifactVersion"."evidenceJson", "ArtifactVersionInput"."strongestAssociation"
         FROM "ArtifactVersion"
         JOIN "ArtifactVersionInput"
           ON "ArtifactVersionInput"."artifactVersionId" = "ArtifactVersion"."id"
         WHERE "ArtifactVersion"."id" = 'version'
       `
-    ).resolves.toEqual([{ evidenceJson: '{"sources":[]}', strongestAssociation: 'turn-attached' }])
-    await expect(client.$queryRawUnsafe('PRAGMA foreign_key_check')).resolves.toEqual([])
+      ).resolves.toEqual([
+        { evidenceJson: '{"sources":[]}', strongestAssociation: 'turn-attached' }
+      ])
+      await expect(client.$queryRawUnsafe('PRAGMA foreign_key_check')).resolves.toEqual([])
 
-    await client.$executeRawUnsafe(
-      `INSERT INTO "NotificationInboxItem" ("id","dedupeKey","kind","originId","title","summary") VALUES ('next-notification','next-notification','task.completed','next-origin','Title','Summary')`
-    )
-    await client.$executeRawUnsafe(
-      `INSERT INTO "ManagedFile" (
+      await client.$executeRawUnsafe(
+        `INSERT INTO "NotificationInboxItem" ("id","dedupeKey","kind","originId","title","summary") VALUES ('next-notification','next-notification','task.completed','next-origin','Title','Summary')`
+      )
+      await client.$executeRawUnsafe(
+        `INSERT INTO "ManagedFile" (
         "source","sourceFileId","projectId","sessionId","displayName","storageKey",
         "sizeBytes","sortAtMs","updatedAt"
       ) VALUES ('upload','next-file','project','session','next.txt','next-content',0,1,CURRENT_TIMESTAMP)`
-    )
-    await expect(
-      client.$queryRaw<Array<{ sequence: number }>>`
+      )
+      await expect(
+        client.$queryRaw<Array<{ sequence: number }>>`
         SELECT "sequence" FROM "NotificationInboxItem" WHERE "id" = 'next-notification'
       `
-    ).resolves.toEqual([{ sequence: 42 }])
-    await expect(
-      client.$queryRaw<Array<{ seq: number }>>`
+      ).resolves.toEqual([{ sequence: 42 }])
+      await expect(
+        client.$queryRaw<Array<{ seq: number }>>`
         SELECT "seq" FROM "ManagedFile" WHERE "sourceFileId" = 'next-file'
       `
-    ).resolves.toEqual([{ seq: 44 }])
-  })
+      ).resolves.toEqual([{ seq: 44 }])
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
-  it('fails closed and rolls back all rebuilt tables when historical data is invalid', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-json-0008-invalid-'))
-    const databasePath = join(storageRoot, 'open-science.db')
-    client = createProjectDbClient(storageRoot)
-    await createDatabaseAtMigration0007(client)
-    await client.$executeRawUnsafe(
-      `INSERT INTO "Project" ("id","name","updatedAt") VALUES ('project','Project',CURRENT_TIMESTAMP)`
-    )
-    await client.$executeRawUnsafe(
-      `INSERT INTO "ProjectPreviewState" ("projectId","panelState","items","updatedAt") VALUES ('project','collapsed','[]',CURRENT_TIMESTAMP)`
-    )
-    await client.$executeRawUnsafe(
-      `INSERT INTO "NotificationInboxItem" ("id","dedupeKey","kind","originId","title","summary") VALUES ('invalid','invalid','custom.kind','origin','Title','Summary')`
-    )
+  it(
+    'fails closed and rolls back all rebuilt tables when historical data is invalid',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-json-0008-invalid-'))
+      const databasePath = join(storageRoot, 'open-science.db')
+      client = createProjectDbClient(storageRoot)
+      await createDatabaseAtMigration0007(client)
+      await client.$executeRawUnsafe(
+        `INSERT INTO "Project" ("id","name","updatedAt") VALUES ('project','Project',CURRENT_TIMESTAMP)`
+      )
+      await client.$executeRawUnsafe(
+        `INSERT INTO "ProjectPreviewState" ("projectId","panelState","items","updatedAt") VALUES ('project','collapsed','[]',CURRENT_TIMESTAMP)`
+      )
+      await client.$executeRawUnsafe(
+        `INSERT INTO "NotificationInboxItem" ("id","dedupeKey","kind","originId","title","summary") VALUES ('invalid','invalid','custom.kind','origin','Title','Summary')`
+      )
 
-    await expect(migrateApplicationDatabase(client, { databasePath })).rejects.toMatchObject({
-      code: 'database_validation_failed',
-      migrationId: MIGRATION_ID
-    })
-    await expect(
-      client.$queryRaw<Array<{ id: string }>>`
+      await expect(migrateApplicationDatabase(client, { databasePath })).rejects.toMatchObject({
+        code: 'database_validation_failed',
+        migrationId: MIGRATION_ID
+      })
+      await expect(
+        client.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
       `
-    ).resolves.toEqual([{ id: '0007_notification_attention_metadata' }])
-    await expect(
-      client.$queryRaw<Array<{ kind: string }>>`
+      ).resolves.toEqual([{ id: '0007_notification_attention_metadata' }])
+      await expect(
+        client.$queryRaw<Array<{ kind: string }>>`
         SELECT "kind" FROM "NotificationInboxItem" WHERE "id" = 'invalid'
       `
-    ).resolves.toEqual([{ kind: 'custom.kind' }])
-    await expect(
-      client.$queryRaw<Array<{ sql: string }>>`
+      ).resolves.toEqual([{ kind: 'custom.kind' }])
+      await expect(
+        client.$queryRaw<Array<{ sql: string }>>`
         SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ProjectPreviewState'
       `
-    ).resolves.not.toEqual([
-      expect.objectContaining({
-        sql: expect.stringContaining('ProjectPreviewState_panelState_check')
-      })
-    ])
-    await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
-  })
+      ).resolves.not.toEqual([
+        expect.objectContaining({
+          sql: expect.stringContaining('ProjectPreviewState_panelState_check')
+        })
+      ])
+      await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 })

@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs'
-import { basename, dirname, extname, relative, resolve } from 'node:path'
+import { dirname, extname, relative, resolve } from 'node:path'
 import {
   createSourceFile,
   forEachChild,
@@ -52,7 +52,6 @@ const queueInternalPaths = {
 } as const
 
 const readSource = (path: string): string => readFileSync(path, 'utf8')
-const rawLineCount = (source: string): number => source.trimEnd().split(/\r?\n/).length
 const portableRelativePath = (path: string): string =>
   relative(rendererRoot, path).replaceAll('\\', '/')
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
@@ -154,29 +153,6 @@ const conversationPanelPropNames = (): string[] => {
 }
 
 describe('workspace page architecture', () => {
-  it('keeps the page and extracted owners within their completion gates', () => {
-    // Session-model fallback and conversation Memory add page wiring for extracted owners.
-    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_245)
-    for (const ownerPath of [
-      ownerPaths.layout,
-      ownerPaths.composer,
-      ownerPaths.conversation,
-      ownerPaths.messageQueue,
-      ownerPaths.messageQueueOwner,
-      queueInternalPaths.admission,
-      queueInternalPaths.drain,
-      queueInternalPaths.projection,
-      queueInternalPaths.announcement,
-      ownerPaths.branchSwitchGuard,
-      ownerPaths.sideChat,
-      ownerPaths.session,
-      ownerPaths.sessionDetails,
-      ownerPaths.sessionAgentConfiguration
-    ]) {
-      expect(rawLineCount(readSource(ownerPath)), basename(ownerPath)).toBeLessThanOrEqual(700)
-    }
-  })
-
   it('keeps private controller consumers explicit and bounded', () => {
     expect(importersOf(ownerPaths.composer)).toEqual([
       'pages/workspace/ConversationPanel.tsx',

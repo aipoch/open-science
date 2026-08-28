@@ -75,10 +75,11 @@ describe('notification attention metadata migration', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_agent_memory_project_scope'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_agent_memory_project_scope'
       ],
       from: '0006_database_domain_constraints',
-      to: '0016_agent_memory_project_scope'
+      to: '0017_agent_memory_project_scope'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
@@ -97,9 +98,12 @@ describe('notification attention metadata migration', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0015_session_model_call_usage.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
     ).resolves.toBeUndefined()
     await expect(
-      access(`${databasePath}.before-0016_agent_memory_project_scope.backup`)
+      access(`${databasePath}.before-0017_agent_memory_project_scope.backup`)
     ).resolves.toBeUndefined()
 
     await expect(

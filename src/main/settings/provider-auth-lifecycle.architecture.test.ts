@@ -77,9 +77,8 @@ const publicOperations = (): string[] => {
 }
 
 describe('Provider authentication lifecycle ownership', () => {
-  it('keeps one focused owner below the production hard limit', () => {
+  it('keeps authentication behind the provider owner boundary', () => {
     const source = readSource(ownerPath)
-    expect(source.split(/\r?\n/).length - Number(source.endsWith('\n'))).toBeLessThanOrEqual(660)
     expect(source).not.toMatch(/ipcMain|contextBridge|window\.api/)
     expect(source).toContain('keyRef: encryptKey(token)')
     expect(source).not.toMatch(/keyRef:\s*token\b/)

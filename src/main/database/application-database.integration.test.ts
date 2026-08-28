@@ -127,7 +127,8 @@ describe('application database (integration)', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_agent_memory_project_scope'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_agent_memory_project_scope'
       ]
     })
 
@@ -605,6 +606,7 @@ describe('application database (integration)', () => {
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
 
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
@@ -687,6 +689,7 @@ describe('application database (integration)', () => {
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
 
     await migrateApplicationDatabase(client)
 
@@ -739,7 +742,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0016_agent_memory_project_scope.backup`
+    const backupPath = `${databasePath}.before-0017_agent_memory_project_scope.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -779,7 +782,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0015_session_model_call_usage' }])
+      ).resolves.toEqual([{ id: '0016_compute_job_sensitive_data_encryption' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -1154,7 +1157,8 @@ describe('application database (integration)', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_agent_memory_project_scope'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_agent_memory_project_scope'
       ]
     })
 

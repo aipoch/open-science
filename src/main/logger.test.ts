@@ -284,6 +284,18 @@ describe('logger: formatLine', () => {
 })
 
 describe('logger: redacted sinks', () => {
+  it('keeps the console mirror quiet by default in tests', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-quiet-'))
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    initLogger({ logDir, fileName: 'main.log' })
+
+    createLogger('quiet').warn('captured in the log file')
+    await flushLogs()
+
+    expect(consoleWarn).not.toHaveBeenCalled()
+    expect(await readFile(join(logDir, 'main.log'), 'utf8')).toContain('captured in the log file')
+  })
+
   it('keeps secrets out of the console mirror and every rotated JSONL file', async () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-redaction-'))
     const sentinel = 'sink-opaque-value-7319'

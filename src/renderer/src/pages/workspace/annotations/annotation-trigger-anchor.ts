@@ -21,11 +21,17 @@ type SelectionTriggerViewport = Readonly<{
 const TRIGGER_ANCHOR_OFFSET = 6
 const TRIGGER_VIEWPORT_MARGIN = 8
 
+const hasUsableAnchorGeometry = (rect: Pick<DOMRect, 'width' | 'height'>): boolean =>
+  rect.width > 0 || rect.height > 0
+
 const rangeAnchorRect = (range: Range, backward: boolean): DOMRect | undefined => {
-  const rects = typeof range.getClientRects === 'function' ? Array.from(range.getClientRects()) : []
+  const rects = (
+    typeof range.getClientRects === 'function' ? Array.from(range.getClientRects()) : []
+  ).filter(hasUsableAnchorGeometry)
   const bounding =
     typeof range.getBoundingClientRect === 'function' ? range.getBoundingClientRect() : undefined
-  return rects.length > 0 ? (backward ? rects[0] : rects[rects.length - 1]) : bounding
+  const anchor = rects.length > 0 ? (backward ? rects[0] : rects[rects.length - 1]) : bounding
+  return anchor && hasUsableAnchorGeometry(anchor) ? anchor : undefined
 }
 
 const rectsIntersect = (
@@ -37,18 +43,33 @@ const rectsIntersect = (
   left.bottom > right.top &&
   left.top < right.bottom
 
+const isRangeConnected = (range: Range): boolean => range.commonAncestorContainer.isConnected
+
 const isRangeTriggerVisible = (
   range: Range,
   backward: boolean,
   viewport: Pick<SelectionTriggerViewport, 'width' | 'height'>
 ): boolean => {
+  // A cloned Range survives message remounts. Removing the quoted nodes either
+  // leaves the clone on a disconnected tree or collapses it onto a connected
+  // parent; neither should keep the portalled trigger at the fallback margin.
+  if (!isRangeConnected(range) || range.collapsed) return false
   const anchorRect = rangeAnchorRect(range, backward)
-  // Geometry is unavailable for detached and jsdom ranges. Placement keeps its
-  // existing fallback there; live browser ranges always provide a rectangle.
+  // Geometry is unavailable for connected jsdom ranges. Those environments
+  // often still expose a zero-size DOMRect; treat that as missing so placement
+  // keeps its existing fallback. Live browser text selections provide a box.
   if (!anchorRect) return true
-  if (
-    !rectsIntersect(anchorRect, { left: 0, right: viewport.width, top: 0, bottom: viewport.height })
-  ) {
+  const viewportRect = {
+    left: 0,
+    right: viewport.width,
+    top: 0,
+    bottom: viewport.height,
+    width: viewport.width,
+    height: viewport.height
+  }
+  // A zero-size window is layout-unusable, not an off-screen selection. jsdom
+  // and pre-layout browsers report that; hiding the trigger would drop a live draft.
+  if (hasUsableAnchorGeometry(viewportRect) && !rectsIntersect(anchorRect, viewportRect)) {
     return false
   }
 
@@ -61,7 +82,14 @@ const isRangeTriggerVisible = (
     const clips = [style.overflow, style.overflowX, style.overflowY].some((overflow) =>
       /^(auto|clip|hidden|scroll)$/.test(overflow)
     )
-    if (clips && !rectsIntersect(anchorRect, ancestor.getBoundingClientRect())) return false
+    if (clips) {
+      const ancestorRect = ancestor.getBoundingClientRect()
+      // Same missing-geometry fallback as the Range itself: an overflow ancestor
+      // with a zero-size box cannot clip a selection that still exists in the tree.
+      if (hasUsableAnchorGeometry(ancestorRect) && !rectsIntersect(anchorRect, ancestorRect)) {
+        return false
+      }
+    }
     ancestor = ancestor.parentElement
   }
   return true

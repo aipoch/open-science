@@ -777,6 +777,41 @@ describe('ComputeApprovalBroker', () => {
     expect(broadcastCount).toBe(1) // still only 1 broadcast
   })
 
+  it('shows the plaintext persistence warning even when a durable grant exists', async () => {
+    const broadcast = vi.fn()
+    const resolveGrant = vi.fn(() => Promise.resolve('project' as const))
+    const remember = vi.fn()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast,
+      permissionGrants: { resolve: resolveGrant, remember } as never
+    })
+    const request = makeRequest({ willPersistUnencrypted: true })
+    const context = {
+      sessionId: 'session-A',
+      projectId: 'project-1',
+      operation: 'submit_job'
+    }
+
+    const decision = broker.requestWithContext(request, context)
+
+    await vi.waitFor(() =>
+      expect(broadcast).toHaveBeenCalledWith({ id: 'id-1', ...request }, context)
+    )
+    expect(resolveGrant).not.toHaveBeenCalled()
+    broker.respond('id-1', 'once')
+    await expect(decision).resolves.toBe('once')
+    expect(remember).toHaveBeenCalledWith(
+      {
+        sessionId: 'session-A',
+        projectId: 'project-1',
+        operation: 'submit_job',
+        providerId: 'ssh:biowulf'
+      },
+      'once'
+    )
+  })
+
   it('forwards approval context only when a card is actually broadcast', async () => {
     const timer = makeTimer()
     const broadcasts: unknown[] = []

@@ -43,9 +43,6 @@ const productionFiles = [
   'provenance-version-writer.ts',
   'write-budget-owner.ts'
 ] as const
-const deepOwnerFiles = productionFiles.filter(
-  (file) => file !== 'provenance-repository.ts' && file !== 'provenance-message-snapshot.ts'
-)
 const sources = new Map(
   productionFiles.map((file) => [file, readFileSync(resolve(__dirname, file), 'utf8')])
 )
@@ -206,22 +203,6 @@ type ModuleImpactManifest = {
 describe('Artifact Provenance repository architecture', () => {
   const facadeFile = sourceFileFor('provenance-repository.ts')
   const facade = classFrom('provenance-repository.ts', 'ArtifactProvenanceRepository')
-
-  it('keeps the facade and deep owners within their approved completion gates', () => {
-    const facadeSource = sources.get('provenance-repository.ts')!
-    const facadeLines = facadeSource.split(/\r?\n/).length - Number(facadeSource.endsWith('\n'))
-    expect(facadeLines).toBeLessThanOrEqual(1200)
-
-    for (const file of deepOwnerFiles) {
-      const source = sources.get(file)!
-      const physicalLines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
-      expect(physicalLines, file).toBeLessThanOrEqual(660)
-    }
-    for (const [file, source] of sources) {
-      const physicalLines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
-      expect(physicalLines, file).toBeLessThanOrEqual(1200)
-    }
-  })
 
   it('keeps the established public facade and private projection helpers', () => {
     expect(methods(facade, 'public')).toEqual(

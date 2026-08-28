@@ -14,6 +14,8 @@ import type { EditAnnotationTarget } from './WorkspaceMessageItem'
 import type { Annotation, TextAnnotation } from '../../../../shared/annotations'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 // Keep the transcript row and markdown surface as thin wrappers so the test never loads Shiki.
 vi.mock('@/components/ui/message-scroller', () => ({
   MessageScrollerItem: ({
@@ -189,7 +191,7 @@ beforeEach(() => {
     value: { writeText },
     configurable: true
   })
-  Range.prototype.getBoundingClientRect = () => new DOMRect()
+  Range.prototype.getBoundingClientRect = () => new DOMRect(10, 20, 110, 20)
   ;(window as unknown as { api: unknown }).api = {
     projectFiles: {
       listFiles: vi.fn().mockResolvedValue({ items: [], totalCount: 0 })

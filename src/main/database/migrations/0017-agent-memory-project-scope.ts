@@ -129,7 +129,7 @@ const MEMORY_ENTRY_INDEX_DDLS = [
 ] as const
 
 const agentMemoryProjectScopeMigration = {
-  id: '0016_agent_memory_project_scope',
+  id: '0017_agent_memory_project_scope',
   statements: [
     `CREATE TABLE IF NOT EXISTS "MemorySettings" (
       "id" TEXT NOT NULL PRIMARY KEY,

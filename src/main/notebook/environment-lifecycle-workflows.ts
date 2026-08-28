@@ -128,8 +128,10 @@ const createNotebookEnvironmentLifecycle = (
       (report) =>
         withDataRootWrite(async () => {
           if (deps.waitForRecovery) await deps.waitForRecovery()
-          await provisioner.repair(parsedLanguage, report, { force: true })
-          await deps.onRepairCompleted?.(parsedLanguage)
+          await provisioner.repair(parsedLanguage, report, {
+            force: true,
+            onVerified: () => deps.onRepairCompleted?.(parsedLanguage)
+          })
         }),
       (progress) =>
         deps.projectProgress({
