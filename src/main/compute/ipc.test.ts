@@ -18,6 +18,7 @@ import type { PasswordSshAdapter } from './connection-adapters'
 import { ComputeConnectionError, SshConfigComputeConnectionBroker } from './connection-broker'
 import type { CredentialVault } from './credential-vault'
 import { ComputeApprovalBroker } from './compute-approval-broker'
+import { COMPUTE_IPC_CHANNELS } from './electron-ipc-adapter'
 import {
   COMPUTE_JOB_UPDATED_CHANNEL,
   COMPUTE_JOBS_LIST_CHANNEL,
@@ -824,6 +825,36 @@ describe('compute handlers — jobsList', () => {
     expect(result[0]!.display_name).toBe('Biowulf HPC')
     expect(result[0]!.session_id).toBe('sess-1')
     expect(findBySession).toHaveBeenCalledWith('sess-1', undefined)
+  })
+
+  it('returns all persisted non-terminal jobs for the renderer activity projection', async () => {
+    const host = sampleHost({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' })
+    const list = vi.fn().mockResolvedValue([host])
+    const jobs = [
+      makeJob({ job_id: 'job-1', session_id: 'sess-1', status: 'queued' }),
+      makeJob({ job_id: 'job-2', session_id: 'sess-2', status: 'running' })
+    ]
+    const findNonTerminal = vi.fn().mockResolvedValue(jobs)
+
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findNonTerminal }),
+      undefined,
+      undefined,
+      '/tmp/test-storage'
+    )
+
+    const result = await handlers.jobsList({ nonTerminal: true })
+
+    expect(result.map((job) => [job.job_id, job.session_id])).toEqual([
+      ['job-1', 'sess-1'],
+      ['job-2', 'sess-2']
+    ])
+    expect(findNonTerminal).toHaveBeenCalledOnce()
   })
 
   it('returns empty array when no jobRepository is injected', async () => {
@@ -1898,6 +1929,29 @@ describe('compute handlers — jobsPendingNotification', () => {
     expect(result[0]!.notification_consumed_at).toBeUndefined()
   })
 
+  it('returns pending notifications across all Sessions for App-level recovery', async () => {
+    const list = vi.fn().mockResolvedValue([])
+    const findPendingNotifications = vi
+      .fn()
+      .mockResolvedValue([makeJob({ job_id: 'job-a', session_id: 'sess-a' })])
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ findPendingNotifications }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    const result = await handlers.jobsPendingNotification({ allSessions: true })
+
+    expect(findPendingNotifications).toHaveBeenCalledWith()
+    expect(result[0]).toMatchObject({ job_id: 'job-a', session_id: 'sess-a' })
+  })
+
   it('returns an empty array when no jobRepository is injected', async () => {
     const handlers = createComputeHandlers(mockRepository({}))
     const result = await handlers.jobsPendingNotification('sess-1')
@@ -2043,6 +2097,10 @@ describe('installComputeIpcHandlers', () => {
       'compute:list',
       'compute:get',
       'compute:create',
+      'compute:create-password',
+      'compute:reset-password',
+      'compute:change-authentication',
+      'compute:password-capability',
       'compute:delete',
       'compute:deletion-status',
       'compute:ssh-config-aliases',
@@ -2057,6 +2115,8 @@ describe('installComputeIpcHandlers', () => {
       'compute:download',
       'compute:reveal-in-folder',
       'compute:approval-respond',
+      'compute:approval-replay',
+      'compute:approval-replay-pending',
       COMPUTE_JOBS_LIST_CHANNEL,
       'compute:jobs:pending-notification',
       'compute:jobs:mark-consumed',
@@ -2064,10 +2124,10 @@ describe('installComputeIpcHandlers', () => {
       'compute:enabled-hosts:set',
       'compute:host-enabled:set',
       'compute:host-selected:set'
-    ]
-    for (const channel of expected) {
-      expect(handlers.has(channel)).toBe(true)
-    }
+    ].sort()
+
+    expect([...handlers.keys()].sort()).toEqual(expected)
+    expect(COMPUTE_IPC_CHANNELS).toEqual(expected)
   })
 
   it('starts defensive orphan Credential recovery when the Compute module is created', async () => {
@@ -2137,6 +2197,52 @@ describe('installComputeIpcHandlers', () => {
 
     expect(handlers.has('compute:list')).toBe(true)
     expect(module.computeService).toBeDefined()
+  })
+
+  it('rejects an invalid approval decision without settling the pending operation', async () => {
+    const broker = new ComputeApprovalBroker({
+      broadcast: vi.fn(),
+      generateId: () => 'approval-1',
+      setTimer: vi.fn(() => 1 as never),
+      clearTimer: vi.fn()
+    })
+    const computeHandlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({}),
+      broker
+    )
+    installComputeIpcHandlers({
+      handlers: computeHandlers,
+      enabledHosts: {
+        get: vi.fn(() => []),
+        set: vi.fn(),
+        setHostEnabled: vi.fn(),
+        setHostSelected: vi.fn()
+      }
+    })
+    const decision = broker.request({
+      provider_id: 'ssh:biowulf',
+      provider_name: 'biowulf',
+      shape: 'direct_ssh',
+      intent: 'Inspect the environment',
+      command_preview: 'env',
+      command_full: 'env'
+    })
+    const settled = vi.fn()
+    void decision.then(settled)
+
+    await expect(
+      invokeHandler('compute:approval-respond', {
+        id: 'approval-1',
+        decision: 'unexpected-allow-value'
+      })
+    ).rejects.toThrow(/invalid.*compute:approval-respond/i)
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+
+    await invokeHandler('compute:approval-respond', { id: 'approval-1', decision: 'deny' })
+    await expect(decision).resolves.toBe('deny')
   })
 
   it('routes enabled-hosts IPC through the authoritative owner and publishes its result', async () => {

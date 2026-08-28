@@ -5,6 +5,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
+import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
 
 export const PreviewTextContent = ({
@@ -14,7 +15,8 @@ export const PreviewTextContent = ({
   projectId,
   sessionId,
   managedFileId,
-  selectedVersionId
+  selectedVersionId,
+  annotationProps
 }: {
   path: string
   name: string
@@ -23,6 +25,7 @@ export const PreviewTextContent = ({
   sessionId?: string
   managedFileId?: string
   selectedVersionId?: string
+  annotationProps?: PreviewFileRendererProps
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const state = usePreviewFileContent({
@@ -46,17 +49,25 @@ export const PreviewTextContent = ({
     )
   }
 
-  return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
+  const content = (
+    <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
+  )
+  return annotationProps ? (
+    <PreviewTextAnnotationSurface {...annotationProps}>{content}</PreviewTextAnnotationSurface>
+  ) : (
+    content
+  )
 }
 
-export const TextPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (
+export const TextPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => (
   <PreviewTextContent
-    path={item.path}
-    name={item.name}
-    source={item.source}
-    projectId={item.projectId}
-    sessionId={item.sessionId}
-    managedFileId={item.managedFileId}
-    selectedVersionId={item.selectedVersionId}
+    path={props.item.path}
+    name={props.item.name}
+    source={props.item.source}
+    projectId={props.item.projectId}
+    sessionId={props.item.sessionId}
+    managedFileId={props.item.managedFileId}
+    selectedVersionId={props.item.selectedVersionId}
+    annotationProps={props}
   />
 )

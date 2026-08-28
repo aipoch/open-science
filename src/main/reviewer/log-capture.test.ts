@@ -89,6 +89,36 @@ describe('driveReviewerToStop — log capture via onUpdate', () => {
     }
   })
 
+  it('caps a streaming text entry by serialized UTF-8 bytes', async () => {
+    const updates: FakeUpdate[] = [
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'ééé' }
+        }
+      },
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let i = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+    const options = {
+      timeoutMs: 1000,
+      maxUpdates: 100,
+      logLimits: {
+        maxTextEntryBytes: 5,
+        maxToolInputBytes: 64,
+        maxToolOutputBytes: 64,
+        maxLogBytes: 256
+      }
+    }
+
+    const log: ReviewerLogEntry[] = []
+    await driveReviewerToStop(session, options, { onUpdate: (entry) => log.push(entry) })
+
+    expect(log).toEqual([{ kind: 'message', text: 'éé', textTruncated: true }])
+  })
+
   it('flushes interleaved content before tools and lets terminal output override raw output', async () => {
     const updates: FakeUpdate[] = [
       {
@@ -150,6 +180,196 @@ describe('driveReviewerToStop — log capture via onUpdate', () => {
         exitCode: 0
       }
     ])
+  })
+
+  it('caps tool input and output by serialized UTF-8 bytes', async () => {
+    const updates: FakeUpdate[] = [
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-bounded',
+          toolName: 'Bash',
+          rawInput: 'ééé'
+        }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-bounded',
+          rawOutput: 'ééé',
+          status: 'completed'
+        }
+      },
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let i = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+    const options = {
+      timeoutMs: 1000,
+      maxUpdates: 100,
+      logLimits: {
+        maxTextEntryBytes: 64,
+        maxToolInputBytes: 5,
+        maxToolOutputBytes: 5,
+        maxLogBytes: 256
+      }
+    }
+    const log: ReviewerLogEntry[] = []
+
+    await driveReviewerToStop(session, options, { onUpdate: (entry) => log.push(entry) })
+
+    expect(log).toEqual([
+      {
+        kind: 'tool',
+        toolName: 'Bash',
+        title: undefined,
+        rawInput: 'éé',
+        rawInputTruncated: true,
+        rawOutput: 'éé',
+        rawOutputTruncated: true,
+        status: 'ok'
+      }
+    ])
+  })
+
+  it('caps the complete serialized reviewer log across individually valid entries', async () => {
+    const chunkKinds = [
+      'agent_message_chunk',
+      'agent_thought_chunk',
+      'agent_message_chunk',
+      'agent_thought_chunk',
+      'agent_message_chunk'
+    ]
+    const updates: FakeUpdate[] = [
+      ...chunkKinds.map((sessionUpdate, index) => ({
+        kind: 'session_update',
+        update: {
+          sessionUpdate,
+          content: { type: 'text', text: String(index).repeat(40) }
+        }
+      })),
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let i = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+    const options = {
+      timeoutMs: 1000,
+      maxUpdates: 100,
+      logLimits: {
+        maxTextEntryBytes: 64,
+        maxToolInputBytes: 64,
+        maxToolOutputBytes: 64,
+        maxLogBytes: 256
+      }
+    }
+    const log: ReviewerLogEntry[] = []
+
+    await driveReviewerToStop(session, options, { onUpdate: (entry) => log.push(entry) })
+
+    expect(Buffer.byteLength(JSON.stringify(log), 'utf8')).toBeLessThanOrEqual(256)
+    expect(log.at(-1)).toMatchObject({ reviewLogTruncated: true })
+  })
+
+  it('keeps later tool updates within the complete serialized log budget', async () => {
+    const updates: FakeUpdate[] = [
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'context' }
+        }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-total-budget',
+          toolName: 'Bash'
+        }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-total-budget',
+          rawOutput: 'x'.repeat(120),
+          status: 'completed'
+        }
+      },
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let i = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+    const options = {
+      timeoutMs: 1000,
+      maxUpdates: 100,
+      logLimits: {
+        maxTextEntryBytes: 64,
+        maxToolInputBytes: 128,
+        maxToolOutputBytes: 128,
+        maxLogBytes: 180
+      }
+    }
+    const log: ReviewerLogEntry[] = []
+
+    await driveReviewerToStop(session, options, { onUpdate: (entry) => log.push(entry) })
+
+    expect(Buffer.byteLength(JSON.stringify(log), 'utf8')).toBeLessThanOrEqual(180)
+    expect(log.at(-1)).toMatchObject({
+      kind: 'tool',
+      rawOutputTruncated: true,
+      reviewLogTruncated: true,
+      status: 'ok'
+    })
+  })
+
+  it('shares the complete log budget across a recovery drive', async () => {
+    const makeSession = (): { nextUpdate: () => Promise<FakeUpdate> } => {
+      const updates: FakeUpdate[] = [
+        {
+          kind: 'session_update',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'm'.repeat(40) }
+          }
+        },
+        {
+          kind: 'session_update',
+          update: {
+            sessionUpdate: 'agent_thought_chunk',
+            content: { type: 'text', text: 't'.repeat(40) }
+          }
+        },
+        { kind: 'stop', stopReason: 'end_turn' }
+      ]
+      let i = 0
+      return { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+    }
+    const options = {
+      timeoutMs: 1000,
+      maxUpdates: 100,
+      logLimits: {
+        maxTextEntryBytes: 64,
+        maxToolInputBytes: 64,
+        maxToolOutputBytes: 64,
+        maxLogBytes: 256
+      }
+    }
+    const log: ReviewerLogEntry[] = []
+    const callbacks = {
+      onUpdate: (entry: ReviewerLogEntry): void => {
+        log.push(entry)
+      },
+      logState: {}
+    }
+
+    await driveReviewerToStop(makeSession(), options, callbacks)
+    await driveReviewerToStop(makeSession(), options, callbacks)
+
+    expect(Buffer.byteLength(JSON.stringify(log), 'utf8')).toBeLessThanOrEqual(256)
+    expect(log.at(-1)).toMatchObject({ reviewLogTruncated: true })
   })
 
   it('produces ONE unified tool entry from tool_call + tool_call_update (not split tool_call/tool_result)', async () => {
@@ -292,6 +512,153 @@ describe('driveReviewerToStop — log capture via onUpdate', () => {
       expect(tool.rawOutput).not.toContain('[object Object]')
     }
   })
+
+  it('bounds structured tool output before serializing the display string', async () => {
+    const updates: FakeUpdate[] = [
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-structured-budget',
+          toolName: 'query_execution_log'
+        }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-structured-budget',
+          rawOutput: { rows: Array.from({ length: 201 }, (_, index) => index) },
+          status: 'completed'
+        }
+      },
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let i = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+    const options = {
+      timeoutMs: 1000,
+      maxUpdates: 100,
+      logLimits: {
+        maxTextEntryBytes: 64,
+        maxToolInputBytes: 4096,
+        maxToolOutputBytes: 4096,
+        maxLogBytes: 8192
+      }
+    }
+    const log: ReviewerLogEntry[] = []
+
+    await driveReviewerToStop(session, options, { onUpdate: (entry) => log.push(entry) })
+
+    const tool = log[0]
+    expect(tool?.kind).toBe('tool')
+    if (tool?.kind !== 'tool') return
+    const output = JSON.parse(tool.rawOutput ?? '{}') as { rows?: unknown[] }
+    expect(output.rows).toHaveLength(201)
+    expect(output.rows?.at(-1)).toBe('[omitted: 1 array entries]')
+    expect(tool.rawOutputTruncated).toBe(true)
+  })
+
+  it('stops traversing structured tool output after its shared byte budget is exhausted', async () => {
+    const rawOutput: Record<string, unknown> = { first: 'x'.repeat(1024) }
+    Object.defineProperty(rawOutput, 'unvisited', {
+      enumerable: true,
+      get: () => {
+        throw new Error('structured serializer traversed beyond its byte budget')
+      }
+    })
+    const updates: FakeUpdate[] = [
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-structured-shared-budget',
+          toolName: 'query_execution_log'
+        }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-structured-shared-budget',
+          rawOutput,
+          status: 'completed'
+        }
+      },
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let i = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+    const log: ReviewerLogEntry[] = []
+
+    await driveReviewerToStop(
+      session,
+      {
+        timeoutMs: 1000,
+        maxUpdates: 100,
+        logLimits: {
+          maxTextEntryBytes: 64,
+          maxToolInputBytes: 64,
+          maxToolOutputBytes: 64,
+          maxLogBytes: 512
+        }
+      },
+      { onUpdate: (entry) => log.push(entry) }
+    )
+
+    const tool = log[0]
+    expect(tool?.kind).toBe('tool')
+    if (tool?.kind !== 'tool') return
+    expect(Buffer.byteLength(tool.rawOutput ?? '', 'utf8')).toBeLessThanOrEqual(64)
+    expect(tool.rawOutputTruncated).toBe(true)
+  })
+
+  it.each(['completed', 'failed', 'error', 'ok'])(
+    'forgets a tool after terminal status %s',
+    async (status) => {
+      const updates: FakeUpdate[] = [
+        {
+          kind: 'session_update',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'tc-reused',
+            toolName: 'Bash'
+          }
+        },
+        {
+          kind: 'session_update',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'tc-reused',
+            rawOutput: 'first',
+            status
+          }
+        },
+        {
+          kind: 'session_update',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'tc-reused',
+            toolName: 'Bash',
+            rawOutput: 'late duplicate',
+            status: 'completed'
+          }
+        },
+        { kind: 'stop', stopReason: 'end_turn' }
+      ]
+      let i = 0
+      const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+      const log: ReviewerLogEntry[] = []
+
+      await driveReviewerToStop(
+        session,
+        { timeoutMs: 1000, maxUpdates: 100 },
+        { onUpdate: (entry) => log.push(entry) }
+      )
+
+      expect(log.filter((entry) => entry.kind === 'tool')).toHaveLength(2)
+    }
+  )
 
   it('merges terminal stdout and exit code from _meta.terminal_output / _meta.terminal_exit', async () => {
     const updates: FakeUpdate[] = [
@@ -484,6 +851,8 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
         title: 'python3 host.read_turn()',
         rawInput: 'python3 host.read_turn()',
         rawOutput: '[block-0]',
+        rawOutputTruncated: true,
+        reviewLogTruncated: true,
         status: 'ok',
         exitCode: 0
       },
@@ -515,6 +884,8 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
       title: 'python3 host.read_turn()',
       rawInput: 'python3 host.read_turn()',
       rawOutput: '[block-0]',
+      rawOutputTruncated: true,
+      reviewLogTruncated: true,
       status: 'ok',
       exitCode: 0
     })

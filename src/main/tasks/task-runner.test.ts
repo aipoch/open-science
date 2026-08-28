@@ -906,7 +906,16 @@ describe('TaskRunner', () => {
     expect(prompt).toHaveBeenCalledWith(
       expect.objectContaining({
         turnIntent: 'plan-first',
-        promptMessageId: 'user-controlled'
+        promptMessageId: 'user-controlled',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-controlled',
+          agentFrameId: 'root-frame-session-controlled',
+          messageBranchId: 'message-branch-session-controlled',
+          messageBranchAncestry: ['message-branch-session-controlled'],
+          messageAncestry: ['user-controlled'],
+          runtimeSegmentId: 'runtime-segment-session-controlled',
+          promptMessageId: 'user-controlled'
+        }
       }),
       expect.any(Object)
     )
@@ -1672,14 +1681,16 @@ describe('TaskRunner', () => {
     }
     let admissionActive = false
     let saveCount = 0
+    const savedSessions: PersistedChatSession[] = []
     const resumeRequests: Parameters<TaskRunnerDependencies['agent']['resumeSession']>[0][] = []
     const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
     const ids = ['new-user', 'run-2', 'new-agent']
     const runner = createRunner({
       sessions: {
         list: async () => [existing],
-        save: async () => {
+        save: async (value) => {
           saveCount += 1
+          savedSessions.push(structuredClone(value))
           if (saveCount === 1) expect(admissionActive).toBe(true)
         }
       },
@@ -1729,12 +1740,27 @@ describe('TaskRunner', () => {
       {
         sessionId: existing.id,
         promptMessageId: 'new-user',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1',
+          messageBranchId: 'message-branch-session-1',
+          messageBranchAncestry: ['message-branch-session-1'],
+          messageAncestry: ['old-user', 'old-agent', 'new-user'],
+          runtimeSegmentId: expect.not.stringMatching('runtime-segment-session-1'),
+          promptMessageId: 'new-user'
+        },
         text: 'Follow-up question',
         contextReset: true,
         historyPreamble:
           'Previous conversation:\n\nUser: Initial question\n\nAssistant: Initial answer'
       }
     ])
+    const promptRuntimeSegmentId = prompts[0]?.provenanceContext.runtimeSegmentId
+    expect(
+      savedSessions[0]?.conversationGraph?.runtimeSegments.some(
+        ({ id }) => id === promptRuntimeSegmentId
+      )
+    ).toBe(true)
   })
 
   it('adopts a persisted agent configuration for an attached session', async () => {
@@ -2113,6 +2139,15 @@ describe('TaskRunner', () => {
       {
         sessionId: existing.id,
         promptMessageId: 'skill-user',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1',
+          messageBranchId: 'message-branch-session-1',
+          messageBranchAncestry: ['message-branch-session-1'],
+          messageAncestry: ['prior-user', 'prior-agent', 'skill-user'],
+          runtimeSegmentId: 'runtime-segment-session-1',
+          promptMessageId: 'skill-user'
+        },
         text: 'Use the selected skill.',
         skillIds: ['literature-review'],
         resumeFallback: {

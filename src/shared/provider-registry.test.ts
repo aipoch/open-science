@@ -12,6 +12,7 @@ import {
   resolveVendorApiEndpoints,
   resolveVendorApiKeyUrl,
   resolveVendorBaseUrl,
+  resolveVendorModelApiEndpoints,
   resolveVendorModelsUrl,
   resolveVendorModelReasoningEffort,
   resolveVendorOpenAiBaseUrl,
@@ -46,8 +47,10 @@ describe('provider registry', () => {
     expect(OFFICIAL_VENDORS[anthropicIndex + 1]?.id).toBe('xai')
   })
 
-  it('places OpenCode Go and Zen immediately before OpenRouter with curated Chat catalogs', () => {
+  it('places OpenCode Go and Zen before OpenRouter with curated mixed-protocol catalogs', () => {
     const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
+    const goModels = getOfficialVendor('opencode-go')?.models.map(({ id }) => id)
+    const zenModels = getOfficialVendor('opencode')?.models.map(({ id }) => id)
 
     expect(
       OFFICIAL_VENDORS.slice(openRouterIndex - 2, openRouterIndex + 1).map(({ id }) => id)
@@ -60,6 +63,83 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl('opencode')).toBeUndefined()
     expect(defaultVendorModel('opencode-go')).toBe('kimi-k2.7-code')
     expect(defaultVendorModel('opencode')).toBe('kimi-k2.7-code')
+    expect(goModels).toEqual([
+      'kimi-k2.7-code',
+      'grok-4.6',
+      'gpt-5.6-luna',
+      'glm-5.3-flash',
+      'glm-5.3',
+      'glm-5.2',
+      'glm-5.1',
+      'kimi-k3',
+      'kimi-k2.6',
+      'longcat-2.0',
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp',
+      'mimo-v2.5',
+      'mimo-v2.5-pro',
+      'minimax-m3',
+      'muse-spark-1.2-contributor',
+      'qwen3.8-max',
+      'qwen3.7-max',
+      'qwen3.7-plus',
+      'hy3'
+    ])
+    expect(zenModels).toEqual([
+      'kimi-k2.7-code',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'grok-4.6',
+      'gpt-5.5',
+      'gpt-5.5-pro',
+      'gpt-5.4',
+      'gpt-5.4-pro',
+      'gpt-5.4-mini',
+      'gpt-5.4-nano',
+      'gpt-5.3-codex',
+      'gpt-5.3-codex-spark',
+      'gpt-5.2',
+      'gpt-5.1',
+      'gpt-5',
+      'gpt-5-nano',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-opus-4-5',
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-5',
+      'claude-haiku-4-5',
+      'grok-4.5',
+      'grok-build-0.1',
+      'muse-spark-1.2',
+      'qwen3.7-max',
+      'qwen3.7-plus',
+      'qwen3.5-plus',
+      'kimi-k3',
+      'kimi-k2.6',
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'minimax-m3',
+      'glm-5.2',
+      'glm-5.1'
+    ])
+    for (const excluded of ['minimax-m2.7', 'minimax-m2.5', 'qwen3.6-plus']) {
+      expect(goModels).not.toContain(excluded)
+      expect(zenModels).not.toContain(excluded)
+    }
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'kimi-k2.7-code')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'grok-4.6')).toEqual(['responses'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'minimax-m3')).toEqual(['anthropic'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'gpt-5.6-sol')).toEqual(['responses'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'claude-opus-5')).toEqual(['anthropic'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'minimax-m3')).toEqual(['openai'])
+    expect(isVendorModelMultimodal('opencode-go', 'glm-5.3-flash')).toBe(true)
+    expect(isVendorModelMultimodal('opencode', 'gpt-5.3-codex-spark')).toBe(false)
   })
 
   it('resolves a single-endpoint vendor base URL', () => {
@@ -694,6 +774,11 @@ describe('provider registry', () => {
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro[1m]')).toBe(true)
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash')).toBe(true)
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(true)
+      expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-v4-pro')).toEqual([
+        'anthropic',
+        'openai',
+        'responses'
+      ])
     })
 
     it('returns false for unknown DeepSeek models', () => {

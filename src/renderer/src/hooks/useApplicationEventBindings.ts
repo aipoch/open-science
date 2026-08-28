@@ -101,6 +101,7 @@ const useApplicationEventBindings = ({
     state.pending.some((candidate) => !openSideChatParentSessionIds.has(candidate.sessionId))
   )
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
+  const hydrateNonTerminalJobs = useSessionJobStore((state) => state.hydrateNonTerminal)
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
   const isFilePreviewOpen = usePreviewWorkbenchStore((state) => state.fileDialogItem !== undefined)
   const isExpandedPreviewOpen = usePreviewWorkbenchStore(
@@ -387,6 +388,22 @@ const useApplicationEventBindings = ({
     }
   }, [dismissComputeApproval, enqueueComputeApproval])
   useEffect(() => window.api.compute.onJobUpdated(applyJobUpdate), [applyJobUpdate])
+  useEffect(() => {
+    if (startupView !== 'app' || !sessionPersistence.isHydrated) return
+    let isActive = true
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    const hydrate = (attempt = 0): void => {
+      void hydrateNonTerminalJobs().catch(() => {
+        if (!isActive || attempt >= 2) return
+        retryTimer = setTimeout(() => hydrate(attempt + 1), 1_000 * 2 ** attempt)
+      })
+    }
+    hydrate()
+    return () => {
+      isActive = false
+      clearTimeout(retryTimer)
+    }
+  }, [hydrateNonTerminalJobs, sessionPersistence.isHydrated, startupView])
 
   return {
     presentation,

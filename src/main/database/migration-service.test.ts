@@ -25,7 +25,7 @@ import {
 } from './migration-service'
 
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0017_test_suffix'
+  const id = '0018_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -38,13 +38,20 @@ const futureTestMigration = (): MigrationManifestEntry => {
   }
 }
 
+// Keep historical fixtures anchored to migration identities instead of a moving manifest tail.
+const manifestBefore = (id: string): readonly MigrationManifestEntry[] => {
+  const index = MIGRATION_MANIFEST.findIndex((migration) => migration.id === id)
+  if (index < 0) throw new Error(`Migration ${id} is unavailable.`)
+  return MIGRATION_MANIFEST.slice(0, index)
+}
+
 const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID = '0009_managed_file_version_foundation'
 const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM =
   '54d50c127428b47efcea83e18c30f1dd7b94bfe7f37a3b2aae29a1a7ac43a1f8'
 
 const legacyDraftMigrationManifest = (): readonly MigrationManifestEntry[] => {
   const managedIndex = MIGRATION_MANIFEST.findIndex(
-    ({ id }) => id === '0016_managed_file_version_foundation'
+    ({ id }) => id === '0017_managed_file_version_foundation'
   )
   const upstreamSuffixIndex = MIGRATION_MANIFEST.findIndex(
     ({ id }) => id === '0009_vision_evidence'
@@ -318,10 +325,11 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ],
       from: null,
-      to: '0016_managed_file_version_foundation'
+      to: '0017_managed_file_version_foundation'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -334,8 +342,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0016_managed_file_version_foundation',
-      to: '0016_managed_file_version_foundation'
+      from: '0017_managed_file_version_foundation',
+      to: '0017_managed_file_version_foundation'
     })
   })
 
@@ -454,9 +462,10 @@ describe('application database migrations', () => {
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_managed_file_version_foundation')`)
+      WHERE "id" IN ('0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_managed_file_version_foundation')`)
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await removeComputePasswordAuthSchema(client)
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
     await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
     await client.$executeRawUnsafe('DROP TABLE "Tag"')
 
@@ -470,10 +479,11 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ],
       from: '0008_database_json_constraints',
-      to: '0016_managed_file_version_foundation'
+      to: '0017_managed_file_version_foundation'
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
@@ -481,14 +491,21 @@ describe('application database migrations', () => {
   it('upgrades the real upstream ledger and repairs VisionEvidence after the managed rebuild', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-upstream-ledger-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0016_managed_file_version_foundation.backup`
+    const backupPath = `${databasePath}.before-0017_managed_file_version_foundation.backup`
     client = createProjectDbClient(storageRoot)
-    const upstreamManifest = MIGRATION_MANIFEST.slice(0, -1)
+    const upstreamManifest = manifestBefore('0017_managed_file_version_foundation')
     await createDatabaseAtReleasedManifest(client, upstreamManifest)
     await client.$executeRawUnsafe(
       `INSERT INTO "Project" ("id", "name", "updatedAt")
        VALUES ('project-1', 'Project', CURRENT_TIMESTAMP)`
     )
+    await client.$executeRawUnsafe(`INSERT INTO "ComputeJob" (
+      "id", "providerId", "shape", "sessionId", "projectId", "status", "intent", "command",
+      "commandHash", "sensitiveDataEncrypted"
+    ) VALUES (
+      'compute-job-1', 'ssh:test', 'direct_ssh', 'session-1', 'project-1', 'queued',
+      'protected job', 'ciphertext', 'command-hash', true
+    )`)
     await client.$executeRawUnsafe(
       `INSERT INTO "FileOriginSession" ("projectId", "sessionId", "updatedAt")
        VALUES ('project-1', 'session-1', CURRENT_TIMESTAMP)`
@@ -522,15 +539,20 @@ describe('application database migrations', () => {
     `
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0016_managed_file_version_foundation'],
-      from: '0015_session_model_call_usage',
-      to: '0016_managed_file_version_foundation'
+      applied: ['0017_managed_file_version_foundation'],
+      from: '0016_compute_job_sensitive_data_encryption',
+      to: '0017_managed_file_version_foundation'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`
         SELECT "uploadVersionId" FROM "VisionEvidence" WHERE "id" = 'vision-1'
       `
     ).resolves.toEqual([{ uploadVersionId: 'upload-version-1' }])
+    await expect(
+      client.$queryRaw<Array<{ sensitiveDataEncrypted: boolean | null }>>`
+        SELECT "sensitiveDataEncrypted" FROM "ComputeJob" WHERE "id" = 'compute-job-1'
+      `
+    ).resolves.toEqual([{ sensitiveDataEncrypted: true }])
     await expect(
       client.$queryRawUnsafe<Array<{ table: string }>>('PRAGMA foreign_key_check')
     ).resolves.toEqual([])
@@ -566,7 +588,7 @@ describe('application database migrations', () => {
   it('keeps historical aggregate-only turn usage when adding exact model-call storage', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-model-call-usage-'))
     client = createProjectDbClient(storageRoot)
-    await createDatabaseAtReleasedManifest(client, MIGRATION_MANIFEST.slice(0, -2))
+    await createDatabaseAtReleasedManifest(client, manifestBefore('0015_session_model_call_usage'))
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
     await client.$executeRawUnsafe(`INSERT INTO "Session" (
       "id", "number", "projectId", "title", "status", "presentedStatus", "createdAtMs", "updatedAtMs"
@@ -576,7 +598,11 @@ describe('application database migrations', () => {
     ) VALUES ('session-1', 'message-1', 2, 10, 4, 3, true)`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: ['0015_session_model_call_usage', '0016_managed_file_version_foundation']
+      applied: [
+        '0015_session_model_call_usage',
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
+      ]
     })
     await expect(
       client.sessionTurnUsage.findUnique({
@@ -645,7 +671,8 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -690,7 +717,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0016_managed_file_version_foundation'
+      to: '0017_managed_file_version_foundation'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -711,8 +738,9 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('DROP INDEX "ComputeJob_status_idx"')
     await removeComputePasswordAuthSchema(client)
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_managed_file_version_foundation')`)
+      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_managed_file_version_foundation')`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: [
@@ -726,10 +754,11 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0016_managed_file_version_foundation'
+      to: '0017_managed_file_version_foundation'
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
@@ -828,10 +857,11 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0016_managed_file_version_foundation'
+      to: '0017_managed_file_version_foundation'
     })
     await expect(
       client.$queryRaw<
@@ -950,7 +980,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0016_managed_file_version_foundation'
+      migrationId: '0017_managed_file_version_foundation'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -966,9 +996,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0017_test_suffix'],
-      from: '0016_managed_file_version_foundation',
-      to: '0017_test_suffix'
+      applied: ['0018_test_suffix'],
+      from: '0017_managed_file_version_foundation',
+      to: '0018_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -990,8 +1020,9 @@ describe('application database migrations', () => {
       { id: '0013_session_projection' },
       { id: '0014_review_query_indexes' },
       { id: '0015_session_model_call_usage' },
-      { id: '0016_managed_file_version_foundation' },
-      { id: '0017_test_suffix' }
+      { id: '0016_compute_job_sensitive_data_encryption' },
+      { id: '0017_managed_file_version_foundation' },
+      { id: '0018_test_suffix' }
     ])
   })
 
@@ -1059,10 +1090,11 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0016_managed_file_version_foundation'
+      to: '0017_managed_file_version_foundation'
     })
     expect(backupEvents).toEqual([
       {
@@ -1136,8 +1168,13 @@ describe('application database migrations', () => {
         reused: false
       },
       {
-        migrationId: '0016_managed_file_version_foundation',
-        path: `${databasePath}.before-0016_managed_file_version_foundation.backup`,
+        migrationId: '0016_compute_job_sensitive_data_encryption',
+        path: `${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0017_managed_file_version_foundation',
+        path: `${databasePath}.before-0017_managed_file_version_foundation.backup`,
         reused: false
       }
     ])
@@ -1146,13 +1183,13 @@ describe('application database migrations', () => {
       access(`${databasePath}.before-0013_session_projection.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
-      access(`${databasePath}.before-0014_review_query_indexes.backup`)
+      access(`${databasePath}.before-0015_session_model_call_usage.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
-      access(`${databasePath}.before-0015_session_model_call_usage.backup`)
+      access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
     ).resolves.toBeUndefined()
     await expect(
-      access(`${databasePath}.before-0016_managed_file_version_foundation.backup`)
+      access(`${databasePath}.before-0017_managed_file_version_foundation.backup`)
     ).resolves.toBeUndefined()
     await expect(
       access(`${databasePath}.before-0011_cross_resource_tags.backup`)
@@ -1189,7 +1226,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0017_test_suffix'
+      migrationId: '0018_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -1217,7 +1254,8 @@ describe('application database migrations', () => {
       { id: '0013_session_projection' },
       { id: '0014_review_query_indexes' },
       { id: '0015_session_model_call_usage' },
-      { id: '0016_managed_file_version_foundation' }
+      { id: '0016_compute_job_sensitive_data_encryption' },
+      { id: '0017_managed_file_version_foundation' }
     ])
   })
 
@@ -1285,7 +1323,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0017_test_suffix'
+      migrationId: '0018_test_suffix'
     })
   })
 
@@ -1326,10 +1364,11 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation',
-        '0017_test_suffix'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation',
+        '0018_test_suffix'
       ],
-      to: '0017_test_suffix'
+      to: '0018_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -1444,20 +1483,14 @@ describe('application database migrations', () => {
     `
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
     await removeComputePasswordAuthSchema(client)
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
     await client.$executeRawUnsafe('DROP TABLE "Tag"')
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
 
-    const managedFileMigrationIndex = MIGRATION_MANIFEST.findIndex(
-      (migration) => migration.id === '0016_managed_file_version_foundation'
-    )
-
     await expect(
-      migrateApplicationDatabaseWithManifest(
-        client,
-        MIGRATION_MANIFEST.slice(0, managedFileMigrationIndex)
-      )
+      migrateApplicationDatabaseWithManifest(client, manifestBefore('0010_compute_password_auth'))
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
       migrationId: '0001_runtime_schema_baseline'
@@ -1569,7 +1602,8 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -1682,7 +1716,8 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1747,7 +1782,8 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -1815,7 +1851,8 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ]
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
@@ -1917,7 +1954,8 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -1938,7 +1976,8 @@ describe('application database migrations', () => {
     const sessionProjectionBackupPath = `${databasePath}.before-0013_session_projection.backup`
     const reviewQueryIndexesBackupPath = `${databasePath}.before-0014_review_query_indexes.backup`
     const sessionModelCallUsageBackupPath = `${databasePath}.before-0015_session_model_call_usage.backup`
-    const managedFileBackupPath = `${databasePath}.before-0016_managed_file_version_foundation.backup`
+    const computeJobEncryptionBackupPath = `${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`
+    const managedFileBackupPath = `${databasePath}.before-0017_managed_file_version_foundation.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -1980,7 +2019,8 @@ describe('application database migrations', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ]
     })
     expect(backupEvents).toEqual([
@@ -2060,7 +2100,12 @@ describe('application database migrations', () => {
         reused: false
       },
       {
-        migrationId: '0016_managed_file_version_foundation',
+        migrationId: '0016_compute_job_sensitive_data_encryption',
+        path: computeJobEncryptionBackupPath,
+        reused: false
+      },
+      {
+        migrationId: '0017_managed_file_version_foundation',
         path: managedFileBackupPath,
         reused: false
       }
@@ -2070,8 +2115,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0015_session_model_call_usage.backup',
-      'open-science.db.before-0016_managed_file_version_foundation.backup'
+      'open-science.db.before-0016_compute_job_sensitive_data_encryption.backup',
+      'open-science.db.before-0017_managed_file_version_foundation.backup'
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -2081,12 +2126,13 @@ describe('application database migrations', () => {
     await expect(access(tagOrderingBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(sessionProjectionBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(reviewQueryIndexesBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(sessionModelCallUsageBackupPath)).resolves.toBeUndefined()
+    await expect(access(sessionModelCallUsageBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(computeJobEncryptionBackupPath)).resolves.toBeUndefined()
     await expect(access(managedFileBackupPath)).resolves.toBeUndefined()
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
-      datasources: { db: { url: `file:${sessionModelCallUsageBackupPath.replaceAll('\\', '/')}` } }
+      datasources: { db: { url: `file:${computeJobEncryptionBackupPath.replaceAll('\\', '/')}` } }
     })
     try {
       await expect(
@@ -2098,7 +2144,7 @@ describe('application database migrations', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0014_review_query_indexes' }])
+      ).resolves.toEqual([{ id: '0015_session_model_call_usage' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -2523,8 +2569,13 @@ describe('application database migrations', () => {
         reused: false
       }),
       expect.objectContaining({
-        migrationId: '0016_managed_file_version_foundation',
-        path: `${databasePath}.before-0016_managed_file_version_foundation.backup`,
+        migrationId: '0016_compute_job_sensitive_data_encryption',
+        path: `${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`,
+        reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0017_managed_file_version_foundation',
+        path: `${databasePath}.before-0017_managed_file_version_foundation.backup`,
         reused: false
       })
     ])
@@ -2584,8 +2635,12 @@ describe('application database migrations', () => {
         path: `${databasePath}.before-0015_session_model_call_usage.backup`
       },
       {
-        migrationId: '0016_managed_file_version_foundation',
-        path: `${databasePath}.before-0016_managed_file_version_foundation.backup`
+        migrationId: '0016_compute_job_sensitive_data_encryption',
+        path: `${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`
+      },
+      {
+        migrationId: '0017_managed_file_version_foundation',
+        path: `${databasePath}.before-0017_managed_file_version_foundation.backup`
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -2619,14 +2674,14 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0015_session_model_call_usage.backup',
-      'open-science.db.before-0016_managed_file_version_foundation.backup',
+      'open-science.db.before-0016_compute_job_sensitive_data_encryption.backup',
+      'open-science.db.before-0017_managed_file_version_foundation.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
     expect(retired).toEqual(
       expect.arrayContaining(
-        MIGRATION_MANIFEST.slice(0, -2).map((migration) =>
+        manifestBefore('0016_compute_job_sensitive_data_encryption').map((migration) =>
           expect.objectContaining({ migrationId: migration.id })
         )
       )

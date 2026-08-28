@@ -48,6 +48,7 @@ export const ComposerYourFilesMenu = ({
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({})
   const [listings, setListings] = useState<Record<string, DirListing>>({})
   const [grantDialogOpen, setGrantDialogOpen] = useState(false)
+  const [rootRemoveStates, setRootRemoveStates] = useState<Record<string, 'removing' | 'error'>>({})
   // Files inserted during this submenu session, keyed `${rootId}:${relativePath}`. Purely local:
   // the set resets when the submenu closes, so the green check marks "added this time".
   const [addedKeys, setAddedKeys] = useState<ReadonlySet<string>>(new Set())
@@ -102,6 +103,21 @@ export const ComposerYourFilesMenu = ({
       mimeType: undefined
     })
     setAddedKeys((previous) => new Set(previous).add(`${root.id}:${relativePath}`))
+  }
+
+  const removeRoot = (rootId: string): void => {
+    setRootRemoveStates((previous) => ({ ...previous, [rootId]: 'removing' }))
+    void remove(rootId)
+      .then(() => {
+        setRootRemoveStates((previous) => {
+          const next = { ...previous }
+          delete next[rootId]
+          return next
+        })
+      })
+      .catch(() => {
+        setRootRemoveStates((previous) => ({ ...previous, [rootId]: 'error' }))
+      })
   }
 
   // Recursive rows for one expanded directory: subdirectories expand further, files are inert
@@ -274,6 +290,7 @@ export const ComposerYourFilesMenu = ({
             ) : null}
             {roots.map((root) => {
               const isExpanded = expandedDirs[root.path] === true
+              const removeState = rootRemoveStates[root.id]
               return (
                 <div key={root.id} data-testid={`your-files-root-${root.id}`}>
                   {/* Fixed height + opacity-based reveal for the × action: hover only changes the
@@ -309,16 +326,32 @@ export const ComposerYourFilesMenu = ({
                       type="button"
                       data-testid={`your-files-remove-${root.id}`}
                       aria-label={t('Remove access to {{name}}', { name: root.name })}
+                      disabled={removeState === 'removing'}
                       onClick={(event) => {
                         event.stopPropagation()
                         event.preventDefault()
-                        void remove(root.id).catch(() => undefined)
+                        removeRoot(root.id)
                       }}
-                      className="relative flex size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 opacity-100 transition-opacity duration-150 hover:bg-bg-300 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:size-11"
+                      className="relative flex size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 opacity-100 transition-opacity duration-150 hover:bg-bg-300 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:size-11"
                     >
                       <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
                     </button>
                   </div>
+                  {removeState === 'error' ? (
+                    <div
+                      role="alert"
+                      className="flex items-center justify-between gap-2 px-2 py-1 text-[11px] leading-4 text-danger-000"
+                    >
+                      <span>{t('Could not remove folder access.')}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeRoot(root.id)}
+                        className="shrink-0 rounded px-1.5 py-0.5 font-medium hover:bg-danger-900 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                      >
+                        {t('Retry')}
+                      </button>
+                    </div>
+                  ) : null}
                   {isExpanded ? renderDirRows(root, root.path, '', 1) : null}
                 </div>
               )

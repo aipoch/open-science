@@ -7,9 +7,8 @@ import {
   resolveActiveConversationMessages
 } from '../../../shared/conversation-graph'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
-import type { MessagePart, PersistedUploadedAttachment } from '../../../shared/session-persistence'
 import {
-  buildMessage,
+  buildUserMessage,
   canBranchInNewSession,
   copySnapshotActivity,
   copySnapshotActivityGroup,
@@ -28,8 +27,6 @@ import {
   hydrateToolActivity,
   type ActiveRun,
   type ChatMessage,
-  type ChatMessageRole,
-  type ChatMessageStatus,
   type ChatSession,
   type SessionStoreData
 } from './session-store-persistence-owner'
@@ -46,7 +43,6 @@ const createPendingSessionId = (): string => {
   pendingSessionSequence += 1
   return `pending-session-${Date.now()}-${pendingSessionSequence}`
 }
-
 const createSessionBranchSource = (
   source: ChatSession,
   headMessageId?: string
@@ -73,32 +69,6 @@ const createConversationBranchId = (): string => {
   conversationBranchSequence += 1
   return `message-branch-${Date.now()}-${conversationBranchSequence}`
 }
-const createMessage = (
-  role: ChatMessageRole,
-  content: string,
-  status: ChatMessageStatus,
-  streamId?: string,
-  eventIds: string[] = [],
-  uploads: PersistedUploadedAttachment[] = [],
-  parts?: MessagePart[],
-  turnIntent?: ChatMessage['turnIntent']
-): ChatMessage => {
-  const now = Date.now()
-  return buildMessage({
-    id: createMessageId(),
-    role,
-    content,
-    status,
-    streamId,
-    eventIds,
-    uploads,
-    parts,
-    turnIntent,
-    sortIndex: createSortIndex(),
-    now
-  })
-}
-
 export const createSessionMessageGraphOwner = <
   State extends SessionStoreData & SessionMessageGraphActions
 >(
@@ -143,13 +113,17 @@ export const createSessionMessageGraphOwner = <
     responseToMessageId,
     relayedFrom,
     uploads,
-    parts
+    parts,
+    annotations
   }) => {
     const trimmedContent = content.trim()
     const persistedUploads = (uploads ?? []).map(createPersistedUpload)
     const session = get().sessions.find((candidate) => candidate.id === sessionId)
     const hasFollowUpBody =
-      Boolean(trimmedContent) || persistedUploads.length > 0 || Boolean(parts?.length)
+      Boolean(trimmedContent) ||
+      persistedUploads.length > 0 ||
+      Boolean(parts?.length) ||
+      Boolean(annotations?.length)
     if (!session || !hasFollowUpBody) return undefined
     if (session.messages.some((message) => message.id === messageId)) {
       return { sessionId, messageId }
@@ -186,12 +160,22 @@ export const createSessionMessageGraphOwner = <
       ...(relayedFrom ? { relayedFrom } : {}),
       ...(responseToMessageId ? { responseToMessageId } : {}),
       ...(persistedUploads.length > 0 ? { uploads: persistedUploads } : {}),
-      ...(parts && parts.length > 0 ? { parts } : {})
+      ...(parts && parts.length > 0 ? { parts } : {}),
+      ...(annotations && annotations.length > 0 ? { annotations } : {})
     }
     const messages = matchingFeedback
       ? session.messages.map((existing, index) =>
           index === matchingFeedbackIndex
-            ? { ...message, sortIndex: matchingFeedback.sortIndex }
+            ? {
+                ...message,
+                sortIndex: matchingFeedback.sortIndex,
+                // The provider echo cannot know renderer-stamped send markers; keep the local
+                // copy's target snapshot and turn intent when it replaces the local Message.
+                ...(matchingFeedback.agentTarget
+                  ? { agentTarget: matchingFeedback.agentTarget }
+                  : {}),
+                ...(matchingFeedback.turnIntent ? { turnIntent: matchingFeedback.turnIntent } : {})
+              }
             : existing
         )
       : [...session.messages, message]
@@ -215,6 +199,7 @@ export const createSessionMessageGraphOwner = <
     content,
     attachments = [],
     parts,
+    annotations,
     turnIntent,
     cwd,
     projectId,
@@ -226,28 +211,34 @@ export const createSessionMessageGraphOwner = <
     isPending,
     specialistId,
     enabledComputeHosts,
-    selectedComputeHosts
+    selectedComputeHosts,
+    preserveSelection,
+    agentTarget
   }) => {
     const trimmedContent = content.trim()
     const normalizedAgentBackendId = agentBackendId?.trim() || undefined
     const normalizedAgentModel = agentModel?.trim() || undefined
     const uploads = attachments.map(createPersistedUpload)
 
-    if (!sessionId || (!trimmedContent && uploads.length === 0)) return undefined
+    if (!sessionId || (!trimmedContent && uploads.length === 0 && !annotations?.length)) {
+      return undefined
+    }
 
     const state = get()
     const existingSession = state.sessions.find((session) => session.id === sessionId)
     const now = Date.now()
-    const userMessage = createMessage(
-      'user',
-      trimmedContent,
-      'complete',
-      undefined,
-      [],
-      uploads,
-      parts,
-      turnIntent
-    )
+    const userMessage: ChatMessage = {
+      ...buildUserMessage({
+        id: createMessageId(),
+        content: trimmedContent,
+        uploads,
+        parts,
+        annotations,
+        turnIntent,
+        sortIndex: createSortIndex()
+      }),
+      ...(agentTarget ? { agentTarget } : {})
+    }
     const activeRun: ActiveRun = {
       promptMessageId: userMessage.id,
       startedAt: now
@@ -265,7 +256,7 @@ export const createSessionMessageGraphOwner = <
             )
           : [...existingSession.messages, userMessage]
       set({
-        selectedSessionId: sessionId,
+        selectedSessionId: preserveSelection ? state.selectedSessionId : sessionId,
         sessions: state.sessions.map((session) =>
           session.id === sessionId
             ? {
@@ -343,7 +334,7 @@ export const createSessionMessageGraphOwner = <
       )
 
       set({
-        selectedSessionId: sessionId,
+        selectedSessionId: preserveSelection ? state.selectedSessionId : sessionId,
         sessions: [newSession, ...state.sessions]
       } as Partial<State>)
     }
@@ -362,17 +353,22 @@ export const createSessionMessageGraphOwner = <
     content,
     attachments = [],
     parts,
+    annotations,
     turnIntent,
     permissionProfile,
     agentFrameworkId,
     agentBackendId,
     agentModel,
     agentConfiguration,
-    specialistId
+    specialistId,
+    agentTarget
   }) => {
     const trimmedContent = content?.trim() ?? ''
     const uploads = attachments.map(createPersistedUpload)
-    if (!sourceSessionId || (!sourceMessageId && !trimmedContent && uploads.length === 0)) {
+    if (
+      !sourceSessionId ||
+      (!sourceMessageId && !trimmedContent && uploads.length === 0 && !annotations?.length)
+    ) {
       return undefined
     }
 
@@ -393,7 +389,18 @@ export const createSessionMessageGraphOwner = <
     const sessionId = createPendingSessionId()
     const userMessage = sourceMessage
       ? undefined
-      : createMessage('user', trimmedContent, 'complete', undefined, [], uploads, parts, turnIntent)
+      : {
+          ...buildUserMessage({
+            id: createMessageId(),
+            content: trimmedContent,
+            uploads,
+            parts,
+            annotations,
+            turnIntent,
+            sortIndex: createSortIndex()
+          }),
+          ...(agentTarget ? { agentTarget } : {})
+        }
     const messages = [
       ...sourceMessages.map(({ message, sortIndex }) => copySnapshotMessage(message, sortIndex)),
       ...(userMessage ? [userMessage] : [])

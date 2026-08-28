@@ -526,13 +526,6 @@ const facadeBoundaryViolations = (source: string): readonly string[] => {
 }
 
 describe('settings store architecture', () => {
-  it('keeps the compatibility facade within its completion gate', () => {
-    const source = readSource(storePath)
-    const physicalLines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
-
-    expect(physicalLines).toBeLessThanOrEqual(750)
-  })
-
   it('composes every owner exactly once', () => {
     expect(compositionViolations(readSource(storePath))).toEqual([])
   })

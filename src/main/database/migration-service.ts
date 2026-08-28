@@ -32,10 +32,11 @@ import { tagOrderingMigration } from './migrations/0012-tag-ordering'
 import { sessionProjectionMigration } from './migrations/0013-session-projection'
 import { reviewQueryIndexesMigration } from './migrations/0014-review-query-indexes'
 import { sessionModelCallUsageMigration } from './migrations/0015-session-model-call-usage'
+import { computeJobSensitiveDataEncryptionMigration } from './migrations/0016-compute-job-sensitive-data-encryption'
 import {
   managedFileVersionFoundationCurrentSchemaAdoptionStatements,
   managedFileVersionFoundationMigration
-} from './migrations/0016-managed-file-version-foundation'
+} from './migrations/0017-managed-file-version-foundation'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -255,6 +256,12 @@ const SESSION_MODEL_CALL_USAGE_CHECKSUM = checksumMigrationPayload(
   sessionModelCallUsageMigration.verifiers,
   sessionModelCallUsageMigration.operations
 )
+const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
+  computeJobSensitiveDataEncryptionMigration.id,
+  computeJobSensitiveDataEncryptionMigration.statements,
+  computeJobSensitiveDataEncryptionMigration.verifiers,
+  computeJobSensitiveDataEncryptionMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -407,6 +414,12 @@ const MIGRATION_MANIFEST = [
   {
     ...sessionModelCallUsageMigration,
     checksum: SESSION_MODEL_CALL_USAGE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeJobSensitiveDataEncryptionMigration,
+    checksum: COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   },

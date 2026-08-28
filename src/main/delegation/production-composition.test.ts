@@ -606,7 +606,8 @@ describe('production delegated-work composition', () => {
     expect(request).toMatchObject({
       projectId: harness.session.projectId,
       sessionId: harness.session.id,
-      originatingPromptId: harness.caller.originMessageId
+      originatingPromptId: harness.caller.originMessageId,
+      runtimeSegmentId: 'runtime-segment-session-codex'
     })
     expect(request?.text).toContain(delegated.children[0].frameId)
     expect(request?.text).toContain(delegated.children[0].attemptId)
@@ -958,7 +959,7 @@ describe('production delegated-work composition', () => {
         rootFrameId: harness.caller.frameId,
         agentFrameId: harness.caller.frameId,
         messageAncestry: [harness.caller.originMessageId],
-        runtimeSegmentId: expect.stringMatching(/^delegation-settlement-/u)
+        runtimeSegmentId: 'runtime-segment-session-codex'
       }
     })
     harness.execution.control(staggered.children[2].attemptId).complete('gamma')
@@ -978,7 +979,7 @@ describe('production delegated-work composition', () => {
       .poll(() => promptEnded)
       .toContainEqual({
         sessionId: harness.session.id,
-        promptId: first.request.provenanceContext!.runtimeSegmentId!
+        promptId: expect.stringMatching(/^delegation-settlement-/u)
       })
     await vi.advanceTimersByTimeAsync(100)
     await expect.poll(() => pendingContinuations).toHaveLength(2)

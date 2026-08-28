@@ -1,6 +1,6 @@
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
@@ -26,6 +26,9 @@ import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolDiffBlock } from './WorkspaceToolDiffBlock'
 import type { ToolExecutionPhase } from './tool-execution-phase'
+import type { SessionTextAnnotationItemType } from '../../../../shared/annotations'
+import type { AnnotationPort } from './annotations/annotation-port'
+import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 
 type WorkspaceToolDetailsRowProps = {
   activity: ToolActivity
@@ -35,6 +38,9 @@ type WorkspaceToolDetailsRowProps = {
   isExpanded: boolean
   onNotebookRunNearViewport?: (runId: string, isNearViewport: boolean) => void
   onToggle: (activityId: string, nextExpanded: boolean) => void
+  annotationPort?: AnnotationPort
+  annotationItemType?: SessionTextAnnotationItemType
+  revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 
 // Section label styling shared by static headers and collapsible toggles.
@@ -57,6 +63,7 @@ const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
   'Request',
   'Result',
   'Shell',
+  'Skill',
   'Tool search',
   'Tools found',
   'Web Fetch',
@@ -66,15 +73,43 @@ const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
 // Renders a code block plus its optional truncation note.
 const renderCodeBody = (
   section: ToolCodeSection,
-  t: (key: string) => string
-): React.JSX.Element => (
-  <>
-    <WorkspaceToolCodeBlock code={section.text} language={section.language} />
-    {section.truncated ? (
-      <div className="text-[11px] text-text-300">{t('Output truncated')}</div>
-    ) : null}
-  </>
-)
+  t: (key: string) => string,
+  annotationContext: Pick<
+    WorkspaceToolDetailsRowProps,
+    'activity' | 'annotationPort' | 'annotationItemType'
+  >
+): React.JSX.Element => {
+  const body = <WorkspaceToolCodeBlock code={section.text} language={section.language} />
+  const sectionId = section.label.trim().toLowerCase()
+  const annotatableBody = annotationContext.annotationPort ? (
+    <TextAnnotationSurface
+      source={{
+        kind: 'session-item',
+        sessionId: annotationContext.annotationPort.sessionId,
+        itemType: annotationContext.annotationItemType ?? 'tool-activity',
+        itemId: annotationContext.activity.id,
+        sectionId
+      }}
+      activeAnnotations={annotationContext.annotationPort.activeAnnotations}
+      onAdd={annotationContext.annotationPort.onAdd}
+      onUpdateNote={annotationContext.annotationPort.onUpdateNote}
+      onError={annotationContext.annotationPort.onError}
+    >
+      {body}
+    </TextAnnotationSurface>
+  ) : (
+    body
+  )
+
+  return (
+    <>
+      {annotatableBody}
+      {section.truncated ? (
+        <div className="text-[11px] text-text-300">{t('Output truncated')}</div>
+      ) : null}
+    </>
+  )
+}
 
 // Loads an image artifact's bytes through the same reader the artifact preview gallery uses and
 // renders it inline; falls back to filename/path text while loading or if the read fails.
@@ -134,7 +169,10 @@ const WorkspaceToolDetailsRow = ({
   notebookRun,
   isExpanded,
   onNotebookRunNearViewport,
-  onToggle
+  onToggle,
+  annotationPort,
+  annotationItemType,
+  revealRequest
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
@@ -161,6 +199,17 @@ const WorkspaceToolDetailsRow = ({
       : undefined
   const translateKnownCopy = (value: string): string =>
     TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
+  const annotationContext = {
+    activity,
+    annotationPort,
+    annotationItemType
+  }
+  const collapsibleSectionRefs = useRef(new Map<string, HTMLDetailsElement>())
+  useLayoutEffect(() => {
+    if (!revealRequest?.sectionId) return
+    const detailsElement = collapsibleSectionRefs.current.get(revealRequest.sectionId)
+    if (detailsElement) detailsElement.open = true
+  }, [revealRequest])
 
   // Keep every near row registered even after hydration so the owner's LRU cannot evict a figure
   // that remains visible. The owner batches targeted IPC reads and trims records after rows leave.
@@ -175,10 +224,29 @@ const WorkspaceToolDetailsRow = ({
 
   const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
     if (section.kind === 'diff') {
+      const diffBody = <WorkspaceToolDiffBlock section={section} />
       return (
         <div key={index} className="space-y-1">
           <div className={sectionLabelClassName}>{translateKnownCopy(section.label)}</div>
-          <WorkspaceToolDiffBlock section={section} />
+          {annotationPort ? (
+            <TextAnnotationSurface
+              source={{
+                kind: 'session-item',
+                sessionId: annotationPort.sessionId,
+                itemType: annotationItemType ?? 'tool-activity',
+                itemId: activity.id,
+                sectionId: `diff:${index}`
+              }}
+              activeAnnotations={annotationPort.activeAnnotations}
+              onAdd={annotationPort.onAdd}
+              onUpdateNote={annotationPort.onUpdateNote}
+              onError={annotationPort.onError}
+            >
+              {diffBody}
+            </TextAnnotationSurface>
+          ) : (
+            diffBody
+          )}
         </div>
       )
     }
@@ -194,12 +262,21 @@ const WorkspaceToolDetailsRow = ({
 
     // Collapsible sections (e.g. notebook output) start closed so the code stays the focus.
     if (section.collapsible) {
+      const sectionId = section.label.trim().toLowerCase()
       return (
-        <details key={index} className="space-y-1">
+        <details
+          key={index}
+          ref={(element) => {
+            if (element) collapsibleSectionRefs.current.set(sectionId, element)
+            else collapsibleSectionRefs.current.delete(sectionId)
+          }}
+          data-tool-section-id={sectionId}
+          className="space-y-1"
+        >
           <summary className={`${sectionLabelClassName} cursor-pointer select-none`}>
             {translateKnownCopy(section.label)}
           </summary>
-          <div className="mt-1">{renderCodeBody(section, t)}</div>
+          <div className="mt-1">{renderCodeBody(section, t, annotationContext)}</div>
         </details>
       )
     }
@@ -207,7 +284,7 @@ const WorkspaceToolDetailsRow = ({
     return (
       <div key={index} className="space-y-1">
         <div className={sectionLabelClassName}>{translateKnownCopy(section.label)}</div>
-        {renderCodeBody(section, t)}
+        {renderCodeBody(section, t, annotationContext)}
       </div>
     )
   }

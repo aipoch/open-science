@@ -4,9 +4,11 @@ import { getFileExtension, PREVIEW_CODE_LANGUAGES } from '../../preview-support'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
+import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
 
-export const CodePreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+export const CodePreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => {
+  const { item } = props
   const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
@@ -23,10 +25,12 @@ export const CodePreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
   }
 
   return (
-    <SourcePreviewContent
-      content={state.preview.content}
-      pagination={state.pagination}
-      language={PREVIEW_CODE_LANGUAGES[getFileExtension(item.name)]}
-    />
+    <PreviewTextAnnotationSurface {...props}>
+      <SourcePreviewContent
+        content={state.preview.content}
+        pagination={state.pagination}
+        language={PREVIEW_CODE_LANGUAGES[getFileExtension(item.name)]}
+      />
+    </PreviewTextAnnotationSurface>
   )
 }

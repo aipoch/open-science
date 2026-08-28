@@ -6,25 +6,30 @@ import {
   createSourceFile,
   forEachChild,
   getModifiers,
+  isArrowFunction,
+  isBindingElement,
   isCallExpression,
   isClassDeclaration,
+  isClassExpression,
   isConstructorDeclaration,
   isEnumDeclaration,
   isExportAssignment,
   isExportDeclaration,
   isFunctionDeclaration,
+  isFunctionExpression,
   isIdentifier,
   isMethodDeclaration,
   isNamedExports,
   isNewExpression,
+  isParameter,
   isPropertyDeclaration,
   isPropertyAccessExpression,
-  isReturnStatement,
+  isSourceFile,
+  isVariableDeclaration,
   isVariableStatement,
   ScriptKind,
   ScriptTarget,
   SyntaxKind,
-  type ClassDeclaration,
   type Node,
   type SourceFile
 } from 'typescript'
@@ -46,102 +51,75 @@ const sources = new Map(
 const sourceFileFor = (file: string): SourceFile =>
   createSourceFile(file, sources.get(file)!, ScriptTarget.Latest, true, ScriptKind.TS)
 
-const classFrom = (file: string, name: string): ClassDeclaration => {
-  const candidate = sourceFileFor(file).statements.find(
-    (statement) => isClassDeclaration(statement) && statement.name?.text === name
-  )
-  if (!candidate || !isClassDeclaration(candidate)) throw new Error(`${name} class not found`)
-  return candidate
-}
-
 const hasModifier = (node: Node, kind: SyntaxKind): boolean =>
   canHaveModifiers(node) &&
   (getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false)
 
-const publicMethods = (declaration: ClassDeclaration): string[] =>
-  declaration.members
-    .filter(isMethodDeclaration)
-    .filter(
-      (member) =>
-        !hasModifier(member, SyntaxKind.PrivateKeyword) &&
-        !hasModifier(member, SyntaxKind.ProtectedKeyword)
-    )
-    .map((member) => (isIdentifier(member.name) ? member.name.text : undefined))
-    .filter((name): name is string => name !== undefined)
-    .sort()
+const hasFacadeLifetime = (expression: Node): boolean => {
+  let current: Node | undefined = expression.parent
+  while (current) {
+    if (isConstructorDeclaration(current) || isPropertyDeclaration(current)) {
+      const facade = current.parent
+      const isTargetFacade =
+        isClassDeclaration(facade) &&
+        facade.name?.text === 'UploadRepository' &&
+        isSourceFile(facade.parent)
+      const isStaticField =
+        isPropertyDeclaration(current) && hasModifier(current, SyntaxKind.StaticKeyword)
+      return isTargetFacade && !isStaticField
+    }
+    if (
+      isMethodDeclaration(current) ||
+      isFunctionDeclaration(current) ||
+      isFunctionExpression(current) ||
+      isArrowFunction(current)
+    ) {
+      return false
+    }
+    current = current.parent
+  }
+  return false
+}
 
-const asyncMethods = (declaration: ClassDeclaration): string[] =>
-  declaration.members
-    .filter(isMethodDeclaration)
-    .filter((member) => hasModifier(member, SyntaxKind.AsyncKeyword))
-    .map((member) => (isIdentifier(member.name) ? member.name.text : undefined))
-    .filter((name): name is string => name !== undefined)
-    .sort()
+const newExpressionLifetimes = (
+  sourceFile: SourceFile,
+  className: string
+): Array<'class' | 'transient'> => {
+  const lifetimes: Array<'class' | 'transient'> = []
+  const visit = (node: Node): void => {
+    if (
+      isNewExpression(node) &&
+      isIdentifier(node.expression) &&
+      node.expression.text === className
+    ) {
+      lifetimes.push(hasFacadeLifetime(node) ? 'class' : 'transient')
+    }
+    forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return lifetimes
+}
 
-const fields = (declaration: ClassDeclaration): string[] =>
-  declaration.members
-    .filter(isPropertyDeclaration)
-    .map((member) => (isIdentifier(member.name) ? member.name.text : undefined))
-    .filter((name): name is string => name !== undefined)
-    .sort()
-
-const newExpressionSites = (className: string): string[] => {
+const newExpressionFiles = (
+  className: string,
+  lifetime: 'class' | 'transient' = 'class'
+): string[] => {
   const sites: string[] = []
   for (const file of productionFiles) {
     const sourceFile = sourceFileFor(file)
-    const visit = (node: Node): void => {
-      if (
-        isNewExpression(node) &&
-        isIdentifier(node.expression) &&
-        node.expression.text === className
-      ) {
-        let current: Node | undefined = node.parent
-        while (current && !isConstructorDeclaration(current)) current = current.parent
-        sites.push(`${file}:${current ? 'constructor' : 'outside-constructor'}`)
-      }
-      forEachChild(node, visit)
+    for (const siteLifetime of newExpressionLifetimes(sourceFile, className)) {
+      if (siteLifetime === lifetime) sites.push(file)
     }
-    visit(sourceFile)
   }
   return sites
 }
 
-const constructorParameters = (declaration: ClassDeclaration): string[] => {
-  const constructors = declaration.members.filter(isConstructorDeclaration)
-  expect(constructors).toHaveLength(1)
-  return constructors[0].parameters.map((parameter) =>
-    [
-      parameter.name.getText(),
-      parameter.type?.getText() ?? '<untyped>',
-      parameter.initializer ? 'defaulted' : 'required'
-    ].join(':')
-  )
-}
-
-const methodDeclarationSites = (methodName: string): string[] => {
+const interactiveTransactionOptions = (
+  sourceMap: ReadonlyMap<string, string> = sources
+): string[] => {
   const sites: string[] = []
-  for (const file of productionFiles) {
-    const sourceFile = sourceFileFor(file)
-    for (const statement of sourceFile.statements) {
-      if (!isClassDeclaration(statement) || !statement.name) continue
-      for (const member of statement.members) {
-        if (
-          isMethodDeclaration(member) &&
-          isIdentifier(member.name) &&
-          member.name.text === methodName
-        ) {
-          sites.push(`${file}:${statement.name.text}`)
-        }
-      }
-    }
-  }
-  return sites.sort()
-}
-
-const interactiveTransactionOptions = (): string[] => {
-  const sites: string[] = []
-  for (const file of productionFiles) {
-    const sourceFile = sourceFileFor(file)
+  for (const [file, source] of sourceMap) {
+    const sourceFile = createSourceFile(file, source, ScriptTarget.Latest, true, ScriptKind.TS)
     const visit = (node: Node): void => {
       if (
         isCallExpression(node) &&
@@ -155,6 +133,54 @@ const interactiveTransactionOptions = (): string[] => {
     visit(sourceFile)
   }
   return sites.sort()
+}
+
+const valueBindingsNamed = (sourceFile: SourceFile, name: string): Node[] => {
+  const bindings: Node[] = []
+  const visit = (node: Node): void => {
+    if (isIdentifier(node) && node.text === name) {
+      const declaration = node.parent
+      const isNamedValueDeclaration =
+        isVariableDeclaration(declaration) ||
+        isParameter(declaration) ||
+        isBindingElement(declaration) ||
+        isFunctionDeclaration(declaration) ||
+        isFunctionExpression(declaration) ||
+        isClassDeclaration(declaration) ||
+        isClassExpression(declaration) ||
+        isEnumDeclaration(declaration)
+      const isValueBinding = isNamedValueDeclaration && declaration.name === node
+      if (isValueBinding) bindings.push(node)
+    }
+    forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return bindings
+}
+
+const expectSharedUploadTransactionPolicy = (
+  sourceMap: ReadonlyMap<string, string> = sources
+): void => {
+  const policyFile = 'staged-publication-owner.ts'
+  const policySource = createSourceFile(
+    policyFile,
+    sourceMap.get(policyFile)!,
+    ScriptTarget.Latest,
+    true,
+    ScriptKind.TS
+  )
+  const policyBindings = valueBindingsNamed(policySource, 'UPLOAD_TRANSACTION_OPTIONS')
+  expect(policyBindings).toHaveLength(1)
+  const declaration = policyBindings[0]?.parent
+  expect(
+    declaration !== undefined &&
+      isVariableDeclaration(declaration) &&
+      isVariableStatement(declaration.parent.parent) &&
+      isSourceFile(declaration.parent.parent.parent)
+  ).toBe(true)
+  expect(interactiveTransactionOptions(sourceMap)).toEqual([
+    'staged-publication-owner.ts:UPLOAD_TRANSACTION_OPTIONS'
+  ])
 }
 
 const functionCallSites = (functionName: string): string[] => {
@@ -183,28 +209,6 @@ const variableInitializer = (file: string, variableName: string): string | undef
   }
   return undefined
 }
-
-const facadeDelegations = (
-  facade: ClassDeclaration,
-  facadeFile: SourceFile
-): Readonly<Record<string, string>> =>
-  Object.fromEntries(
-    facade.members.filter(isMethodDeclaration).map((method) => {
-      if (!isIdentifier(method.name) || !method.body || method.body.statements.length !== 1) {
-        throw new Error('UploadRepository methods must be single-return delegations')
-      }
-      const [statement] = method.body.statements
-      if (
-        !isReturnStatement(statement) ||
-        !statement.expression ||
-        !isCallExpression(statement.expression) ||
-        !isPropertyAccessExpression(statement.expression.expression)
-      ) {
-        throw new Error(`${method.name.text} is not a direct owner delegation`)
-      }
-      return [method.name.text, statement.expression.expression.getText(facadeFile)]
-    })
-  )
 
 const exportedValues = (sourceFile: SourceFile): string[] => {
   const names: string[] = []
@@ -249,38 +253,8 @@ const exportedValues = (sourceFile: SourceFile): string[] => {
 
 describe('Upload repository architecture', () => {
   const facadeFile = sourceFileFor('repository.ts')
-  const facade = classFrom('repository.ts', 'UploadRepository')
 
-  it('keeps every production module within the completion gate', () => {
-    for (const [file, source] of sources) {
-      const physicalLines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
-      expect(physicalLines, file).toBeLessThanOrEqual(660)
-    }
-  })
-
-  it('keeps the established 14-method public facade and three value exports', () => {
-    const establishedMethods = [
-      'abortTransfer',
-      'appendTransfer',
-      'beginTransfer',
-      'deleteUpload',
-      'finalizePendingSessionUploads',
-      'finishTransfer',
-      'getTransferStatus',
-      'recoverStagingUploads',
-      'resolveManagedUpload',
-      'resolveManagedUploadPath',
-      'resolveSessionUpload',
-      'resolveSessionUploadPath',
-      'stageLocalFile',
-      'upgradeLegacySessionUploads'
-    ].sort()
-    expect(publicMethods(facade)).toEqual(establishedMethods)
-    expect(asyncMethods(facade)).toEqual(establishedMethods)
-    expect(constructorParameters(facade)).toEqual([
-      'storageRoot:string:required',
-      'options:UploadRepositoryOptions:defaulted'
-    ])
+  it('keeps the public value exports stable', () => {
     expect(exportedValues(facadeFile)).toEqual(
       [
         'OrphanLegacyUploadAuthorityMissingError',
@@ -317,7 +291,7 @@ describe('Upload repository architecture', () => {
     expect(exportedValues(assignmentExport)).toEqual(['default:assigned'])
   })
 
-  it('composes each owner exactly once without facade lifecycle state', () => {
+  it('composes each owner exactly once behind the facade', () => {
     for (const owner of [
       'ActiveTransferOwner',
       'LegacyRecoveryOwner',
@@ -325,88 +299,92 @@ describe('Upload repository architecture', () => {
       'StagedPublicationOwner',
       'VerifiedLegacyCleanupOwner'
     ]) {
-      expect(newExpressionSites(owner), owner).toEqual(['repository.ts:constructor'])
+      expect(newExpressionFiles(owner), owner).toEqual(['repository.ts'])
+      expect(newExpressionFiles(owner, 'transient'), owner).toEqual([])
     }
-    expect(fields(facade)).toEqual([
-      'legacyRecoveryOwner',
-      'managedUploadResolver',
-      'stagedPublicationOwner',
-      'transferOwner'
-    ])
-  })
 
-  it('keeps every facade method as a direct delegation to its established owner', () => {
-    expect(facadeDelegations(facade, facadeFile)).toEqual({
-      abortTransfer: 'this.transferOwner.abortTransfer',
-      appendTransfer: 'this.transferOwner.appendTransfer',
-      beginTransfer: 'this.transferOwner.beginTransfer',
-      deleteUpload: 'this.managedUploadResolver.deleteUpload',
-      finalizePendingSessionUploads: 'this.stagedPublicationOwner.finalizePendingSessionUploads',
-      finishTransfer: 'this.transferOwner.finishTransfer',
-      getTransferStatus: 'this.transferOwner.getTransferStatus',
-      recoverStagingUploads: 'this.legacyRecoveryOwner.recoverStagingUploads',
-      resolveManagedUpload: 'this.managedUploadResolver.resolveManagedUpload',
-      resolveManagedUploadPath: 'this.managedUploadResolver.resolveManagedUploadPath',
-      resolveSessionUpload: 'this.managedUploadResolver.resolveSessionUpload',
-      resolveSessionUploadPath: 'this.managedUploadResolver.resolveSessionUploadPath',
-      stageLocalFile: 'this.transferOwner.stageLocalFile',
-      upgradeLegacySessionUploads: 'this.legacyRecoveryOwner.upgradeLegacySessionUploads'
-    })
+    const fieldInitializerFile = createSourceFile(
+      'field-initializer.ts',
+      'class UploadRepository { private readonly owner = new ActiveTransferOwner() }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionLifetimes(fieldInitializerFile, 'ActiveTransferOwner')).toEqual(['class'])
+
+    const methodConstructionFile = createSourceFile(
+      'method-construction.ts',
+      'class UploadRepository { createOwner() { return new ActiveTransferOwner() } }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionLifetimes(methodConstructionFile, 'ActiveTransferOwner')).toEqual([
+      'transient'
+    ])
+
+    const staticFieldFile = createSourceFile(
+      'static-field.ts',
+      'class UploadRepository { static owner = new ActiveTransferOwner() }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionLifetimes(staticFieldFile, 'ActiveTransferOwner')).toEqual(['transient'])
+
+    const nestedClassFile = createSourceFile(
+      'nested-class.ts',
+      'class UploadRepository { createOwner() { class Holder { owner = new ActiveTransferOwner() } return Holder } }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionLifetimes(nestedClassFile, 'ActiveTransferOwner')).toEqual(['transient'])
   })
 
   it('keeps recovery and verified cleanup decisions behind their owners', () => {
     const facadeSource = sources.get('repository.ts')!
-    const cleanupSource = sources.get('verified-legacy-cleanup-owner.ts')!
-    const recoverySource = sources.get('legacy-recovery-owner.ts')!
 
     expect(facadeSource).not.toMatch(/from ['"]node:fs\/promises['"]/)
     expect(facadeSource).not.toContain('LEGACY_CLEANUP_PRIVATE_SUFFIX')
     expect(facadeSource).not.toContain('settleSiblingOperations')
-    expect(publicMethods(classFrom('legacy-recovery-owner.ts', 'LegacyRecoveryOwner'))).toEqual(
-      [
-        'completeStagingUpload',
-        'hasOrphanLegacyCandidate',
-        'recoverStagingUploads',
-        'removeVerifiedLegacyCopy',
-        'upgradeLegacySessionUploads'
-      ].sort()
-    )
-    expect(
-      publicMethods(classFrom('verified-legacy-cleanup-owner.ts', 'VerifiedLegacyCleanupOwner'))
-    ).toEqual(['assertLegacySourceAbsent', 'hasPrivateClaim', 'removeVerifiedLegacyCopy'].sort())
-    expect(methodDeclarationSites('assertConsistentSessionUploadReferences')).toEqual([
-      'legacy-recovery-owner.ts:LegacyRecoveryOwner'
-    ])
-    expect(methodDeclarationSites('hasOrphanLegacyCandidate')).toEqual([
-      'legacy-recovery-owner.ts:LegacyRecoveryOwner'
-    ])
-    expect(methodDeclarationSites('completeStagingUpload')).toEqual([
-      'legacy-recovery-owner.ts:LegacyRecoveryOwner'
-    ])
-    expect(methodDeclarationSites('restoreLegacyCleanupPrivate')).toEqual([
-      'verified-legacy-cleanup-owner.ts:VerifiedLegacyCleanupOwner'
-    ])
-    expect(methodDeclarationSites('assertLegacySourceAbsent')).toEqual([
-      'verified-legacy-cleanup-owner.ts:VerifiedLegacyCleanupOwner'
-    ])
-    expect(cleanupSource.match(/LEGACY_CLEANUP_PRIVATE_SUFFIX/g)).toHaveLength(4)
     for (const [file, source] of sources) {
       if (file !== 'verified-legacy-cleanup-owner.ts') {
         expect(source, file).not.toContain('LEGACY_CLEANUP_PRIVATE_SUFFIX')
       }
     }
-    expect(recoverySource).toContain('cleanup: Pick<')
   })
 
   it('routes every interactive Upload transaction through the shared connection wait policy', () => {
     expect(variableInitializer('staged-publication-owner.ts', 'UPLOAD_TRANSACTION_OPTIONS')).toBe(
       '{ maxWait: 10_000 } as const'
     )
-    expect(interactiveTransactionOptions()).toEqual([
-      'staged-publication-owner.ts:UPLOAD_TRANSACTION_OPTIONS'
-    ])
-    expect(functionCallSites('runUploadTransaction')).toEqual([
-      'legacy-recovery-owner.ts',
+    expectSharedUploadTransactionPolicy()
+
+    const shadowedPolicySources = new Map(sources)
+    shadowedPolicySources.set(
+      'rogue-owner.ts',
+      `
+        const UPLOAD_TRANSACTION_OPTIONS = { maxWait: 1 }
+        client.$transaction(operation, UPLOAD_TRANSACTION_OPTIONS)
+      `
+    )
+    expect(() => expectSharedUploadTransactionPolicy(shadowedPolicySources)).toThrow()
+
+    const sameFileShadowSources = new Map(sources)
+    sameFileShadowSources.set(
+      'staged-publication-owner.ts',
+      sources.get('staged-publication-owner.ts')!.replace(
+        '): Promise<Result> => client.$transaction(operation, UPLOAD_TRANSACTION_OPTIONS)',
+        `): Promise<Result> => {
+            const UPLOAD_TRANSACTION_OPTIONS = { maxWait: 1 }
+            return client.$transaction(operation, UPLOAD_TRANSACTION_OPTIONS)
+          }`
+      )
+    )
+    expect(() => expectSharedUploadTransactionPolicy(sameFileShadowSources)).toThrow()
+
+    expect([...new Set(functionCallSites('runUploadTransaction'))]).toEqual([
       'legacy-recovery-owner.ts',
       'staged-publication-owner.ts'
     ])

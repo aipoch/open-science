@@ -45,11 +45,12 @@ import {
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
+import type { PreviewAnnotationPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
 import { useManagedVersionWorkflow, type ManagedVersionMode } from './useManagedVersionWorkflow'
 
-type PreviewFileSurfaceProps = {
+type PreviewFileSurfaceProps = PreviewAnnotationPort & {
   item: PreviewFileItem
   contentKey?: string
   renderContent?: boolean
@@ -64,6 +65,10 @@ type PreviewFileSurfaceProps = {
   workbenchConnected?: boolean
   onItemChange?: (item: PreviewFileItem) => void
 }
+
+type LineageLoadState =
+  | { key: string; phase: 'loading' | 'error' }
+  | { key: string; phase: 'loaded'; value?: ArtifactLineageProvenance }
 
 const hasManagedTextEditExtension = (filename: string): boolean => {
   const extensionIndex = filename.lastIndexOf('.')
@@ -493,7 +498,12 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       provenanceEntry = 'menu',
       leaveGuardScope,
       workbenchConnected = false,
-      onItemChange
+      onItemChange,
+      activeAnnotations,
+      onAddAnnotation,
+      onUpdateAnnotationNote,
+      onRemoveAnnotation,
+      onAnnotationError
     },
     ref
   ): React.JSX.Element => {
@@ -505,10 +515,8 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       key: string
       item: PreviewFileItem
     }>()
-    const [lineageResult, setLineageResult] = useState<{
-      key: string
-      value?: ArtifactLineageProvenance
-    }>()
+    const [lineageLoadState, setLineageLoadState] = useState<LineageLoadState>()
+    const [lineageRetryToken, setLineageRetryToken] = useState(0)
     const [mode, setMode] = useState<ManagedVersionMode>('view')
     const [draft, setDraft] = useState('')
     const [editBaseline, setEditBaseline] = useState<{
@@ -566,7 +574,12 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     // Selection and origin lifecycle changes can update a stable tab without changing its Artifact
     // identity. Keep the response keyed to the full request so stale lineage is never consumed.
     const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}:${previewItem.originSession?.state ?? ''}`
-    const lineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
+    const lineage =
+      lineageLoadState?.key === lineageRequestKey && lineageLoadState.phase === 'loaded'
+        ? lineageLoadState.value
+        : undefined
+    const lineageFailed =
+      lineageLoadState?.key === lineageRequestKey && lineageLoadState.phase === 'error'
     const exactSelectedVersion = lineage?.versions.find(
       (version) => version.versionId === previewItem.selectedVersionId
     )
@@ -641,9 +654,11 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           artifactId: previewItem.artifactId
         })
         .then((value) => {
-          if (active) setLineageResult({ key: lineageRequestKey, value })
+          if (active) setLineageLoadState({ key: lineageRequestKey, phase: 'loaded', value })
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (active) setLineageLoadState({ key: lineageRequestKey, phase: 'error' })
+        })
 
       return () => {
         active = false
@@ -651,6 +666,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     }, [
       lineageKey,
       lineageRequestKey,
+      lineageRetryToken,
       previewItem.artifactId,
       previewItem.sessionId,
       previewItem.source,
@@ -917,7 +933,26 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             ) : undefined
           }
         />
-        {!showProvenance && managedNavigationInspect?.text !== undefined ? (
+        {!showProvenance && lineageFailed ? (
+          <div
+            role="alert"
+            className="flex shrink-0 items-center justify-between gap-2 border-b border-border-300/50 bg-danger-900 px-3 py-1 text-[11px] leading-4 text-danger-000"
+          >
+            <span>{t('Could not load version history.')}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => {
+                setLineageLoadState({ key: lineageRequestKey, phase: 'loading' })
+                setLineageRetryToken((token) => token + 1)
+              }}
+              className="h-5 text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
+            >
+              {t('Retry')}
+            </Button>
+          </div>
+        ) : !showProvenance && managedNavigationInspect?.text !== undefined ? (
           <ManagedVersionNavigation
             inspect={managedNavigationInspect}
             onSelect={selectManagedVersion}
@@ -985,6 +1020,11 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
                   item={resolvedPreviewItem}
                   downloadVersionContext={managedWorkflow.downloadVersionContext}
+                  activeAnnotations={activeAnnotations}
+                  onAddAnnotation={onAddAnnotation}
+                  onUpdateAnnotationNote={onUpdateAnnotationNote}
+                  onRemoveAnnotation={onRemoveAnnotation}
+                  onAnnotationError={onAnnotationError}
                 />
               ) : null
             ) : managedWorkflow.diffResult ? (
@@ -1003,6 +1043,11 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
               key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
               item={resolvedPreviewItem}
               downloadVersionContext={managedWorkflow.downloadVersionContext}
+              activeAnnotations={activeAnnotations}
+              onAddAnnotation={onAddAnnotation}
+              onUpdateAnnotationNote={onUpdateAnnotationNote}
+              onRemoveAnnotation={onRemoveAnnotation}
+              onAnnotationError={onAnnotationError}
             />
           ) : null}
         </div>

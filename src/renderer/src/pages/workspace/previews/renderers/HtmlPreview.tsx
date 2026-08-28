@@ -9,6 +9,7 @@ import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useManagedPreviewResource } from '../useManagedPreviewResource'
 import { usePreviewFileContent } from '../usePreviewFileContent'
+import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
 
 type HtmlPreviewMode = 'render' | 'source'
@@ -21,7 +22,8 @@ const HTML_PREVIEW_MODES = [
 
 const HtmlSourceContent = ({
   item,
-  topContent
+  topContent,
+  ...annotationProps
 }: PreviewFileRendererProps & { topContent: React.ReactNode }): React.JSX.Element => {
   const { t } = useTranslation()
   const state = usePreviewFileContent(item)
@@ -38,15 +40,18 @@ const HtmlSourceContent = ({
   }
 
   return (
-    <SourcePreviewContent
-      content={state.preview.content}
-      pagination={state.pagination}
-      topContent={topContent}
-    />
+    <PreviewTextAnnotationSurface item={item} {...annotationProps}>
+      <SourcePreviewContent
+        content={state.preview.content}
+        pagination={state.pagination}
+        topContent={topContent}
+      />
+    </PreviewTextAnnotationSurface>
   )
 }
 
-export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => {
+  const { item } = props
   const { t } = useTranslation()
   const [mode, setMode] = useState<HtmlPreviewMode>('render')
   const requestKey = createPreviewResourceKey(item)
@@ -95,7 +100,7 @@ export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
   )
 
   if (mode === 'source') {
-    return <HtmlSourceContent item={item} topContent={modeToggle} />
+    return <HtmlSourceContent {...props} topContent={modeToggle} />
   }
 
   if (resourceState.status === 'loading') return <PreviewLoadingContent />

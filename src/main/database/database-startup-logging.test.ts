@@ -113,7 +113,8 @@ describe('database startup logging', () => {
               '0013_session_projection',
               '0014_review_query_indexes',
               '0015_session_model_call_usage',
-              '0016_managed_file_version_foundation'
+              '0016_compute_job_sensitive_data_encryption',
+              '0017_managed_file_version_foundation'
             ],
             adoptedLegacy: true
           })

@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 
 import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import type { WorkspaceMessageQueueController } from './workspace-message-queue-controller'
+import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
 
 type ComposerMessageQueueProps = Omit<WorkspaceMessageQueueController, 'lifecycle'>
 type ComposerMessageQueueTriggerProps = Pick<ComposerMessageQueueProps, 'items'> & {
@@ -38,6 +39,7 @@ const queueErrorText = (
   t: TFunction,
   error: { kind: 'branch' | 'send' | 'edit' | 'cancel'; detail?: string }
 ): string => {
+  const detail = localizeImageAnnotationSourceError(error.detail, t) ?? error.detail ?? ''
   if (error.kind === 'branch') {
     return t(
       'This queued message belongs to another message branch. Return to that branch to send it.'
@@ -46,11 +48,11 @@ const queueErrorText = (
   if (error.kind === 'edit') return t('Clear the composer before editing this queued message.')
   if (error.kind === 'cancel') {
     return t('Could not stop the current run. {{detail}} Try again.', {
-      detail: error.detail ?? ''
+      detail
     })
   }
   return t('Could not send this queued message. {{detail}} Try again.', {
-    detail: error.detail ?? ''
+    detail
   })
 }
 

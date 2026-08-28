@@ -20,7 +20,7 @@ import { PrismaClient } from '@prisma/client'
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
     expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
-      '2055a94ae4b70f91cbac2dcec3bdbeb5b9f19760586bf57e36a9c8274131114b'
+      '124b6c9d9e4172d2accb23fc15e976fabe7d1a93d0bc0fab3b8e963383ed893f'
     )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
@@ -54,7 +54,8 @@ describe('packaged database migration ledger smoke', () => {
          WHERE "id" IN (
            '0014_review_query_indexes',
            '0015_session_model_call_usage',
-           '0016_managed_file_version_foundation'
+           '0016_compute_job_sensitive_data_encryption',
+           '0017_managed_file_version_foundation'
          )`
       )
 

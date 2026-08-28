@@ -33,11 +33,12 @@ import {
 } from './preview-tab-actions'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { SourceWebPreview } from './previews/SourceWebPreview'
+import type { PreviewAnnotationPort } from './previews/preview-types'
 import { PreviewToolContent } from './previews/PreviewToolContent'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
-type PreviewPanelProps = {
+type PreviewPanelProps = PreviewAnnotationPort & {
   panelRef: React.Ref<PanelImperativeHandle>
   defaultSize: string
   minSize: string
@@ -45,7 +46,7 @@ type PreviewPanelProps = {
   restoredPlanResponder?: RestoredPlanResponder
 }
 
-type PreviewPanelSurfaceProps = {
+type PreviewPanelSurfaceProps = PreviewAnnotationPort & {
   className?: string
   restoredPlanResponder?: RestoredPlanResponder
 }
@@ -53,11 +54,12 @@ type PreviewPanelSurfaceProps = {
 // Renders the active tab's content, or an empty state when nothing is previewed yet.
 const PreviewActiveContent = ({
   item,
-  restoredPlanResponder
+  restoredPlanResponder,
+  ...annotationPort
 }: {
   item: PreviewItem | undefined
   restoredPlanResponder?: RestoredPlanResponder
-}): React.JSX.Element | null => {
+} & PreviewAnnotationPort): React.JSX.Element | null => {
   const { t } = useTranslation()
 
   if (!item) {
@@ -74,7 +76,7 @@ const PreviewActiveContent = ({
 
   if (item.type === 'source') return <SourceWebPreview item={item} />
 
-  return <PreviewFileContent item={item} />
+  return <PreviewFileContent item={item} {...annotationPort} />
 }
 
 const previewTabClassName =
@@ -458,12 +460,13 @@ const usePreviewModalSurface = ({
 const PreviewFilePanel = ({
   item,
   contentKey,
-  onClose
+  onClose,
+  ...annotationPort
 }: {
   item: PreviewFileItem
   contentKey: string
   onClose: (id: string) => boolean
-}): React.JSX.Element => {
+} & PreviewAnnotationPort): React.JSX.Element => {
   const { t } = useTranslation()
   const [isFullScreenOpen, setIsFullScreenOpen] = useState(false)
   const surfaceRef = useRef<HTMLElement | null>(null)
@@ -530,6 +533,7 @@ const PreviewFilePanel = ({
           provenanceEntry={isFullScreenOpen ? 'trailing' : 'menu'}
           leaveGuardScope={workbenchPreviewGuardScope(item.projectId, item.id)}
           workbenchConnected
+          {...annotationPort}
         />
       </section>
     </>
@@ -628,7 +632,8 @@ const PreviewSourcePanel = ({
 // tabs and active content inside a bottom sheet.
 const PreviewPanelSurface = ({
   className,
-  restoredPlanResponder
+  restoredPlanResponder,
+  ...annotationPort
 }: PreviewPanelSurfaceProps): React.JSX.Element => {
   const items = usePreviewWorkbenchStore((state) => state.items)
   const activeItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
@@ -765,6 +770,7 @@ const PreviewPanelSurface = ({
                 removeItem(itemId)
                 return usePreviewWorkbenchStore.getState().items.length < before
               }}
+              {...annotationPort}
             />
           ) : (
             <section
@@ -796,7 +802,8 @@ const PreviewPanel = ({
   defaultSize,
   minSize,
   onResize,
-  restoredPlanResponder
+  restoredPlanResponder,
+  ...annotationPort
 }: PreviewPanelProps): React.JSX.Element => {
   const handleResize = (
     panelSize: PanelSize,
@@ -817,7 +824,7 @@ const PreviewPanel = ({
       collapsedSize="0%"
       onResize={handleResize}
     >
-      <PreviewPanelSurface restoredPlanResponder={restoredPlanResponder} />
+      <PreviewPanelSurface restoredPlanResponder={restoredPlanResponder} {...annotationPort} />
     </ResizablePanel>
   )
 }

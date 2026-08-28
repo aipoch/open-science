@@ -75,10 +75,11 @@ describe('notification attention metadata migration', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ],
       from: '0006_database_domain_constraints',
-      to: '0016_managed_file_version_foundation'
+      to: '0017_managed_file_version_foundation'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
@@ -97,9 +98,12 @@ describe('notification attention metadata migration', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0015_session_model_call_usage.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
     ).resolves.toBeUndefined()
     await expect(
-      access(`${databasePath}.before-0016_managed_file_version_foundation.backup`)
+      access(`${databasePath}.before-0017_managed_file_version_foundation.backup`)
     ).resolves.toBeUndefined()
 
     await expect(

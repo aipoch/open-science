@@ -25,7 +25,13 @@ const harness = vi.hoisted(() => ({
   submissionAttempted: false,
   submit: undefined as ((checks: NewCheck[]) => Promise<void>) | undefined,
   promptError: undefined as Error | undefined,
-  nextUpdate: undefined as (() => Promise<{ kind: string; stopReason?: string }>) | undefined,
+  nextUpdate: undefined as
+    | (() => Promise<{
+        kind: string
+        stopReason?: string
+        update?: { sessionUpdate?: string; [key: string]: unknown }
+      }>)
+    | undefined,
   disposeError: undefined as Error | undefined,
   stopError: undefined as Error | undefined,
   bridgeScoped: undefined as boolean | undefined
@@ -433,6 +439,53 @@ describe('review assessment owner', () => {
 
     expect(result.review.lifecycle).toBe('error')
     expect(harness.events.filter((event) => event === 'acp:prompt')).toHaveLength(1)
+  })
+
+  it('shares the reviewer log budget with the protocol recovery turn', async () => {
+    harness.submission = undefined
+    const contentUpdates = (
+      prefix: string
+    ): Array<{
+      kind: string
+      update: { sessionUpdate: string; content: { type: string; text: string } }
+    }> =>
+      Array.from({ length: 10 }, (_, index) => ({
+        kind: 'session_update',
+        update: {
+          sessionUpdate: index % 2 === 0 ? 'agent_message_chunk' : 'agent_thought_chunk',
+          content: {
+            type: 'text',
+            text: `${prefix}${String(index).padStart(2, '0')}${'x'.repeat(65_536)}`
+          }
+        }
+      }))
+    const updates = [
+      ...contentUpdates('initial-'),
+      { kind: 'stop', stopReason: 'end_turn' },
+      ...contentUpdates('recovery-'),
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let index = 0
+    harness.nextUpdate = async () => {
+      const update = updates[index++]!
+      if (index === updates.length) await harness.submit?.([])
+      return update
+    }
+    const reviewRepository = makeRepository()
+
+    const result = await runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      mode: 'initial'
+    })
+
+    expect(result.review.lifecycle).toBe('complete')
+    const commit = vi.mocked(reviewRepository.commitScopedSubmission).mock.calls[0]?.[0]
+    expect(commit?.reviewerLog).toBeDefined()
+    const persistedLog = commit?.reviewerLog ?? []
+    expect(Buffer.byteLength(JSON.stringify(persistedLog), 'utf8')).toBeLessThanOrEqual(
+      1_024 * 1_024
+    )
+    expect(persistedLog.at(-1)).toMatchObject({ reviewLogTruncated: true })
   })
 
   it('does not retry a cancelled reviewer turn', async () => {

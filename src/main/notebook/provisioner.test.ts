@@ -2168,12 +2168,16 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
       }
     })
 
-    await new DefaultRuntimeProvisioner(deps).repair('python', () => {})
+    await new DefaultRuntimeProvisioner(deps).repair('python', () => {}, {
+      onVerified: () => {
+        order.push('repair:completed')
+      }
+    })
 
     // The lock is taken for the default-python env, the rebuild (runArgv) runs while held, and the lock
-    // is only released after — one contiguous critical section.
+    // and repair completion is published before that one contiguous critical section releases.
     expect(order[0]).toBe(`lock:${DEFAULT_PY_ENV}`)
-    expect(order[order.length - 1]).toBe('unlock')
+    expect(order.slice(-2)).toEqual(['repair:completed', 'unlock'])
     expect(runArgv).toHaveBeenCalled()
   })
 
@@ -2708,6 +2712,19 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     // The rebuild was NOT aborted and the env is intact.
     expect(runArgv).toHaveBeenCalled()
     expect(existsSync(bin)).toBe(true)
+  })
+
+  it('does not carry a cancel during repair finalization into the next operation', async () => {
+    const root = makeRoot()
+    const provisioner = serializeProvisioner(new DefaultRuntimeProvisioner(makeDeps(root)))
+
+    await provisioner.repair('python', () => {}, {
+      onVerified: () => {
+        provisioner.cancel('python')
+      }
+    })
+
+    await expect(provisioner.provisionPython(() => {})).resolves.toBeUndefined()
   })
 
   it('a per-language cancel is dropped while idle (does not arm a future queued Reset)', () => {

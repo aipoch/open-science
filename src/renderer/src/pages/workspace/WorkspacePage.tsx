@@ -23,7 +23,8 @@ import {
   projectSessionActionability,
   resolveRootPermissionPending,
   sessionAwaitsHistoryReplay,
-  useSessionStore
+  useSessionStore,
+  type ChatSession
 } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
@@ -60,7 +61,6 @@ import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
-import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 import { useWorkspaceConversationController } from './workspace-conversation-controller'
@@ -70,6 +70,7 @@ import { useSideChatController } from './use-side-chat-controller'
 import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 import { createWorkspaceComputeHostAccessController } from './workspace-compute-host-access-controller'
 import { useWorkspaceSessionAgentConfiguration } from './workspace-session-agent-configuration-controller'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -78,12 +79,21 @@ type WorkspacePageProps = {
   isPreviewPresentationActive?: boolean
 }
 
-// New-conversation drafts are project-scoped so switching projects never leaks unsent intent.
 const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
+const planProjectionRecoveryPorts = {
+  getProjection: (projectId: string, sessionId: string) =>
+    window.api.acp.getPlanProjection(projectId, sessionId),
+  getSession: (sessionId: string) =>
+    useSessionStore.getState().sessions.find((session) => session.id === sessionId),
+  setProjection: (
+    sessionId: string,
+    projection: NonNullable<ChatSession['activePlanProjection']>
+  ) => useSessionStore.getState().setActivePlanProjection(sessionId, projection),
+  finishRun: (sessionId: string) => useSessionStore.getState().finishRun(sessionId)
+}
 
-// Renders the workspace shell and bridges the chat surface to the session store.
 const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
@@ -116,7 +126,6 @@ const WorkspacePage = ({
     state.projects.find((project) => project.id === scopedProjectId)
   )
 
-  // Specialist catalog for new-conversation draft validation.
   const specialistItems = useSpecialistStore((state) => state.items)
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
   const loadSpecialists = useSpecialistStore((state) => state.load)
@@ -126,7 +135,6 @@ const WorkspacePage = ({
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
-  const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
   const previewItems = usePreviewWorkbenchStore((state) => state.items)
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
@@ -134,19 +142,11 @@ const WorkspacePage = ({
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const projectFormDialog = useProjectFormDialog()
-  // Drives the sidebar project menu's Download artifacts… disabled state. An incomplete index
-  // leaves the item clickable (the count may be partial) so the click path can repair the index
-  // before collecting (listAllProjectFiles); only an authoritatively complete empty project
-  // disables the item (see ProjectFilesOverview.isIndexComplete in shared/project-files).
-  // Keyed by project so a project switch renders the menu item disabled without a synchronous
-  // setState reset inside the effect (react-hooks/set-state-in-effect).
   const [projectFileCount, setProjectFileCount] = useState<{
     projectId: string
     total: number
     complete: boolean
   } | null>(null)
-  // A count recorded for another project is not authoritative for the active one; treat it as
-  // unknown and keep the menu item clickable.
   const activeProjectFileCount =
     projectFileCount && projectFileCount.projectId === activeProjectId ? projectFileCount : null
   const canCollectProjectArtifacts =
@@ -160,8 +160,6 @@ const WorkspacePage = ({
     }
 
     let cancelled = false
-    // Out-of-order responses must not rewind the count: only the latest request may write it
-    // (same pattern as overviewRequestRef in use-project-files-index).
     let requestVersion = 0
     const refresh = async (): Promise<void> => {
       const request = ++requestVersion
@@ -215,8 +213,6 @@ const WorkspacePage = ({
   } = runtime
   const { respondToElicitation } = useWorkspaceElicitation(runtime.resolveSessionRuntimeSelection)
 
-  // Auto-trigger an analysis turn when a remote job finishes (design §11).
-  useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage: runtime.sendMessage })
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(defaultPermissionProfile)
   // Draft auto-review state for a not-yet-created conversation. Auto-review defaults off, so a new
@@ -378,6 +374,18 @@ const WorkspacePage = ({
   })
   const { doc: draftDoc, error: attachmentError } = composer.view
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
+  const previewAnnotations = {
+    activeAnnotations: composer.view.annotations,
+    onAddAnnotation: (annotation: Parameters<typeof composer.actions.addAnnotation>[0]) => {
+      const error = composer.actions.addAnnotation(annotation)
+      composer.actions.setError(error ? annotationValidationMessage(error, t) : null)
+      return error
+    },
+    onUpdateAnnotationNote: composer.actions.updateAnnotationNote,
+    onRemoveAnnotation: composer.actions.removeAnnotation,
+    onAnnotationError: (error: Parameters<typeof annotationValidationMessage>[0]) =>
+      composer.actions.setError(annotationValidationMessage(error, t))
+  }
   const sideChat = useSideChatController(
     activeSession ? { sessionId: activeSession.id, projectId: activeSession.projectId } : undefined
   )
@@ -388,37 +396,6 @@ const WorkspacePage = ({
       (activeProviderType !== undefined && isCodexSubscriptionProvider(activeProviderType)
         ? 'Side chat is unavailable for Codex subscription because strict tool isolation cannot be enforced.'
         : undefined))
-
-  useEffect(() => {
-    const getPlanProjection = window.api.acp?.getPlanProjection
-    if (
-      !activeSession ||
-      activeSession.activePlanProjection ||
-      !getPlanProjection ||
-      (activeSession.status !== 'waiting-plan-approval' && !activeSession.runtimeContext?.plan)
-    ) {
-      return
-    }
-    let cancelled = false
-    void getPlanProjection(activeSession.projectId, activeSession.id)
-      .then((projection) => {
-        if (cancelled) return
-        if (projection) {
-          setActivePlanProjection(activeSession.id, projection)
-          return
-        }
-        const current = useSessionStore
-          .getState()
-          .sessions.find((session) => session.id === activeSession.id)
-        if (current?.status === 'waiting-plan-approval' && !current.activePlanProjection) {
-          useSessionStore.getState().finishRun(activeSession.id)
-        }
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [activeSession, setActivePlanProjection])
   const canArchiveSession = sessionController.lifecycle.canArchive
   const visiblePermissionRequests = useMemo(
     () =>
@@ -444,7 +421,6 @@ const WorkspacePage = ({
   const activePermissionProfileState = activeSession
     ? permissionProfiles?.[activeSession.id]
     : undefined
-  // Session grants only exist for a bound Agent session; new conversations have none yet.
   const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
   const activeContextUsage = activeSession
     ? (contextUsageBySession?.[activeSession.id] ?? activeSession.contextUsage)
@@ -452,8 +428,6 @@ const WorkspacePage = ({
   const activeSessionSupportsNativeCompaction = activeSession
     ? nativeContextCompactionSessionIds?.includes(activeSession.id) === true
     : false
-  // Auto-review defaults off: an existing session is enabled only when explicitly turned on; a new
-  // conversation uses the draft toggle (which also starts off).
   const activeAutoReviewEnabled = activeSession
     ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
@@ -511,7 +485,11 @@ const WorkspacePage = ({
     abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
     getSession: (sessionId) =>
       useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
-    subscribeSessionChanges: useSessionStore.subscribe
+    subscribeSessionChanges: useSessionStore.subscribe,
+    planProjectionRecovery:
+      typeof window.api.acp?.getPlanProjection === 'function'
+        ? planProjectionRecoveryPorts
+        : undefined
   })
   // "Request review" is disabled when:
   //   - there is no active session or no completed agent turn yet, OR
@@ -635,7 +613,11 @@ const WorkspacePage = ({
     activeSession.runtimeContext?.permission?.state === 'pending'
       ? (activeSession.error ?? actionError)
       : null
+  const planProjectionRecoveryError = conversation.planProjectionRecoveryError
+    ? t('Unable to restore plan state. Retrying…')
+    : null
   const visibleActionError =
+    planProjectionRecoveryError ??
     attachmentError ??
     sessionController.view.exportError ??
     (activeSession ? durablePermissionError : actionError)
@@ -946,6 +928,7 @@ const WorkspacePage = ({
           toggle: togglePreviewPanel,
           syncState: syncPreviewPanelState
         }}
+        previewAnnotations={previewAnnotations}
         renderDesktopSidebar={({ sidebarToggle, sidebarToggleRef }) => (
           <WorkspaceSidebarContainer
             projectId={scopedProjectId}
@@ -1207,6 +1190,7 @@ const WorkspacePage = ({
         }
         onClose={usePreviewWorkbenchStore.getState().closeFileDialog}
         onItemChange={usePreviewWorkbenchStore.getState().openFileDialog}
+        {...previewAnnotations}
       />
 
       <SessionNotebookDialog

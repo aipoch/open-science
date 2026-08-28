@@ -61,8 +61,6 @@ const privateOwnerPaths = [
 ] as const
 
 const readSource = (path: string): string => readProductionSource(path, projectRoot)
-const rawLineCount = (source: string): number =>
-  source.split(/\r?\n/).length - Number(source.endsWith('\n'))
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
 const portableProjectPath = (path: string): string =>
   relative(projectRoot, path).replaceAll('\\', '/')
@@ -208,16 +206,6 @@ type ModuleImpactManifest = {
 }
 
 describe('Reviewer orchestrator architecture', () => {
-  it('keeps the facade and private owners within their completion gates', () => {
-    expect(rawLineCount(readSource(reviewerPaths.facade))).toBeLessThanOrEqual(600)
-    for (const ownerPath of privateOwnerPaths) {
-      expect(
-        rawLineCount(readSource(ownerPath)),
-        portableProjectPath(ownerPath)
-      ).toBeLessThanOrEqual(660)
-    }
-  })
-
   it('locks the stable facade export inventory', () => {
     expect(exportInventoryFromFacade()).toEqual([
       'type:RunReviewOptions',

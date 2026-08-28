@@ -13,6 +13,7 @@ const request: DelegationSettlementDispatch = {
   originatingPromptId: 'root-prompt',
   rootFrameId: 'root-frame',
   rootBranchId: 'root-branch',
+  runtimeSegmentId: 'root-runtime',
   promptId: 'wake-1',
   text: 'settlement update'
 }

@@ -20,7 +20,7 @@ const dialogCloseButtonClassName = 'cursor-pointer rounded-lg text-muted-foregro
 const dialogFormLabelClassName = 'block text-sm font-medium text-foreground mb-1'
 const dialogFormHelpClassName = 'text-xs leading-relaxed text-foreground/90 mb-2'
 const dialogFormInputClassName =
-  'rounded-lg border border-border-100 bg-bg-000 text-foreground shadow-none placeholder:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25'
+  'rounded-lg border border-input bg-bg-000 text-foreground shadow-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25'
 const dialogFormTextareaClassName = `${dialogFormInputClassName} w-full resize-none px-3 py-2 text-sm outline-none`
 const dialogCancelButtonClassName =
   'cursor-pointer border-0 shadow-none hover:bg-bg-200 hover:text-foreground'

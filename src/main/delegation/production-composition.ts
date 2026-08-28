@@ -156,17 +156,29 @@ const settlementSnapshot = (
   if (!rootFrame) return undefined
   const rootBranch = graph.branches.find(({ id }) => id === rootFrame.activeBranchId)
   if (!rootBranch) return undefined
-  const activeRootPromptIds = resolveActiveConversationMessages({
+  const activeRootMessages = resolveActiveConversationMessages({
     ...graph,
     activeFrameId: graph.rootFrameId
-  }).map(({ id }) => id)
+  })
+  const durableRootRuntimeSegmentIds = new Set(
+    graph.runtimeSegments
+      .filter(({ agentFrameId }) => agentFrameId === graph.rootFrameId)
+      .map(({ id }) => id)
+  )
   const records = session.runtimeContext?.delegatedWork?.records ?? []
   return {
     projectId: session.projectId,
     sessionId: session.id,
     rootFrameId: graph.rootFrameId,
     rootBranchId: rootBranch.id,
-    activeRootPromptIds,
+    activeRootPromptIds: activeRootMessages.map(({ id }) => id),
+    rootPromptRuntimeSegments: Object.fromEntries(
+      activeRootMessages.flatMap(({ id, runtimeSegmentId }) =>
+        runtimeSegmentId && durableRootRuntimeSegmentIds.has(runtimeSegmentId)
+          ? [[id, runtimeSegmentId]]
+          : []
+      )
+    ),
     attempts: records.flatMap((record) => {
       const frame = graph.frames.find(({ id }) => id === record.agentFrameId)
       if (!frame) return []

@@ -70,6 +70,10 @@ it('keeps a safe default timeout for schema-backed hooks', () => {
   expect(vitestConfig.test?.hookTimeout).toBe(30_000)
 })
 
+it('prints captured console output only for failed tests', () => {
+  expect(vitestConfig.test?.silent).toBe('passed-only')
+})
+
 it('pins the full-suite worker cap to the machine rather than leaving it unbounded', () => {
   const available =
     typeof availableParallelism === 'function' ? availableParallelism() : cpus().length

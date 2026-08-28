@@ -287,6 +287,30 @@ describe('ComposerYourFilesMenu', () => {
     expect(container.querySelector('[data-testid="your-files-root-root-1"]')).toBeNull()
   })
 
+  it('keeps failed access removal visible and retryable', async () => {
+    removeGrantedRoot
+      .mockRejectedValueOnce(new Error('permission store unavailable'))
+      .mockResolvedValueOnce([])
+    renderMenu()
+
+    await click(container.querySelector('[data-testid="your-files-remove-root-1"]'))
+    await flush()
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    const retry = [...(alert?.querySelectorAll('button') ?? [])].find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(container.querySelector('[data-testid="your-files-root-root-1"]')).not.toBeNull()
+    expect(alert).not.toBeNull()
+    expect(alert?.textContent).toContain('Could not remove folder access.')
+    expect(retry).not.toBeUndefined()
+
+    await click(retry)
+    await flush()
+
+    expect(container.querySelector('[data-testid="your-files-root-root-1"]')).toBeNull()
+  })
+
   it('shows a quiet inline note when listing a directory fails', async () => {
     listDir.mockRejectedValueOnce(new Error('EACCES: permission denied'))
     renderMenu()

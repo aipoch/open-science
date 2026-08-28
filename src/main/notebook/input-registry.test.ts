@@ -12,6 +12,11 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from './input-registry'
 import { createNotebookInputPreviewKey } from '../../shared/notebook'
 
+// Hosted Windows runners migrate a fresh database for each case under disk
+// contention. The Windows full-test workflow default is 60s; the heavier
+// Version-recheck case finishes later without hanging.
+const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
+
 let storageRoot: string | undefined
 let client: PrismaClient | undefined
 
@@ -386,7 +391,7 @@ describe('NotebookInputRegistry', () => {
       data: { versionNumber: 2 }
     })
     await expect(registry.openRun(turn)).rejects.toThrow(/registration no longer matches/i)
-  })
+  }, WINDOWS_SQLITE_TEST_TIMEOUT_MS)
 
   it('rejects same-size input corruption during turn registration', async () => {
     const registry = await setup()

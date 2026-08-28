@@ -203,6 +203,7 @@ describe('WorkspacePage send gate while compacting', () => {
     await act(async () => {
       root.unmount()
     })
+    vi.useRealTimers()
     container.remove()
   })
 
@@ -349,6 +350,38 @@ describe('WorkspacePage send gate while compacting', () => {
 
     expect(window.api.acp.getPlanProjection).toHaveBeenCalledWith('proj-1', 'sess-a')
     expect(useSessionStore.getState().sessions[0]?.status).toBe('idle')
+  })
+
+  it('recovers a restored Plan wait after a transient authority read failure', async () => {
+    vi.useFakeTimers()
+    let rejectFirstProjection!: (error: Error) => void
+    const firstProjection = new Promise<ActivePlanProjection | null>((_resolve, reject) => {
+      rejectFirstProjection = reject
+    })
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'waiting-plan-approval' })],
+      selectedSessionId: 'sess-a'
+    })
+    vi.mocked(window.api.acp.getPlanProjection).mockReturnValue(firstProjection)
+
+    await renderPage()
+    vi.mocked(window.api.acp.getPlanProjection).mockResolvedValue(null)
+    await act(async () => {
+      rejectFirstProjection(new Error('temporary projection read failure'))
+      await firstProjection.catch(() => undefined)
+    })
+
+    expect(conversationProps.view.actionError).toBe('Unable to restore plan state. Retrying…')
+    expect(conversationProps.view.canEditDraft).toBe(false)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+
+    expect(window.api.acp.getPlanProjection).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions[0]?.status).toBe('idle')
+    expect(conversationProps.view.actionError).toBeNull()
+    expect(conversationProps.view.canEditDraft).toBe(true)
   })
 
   it('submits restored Plan-card feedback through the atomic human-gated Plan command', async () => {

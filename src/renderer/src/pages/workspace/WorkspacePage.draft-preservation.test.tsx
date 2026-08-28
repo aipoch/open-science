@@ -18,6 +18,7 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import type { TextAnnotation } from '../../../../shared/annotations'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 import { setDefaultWorkspaceAgentSettings } from './workspace-page-test-fixtures'
@@ -150,6 +151,19 @@ const userMessage = (id: string, content: string): ChatMessage => ({
   eventIds: [],
   createdAt: 1,
   updatedAt: 1
+})
+
+const createTextAnnotation = (): TextAnnotation => ({
+  id: 'annotation-1',
+  kind: 'text' as const,
+  target: 'agent' as const,
+  quote: 'Quoted Agent evidence',
+  note: 'Explain why this matters.',
+  source: {
+    kind: 'agent-message' as const,
+    sessionId: 'sess-a',
+    messageId: 'agent-message-1'
+  }
 })
 
 const createDeferred = <Value,>(): {
@@ -792,6 +806,36 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).not.toHaveBeenCalled()
   })
 
+  it('routes an annotation-only draft through the Workspace seam and clears it after admission', async () => {
+    const admitted = createDeferred<{ sessionId: string; messageId: string }>()
+    runtime.sendMessage.mockReturnValueOnce(admitted.promise)
+    await renderPage()
+    const annotation = createTextAnnotation()
+
+    await act(async () => {
+      expect(conversationProps.composer.actions.addAnnotation(annotation)).toBeUndefined()
+    })
+    expect(conversationProps.composer.view.annotations).toEqual([annotation])
+
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    })
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '', annotations: [annotation] })
+    )
+    expect(conversationProps.conversation.optimisticMessage).toMatchObject({
+      content: '',
+      annotations: [annotation]
+    })
+    expect(conversationProps.composer.view.annotations).toEqual([annotation])
+
+    await act(async () => {
+      admitted.resolve({ sessionId: 'sess-a', messageId: 'annotation-message-1' })
+      await admitted.promise
+    })
+    expect(conversationProps.composer.view.annotations).toEqual([])
+  })
+
   it('routes the split-send branch action to a fresh Session snapshot instead of continuing the source', async () => {
     await renderPage()
 
@@ -853,6 +897,7 @@ describe('WorkspacePage draft preservation', () => {
 
     await act(async () => {
       conversationProps.composer.actions.changeDoc(textDoc('restore to session A'))
+      conversationProps.composer.actions.addAnnotation(createTextAnnotation())
     })
     await stageAttachment(attachment)
     await act(async () => {
@@ -876,6 +921,7 @@ describe('WorkspacePage draft preservation', () => {
     expect(conversationProps.composer.view.attachments).toEqual([])
     await openSession('sess-a')
     expect(conversationProps.composer.view.doc).toEqual(textDoc('restore to session A'))
+    expect(conversationProps.composer.view.annotations).toEqual([createTextAnnotation()])
     expect(conversationProps.composer.view.attachments).toEqual([attachment])
   })
 

@@ -8,6 +8,7 @@ import {
   WebContentsView,
   type BrowserWindowConstructorOptions,
   type IpcMainEvent,
+  type WebContents,
   type WebFrameMain
 } from 'electron'
 import { join } from 'path'
@@ -56,6 +57,7 @@ const log = createLogger('window')
 const E2E_WINDOW_MODE_ENV = 'OPEN_SCIENCE_E2E_WINDOW_MODE'
 const RENDERER_RECOVERY_WINDOW_MS = 60_000
 const MAX_AUTOMATIC_RENDERER_RECOVERIES = 2
+const ALLOWED_RENDERER_PERMISSIONS = new Set(['clipboard-sanitized-write'])
 const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
   'abnormal-exit',
   'crashed',
@@ -113,13 +115,29 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     }
     return { action: 'deny' }
   })
-  // Remote source pages share the main window Session but never need device, media, location, or
-  // storage permissions. Keep trusted main-frame behavior intact and fail every subframe closed.
+  const isAllowedRendererPermission = (
+    requestingWebContents: WebContents | null,
+    permission: string,
+    details: { isMainFrame: boolean; requestingUrl?: string }
+  ): boolean => {
+    const rendererUrl = window.webContents.getURL()
+    return (
+      rendererUrl !== '' &&
+      requestingWebContents === window.webContents &&
+      details.isMainFrame &&
+      details.requestingUrl === rendererUrl &&
+      ALLOWED_RENDERER_PERMISSIONS.has(permission)
+    )
+  }
+  // Remote source pages share the main window Session but never need Chromium permissions. The
+  // trusted renderer only needs sanitized clipboard writes; fail every other capability closed.
   window.webContents.session.setPermissionRequestHandler(
-    (_webContents, _permission, callback, details) => callback(details.isMainFrame)
+    (webContents, permission, callback, details) =>
+      callback(isAllowedRendererPermission(webContents, permission, details))
   )
   window.webContents.session.setPermissionCheckHandler(
-    (_webContents, _permission, _requestingOrigin, details) => details.isMainFrame
+    (webContents, permission, _requestingOrigin, details) =>
+      isAllowedRendererPermission(webContents, permission, details)
   )
   const sourcePreviewLoadMonitor = createSourcePreviewLoadMonitor((state) => {
     window.webContents.send(SOURCE_PREVIEW_LOAD_STATE_CHANNEL, state)

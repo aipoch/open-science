@@ -197,6 +197,12 @@ export const runReviewAssessment = async (
   let reviewerSessionFailed = false
   let reviewerSessionError: unknown
   const capturedLog: ReviewerLogEntry[] = []
+  const reviewerLogDriveCallbacks = {
+    onUpdate: (entry: ReviewerLogEntry): void => {
+      capturedLog.push(entry)
+    },
+    logState: {}
+  }
 
   try {
     const evidence = new ReviewerHostServer(
@@ -248,7 +254,7 @@ export const runReviewAssessment = async (
     const stopReason = await driveReviewerToStop(
       reviewerSession,
       { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates, signal: abortSignal },
-      { onUpdate: (entry) => capturedLog.push(entry) }
+      reviewerLogDriveCallbacks
     )
     if (options.mode === 'initial') {
       log.info('reviewer session stopped', { reviewId: review.id, stopReason })
@@ -262,7 +268,7 @@ export const runReviewAssessment = async (
       const recoveryStopReason = await driveReviewerToStop(
         reviewerSession,
         { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates, signal: abortSignal },
-        { onUpdate: (entry) => capturedLog.push(entry) }
+        reviewerLogDriveCallbacks
       )
       log.info('reviewer recovery session stopped', {
         reviewId: review.id,

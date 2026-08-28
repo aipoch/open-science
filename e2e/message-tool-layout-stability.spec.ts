@@ -127,7 +127,8 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
 
   const bufferedGeometry = await bufferedMessage.evaluate((element) => {
     const markdown = element.closest<HTMLElement>('.agent-markdown-root')
-    const surface = markdown?.parentElement
+    const surface =
+      markdown?.closest<HTMLElement>('[data-annotation-surface]') ?? markdown?.parentElement
     if (!markdown || !surface) throw new Error('Could not resolve the Agent message surface.')
     return {
       markdownHeight: markdown.getBoundingClientRect().height,

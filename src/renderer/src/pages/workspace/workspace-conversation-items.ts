@@ -1,7 +1,10 @@
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
-import { isHiddenControlMessage } from '../../../../shared/session-persistence'
+import {
+  isHiddenControlMessage,
+  type PersistedMessageAgentTarget
+} from '../../../../shared/session-persistence'
 
 import {
   projectHandoffLifecycle,
@@ -52,6 +55,16 @@ type ConversationSubagentMessageItem = {
   message: InlineParentMessageProjection
 }
 
+// A quiet divider derived (never persisted) above a user Message whose resolved send target
+// differs from the previous stamped turn.
+type ConversationSessionConfigChangeItem = {
+  id: string
+  type: 'session-config-change'
+  createdAt: number
+  sortIndex: number
+  agentTarget: PersistedMessageAgentTarget
+}
+
 type ConversationItem =
   | ConversationMessageItem
   | ConversationActivityItem
@@ -59,6 +72,7 @@ type ConversationItem =
   | ConversationCompactionActivityItem
   | ConversationHandoffItem
   | ConversationSubagentMessageItem
+  | ConversationSessionConfigChangeItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 
@@ -208,13 +222,67 @@ const formatActivityTitle = (
   return t('Using tool: {{name}}', { name: toolName })
 }
 
+// Config-change dividers are annotations on the following user Message. Hide them with that
+// Message (and other message-like rows) so they cannot appear while the owning turn is still
+// behind the presentation barrier. Tool and activity rows stay live so running work remains
+// visible above the paced reply.
+const hidesBehindPresentationBarrier = (type: string): boolean =>
+  type === 'message' || type === 'subagent-message' || type === 'session-config-change'
+
+// Two send targets describe the same turn configuration only when every routed field matches.
+const agentTargetsMatch = (
+  left: PersistedMessageAgentTarget,
+  right: PersistedMessageAgentTarget
+): boolean =>
+  left.frameworkId === right.frameworkId &&
+  left.backendId === right.backendId &&
+  left.providerId === right.providerId &&
+  left.model === right.model &&
+  left.reasoningEffort === right.reasoningEffort
+
+// Derives divider rows above user Messages whose resolved send target changed from the previous
+// stamped turn. Messages without a snapshot (legacy turns, relayed side-chat messages) neither
+// emit a divider nor move the baseline, so upgraded sessions show no false markers.
+const createSessionConfigChangeItems = (
+  messages: readonly ConversationMessageItem[]
+): ConversationSessionConfigChangeItem[] => {
+  const ordered = [...messages].sort(
+    (left, right) =>
+      left.createdAt - right.createdAt ||
+      left.sortIndex - right.sortIndex ||
+      left.id.localeCompare(right.id)
+  )
+  const items: ConversationSessionConfigChangeItem[] = []
+  let baseline: PersistedMessageAgentTarget | undefined
+  for (const item of ordered) {
+    const target =
+      item.message.role === 'user' && !item.message.relayedFrom
+        ? item.message.agentTarget
+        : undefined
+    if (!target) continue
+    if (baseline && !agentTargetsMatch(baseline, target)) {
+      items.push({
+        id: `session-config-change-${item.id}`,
+        type: 'session-config-change',
+        createdAt: item.createdAt,
+        // Half a step below the owning Message keeps the divider directly above it under the
+        // shared (createdAt, sortIndex) transcript sort.
+        sortIndex: item.sortIndex - 0.5,
+        agentTarget: target
+      })
+    }
+    baseline = target
+  }
+  return items
+}
+
 // Projects persisted chat messages and transient tool activities into one sortable transcript list.
 const createConversationItems = (
   session: ChatSession | undefined,
   handoffEvents: readonly HandoffLifecycleEvent[] = []
 ): ConversationItem[] => {
-  const messages: ConversationItem[] =
-    session?.messages.flatMap((message, index): ConversationItem[] =>
+  const messages: ConversationMessageItem[] =
+    session?.messages.flatMap((message, index): ConversationMessageItem[] =>
       isHiddenControlMessage(message)
         ? []
         : [
@@ -271,7 +339,13 @@ const createConversationItems = (
   )
 
   // Runtime events and chat chunks use separate sequences, so sorting uses timestamps first.
-  return [...messages, ...activities, ...handoffs, ...subagentMessages].sort((left, right) => {
+  return [
+    ...messages,
+    ...activities,
+    ...handoffs,
+    ...subagentMessages,
+    ...createSessionConfigChangeItems(messages)
+  ].sort((left, right) => {
     if (left.createdAt !== right.createdAt) return left.createdAt - right.createdAt
     if (left.sortIndex !== right.sortIndex) return left.sortIndex - right.sortIndex
     return left.id.localeCompare(right.id)
@@ -324,6 +398,7 @@ export {
   formatActivityTitle,
   formatNotebookToolName,
   getNotebookToolSuffix,
+  hidesBehindPresentationBarrier,
   isActivityActive,
   resolveTurnTerminalAgentMessageIds,
   isContextCompactionActivity

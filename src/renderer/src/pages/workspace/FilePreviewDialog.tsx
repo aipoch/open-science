@@ -10,8 +10,9 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { dialogPreviewGuardScope } from '@/stores/preview-leave-guard'
 
 import { PreviewFileSurface, type PreviewFileSurfaceHandle } from './PreviewFileSurface'
+import type { PreviewAnnotationPort } from './previews/preview-types'
 
-type FilePreviewDialogProps = {
+type FilePreviewDialogProps = PreviewAnnotationPort & {
   item: PreviewFileItem | undefined
   onClose: (skipGuard?: boolean) => void
   onItemChange?: (item: PreviewFileItem, skipGuard?: boolean) => void
@@ -51,7 +52,8 @@ const setBackgroundIsolation = (isolated: boolean): void => {
 const FilePreviewDialog = ({
   item,
   onClose,
-  onItemChange
+  onItemChange,
+  ...annotationPort
 }: FilePreviewDialogProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const dialogItem = useRetainedDialogValue(item)
@@ -109,6 +111,7 @@ const FilePreviewDialog = ({
           className={`${dialogOverlayClassName} z-[60]`}
         />
         <Dialog.Content
+          data-slot="file-preview-dialog"
           aria-describedby={undefined}
           aria-modal="true"
           onInteractOutside={(event) => event.preventDefault()}
@@ -138,6 +141,7 @@ const FilePreviewDialog = ({
                   onViewInContextNavigate={onClose}
                   tooltipClassName="z-[70]"
                   leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
+                  {...annotationPort}
                 />
               ) : null}
             </div>

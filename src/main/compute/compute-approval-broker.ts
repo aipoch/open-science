@@ -188,13 +188,14 @@ export class ComputeApprovalBroker {
   ): Promise<ComputeApprovalDecision> {
     const { sessionId, projectId, operation } = ctx
     const providerId = info.provider_id
+    const requiresExplicitApproval = info.willPersistUnencrypted === true
     const providerGeneration = this.providerGenerations.get(providerId) ?? 0
     const requestWasCancelled = (): boolean => {
       signal?.throwIfAborted()
       return this.globalCancellationActive || this.cancellingSessions.has(sessionId)
     }
 
-    if (this.deps.permissionGrants) {
+    if (!requiresExplicitApproval && this.deps.permissionGrants) {
       const durableScope = await this.deps.permissionGrants.resolve({
         sessionId,
         projectId,
@@ -215,7 +216,7 @@ export class ComputeApprovalBroker {
     }
 
     // ── legacy project grant check (persistent) ───────────────────────────────────
-    if (this.deps.checkProjectGrant) {
+    if (!requiresExplicitApproval && this.deps.checkProjectGrant) {
       const hasProject = await this.deps.checkProjectGrant({ projectId, operation, providerId })
       if (requestWasCancelled()) return 'deny'
       if (hasProject) {
@@ -231,7 +232,7 @@ export class ComputeApprovalBroker {
 
     // ── conversation grant check (session in-memory) ───────────────────────────────
     const convKey = `${sessionId}:${operation}:${providerId}`
-    if (this.conversationGrants.has(convKey)) {
+    if (!requiresExplicitApproval && this.conversationGrants.has(convKey)) {
       const providerIsCurrent = await this.isProviderCurrent(
         providerId,
         ctx.ownerId,

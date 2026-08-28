@@ -135,7 +135,7 @@ const localizedSettingsCases = [
     mainModel: 'メインモデル',
     scenarioModels: 'シナリオモデル',
     expandSubagent: 'サブエージェント設定を展開',
-    reasoningEffort: '推論の強度',
+    reasoningEffort: '推論強度',
     defaultEffort: 'デフォルト',
     closeSettings: '設定を閉じる'
   },

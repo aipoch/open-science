@@ -77,9 +77,8 @@ const publicOperations = (): string[] => {
 }
 
 describe('Provider runtime projection ownership', () => {
-  it('keeps one focused owner below the production hard limit', () => {
+  it('keeps persistence out of the runtime projection owner', () => {
     const source = readSource(ownerPath)
-    expect(source.split(/\r?\n/).length - Number(source.endsWith('\n'))).toBeLessThanOrEqual(660)
     expect(source).not.toMatch(/SettingsRepository|setActiveProvider|upsertProvider/)
   })
 

@@ -135,6 +135,67 @@ describe('TimeoutController', () => {
   })
 })
 
+describe('NotebookKernelExecutor request arbitration', () => {
+  it('does not arm the timeout after cancellation wins during synchronous dispatch', async () => {
+    vi.useFakeTimers()
+    try {
+      const cancellation = new AbortController()
+      const kill = vi.fn((signal: NodeJS.Signals) => {
+        void signal
+        return true
+      })
+      const proc = {
+        kind: 'python',
+        env: DEFAULT_PY_ENV,
+        key: `python:${DEFAULT_PY_ENV}`,
+        alive: true,
+        interpreterIdentity: '',
+        child: {
+          kill,
+          stdin: {
+            write: () => {
+              cancellation.abort()
+              return true
+            }
+          }
+        }
+      } as unknown as RequestArbitrationProc
+      const internals = executorRequestInternals(new NotebookKernelExecutor({ platform: 'linux' }))
+      const request = internals.sendRequest(
+        proc,
+        'request-1',
+        {
+          code: 'slow()',
+          cwd: '/workspace',
+          notebookSessionRoot: '/workspace/notebook',
+          dataRoot: '/workspace/notebook/data',
+          runtimeRoot: '/runtime',
+          timeoutMs: 10,
+          signal: cancellation.signal
+        },
+        () => undefined
+      )
+
+      vi.advanceTimersByTime(10)
+      internals.settlePendingResponse(proc, proc.pending, {
+        reqId: 'request-1',
+        stdout: '',
+        stderr: '',
+        error: null,
+        errorLine: null,
+        result: null,
+        cwd: '/workspace',
+        figures: []
+      })
+
+      await expect(request).resolves.toMatchObject({ cancelled: true, timedOut: false })
+      expect(kill.mock.calls.filter(([signal]) => signal === 'SIGINT')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 // -- Driver against a fake python loop, gated on a resolvable system python3. ------------------------
 
 const FIXTURE = join(__dirname, '../../../test/fixtures/fake_loop.py')
@@ -189,6 +250,33 @@ type ProcStateLike = {
   env: string
   pending?: { timeout?: TimeoutController }
 }
+type RequestArbitrationProc = {
+  pending?: unknown
+}
+type RequestArbitrationInternals = {
+  sendRequest: (
+    proc: RequestArbitrationProc,
+    reqId: string,
+    request: NotebookExecutionRequest,
+    onDispatch: () => void
+  ) => Promise<{ cancelled: boolean; timedOut: boolean }>
+  settlePendingResponse: (
+    proc: RequestArbitrationProc,
+    pending: unknown,
+    response: {
+      reqId: string
+      stdout: string
+      stderr: string
+      error: string | null
+      errorLine: number | null
+      result: string | null
+      cwd: string
+      figures: []
+    }
+  ) => void
+}
+const executorRequestInternals = (executor: NotebookKernelExecutor): RequestArbitrationInternals =>
+  executor as unknown as RequestArbitrationInternals
 // Composite process key: 'repl' for the control kernel, `${kind}:${env}` for data kernels. `env`
 // defaults to the language's default env so existing single-env call sites need no change.
 const procKeyFor = (kind: 'python' | 'r' | 'repl', env?: string): string =>

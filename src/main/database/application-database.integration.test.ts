@@ -117,7 +117,8 @@ describe('application database (integration)', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ]
     })
 
@@ -588,13 +589,10 @@ describe('application database (integration)', () => {
       CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version'))
     )`)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
     await client.$executeRawUnsafe('DROP TABLE "Tag"')
-    // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
+    // Simulate a current pre-ledger schema with the targeted legacy table shape.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
 
@@ -672,13 +670,10 @@ describe('application database (integration)', () => {
       'ALTER TABLE "ArtifactVersionLegacy" RENAME TO "ArtifactVersion"'
     )
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
     await client.$executeRawUnsafe('DROP TABLE "Tag"')
-    // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
+    // Simulate a current pre-ledger schema with the targeted legacy table shape.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
 
@@ -736,7 +731,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0016_managed_file_version_foundation.backup`
+    const backupPath = `${databasePath}.before-0017_managed_file_version_foundation.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -776,7 +771,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0015_session_model_call_usage' }])
+      ).resolves.toEqual([{ id: '0016_compute_job_sensitive_data_encryption' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -1152,7 +1147,8 @@ describe('application database (integration)', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_managed_file_version_foundation'
       ]
     })
 

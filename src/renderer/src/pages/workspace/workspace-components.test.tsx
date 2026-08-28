@@ -668,7 +668,7 @@ describe('conversation composer editor integration', () => {
     )
     expect(conversationPanelSource).toContain('onSendMessage(docToSkillIds(draftDoc))')
     expect(conversationPanelSource).toContain('onSubmit={handleSubmit}')
-    expect(conversationPanelSource).toContain('onDocChange={onDraftDocChange}')
+    expect(conversationPanelSource).toContain('onDocChange={onValidatedDraftDocChange}')
   })
 })
 

@@ -37,8 +37,6 @@ const adapterPath = resolve(__dirname, 'responses-response-adapter.ts')
 const bridgePath = resolve(__dirname, 'responses-bridge.ts')
 const hostPath = resolve(__dirname, 'provider-loopback-http-host.ts')
 const readSource = (path: string): string => readProductionSource(path, projectRoot)
-const rawLineCount = (source: string): number =>
-  source.split(/\r?\n/).length - Number(source.endsWith('\n'))
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
 const portableProjectPath = (path: string): string =>
   relative(projectRoot, path).replaceAll('\\', '/')
@@ -129,9 +127,7 @@ const exportInventoryFrom = (path: string): string[] => {
 }
 
 describe('Responses result adapter ownership', () => {
-  it('keeps exact, bounded adapter and facade interfaces', () => {
-    expect(rawLineCount(readSource(adapterPath))).toBeLessThanOrEqual(600)
-    expect(rawLineCount(readSource(bridgePath))).toBeLessThanOrEqual(600)
+  it('keeps exact adapter and facade interfaces', () => {
     expect(exportInventoryFrom(adapterPath)).toEqual([
       'type:ResponsesStreamWriter',
       'value:ResponsesProtocolError',

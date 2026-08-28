@@ -3,9 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
+import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
 
-export const FastaPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+export const FastaPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => {
+  const { item } = props
   const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
@@ -22,10 +24,12 @@ export const FastaPreviewRenderer = ({ item }: PreviewFileRendererProps): React.
   }
 
   return (
-    <SourcePreviewContent
-      content={state.preview.content}
-      pagination={state.pagination}
-      lineClassName="break-all"
-    />
+    <PreviewTextAnnotationSurface {...props}>
+      <SourcePreviewContent
+        content={state.preview.content}
+        pagination={state.pagination}
+        lineClassName="break-all"
+      />
+    </PreviewTextAnnotationSurface>
   )
 }

@@ -2,16 +2,27 @@ import { renderPreviewFile } from './preview-registry'
 import { PreviewUnsupportedContent } from './PreviewFallback'
 import { PreviewRuntimeBoundary } from './preview-runtime'
 import type { PreviewDownloadVersionContext } from './preview-runtime-context'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileRendererProps } from './preview-types'
 
 export const PreviewFileContent = ({
   item,
-  downloadVersionContext
-}: {
-  item: PreviewFileItem
+  downloadVersionContext,
+  activeAnnotations,
+  onAddAnnotation,
+  onUpdateAnnotationNote,
+  onRemoveAnnotation,
+  onAnnotationError
+}: PreviewFileRendererProps & {
   downloadVersionContext?: PreviewDownloadVersionContext
 }): React.JSX.Element => {
-  const content = renderPreviewFile({ item })
+  const content = renderPreviewFile({
+    item,
+    activeAnnotations,
+    onAddAnnotation,
+    onUpdateAnnotationNote,
+    onRemoveAnnotation,
+    onAnnotationError
+  })
 
   return (
     <PreviewRuntimeBoundary item={item} downloadVersionContext={downloadVersionContext}>

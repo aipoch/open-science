@@ -297,6 +297,8 @@ export type ComputeApprovalRequest = {
   resources?: string
   timeout_seconds?: number
   remote_workdir?: string
+  // Transient approval disclosure; this is never persisted as Compute Job state.
+  willPersistUnencrypted?: boolean
 }
 
 // Job status values, including concurrency-managed queued work.
@@ -433,3 +435,10 @@ export type JobSummary = {
   left_on_remote?: Array<{ uri: string; size_mb: number; reason: string }>
   harvest_error?: string
 }
+
+// The existing per-Session feed supports workspace history. The non-terminal variant is a bounded
+// cross-Session query used to hydrate renderer-lifetime activity after startup or recovery.
+export type ComputeJobsListFilter =
+  Readonly<{ sessionId: string; status?: string[] }> | Readonly<{ nonTerminal: true }>
+
+export type ComputeJobsPendingNotificationFilter = string | Readonly<{ allSessions: true }>

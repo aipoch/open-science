@@ -34,10 +34,16 @@ const mocks = vi.hoisted(() => {
     compute: {
       enqueueApproval: vi.fn(),
       dismissApproval: vi.fn(),
-      pendingApprovals: [] as unknown[]
+      pendingApprovals: [] as unknown[],
+      jobsList: vi.fn().mockResolvedValue([]),
+      jobsPendingNotification: vi.fn().mockResolvedValue([]),
+      jobsMarkConsumed: vi.fn().mockResolvedValue(undefined)
     },
+    runtimeSendMessage: vi
+      .fn()
+      .mockResolvedValue({ sessionId: 'session-1', messageId: 'analysis-message' }),
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
-    sessions: [] as Array<{ id: string }>,
+    sessions: [] as Array<{ id: string } & Record<string, unknown>>,
     appendRoutedUserMessage: vi.fn(),
     sideChatRelayBox,
     environment: {
@@ -171,7 +177,8 @@ vi.mock('@/stores/session-store', () => ({
     getState: () => ({
       sessions: mocks.sessions,
       appendRoutedUserMessage: mocks.appendRoutedUserMessage
-    })
+    }),
+    subscribe: vi.fn(() => vi.fn())
   }
 }))
 vi.mock('@/stores/notebook-env-store', () => ({
@@ -257,7 +264,8 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     pendingPermissions: [],
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
-    saveAsSkillInFlightSessionIds: []
+    saveAsSkillInFlightSessionIds: [],
+    sendMessage: mocks.runtimeSendMessage
   })
 }))
 vi.mock('@/pages/home/HomePage', () => ({
@@ -391,6 +399,10 @@ describe('App startup routing', () => {
     mocks.skillImport.dismiss.mockClear()
     mocks.compute.enqueueApproval.mockClear()
     mocks.compute.dismissApproval.mockClear()
+    mocks.compute.jobsList.mockClear()
+    mocks.compute.jobsPendingNotification.mockClear()
+    mocks.compute.jobsMarkConsumed.mockClear()
+    mocks.runtimeSendMessage.mockClear()
     mocks.navigation.view = 'home'
     mocks.startupView = 'app'
     mocks.sessionPersistence.isReady = true
@@ -452,6 +464,9 @@ describe('App startup routing', () => {
         onApprovalSettled: vi.fn(() => vi.fn()),
         replayPendingApprovals: vi.fn().mockResolvedValue(undefined),
         onJobUpdated: vi.fn(() => vi.fn()),
+        jobsList: mocks.compute.jobsList,
+        jobsPendingNotification: mocks.compute.jobsPendingNotification,
+        jobsMarkConsumed: mocks.compute.jobsMarkConsumed,
         enabledHostsSet: vi.fn(() => Promise.resolve())
       },
       permissions: { onChanged: vi.fn(() => vi.fn()) },
@@ -485,6 +500,7 @@ describe('App startup routing', () => {
   })
 
   afterEach(async () => {
+    vi.useRealTimers()
     await act(async () => root?.unmount())
     canvasContextSpy.mockRestore()
     container.remove()
@@ -494,6 +510,74 @@ describe('App startup routing', () => {
     root = createRoot(container)
     await act(async () => root.render(<App />))
   }
+
+  it('hydrates the persisted non-terminal Compute Job projection at app startup', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+
+    expect(mocks.compute.jobsList).toHaveBeenCalledWith({ nonTerminal: true })
+  })
+
+  it('retries global Compute Job activity hydration after a transient startup failure', async () => {
+    vi.useFakeTimers()
+    mocks.settings.isLoaded = true
+    mocks.compute.jobsList
+      .mockRejectedValueOnce(new Error('main process unavailable'))
+      .mockResolvedValueOnce([])
+
+    await render()
+    await act(async () => Promise.resolve())
+    await act(async () => vi.advanceTimersByTimeAsync(1_000))
+
+    expect(mocks.compute.jobsList).toHaveBeenCalledTimes(2)
+    expect(mocks.compute.jobsList).toHaveBeenLastCalledWith({ nonTerminal: true })
+  })
+
+  it('keeps the remote-job analysis owner active while Home is presented', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessions = [
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Background Session',
+        cwd: '/workspace/project-1',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    mocks.compute.jobsPendingNotification.mockResolvedValueOnce([
+      {
+        job_id: 'job-1',
+        provider_id: 'ssh:cluster',
+        display_name: 'Cluster',
+        shape: 'direct_ssh',
+        session_id: 'session-1',
+        status: 'success',
+        intent: 'Analyze results',
+        created_at: 1,
+        started_at: 2,
+        finished_at: 3,
+        exit_code: 0,
+        error_code: undefined,
+        remote_workdir: undefined,
+        stdout_tail: undefined,
+        stderr_tail: undefined,
+        notified_at: 4,
+        notification_consumed_at: undefined
+      }
+    ])
+
+    await render()
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+    expect(mocks.compute.jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
+    expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-1', preserveSelection: true })
+    )
+  })
 
   it('opens Settings with Cmd/Ctrl+, after startup is interactive', async () => {
     await render()
@@ -753,6 +837,20 @@ describe('App startup routing', () => {
     expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
   })
 
+  it('routes the close shortcut directly to the owned file preview modal', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.preview.fileDialogItem = { id: 'previewed-file' }
+    const previewDialog = document.createElement('div')
+    previewDialog.setAttribute('role', 'dialog')
+    previewDialog.dataset.slot = 'file-preview-dialog'
+    document.body.appendChild(previewDialog)
+    await render()
+
+    expect(mocks.closeActiveModal.handler?.()).toBe('close-preview')
+    previewDialog.remove()
+  })
+
   it('does not open Settings under the active expanded preview modal', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
@@ -852,7 +950,7 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="onboarding-page"]')).toBeNull()
   })
 
-  it('shows a settings load error and retries the complete initialization', async () => {
+  it('shows a settings load error in the standard error notice and retries initialization', async () => {
     mocks.settings.loadError = 'settings IPC unavailable'
     mocks.settings.load.mockReset().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
 
@@ -860,15 +958,14 @@ describe('App startup routing', () => {
 
     const shell = container.querySelector('[role="alert"]')
     expect(shell?.textContent).toContain('settings IPC unavailable')
+    expect(shell?.querySelector('section > svg[aria-hidden="true"]')).not.toBeNull()
     expect(shell?.classList.contains('min-h-svh')).toBe(true)
     expect(shell?.classList.contains('h-screen')).toBe(false)
     expect(shell?.classList.contains('text-foreground')).toBe(true)
     expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
     expect(mocks.settings.checkEnvironment).not.toHaveBeenCalled()
 
-    const retry = container.querySelector<HTMLButtonElement>(
-      '[data-testid="settings-startup-retry"]'
-    )
+    const retry = container.querySelector<HTMLButtonElement>('button')
     expect(retry).not.toBeNull()
     expect(retry?.dataset.slot).toBe('button')
     expect(retry?.className).toContain('focus-visible:ring-3')

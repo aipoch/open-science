@@ -57,7 +57,7 @@ import type { XaiOAuthControllerPort } from './xai-oauth'
 import { XaiProviderAccountOwner } from './xai-provider-account-owner'
 import { ProviderModelCatalogOwner } from './provider-model-catalog-owner'
 import { assertProviderCapacity, assertProviderDraftLimits } from './provider-resource-limits'
-
+import { assertProviderModelLimit } from './provider-resource-limits'
 type ProviderAccountsModuleOptions = {
   repository: SettingsRepository
   storageRoot: string
@@ -78,7 +78,6 @@ type ProviderAccountsModuleOptions = {
   claudeSharedAuth?: ClaudeSharedAuthControllerPort
   xaiOAuth?: XaiOAuthControllerPort
 }
-
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
 // executable installation, runtime spawn, live ACP reconnect, and transports remain outside.
 class ProviderAccountsModule {
@@ -354,6 +353,7 @@ class ProviderAccountsModule {
   }
   async validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult> {
     if (request.draft) assertProviderDraftLimits(request.draft)
+    assertProviderModelLimit(request.model)
     const settings = await this.repository.getSettings()
     const resolved = this.resolveValidationTarget(request, settings)
     if (!resolved) {
@@ -419,10 +419,10 @@ class ProviderAccountsModule {
     const latestSettings = await this.repository.getSettings()
     const stored = latestSettings.providers.find((provider) => provider.id === resolved.storedId)
     if (!stored) return { ...result, applied: false }
-    const latestResolved = this.resolveProvider(
-      stored,
-      latestSettings.activeProviderId === stored.id ? latestSettings.activeModel : undefined
-    )
+    const model =
+      request.model ??
+      (latestSettings.activeProviderId === stored.id ? latestSettings.activeModel : undefined)
+    const latestResolved = this.resolveProvider(stored, model)
     if (!this.sameValidationTarget(resolved.provider, latestResolved)) {
       return { ...result, applied: false }
     }
@@ -553,12 +553,12 @@ class ProviderAccountsModule {
   ): { provider: ResolvedProvider; storedId?: string } | undefined {
     if (request.providerId) {
       const stored = settings.providers.find((provider) => provider.id === request.providerId)
+      const model =
+        request.model ??
+        (settings.activeProviderId === stored?.id ? settings.activeModel : undefined)
       return stored
         ? {
-            provider: this.resolveProvider(
-              stored,
-              settings.activeProviderId === stored.id ? settings.activeModel : undefined
-            ),
+            provider: this.resolveProvider(stored, model),
             storedId: stored.id
           }
         : undefined

@@ -317,7 +317,7 @@ const SubagentTranscript = ({
   return (
     <WorkspaceMessageScroller
       activeSession={projectedSession}
-      onSendEditedMessage={() => undefined}
+      onSendEditedMessage={() => ({ ok: false })}
     />
   )
 }

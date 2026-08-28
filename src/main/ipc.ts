@@ -684,6 +684,7 @@ const createApplicationModules = async (
   const computeJobActivityRef: {
     current?: {
       findNonTerminal(): Promise<Array<{ project_id: string }>>
+      countNonTerminalBySession(sessionId: string): Promise<number>
     }
   } = {}
   const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
@@ -1381,6 +1382,11 @@ const createApplicationModules = async (
       notificationsLog.warn('task notification delivery failed', errorLogFields(error)),
     onAttentionError: (error) =>
       notificationsLog.warn('desktop attention handler failed', errorLogFields(error)),
+    hasNonTerminalComputeJobs: async (sessionId) => {
+      const computeJobs = computeJobActivityRef.current
+      if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+      return (await computeJobs.countNonTerminalBySession(sessionId)) > 0
+    },
     inbox: notificationInbox,
     onInboxError: (error) =>
       notificationsLog.warn('message center recording failed', errorLogFields(error))
