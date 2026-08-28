@@ -54,6 +54,8 @@ const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
+// Match the renderer replay window so a reconnect can catch up while live-only queues stay bounded.
+const MAX_WEBSOCKET_BUFFERED_BYTES = 16 * 1024 * 1024
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
 const MAX_TASK_IDEMPOTENCY_BYTES = 64 * 1024 * 1024
@@ -150,6 +152,24 @@ const publicApplicationCommandError = (
   error instanceof ApplicationCommandError
     ? toApplicationCommandErrorEnvelope(error)
     : { code: 'command-failed', message: INTERNAL_SERVER_ERROR_MESSAGE }
+
+const sendWebSocketMessage = (socket: WebSocket, message: string): boolean => {
+  if (socket.readyState !== WebSocket.OPEN) return false
+  if (socket.bufferedAmount >= MAX_WEBSOCKET_BUFFERED_BYTES) {
+    socket.terminate()
+    return false
+  }
+
+  try {
+    socket.send(message, (error) => {
+      if (error) socket.terminate()
+    })
+    return true
+  } catch {
+    socket.terminate()
+    return false
+  }
+}
 
 export type ExternalWebAccessAuthorization = {
   kind: 'authorized' | 'authorized-pairing-manager'
@@ -1017,11 +1037,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         const afterValue = url.searchParams.get('after')
         const after = afterValue === null ? Number.NaN : Number(afterValue)
         for (const message of internalEventStream.resume({ streamId, after })) {
-          socket.send(message)
+          if (!sendWebSocketMessage(socket, message)) break
         }
       }
     }
-    sockets.add(socket)
+    if (socket.readyState === WebSocket.OPEN) sockets.add(socket)
   })
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
@@ -1036,20 +1056,21 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       ? internalEventStream.publish(internalProjection)
       : undefined
     for (const socket of sockets) {
-      if (socket.readyState !== WebSocket.OPEN) continue
       if (publicEventSockets.has(socket)) {
-        for (const publicMessage of publicMessages) socket.send(publicMessage)
+        for (const publicMessage of publicMessages) {
+          if (!sendWebSocketMessage(socket, publicMessage)) break
+        }
       } else if (internalEventSockets.get(socket) === 'replay') {
-        if (replayInternalMessage) socket.send(replayInternalMessage)
+        if (replayInternalMessage) sendWebSocketMessage(socket, replayInternalMessage)
       } else if (legacyInternalMessage) {
-        socket.send(legacyInternalMessage)
+        sendWebSocketMessage(socket, legacyInternalMessage)
       }
     }
   })
   const removeTaskProgressSink = options.tasks?.subscribeProgress((event) => {
     const message = JSON.stringify(projectPublicTaskProgressEvent(event))
     for (const socket of publicEventSockets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(message)
+      sendWebSocketMessage(socket, message)
     }
   })
 
@@ -1089,8 +1110,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
       awaitingPong.add(socket)
       socket.ping()
-      if (publicEventSockets.has(socket)) socket.send(publicHeartbeat)
-      else if (internalEventSockets.has(socket)) socket.send(internalHeartbeat)
+      if (publicEventSockets.has(socket)) sendWebSocketMessage(socket, publicHeartbeat)
+      else if (internalEventSockets.has(socket)) sendWebSocketMessage(socket, internalHeartbeat)
     }
   }, options.eventHeartbeatIntervalMs ?? DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS)
 
