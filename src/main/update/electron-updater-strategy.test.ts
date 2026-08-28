@@ -363,10 +363,13 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
   })
 
-  it('records a failed in-place download without the provider error message', async () => {
+  it('preserves the offer and retries after a failed in-place download', async () => {
     const updater = new FakeUpdater()
+    let starts = 0
     updater.runDownload = async () => {
-      throw new Error('private updater diagnostic detail')
+      starts += 1
+      if (starts === 1) throw new Error('private updater diagnostic detail')
+      updater.emit('update-downloaded', { version: '0.3.0' })
     }
     const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
@@ -381,9 +384,22 @@ describe('ElectronUpdaterStrategy', () => {
       vi.mocked(log[level]).mockClear()
     }
 
-    const status = await strategy.download()
+    const failed = await strategy.download()
+    const retry = await strategy.download()
 
-    expect(status.error).toBe('private updater diagnostic detail')
+    expect.soft(failed).toEqual(
+      expect.objectContaining({
+        state: 'error',
+        current: '0.2.0',
+        latest: '0.3.0',
+        notes: 'notes',
+        totalBytes: 10000,
+        error: 'private updater diagnostic detail'
+      })
+    )
+    expect.soft(retry.state).toBe('ready')
+    expect.soft(retry.error).toBeUndefined()
+    expect.soft(starts).toBe(2)
     const records = diagnosticRecords(log)
     expect(records).toEqual(
       expect.arrayContaining([
