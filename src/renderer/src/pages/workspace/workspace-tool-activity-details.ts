@@ -9,6 +9,11 @@ import {
   resolveNotebookRunToolName
 } from './notebook-tool-names'
 import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
+import {
+  extractSkillLoadDocument,
+  getLoadedSkillName,
+  isSkillLoadActivity
+} from './workspace-skill-load'
 
 type ToolCodeSection = {
   kind: 'code'
@@ -46,7 +51,6 @@ type ToolActivityDetails = {
 // Bounds very large tool payloads so a single read/execute row cannot flood the transcript.
 const MAX_CODE_CHARS = 20000
 const SKILL_ACTIVITY_TITLE_PATTERN = /^(?:run|loading|loaded)\s+skill(?:\?|:|\s|$)/iu
-const SKILL_NAME_PATTERN = /^(?:loading|loaded)\s+skill:\s*(.+?)\s*$/iu
 
 // Human-readable fallbacks for ACP tool kinds when the provider tool name is unavailable.
 const TOOL_KIND_LABELS: Record<ToolKind, string> = {
@@ -114,37 +118,14 @@ const trimDetail = (value: string | null | undefined): string | undefined => {
   return trimmedValue ? trimmedValue : undefined
 }
 
-// The Skill runtime serves loads through its own MCP server; ACP providers namespace the tool as
-// mcp__skills__load_skill (Claude), mcp.skills.load_skill (Codex), or a flattened underscore form.
-const SKILL_LOAD_TOOL_PATTERN = /^(?:mcp__|mcp\.)?skills(?:__|\.|_)load_skill$/iu
-
-// Detects the Skill runtime's load_skill MCP call by its stable namespaced tool identity.
-const isSkillLoadActivity = (activity: ToolActivity): boolean =>
-  SKILL_LOAD_TOOL_PATTERN.test(activity.providerToolName?.trim() ?? '') ||
-  SKILL_LOAD_TOOL_PATTERN.test(activity.title.trim())
-
 // Skill documents are internal agent instructions. Existing persisted sessions can contain their
 // old payloads, so keep native Skill activities as compact rows without an expandable detail view.
-// load_skill MCP calls are Skill activities too, but keep their generic expandable detail view.
+// load_skill MCP calls are Skill activities too; once their output carries the SKILL.md document,
+// WorkspaceActivityGroup routes them to the WorkspaceSkillLoadRow markdown view instead.
 const isSkillActivity = (activity: ToolActivity): boolean =>
   activity.providerToolName?.trim().toLowerCase() === 'skill' ||
   SKILL_ACTIVITY_TITLE_PATTERN.test(activity.title.trim()) ||
   isSkillLoadActivity(activity)
-
-// Projected lifecycle titles are the stable, user-safe Skill names shared across providers. The
-// load_skill MCP call carries the canonical name in its `skill` argument instead (Codex keeps the
-// real arguments inside a nested `arguments` envelope on completed activities).
-const getLoadedSkillName = (activity: ToolActivity): string | undefined => {
-  const titleName = trimDetail(SKILL_NAME_PATTERN.exec(activity.title)?.[1])
-
-  if (titleName) return titleName
-  if (!isSkillLoadActivity(activity)) return undefined
-
-  const rawInput = isRecord(activity.rawInput) ? activity.rawInput : undefined
-  const args = rawInput && isRecord(rawInput.arguments) ? rawInput.arguments : rawInput
-
-  return args && typeof args.skill === 'string' ? trimDetail(args.skill) : undefined
-}
 
 // Converts supported ACP content block variants into displayable text snippets.
 const collectContentText = (content: ContentBlock): string[] => {
@@ -1084,6 +1065,16 @@ const buildFetchDetails = (activity: ToolActivity): ToolActivityDetails | undefi
   }
 }
 
+// Reads the SKILL.md document a load_skill call returned, when the output is a skill document.
+// The expanded Skill row renders this markdown instead of the generic input/output sections.
+const getSkillLoadDocument = (activity: ToolActivity): string | undefined => {
+  if (!isSkillLoadActivity(activity)) return undefined
+
+  const output = getOutputText(activity)
+
+  return output ? extractSkillLoadDocument(output.code) : undefined
+}
+
 // Projects one tool activity into the structured, expandable detail model, or nothing for chips.
 const buildToolActivityDetails = (
   activity: ToolActivity,
@@ -1125,7 +1116,7 @@ export {
   buildToolActivityDetails,
   getNotebookRunIdFromActivity,
   getNotebookRunStatusFromActivity,
-  getLoadedSkillName,
+  getSkillLoadDocument,
   getToolDisplayName,
   isEditActivity,
   getManagePackagesFallbackText,

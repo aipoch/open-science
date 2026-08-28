@@ -92,7 +92,10 @@ type EditAnnotationTarget = {
   add: (annotation: TextAnnotation) => AnnotationValidationError | undefined
 }
 
-type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
+type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
+  resolvedProjectId?: string
+  resolvedSessionId?: string
+}
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
@@ -849,11 +852,24 @@ const VisibleArtifactPreview = ({
   } | null>(null)
 
   useEffect(() => {
-    if (!shouldReadArtifactPreview(artifact)) return
+    if (
+      !shouldReadArtifactPreview(artifact) ||
+      !artifact.resolvedProjectId ||
+      !artifact.artifactId
+    ) {
+      return
+    }
 
     let canceled = false
     void window.api.artifacts
-      .readPreview({ path: artifact.path, maxBytes: ARTIFACT_PREVIEW_BYTES, encoding: 'utf8' })
+      .readPreview({
+        path: artifact.path,
+        projectId: artifact.resolvedProjectId,
+        ...(artifact.resolvedSessionId ? { sessionId: artifact.resolvedSessionId } : {}),
+        fileId: artifact.artifactId,
+        maxBytes: ARTIFACT_PREVIEW_BYTES,
+        encoding: 'utf8'
+      })
       .then((preview) => {
         if (!canceled) setPreviewState({ requestKey, preview })
       })
@@ -886,12 +902,18 @@ const ArtifactCard = ({
   const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const requestKey = JSON.stringify([
     artifact.id,
+    artifact.artifactId ?? null,
+    artifact.resolvedProjectId ?? null,
+    artifact.resolvedSessionId ?? null,
     artifact.path,
     artifact.size ?? null,
     artifact.mtimeMs ?? null
   ])
   const missing = useUnavailablePreviewProbe({
-    enabled: isNearViewport,
+    enabled: isNearViewport && Boolean(artifact.resolvedProjectId && artifact.artifactId),
+    projectId: artifact.resolvedProjectId,
+    sessionId: artifact.resolvedSessionId,
+    managedFileId: artifact.artifactId,
     path: artifact.path,
     source: 'artifact',
     size: artifact.size,

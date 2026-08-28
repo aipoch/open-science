@@ -305,6 +305,28 @@ const createDeferred = <Value,>(): {
   return { promise, resolve }
 }
 
+const installIntersectionObserver = (): (() => void) => {
+  let intersectionCallback: IntersectionObserverCallback | undefined
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      observe = vi.fn()
+      unobserve = vi.fn()
+      disconnect = vi.fn()
+
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallback = callback
+      }
+    }
+  )
+  return () => {
+    intersectionCallback?.(
+      [{ isIntersecting: true } as IntersectionObserverEntry],
+      {} as IntersectionObserver
+    )
+  }
+}
+
 class FakeHandoffLifecycleSource implements HandoffLifecycleEventSource {
   private events: readonly HandoffLifecycleEvent[] = []
   private readonly listeners = new Set<() => void>()
@@ -3524,19 +3546,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
   })
 
   it('does not read a generated text thumbnail until its card approaches the viewport', async () => {
-    let intersectionCallback: IntersectionObserverCallback | undefined
-    vi.stubGlobal(
-      'IntersectionObserver',
-      class {
-        observe = vi.fn()
-        unobserve = vi.fn()
-        disconnect = vi.fn()
-
-        constructor(callback: IntersectionObserverCallback) {
-          intersectionCallback = callback
-        }
-      }
-    )
+    const enterViewport = installIntersectionObserver()
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
       status: 'idle',
@@ -3551,6 +3561,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       artifacts: [
         {
           id: 'artifact-1',
+          artifactId: 'managed-artifact-1',
+          versionId: 'artifact-version-1',
           kind: 'managed-file',
           path: '/workspace/report.txt',
           fileUrl: 'file:///workspace/report.txt',
@@ -3571,18 +3583,69 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
 
     await act(async () => {
-      intersectionCallback?.(
-        [{ isIntersecting: true } as IntersectionObserverEntry],
-        {} as IntersectionObserver
-      )
+      enterViewport()
       await Promise.resolve()
       await Promise.resolve()
     })
 
-    const thumbnailReads = vi
-      .mocked(window.api.artifacts.readPreview)
-      .mock.calls.filter(([request]) => request.maxBytes !== 1)
-    expect(thumbnailReads).toHaveLength(1)
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledWith({
+      path: '/workspace/report.txt',
+      projectId: 'default',
+      sessionId: 'session-1',
+      fileId: 'managed-artifact-1',
+      maxBytes: 1,
+      encoding: 'base64'
+    })
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledWith({
+      path: '/workspace/report.txt',
+      projectId: 'default',
+      sessionId: 'session-1',
+      fileId: 'managed-artifact-1',
+      maxBytes: 32 * 1024,
+      encoding: 'utf8'
+    })
+  })
+
+  it('does not fall back to a path-only thumbnail read for a legacy artifact', async () => {
+    const enterViewport = installIntersectionObserver()
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the file',
+          artifactIds: ['artifact-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-1',
+          kind: 'managed-file',
+          path: '/workspace/legacy-report.txt',
+          name: 'legacy-report.txt',
+          mimeType: 'text/plain',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      enterViewport()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
   })
 
   it('mounts desktop Run Marks from visible human prompts', async () => {

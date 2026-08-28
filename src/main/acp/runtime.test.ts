@@ -23152,31 +23152,224 @@ describe('ACP runtime — agent process lifecycle logging', () => {
     expect(JSON.stringify(call?.[1])).not.toMatch(/sensitive pipe failure|sensitive-socket|9090/)
   })
 
-  it('logs agent stderr with the framework the process was spawned under', async () => {
+  it.each(PERMISSION_PROJECTION_FRAMEWORKS)(
+    'summarizes bursty %s stderr without exposing raw output by default',
+    async (_name, framework, modelRoute, backendId) => {
+      warnLogSpy.mockClear()
+      const process = new FakeAgentProcess()
+      const promptResponse = createDeferred<PromptResponse>()
+      const fakeAgent = startFakeAgent(process, ['stderr-session'], {
+        onPrompt: () => promptResponse.promise,
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {})
+      })
+      const events: AcpRuntimeEvent[] = []
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        }),
+        callbacks: { onEvent: (event) => events.push(event) }
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run analysis' })
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      warnLogSpy.mockClear()
+      events.length = 0
+      vi.useFakeTimers()
+      try {
+        for (let index = 0; index < 10; index += 1) {
+          process.stderr.emit('data', Buffer.from('private-path:/lab/run-42/result.csv'))
+        }
+
+        await vi.advanceTimersByTimeAsync(1000)
+
+        expect(warnLogSpy.mock.calls).toEqual([
+          [
+            'agent stderr summary',
+            {
+              errorCategory: 'process-stderr',
+              framework: framework.id,
+              status: 'connected',
+              sessionCount: 1,
+              chunkCount: 10,
+              byteCount: 350,
+              windowMs: 1000,
+              chunksPerSecond: 10
+            }
+          ]
+        ])
+        expect(events).toHaveLength(1)
+        expect(events[0]).toMatchObject({
+          kind: 'system',
+          level: 'warning',
+          sessionId: 'stderr-session',
+          title: 'agent',
+          text: 'Agent process stderr: 10 chunks, 350 bytes; raw output omitted.'
+        })
+        expect(JSON.stringify({ logs: warnLogSpy.mock.calls, events })).not.toContain(
+          'private-path:/lab/run-42/result.csv'
+        )
+      } finally {
+        vi.useRealTimers()
+        promptResponse.resolve({ stopReason: 'end_turn' })
+        await prompt
+      }
+    }
+  )
+
+  it('caps explicitly enabled raw stderr samples by UTF-8 bytes', async () => {
+    warnLogSpy.mockClear()
+    const previousRawStderr = process.env.OPEN_SCIENCE_AGENT_STDERR
+    process.env.OPEN_SCIENCE_AGENT_STDERR = 'raw'
+    try {
+      const agentProcess = new FakeAgentProcess()
+      startFakeAgent(agentProcess, ['raw-stderr-session'])
+      const events: AcpRuntimeEvent[] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(agentProcess),
+        callbacks: { onEvent: (event) => events.push(event) }
+      })
+
+      await runtime.createSession({ cwd: '/workspace' })
+      warnLogSpy.mockClear()
+      events.length = 0
+      vi.useFakeTimers()
+      agentProcess.stderr.emit('data', Buffer.from('测'.repeat(3000)))
+
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const call = warnLogSpy.mock.calls.find(([message]) => message === 'agent stderr summary')
+      expect(call).toBeDefined()
+      const data = call?.[1] as {
+        byteCount: number
+        rawSample: string
+        rawSampleTruncated: boolean
+      }
+      expect(data.byteCount).toBe(9000)
+      expect(data.rawSampleTruncated).toBe(true)
+      expect(Buffer.byteLength(data.rawSample, 'utf8')).toBeLessThanOrEqual(4096)
+      expect(data.rawSample).toMatch(/^测+$/)
+      expect(events).toHaveLength(1)
+      expect(events[0]?.text).toContain('…[truncated]')
+    } finally {
+      vi.useRealTimers()
+      if (previousRawStderr === undefined) delete process.env.OPEN_SCIENCE_AGENT_STDERR
+      else process.env.OPEN_SCIENCE_AGENT_STDERR = previousRawStderr
+    }
+  })
+
+  it('does not attribute delayed stderr to a later prompt in the same session', async () => {
     warnLogSpy.mockClear()
     const process = new FakeAgentProcess()
-    startFakeAgent(process, ['stderr-session'])
+    const firstResponse = createDeferred<PromptResponse>()
+    const secondResponse = createDeferred<PromptResponse>()
+    const responses = [firstResponse, secondResponse]
+    const fakeAgent = startFakeAgent(process, ['stderr-session'], {
+      onPrompt: () => responses.shift()!.promise
+    })
+    const events: AcpRuntimeEvent[] = []
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
     })
 
-    await runtime.createSession({ cwd: '/workspace' })
-    process.stderr.emit('data', Buffer.from('provider auth failed'))
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const firstPrompt = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'first analysis'
+    })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    events.length = 0
+    vi.useFakeTimers()
+    let secondPrompt: Promise<PromptResponse> | undefined
+    try {
+      process.stderr.emit('data', Buffer.from('first prompt diagnostic'))
+      firstResponse.resolve({ stopReason: 'end_turn' })
+      await firstPrompt
 
-    const call = warnLogSpy.mock.calls.find(([message]) => message === 'agent stderr')
-    expect(call).toBeDefined()
-    const data = call?.[1] as {
-      text: string
-      framework: string
-      status: string
-      sessionCount: number
+      secondPrompt = runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'second analysis'
+      })
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const warning = events.find((event) => event.kind === 'system' && event.title === 'agent')
+      expect(warning).toBeDefined()
+      expect(warning?.sessionId).toBeUndefined()
+      expect(warning?.promptMessageId).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+      secondResponse.resolve({ stopReason: 'end_turn' })
+      await secondPrompt
     }
-    expect(data.text).toBe('provider auth failed')
-    expect(data.framework).toBe('claude-code')
-    expect(data.status).toBe('connected')
-    expect(data.sessionCount).toBe(1)
+  })
+
+  it('keeps known non-actionable Codex stderr out of runtime warning events', async () => {
+    warnLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const promptResponse = createDeferred<PromptResponse>()
+    const fakeAgent = startFakeAgent(process, ['stderr-session'], {
+      onPrompt: () => promptResponse.promise,
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'codex:provider-a',
+        modelRoute: 'codex-responses',
+        executablePath: '/bin/codex',
+        env: {}
+      }),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run analysis' })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    events.length = 0
+    vi.useFakeTimers()
+    try {
+      process.stderr.emit(
+        'data',
+        Buffer.from(
+          [
+            'Warning: Skill descriptions were shortened to fit the 2% skills context budget.',
+            'Codex can still see every skill, but some descriptions are shorter.',
+            'Disable unused skills or plugins to leave more room for the rest.',
+            'Warning: Falling back from WebSockets to HTTPS transport. request timed out'
+          ].join('\n')
+        )
+      )
+      await vi.advanceTimersByTimeAsync(1000)
+
+      expect(warnLogSpy.mock.calls.some(([message]) => message === 'agent stderr summary')).toBe(
+        true
+      )
+      expect(events.some((event) => event.kind === 'system' && event.title === 'agent')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+      promptResponse.resolve({ stopReason: 'end_turn' })
+      await prompt
+    }
   })
 
   it('labels a late stderr with the framework captured at bind time, not the current one', async () => {
@@ -23206,10 +23399,16 @@ describe('ACP runtime — agent process lifecycle logging', () => {
     await runtime.createSession({ cwd: '/workspace' })
     await runtime.disconnect()
     await runtime.createSession({ cwd: '/workspace' })
-    oldProcess.stderr.emit('data', Buffer.from('slow tail output'))
+    vi.useFakeTimers()
+    try {
+      oldProcess.stderr.emit('data', Buffer.from('slow tail output'))
+      await vi.advanceTimersByTimeAsync(1000)
 
-    const call = warnLogSpy.mock.calls.find(([message]) => message === 'agent stderr')
-    expect((call?.[1] as { framework: string }).framework).toBe('claude-code')
+      const call = warnLogSpy.mock.calls.find(([message]) => message === 'agent stderr summary')
+      expect((call?.[1] as { framework: string }).framework).toBe('claude-code')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
