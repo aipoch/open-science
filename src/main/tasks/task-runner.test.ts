@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
+import { queryObjects } from 'node:v8'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -47,6 +48,8 @@ const session: PersistedChatSession = {
   createdAt: 1,
   updatedAt: 2
 }
+
+class RetainedRunEventPayload {}
 
 type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'sessions'> & {
   sessions?: Omit<Partial<TaskSessionPort>, 'save'> & {
@@ -101,6 +104,52 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it('does not retain raw runtime event payloads during or after a Run', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-created' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'thought-event',
+            timestamp: 10,
+            kind: 'thought',
+            level: 'info',
+            sessionId: 'session-created',
+            text: 'Working',
+            raw: new RetainedRunEventPayload()
+          })
+          await promptGate
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Review these papers.' })
+    try {
+      expect(queryObjects(RetainedRunEventPayload)).toBe(0)
+    } finally {
+      finishPrompt?.()
+      await runner.waitForRun(started.id)
+    }
+
+    expect(queryObjects(RetainedRunEventPayload)).toBe(0)
+  })
+
   it('returns the Session authority Compute preference from start, get, and wait', async () => {
     const saved: PersistedChatSession[] = []
     const runner = createRunner({
