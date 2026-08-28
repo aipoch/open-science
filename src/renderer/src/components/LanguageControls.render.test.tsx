@@ -65,6 +65,7 @@ describe('LanguageSelect', () => {
       '日本語',
       '한국어',
       'Français',
+      'Português (Portugal)',
       'Русский',
       'Español'
     ])
@@ -160,6 +161,24 @@ describe('LanguageSelect', () => {
     expect(document.documentElement.lang).toBe('fr')
     expect(container.querySelector('button')?.getAttribute('aria-label')).toBe(
       "Langue de l'interface"
+    )
+  })
+
+  it('switches to European Portuguese copy from the language picker', () => {
+    render(<LanguageSelect />)
+    openRadixMenu(container.querySelector('button'))
+
+    const portuguese = Array.from(document.querySelectorAll('[role="option"]')).find((option) =>
+      option.textContent?.includes('Português (Portugal)')
+    )
+    clickRadixMenuItem(portuguese as HTMLElement)
+
+    expect(useLocaleStore.getState().preference).toBe('pt-PT')
+    expect(useLocaleStore.getState().locale).toBe('pt-PT')
+    expect(i18next.language).toBe('pt-PT')
+    expect(document.documentElement.lang).toBe('pt-PT')
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe(
+      'Idioma da interface'
     )
   })
 

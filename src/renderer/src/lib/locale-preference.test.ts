@@ -50,6 +50,10 @@ describe('stored preference', () => {
   })
 
   it('round-trips a persisted choice', () => {
+    persistPreference('pt-PT')
+    expect(getStoredPreference()).toBe('pt-PT')
+    expect(resolvePreference()).toBe('pt-PT')
+
     persistPreference('es')
     expect(getStoredPreference()).toBe('es')
     expect(resolvePreference()).toBe('es')
@@ -101,6 +105,16 @@ describe('resolveInitialLocale', () => {
     expect(resolveInitialLocale()).toBe('fr')
   })
 
+  it('detects European Portuguese from the device', () => {
+    stubLanguages(['pt-PT', 'en'])
+    expect(resolveInitialLocale()).toBe('pt-PT')
+  })
+
+  it('does not apply European Portuguese to Brazilian or bare Portuguese', () => {
+    stubLanguages(['pt-BR', 'pt', 'fr-FR', 'en'])
+    expect(resolveInitialLocale()).toBe('fr')
+  })
+
   it('detects Spanish regional tags from the device', () => {
     stubLanguages(['es-MX', 'en'])
     expect(resolveInitialLocale()).toBe('es')
@@ -127,6 +141,8 @@ describe('applyHtmlLang', () => {
     expect(document.documentElement.lang).toBe('en')
     applyHtmlLang('fr')
     expect(document.documentElement.lang).toBe('fr')
+    applyHtmlLang('pt-PT')
+    expect(document.documentElement.lang).toBe('pt-PT')
     applyHtmlLang('es')
     expect(document.documentElement.lang).toBe('es')
   })

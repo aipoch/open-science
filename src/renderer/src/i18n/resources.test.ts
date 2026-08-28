@@ -21,6 +21,7 @@ import es from '../../../shared/i18n/locales/es.json'
 import fr from '../../../shared/i18n/locales/fr.json'
 import ja from '../../../shared/i18n/locales/ja.json'
 import ko from '../../../shared/i18n/locales/ko.json'
+import ptPT from '../../../shared/i18n/locales/pt-PT.json'
 import ru from '../../../shared/i18n/locales/ru.json'
 import zhHans from '../../../shared/i18n/locales/zh-Hans.json'
 import zhHant from '../../../shared/i18n/locales/zh-Hant.json'
@@ -43,6 +44,7 @@ const commonCatalogs = {
   fr: fr.common,
   ja: ja.common,
   ko: ko.common,
+  'pt-PT': ptPT.common,
   ru: ru.common,
   'zh-Hans': zhHans.common,
   'zh-Hant': zhHant.common
@@ -53,6 +55,7 @@ const sourceCatalogs = {
   fr: { ...fr.common, ...fr.renderer },
   ja: { ...ja.common, ...ja.renderer },
   ko: { ...ko.common, ...ko.renderer },
+  'pt-PT': { ...ptPT.common, ...ptPT.renderer },
   ru: { ...ru.common, ...ru.renderer },
   'zh-Hans': { ...zhHans.common, ...zhHans.renderer },
   'zh-Hant': { ...zhHant.common, ...zhHant.renderer }
@@ -63,6 +66,7 @@ const rendererCatalogs = {
   fr: fr.renderer,
   ja: ja.renderer,
   ko: ko.renderer,
+  'pt-PT': ptPT.renderer,
   ru: ru.renderer,
   'zh-Hans': zhHans.renderer,
   'zh-Hant': zhHant.renderer
@@ -156,6 +160,7 @@ const REQUIRED_PLURAL_CATEGORIES = {
   fr: ['one', 'many', 'other'],
   ja: ['other'],
   ko: ['other'],
+  'pt-PT': ['one', 'many', 'other'],
   ru: ['one', 'few', 'many', 'other'],
   'zh-Hans': ['other'],
   'zh-Hant': ['other']
@@ -176,6 +181,12 @@ const withoutPluralCategory = (key: string): string => {
 const COUNTED_KEYS_WITHOUT_MARKER = ['probed just now'] as const
 
 describe('supported catalog registration', () => {
+  it('ships an authoritative European Portuguese catalog', () => {
+    expect(
+      existsSync(join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales', 'pt-PT.json'))
+    ).toBe(true)
+  })
+
   it('preserves duplicate top-level namespace keys for the structure guard to reject', () => {
     expect(rawTopLevelKeys('{"common": {}, "native": {}, "native": {}, "renderer": {}}')).toEqual([
       'common',
@@ -530,6 +541,12 @@ describe.each(TRANSLATED)('%s native catalog', (locale) => {
         specialist: '스페셜리스트',
         connector: '커넥터'
       },
+      'pt-PT': {
+        subagent: 'subagente',
+        skill: 'competência',
+        specialist: 'especialista',
+        connector: 'conector'
+      },
       ru: {
         subagent: 'субагент',
         skill: 'навык',
@@ -586,6 +603,15 @@ describe('process catalog boundaries', () => {
         Skill: '스킬',
         Specialist: '스페셜리스트',
         Connector: '커넥터'
+      }
+    },
+    {
+      locale: 'pt-PT' as const,
+      expected: {
+        Subagent: 'Subagente',
+        Skill: 'Competência',
+        Specialist: 'Especialista',
+        Connector: 'Conector'
       }
     },
     {
@@ -728,6 +754,10 @@ describe('dynamic counted lookup translations', () => {
     {
       locale: 'ko' as const,
       expected: ['방금 확인함', '3시간 전에 확인함', '3일 전', '3일 전']
+    },
+    {
+      locale: 'pt-PT' as const,
+      expected: ['verificado agora', 'verificado há 3 h', 'há 3 d', 'há 3 dias']
     },
     {
       locale: 'ru' as const,
@@ -1013,6 +1043,28 @@ describe('mandatory product glossary', () => {
       'Claude setup token': 'Claude 설정 토큰',
       'Token: {{masked}}': '토큰: {{masked}}'
     },
+    'pt-PT': {
+      Agent: 'Agente',
+      'Agent framework': 'Framework de agentes',
+      'Command line tool': 'Ferramenta de linha de comandos',
+      Diagnostics: 'Diagnóstico',
+      failed: 'falhou',
+      Skills: 'Competências',
+      Specialist: 'Especialista',
+      Specialists: 'Especialistas',
+      Marketplace: 'Mercado',
+      Connector: 'Conector',
+      Main: 'Agente principal',
+      Light: 'Claro',
+      Resume: 'Retomar',
+      Running: 'Em execução',
+      running: 'em execução',
+      Terminal: 'Terminal',
+      Shell: 'Linha de comandos',
+      'Token usage': 'Utilização de tokens',
+      'Claude setup token': 'Token de configuração do Claude',
+      'Token: {{masked}}': 'Token: {{masked}}'
+    },
     ru: {
       Agent: 'Агент',
       Skills: 'Навыки',
@@ -1036,6 +1088,7 @@ describe('mandatory product glossary', () => {
       'zh-Hant': /主模型/u,
       ja: /メインモデル/u,
       ko: /메인 모델/u,
+      'pt-PT': /modelo principal/iu,
       ru: /основн\p{L}*\s+модел/iu
     },
     mainAgent: {
@@ -1045,6 +1098,7 @@ describe('mandatory product glossary', () => {
       'zh-Hant': /主智能體/u,
       ja: /メインエージェント/u,
       ko: /메인 에이전트/u,
+      'pt-PT': /agente principal/iu,
       ru: /главн\p{L}*\s+агент/iu
     },
     subagent: {
@@ -1054,6 +1108,7 @@ describe('mandatory product glossary', () => {
       'zh-Hant': /子智能體/u,
       ja: /サブエージェント/u,
       ko: /서브에이전트/u,
+      'pt-PT': /subagentes?/iu,
       ru: /субагент/iu
     }
   } satisfies Record<string, Record<TranslatedLocale, RegExp>>
@@ -1143,6 +1198,7 @@ describe('mandatory product glossary', () => {
       fr: 'réglage du fournisseur',
       ja: 'プロバイダー設定を使用',
       ko: '모델 제공업체 설정 사용',
+      'pt-PT': 'predefinição do fornecedor',
       ru: 'настройка поставщика',
       'zh-Hans': '由服务商决定',
       'zh-Hant': '由服務商決定'
@@ -1369,6 +1425,7 @@ describe('mandatory product glossary', () => {
       'zh-Hant': /命令列/,
       ja: /シェル/,
       ko: /셸/,
+      'pt-PT': /linhas? de comandos/iu,
       ru: /командн/iu
     }[locale]
     const offenders = Object.entries(catalog(locale))
@@ -1534,6 +1591,12 @@ describe('mandatory product glossary', () => {
       untranslatedAgent: /\b(?:sub)?agents?\b/i,
       untranslatedSkill: /\bskills?\b/i
     },
+    'pt-PT': {
+      agent: /agentes?/iu,
+      skill: /competências?/iu,
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
     ru: {
       agent: /агент/iu,
       skill: /навык/iu,
@@ -1594,6 +1657,7 @@ describe('mandatory product glossary', () => {
     'zh-Hant': { credential: '權杖', model: '詞元' },
     ja: { credential: 'トークン', model: 'トークン' },
     ko: { credential: '토큰', model: '토큰' },
+    'pt-PT': { credential: 'token', model: 'token' },
     ru: { credential: 'токен', model: 'токен' }
   } satisfies Record<TranslatedLocale, { credential: string; model: string }>
 
@@ -1608,7 +1672,7 @@ describe('mandatory product glossary', () => {
         ? expected.credential
         : expected.model
       return !prose.toLocaleLowerCase(locale).includes(term.toLocaleLowerCase(locale)) ||
-        (locale !== 'es' && /\btokens?\b/i.test(prose))
+        (locale !== 'es' && locale !== 'pt-PT' && /\btokens?\b/i.test(prose))
         ? [`${key}: ${term}`]
         : []
     })
@@ -2918,6 +2982,279 @@ describe('Russian safety copy', () => {
     ]
   ])('preserves the scope of %s', (key, expected) => {
     expect(catalog('ru')[key]).toBe(expected)
+  })
+})
+
+describe('European Portuguese safety copy', () => {
+  it('uses European Portuguese plural rules, including zero', () => {
+    const instance = initI18n('pt-PT')
+    const translate = (count: number): string =>
+      instance.t('{{count}} files', {
+        count,
+        defaultValue_one: '{{count}} file'
+      })
+
+    expect([0, 1, 2, 1_000_000].map(translate)).toEqual([
+      '0 ficheiros',
+      '1 ficheiro',
+      '2 ficheiros',
+      '1000000 ficheiros'
+    ])
+  })
+
+  it.each([
+    ['Skill', 'Competência'],
+    ['Skills', 'Competências'],
+    ['Subagent', 'Subagente'],
+    ['Specialist', 'Especialista'],
+    ['Connector', 'Conector'],
+    ['Marketplace', 'Mercado'],
+    ['Main Agent', 'Agente principal'],
+    ['Main model', 'Modelo principal'],
+    ['Shell', 'Linha de comandos'],
+    ['Token usage', 'Utilização de tokens'],
+    ['Save', 'Guardar'],
+    ['Delete', 'Eliminar'],
+    ['Download', 'Transferir'],
+    ['Close others', 'Fechar os outros'],
+    ['Preview', 'Pré-visualização'],
+    ['Close preview of {{title}}', 'Fechar a pré-visualização de {{title}}']
+  ])('uses reviewed Portuguese (Portugal) terminology for %s', (key, expected) => {
+    expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Add context for the Agent', 'Adicionar contexto para o Agente'],
+    ['Annotation note', 'Nota da anotação'],
+    ['Image point {{number}}', 'Ponto {{number}} da imagem'],
+    ['Text quote', 'Excerto de texto'],
+    ['Show annotation source', 'Mostrar origem da anotação'],
+    ['Add a note for this image annotation', 'Adicione uma nota a esta anotação na imagem'],
+    [
+      'An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.',
+      'Uma imagem anotada já não está disponível. Restaure o acesso à respetiva versão imutável ou remova a anotação e tente novamente.'
+    ],
+    [
+      'You can add up to 10 annotations to one message.',
+      'Pode adicionar até 10 anotações a uma única mensagem.'
+    ]
+  ])('uses reviewed European Portuguese annotation copy for %s', (key, expected) => {
+    expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it.each([
+    [
+      "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.",
+      'O armazenamento seguro não está disponível. O comando, os caminhos e a saída desta tarefa podem ser guardados sem encriptação.'
+    ],
+    ['Filter Marketplace Specialists', 'Filtrar especialistas do mercado'],
+    ['Updates available', 'Atualizações disponíveis'],
+    ['No Specialists match this filter.', 'Nenhum especialista corresponde a este filtro.'],
+    ['No Specialists match “{{query}}”.', 'Nenhum especialista corresponde a “{{query}}”.'],
+    ['Show all', 'Mostrar tudo'],
+    [
+      'Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.',
+      'A mostrar {{detailed}} de {{reported}} chamadas registadas, porque alguns turnos não têm detalhes exatos das chamadas.'
+    ],
+    ['Could not load version history.', 'Não foi possível carregar o histórico de versões.'],
+    [
+      'Reviewer log content was truncated to fit the size limit.',
+      'O conteúdo do registo do revisor foi truncado para respeitar o limite de tamanho.'
+    ],
+    [
+      'Unable to restore plan state. Retrying…',
+      'Não foi possível restaurar o estado do plano. A tentar novamente…'
+    ],
+    [
+      'Session configuration changed to {{framework}} · {{model}} · {{effort}}',
+      'A configuração da sessão foi alterada para {{framework}} · {{model}} · {{effort}}'
+    ],
+    ['{{framework}} · {{model}} · {{effort}}', '{{framework}} · {{model}} · {{effort}}'],
+    ['Session title', 'Título da sessão'],
+    ['Rename session title', 'Alterar o título da sessão'],
+    [
+      "Tencent's coding agent for the terminal.",
+      'Agente de programação da Tencent para a linha de comandos.'
+    ],
+    [
+      'CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.',
+      'O CodeBuddy é necessário para este framework. Instale-o abaixo ou manualmente e volte a detetá-lo.'
+    ],
+    [
+      'Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.',
+      'Transfere o CodeBuddy para o ambiente de execução gerido pela aplicação e utiliza o ambiente de execução da própria aplicação para o executar — não requer uma instalação global do Node.js nem do npm.'
+    ]
+  ])('uses reviewed European Portuguese copy for newly merged surface %s', (key, expected) => {
+    expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it.each([
+    [
+      ' (control tab falls back to most recent data kernel)',
+      ' (o separador de controlo recorre ao kernel de dados mais recente)'
+    ],
+    [
+      "A conversation can't be resumed on a different backend, so switching starts a fresh agent session. Open conversations keep their existing messages, and their transcript is replayed to {{name}} so it can pick up where you left off (tool state is not carried over). New conversations are unaffected.",
+      'Uma conversa não pode ser retomada num backend diferente, pelo que a mudança inicia uma nova sessão do agente. As conversas abertas mantêm as mensagens existentes e a respetiva transcrição é reproduzida para {{name}}, para que possa retomar de onde ficou (o estado das ferramentas não é transferido). As novas conversas não são afetadas.'
+    ],
+    [
+      'Leave empty to use User from ~/.ssh/config.',
+      'Deixe em branco para usar User de ~/.ssh/config.'
+    ],
+    ['Specialist icon', 'Ícone do especialista'],
+    ['System prompt', 'Prompt do sistema'],
+    ['Try again', 'Tentar novamente'],
+    ['Specialist appearance picker — 8 states', 'Seletor de aparência do especialista — 8 estados'],
+    ['All Agents/Specialists', 'Todos os agentes/especialistas']
+  ])('uses native European Portuguese copy for review finding %s', (key, expected) => {
+    expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it('uses sentence case for Main Agent throughout the European Portuguese catalog', () => {
+    const offenders = allCatalogEntries('pt-PT')
+      .filter(([, value]) => /Agente Principal/u.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each([
+    ['Electron v', 'Electron v'],
+    ['Endpoint', 'Endpoint'],
+    ['Node v', 'Node v'],
+    ['PINNED', 'FIXADO'],
+    ['This turn was interrupted.', 'Este turno foi interrompido.'],
+    ['Turn limit', 'Limite de turnos'],
+    ['Turn limit reached', 'Limite de turnos atingido'],
+    ['Using OpenChemLib viewer', 'A utilizar o visualizador OpenChemLib'],
+    ['Streamable HTTP', 'Streamable HTTP'],
+    ['Flask', 'Flask'],
+    ['Bioconductor', 'Bioconductor'],
+    ['User', 'User'],
+    ['Port', 'Port']
+  ])('preserves reviewed technical and session terminology for %s', (key, expected) => {
+    expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Archived {{when}}', 'Arquivado {{when}}'],
+    ['Checking database…', 'A verificar a base de dados…'],
+    ['Detach connector', 'Desassociar conector'],
+    ['Check again', 'Verificar novamente'],
+    ['Download artifacts…', 'Transferir artefactos…'],
+    ['Edit specialist', 'Editar especialista'],
+    ['Follow main model', 'Seguir o modelo principal'],
+    ['Follow {{appName}} on X', 'Seguir {{appName}} no X'],
+    ['Import from GitHub', 'Importar do GitHub'],
+    ['Mention {{name}}', 'Mencionar {{name}}'],
+    ['Open environment repair', 'Abrir reparação do ambiente'],
+    ['Open full screen preview', 'Abrir a pré-visualização em ecrã inteiro'],
+    ['Reveal in folder', 'Mostrar na pasta'],
+    ['Search specialists…', 'Procurar especialistas…'],
+    ['Select a Specialist ZIP', 'Selecionar um ZIP de Especialista'],
+    ['Choose Specialist', 'Escolher Especialista']
+  ])('uses reviewed European Portuguese action copy for %s', (key, expected) => {
+    expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Loading…', 'A carregar…'],
+    ['Saving…', 'A guardar…'],
+    ['Deleting…', 'A eliminar…'],
+    ['Downloading…', 'A transferir…'],
+    ['Checking…', 'A verificar…'],
+    ['Refreshing…', 'A atualizar…'],
+    ['Stopping…', 'A parar…'],
+    ['Uninstalling…', 'A desinstalar…']
+  ])('uses an idiomatic European Portuguese progress form for %s', (key, expected) => {
+    expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it('contains no common Brazilian Portuguese UI vocabulary', () => {
+    const brazilian =
+      /(?<![\p{L}\p{N}_])(?:arquivos?|usuári[oa]s?|senhas?|habilidades?|salvar|salve|salvou|salvará|salvo|salva|excluir|exclua|exclui|exclusão|telas?|equipes?|aplicativos?|registros?|registr(?:ad|ar|e|ou|a|am|ando)\p{L}*|gerenci\p{L}*|baix(?:ar|e|ado|ada|ados|adas|ando|ou|ará|arão)|acessar|acesse|você|controles?|desabilit\p{L}*|sistema operacional|contatos?|artefatos?|provedores?|criptograf\p{L}*|descriptograf\p{L}*|desenvolvedores?|confiáve(?:l|is)|digite|logins?|downloads?|pular|rolar|rolagem|chaveiro|colet\p{L}*|mescl\p{L}*|compartilh\p{L}*|conosco|grade|padrão|reparo|embalagem|acondicion\p{L}*)(?![\p{L}\p{N}_])/iu
+    const offenders = allCatalogEntries('pt-PT')
+      .filter(([, value]) => brazilian.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('contains no malformed mechanical replacements', () => {
+    const malformed = /pré-pré-visualiz|aa aplicação/iu
+    const malformedUppercaseArticle = /\b(?:OS seus|AS suas)\b/u
+    const offenders = allCatalogEntries('pt-PT')
+      .filter(([, value]) => malformed.test(value) || malformedUppercaseArticle.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses infinitive progress forms throughout the European Portuguese catalog', () => {
+    const inProgressSource =
+      /^(?:Adding|Applying|Archiving|Awaiting|Beginning|Building|Cancelling|Changing|Checking|Cleaning|Compacting|Connecting|Copying|Creating|Decoding|Deleting|Detecting|Disabling|Discarding|Downloading|Enabling|Estimating|Exporting|Extracting|Fetching|Finding|Finishing|Generating|Importing|Installing|Interacting|Listing|Loading|Matching|Moving|Opening|Pairing|Parsing|Preparing|Probing|Reading|Re-running|Reconfiguring|Reconnecting|Refreshing|Reloading|Removing|Rendering|Resolving|Restarting|Restoring|Resuming|Retrying|Reviewing|Running|Saving|Scanning|Searching|Selecting|Sending|Setting up|Signing in|Starting|Stopping|Submitting|Summarizing|Switching|Testing|Thinking|Uninstalling|Updating|Uploading|Validating|Verifying|Waiting|Working)\b/u
+    const brazilianGerund = /^\p{L}+(?:ando|endo|indo)\b/iu
+    const offenders = Object.entries(catalog('pt-PT'))
+      .filter(([key]) => inProgressSource.test(englishOf(key)))
+      .filter(([, value]) => brazilianGerund.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses European Portuguese preview terminology in every preview surface', () => {
+    const offenders = Object.entries(catalog('pt-PT'))
+      .filter(([key]) => /\bpreview\b/i.test(englishOf(key).replace(/\{\{\w+\}\}/g, '')))
+      .filter(([, value]) => !/(?:\bpré-visualiz|\bantev)/iu.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses session terminology for sign-in and sign-out surfaces', () => {
+    const offenders = Object.entries(catalog('pt-PT'))
+      .filter(([key]) =>
+        /\b(?:sign(?:ed|ing)?[- ](?:in|out)|log(?:ged|ging)?[- ](?:in|out))\b/i.test(englishOf(key))
+      )
+      .filter(([, value]) => !/sessão/iu.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('distinguishes investigation from interface search', () => {
+    const investigationOffenders = Object.entries(catalog('pt-PT'))
+      .filter(([key]) => /\bresearch(?:er|ers|ing)?\b/i.test(englishOf(key)))
+      .filter(([, value]) => !/investiga/iu.test(value))
+      .map(([key]) => `investigation: ${key}`)
+    const searchOffenders = Object.entries(catalog('pt-PT'))
+      .filter(([key]) => /\bsearch(?:ed|es|ing)?\b/i.test(englishOf(key)))
+      .filter(([, value]) => !/procur/iu.test(value))
+      .map(([key]) => `search: ${key}`)
+
+    expect([...investigationOffenders, ...searchOffenders]).toEqual([])
+  })
+
+  it('preserves high-risk safety semantics in native Portuguese', () => {
+    const requirements = {
+      'Approval applies to this call only.': [/apenas/iu, /chamada/iu],
+      'The local Compute Host and encrypted password will be deleted. The remote SSH account is unchanged, and the password cannot be recovered.':
+        [/serão eliminados/iu, /não será alterada/iu, /não será possível recuperar/iu],
+      'The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.':
+        [/serviço externo/iu, /aprove apenas/iu, /confiar/iu],
+      'This report is posted publicly on GitHub. Edit the error text below to remove anything sensitive before sharing. Your runtime log stays on this device and is never attached automatically.':
+        [/publicado publicamente/iu, /dados sensíveis/iu, /nunca é anexado automaticamente/iu],
+      'Current local edits are not recoverable after a successful overwrite. A failed atomic install preserves the current version.':
+        [/não podem ser recuperadas/iu, /versão atual é preservada/iu]
+    } satisfies Record<string, RegExp[]>
+    const offenders = Object.entries(requirements)
+      .filter(([key, patterns]) => {
+        const value = catalog('pt-PT')[key]
+        return !value || patterns.some((pattern) => !pattern.test(value))
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
   })
 })
 

@@ -84,6 +84,39 @@ test('persists Russian into the built main-process native quit dialog', async ({
     })
 })
 
+test('persists European Portuguese into the built main-process native quit dialog', async ({
+  app
+}) => {
+  let page = await app.completeOnboarding()
+
+  await page
+    .locator('button')
+    .filter({ has: page.locator('svg.lucide-languages') })
+    .click()
+  await page.getByRole('menuitem', { name: 'Português (Portugal)', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'pt-PT')
+
+  await expect
+    .poll(() => app.capturePersistedLocaleNativeQuitDialog())
+    .toEqual({
+      buttons: ['Cancelar', 'Sair'],
+      detail: 'O trabalho ainda está em execução e será interrompido se sair.',
+      includesRendererCatalog: false,
+      message: 'Sair do Open Science?'
+    })
+
+  page = await app.restart()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'pt-PT')
+  await expect
+    .poll(() => app.capturePersistedLocaleNativeQuitDialog())
+    .toEqual({
+      buttons: ['Cancelar', 'Sair'],
+      detail: 'O trabalho ainda está em execução e será interrompido se sair.',
+      includesRendererCatalog: false,
+      message: 'Sair do Open Science?'
+    })
+})
+
 const localizedSettingsCases = [
   {
     language: 'Simplified Chinese',
@@ -156,6 +189,24 @@ const localizedSettingsCases = [
     reasoningEffort: '추론 강도',
     defaultEffort: '기본값',
     closeSettings: '설정 닫기'
+  },
+  {
+    language: 'European Portuguese',
+    pickerLabel: 'Português (Portugal)',
+    locale: 'pt-PT',
+    projects: 'Projetos',
+    modelSettings: 'Definições do modelo',
+    settings: 'Definições',
+    openNavigation: 'Abrir a navegação das definições',
+    general: 'Geral',
+    appearance: 'Aspeto',
+    interfaceLanguage: 'Idioma da interface',
+    mainModel: 'Modelo principal',
+    scenarioModels: 'Modelos por cenário',
+    expandSubagent: 'Expandir as definições de Subagente',
+    reasoningEffort: 'Nível de raciocínio',
+    defaultEffort: 'Predefinição',
+    closeSettings: 'Fechar as definições'
   },
   {
     language: 'Russian',

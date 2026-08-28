@@ -181,6 +181,7 @@ const fallbackLng: Record<string, string[]> = {
   fr: [DEFAULT_LOCALE],
   ja: [DEFAULT_LOCALE],
   ko: [DEFAULT_LOCALE],
+  'pt-PT': [DEFAULT_LOCALE],
   ru: [DEFAULT_LOCALE],
   'zh-Hant': [DEFAULT_LOCALE],
   'zh-Hans': [DEFAULT_LOCALE],

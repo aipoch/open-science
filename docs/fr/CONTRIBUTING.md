@@ -174,6 +174,7 @@ Utilisez l'un de ces préfixes de type standard :
   (espagnol), `src/shared/i18n/locales/fr.json` (français),
   `src/shared/i18n/locales/ja.json` (japonais),
   `src/shared/i18n/locales/ko.json` (coréen),
+  `src/shared/i18n/locales/pt-PT.json` (portugais européen),
   `src/shared/i18n/locales/ru.json` (russe),
   `src/shared/i18n/locales/zh-Hans.json` (chinois simplifié) et
   `src/shared/i18n/locales/zh-Hant.json` (chinois traditionnel). Utilisez le
