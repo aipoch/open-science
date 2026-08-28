@@ -77,6 +77,7 @@ const installApi = (): void => {
         claude: {},
         opencode: {},
         codex: {},
+        codebuddy: {},
         providers: [],
         agentFrameworkId: 'claude-code',
         agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
@@ -85,6 +86,7 @@ const installApi = (): void => {
         claude: {},
         opencode: {},
         codex: {},
+        codebuddy: {},
         providers: [],
         agentFrameworkId: 'claude-code',
         agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
@@ -93,10 +95,16 @@ const installApi = (): void => {
         claude: {},
         opencode: {},
         codex: {},
+        codebuddy: {},
         providers: [],
         agentFrameworkId: 'claude-code',
         agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
       }),
+      detectCodeBuddy: vi.fn(() =>
+        (
+          window as unknown as { api: { settings: { getSettings: () => Promise<unknown> } } }
+        ).api.settings.getSettings()
+      ),
       getPreflight: vi.fn().mockResolvedValue({ claudeReady: true, activeProviderReady: true }),
       isEncryptionAvailable: vi.fn().mockResolvedValue(true),
       isNpmAvailable: vi.fn().mockResolvedValue(true),
@@ -3956,6 +3964,12 @@ describe('SettingsPage Codex framework', () => {
       displayName: 'Codex',
       supportsSkills: true,
       supportedApiTypes: ['responses']
+    },
+    {
+      id: 'codebuddy',
+      displayName: 'CodeBuddy',
+      supportsSkills: false,
+      supportedApiTypes: ['openai']
     }
   ]
 
@@ -4016,23 +4030,117 @@ describe('SettingsPage Codex framework', () => {
     expect(checkEnvironment).toHaveBeenCalledWith({ force: true })
   })
 
+  it('switches to a ready CodeBuddy framework after confirmation', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const snapshot = {
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' },
+      providers: [],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: true,
+      codebuddyManaged: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: false,
+      codexReady: true,
+      codebuddyReady: true,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: false
+    })
+    const setAgentFramework = vi.fn().mockResolvedValue({
+      ...snapshot,
+      agentFrameworkId: 'codebuddy'
+    })
+    api.settings.setAgentFramework = setAgentFramework
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ checkEnvironment })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    const codeBuddyRadio = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Use CodeBuddy"]'
+    )
+    expect(codeBuddyRadio).not.toBeNull()
+    await act(async () => codeBuddyRadio?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Switch to CodeBuddy?')
+    const confirm = Array.from(dialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Switch'
+    )
+    await act(async () => confirm?.click())
+
+    expect(setAgentFramework).toHaveBeenCalledWith({ id: 'codebuddy' })
+    expect(checkEnvironment).toHaveBeenCalledWith({ force: true })
+  })
+
+  it('does not show the obsolete Skill limitation for active CodeBuddy', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const snapshot = {
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' },
+      providers: [],
+      agentFrameworkId: 'codebuddy',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: true,
+      codebuddyManaged: false
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: false,
+      codexReady: true,
+      codebuddyReady: true,
+      agentFrameworkId: 'codebuddy',
+      agentReady: true,
+      activeProviderReady: false
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    expect(document.body.textContent).not.toContain(
+      "Skills aren't available with CodeBuddy; use Claude Code for skill-based workflows."
+    )
+  })
+
   it('routes the default app-managed install action to installCodex', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     api.settings.getSettings = vi.fn().mockResolvedValue({
       claude: { resolvedPath: '/data/claude', version: '2.1.0' },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       codex: {},
+      codebuddy: {},
       providers: [],
       agentFrameworkId: 'claude-code',
       agentFrameworks: frameworks,
       claudeManaged: true,
       opencodeManaged: false,
-      codexManaged: false
+      codexManaged: false,
+      codebuddyManaged: false
     })
     api.settings.getPreflight = vi.fn().mockResolvedValue({
       claudeReady: true,
       opencodeReady: true,
       codexReady: false,
+      codebuddyReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: false
@@ -4094,9 +4202,11 @@ describe('SettingsPage Codex framework', () => {
     const detectClaude = vi.fn().mockResolvedValue(snapshot)
     const detectOpencode = vi.fn().mockResolvedValue(snapshot)
     const detectCodex = vi.fn().mockResolvedValue(snapshot)
+    const detectCodeBuddy = vi.fn().mockResolvedValue(snapshot)
     api.settings.detectClaude = detectClaude
     api.settings.detectOpencode = detectOpencode
     api.settings.detectCodex = detectCodex
+    api.settings.detectCodeBuddy = detectCodeBuddy
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({ checkEnvironment })
 
@@ -4105,13 +4215,13 @@ describe('SettingsPage Codex framework', () => {
     })
     await openAgentPanel()
 
-    // Two ready runtimes land in the Installed group; Codex (not ready) in Available.
+    // Two ready runtimes land in the Installed group; Codex/CodeBuddy (not ready) in Available.
     expect(document.body.textContent).toContain('Installed · 2')
-    expect(document.body.textContent).toContain('Available · 1')
+    expect(document.body.textContent).toContain('Available · 2')
     // Claude is renamed in this panel only.
     expect(document.body.textContent).toContain('Claude Agent')
 
-    // The section-level Re-detect re-scans all three frameworks at once.
+    // The section-level Re-detect re-scans every framework at once.
     const redetect = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Re-detect'
     )
@@ -4122,7 +4232,156 @@ describe('SettingsPage Codex framework', () => {
     expect(detectClaude).toHaveBeenCalledTimes(1)
     expect(detectOpencode).toHaveBeenCalledTimes(1)
     expect(detectCodex).toHaveBeenCalledTimes(1)
+    expect(detectCodeBuddy).toHaveBeenCalledTimes(2)
     expect(checkEnvironment).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps detected CodeBuddy in Installed even while preflight still needs repair', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: {},
+      codex: {},
+      codebuddy: {
+        resolvedPath: '/Users/x/.open-science/codebuddy-managed/bin/codebuddy',
+        version: '2.138.0'
+      },
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: false,
+      codebuddyManaged: true
+    })
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: false,
+      codexReady: false,
+      codebuddyReady: false,
+      agentFrameworkId: 'claude-code',
+      agentReady: true,
+      activeProviderReady: false
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    expect(document.body.textContent).toContain('Installed · 2')
+    expect(document.body.textContent).toContain('Available · 2')
+    expect(document.body.textContent).toContain('CodeBuddy')
+    expect(document.body.textContent).toContain('v2.138.0')
+    expect(document.body.textContent).toContain(
+      '/Users/x/.open-science/codebuddy-managed/bin/codebuddy'
+    )
+    expect(document.body.querySelector('[aria-label="Repair CodeBuddy"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Install CodeBuddy"]')).toBeNull()
+  })
+
+  it('auto-detects a user-installed CodeBuddy when the Agent panel is shown', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const initialSnapshot = {
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codebuddy: {},
+      providers: [],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: true,
+      codebuddyManaged: false
+    }
+    const detectedSnapshot = {
+      ...initialSnapshot,
+      codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' }
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(initialSnapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: false,
+      codexReady: true,
+      codebuddyReady: false,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: false
+    })
+    const detectCodeBuddy = vi.fn().mockResolvedValue(detectedSnapshot)
+    api.settings.detectCodeBuddy = detectCodeBuddy
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    await waitFor(() => expect(detectCodeBuddy).toHaveBeenCalledOnce())
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('/opt/homebrew/bin/codebuddy')
+    })
+
+    expect(document.body.textContent).toContain('v2.138.0')
+    expect(document.body.querySelector('[aria-label="Repair CodeBuddy"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Install CodeBuddy"]')).toBeNull()
+  })
+
+  it('re-detects CodeBuddy after Settings is reopened', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    const initialSnapshot = {
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codebuddy: {},
+      providers: [],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: true,
+      codebuddyManaged: false
+    }
+    const detectedSnapshot = {
+      ...initialSnapshot,
+      codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' }
+    }
+    api.settings.getSettings = vi.fn().mockResolvedValue(initialSnapshot)
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: false,
+      codexReady: true,
+      codebuddyReady: false,
+      agentFrameworkId: 'codex',
+      agentReady: true,
+      activeProviderReady: false
+    })
+    const detectCodeBuddy = vi
+      .fn()
+      .mockResolvedValueOnce(initialSnapshot)
+      .mockResolvedValue(detectedSnapshot)
+    api.settings.detectCodeBuddy = detectCodeBuddy
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+    await waitFor(() => expect(detectCodeBuddy).toHaveBeenCalledOnce())
+    expect(document.body.querySelector('[aria-label="Install CodeBuddy"]')).not.toBeNull()
+
+    await act(async () => {
+      root.render(<SettingsPage open={false} onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    await waitFor(() => expect(detectCodeBuddy).toHaveBeenCalledTimes(2))
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('/opt/homebrew/bin/codebuddy')
+    })
+    expect(document.body.querySelector('[aria-label="Repair CodeBuddy"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Install CodeBuddy"]')).toBeNull()
   })
 
   it('keeps an outdated Codex ACP install in Installed and offers an update', async () => {
@@ -4131,17 +4390,20 @@ describe('SettingsPage Codex framework', () => {
       claude: { resolvedPath: '/data/claude', version: '2.1.0' },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      codebuddy: {},
       providers: [],
       agentFrameworkId: 'codex',
       agentFrameworks: frameworks,
       claudeManaged: true,
       opencodeManaged: false,
-      codexManaged: true
+      codexManaged: true,
+      codebuddyManaged: false
     })
     api.settings.getPreflight = vi.fn().mockResolvedValue({
       claudeReady: true,
       opencodeReady: false,
       codexReady: false,
+      codebuddyReady: false,
       agentFrameworkId: 'codex',
       agentReady: false,
       activeProviderReady: false
@@ -4153,7 +4415,7 @@ describe('SettingsPage Codex framework', () => {
     await openAgentPanel()
 
     expect(document.body.textContent).toContain('Installed · 2')
-    expect(document.body.textContent).toContain('Available · 1')
+    expect(document.body.textContent).toContain('Available · 2')
     expect(document.body.textContent).toContain('Update required')
     expect(document.body.querySelector('[aria-label="Update Codex"]')).not.toBeNull()
     const frameworkRadios = Array.from(

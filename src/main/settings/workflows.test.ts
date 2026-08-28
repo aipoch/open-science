@@ -48,9 +48,11 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
 const snapshot = (overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot => ({
   claude: {},
   opencode: {},
+  codebuddy: {},
   codex: {},
   claudeManaged: false,
   opencodeManaged: false,
+  codebuddyManaged: false,
   codexManaged: false,
   providers: [],
   agentFrameworkId: 'claude-code',
@@ -70,6 +72,7 @@ const fakeStore = () => {
     getConnectors: vi.fn().mockResolvedValue(undefined),
     uninstallClaude: vi.fn(),
     uninstallOpencode: vi.fn(),
+    uninstallCodeBuddy: vi.fn(),
     uninstallCodex: vi.fn(),
     upsertProvider: vi.fn().mockResolvedValue(snapshot()),
     deleteProvider: vi.fn().mockResolvedValue(snapshot()),
@@ -117,6 +120,7 @@ describe('SettingsWorkflows runtime effects', () => {
   it.each([
     ['uninstallClaude', 'claude-code', 'opencode'],
     ['uninstallOpencode', 'opencode', 'codex'],
+    ['uninstallCodeBuddy', 'codebuddy', 'claude-code'],
     ['uninstallCodex', 'codex', 'claude-code']
   ] as const)(
     'switches framework after an affected %s uninstall selects a fallback',

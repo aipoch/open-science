@@ -70,6 +70,7 @@ import type {
   ClaudeInfo,
   ClaudeSubscriptionProviderId,
   CodexInfo,
+  CodeBuddyInfo,
   AgentFrameworkId,
   AgentFrameworkView,
   ChatApiEndpoint,
@@ -108,11 +109,13 @@ type SettingsStoreData = RuntimeSetupState &
     // Detected opencode executable, for the framework-aware detection card.
     opencode: OpencodeInfo
     codex: CodexInfo
+    codebuddy: CodeBuddyInfo
     // Whether each framework's detected runtime is the app-managed install (only these can be uninstalled
     // in-app). Mirrored from the main-process snapshot; a PATH/npm binary reads false.
     claudeManaged: boolean
     opencodeManaged: boolean
     codexManaged: boolean
+    codebuddyManaged: boolean
     onboardingCompletedAt: number | undefined
     encryptionAvailable: boolean
     // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
@@ -177,9 +180,11 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   agentFrameworks: [],
   opencode: {},
   codex: {},
+  codebuddy: {},
   claudeManaged: false,
   opencodeManaged: false,
   codexManaged: false,
+  codebuddyManaged: false,
   onboardingCompletedAt: undefined,
   encryptionAvailable: true,
   packageMirror: undefined,
@@ -230,9 +235,11 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
   codex: snapshot.codex ?? {},
+  codebuddy: snapshot.codebuddy ?? {},
   claudeManaged: snapshot.claudeManaged,
   opencodeManaged: snapshot.opencodeManaged,
-  codexManaged: snapshot.codexManaged ?? false
+  codexManaged: snapshot.codexManaged ?? false,
+  codebuddyManaged: snapshot.codebuddyManaged ?? false
 })
 
 // Stable fallback reference so the selector returns the same array identity across renders
@@ -336,6 +343,8 @@ const createSettingsStoreState = (
         await get().detectOpencode()
       } else if (id === 'codex') {
         await get().detectCodex()
+      } else if (id === 'codebuddy') {
+        await get().detectCodeBuddy()
       } else {
         await get().detectClaude()
       }

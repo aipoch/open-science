@@ -3313,6 +3313,18 @@ describe('Brazilian Portuguese safety copy', () => {
     [
       'Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.',
       'A execução [{{index}}] alterou {{names}} posteriormente. Esta saída é o instantâneo registrado antes dessa alteração; esta execução foi concluída normalmente.'
+    ],
+    [
+      "Tencent's coding agent for the terminal.",
+      'Agente de programação da Tencent para a linha de comando.'
+    ],
+    [
+      'CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.',
+      'O CodeBuddy é necessário para este framework. Instale-o abaixo ou faça a instalação manual e execute uma nova detecção.'
+    ],
+    [
+      'Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.',
+      'Baixa o CodeBuddy para o ambiente de execução gerenciado pelo aplicativo e o executa com o ambiente de execução do próprio aplicativo — sem exigir que Node.js ou npm estejam instalados globalmente.'
     ]
   ])('keeps reviewed high-risk Brazilian Portuguese copy exact in %s', (key, expected) => {
     expect(catalog('pt-BR')[key]).toBe(expected)

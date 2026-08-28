@@ -23,14 +23,17 @@ import type { VisionEvidenceSource } from './vision-evidence-repository'
 import {
   ACP_STEERING_METHOD,
   ACP_STEERING_TIMEOUT_MS,
+  CODEBUDDY_STEER_METHOD,
   OPENCODE_HTTP_STEER_TIMEOUT_MS,
   buildAcpSteeringParams,
+  buildCodeBuddySteerParams,
   buildOpenCodeHttpFollowUpBody,
   contentBlocksToOpenCodeFollowUpParts,
   firstOpenCodeFollowUpText,
   interpretSteerOutcome,
   openCodeHttpFollowUpPath,
   parseOpenCodeHttpFollowUp,
+  parseCodeBuddySteer,
   parseSteerOutcome,
   resolveNativeFollowUpRoute,
   steeringPromptFromText,
@@ -306,6 +309,32 @@ class AcpNativeFollowUpWorkflow {
           transport: route.transport
         })
         return refused(dispatched.reason)
+      }
+    } else if (route.transport === 'codebuddy-acp-steer') {
+      try {
+        const result = await Promise.race([
+          connection.agent.request(
+            CODEBUDDY_STEER_METHOD,
+            buildCodeBuddySteerParams(providerSessionId, prompt),
+            { cancellationSignal: transportSignal }
+          ),
+          this.rejectWhenAborted(transportSignal)
+        ])
+        if (!parseCodeBuddySteer(result)) {
+          log.info('native follow-up refused', {
+            sessionId: request.sessionId,
+            reason: 'prompt-required',
+            transport: route.transport
+          })
+          return refused('prompt-required')
+        }
+      } catch {
+        log.info('native follow-up refused', {
+          sessionId: request.sessionId,
+          reason: 'dispatch-failed',
+          transport: route.transport
+        })
+        return refused('dispatch-failed')
       }
     } else {
       if (!openCodeUsageApi) {

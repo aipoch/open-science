@@ -92,6 +92,7 @@ const saveAsSkillReplayTargetForBackend = (
   backend: AcpBackendGenerationView
 ): HistoryReplayTarget => {
   if (backend.framework.id === 'opencode') return 'opencode'
+  if (backend.framework.id === 'codebuddy') return 'codebuddy'
   if (backend.framework.id === 'codex') {
     return backend.modelRoute === 'codex-bridge' ? 'codex-bridge' : 'codex-response'
   }

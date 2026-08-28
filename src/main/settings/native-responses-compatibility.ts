@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 
 import { createLogger, diagnosticErrorFields } from '../logger'
+import type { SkillSelectorUsageObservation } from '../agent-framework'
 import type {
   ResponsesBridgeConnection,
   ResponsesBridgeModelTarget,
@@ -571,8 +572,10 @@ export class NativeResponsesCompatibilityProxy {
   async selectSkills(
     text: string,
     catalog: ResponsesBridgeSkillCandidate[],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    _observeUsage?: (observation: SkillSelectorUsageObservation) => void
   ): Promise<ResponsesBridgeSkillInput[]> {
+    void _observeUsage
     if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
     const explicit = selectExplicitConnectorSkills(text, catalog)
     if (explicit.length > 0) return explicit

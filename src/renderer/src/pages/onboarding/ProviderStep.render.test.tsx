@@ -74,6 +74,7 @@ const readyClaudeEnvironment = (): void => {
       claudeReady: true,
       opencodeReady: false,
       codexReady: false,
+      codebuddyReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: false

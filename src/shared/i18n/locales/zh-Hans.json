@@ -3478,6 +3478,9 @@
     "The vendor returned a model ID longer than {{limit}} characters.": "服务商返回了长度超过 {{limit}} 个字符的模型 ID。",
     "Claude token must not exceed {{limit}} bytes.": "Claude 令牌不得超过 {{limit}} 字节。",
     "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
-    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "会话配置已更改为 {{framework}} · {{model}} · {{effort}}"
+    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "会话配置已更改为 {{framework}} · {{model}} · {{effort}}",
+    "Tencent's coding agent for the terminal.": "腾讯的命令行编程智能体。",
+    "CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.": "此框架需要 CodeBuddy。请在下方安装，或手动安装后重新检测。",
+    "Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.": "将 CodeBuddy 下载到应用托管运行时，并使用应用运行时运行 —— 无需全局 Node.js 或 npm。"
   }
 }

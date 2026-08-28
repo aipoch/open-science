@@ -22,6 +22,7 @@ import {
   type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
+import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
@@ -87,6 +88,7 @@ export type AgentBackendRuntimePort = Pick<
   AgentRuntimeManager,
   | 'resolveClaudeExecutable'
   | 'resolveOpencodeExecutable'
+  | 'resolveCodeBuddyExecutable'
   | 'resolveCodexExecutable'
   | 'probeCodexNativeVersion'
   | 'provisionClaudeRuntimeConfig'
@@ -311,9 +313,11 @@ export class AgentBackendResolver {
     }
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
     const includeSkillAndConnectorContext = context.includeSkillAndConnectorContext !== false
-    const userSkillDirectoryGuidance = includeSkillAndConnectorContext
-      ? userSkillDirectorySystemPromptAppend(this.storageRoot)
-      : undefined
+    const codeBuddySkillRuntimeRoot = join(codeBuddyStorageDir(this.storageRoot), 'skill-runtime')
+    const userSkillDirectoryGuidance =
+      includeSkillAndConnectorContext && framework.supportsSkills
+        ? userSkillDirectorySystemPromptAppend(this.storageRoot)
+        : undefined
     let connectorInstructions =
       includeSkillAndConnectorContext && framework.id === 'claude-code'
         ? renderConnectorInstructions(this.connectors.connectorSkillNames(settings.connectors))
@@ -326,7 +330,9 @@ export class AgentBackendResolver {
               settings.codex?.resolvedPath,
               settings.codex?.nativePath
             )
-          : await this.runtime.resolveOpencodeExecutable(settings.opencodePath)
+          : framework.id === 'codebuddy'
+            ? await this.runtime.resolveCodeBuddyExecutable(settings.codebuddyPath)
+            : await this.runtime.resolveOpencodeExecutable(settings.opencodePath)
     const codexNativeVersion =
       framework.id === 'codex'
         ? await this.runtime.probeCodexNativeVersion(settings.codex?.nativePath)
@@ -390,18 +396,31 @@ export class AgentBackendResolver {
       await this.ensureCodexSubscriptionHome()
     }
     const backendProviderId = plan.backendProviderId
-    const skillsRoot =
-      framework.id === 'codex'
-        ? isCodexSubscriptionProvider(target.provider.type)
-          ? codexSubscriptionStorageDir(this.storageRoot)
-          : codexStorageDir(this.storageRoot)
-        : opencodeConfigDir(this.storageRoot)
-    const materializedConnectorSkillNames = includeSkillAndConnectorContext
-      ? await this.runtime.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
-      : []
-    connectorInstructions = includeSkillAndConnectorContext
-      ? renderConnectorInstructions(materializedConnectorSkillNames)
-      : ''
+    if (framework.supportsSkills || framework.id === 'codebuddy') {
+      const skillsRoot =
+        framework.id === 'codebuddy'
+          ? join(codeBuddySkillRuntimeRoot, '.claude')
+          : framework.id === 'codex'
+            ? isCodexSubscriptionProvider(target.provider.type)
+              ? codexSubscriptionStorageDir(this.storageRoot)
+              : codexStorageDir(this.storageRoot)
+            : opencodeConfigDir(this.storageRoot)
+      const materializedConnectorSkillNames = includeSkillAndConnectorContext
+        ? await this.runtime.materializeAgentSkills(
+            settings,
+            skillsRoot,
+            forcedSkillIds,
+            ...(framework.id === 'codebuddy' ? [{ directoryLayout: 'agent-facing' as const }] : [])
+          )
+        : []
+      connectorInstructions = includeSkillAndConnectorContext
+        ? renderConnectorInstructions(materializedConnectorSkillNames)
+        : ''
+    } else if (includeSkillAndConnectorContext) {
+      connectorInstructions = renderConnectorInstructions(
+        this.connectors.connectorSkillNames(settings.connectors)
+      )
+    }
 
     const transport = await this.transports.acquire({ activeTarget: target, plan })
     const provider = transport.provider ?? target.provider
@@ -410,7 +429,7 @@ export class AgentBackendResolver {
     const persistentSystemPromptAppends = [
       ...(context.systemPromptAppends ?? []),
       ...(userSkillDirectoryGuidance ? [userSkillDirectoryGuidance] : []),
-      ...(framework.id === 'codex' && connectorInstructions ? [connectorInstructions] : [])
+      ...(framework.id !== 'opencode' && connectorInstructions ? [connectorInstructions] : [])
     ]
 
     try {
@@ -473,6 +492,17 @@ export class AgentBackendResolver {
           ? { sessionModelRequired: true }
           : {}),
         sessionEffort,
+        ...(framework.id === 'codebuddy' && includeSkillAndConnectorContext
+          ? {
+              sessionOptions: {
+                [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+                  command: process.execPath,
+                  entryPath: this.skillRuntimeMcpEntryPath,
+                  root: codeBuddySkillRuntimeRoot
+                }
+              }
+            }
+          : {}),
         contextWindow: provider.contextWindow,
         ...(provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: provider.model,

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { codexFramework } from '../agent-framework/codex'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
@@ -281,6 +283,88 @@ describe('AcpPromptPreparationOwner', () => {
     expect(handle.promptPrefix).toContain('<open_science_compute_execution_target>')
     expect(handle.promptPrefix).toContain('Do not run task work in the local Notebook or shell')
     expect(handle.promptPrefix).not.toContain('ssh:cedar-gpu')
+  })
+
+  it('carries preloaded CodeBuddy Skill activity without attaching Codex-only metadata', async () => {
+    const fixture = setup()
+    fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+      input.codebuddy?.observeUsage?.({
+        sourceInvocationId: 'selector-call-1',
+        usage: {
+          inputTokens: 40,
+          cacheTokens: 5,
+          cachedReadTokens: 5,
+          cachedWriteTokens: 0,
+          outputTokens: 3
+        }
+      })
+      return {
+        text: 'prepared task',
+        codexSkillInputs: [],
+        skillActivityInputs: [
+          {
+            name: 'mcp-pubmed',
+            path: '/app-data/codebuddy/skill-runtime/.claude/skills/mcp-pubmed/SKILL.md'
+          }
+        ],
+        skillRuntimeAllowlist: []
+      }
+    })
+
+    const handle = await fixture.prepare({
+      backend: {
+        framework: codeBuddyFramework,
+        session: {
+          modelRequired: false,
+          options: {
+            [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+              root: '/app-data/codebuddy/skill-runtime'
+            }
+          }
+        },
+        prompt: { systemPromptAppends: [] },
+        context: { supportsImageInput: false },
+        adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+      },
+      contextEstimateInput: { frameworkId: 'codebuddy' as const }
+    })
+
+    expect(fixture.turnSkill.prepareProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        frameworkId: 'codebuddy',
+        codebuddy: {
+          root: '/app-data/codebuddy/skill-runtime',
+          selectorAvailable: true,
+          selectSkills: expect.any(Function),
+          signal: expect.any(AbortSignal),
+          observeUsage: expect.any(Function)
+        }
+      })
+    )
+    expect(handle).toMatchObject({
+      status: 'ready',
+      skillRuntimeAllowlist: [],
+      skillActivityInputs: [
+        {
+          name: 'mcp-pubmed',
+          path: '/app-data/codebuddy/skill-runtime/.claude/skills/mcp-pubmed/SKILL.md'
+        }
+      ],
+      preDispatchModelCalls: [
+        {
+          inputTokens: 40,
+          cacheTokens: 5,
+          cachedReadTokens: 5,
+          cachedWriteTokens: 0,
+          outputTokens: 3,
+          sourceInvocationId: 'selector-call-1',
+          contextUsedTokens: 45
+        }
+      ]
+    })
+    expect(fixture.promptContent.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ codexSkillInputs: [] })
+    )
   })
 
   it('stops a superseded prompt after stalled content preparation and releases its grant', async () => {

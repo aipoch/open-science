@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,6 +7,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import {
   claudeCodeFramework,
+  codeBuddyFramework,
   codexFramework,
   opencodeFramework,
   type ResolvedAgentBackend
@@ -14,6 +15,7 @@ import {
 import {
   createProductionDelegatedFrameworkRuntime,
   DELEGATED_CHILD_SYSTEM_PROMPT_APPEND,
+  prepareCodeBuddyDelegateSpawn,
   withDelegatedChildContext
 } from './production-framework-runtime'
 
@@ -54,6 +56,18 @@ const backend = (frameworkId: AgentFrameworkId): ResolvedAgentBackend => {
       env: {
         OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
         OPENCODE_CONFIG_CONTENT: safeOpenCodeConfig
+      }
+    }
+  }
+  if (frameworkId === 'codebuddy') {
+    return {
+      framework: codeBuddyFramework,
+      executablePath: '/codebuddy',
+      args: ['--tools', 'Read,Write,Edit,Glob,Grep,Bash'],
+      env: {
+        CODEBUDDY_DISABLE_FORK_SUBAGENT: '1',
+        CODEBUDDY_DISABLE_BACKGROUND_TASKS: '1',
+        CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS: '1'
       }
     }
   }
@@ -144,7 +158,37 @@ const delegatedSession = (frameworkId: AgentFrameworkId): PersistedChatSession =
 })
 
 describe('production delegated framework runtime bridge', () => {
-  it.each(['claude-code', 'opencode', 'codex'] as const)(
+  it('copies CodeBuddy configuration into each delegated Attempt runtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'delegated-codebuddy-config-'))
+    const sourceConfigDir = join(root, 'shared-codebuddy')
+    const runtimeHome = join(root, 'attempt')
+    await mkdir(sourceConfigDir, { recursive: true })
+    await writeFile(join(sourceConfigDir, 'models.json'), '{"models":[]}\n')
+
+    try {
+      const spawn = await prepareCodeBuddyDelegateSpawn(
+        {
+          ...backend('codebuddy'),
+          env: {
+            ...backend('codebuddy').env,
+            CODEBUDDY_CONFIG_DIR: sourceConfigDir,
+            CODEBUDDY_API_KEY: 'secret'
+          }
+        },
+        runtimeHome
+      )
+
+      expect(spawn.env.CODEBUDDY_CONFIG_DIR).toBe(join(runtimeHome, 'codebuddy'))
+      expect(spawn.env.CODEBUDDY_API_KEY).toBe('secret')
+      await expect(readFile(join(runtimeHome, 'codebuddy', 'models.json'), 'utf8')).resolves.toBe(
+        '{"models":[]}\n'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
     'adds child-only identity and canonical delivery context for %s without replacing backend rules',
     (frameworkId) => {
       const decorated = withDelegatedChildContext({
@@ -254,7 +298,7 @@ describe('production delegated framework runtime bridge', () => {
       readSession: async () => undefined
     })
 
-    for (const frameworkId of ['claude-code', 'opencode', 'codex'] as const) {
+    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
       const selectionsBeforeComposition = selected.length
       const certified = await frameworks.forSession(session(frameworkId))
       expect(certified.frameworkId).toBe(frameworkId)

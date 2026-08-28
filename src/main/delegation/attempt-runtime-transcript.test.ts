@@ -29,6 +29,15 @@ describe('Attempt runtime transcript projection', () => {
           text: 'First '
         }),
         update({
+          id: 'thought-a:1',
+          timestamp: 10,
+          kind: 'thought',
+          level: 'info',
+          messageId: 'provider-message-a:thought',
+          role: 'assistant',
+          text: 'private analysis'
+        }),
+        update({
           id: 'message-a:2',
           timestamp: 11,
           kind: 'message',
@@ -135,6 +144,7 @@ describe('Attempt runtime transcript projection', () => {
         ]
       })
     ])
+    expect(JSON.stringify(transcript.messages)).not.toContain('private analysis')
     expect(transcript.activities).toEqual([
       expect.objectContaining({
         id: 'agent-runtime:runtime-1:tool-1',

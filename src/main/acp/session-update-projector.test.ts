@@ -3,11 +3,12 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import type { AcpRuntimeEvent } from '../../shared/acp'
 
 import { AcpSessionUpdateProjector } from './session-update-projector'
 
 type TestRouting = Readonly<{
-  framework?: 'claude-code' | 'codex' | 'opencode'
+  framework?: 'claude-code' | 'codex' | 'opencode' | 'codebuddy'
   appSessionId?: string
   eventId: string
   timestamp?: number
@@ -510,6 +511,113 @@ describe('AcpSessionUpdateProjector', () => {
     ])
   })
 
+  it('projects CodeBuddy think-tag content separately without changing other frameworks', () => {
+    const projector = createProjector()
+    const routing = {
+      framework: 'codebuddy' as const,
+      eventId: 'event-codebuddy-thinking',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: []
+    }
+    const codeBuddy = projector.route(
+      {
+        sessionId: 'session-one-chunk',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: '<think>private</think>Visible in one chunk' }
+        }
+      },
+      routing
+    )
+    expect(
+      codeBuddy.filter((effect) => effect.kind === 'visible-event').map((effect) => effect.event)
+    ).toMatchObject([
+      { kind: 'thought', text: 'private', raw: undefined },
+      { kind: 'message', text: 'Visible in one chunk', raw: undefined }
+    ])
+
+    const opencode = createProjector()
+    expect(
+      opencode.route(
+        {
+          sessionId: 'session-2',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '<think>literal</think>' }
+          }
+        },
+        { ...routing, framework: 'opencode' }
+      )
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: 'visible-event',
+        event: expect.objectContaining({ text: '<think>literal</think>' })
+      })
+    )
+  })
+
+  it('segments CodeBuddy assistant presentation across tool boundaries', () => {
+    const projector = createProjector()
+    const routing = {
+      framework: 'codebuddy' as const,
+      eventId: 'event-codebuddy-tool',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: ['open-science-notebook']
+    }
+    const toolMessageId = (toolCallId: string): string | undefined => {
+      const effect = projector
+        .route(
+          {
+            sessionId: 'session-1',
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              title: 'mcp__open_science_notebook__notebook_execute',
+              kind: 'other',
+              status: 'pending'
+            }
+          } as unknown as SessionNotification,
+          routing
+        )
+        .find((candidate) => candidate.kind === 'visible-event')
+      return (effect?.event as AcpRuntimeEvent | undefined)?.messageId
+    }
+    const messageId = (
+      text: string,
+      providerMessageId = 'codebuddy-turn-message'
+    ): string | undefined => {
+      const effect = projector
+        .route(
+          {
+            sessionId: 'session-1',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: providerMessageId,
+              content: { type: 'text', text }
+            }
+          },
+          routing
+        )
+        .find((candidate) => candidate.kind === 'visible-event')
+      return (effect?.event as AcpRuntimeEvent | undefined)?.messageId
+    }
+
+    const firstTool = toolMessageId('notebook-state')
+    const beforeExecution = messageId('Notebook is ready.')
+    const secondTool = toolMessageId('notebook-execute')
+    const afterExecution = messageId('The calculation completed.')
+    const nextTurn = messageId('A new response.', 'codebuddy-next-message')
+
+    expect(firstTool).toBeUndefined()
+    expect(secondTool).toBeUndefined()
+    expect(beforeExecution).toBe('codebuddy-turn-message:notebook-state')
+    expect(afterExecution).toBe('codebuddy-turn-message:notebook-execute')
+    expect(afterExecution).not.toBe(beforeExecution)
+    expect(nextTurn).toBe('codebuddy-next-message')
+  })
+
   it('projects the legacy Codex completion notice as a completed compaction lifecycle', () => {
     const projector = createProjector()
     const notice = "*Context compacted to fit the model's context window.*\n\n"
@@ -680,6 +788,40 @@ describe('AcpSessionUpdateProjector', () => {
         sessionId: 'session-1',
         currentModeId: 'default',
         selectedProfile: 'ask'
+      }
+    ])
+  })
+
+  it('projects CodeBuddy fullAccess mode onto the Full access profile', () => {
+    const projector = createProjector({
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask',
+      currentModeId: 'default',
+      availableModeIds: ['default', 'fullAccess'],
+      fullAccessAvailable: true
+    })
+
+    expect(
+      projector.route(
+        {
+          sessionId: 'session-1',
+          update: { sessionUpdate: 'current_mode_update', currentModeId: 'fullAccess' }
+        },
+        {
+          framework: 'codebuddy',
+          eventId: 'event-codebuddy-mode',
+          visible: false,
+          reconnectPending: true,
+          mcpServerNames: []
+        }
+      )
+    ).toMatchObject([
+      { kind: 'live-profile', sessionId: 'session-1', selectedProfile: 'full' },
+      {
+        kind: 'current-mode',
+        sessionId: 'session-1',
+        currentModeId: 'fullAccess',
+        selectedProfile: 'full'
       }
     ])
   })

@@ -160,20 +160,27 @@ export const isProviderCompatibleWith = (
   frameworkEndpoints: readonly ChatApiEndpoint[]
 ): boolean => endpoints.some((endpoint) => frameworkEndpoints.includes(endpoint))
 
-// Codex can drive a Chat Completions-only provider through the app's local Responses bridge. Keep
-// this contract in one module so compatibility, validation, and runtime setup cannot disagree about
-// which provider/framework pairs depend on bridge behavior.
+// Codex can drive a Chat Completions-only provider through the app's local Responses bridge.
+// CodeBuddy has the inverse boundary: it always consumes Chat Completions, so providers that expose
+// only Responses or Messages require the app's Chat compatibility transport.
 export const requiresChatCompletionsBridge = (
   provider: { apiEndpoints?: readonly ChatApiEndpoint[] },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
 ): boolean => {
   const endpoints = providerEndpoints(provider)
 
+  if (framework.id === 'codex') {
+    return (
+      framework.supportedApiTypes.includes('responses') &&
+      endpoints.includes('openai') &&
+      !endpoints.includes('responses')
+    )
+  }
   return (
-    framework.id === 'codex' &&
-    framework.supportedApiTypes.includes('responses') &&
-    endpoints.includes('openai') &&
-    !endpoints.includes('responses')
+    framework.id === 'codebuddy' &&
+    framework.supportedApiTypes.includes('openai') &&
+    !endpoints.includes('openai') &&
+    (endpoints.includes('responses') || endpoints.includes('anthropic'))
   )
 }
 
@@ -223,6 +230,11 @@ export type ClaudeInfo = {
 
 // Detected opencode executable metadata (resolved path + reported version), persisted for the card.
 export type OpencodeInfo = {
+  resolvedPath?: string
+  version?: string
+}
+
+export type CodeBuddyInfo = {
   resolvedPath?: string
   version?: string
 }
@@ -338,7 +350,7 @@ export const providerValidationFailed = (provider: {
 
 // The agent backends the app can drive over ACP. Persisted settings and the UI reference these ids;
 // the main-process AgentFramework registry is keyed by the same union.
-export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex'
+export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex' | 'codebuddy'
 
 // How much reasoning effort the user asks the agent to spend. 'default' means "don't override": the
 // agent keeps its own default and nothing is sent. The concrete levels form a relative scale
@@ -467,6 +479,7 @@ export type SettingsSnapshot = {
   claude: ClaudeInfo
   // Detected opencode executable, for the framework-aware detection card.
   opencode: OpencodeInfo
+  codebuddy: CodeBuddyInfo
   // Detected codex-acp adapter and its paired native Codex runtime.
   codex: CodexInfo
   activeProviderId?: string
@@ -484,6 +497,8 @@ export type SettingsSnapshot = {
   // is never removed. Derived each read from the resolved path, never persisted.
   claudeManaged: boolean
   opencodeManaged: boolean
+  // Derived like the other frameworks: only the app-managed CodeBuddy shim is removed in-app.
+  codebuddyManaged: boolean
   codexManaged: boolean
   // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
   onboardingCompletedAt?: number
@@ -588,6 +603,7 @@ export type AppIconPreview = AppIconVariantInfo & {
 export type Preflight = {
   claudeReady: boolean
   opencodeReady: boolean
+  codebuddyReady: boolean
   codexReady: boolean
   // Readiness of the selected agent framework, plus which one it is.
   agentFrameworkId: AgentFrameworkId
@@ -721,6 +737,7 @@ export type InstallSourceLabelKey =
 export type InstallSourceDescriptionKey =
   | 'Downloads a self-contained Claude — no Node.js or npm required.'
   | 'Downloads a self-contained Codex ACP runtime — no Node.js or npm required.'
+  | 'Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.'
   | 'Downloads a self-contained OpenCode — no Node.js or npm required.'
 
 export type ClaudeInstallSourceInfo = {
@@ -804,6 +821,21 @@ export type InstallClaudeRequest = {
 export type InstallOpencodeRequest = {
   source: ClaudeInstallSource
 }
+
+export type InstallCodeBuddyRequest = {
+  source: 'managed'
+}
+
+export const getCodeBuddyInstallSources = (): ClaudeInstallSourceInfo[] => [
+  {
+    id: 'managed',
+    labelKey: 'App-managed download (recommended)',
+    displayCommand: '',
+    requiresNpm: false,
+    descriptionKey:
+      'Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.'
+  }
+]
 
 export type CodexInstallSource = Exclude<ClaudeInstallSource, 'official-script'>
 

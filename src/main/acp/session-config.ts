@@ -87,12 +87,14 @@ export const matchSessionModelOption = (
 
 // Finds the session's reasoning-effort select option (the ACP `thought_level` category; Claude Code
 // advertises it as `effort`) and transports the model-resolved value only when it is advertised
-// exactly. The model profile owns all relative-level mapping; this ACP boundary must never silently
-// reinterpret `max` as `high` (or any other different API value). The `default` sentinel is retained
-// solely to clear an existing live override when the agent explicitly advertises that operation.
+// exactly, then uses an optional framework vocabulary adapter. The model profile owns all
+// relative-level mapping; this ACP boundary must never silently reinterpret `max` as `high` (or any
+// other different API value). The `default` sentinel is retained solely to clear an existing live
+// override when the agent explicitly advertises that operation.
 export const resolveSessionEffortOption = (
   configOptions: readonly SessionConfigOption[] | null | undefined,
-  desiredEffort: ResolvedReasoningEffort | undefined
+  desiredEffort: ResolvedReasoningEffort | undefined,
+  adaptEffort?: (effort: ResolvedReasoningEffort) => string
 ): SessionModelSelection | undefined => {
   const option = (configOptions ?? []).find(
     (candidate) =>
@@ -103,8 +105,10 @@ export const resolveSessionEffortOption = (
   if (!option || option.type !== 'select') return undefined
 
   const values = collectSelectValues(option.options)
+  if (!desiredEffort) return undefined
+  const value = values.includes(desiredEffort) ? desiredEffort : adaptEffort?.(desiredEffort)
 
-  if (!desiredEffort || !values.includes(desiredEffort)) return undefined
+  if (!value || !values.includes(value)) return undefined
 
-  return { configId: option.id, value: desiredEffort }
+  return { configId: option.id, value }
 }

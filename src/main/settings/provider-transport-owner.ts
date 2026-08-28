@@ -15,10 +15,15 @@ import {
   type AnthropicProviderBridgeTarget
 } from './anthropic-provider-bridge'
 import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
+import {
+  ChatProviderCompatibilityBridge,
+  type ChatProviderCompatibilityTarget
+} from './chat-provider-compatibility'
 import type { ProviderRuntimeTarget } from './provider-accounts'
 import type { BackendRoutePlan } from './backend-route-planner'
 import {
   ResponsesBridge,
+  type ResponsesBridgeOptions,
   type ResponsesBridgeConnection,
   type ResponsesBridgeNamespacedTool,
   type ResponsesBridgeTarget
@@ -30,22 +35,11 @@ import {
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import { xaiNativeResponsesTargetFields } from './xai-protocol'
 import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
-
-type ResponsesBridgePort = Pick<
-  ResponsesBridge,
-  | 'start'
-  | 'close'
-  | 'selectSkills'
-  | 'registerReviewerSession'
-  | 'unregisterReviewerSession'
-  | 'registerToolLessSession'
-  | 'unregisterToolLessSession'
-  | 'registerHostMessageSession'
-  | 'unregisterHostMessageSession'
-  | 'setReasoningEffort'
-  | 'setModelTarget'
-  | 'setTarget'
->
+import {
+  createCodeBuddySkillSelectorTransport,
+  type ProviderResponsesBridgePort
+} from './codebuddy-skill-selector-transport'
+import { adaptCodeBuddyChatCompletionsRequest } from './codebuddy-chat-request-adapter'
 type AnthropicProviderBridgePort = Pick<
   AnthropicProviderBridge,
   'start' | 'close' | 'setTarget' | 'clearErrorReplay'
@@ -54,9 +48,25 @@ type OpenAiProviderBridgePort = Pick<
   OpenAiProviderBridge,
   'start' | 'close' | 'setTarget' | 'clearErrorReplay'
 >
+type ChatProviderCompatibilityBridgePort = Pick<ChatProviderCompatibilityBridge, 'start' | 'close'>
+type CreateXaiOAuthProviderBridge = typeof createXaiOAuthProviderBridge
+
+const codeBuddyCompatibilityEndpoint = (
+  provider: ProviderRuntimeTarget['provider'],
+  wire: ChatProviderCompatibilityTarget['wire']
+): string => {
+  if (wire === 'responses') {
+    const baseUrl = normalizeResponsesBaseUrl(provider.openaiBaseUrl ?? provider.baseUrl)
+    if (!baseUrl) throw new Error('The CodeBuddy Responses provider target is incomplete.')
+    return `${baseUrl}/responses`
+  }
+  const baseUrl = normalizeAnthropicBaseUrl(provider.baseUrl ?? '')
+  if (!baseUrl) throw new Error('The CodeBuddy Messages provider target is incomplete.')
+  return `${baseUrl}/v1/messages`
+}
 
 type ResponsesBridgeEntry = {
-  bridge: ResponsesBridgePort
+  bridge: ProviderResponsesBridgePort
   connection: Promise<ResponsesBridgeConnection>
 }
 
@@ -106,7 +116,10 @@ type ProviderTransportGeneration = Readonly<{
 
 type ProviderTransportOwnerOptions = {
   getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
-  createResponsesBridge?: (target: ResponsesBridgeTarget) => ResponsesBridgePort
+  createResponsesBridge?: (
+    target: ResponsesBridgeTarget,
+    options?: ResponsesBridgeOptions
+  ) => ProviderResponsesBridgePort
   createNativeResponsesProxy?: (target: NativeResponsesProxyTarget) => NativeResponsesProxyPort
   createAnthropicProviderBridge?: (
     targets: readonly AnthropicProviderBridgeTarget[],
@@ -116,11 +129,18 @@ type ProviderTransportOwnerOptions = {
     targets: readonly OpenAiProviderBridgeTarget[],
     initialTargetId: string
   ) => OpenAiProviderBridgePort
+  createChatProviderCompatibilityBridge?: (
+    target: ChatProviderCompatibilityTarget
+  ) => ChatProviderCompatibilityBridgePort
+  createXaiOAuthProviderBridge?: CreateXaiOAuthProviderBridge
   nextGenerationId?: () => string
 }
 
 class ProviderTransportOwner {
-  private readonly createResponsesBridge: (target: ResponsesBridgeTarget) => ResponsesBridgePort
+  private readonly createResponsesBridge: (
+    target: ResponsesBridgeTarget,
+    options?: ResponsesBridgeOptions
+  ) => ProviderResponsesBridgePort
   private readonly createNativeResponsesProxy: (
     target: NativeResponsesProxyTarget
   ) => NativeResponsesProxyPort
@@ -132,6 +152,10 @@ class ProviderTransportOwner {
     targets: readonly OpenAiProviderBridgeTarget[],
     initialTargetId: string
   ) => OpenAiProviderBridgePort
+  private readonly createChatProviderCompatibilityBridge: (
+    target: ChatProviderCompatibilityTarget
+  ) => ChatProviderCompatibilityBridgePort
+  private readonly createXaiOAuthProviderBridge: CreateXaiOAuthProviderBridge
   private readonly nextGenerationId: () => string
   private readonly getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
   private readonly responsesBridges = new Map<string, ResponsesBridgeEntry>()
@@ -142,7 +166,8 @@ class ProviderTransportOwner {
 
   constructor(options: ProviderTransportOwnerOptions = {}) {
     this.createResponsesBridge =
-      options.createResponsesBridge ?? ((target) => new ResponsesBridge(target, netFetchStandard))
+      options.createResponsesBridge ??
+      ((target, bridgeOptions) => new ResponsesBridge(target, netFetchStandard, bridgeOptions))
     this.createNativeResponsesProxy =
       options.createNativeResponsesProxy ??
       ((target) => new NativeResponsesCompatibilityProxy(target, netFetchStandard))
@@ -154,11 +179,19 @@ class ProviderTransportOwner {
       options.createOpenAiProviderBridge ??
       ((targets, initialTargetId) =>
         new OpenAiProviderBridge(targets, initialTargetId, netFetchStandard))
+    this.createChatProviderCompatibilityBridge =
+      options.createChatProviderCompatibilityBridge ??
+      ((target) => new ChatProviderCompatibilityBridge(target, netFetchStandard))
+    this.createXaiOAuthProviderBridge =
+      options.createXaiOAuthProviderBridge ?? createXaiOAuthProviderBridge
     this.nextGenerationId = options.nextGenerationId ?? randomUUID
     this.getXaiOAuthAccessToken = options.getXaiOAuthAccessToken
   }
 
   async acquire(input: ProviderTransportRequest): Promise<ProviderTransportGeneration> {
+    if (input.plan.modelRoute === 'codebuddy-openai') {
+      return this.startCodeBuddyTransport(input)
+    }
     if (input.plan.transport.kind === 'claude-anthropic') {
       return this.startClaudeTransport(input)
     }
@@ -193,6 +226,98 @@ class ProviderTransportOwner {
         : {}),
       release: responsesBridge.lease.release
     })
+  }
+
+  private async startCodeBuddyTransport(
+    input: ProviderTransportRequest
+  ): Promise<ProviderTransportGeneration> {
+    const provider = input.activeTarget.provider
+    const model = input.activeTarget.effectiveModel ?? provider.model
+    if (!model) throw new Error('The CodeBuddy provider target is incomplete.')
+    const targetId = JSON.stringify(['codebuddy', input.activeTarget.providerId, model])
+    const transport = input.plan.transport
+    const usesXaiOAuth = provider.type === 'xai-subscription'
+    const bridge: ChatProviderCompatibilityBridgePort =
+      transport.kind === 'codebuddy-provider-compatibility'
+        ? this.createChatProviderCompatibilityBridge({
+            wire: transport.wire,
+            endpoint: codeBuddyCompatibilityEndpoint(provider, transport.wire),
+            ...(provider.key ? { key: provider.key } : {}),
+            model,
+            adaptRequest: adaptCodeBuddyChatCompletionsRequest
+          })
+        : usesXaiOAuth
+          ? this.createXaiOAuthProviderBridge(
+              [{ id: targetId, model }],
+              targetId,
+              'openai',
+              this.getXaiOAuthAccessToken,
+              { adaptOpenAiRequest: adaptCodeBuddyChatCompletionsRequest }
+            )
+          : (() => {
+              const endpoint = openAiChatCompletionsUrl(provider)
+              if (!endpoint) throw new Error('The CodeBuddy provider target is incomplete.')
+              return this.createOpenAiProviderBridge(
+                [
+                  {
+                    id: targetId,
+                    wire: 'chat-completions',
+                    endpoint,
+                    ...(provider.key ? { key: provider.key } : {}),
+                    model,
+                    adaptRequest: adaptCodeBuddyChatCompletionsRequest
+                  }
+                ],
+                targetId
+              )
+            })()
+    let selector: ReturnType<typeof createCodeBuddySkillSelectorTransport> | undefined =
+      transport.kind === 'codebuddy-provider-compatibility' || usesXaiOAuth
+        ? undefined
+        : createCodeBuddySkillSelectorTransport({
+            activeTarget: input.activeTarget,
+            ...(input.plan.sessionEffort ? { reasoningEffort: input.plan.sessionEffort } : {}),
+            createSelector: this.createResponsesBridge
+          })
+    try {
+      const connection = await bridge.start()
+      const routedProvider = Object.freeze({
+        ...provider,
+        baseUrl: connection.baseUrl,
+        openaiBaseUrl: `${connection.baseUrl}/v1`,
+        model,
+        key: connection.token,
+        apiEndpoints: ['openai'] as const
+      })
+      selector ??= createCodeBuddySkillSelectorTransport({
+        activeTarget: { ...input.activeTarget, provider: routedProvider, apiEndpoints: ['openai'] },
+        ...(input.plan.sessionEffort ? { reasoningEffort: input.plan.sessionEffort } : {}),
+        createSelector: this.createResponsesBridge
+      })
+      let released = false
+      const release = async (): Promise<void> => {
+        if (released) return
+        released = true
+        await Promise.all([bridge.close(), selector?.release()])
+      }
+      const selectSkills = selector.providerTransportLease?.selectSkills
+      return Object.freeze({
+        provider: routedProvider,
+        environment: loopbackProxyBypassEnvironment(process.env),
+        providerTransportLease: {
+          setTarget: () => false,
+          ...(selectSkills ? { selectSkills } : {}),
+          release
+        },
+        release
+      })
+    } catch (error) {
+      await Promise.all([
+        bridge.close().catch(() => undefined),
+        selector?.release().catch(() => undefined)
+      ])
+      throw error
+    }
   }
 
   private async startNativeCodexTransport(
@@ -272,7 +397,7 @@ class ProviderTransportOwner {
         const targetId = planned.id
         const bridge =
           candidate.provider.type === 'xai-subscription'
-            ? createXaiOAuthProviderBridge(
+            ? this.createXaiOAuthProviderBridge(
                 [{ id: targetId, model }],
                 targetId,
                 'openai',
@@ -374,7 +499,7 @@ class ProviderTransportOwner {
     }
     const bridge =
       input.activeTarget.provider.type === 'xai-subscription'
-        ? createXaiOAuthProviderBridge(
+        ? this.createXaiOAuthProviderBridge(
             transport.targets.map(({ id, model }) => ({ id, model })),
             transport.initialTargetId,
             'anthropic',
@@ -473,7 +598,8 @@ class ProviderTransportOwner {
     return Object.freeze({
       ...connection,
       lease: {
-        selectSkills: (text, catalog, signal) => entry.proxy.selectSkills(text, catalog, signal),
+        selectSkills: (text, catalog, signal, observeUsage) =>
+          entry.proxy.selectSkills(text, catalog, signal, observeUsage),
         registerReviewerSession: (key) => entry.proxy.registerReviewerSession(key),
         unregisterReviewerSession: (key) => entry.proxy.unregisterReviewerSession(key),
         registerToolLessSession: (key) => entry.proxy.registerToolLessSession(key),
@@ -567,7 +693,8 @@ class ProviderTransportOwner {
     return Object.freeze({
       ...connection,
       lease: {
-        selectSkills: (text, catalog, signal) => entry.bridge.selectSkills(text, catalog, signal),
+        selectSkills: (text, catalog, signal, observeUsage) =>
+          entry.bridge.selectSkills(text, catalog, signal, observeUsage),
         registerReviewerSession: (key) => entry.bridge.registerReviewerSession(key),
         unregisterReviewerSession: (key) => entry.bridge.unregisterReviewerSession(key),
         registerToolLessSession: (key) => entry.bridge.registerToolLessSession(key),

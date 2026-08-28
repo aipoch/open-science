@@ -735,7 +735,14 @@ class AcpPermissionContext {
 
   observeToolCall(notification: SessionNotification, context: PermissionToolContext): void {
     const { sessionId, framework, mcpServerNames } = context
-    if (framework !== 'codex' && framework !== 'opencode' && framework !== 'claude-code') return
+    if (
+      framework !== 'codex' &&
+      framework !== 'opencode' &&
+      framework !== 'claude-code' &&
+      framework !== 'codebuddy'
+    ) {
+      return
+    }
 
     const routed =
       sessionId === notification.sessionId ? notification : { ...notification, sessionId }
@@ -779,7 +786,7 @@ class AcpPermissionContext {
       return
     }
 
-    if (framework === 'claude-code') {
+    if (framework === 'claude-code' || framework === 'codebuddy') {
       const inputs = this.claudeCodeMcpToolInputs.get(sessionId) ?? new Map()
       const previous = inputs.get(event.toolCallId)
       const title = event.title ?? previous?.title

@@ -292,6 +292,9 @@ describe('AcpConnectionResourceOwner', () => {
   it('selects and releases the generation-scoped provider transport', async () => {
     const owner = new AcpConnectionResourceOwner()
     const setTarget = vi.fn(() => true)
+    const selectSkills = vi.fn(async () => [
+      { name: 'mcp-pubmed', path: '/skills/mcp-pubmed/SKILL.md' }
+    ])
     const release = vi.fn(async () => undefined)
     await owner.connect(async (attempt) => {
       attempt.attach({
@@ -299,14 +302,18 @@ describe('AcpConnectionResourceOwner', () => {
         connection: { close: vi.fn() } as unknown as ClientConnection,
         framework: 'opencode',
         bridgeLease: undefined,
-        providerTransportLease: { setTarget, release }
+        providerTransportLease: { setTarget, selectSkills, release }
       })
       return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
 
     expect(owner.providerTransportAvailable).toBe(true)
+    expect(owner.bridgeSkillsAvailable).toBe(true)
     expect(owner.setProviderTransportTarget('provider-b/model-b')).toBe(true)
     expect(setTarget).toHaveBeenCalledWith('provider-b/model-b')
+    await expect(owner.selectBridgeSkills('use pubmed', [])).resolves.toEqual([
+      { name: 'mcp-pubmed', path: '/skills/mcp-pubmed/SKILL.md' }
+    ])
 
     await owner.teardown(owner.supersede(), vi.fn())
 

@@ -811,6 +811,27 @@ describe('ACP permission broker', () => {
     expect(emittedRequests).toEqual([])
   })
 
+  it('does not auto-approve a stale CodeBuddy Skill loader request', async () => {
+    const emittedRequests: string[] = []
+    const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))
+    const request = createPermissionRequest()
+    request.toolCall.title = undefined
+    request.toolCall.rawInput = { skill: 'mcp-pubmed' }
+    request.toolCall._meta = { 'codebuddy.ai/toolName': 'mcp__skills__load_skill' }
+
+    const response = broker.requestPermission(request, {
+      profile: 'ask',
+      frameworkId: 'codebuddy',
+      mcpServerNames: ['skills']
+    })
+
+    expect(emittedRequests).toHaveLength(1)
+    broker.respond({ requestId: emittedRequests[0], optionId: 'reject-once' })
+    await expect(response).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'reject-once' }
+    })
+  })
+
   it('emits a serializable permission request and resolves the selected option', async () => {
     const emittedRequests: string[] = []
     const broker = new AcpPermissionBroker((request) => emittedRequests.push(request.requestId))

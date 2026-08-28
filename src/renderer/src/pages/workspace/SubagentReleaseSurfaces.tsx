@@ -126,7 +126,9 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
     }
   }, [expanded])
 
-  if (!session || summary.children.length === 0) return null
+  if (!session || summary.children.length === 0) {
+    return null
+  }
 
   const single = summary.children.length === 1 ? summary.children[0] : undefined
   const label =

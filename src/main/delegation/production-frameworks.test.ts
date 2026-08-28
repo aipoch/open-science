@@ -71,7 +71,12 @@ const deferred = <Value>(): { promise: Promise<Value>; resolve: (value: Value) =
 
 describe('production delegated framework factory composition', () => {
   it('publishes support only for frameworks present in the production factory composer', () => {
-    expect(productionDelegatedWorkFrameworks()).toEqual(['claude-code', 'opencode', 'codex'])
+    expect(productionDelegatedWorkFrameworks()).toEqual([
+      'claude-code',
+      'opencode',
+      'codex',
+      'codebuddy'
+    ])
   })
 
   it('selects the certified Claude Code, OpenCode, and Codex production factories', async () => {
@@ -92,6 +97,13 @@ describe('production delegated framework factory composition', () => {
                   adapterVersion: CODEX_ACP_VERSION
                 },
                 codexFramework: {
+                  spawn: () => ({ kill: vi.fn() }) as unknown as ChildProcessWithoutNullStreams
+                }
+              }
+            : {}),
+          ...(frameworkId === 'codebuddy'
+            ? {
+                codebuddyFramework: {
                   spawn: () => ({ kill: vi.fn() }) as unknown as ChildProcessWithoutNullStreams
                 }
               }
@@ -133,10 +145,21 @@ describe('production delegated framework factory composition', () => {
                           CODEX_CONFIG: JSON.stringify({
                             features: { multi_agent: false, multi_agent_v2: false }
                           })
-                        }
+                        } as Record<string, string>
                       }
                     }
-                  : base
+                  : {
+                      ...base,
+                      spawn: {
+                        executablePath: '/codebuddy',
+                        args: ['--tools', 'Read,Write,Edit,Glob,Grep,Bash'],
+                        env: {
+                          CODEBUDDY_DISABLE_FORK_SUBAGENT: '1',
+                          CODEBUDDY_DISABLE_BACKGROUND_TASKS: '1',
+                          CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS: '1'
+                        } as Record<string, string>
+                      }
+                    }
           },
           createRuntime: (_scope, callbacks) => {
             runtimes.push(frameworkId)
@@ -166,7 +189,7 @@ describe('production delegated framework factory composition', () => {
       }
     })
 
-    for (const frameworkId of ['claude-code', 'opencode', 'codex'] as const) {
+    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
       const selected = await frameworks.forSession(session(frameworkId))
       await selected.assertAvailable()
       const reservation = await selected.execution.reserve(1)
@@ -184,8 +207,8 @@ describe('production delegated framework factory composition', () => {
       )
     }
 
-    expect(prepared).toEqual(['claude-code', 'opencode', 'codex'])
-    expect(runtimes).toEqual(['claude-code', 'opencode', 'codex'])
+    expect(prepared).toEqual(['claude-code', 'opencode', 'codex', 'codebuddy'])
+    expect(runtimes).toEqual(['claude-code', 'opencode', 'codex', 'codebuddy'])
   })
 
   it('rejects an unsafe fresh framework audit before workspace preparation or runtime creation', async () => {

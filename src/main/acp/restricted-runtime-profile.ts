@@ -2,6 +2,7 @@ import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { ResolvedAgentBackend } from '../agent-framework'
+import { isolateCodeBuddyEnvironment } from '../agent-framework/codebuddy'
 import { projectSafeCodexProviderRoute } from '../settings/codex-auth'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 
@@ -73,7 +74,7 @@ const readCodexProviderRoute = async (
   }
 }
 
-const removeClaudeSkillRuntimeCapability = (
+const removeSkillRuntimeCapability = (
   source: Readonly<Record<string, unknown>> | undefined
 ): Record<string, unknown> => {
   const sessionOptions = { ...source }
@@ -194,7 +195,7 @@ const prepareClaudeBackend = async (
   profile: RestrictedRuntimeProfile
 ): Promise<ResolvedAgentBackend> => {
   const env = { ...backend.env }
-  const sessionOptions = removeClaudeSkillRuntimeCapability(backend.sessionOptions)
+  const sessionOptions = removeSkillRuntimeCapability(backend.sessionOptions)
   // Token-authenticated Claude backends can move into this runtime's durable profile because the
   // credential is portable. claude-shared cannot: its OAuth state lives in the user's existing
   // CLAUDE_CONFIG_DIR, so keep that directory while asking the SDK to persist the Side chat there.
@@ -219,6 +220,31 @@ const prepareClaudeBackend = async (
   }
 }
 
+const prepareCodeBuddyBackend = async (
+  backend: ResolvedAgentBackend,
+  profileRoot: string,
+  profile: RestrictedRuntimeProfile
+): Promise<ResolvedAgentBackend> => {
+  const configDir = join(profileRoot, 'codebuddy')
+  const args: string[] = []
+  for (let index = 0; index < (backend.args?.length ?? 0); index += 1) {
+    const value = backend.args![index]!
+    if (value === '--tools' || value === '--system-prompt-file') {
+      index += 1
+      continue
+    }
+    args.push(value)
+  }
+  return {
+    ...backend,
+    env: await isolateCodeBuddyEnvironment(backend.env, configDir),
+    args: [...args, '--tools', ''],
+    sessionOptions: removeSkillRuntimeCapability(backend.sessionOptions),
+    systemPromptAppends: [profile.systemPrompt],
+    persistentSystemPrompt: undefined
+  }
+}
+
 const prepareRestrictedBackend = (
   backend: ResolvedAgentBackend,
   profileRoot: string,
@@ -228,6 +254,9 @@ const prepareRestrictedBackend = (
     return prepareOpenCodeBackend(backend, profileRoot, profile)
   }
   if (backend.framework.id === 'codex') return prepareCodexBackend(backend, profileRoot, profile)
+  if (backend.framework.id === 'codebuddy') {
+    return prepareCodeBuddyBackend(backend, profileRoot, profile)
+  }
   return prepareClaudeBackend(backend, profileRoot, profile)
 }
 

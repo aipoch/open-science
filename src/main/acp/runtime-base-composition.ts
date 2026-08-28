@@ -19,6 +19,7 @@ import type { AcpModelChangeWorkflow } from './model-change-workflow'
 import { AcpPromptContentOwner } from './prompt-content-owner'
 import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
+import { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import type { ReviewerSessionOwner } from './reviewer-session-owner'
 import type { AcpRuntimeOptions } from './runtime'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
@@ -190,6 +191,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       backendGeneration,
       opencodeUsageFetch: options.opencodeUsageFetch
     }),
+    providerPromptSerialization: new AcpProviderPromptSerializationOwner(),
     contextUsageTracker,
     setTimer,
     clearTimer,

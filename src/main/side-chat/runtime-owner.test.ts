@@ -486,6 +486,15 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           })),
           sendPrompt: vi.fn(async (request: { sessionId: string }) => {
             runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            runtimeOptions!.callbacks?.onEvent?.({
+              id: 'thought-private',
+              messageId: 'assistant-coalesced:thought',
+              timestamp: 0,
+              sessionId: request.sessionId,
+              kind: 'thought',
+              role: 'assistant',
+              text: 'private analysis'
+            } as never)
             for (let index = 0; index < 100; index += 1) {
               runtimeOptions!.callbacks?.onEvent?.({
                 id: `event-${index}`,
@@ -524,6 +533,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         expect.objectContaining({ id: 'assistant-coalesced', text: 'x'.repeat(20_000) })
       ])
     )
+    expect(JSON.stringify(owner.list().chats[0]?.entries)).not.toContain('private analysis')
     expect(persistence.save).toHaveBeenLastCalledWith(
       expect.objectContaining({
         sideChat: expect.objectContaining({

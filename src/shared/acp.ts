@@ -879,7 +879,7 @@ export type AcpSteerFollowUpRequest = {
   parts?: MessagePart[]
 }
 
-export type AcpSteerFollowUpTransport = 'acp-steering' | 'opencode-http'
+export type AcpSteerFollowUpTransport = 'acp-steering' | 'codebuddy-acp-steer' | 'opencode-http'
 
 export type AcpSteerFollowUpRefuseReason =
   | 'empty-text'

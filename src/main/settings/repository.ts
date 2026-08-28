@@ -358,6 +358,23 @@ class SettingsRepository {
     }))
   }
 
+  async setCodeBuddyInfo(resolvedPath: string, version?: string): Promise<StoredSettings> {
+    return this.mutate((settings) => ({
+      ...settings,
+      codebuddyPath: resolvedPath,
+      codebuddyVersion: version
+    }))
+  }
+
+  async clearCodeBuddyInfo(): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      const { codebuddyPath, codebuddyVersion, ...rest } = settings
+      void codebuddyPath
+      void codebuddyVersion
+      return rest
+    })
+  }
+
   async setCodexInfo(codex: StoredCodexInfo): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, codex }))
   }

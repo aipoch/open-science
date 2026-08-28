@@ -21,12 +21,13 @@ import type { AcpConnectionCapabilities } from './connection-resource-owner'
 // it as injected rather than resending.
 
 export const ACP_STEERING_METHOD = '_session/steering'
+export const CODEBUDDY_STEER_METHOD = 'session/steer'
 export const STEERING_IDLE_BEHAVIOR = 'promptRequired' as const
 export const OPENCODE_HTTP_FOLLOW_UP_NO_REPLY = true as const
 export const OPENCODE_HTTP_STEER_TIMEOUT_MS = 8_000
 export const ACP_STEERING_TIMEOUT_MS = 8_000
 
-export type NativeFollowUpTransport = 'acp-steering' | 'opencode-http'
+export type NativeFollowUpTransport = 'acp-steering' | 'codebuddy-acp-steer' | 'opencode-http'
 
 export type NativeFollowUpRefuseReason =
   | 'empty-text'
@@ -70,6 +71,11 @@ export type AcpSteeringParams = Readonly<{
   }>
 }>
 
+export type CodeBuddySteerParams = Readonly<{
+  sessionId: string
+  contentBlocks: readonly ContentBlock[]
+}>
+
 export type OpenCodeHttpFollowUpPart =
   | Readonly<{ type: 'text'; text: string }>
   | Readonly<{ type: 'file'; mime: string; url: string; filename?: string }>
@@ -104,7 +110,10 @@ export const readSteeringAdvertisement = (initialize: unknown): SteeringAdvertis
   return Object.freeze({ supported })
 }
 
-export const retainInitializeCapabilities = (initialize: unknown): AcpConnectionCapabilities => {
+export const retainInitializeCapabilities = (
+  initialize: unknown,
+  frameworkId?: AgentFrameworkId
+): AcpConnectionCapabilities => {
   const record = recordValue(initialize)
   const sessionCapabilities = recordValue(
     recordValue(record?.agentCapabilities)?.sessionCapabilities
@@ -112,7 +121,9 @@ export const retainInitializeCapabilities = (initialize: unknown): AcpConnection
   return Object.freeze({
     close: Boolean(sessionCapabilities?.close),
     delete: Boolean(sessionCapabilities?.delete),
-    resume: Boolean(sessionCapabilities?.resume),
+    // CodeBuddy 2.138.0 implements load/resume (including cross-process) but omits the capability
+    // bit. Keep this version-pinned compatibility fact at the framework boundary.
+    resume: frameworkId === 'codebuddy' || Boolean(sessionCapabilities?.resume),
     steering: readSteeringAdvertisement(initialize).supported
   })
 }
@@ -142,6 +153,9 @@ export const resolveNativeFollowUpRoute = (input: {
   if (input.advertisedSteering) {
     return Object.freeze({ transport: 'acp-steering' })
   }
+  if (input.frameworkId === 'codebuddy') {
+    return Object.freeze({ transport: 'codebuddy-acp-steer' })
+  }
   if (input.frameworkId === 'opencode' && input.hasOpenCodeHttp) {
     return Object.freeze({ transport: 'opencode-http' })
   }
@@ -162,6 +176,15 @@ export const buildAcpSteeringParams = (
       steering: Object.freeze({ idleBehavior: STEERING_IDLE_BEHAVIOR })
     })
   })
+
+export const buildCodeBuddySteerParams = (
+  sessionId: string,
+  contentBlocks: readonly ContentBlock[]
+): CodeBuddySteerParams =>
+  Object.freeze({ sessionId, contentBlocks: Object.freeze([...contentBlocks]) })
+
+export const parseCodeBuddySteer = (result: unknown): boolean =>
+  recordValue(result)?.steered === true
 
 const dataUrl = (mimeType: string, data: string): string => `data:${mimeType};base64,${data}`
 

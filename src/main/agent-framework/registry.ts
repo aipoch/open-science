@@ -1,12 +1,14 @@
 import { claudeCodeFramework } from './claude-code'
 import { codexFramework } from './codex'
+import { codeBuddyFramework } from './codebuddy'
 import { opencodeFramework } from './opencode'
 import type { AgentFramework, AgentFrameworkId } from './types'
 
 const FRAMEWORKS: Record<AgentFrameworkId, AgentFramework> = {
   'claude-code': claudeCodeFramework,
   opencode: opencodeFramework,
-  codex: codexFramework
+  codex: codexFramework,
+  codebuddy: codeBuddyFramework
 }
 
 // Fallback for settings documents created before framework selection was persisted.

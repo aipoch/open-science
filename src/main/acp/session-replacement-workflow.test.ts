@@ -197,7 +197,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     )
   })
 
-  it.each(['codex', 'opencode'] as const)(
+  it.each(['codex', 'opencode', 'codebuddy'] as const)(
     'projects a live %s Specialist switch without replacing provider history',
     async (frameworkId) => {
       const registry = new AcpSessionRegistry()

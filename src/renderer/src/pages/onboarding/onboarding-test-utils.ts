@@ -52,6 +52,7 @@ const readyClaudeState = (): void => {
       claudeReady: true,
       opencodeReady: false,
       codexReady: false,
+      codebuddyReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: false
@@ -68,6 +69,7 @@ const codexReadyState = (): Partial<ReturnType<typeof createInitialSettingsState
     claudeReady: false,
     opencodeReady: false,
     codexReady: true,
+    codebuddyReady: false,
     agentFrameworkId: 'codex' as const,
     agentReady: true,
     activeProviderReady: false
@@ -150,8 +152,10 @@ const resetOnboardingStores = (): {
     ...createInitialSettingsState(),
     checkEnvironment: vi.fn().mockResolvedValue(undefined),
     detectClaude: vi.fn().mockResolvedValue({ found: false }),
+    detectCodeBuddy: vi.fn().mockResolvedValue(undefined),
     detectCodex: vi.fn().mockResolvedValue(undefined),
     installClaude: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
+    installCodeBuddy: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
     installCodex: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
     installOpencode: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
     setAgentFramework: vi.fn().mockResolvedValue(undefined),

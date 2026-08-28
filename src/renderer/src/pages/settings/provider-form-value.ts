@@ -132,8 +132,9 @@ export const providerFormModelForFramework = (
 
 // The provider kind pre-selected when the Add provider form opens, matched to the active agent
 // framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,
-// OpenCode → DeepSeek. Exhaustive over AgentFrameworkId so a new framework forces a deliberate
-// choice, and keyed off OfficialVendorId so a registry rename fails at compile time.
+// OpenCode → DeepSeek, CodeBuddy → MiniMax. Exhaustive over AgentFrameworkId so a new framework
+// forces a deliberate choice, and keyed off OfficialVendorId so a registry rename fails at compile
+// time.
 export const defaultProviderKindKey = (
   frameworkId: AgentFrameworkId
 ): `official:${OfficialVendorId}` => {
@@ -144,6 +145,8 @@ export const defaultProviderKindKey = (
       return 'official:openai'
     case 'opencode':
       return 'official:deepseek'
+    case 'codebuddy':
+      return 'official:minimax'
     default: {
       // The never assignment keeps the switch exhaustive at compile time. Persisted state could
       // still hold a stale value outside the union; this runs during render, so degrade to the

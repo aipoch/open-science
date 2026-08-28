@@ -222,6 +222,57 @@ describe('ACP session capability owner', () => {
     expect(registerSessionAlias).toHaveBeenCalledWith(provisionalId, 'session-1')
   })
 
+  it('commits framework MCP servers as trusted Session identities', async () => {
+    const owner = createOwner({ artifacts: undefined, notebook: undefined, skillImport: undefined })
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+    const built = provision.includeFrameworkMcpServers([
+      { name: 'skills', command: '/app/open-science', args: ['skill-runtime-mcp'], env: [] }
+    ])
+
+    expect(built.mcpServers).toEqual([
+      { name: 'skills', command: '/app/open-science', args: ['skill-runtime-mcp'], env: [] }
+    ])
+    expect(built.descriptor).toMatchObject({
+      transport: 'stdio',
+      canonicalMcpServerNames: ['skills'],
+      modelFacingMcpServerNames: ['skills']
+    })
+
+    provision.commit('session-1')
+    expect(owner.mcpServerNamesFor('session-1')).toEqual(['skills'])
+    expect(owner.mcpServersFor('session-1')).toEqual(built.mcpServers)
+
+    owner.revokeSession('session-1')
+    expect(owner.mcpServersFor('session-1')).toEqual([])
+  })
+
+  it('rejects colliding framework MCP server identities', async () => {
+    const owner = createOwner({ artifacts: undefined, notebook: undefined, skillImport: undefined })
+    const provision = await owner.provision({
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+
+    expect(() =>
+      provision.includeFrameworkMcpServers([
+        { name: 'skills', command: '/app/open-science', args: ['skill-runtime-mcp'], env: [] },
+        { name: 'skills', command: '/app/open-science', args: ['other-mcp'], env: [] }
+      ])
+    ).toThrow('Framework MCP server names must be unique within the Session.')
+  })
+
   it('refreshes preference-backed availability before backend guidance is projected', async () => {
     let skillImportEnabled = false
     const owner = createOwner({

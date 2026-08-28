@@ -54,9 +54,11 @@ describe('ClaudeCodeSkillMaterializer', () => {
       'utf8'
     )
 
-    await new ClaudeCodeSkillMaterializer().sync(configDir, [skill], {
+    const materializer = new ClaudeCodeSkillMaterializer()
+    await materializer.sync(configDir, [skill], {
       directoryLayout: 'agent-facing'
     })
+    await materializer.sync(configDir, [skill], { directoryLayout: 'agent-facing' })
 
     expect(await listSkillDirs(configDir)).toEqual(['paper-review'])
     await expect(
@@ -65,6 +67,9 @@ describe('ClaudeCodeSkillMaterializer', () => {
     await expect(stat(join(configDir, 'skills', '.os-versions.json'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
+
+    await materializer.sync(configDir, [], { directoryLayout: 'agent-facing' })
+    expect(await listSkillDirs(configDir)).toEqual([])
   })
 
   it.each(['---', 'a--b', 'a'.repeat(65), 'os-private', 'mcp-private'])(

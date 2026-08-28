@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve, sep } from 'node:path'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import type { McpServer } from '@agentclientprotocol/sdk'
 
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import { SKILL_RUNTIME_MCP_SERVER_ARG } from '../mcp-server-args'
@@ -237,11 +238,11 @@ const applySkillArguments = (document: string, serialized = ''): string => {
   return serialized && !consumed ? `${rendered.trimEnd()}\n\nARGUMENTS: ${serialized}` : rendered
 }
 
-const loadSkillDocument = async (
+const readSkillDocument = async (
   environment: SkillRuntimeEnvironment,
   requestedName: string,
   args?: string
-): Promise<string> => {
+): Promise<{ document: string; skillDir: string }> => {
   const name = requestedName.trim()
   if (!SAFE_PROJECTED_SKILL_NAME.test(name) || name.includes('..')) {
     throw new Error(`Unknown skill: ${requestedName}`)
@@ -267,15 +268,29 @@ const loadSkillDocument = async (
     if (documentMetadata.size > SKILL_IMPORT_LIMITS.maxFileBytes) {
       throw new Error('Skill document is too large.')
     }
-    const document = applySkillArguments(await readFile(documentPath, 'utf8'), args).replace(
-      /\$\{CLAUDE_SKILL_DIR\}/g,
+    return {
+      document: applySkillArguments(await readFile(documentPath, 'utf8'), args),
       skillDir
-    )
-    return `Base directory for this skill: ${skillDir}\n\n${document}`
+    }
   } catch {
     throw new Error(`Unknown skill: ${name}`)
   }
 }
+
+const loadSkillDocument = async (
+  environment: SkillRuntimeEnvironment,
+  requestedName: string,
+  args?: string
+): Promise<string> => {
+  const { document, skillDir } = await readSkillDocument(environment, requestedName, args)
+  return `Base directory for this skill: ${skillDir}\n\n${document.replace(/\$\{CLAUDE_SKILL_DIR\}/g, skillDir)}`
+}
+
+const loadSkillDocumentContent = async (
+  environment: SkillRuntimeEnvironment,
+  requestedName: string,
+  args?: string
+): Promise<string> => (await readSkillDocument(environment, requestedName, args)).document
 
 const createSkillRuntimeMcpServer = async (
   environment: SkillRuntimeEnvironment
@@ -300,23 +315,63 @@ const createSkillRuntimeMcpServer = async (
   return server
 }
 
+const skillRuntimeProcessEnvironment = ({
+  root,
+  allowedNames
+}: Pick<SkillRuntimeMcpServerConfig, 'root' | 'allowedNames'>): Record<string, string> => ({
+  ELECTRON_RUN_AS_NODE: '1',
+  [SKILL_RUNTIME_ROOT_ENV]: root,
+  ...(allowedNames ? { [SKILL_RUNTIME_ALLOWED_NAMES_ENV]: JSON.stringify([...allowedNames]) } : {})
+})
+
 const createSkillRuntimeMcpServerConfig = ({
   command,
   entryPath,
-  root,
-  allowedNames
+  ...environment
 }: SkillRuntimeMcpServerConfig): Record<string, unknown> => ({
   type: 'stdio',
   command,
   args: [entryPath, SKILL_RUNTIME_MCP_SERVER_ARG],
-  env: {
-    ELECTRON_RUN_AS_NODE: '1',
-    [SKILL_RUNTIME_ROOT_ENV]: root,
-    ...(allowedNames
-      ? { [SKILL_RUNTIME_ALLOWED_NAMES_ENV]: JSON.stringify([...allowedNames]) }
-      : {})
-  }
+  env: skillRuntimeProcessEnvironment(environment)
 })
+
+const createSkillRuntimeAcpServerConfig = ({
+  command,
+  entryPath,
+  ...environment
+}: SkillRuntimeMcpServerConfig): McpServer => ({
+  name: SKILL_RUNTIME_MCP_SERVER_NAME,
+  command,
+  args: [entryPath, SKILL_RUNTIME_MCP_SERVER_ARG],
+  env: Object.entries(skillRuntimeProcessEnvironment(environment)).map(([name, value]) => ({
+    name,
+    value
+  }))
+})
+
+const narrowSkillRuntimeAcpServers = (
+  servers: readonly McpServer[],
+  allowedNames: readonly string[] | undefined
+): McpServer[] => {
+  if (allowedNames === undefined) return [...servers]
+  if (allowedNames.length === 0) {
+    return servers.filter((server) => server.name !== SKILL_RUNTIME_MCP_SERVER_NAME)
+  }
+  const serialized = JSON.stringify([...new Set(allowedNames)])
+  return servers.flatMap((server) => {
+    if (server.name !== SKILL_RUNTIME_MCP_SERVER_NAME) return [server]
+    if (!('env' in server)) return []
+    return [
+      {
+        ...server,
+        env: [
+          ...(server.env ?? []).filter(({ name }) => name !== SKILL_RUNTIME_ALLOWED_NAMES_ENV),
+          { name: SKILL_RUNTIME_ALLOWED_NAMES_ENV, value: serialized }
+        ]
+      }
+    ]
+  })
+}
 
 const environmentFromProcess = (env: NodeJS.ProcessEnv = process.env): SkillRuntimeEnvironment => {
   const root = env[SKILL_RUNTIME_ROOT_ENV]
@@ -343,10 +398,13 @@ export {
   SKILL_RUNTIME_MCP_SERVER_ARG,
   SKILL_RUNTIME_MCP_SERVER_NAME,
   SKILL_RUNTIME_ROOT_ENV,
+  createSkillRuntimeAcpServerConfig,
+  narrowSkillRuntimeAcpServers,
   createSkillRuntimeMcpServer,
   createSkillRuntimeMcpServerConfig,
   environmentFromProcess,
   loadSkillDocument,
+  loadSkillDocumentContent,
   runSkillRuntimeMcpServer
 }
 export type { SkillRuntimeEnvironment, SkillRuntimeMcpServerConfig }

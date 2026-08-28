@@ -164,4 +164,38 @@ describe('xAI OAuth provider bridge', () => {
       stream: false
     })
   })
+
+  it('adapts CodeBuddy Chat Completions before translating them to Responses', async () => {
+    const upstream = vi.fn<typeof fetch>().mockResolvedValue(Response.json(responsesPayload))
+    const adaptOpenAiRequest = vi.fn((request: Record<string, unknown>) => ({
+      ...request,
+      messages: [{ role: 'user', content: 'Adapted input' }]
+    }))
+    const bridge = createXaiOAuthProviderBridge(
+      [{ id: 'active', model: 'grok-4.6' }],
+      'active',
+      'openai',
+      vi.fn(async () => 'access-token'),
+      { fetchImpl: upstream, adaptOpenAiRequest }
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+
+    await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'openai-request-model',
+        messages: [{ role: 'user', content: 'Original input' }]
+      })
+    })
+
+    expect(adaptOpenAiRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: [{ role: 'user', content: 'Original input' }] })
+    )
+    expect(JSON.parse(String(upstream.mock.calls[0]?.[1]?.body))).toMatchObject({
+      model: 'grok-4.6',
+      input: [{ role: 'user', content: 'Adapted input' }]
+    })
+  })
 })
