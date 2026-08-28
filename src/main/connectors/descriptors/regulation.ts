@@ -1,6 +1,11 @@
 import type { ToolContext, ToolDescriptor } from '../types'
 import { netFetchStandard } from '../../skills/net-fetch'
 import { abortableDelay } from '../abortable-delay'
+import {
+  CONNECTOR_RETRYABLE_STATUS,
+  boundedExponentialBackoff,
+  withTimeoutSignal
+} from '../request-policy'
 
 // Gene-regulation domain connector aggregating three public REST APIs, mirroring the upstream
 // mcp-regulation server: ENCODE portal (functional-genomics experiments/biosamples/files), JASPAR
@@ -45,35 +50,30 @@ function isNotFound(err: unknown): boolean {
 const ENCODE_UA = 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
 const ENCODE_TIMEOUT_MS = 60_000
 const ENCODE_RETRIES = 3
-const ENCODE_RETRYABLE = new Set([429, 500, 502, 503, 504])
 async function encodeFetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
-    signal?.throwIfAborted()
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), ENCODE_TIMEOUT_MS)
-    const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
     let res: Response
     try {
-      res = await netFetchStandard(url, {
-        headers: { accept: 'application/json', 'user-agent': ENCODE_UA },
-        signal: requestSignal
-      })
+      res = await withTimeoutSignal(ENCODE_TIMEOUT_MS, signal, (requestSignal) =>
+        netFetchStandard(url, {
+          headers: { accept: 'application/json', 'user-agent': ENCODE_UA },
+          signal: requestSignal
+        })
+      )
     } catch (err) {
       if (signal?.aborted) throw err
       if (attempt < ENCODE_RETRIES) {
-        await abortableDelay(Math.min(400 * 2 ** attempt, 4000), signal)
+        await abortableDelay(boundedExponentialBackoff(attempt), signal)
         continue
       }
       throw err
-    } finally {
-      clearTimeout(timer)
     }
     if (res.ok) {
       signal?.throwIfAborted()
       return res.json()
     }
-    if (attempt < ENCODE_RETRIES && ENCODE_RETRYABLE.has(res.status)) {
-      await abortableDelay(Math.min(400 * 2 ** attempt, 4000), signal)
+    if (attempt < ENCODE_RETRIES && CONNECTOR_RETRYABLE_STATUS.has(res.status)) {
+      await abortableDelay(boundedExponentialBackoff(attempt), signal)
       continue
     }
     throw new Error(`HTTP ${res.status} for ${url}`)
