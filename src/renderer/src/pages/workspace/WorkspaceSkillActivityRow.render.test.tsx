@@ -108,4 +108,30 @@ describe('WorkspaceSkillActivityRow', () => {
     expect(chip?.textContent).toContain('Loaded skill: mcp-pubmed')
     expect(getSkillDetail).not.toHaveBeenCalled()
   })
+
+  it('offers a retry when the catalog fetch fails', async () => {
+    useSettingsStore.setState({ skills: [catalogSkill], skillsLoaded: true })
+    const getSkillDetail = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ipc down'))
+      .mockResolvedValue({ body: '# mcp-pubmed\n\nRecovered.' })
+    window.api = { settings: { getSkillDetail } } as unknown as Window['api']
+
+    await renderRow(true)
+
+    const retry = container.querySelector('[data-testid="skill-load-details"] button')
+
+    expect(retry?.textContent).toBe('Retry')
+
+    await act(async () => {
+      retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(getSkillDetail).toHaveBeenCalledTimes(2)
+
+    const panel = container.querySelector('[data-testid="skill-load-details"]')
+
+    expect(panel?.querySelector('h1')?.textContent).toBe('mcp-pubmed')
+    expect(panel?.textContent).toContain('Recovered.')
+  })
 })

@@ -2,7 +2,7 @@
 import { MessageScrollerItem, useMessageScroller } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { ChevronRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../../shared/compute'
@@ -20,7 +20,7 @@ import {
   getSkillLoadDocument,
   isSkillActivity
 } from './workspace-tool-activity-details'
-import { getLoadedSkillName, isSkillLoadActivity } from './workspace-skill-load'
+import { getLoadedSkillName } from './workspace-skill-load'
 import {
   formatActivityGroupElapsed,
   formatActivityGroupPresentationTitle,
@@ -109,15 +109,25 @@ const WorkspaceActivityGroup = ({
 }: WorkspaceActivityGroupProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { scrollToMessage } = useMessageScroller()
+  const groupElementRef = useRef<HTMLDivElement>(null)
   // ToolSearch wrapper rows are hidden when concrete search rows are present.
   const renderableActivityEntries = getRenderableActivityEntries(group.activities)
   const visibleActivities = renderableActivityEntries.map(({ activity }) => activity)
 
   // A row's detail panel changes this group's height. Leave bottom-follow mode first — exactly
-  // like the group header does — so the viewport stays put and the panel opens strictly downward
-  // instead of the transcript snapping to the bottom (an upward flash) once content overflows.
+  // like the group header does — so the panel opens strictly downward instead of the transcript
+  // snapping to the bottom once content overflows. align:'nearest' is scroll-neutral only when the
+  // whole group fits the viewport (a taller group would be scrolled to its top), so restore the
+  // scroll offset after the mode escape: the escape must never move the viewport itself.
   const handleToggleRow = (activityId: string, nextExpanded: boolean): void => {
+    const viewport = groupElementRef.current?.closest<HTMLElement>(
+      '[data-slot="message-scroller-viewport"]'
+    )
+    const previousScrollTop = viewport?.scrollTop
+
     scrollToMessage(group.id, { align: 'nearest', behavior: 'auto' })
+
+    if (viewport && previousScrollTop !== undefined) viewport.scrollTop = previousScrollTop
     onToggleRow(activityId, nextExpanded)
   }
 
@@ -125,6 +135,7 @@ const WorkspaceActivityGroup = ({
     <MessageScrollerItem key={group.id} messageId={group.id} className="min-w-0">
       <div className={cn('px-4 pb-0.5 pt-2.5 md:px-6', contentPaddingClassName)}>
         <div
+          ref={groupElementRef}
           className="w-full overflow-hidden rounded-[14px] bg-bg-200/70 px-1.5 py-1"
           data-testid="tool-group"
         >
@@ -177,10 +188,7 @@ const WorkspaceActivityGroup = ({
                   const searchDetails = isSearch ? formatWebSearchDetails(activity) : undefined
                   // A completed load_skill expands into its rendered SKILL.md; while the document
                   // is unavailable (running, failed, or old sessions) it keeps the generic row.
-                  const skillLoadDocument =
-                    !isSearch && isSkillLoadActivity(activity)
-                      ? getSkillLoadDocument(activity)
-                      : undefined
+                  const skillLoadDocument = !isSearch ? getSkillLoadDocument(activity) : undefined
                   const toolDetails =
                     isSearch || skillLoadDocument
                       ? undefined
