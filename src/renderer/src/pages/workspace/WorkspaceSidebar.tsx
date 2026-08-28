@@ -57,6 +57,9 @@ type WorkspaceSidebarProps = {
   onOpenSession: (sessionId: string) => void
   onPreviewSession?: SessionPreviewRequest
   onRenameSession: (session: ChatSession) => void
+  // Desktop hover card: renames a session from the inline title editor. Absent or
+  // `canMutateConversations === false` keeps the hover card title read-only.
+  onRenameSessionTitle?: (session: ChatSession, title: string) => void
   canDownloadArtifacts: boolean
   onDownloadArtifacts: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
@@ -223,6 +226,7 @@ const WorkspaceSidebarView = ({
   onOpenSession,
   onPreviewSession,
   onRenameSession,
+  onRenameSessionTitle,
   canDownloadArtifacts,
   onDownloadArtifacts,
   onViewNotebook,
@@ -497,23 +501,17 @@ const WorkspaceSidebarView = ({
                       </button>
                     )
 
-                    return (
+                    // The hover-preview trigger is the whole row, not only the open button: the
+                    // card is anchored to the row's top edge and the pointer can cross from
+                    // anywhere in the row straight onto the card without hitting a dead zone.
+                    const row = (
                       <div
                         key={session.id}
                         className={cn(sessionRowClassName, isActive && 'bg-bg-300 text-text-000')}
                         title={mobileMode ? session.title : undefined}
                       >
                         <div className="flex w-full min-w-0 items-center">
-                          {mobileMode ? (
-                            openSessionButton
-                          ) : (
-                            <SessionHoverPreview
-                              session={session}
-                              onPreviewRequest={onPreviewSession}
-                            >
-                              {openSessionButton}
-                            </SessionHoverPreview>
-                          )}
+                          {openSessionButton}
 
                           <span
                             aria-hidden="true"
@@ -644,6 +642,24 @@ const WorkspaceSidebarView = ({
                           </DropdownMenu>
                         </div>
                       </div>
+                    )
+
+                    return mobileMode ? (
+                      row
+                    ) : (
+                      <SessionHoverPreview
+                        key={session.id}
+                        session={session}
+                        onPreviewRequest={onPreviewSession}
+                        canRename={canMutateConversations && onRenameSessionTitle !== undefined}
+                        onRenameTitle={
+                          onRenameSessionTitle
+                            ? (title) => onRenameSessionTitle(session, title)
+                            : undefined
+                        }
+                      >
+                        {row}
+                      </SessionHoverPreview>
                     )
                   })}
                 </div>

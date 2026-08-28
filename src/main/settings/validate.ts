@@ -15,6 +15,7 @@ import { NativeResponsesCompatibilityProxy } from './native-responses-compatibil
 import { normalizeResponsesBaseUrl } from '../agent-framework/codex'
 import { ResponseBodyLimitError, readBoundedResponseText } from './bounded-response'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import { toErrorMessage } from '../error-message'
 
 // Runs a real connectivity/auth probe for a provider and classifies the outcome into an actionable
 // category. Request construction and classification are pure so the branch matrix is unit-testable;
@@ -260,7 +261,7 @@ const classifyStatus = (status: number): ValidationCategory => {
 
 // Maps a thrown fetch error (or URL failure) to a category.
 const classifyFetchError = (error: unknown): ValidationCategory => {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = toErrorMessage(error)
 
   if (/invalid base url|missing base url/i.test(message)) return 'bad-url'
   if (error instanceof Error && error.name === 'AbortError') return 'timeout'
@@ -576,7 +577,7 @@ const validateProviderThroughLocalResponsesAdapter = async (
     return toResult('ok', { status })
   } catch (error) {
     return toResult(classifyFetchError(error), {
-      message: error instanceof Error ? error.message : String(error)
+      message: toErrorMessage(error)
     })
   } finally {
     clearTimeout(timer)
@@ -671,7 +672,7 @@ const validateCustomProvider = async (
     request = buildValidationRequest(provider, requireBridgeToolCall, frameworkEndpoints)
   } catch (error) {
     return toResult(classifyFetchError(error), {
-      message: error instanceof Error ? error.message : String(error)
+      message: toErrorMessage(error)
     })
   }
 
@@ -767,7 +768,7 @@ const validateCustomProvider = async (
     return toResult(category, { status: response.status })
   } catch (error) {
     return toResult(classifyFetchError(error), {
-      message: error instanceof Error ? error.message : String(error)
+      message: toErrorMessage(error)
     })
   } finally {
     clearTimeout(timer)

@@ -21,6 +21,7 @@ import type {
   SaveSessionArtifactsResult
 } from '../shared/file-save'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
+import { toErrorMessage } from './error-message'
 
 type RegisterFileSaveHandlersOptions = {
   resolveManagedFilePath?: (
@@ -332,7 +333,7 @@ const writeProjectArtifactArchive = async (options: {
         if (entryStarted) throw error
         options.failures.push({
           ...candidate.file,
-          message: error instanceof Error ? error.message : String(error)
+          message: toErrorMessage(error)
         })
       } finally {
         await closeSource?.()
@@ -637,7 +638,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         } catch (error) {
           failures.push({
             ...file,
-            message: error instanceof Error ? error.message : String(error)
+            message: toErrorMessage(error)
           })
         } finally {
           await managedFile?.close()
@@ -703,7 +704,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         } catch (error) {
           failures.push({
             ...file,
-            message: error instanceof Error ? error.message : String(error)
+            message: toErrorMessage(error)
           })
         } finally {
           if (!retainedManagedVersion) await exportFile?.close()

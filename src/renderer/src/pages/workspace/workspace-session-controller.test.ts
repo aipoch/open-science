@@ -246,6 +246,103 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.dialogs.edit).toBeNull()
   })
 
+  it('renames a Session title inline through the session-details mutation', async () => {
+    const active = session({ description: 'Keep me' })
+    const edited: PersistedChatSession = {
+      ...active,
+      title: 'Renamed inline',
+      description: 'Keep me',
+      sessionDetailsSource: 'manual',
+      revision: 2,
+      updatedAt: 2
+    }
+    const editDetails = vi.fn().mockResolvedValue(edited)
+    window.api = { sessions: { editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.renameTitle(active, '  Renamed inline  '))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(editDetails).toHaveBeenCalledWith({
+      projectId: active.projectId,
+      sessionId: active.id,
+      title: 'Renamed inline',
+      description: 'Keep me'
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Renamed inline',
+      sessionDetailsSource: 'manual',
+      revision: 2
+    })
+  })
+
+  it('ignores blank or unchanged inline rename titles', () => {
+    const active = session()
+    const editDetails = vi.fn()
+    window.api = { sessions: { editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.renameTitle(active, '   '))
+    act(() => hook.result.current.actions.renameTitle(active, 'Original title'))
+
+    expect(editDetails).not.toHaveBeenCalled()
+  })
+
+  it('loads an unopened Session before an inline rename to preserve its description', async () => {
+    const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const persisted: PersistedChatSession = {
+      id: summary.id,
+      projectId: summary.projectId,
+      title: summary.title,
+      description: 'Durable description',
+      cwd: summary.cwd,
+      status: summary.status,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Rename me',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt
+    }
+    const loadOne = vi.fn().mockResolvedValue(persisted)
+    const editDetails = vi
+      .fn()
+      .mockResolvedValue({ ...persisted, title: 'Renamed', sessionDetailsSource: 'manual' })
+    window.api = { sessions: { loadOne, editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: summary })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.renameTitle(summary, 'Renamed')
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-a', sessionId: 'session-a' })
+    expect(editDetails).toHaveBeenCalledWith({
+      projectId: 'project-a',
+      sessionId: 'session-a',
+      title: 'Renamed',
+      description: 'Durable description'
+    })
+  })
+
   it('loads an unopened Session before opening conversation export', async () => {
     const summary = session({ contentLoaded: false, activeMessageCount: 1 })
     const persisted: PersistedChatSession = {

@@ -22,6 +22,10 @@ const SESSION_ID = 'session-a'
 
 const storageKey = (storageRoot: string, path: string): string =>
   relative(storageRoot, path).split(sep).join('/')
+// Hosted Windows runners rebuild the migration ledger in beforeEach. The
+// Windows full-test workflow's 60s CLI hook budget does not override the
+// Vitest project config, so schema-backed hooks still die at 30s.
+const WINDOWS_SQLITE_HOOK_TIMEOUT_MS = 120_000
 
 const createSession = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSession => ({
   id: SESSION_ID,
@@ -64,12 +68,12 @@ describe('ManagedFileIndexRepository', () => {
       }),
       uploadRepository
     )
-  })
+  }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
 
   afterEach(async () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
-  })
+  }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
 
   it('adopts a path-only legacy Artifact into an immutable v1 before indexing it', async () => {
     const artifactPath = join(
@@ -322,7 +326,9 @@ describe('ManagedFileIndexRepository', () => {
         sourceVersionId: expect.any(String),
         messageId: undefined,
         name: 'samples.csv',
-        path: expect.stringMatching(/^upload-version:project-a\/session-a\/[a-zA-Z0-9-]+$/u)
+        path: expect.stringMatching(
+          /^upload-version:project-a\/session-a\/upload-1\/[a-zA-Z0-9-]+$/u
+        )
       })
     ])
 
@@ -593,7 +599,7 @@ describe('ManagedFileIndexRepository', () => {
     ).resolves.toMatchObject({
       items: [
         expect.objectContaining({
-          path: `upload-version:${PROJECT_ID}/${SESSION_ID}/upload-version-1`
+          path: `upload-version:${PROJECT_ID}/${SESSION_ID}/upload-1/upload-version-1`
         })
       ]
     })
@@ -1084,7 +1090,7 @@ describe('ManagedFileIndexRepository', () => {
           sourceFileId: uploadId,
           sourceVersionId: versionId,
           sessionId: sourceSessionId,
-          path: `upload-version:${PROJECT_ID}/${sourceSessionId}/${versionId}`
+          path: `upload-version:${PROJECT_ID}/${sourceSessionId}/${uploadId}/${versionId}`
         }
       ]
     })
@@ -1169,7 +1175,7 @@ describe('ManagedFileIndexRepository', () => {
           sourceVersionId: expect.any(String),
           sessionId: sourceSessionId,
           path: expect.stringMatching(
-            /^upload-version:project-a\/session-source-legacy\/[a-zA-Z0-9-]+$/u
+            /^upload-version:project-a\/session-source-legacy\/upload-cross-session-legacy\/[a-zA-Z0-9-]+$/u
           )
         }
       ]

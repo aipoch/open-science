@@ -342,56 +342,60 @@ describe('NotebookInputRegistry', () => {
     expect(() => lease.getRunInputFiles()).toThrow(/closed/i)
   })
 
-  it('rechecks Version state and immutable metadata before a run', async () => {
-    const registry = await setup()
-    await createUpload({
-      projectId: 'project-1',
-      sessionId: 'source-session-1',
-      uploadFileId: 'upload-1',
-      versionId: 'upload-version-1',
-      filename: 'groups.csv',
-      content: 'group\nA\n'
-    })
-    const attachment = {
-      id: 'upload-1',
-      versionId: 'upload-version-1',
-      versionNumber: 1,
-      sessionId: 'source-session-1',
-      name: 'groups.csv',
-      originalName: 'groups.csv',
-      path: '/ignored',
-      size: 8
-    }
-    await client!.uploadVersion.update({
-      where: { id: 'upload-version-1' },
-      data: { state: 'staging' }
-    })
-    await expect(
-      registry.registerTurn({
+  it(
+    'rechecks Version state and immutable metadata before a run',
+    async () => {
+      const registry = await setup()
+      await createUpload({
+        projectId: 'project-1',
+        sessionId: 'source-session-1',
+        uploadFileId: 'upload-1',
+        versionId: 'upload-version-1',
+        filename: 'groups.csv',
+        content: 'group\nA\n'
+      })
+      const attachment = {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        sessionId: 'source-session-1',
+        name: 'groups.csv',
+        originalName: 'groups.csv',
+        path: '/ignored',
+        size: 8
+      }
+      await client!.uploadVersion.update({
+        where: { id: 'upload-version-1' },
+        data: { state: 'staging' }
+      })
+      await expect(
+        registry.registerTurn({
+          projectId: 'project-1',
+          appSessionId: 'active-session',
+          promptMessageId: 'prompt-staging',
+          uploads: [attachment],
+          references: []
+        })
+      ).rejects.toThrow(/unavailable in this Project/)
+
+      await client!.uploadVersion.update({
+        where: { id: 'upload-version-1' },
+        data: { state: 'ready' }
+      })
+      const turn = {
         projectId: 'project-1',
         appSessionId: 'active-session',
-        promptMessageId: 'prompt-staging',
-        uploads: [attachment],
-        references: []
+        promptMessageId: 'prompt-ready'
+      }
+      await registry.registerTurn({ ...turn, uploads: [attachment], references: [] })
+      await client!.uploadVersion.update({
+        where: { id: 'upload-version-1' },
+        data: { versionNumber: 2 }
       })
-    ).rejects.toThrow(/unavailable in this Project/)
-
-    await client!.uploadVersion.update({
-      where: { id: 'upload-version-1' },
-      data: { state: 'ready' }
-    })
-    const turn = {
-      projectId: 'project-1',
-      appSessionId: 'active-session',
-      promptMessageId: 'prompt-ready'
-    }
-    await registry.registerTurn({ ...turn, uploads: [attachment], references: [] })
-    await client!.uploadVersion.update({
-      where: { id: 'upload-version-1' },
-      data: { versionNumber: 2 }
-    })
-    await expect(registry.openRun(turn)).rejects.toThrow(/registration no longer matches/i)
-  }, WINDOWS_SQLITE_TEST_TIMEOUT_MS)
+      await expect(registry.openRun(turn)).rejects.toThrow(/registration no longer matches/i)
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('rejects same-size input corruption during turn registration', async () => {
     const registry = await setup()

@@ -103,6 +103,7 @@ type WorkspaceSessionController = {
     changeEditTitleDraft: (draft: string) => void
     changeEditDescriptionDraft: (draft: string) => void
     confirmEdit: (event: FormEvent<HTMLFormElement>) => void
+    renameTitle: (session: ChatSession, title: string) => void
     togglePin: (session: ChatSession) => void
     archive: (session: ChatSession) => void
     openExportConversation: (session: ChatSession) => void
@@ -638,6 +639,7 @@ const useWorkspaceSessionController = ({
       changeEditTitleDraft: sessionDetails.changeTitle,
       changeEditDescriptionDraft: sessionDetails.changeDescription,
       confirmEdit: sessionDetails.confirm,
+      renameTitle: sessionDetails.rename,
       togglePin: (session: ChatSession) => {
         if (isPersistenceReady) togglePinned(session.id)
       },

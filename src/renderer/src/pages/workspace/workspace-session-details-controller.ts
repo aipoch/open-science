@@ -21,6 +21,7 @@ type WorkspaceSessionDetailsController = {
   changeTitle: (draft: string) => void
   changeDescription: (draft: string) => void
   confirm: (event: FormEvent<HTMLFormElement>) => void
+  rename: (session: ChatSession, title: string) => void
 }
 
 const useWorkspaceSessionDetailsController = (
@@ -70,6 +71,41 @@ const useWorkspaceSessionDetailsController = (
         setDialog((current) => (current ? { ...current, isSaving: false } : current))
       })
   }
+  // Title-only rename (sidebar hover card inline editor). Routes through the session-details
+  // owner's editDetails mutation — like the Edit dialog — so the durable title is marked
+  // sessionDetailsSource 'manual' and a later details generation cannot overwrite it. The
+  // authoritative session is loaded first when needed so its description is preserved verbatim.
+  const rename = (session: ChatSession, title: string): void => {
+    if (!isPersistenceReady) return
+    const trimmedTitle = title.trim()
+    if (!trimmedTitle || trimmedTitle === session.title) return
+    const submit = (authoritative: ChatSession): void => {
+      void window.api.sessions
+        .editDetails({
+          projectId: authoritative.projectId,
+          sessionId: authoritative.id,
+          title: trimmedTitle,
+          description: authoritative.description ?? ''
+        })
+        .then((persisted) => {
+          useSessionStore.getState().upsertPersistedSession(persisted)
+        })
+        .catch((error: unknown) => {
+          console.warn('renameSessionTitle failed', error)
+        })
+    }
+    if (session.contentLoaded !== false) {
+      submit(session)
+      return
+    }
+    void loadPersistedSession({ projectId: session.projectId, sessionId: session.id })
+      .then((persisted) => {
+        if (!persisted) throw new Error('Selected Session JSON is missing.')
+        const hydrated = hydratePersistedSessionIfPresent(persisted)
+        if (hydrated) submit(hydrated)
+      })
+      .catch(onLoadFailure)
+  }
   return {
     dialog,
     open,
@@ -78,7 +114,8 @@ const useWorkspaceSessionDetailsController = (
       setDialog((current) => (current ? { ...current, titleDraft } : current)),
     changeDescription: (descriptionDraft) =>
       setDialog((current) => (current ? { ...current, descriptionDraft } : current)),
-    confirm
+    confirm,
+    rename
   }
 }
 

@@ -102,6 +102,7 @@ const { createReviewerCommandOwner, registerReviewerIpcHandlers } = await import
 const { beginMigration, clearMigrationPending } = await import('../storage/migration-state')
 
 const acpRuntime = {} as AcpRuntime
+const managedFileVersions = { openVersion: vi.fn() }
 
 const createRequest = (): ReviewRunRequest => ({
   sessionId: 'session-1',
@@ -601,7 +602,7 @@ describe('reviewer IPC handlers', () => {
       getReviewsForSession.mockResolvedValue(reviews)
       // The default sessionLoadAll mock returns [{ id: 'session-1' }], which matches the request.
       flagStaleReviews.mockResolvedValue(flagged as never)
-      registerReviewerIpcHandlers({ acpRuntime })
+      registerReviewerIpcHandlers({ acpRuntime, managedFileVersions })
 
       const getHandler = handlers.get(REVIEWER_IPC.GET_FOR_SESSION)
       expect(getHandler).toBeDefined()
@@ -628,7 +629,7 @@ describe('reviewer IPC handlers', () => {
       const reviews = [{ id: 'review-1', turnMessageId: 'message-1' }]
       getReviewsForSession.mockResolvedValue(reviews)
       // sessionLoadAll returns [{ id: 'session-1' }] by default; look up a different session id.
-      registerReviewerIpcHandlers({ acpRuntime })
+      registerReviewerIpcHandlers({ acpRuntime, managedFileVersions })
 
       const getHandler = handlers.get(REVIEWER_IPC.GET_FOR_SESSION)
       sessionLoadOne.mockResolvedValueOnce(undefined)

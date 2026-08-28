@@ -22,6 +22,7 @@ import {
   assertWithinResourceBudget,
   readBoundedJsonBody
 } from '../resource-budget'
+import { toErrorMessage } from '../error-message'
 
 // One readable block as returned by host.read_turn().
 export type OrderedBlock = {
@@ -169,7 +170,7 @@ export class ReviewerHostServer {
         res.writeHead(error instanceof ResourceBudgetExceededError ? 413 : 500, {
           'content-type': 'application/json'
         })
-        res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
+        res.end(JSON.stringify({ error: toErrorMessage(error) }))
       })
     })
   }
@@ -373,8 +374,7 @@ export class ReviewerHostServer {
         }
       } catch (error) {
         throw new Error(
-          `Failed to read managed Artifact ${JSON.stringify(id)}: ` +
-            `${error instanceof Error ? error.message : String(error)}`
+          `Failed to read managed Artifact ${JSON.stringify(id)}: ${toErrorMessage(error)}`
         )
       } finally {
         await resolvedVersion.close()
@@ -386,8 +386,7 @@ export class ReviewerHostServer {
       } catch (error) {
         if (error instanceof ArtifactVersionChecksumMismatchError) throw error
         throw new Error(
-          `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-            `${error instanceof Error ? error.message : String(error)}`
+          `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ${toErrorMessage(error)}`
         )
       }
 
@@ -412,8 +411,7 @@ export class ReviewerHostServer {
       } catch (error) {
         this.artifactVerifications.delete(id)
         throw new Error(
-          `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-            `${error instanceof Error ? error.message : String(error)}`
+          `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ${toErrorMessage(error)}`
         )
       }
     }

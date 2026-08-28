@@ -33,6 +33,7 @@ import {
 } from '../acp/session-agent-target'
 import type { SessionAgentConfiguration } from '../../shared/settings'
 import type { ArtifactVersionContentResolver } from './host-sdk'
+import { toErrorMessage } from '../error-message'
 
 const log = createLogger('reviewer:ipc')
 
@@ -140,7 +141,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     recoveryGate = attempt
     void attempt.catch((error: unknown) => {
       log.error('review recovery failed', {
-        error: error instanceof Error ? error.message : String(error)
+        error: toErrorMessage(error)
       })
       if (recoveryGate === attempt) {
         recoveryGate = undefined
@@ -296,7 +297,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         log.warn('auto-review idempotency check failed; refusing to start (fail-closed)', {
           sessionId,
           turnMessageId,
-          error: error instanceof Error ? error.message : String(error)
+          error: toErrorMessage(error)
         })
         return finishBeforeBackground({ started: false, reason: 'idempotency-check-failed' })
       }
@@ -320,7 +321,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       log.error('review start failed: could not load session', {
         sessionId,
         turnMessageId,
-        error: error instanceof Error ? error.message : String(error)
+        error: toErrorMessage(error)
       })
       // Transient store read failure — no Review row, lock released. Safe (and worth) retrying.
       return finishBeforeBackground({ started: false, reason: 'load-failed' })
@@ -357,7 +358,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       log.error('review start failed: could not resolve Session agent target', {
         sessionId,
         turnMessageId,
-        error: error instanceof Error ? error.message : String(error)
+        error: toErrorMessage(error)
       })
       return finishBeforeBackground({ started: false, reason: 'run-failed' })
     }
@@ -379,7 +380,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       log.error('review start failed: model admission failed', {
         sessionId,
         turnMessageId,
-        error: error instanceof Error ? error.message : String(error)
+        error: toErrorMessage(error)
       })
       return finishBeforeBackground({ started: false, reason: 'run-failed' })
     }
@@ -396,7 +397,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         log.error('review start cleanup failed', {
           sessionId,
           turnMessageId,
-          error: error instanceof Error ? error.message : String(error)
+          error: toErrorMessage(error)
         })
       })
       return finishBeforeBackground({ started: false, reason: 'run-failed' })
@@ -480,7 +481,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           log.error('runReview threw unexpectedly', {
             sessionId,
             turnMessageId,
-            error: error instanceof Error ? error.message : String(error)
+            error: toErrorMessage(error)
           })
         })
         .finally(async () => {
@@ -499,7 +500,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
               log.error('review runtime cleanup failed', {
                 sessionId,
                 turnMessageId,
-                error: error instanceof Error ? error.message : String(error)
+                error: toErrorMessage(error)
               })
             })
             projectAdmission.release()

@@ -33,6 +33,7 @@ import { disconnectProjectDbClient } from '../projects/prisma-client'
 import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import { inspectWindowsStoragePath, type WindowsStoragePathCapabilities } from './remote-data-root'
+import { toErrorMessage } from '../error-message'
 
 export { DATA_ROOT_DIRS } from './data-directories'
 
@@ -504,7 +505,7 @@ export const runDataRootMigration = async (
     operation.fail(error)
     return {
       ok: false,
-      error: `Could not verify provenance data: ${error instanceof Error ? error.message : String(error)}`
+      error: `Could not verify provenance data: ${toErrorMessage(error)}`
     }
   }
 
@@ -591,7 +592,7 @@ export const runDataRootMigration = async (
     operation.fail(error)
     return {
       ok: false,
-      error: `Could not verify provenance data: ${error instanceof Error ? error.message : String(error)}`
+      error: `Could not verify provenance data: ${toErrorMessage(error)}`
     }
   }
 
@@ -723,7 +724,7 @@ export const commitDataRootSwitch = async (
     operation.fail(error)
     return {
       ok: false,
-      error: `Could not verify provenance data: ${error instanceof Error ? error.message : String(error)}`
+      error: `Could not verify provenance data: ${toErrorMessage(error)}`
     }
   }
 

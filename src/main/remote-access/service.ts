@@ -19,6 +19,7 @@ import {
   ensureRemoteItConnectLink
 } from './remoteit'
 import { RemoteAccessRepository } from './repository'
+import { toErrorMessage } from '../error-message'
 
 type RemoteAccessServiceDeps = {
   repository?: RemoteAccessRepository
@@ -63,7 +64,7 @@ const normalizeRemoteItPublicUrl = (value: string): string => {
 }
 
 const configurationLoadError = (error: unknown): Error => {
-  const detail = error instanceof Error ? error.message : String(error)
+  const detail = toErrorMessage(error)
   return new Error(
     `Remote access configuration could not be loaded. Fix or remove remote-access.json, then restart Open Science. ${detail}`
   )
@@ -220,7 +221,7 @@ export class RemoteAccessService {
         failure = cleanupError
       }
       this.lifecycle = 'error'
-      this.error = failure instanceof Error ? failure.message : String(failure)
+      this.error = toErrorMessage(failure)
       this.notifyChanged()
       return this.snapshot(true)
     }
@@ -232,7 +233,7 @@ export class RemoteAccessService {
         this.error = undefined
       } catch (error) {
         this.lifecycle = 'error'
-        this.error = error instanceof Error ? error.message : String(error)
+        this.error = toErrorMessage(error)
       }
       this.notifyChanged()
       return this.snapshot(true)
@@ -363,7 +364,7 @@ export class RemoteAccessService {
         await this.pairing.setModePreference('off').catch(() => undefined)
       }
       this.lifecycle = 'error'
-      this.error = error instanceof Error ? error.message : String(error)
+      this.error = toErrorMessage(error)
       this.log.error(`Remote access ${mode} enable failed`, error)
       this.notifyChanged()
       return this.snapshot(true)
@@ -475,7 +476,7 @@ export class RemoteAccessService {
     }
     if (failure) {
       this.lifecycle = 'error'
-      this.error = failure instanceof Error ? failure.message : String(failure)
+      this.error = toErrorMessage(failure)
       this.log.error('Remote access disable failed', failure)
       this.notifyChanged()
       return this.snapshot(true)
