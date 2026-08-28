@@ -10,6 +10,8 @@ const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 30_000
 const EVENT_RECONNECT_DELAY_MS = 100
 const MAX_BUFFERED_EVENTS = 1_024
 const TASK_EVENT_STREAM_PROTOCOL_VERSION = 1
+const NORMAL_EVENT_STREAM_CLOSE_CODES = new Set([1000, 1005])
+const FAILED_EVENT_STREAM_CLOSE_CODES = new Set([1002, 1003, 1007, 1008, 1009])
 
 export class OpenScienceApiError extends Error {
   constructor(message, { code = 'request_failed', status } = {}) {
@@ -483,12 +485,28 @@ export class OpenScienceClient {
           current.close()
         }
       })
-      current.addEventListener('close', () => {
+      current.addEventListener('close', (event) => {
         if (finished || socket !== current) return
         if (!connectionOpened && !readySettled) {
           finish({
             error: new OpenScienceApiError(
               'Open Science event stream closed before it was ready.',
+              { code: 'event_stream_failed' }
+            ),
+            discardQueue: true
+          })
+          return
+        }
+        if (NORMAL_EVENT_STREAM_CLOSE_CODES.has(event.code)) {
+          finish()
+          return
+        }
+        if (FAILED_EVENT_STREAM_CLOSE_CODES.has(event.code)) {
+          finish({
+            error: new OpenScienceApiError(
+              event.code === 1008
+                ? 'Open Science event stream access was revoked.'
+                : 'Open Science event stream closed permanently.',
               { code: 'event_stream_failed' }
             ),
             discardQueue: true

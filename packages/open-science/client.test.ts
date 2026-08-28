@@ -16,18 +16,24 @@ const response = (status: number, payload: unknown): Response =>
 class ControllableWebSocket {
   static instance: ControllableWebSocket
 
-  readonly listeners = new Map<string, Array<(event: { data?: string }) => void>>()
+  readonly listeners = new Map<
+    string,
+    Array<(event: { code?: number; data?: string; reason?: string }) => void>
+  >()
   closed = false
 
   constructor(readonly url: URL) {
     ControllableWebSocket.instance = this
   }
 
-  addEventListener(name: string, listener: (event: { data?: string }) => void): void {
+  addEventListener(
+    name: string,
+    listener: (event: { code?: number; data?: string; reason?: string }) => void
+  ): void {
     this.listeners.set(name, [...(this.listeners.get(name) ?? []), listener])
   }
 
-  emit(name: string, event: { data?: string } = {}): void {
+  emit(name: string, event: { code?: number; data?: string; reason?: string } = {}): void {
     for (const listener of this.listeners.get(name) ?? []) listener(event)
   }
 
@@ -840,6 +846,63 @@ describe('OpenScienceClient', () => {
       value: { sequence: 2, type: 'run.progress', data: { runId: 'run-1' } }
     })
     await iterator.return?.()
+  })
+
+  it('completes without reconnecting after a normal event socket close', async () => {
+    class TrackingWebSocket extends ControllableWebSocket {
+      static readonly instances: TrackingWebSocket[] = []
+
+      constructor(url: URL) {
+        super(url)
+        TrackingWebSocket.instances.push(this)
+      }
+    }
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'token-1',
+      fetch: vi.fn()
+    })
+    const events = client.events({ WebSocket: TrackingWebSocket as never })
+    const iterator = events[Symbol.asyncIterator]()
+    const socket = TrackingWebSocket.instances[0]
+    socket.emit('open')
+    await events.ready
+
+    const next = iterator.next()
+    socket.emit('close', { code: 1000, reason: 'Service stopped' })
+
+    await expect(next).resolves.toEqual({ done: true, value: undefined })
+    expect(TrackingWebSocket.instances).toHaveLength(1)
+  })
+
+  it('fails without reconnecting after event stream access is revoked', async () => {
+    class TrackingWebSocket extends ControllableWebSocket {
+      static readonly instances: TrackingWebSocket[] = []
+
+      constructor(url: URL) {
+        super(url)
+        TrackingWebSocket.instances.push(this)
+      }
+    }
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'token-1',
+      fetch: vi.fn()
+    })
+    const events = client.events({ WebSocket: TrackingWebSocket as never })
+    const iterator = events[Symbol.asyncIterator]()
+    const socket = TrackingWebSocket.instances[0]
+    socket.emit('open')
+    await events.ready
+
+    const next = iterator.next()
+    socket.emit('close', { code: 1008, reason: 'Remote access revoked' })
+
+    await expect(next).rejects.toMatchObject({
+      code: 'event_stream_failed',
+      message: 'Open Science event stream access was revoked.'
+    })
+    expect(TrackingWebSocket.instances).toHaveLength(1)
   })
 
   it('fails a ready event iterator when the connection stops receiving liveness frames', async () => {
