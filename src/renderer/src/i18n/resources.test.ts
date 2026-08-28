@@ -3082,7 +3082,7 @@ describe('European Portuguese safety copy', () => {
     ],
     [
       'Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.',
-      'Transfere o CodeBuddy para o ambiente de execução gerido pela aplicação e executa-o nesse ambiente — não é necessária uma instalação global do Node.js nem do npm.'
+      'Transfere o CodeBuddy para o ambiente de execução gerido pela aplicação e utiliza o ambiente de execução da própria aplicação para o executar — não requer uma instalação global do Node.js nem do npm.'
     ]
   ])('uses reviewed European Portuguese copy for newly merged surface %s', (key, expected) => {
     expect(catalog('pt-PT')[key]).toBe(expected)

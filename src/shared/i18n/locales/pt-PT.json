@@ -3740,6 +3740,6 @@
     "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "A configuração da sessão foi alterada para {{framework}} · {{model}} · {{effort}}",
     "Tencent's coding agent for the terminal.": "Agente de programação da Tencent para a linha de comandos.",
     "CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.": "O CodeBuddy é necessário para este framework. Instale-o abaixo ou manualmente e volte a detetá-lo.",
-    "Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.": "Transfere o CodeBuddy para o ambiente de execução gerido pela aplicação e executa-o nesse ambiente — não é necessária uma instalação global do Node.js nem do npm."
+    "Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.": "Transfere o CodeBuddy para o ambiente de execução gerido pela aplicação e utiliza o ambiente de execução da própria aplicação para o executar — não requer uma instalação global do Node.js nem do npm."
   }
 }
