@@ -13,6 +13,7 @@ import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import type { ConcurrencyManager } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
 import { JobPoller } from './job-poller'
+import { UnencryptedComputeJobPersistenceApprovalRequiredError } from './job-repository'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -134,13 +135,21 @@ const makeOwner = (
   )
 
 const makeJobRepo = (
-  jobs: Map<string, import('../../shared/compute').ComputeJob> = new Map()
+  jobs: Map<string, import('../../shared/compute').ComputeJob> = new Map(),
+  fieldProtectionAvailable: boolean | (() => boolean) = true
 ): {
   repo: import('./job-repository').ComputeJobRepository
   createCalls: ReturnType<typeof vi.fn>
   updateCalls: ReturnType<typeof vi.fn>
 } => {
+  const isFieldProtectionAvailable = (): boolean =>
+    typeof fieldProtectionAvailable === 'function'
+      ? fieldProtectionAvailable()
+      : fieldProtectionAvailable
   const createCalls = vi.fn(async (request: import('./job-repository').CreateJobRequest) => {
+    if (!isFieldProtectionAvailable() && request.allowUnencryptedPersistence !== true) {
+      throw new UnencryptedComputeJobPersistenceApprovalRequiredError()
+    }
     const job: import('../../shared/compute').ComputeJob = {
       job_id: request.id,
       provider_id: request.providerId,
@@ -209,6 +218,7 @@ const makeJobRepo = (
 
   return {
     repo: {
+      isFieldProtectionAvailable: vi.fn(isFieldProtectionAvailable),
       create: createCalls,
       get: getCalls,
       update: updateCalls,
@@ -794,6 +804,83 @@ describe('resolveInputs — mixed inputs summary', () => {
 })
 
 describe('ComputeJobWorkflowOwner.submitJob — inputs_summary in approval', () => {
+  it('requests explicit plaintext approval if protection becomes unavailable after approval', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    let fieldProtectionAvailable = true
+    const { repo: jobRepo, createCalls } = makeJobRepo(new Map(), () => fieldProtectionAvailable)
+    const { repo } = makeRepo()
+    const requestWithContext = vi.fn(async () => {
+      fieldProtectionAvailable = false
+      return 'once' as const
+    })
+    const broker = {
+      request: requestWithContext,
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = makeOwner(runner, repo, broker, jobRepo)
+
+    await expect(
+      service.submitJob(
+        'ssh:biowulf',
+        'test',
+        'echo secret',
+        {},
+        { sessionId: 's1', projectId: 'p1' }
+      )
+    ).resolves.toMatchObject({ status: 'submitted' })
+
+    expect(requestWithContext).toHaveBeenCalledTimes(2)
+    expect(requestWithContext).toHaveBeenLastCalledWith(
+      expect.objectContaining({ willPersistUnencrypted: true }),
+      expect.anything(),
+      undefined
+    )
+    expect(createCalls).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowUnencryptedPersistence: true })
+    )
+  })
+
+  it('discloses plaintext persistence when secure storage is unavailable', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo } = makeJobRepo(new Map(), false)
+    const { repo } = makeRepo()
+    const requestWithContext = vi.fn(() => Promise.resolve('once' as const))
+    const broker = {
+      request: requestWithContext,
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = makeOwner(runner, repo, broker, jobRepo)
+    await service.submitJob(
+      'ssh:biowulf',
+      'test',
+      'echo hi',
+      {},
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    expect(requestWithContext).toHaveBeenCalledWith(
+      expect.objectContaining({ willPersistUnencrypted: true }),
+      expect.anything(),
+      undefined
+    )
+  })
+
   it('passes inputs_summary to the approval request when inputs are provided', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,

@@ -1,5 +1,6 @@
 import type { ToolContext, ToolDescriptor } from '../types'
 import { netFetchStandard } from '../../skills/net-fetch'
+import { abortableDelay } from '../abortable-delay'
 
 // Gene-regulation domain connector aggregating three public REST APIs, mirroring the upstream
 // mcp-regulation server: ENCODE portal (functional-genomics experiments/biosamples/files), JASPAR
@@ -45,23 +46,6 @@ const ENCODE_UA = 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
 const ENCODE_TIMEOUT_MS = 60_000
 const ENCODE_RETRIES = 3
 const ENCODE_RETRYABLE = new Set([429, 500, 502, 503, 504])
-const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
-  signal?.throwIfAborted()
-  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
-  return new Promise((resolve, reject) => {
-    const finish = (): void => {
-      signal.removeEventListener('abort', abort)
-      resolve()
-    }
-    const abort = (): void => {
-      clearTimeout(timer)
-      reject(signal.reason)
-    }
-    const timer = setTimeout(finish, ms)
-    signal.addEventListener('abort', abort, { once: true })
-  })
-}
-
 async function encodeFetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     signal?.throwIfAborted()
@@ -77,7 +61,7 @@ async function encodeFetchJson(url: string, signal?: AbortSignal): Promise<unkno
     } catch (err) {
       if (signal?.aborted) throw err
       if (attempt < ENCODE_RETRIES) {
-        await sleep(Math.min(400 * 2 ** attempt, 4000), signal)
+        await abortableDelay(Math.min(400 * 2 ** attempt, 4000), signal)
         continue
       }
       throw err
@@ -89,7 +73,7 @@ async function encodeFetchJson(url: string, signal?: AbortSignal): Promise<unkno
       return res.json()
     }
     if (attempt < ENCODE_RETRIES && ENCODE_RETRYABLE.has(res.status)) {
-      await sleep(Math.min(400 * 2 ** attempt, 4000), signal)
+      await abortableDelay(Math.min(400 * 2 ** attempt, 4000), signal)
       continue
     }
     throw new Error(`HTTP ${res.status} for ${url}`)

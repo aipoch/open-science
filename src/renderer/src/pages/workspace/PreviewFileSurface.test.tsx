@@ -269,6 +269,43 @@ describe('PreviewFileSurface Provenance entry', () => {
     expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
   })
 
+  it('keeps a failed lineage load visible and retryable without hiding the preview', async () => {
+    window.api.artifacts.getLineage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('lineage unavailable'))
+      .mockResolvedValueOnce({
+        artifactId: 'artifact-1',
+        filename: 'sin.png',
+        originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+        versions: [descriptor, secondDescriptor]
+      })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    const retry = [...(alert?.querySelectorAll('button') ?? [])].find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+    expect(container.querySelector('button[aria-label="Next Artifact version"]')).toBeNull()
+    expect(alert).not.toBeNull()
+    expect(alert?.textContent).toContain('Could not load version history.')
+    expect(retry).not.toBeUndefined()
+
+    await click(retry ?? null)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('button[aria-label="Next Artifact version"]')).not.toBeNull()
+  })
+
   it('refreshes a stale lineage when a GENERATED click selects a newly finalized version', async () => {
     const getLineage = vi
       .fn()

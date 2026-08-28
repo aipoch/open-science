@@ -413,10 +413,12 @@ const ProvenanceMessagesTimeline = ({
 
                 // Artifact provenance builds its immutable transcript from persisted messages and
                 // activities only, so no coordinator lifecycle or durable Subagent command rows
-                // are supplied here.
+                // are supplied here. Derived config-change dividers are render-time annotations,
+                // not provenance records, and are skipped as well.
                 if (
                   conversationItem.type === 'handoff' ||
-                  conversationItem.type === 'subagent-message'
+                  conversationItem.type === 'subagent-message' ||
+                  conversationItem.type === 'session-config-change'
                 )
                   return null
 

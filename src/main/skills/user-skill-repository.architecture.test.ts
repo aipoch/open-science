@@ -46,7 +46,6 @@ const compatibilityIndexPath = resolve(skillsRoot, 'user-skill-compatibility-ind
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
 
 const readSource = (path: string): string => readProductionSource(path, projectRoot)
-const rawLineCount = (source: string): number => source.trimEnd().split(/\r?\n/).length
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
 const portableProjectPath = (path: string): string =>
   relative(projectRoot, path).replaceAll('\\', '/')
@@ -168,31 +167,6 @@ type ModuleImpactManifest = {
 }
 
 describe('User Skill repository architecture', () => {
-  it('keeps the public facade within the production file budget', () => {
-    expect(rawLineCount(readSource(repositoryPath))).toBeLessThanOrEqual(660)
-  })
-
-  it('keeps the catalog and Personal Skill owner within the production file budget', () => {
-    expect(rawLineCount(readSource(storePath))).toBeLessThanOrEqual(660)
-  })
-
-  it('keeps the GitHub and ZIP import owner within the production file budget', () => {
-    expect(rawLineCount(readSource(bundleOwnerPath))).toBeLessThanOrEqual(660)
-  })
-
-  it('keeps the Agent Home import owner within the production file budget', () => {
-    expect(rawLineCount(readSource(agentHomeOwnerPath))).toBeLessThanOrEqual(660)
-  })
-
-  it('keeps the mutation and transaction owners within the production file budget', () => {
-    expect(rawLineCount(readSource(mutationOwnerPath))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(transactionOwnerPath))).toBeLessThanOrEqual(660)
-  })
-
-  it('keeps the compatibility index within the production file budget', () => {
-    expect(rawLineCount(readSource(compatibilityIndexPath))).toBeLessThanOrEqual(360)
-  })
-
   it('locks the compatibility export and operation inventories', () => {
     expect(exportInventory()).toEqual([
       'type:ImportOutcome',

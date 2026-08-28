@@ -297,6 +297,8 @@ export type ComputeApprovalRequest = {
   resources?: string
   timeout_seconds?: number
   remote_workdir?: string
+  // Transient approval disclosure; this is never persisted as Compute Job state.
+  willPersistUnencrypted?: boolean
 }
 
 // Job status values, including concurrency-managed queued work.

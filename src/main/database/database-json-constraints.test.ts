@@ -8,6 +8,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from './migration-service'
 
+// Hosted Windows runners apply the full migration ledger and many CHECK
+// round-trips under disk contention. The Windows full-test workflow default
+// is 60s; this suite finishes later without hanging.
+const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
+
 describe('database JSON and remaining domain constraints', () => {
   let client: PrismaClient | undefined
   let storageRoot: string | undefined
@@ -246,5 +251,5 @@ describe('database JSON and remaining domain constraints', () => {
         })
       ])
     ).resolves.toBeDefined()
-  })
+  }, WINDOWS_SQLITE_TEST_TIMEOUT_MS)
 })

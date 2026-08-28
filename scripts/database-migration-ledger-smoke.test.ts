@@ -20,7 +20,7 @@ import { PrismaClient } from '@prisma/client'
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
     expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
-      '84f09b9d29ee3ce9ea82ce73ded6a866c20330586932afc0626975faa462a875'
+      'b8cf55e358a0a99ad38b412c9e460560c79be4707c0906bc8d90c5c151cf9e3f'
     )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
@@ -50,7 +50,7 @@ describe('packaged database migration ledger smoke', () => {
       await client.$executeRawUnsafe('DROP INDEX "Review_sessionId_idx"')
       await client.$executeRawUnsafe('DROP INDEX "Finding_reviewId_idx"')
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0014_review_query_indexes', '0015_session_model_call_usage')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption')`
       )
 
       await migrateApplicationDatabase(client)

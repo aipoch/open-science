@@ -54,11 +54,55 @@ const defaultEnvironment = (language: NotebookLanguage): string =>
 const processKey = (language: NotebookLanguage, environment: string): string =>
   `${language === 'r' ? 'r' : 'python'}:${resolveEnvName(language, environment)}`
 
+class NotebookRuntimeRepairRequiredError extends Error {}
+
 const repairRequiredError = (language: NotebookLanguage): Error =>
-  new Error(
+  new NotebookRuntimeRepairRequiredError(
     `RUNTIME_REPAIR_REQUIRED: the bound ${language} runtime failed a protected-package ` +
       'integrity check. Run the runtime Repair workflow before executing another cell.'
   )
+
+const bindingChangedError = (language: NotebookLanguage): Error =>
+  new Error(
+    `RUNTIME_BINDING_CHANGED: the bound ${language} runtime changed while this cell was queued. ` +
+      'Retry the cell so it is admitted against the current runtime.'
+  )
+
+const bindingUnavailableError = (
+  language: NotebookLanguage,
+  binding: NotebookSessionRuntimeBinding
+): Error =>
+  new Error(
+    `RUNTIME_BINDING_UNAVAILABLE: the bound ${language} runtime is ${binding.status}` +
+      (binding.reason ? ` (${binding.reason})` : '') +
+      '. Call list_notebook_runtimes then notebook_switch_runtime to choose another runtime ' +
+      '(an unspecified choice falls back to the app-managed default). Any prior kernel memory ' +
+      '(variables, imports) for this language was lost.'
+  )
+
+const equalStringArrays = (left: string[] | undefined, right: string[] | undefined): boolean =>
+  left === right ||
+  (left !== undefined &&
+    right !== undefined &&
+    left.length === right.length &&
+    left.every((value, index) => value === right[index]))
+
+const sameRuntimeTarget = (
+  admitted: NotebookSessionRuntimeBinding | undefined,
+  current: NotebookSessionRuntimeBinding | undefined
+): boolean => {
+  if (admitted === undefined || current === undefined) return admitted === current
+  return (
+    admitted.language === current.language &&
+    admitted.runtimeId === current.runtimeId &&
+    admitted.source === current.source &&
+    admitted.interpreterPath === current.interpreterPath &&
+    admitted.envName === current.envName &&
+    admitted.resolvedInterpreter?.command === current.resolvedInterpreter?.command &&
+    equalStringArrays(admitted.resolvedInterpreter?.args, current.resolvedInterpreter?.args) &&
+    admitted.resolvedInterpreter?.condaPrefix === current.resolvedInterpreter?.condaPrefix
+  )
+}
 
 /** Owns data-cell routing plus every fail-closed gate before the executor may be dispatched. */
 class NotebookDataExecutionAdmissionOwner {
@@ -104,13 +148,7 @@ class NotebookDataExecutionAdmissionOwner {
     } else if (repairRequired) {
       rejection = repairRequiredError(cell.language)
     } else if (binding && (binding.status ?? 'active') !== 'active') {
-      rejection = new Error(
-        `RUNTIME_BINDING_UNAVAILABLE: the bound ${cell.language} runtime is ${binding.status}` +
-          (binding.reason ? ` (${binding.reason})` : '') +
-          '. Call list_notebook_runtimes then notebook_switch_runtime to choose another runtime ' +
-          '(an unspecified choice falls back to the app-managed default). Any prior kernel memory ' +
-          '(variables, imports) for this language was lost.'
-      )
+      rejection = bindingUnavailableError(cell.language, binding)
     } else if (binding?.resolvedInterpreter) {
       resolvedInterpreter = binding.resolvedInterpreter
     } else {
@@ -144,6 +182,7 @@ class NotebookDataExecutionAdmissionOwner {
   }
 
   runShared<Result>(
+    session: NotebookSessionAggregate,
     admission: NotebookDataExecutionAdmission,
     operation: (rejection: unknown | undefined) => Promise<Result>
   ): Promise<Result> {
@@ -151,21 +190,36 @@ class NotebookDataExecutionAdmissionOwner {
       'execution',
       admission.route.environment,
       () => {
+        const currentRoute = this.route(session, admission.language)
+        const currentBinding = session.runtimeBinding(admission.language)
+        if (
+          currentRoute.environment !== admission.route.environment ||
+          currentRoute.processKey !== admission.route.processKey ||
+          !sameRuntimeTarget(admission.binding, currentBinding)
+        ) {
+          return operation(bindingChangedError(admission.language))
+        }
         const repair = this.options.repairPolicy.requirement(
           admission.language,
           admission.route.environment,
-          admission.binding
+          currentBinding
         )
         const postLockRepairRequired =
           this.options.environmentOperations.isRepairBlocked(
             this.options.repairPolicy.blockKey(
               admission.language,
               admission.route.environment,
-              admission.binding
+              currentBinding
             )
           ) || repair.required
+        if (postLockRepairRequired) return operation(repairRequiredError(admission.language))
+        if (currentBinding && (currentBinding.status ?? 'active') !== 'active') {
+          return operation(bindingUnavailableError(admission.language, currentBinding))
+        }
         return operation(
-          postLockRepairRequired ? repairRequiredError(admission.language) : admission.rejection
+          admission.rejection instanceof NotebookRuntimeRepairRequiredError
+            ? undefined
+            : admission.rejection
         )
       }
     )

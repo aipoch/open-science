@@ -7,6 +7,7 @@ import {
   type RefObject
 } from 'react'
 
+import { hidesBehindPresentationBarrier } from './workspace-conversation-items'
 import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'
 import { findMessageTarget } from './workspace-run-marks'
 
@@ -162,9 +163,7 @@ const useTranscriptWindow = (
           const withinPresentationWindow =
             itemIndex >= presentationStart && itemIndex <= presentationBarrierIndex
           const liveActivityAfterBarrier =
-            itemIndex > presentationBarrierIndex &&
-            item.type !== 'message' &&
-            item.type !== 'subagent-message'
+            itemIndex > presentationBarrierIndex && !hidesBehindPresentationBarrier(item.type)
           return withinPresentationWindow || liveActivityAfterBarrier ? [{ item, itemIndex }] : []
         })
       : items.slice(start, end).map((item, offset) => ({ item, itemIndex: start + offset }))

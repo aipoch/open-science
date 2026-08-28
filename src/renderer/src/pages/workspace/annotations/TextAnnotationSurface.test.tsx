@@ -551,9 +551,9 @@ describe('TextAnnotationSurface annotate trigger', () => {
   const annotateTrigger = (): HTMLButtonElement | undefined =>
     document.querySelector<HTMLButtonElement>('[data-annotation-trigger]') ?? undefined
 
-  const commitSelection = async (paragraph: HTMLParagraphElement): Promise<void> => {
+  const commitSelection = async (target: HTMLElement): Promise<void> => {
     const range = document.createRange()
-    range.selectNodeContents(paragraph.firstChild!)
+    range.selectNodeContents(target.firstChild!)
     Object.defineProperty(range, 'getBoundingClientRect', {
       configurable: true,
       value: () =>
@@ -572,7 +572,7 @@ describe('TextAnnotationSurface annotate trigger', () => {
     const selection = window.getSelection()!
     selection.removeAllRanges()
     selection.addRange(range)
-    await act(async () => paragraph.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    await act(async () => target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
   }
 
   it('keeps the trigger alive when clicking it collapses the browser selection', async () => {
@@ -664,6 +664,238 @@ describe('TextAnnotationSurface annotate trigger', () => {
     await commitSelection(paragraph)
     expect(annotateTrigger()).toBeDefined()
     expect(document.querySelector('textarea')).toBeNull()
+  })
+
+  it('hides the trigger when a nested containing block is removed', async () => {
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={vi.fn()}
+          onError={vi.fn()}
+        >
+          <div>
+            <p>
+              <span>selectable agent reply</span>
+            </p>
+          </div>
+        </TextAnnotationSurface>
+      )
+    )
+    const span = container.querySelector('span')!
+    await commitSelection(span)
+    expect(annotateTrigger()).toBeDefined()
+
+    await act(async () => {
+      container.querySelector('p')?.remove()
+    })
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
+  it('hides the trigger when selected character data is replaced in place', async () => {
+    const paragraph = await renderSurface()
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    await act(async () => {
+      if (paragraph.firstChild) paragraph.firstChild.textContent = 'stream replaced the quote'
+    })
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
+  it('hides the trigger as soon as the selected content is removed', async () => {
+    const paragraph = await renderSurface()
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    await act(async () => {
+      paragraph.remove()
+    })
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
+  it('keeps the trigger after syntax highlighting retargets the selected code', async () => {
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{
+            kind: 'session-item',
+            sessionId: 'session-1',
+            itemId: 'tool-1',
+            itemType: 'tool-activity',
+            sectionId: 'code'
+          }}
+          activeAnnotations={[]}
+          onAdd={vi.fn()}
+          onError={vi.fn()}
+        >
+          <WorkspaceToolCodeBlock code="const answer = 42" language="typescript" />
+        </TextAnnotationSurface>
+      )
+    )
+    const code = container.querySelector<HTMLElement>('[data-testid="tool-code-block"] code')!
+    await commitSelection(code)
+    expect(annotateTrigger()).toBeDefined()
+
+    await vi.waitFor(() => {
+      expect(
+        container.querySelectorAll('[data-testid="tool-code-block"] code span').length
+      ).toBeGreaterThan(0)
+    })
+    await act(async () => Promise.resolve())
+    expect(annotateTrigger()).toBeDefined()
+  })
+
+  it('keeps a duplicate quote on the selected occurrence after highlight replacement', async () => {
+    const highlights = installCssHighlightsMock()
+    const onAdd = vi.fn<(annotation: TextAnnotation) => undefined>(() => undefined)
+    try {
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={[]}
+            onAdd={onAdd}
+            onError={vi.fn()}
+          >
+            <p>repeat then repeat</p>
+          </TextAnnotationSurface>
+        )
+      )
+      const paragraph = container.querySelector('p')!
+      const range = document.createRange()
+      range.setStart(paragraph.firstChild!, 12)
+      range.setEnd(paragraph.firstChild!, 18)
+      Object.defineProperty(range, 'getBoundingClientRect', {
+        configurable: true,
+        value: () =>
+          ({
+            left: 10,
+            right: 120,
+            top: 20,
+            bottom: 40,
+            width: 110,
+            height: 20,
+            x: 10,
+            y: 20,
+            toJSON: () => ({})
+          }) as DOMRect
+      })
+      const selection = window.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+      await act(async () => paragraph.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+      expect(annotateTrigger()).toBeDefined()
+
+      await act(async () => {
+        paragraph.replaceChildren()
+        for (const part of ['repeat', ' then ', 'repeat']) {
+          const token = document.createElement('span')
+          token.textContent = part
+          paragraph.appendChild(token)
+        }
+      })
+      expect(annotateTrigger()).toBeDefined()
+
+      await act(async () => annotateTrigger()?.click())
+      const draftRange = Array.from(highlights.get('agent-annotation-draft') ?? [])[0]
+      expect(draftRange?.toString()).toBe('repeat')
+      expect(draftRange?.startContainer).toBe(paragraph.lastChild?.firstChild)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('hides the trigger when streaming replaces the selected message content', async () => {
+    const paragraph = await renderSurface()
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={vi.fn()}
+          onError={vi.fn()}
+        >
+          <p>stream replaced the quote</p>
+        </TextAnnotationSurface>
+      )
+    )
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
+  it('hides the trigger when the selection scrolls outside its clipping container', async () => {
+    await act(async () =>
+      root.render(
+        <div data-testid="annotation-scroll-viewport" style={{ maxHeight: 100, overflow: 'auto' }}>
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={[]}
+            onAdd={vi.fn()}
+            onError={vi.fn()}
+          >
+            <p>selectable agent reply</p>
+          </TextAnnotationSurface>
+        </div>
+      )
+    )
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="annotation-scroll-viewport"]'
+    )!
+    const paragraph = container.querySelector('p')!
+    const rect = (top: number, bottom: number): DOMRect =>
+      ({
+        left: 10,
+        right: 120,
+        top,
+        bottom,
+        width: 110,
+        height: bottom - top,
+        x: 10,
+        y: top,
+        toJSON: () => ({})
+      }) as DOMRect
+    Object.defineProperty(viewport, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(0, 100)
+    })
+
+    let selectionRect = rect(20, 40)
+    const originalRangeRect = Object.getOwnPropertyDescriptor(
+      Range.prototype,
+      'getBoundingClientRect'
+    )
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => selectionRect
+    })
+
+    try {
+      const range = document.createRange()
+      range.selectNodeContents(paragraph.firstChild!)
+      const selection = window.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+      await act(async () => paragraph.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+      expect(annotateTrigger()).toBeDefined()
+
+      selectionRect = rect(120, 140)
+      await act(async () => viewport.dispatchEvent(new Event('scroll')))
+      expect(annotateTrigger()).toBeUndefined()
+
+      selectionRect = rect(20, 40)
+      await act(async () => viewport.dispatchEvent(new Event('scroll')))
+      expect(annotateTrigger()).toBeDefined()
+    } finally {
+      if (originalRangeRect) {
+        Object.defineProperty(Range.prototype, 'getBoundingClientRect', originalRangeRect)
+      } else {
+        delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect
+      }
+    }
   })
 
   it('places the trigger beside the last line of a multi-line selection', async () => {

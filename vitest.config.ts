@@ -119,6 +119,8 @@ export default defineConfig({
     }
   },
   test: {
+    // Keep successful suites quiet while retaining their captured console output on failure.
+    silent: 'passed-only',
     server: {
       deps: {
         inline: ['@file-viewer/renderer-spreadsheet']

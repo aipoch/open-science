@@ -376,11 +376,23 @@ export const collectSessionReferences = (
   return references
 }
 
+// The resolved Agent target a user Message was sent with. Consecutive snapshots let the renderer
+// derive session config-change timeline markers without a synthetic activity. Absent on messages
+// persisted before the field existed; unknown values are discarded by the persistence sanitizer.
+export type PersistedMessageAgentTarget = {
+  frameworkId: AgentFrameworkId
+  backendId?: string
+  providerId: string
+  model?: string
+  reasoningEffort: ReasoningEffort
+}
+
 export type PersistedChatMessage = {
   id: string
   role: PersistedMessageRole
   content: string
   attribution?: MessageAttribution
+  agentTarget?: PersistedMessageAgentTarget
   status: PersistedMessageStatus
   streamId?: string
   responseToMessageId?: string
@@ -825,6 +837,31 @@ export const sanitizeMessageAttribution = (value: unknown): MessageAttribution |
     feature: value.feature,
     purpose: value.purpose,
     causeReviewId: value.causeReviewId
+  }
+}
+
+// Keeps only fully-valid send-target snapshots; a partial or unknown target would mark false
+// config changes, so the whole field drops instead of degrading to a torn snapshot.
+const sanitizeMessageAgentTarget = (value: unknown): PersistedMessageAgentTarget | undefined => {
+  if (!isRecord(value)) return undefined
+  const frameworkId = asString(value.frameworkId)
+  const providerId = asString(value.providerId)
+  if (
+    !frameworkId ||
+    !AGENT_FRAMEWORK_IDS.has(frameworkId as AgentFrameworkId) ||
+    !providerId ||
+    !isReasoningEffort(value.reasoningEffort)
+  ) {
+    return undefined
+  }
+  const backendId = asString(value.backendId)
+  const model = asString(value.model)
+  return {
+    frameworkId: frameworkId as AgentFrameworkId,
+    ...(backendId ? { backendId } : {}),
+    providerId,
+    ...(model ? { model } : {}),
+    reasoningEffort: value.reasoningEffort
   }
 }
 
@@ -3295,6 +3332,10 @@ const sanitizeMessage = (
     sanitized.structuredOutputEvidenceInvalid = true
   }
   if (role === 'user' && message.interrupted === true) sanitized.interrupted = true
+  if (role === 'user') {
+    const agentTarget = sanitizeMessageAgentTarget(message.agentTarget)
+    if (agentTarget) sanitized.agentTarget = agentTarget
+  }
   if (role === 'agent' && sanitized.status === 'complete') {
     sanitized.completedAt = completedAt ?? sanitized.updatedAt
   }

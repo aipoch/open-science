@@ -1,16 +1,40 @@
+const collectSurfaceTextNodes = (surface: HTMLElement): Text[] => {
+  const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT)
+  const nodes: Text[] = []
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    nodes.push(node as Text)
+  }
+  return nodes
+}
+
+const concatenatedText = (nodes: readonly Text[]): string => nodes.map((node) => node.data).join('')
+
+const rangeStartInSurfaceText = (nodes: readonly Text[], range: Range): number | undefined => {
+  let offset = 0
+  for (const node of nodes) {
+    if (range.startContainer === node) return offset + range.startOffset
+    offset += node.data.length
+  }
+
+  const startContainer = range.startContainer
+  if (startContainer.nodeType !== Node.ELEMENT_NODE) return undefined
+  const child = startContainer.childNodes[range.startOffset] ?? startContainer.lastChild
+  if (!child) return undefined
+  offset = 0
+  for (const node of nodes) {
+    if (child === node || (child instanceof Element && child.contains(node))) return offset
+    offset += node.data.length
+  }
+  return undefined
+}
+
 const rangeForTextOccurrence = (
   surface: HTMLElement,
   quote: string,
   occurrence = 0
 ): Range | undefined => {
-  const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT)
-  const nodes: Text[] = []
-  let text = ''
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const textNode = node as Text
-    nodes.push(textNode)
-    text += textNode.data
-  }
+  const nodes = collectSurfaceTextNodes(surface)
+  const text = concatenatedText(nodes)
   let start = -1
   let from = 0
   for (let index = 0; index <= occurrence; index += 1) {
@@ -26,7 +50,7 @@ const rangeForTextOccurrence = (
   let endOffset = 0
   for (const node of nodes) {
     const nextOffset = offset + node.data.length
-    if (!startNode && start >= offset && start <= nextOffset) {
+    if (!startNode && start >= offset && start < nextOffset) {
       startNode = node
       startOffset = start - offset
     }
@@ -42,6 +66,21 @@ const rangeForTextOccurrence = (
   range.setStart(startNode, startOffset)
   range.setEnd(endNode, endOffset)
   return range
+}
+
+const quoteOccurrenceForRange = (surface: HTMLElement, quote: string, range: Range): number => {
+  const nodes = collectSurfaceTextNodes(surface)
+  const start = rangeStartInSurfaceText(nodes, range)
+  if (start === undefined) return 0
+  const text = concatenatedText(nodes)
+  let occurrence = 0
+  let from = 0
+  for (;;) {
+    const index = text.indexOf(quote, from)
+    if (index < 0 || index >= start) return occurrence
+    occurrence += 1
+    from = index + quote.length
+  }
 }
 
 type TextAnnotationRangeTarget = Readonly<{ id: string; quote: string }>
@@ -72,4 +111,26 @@ const reconcileTextAnnotationRanges = (
   return next
 }
 
-export { rangeForTextOccurrence, reconcileTextAnnotationRanges }
+const retargetTextAnnotationRange = (
+  surface: HTMLElement,
+  quote: string,
+  existing?: Range,
+  occurrence = 0
+): Range | undefined => {
+  if (
+    existing &&
+    !existing.collapsed &&
+    existing.toString() === quote &&
+    rangeBelongsToSurface(existing, surface)
+  ) {
+    return existing
+  }
+  return rangeForTextOccurrence(surface, quote, occurrence)
+}
+
+export {
+  quoteOccurrenceForRange,
+  rangeForTextOccurrence,
+  reconcileTextAnnotationRanges,
+  retargetTextAnnotationRange
+}

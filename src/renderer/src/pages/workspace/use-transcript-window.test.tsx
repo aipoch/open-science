@@ -37,4 +37,32 @@ describe('useTranscriptWindow', () => {
 
     act(() => root.unmount())
   })
+
+  it('keeps config-change dividers behind the presentation barrier with their owning message', () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const timeline = [
+      { id: 'message-1', type: 'message' },
+      { id: 'message-2', type: 'message' },
+      { id: 'session-config-change-message-3', type: 'session-config-change' },
+      { id: 'message-3', type: 'message' },
+      { id: 'activity-1', type: 'activity' }
+    ] as WorkspaceConversationTimelineItem[]
+    const result = {
+      current: undefined as unknown as ReturnType<typeof useTranscriptWindow>
+    }
+    const HookHarness = (): null => {
+      result.current = useTranscriptWindow('session-1', timeline, 1, createRef())
+      return null
+    }
+
+    act(() => root.render(<HookHarness />))
+    expect(result.current.entries.map((entry) => entry.item.id)).toEqual([
+      'message-1',
+      'message-2',
+      'activity-1'
+    ])
+
+    act(() => root.unmount())
+  })
 })

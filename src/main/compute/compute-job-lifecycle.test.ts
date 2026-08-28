@@ -30,7 +30,8 @@ beforeEach(async () => {
     intent: 'test promotion',
     command: 'echo ok',
     commandHash: 'hash',
-    initialStatus: 'queued'
+    initialStatus: 'queued',
+    allowUnencryptedPersistence: true
   })
   await repository.create({
     id: 'submitted-job',
@@ -41,7 +42,8 @@ beforeEach(async () => {
     intent: 'test dispatch',
     command: 'echo ok',
     commandHash: 'hash',
-    initialStatus: 'submitted'
+    initialStatus: 'submitted',
+    allowUnencryptedPersistence: true
   })
   await repository.create({
     id: 'running-job',
@@ -52,7 +54,8 @@ beforeEach(async () => {
     intent: 'test polling',
     command: 'echo ok',
     commandHash: 'hash',
-    initialStatus: 'running'
+    initialStatus: 'running',
+    allowUnencryptedPersistence: true
   })
   publish = vi.fn()
   lifecycle = new ComputeJobLifecycle(repository, publish)

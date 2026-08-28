@@ -366,6 +366,42 @@ describe('rna / rfam', () => {
     })
   })
 
+  it('aborts the polling delay without starting another request', async () => {
+    vi.useFakeTimers()
+    const cancellation = new AbortController()
+    const fetchJson = vi.fn().mockResolvedValue({})
+    const pending = tool('search_sequence').run!(
+      {
+        credentials: {},
+        signal: cancellation.signal,
+        fetchJson,
+        fetchText: async () => {
+          throw new Error('unused')
+        },
+        fetchJsonWithHeaders: async () => {
+          throw new Error('unused')
+        },
+        postJson: async () => ({ resultURL: 'https://rfam.test/result/1', jobId: 'job-1' })
+      },
+      { sequence: 'GGUUCC', poll_interval_s: 60, max_wait_s: 120 }
+    )
+    let settled = false
+    void pending.catch(() => {
+      settled = true
+    })
+
+    try {
+      await vi.waitFor(() => expect(fetchJson).toHaveBeenCalledOnce())
+      cancellation.abort()
+
+      await vi.waitFor(() => expect(settled).toBe(true))
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+      expect(fetchJson).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('search_sequence surfaces a submit-side error as-is (backend down)', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 500, headers: new Headers() })
     await expect(

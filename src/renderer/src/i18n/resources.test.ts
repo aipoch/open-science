@@ -3043,6 +3043,37 @@ describe('European Portuguese safety copy', () => {
   })
 
   it.each([
+    [
+      "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.",
+      'O armazenamento seguro não está disponível. O comando, os caminhos e a saída desta tarefa podem ser guardados sem encriptação.'
+    ],
+    ['Filter Marketplace Specialists', 'Filtrar Especialistas do Mercado'],
+    ['Updates available', 'Atualizações disponíveis'],
+    ['No Specialists match this filter.', 'Nenhum Especialista corresponde a este filtro.'],
+    ['Show all', 'Mostrar tudo'],
+    [
+      'Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.',
+      'A mostrar {{detailed}} de {{reported}} chamadas registadas, porque alguns turnos não têm detalhes exatos das chamadas.'
+    ],
+    ['Could not load version history.', 'Não foi possível carregar o histórico de versões.'],
+    [
+      'Reviewer log content was truncated to fit the size limit.',
+      'O conteúdo do registo do revisor foi truncado para respeitar o limite de tamanho.'
+    ],
+    [
+      'Unable to restore plan state. Retrying…',
+      'Não foi possível restaurar o estado do plano. A tentar novamente…'
+    ],
+    [
+      'Session configuration changed to {{framework}} · {{model}} · {{effort}}',
+      'A configuração da sessão foi alterada para {{framework}} · {{model}} · {{effort}}'
+    ],
+    ['{{framework}} · {{model}} · {{effort}}', '{{framework}} · {{model}} · {{effort}}']
+  ])('uses reviewed European Portuguese copy for newly merged surface %s', (key, expected) => {
+    expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it.each([
     ['Electron v', 'Electron v'],
     ['Endpoint', 'Endpoint'],
     ['Node v', 'Node v'],

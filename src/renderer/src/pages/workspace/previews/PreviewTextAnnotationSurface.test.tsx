@@ -11,6 +11,7 @@ import type {
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { requestAnnotationReveal } from '../annotations/annotation-reveal'
+import { HighlightedCodeLines } from '../HighlightedCodeLines'
 import { PreviewTextAnnotationSurface } from './PreviewTextAnnotationSurface'
 
 const item = (overrides: Partial<PreviewFileItem> = {}): PreviewFileItem => ({
@@ -439,5 +440,85 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(scrollIntoView).toHaveBeenCalledTimes(1)
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' })
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+  })
+
+  it('keeps the trigger after preview code highlighting retargets the selected code', async () => {
+    await act(async () => {
+      root.render(
+        <PreviewTextAnnotationSurface
+          item={item({
+            name: 'main.ts',
+            title: 'main.ts',
+            path: '/project/main.ts',
+            format: 'code'
+          })}
+          onAddAnnotation={vi.fn(() => undefined)}
+          onAnnotationError={vi.fn()}
+        >
+          <HighlightedCodeLines code="const answer = 42" language="typescript" />
+        </PreviewTextAnnotationSurface>
+      )
+    })
+    const contentSpan = container.querySelector(
+      '[data-testid="source-line-number"]'
+    )?.nextElementSibling
+    const text = contentSpan?.firstChild
+    if (!text) throw new Error('Preview code text was not rendered')
+    const range = document.createRange()
+    range.selectNodeContents(text)
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        left: 10,
+        right: 120,
+        top: 20,
+        bottom: 40,
+        width: 110,
+        height: 20,
+        x: 10,
+        y: 20,
+        toJSON: () => ({})
+      })
+    })
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    await act(async () => {
+      container
+        .querySelector('[data-preview-text-annotation-surface="true"]')
+        ?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    })
+    expect(document.querySelector('[data-annotation-trigger]')).not.toBeNull()
+
+    await vi.waitFor(() => {
+      expect(
+        container.querySelectorAll('[data-testid="source-code-token"]').length
+      ).toBeGreaterThan(0)
+    })
+    await act(async () => Promise.resolve())
+    expect(document.querySelector('[data-annotation-trigger]')).not.toBeNull()
+  })
+
+  it('keeps a duplicate preview quote on the selected occurrence after highlight replacement', async () => {
+    await renderSurface({ content: 'repeat then repeat' })
+    await selectRange(12, 18)
+    expect(document.querySelector('[data-annotation-trigger]')).not.toBeNull()
+
+    const paragraph = container.querySelector('p')!
+    await act(async () => {
+      paragraph.replaceChildren()
+      for (const part of ['repeat', ' then ', 'repeat']) {
+        const token = document.createElement('span')
+        token.textContent = part
+        paragraph.appendChild(token)
+      }
+    })
+    expect(document.querySelector('[data-annotation-trigger]')).not.toBeNull()
+
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[data-annotation-trigger]')?.click()
+    )
+    const draftRange = Array.from(registeredRanges)[0]
+    expect(draftRange?.toString()).toBe('repeat')
+    expect(draftRange?.startContainer).toBe(paragraph.lastChild?.firstChild)
   })
 })
