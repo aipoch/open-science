@@ -77,14 +77,6 @@ const CODEBUDDY_NETWORK_DENY_RULES = [
   'Bash(git submodule:*)'
 ] as const
 
-const codeBuddyTools = (platform: NodeJS.Platform): string =>
-  [
-    ...CODEBUDDY_LOCAL_TOOLS,
-    // CodeBuddy's OS-level Bash sandbox is available only on macOS and Linux. Keep every shell
-    // tool absent on Windows rather than relying on a prompt to prevent direct network access.
-    ...(platform === 'win32' ? [] : ['Bash'])
-  ].join(',')
-
 export const codeBuddyStorageDir = (storageRoot: string): string => join(storageRoot, 'codebuddy')
 
 export const isolateCodeBuddyEnvironment = async (
@@ -227,7 +219,9 @@ export const createCodeBuddyFramework = ({
         '--setting-sources',
         'user',
         '--tools',
-        codeBuddyTools(platform),
+        // Shell execution stays on the app-owned Notebook tool so Python/R requests follow its
+        // kernel-routing contract instead of CodeBuddy's prefix-bypassable native Bash rules.
+        CODEBUDDY_LOCAL_TOOLS.join(','),
         '--disallowedTools',
         ...CODEBUDDY_NETWORK_DENY_RULES,
         ...(persistentSystemPrompt ? ['--system-prompt-file', systemPromptPath] : [])

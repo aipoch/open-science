@@ -55,7 +55,7 @@ describe('codebuddy framework', () => {
       '--setting-sources',
       'user',
       '--tools',
-      expect.not.stringMatching(/Agent|Skill|Workflow|Task|WebFetch|WebSearch/),
+      expect.not.stringMatching(/Agent|Skill|Workflow|Task|WebFetch|WebSearch|Bash/),
       '--disallowedTools',
       'Bash(curl:*)',
       'Bash(wget:*)',
@@ -154,7 +154,7 @@ describe('codebuddy framework', () => {
     expect(spawnedEnv?.NO_PROXY).toBe('inherited-bypass.example.test')
   })
 
-  it('removes every shell tool on Windows where the CodeBuddy sandbox is unavailable', () => {
+  it('keeps native Bash absent on Windows too', () => {
     const framework = createCodeBuddyFramework({ platform: 'win32' })
     const config = framework.prepareModelConfig(provider, {
       storageRoot: 'C:\\app-data',
@@ -168,6 +168,18 @@ describe('codebuddy framework', () => {
     expect(tools).toBe('Read,Write,Edit,Glob,Grep')
     expect(config.args).toContain('Bash(curl:*)')
     expect(settings.sandbox.enabled).toBe(false)
+  })
+
+  it('routes shell work through the app-owned Notebook tool instead of native Bash', () => {
+    const config = createCodeBuddyFramework({ platform: 'linux' }).prepareModelConfig(provider, {
+      storageRoot: '/app-data',
+      executablePath: '/usr/bin/codebuddy',
+      systemPromptAppends: [],
+      reasoningEfforts: []
+    })
+    const tools = config.args?.[config.args.indexOf('--tools') + 1]
+
+    expect(tools).not.toContain('Bash')
   })
 
   it('replays dynamic MCP servers when activating the target Session before a prompt', async () => {
