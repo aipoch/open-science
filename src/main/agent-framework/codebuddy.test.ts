@@ -48,6 +48,8 @@ describe('codebuddy framework', () => {
       CODEBUDDY_DISABLE_FORK_SUBAGENT: '1',
       CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS: '1',
       DISABLE_AUTOUPDATER: '1',
+      DISABLE_TELEMETRY: '1',
+      DISABLE_ERROR_REPORTING: '1',
       NO_BROWSER: '1'
     })
     expect(config.args).toEqual([
@@ -152,6 +154,8 @@ describe('codebuddy framework', () => {
     )[2].env
     expect(spawnedEnv?.HTTPS_PROXY).toBe('http://inherited-proxy.example.test:3128')
     expect(spawnedEnv?.NO_PROXY).toBe('inherited-bypass.example.test')
+    expect(spawnedEnv?.DISABLE_TELEMETRY).toBe('1')
+    expect(spawnedEnv?.DISABLE_ERROR_REPORTING).toBe('1')
   })
 
   it('keeps native Bash absent on Windows too', () => {

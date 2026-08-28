@@ -93,6 +93,8 @@ type WorkspaceSidebarProps = {
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
   now: number
   showSessionShortcuts?: boolean
+  openSessionActionsId?: string | null
+  onSessionActionsOpenChange?: (sessionId: string, open: boolean) => void
 }
 
 // Maps each session status to the left-side indicator dot using emitted theme colors.
@@ -246,7 +248,9 @@ const WorkspaceSidebarView = ({
   isMobileOpen = false,
   onMobileClose,
   now,
-  showSessionShortcuts = false
+  showSessionShortcuts = false,
+  openSessionActionsId = null,
+  onSessionActionsOpenChange
 }: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
   const sections = getSessionSections(sessions, now)
@@ -521,7 +525,11 @@ const WorkspaceSidebarView = ({
                             )}
                           />
 
-                          <DropdownMenu>
+                          <DropdownMenu
+                            onOpenChange={(menuOpen) => {
+                              onSessionActionsOpenChange?.(session.id, menuOpen)
+                            }}
+                          >
                             <DropdownMenuTrigger asChild>
                               <button
                                 type="button"
@@ -652,6 +660,7 @@ const WorkspaceSidebarView = ({
                         session={session}
                         onPreviewRequest={onPreviewSession}
                         canRename={canMutateConversations && onRenameSessionTitle !== undefined}
+                        previewSuppressed={openSessionActionsId === session.id}
                         onRenameTitle={
                           onRenameSessionTitle
                             ? (title) => onRenameSessionTitle(session, title)
@@ -709,6 +718,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const { onOpenSession, sessions } = props
   const [now, setNow] = useState(Date.now)
   const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
+  const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
   const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
   const isMac = window.api?.platform === 'darwin'
 
@@ -773,7 +783,19 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
     }
   }, [isMac, now, onOpenSession, sessions])
 
-  return <WorkspaceSidebarView {...props} now={now} showSessionShortcuts={showSessionShortcuts} />
+  return (
+    <WorkspaceSidebarView
+      {...props}
+      now={now}
+      showSessionShortcuts={showSessionShortcuts}
+      openSessionActionsId={openSessionActionsId}
+      onSessionActionsOpenChange={(sessionId, open) => {
+        setOpenSessionActionsId((current) =>
+          open ? sessionId : current === sessionId ? null : current
+        )
+      }}
+    />
+  )
 }
 
 export { WorkspaceSidebar }
