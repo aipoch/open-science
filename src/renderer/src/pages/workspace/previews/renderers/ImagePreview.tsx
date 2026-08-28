@@ -2,31 +2,59 @@ import { ImageOff } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useCachedPreviewImage } from '../useCachedPreviewImage'
 import { ZoomablePreview } from './ZoomablePreview'
+import { ImagePointAnnotationSurface } from '../../annotations/ImagePointAnnotationSurface'
+import type { Annotation, AnnotationValidationError } from '../../../../../../shared/annotations'
 
 const ZoomableImage = ({
   url,
   name,
-  onError
+  onError,
+  annotationItem,
+  activeAnnotations = [],
+  onAddAnnotation,
+  onUpdateAnnotationNote,
+  onRemoveAnnotation,
+  onAnnotationError
 }: {
   url: string
   name: string
   onError: () => void
+  annotationItem?: PreviewFileItem
+  activeAnnotations?: readonly Annotation[]
+  onAddAnnotation?: (annotation: Annotation) => AnnotationValidationError | undefined
+  onUpdateAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
+  onRemoveAnnotation?: (id: string) => void
+  onAnnotationError?: (error: AnnotationValidationError) => void
 }): React.JSX.Element => {
   return (
     <ZoomablePreview>
-      <img
-        src={url}
-        alt={name}
-        className="size-full object-contain"
-        draggable={false}
-        onError={onError}
-      />
+      {annotationItem ? (
+        <ImagePointAnnotationSurface
+          item={annotationItem}
+          src={url}
+          activeAnnotations={activeAnnotations}
+          onAdd={onAddAnnotation}
+          onUpdateNote={onUpdateAnnotationNote}
+          onRemove={onRemoveAnnotation}
+          onAnnotationError={onAnnotationError}
+          onImageError={onError}
+        />
+      ) : (
+        <img
+          src={url}
+          alt={name}
+          className="size-full object-contain"
+          draggable={false}
+          onError={onError}
+        />
+      )}
     </ZoomablePreview>
   )
 }
@@ -39,7 +67,13 @@ export const PreviewImageContent = ({
   sessionId,
   mimeType,
   size,
-  mtimeMs
+  mtimeMs,
+  annotationItem,
+  activeAnnotations,
+  onAddAnnotation,
+  onUpdateAnnotationNote,
+  onRemoveAnnotation,
+  onAnnotationError
 }: {
   path: string
   name: string
@@ -49,6 +83,12 @@ export const PreviewImageContent = ({
   mimeType?: string
   size?: number
   mtimeMs?: number
+  annotationItem?: PreviewFileItem
+  activeAnnotations?: readonly Annotation[]
+  onAddAnnotation?: (annotation: Annotation) => AnnotationValidationError | undefined
+  onUpdateAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
+  onRemoveAnnotation?: (id: string) => void
+  onAnnotationError?: (error: AnnotationValidationError) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const requestKey = createPreviewResourceKey({
@@ -95,12 +135,29 @@ export const PreviewImageContent = ({
 
   return (
     <div className="relative size-full overflow-hidden p-4">
-      <ZoomableImage url={state.url} name={name} onError={() => setFailedRequestKey(requestKey)} />
+      <ZoomableImage
+        url={state.url}
+        name={name}
+        onError={() => setFailedRequestKey(requestKey)}
+        annotationItem={annotationItem}
+        activeAnnotations={activeAnnotations}
+        onAddAnnotation={onAddAnnotation}
+        onUpdateAnnotationNote={onUpdateAnnotationNote}
+        onRemoveAnnotation={onRemoveAnnotation}
+        onAnnotationError={onAnnotationError}
+      />
     </div>
   )
 }
 
-export const ImagePreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (
+export const ImagePreviewRenderer = ({
+  item,
+  activeAnnotations,
+  onAddAnnotation,
+  onUpdateAnnotationNote,
+  onRemoveAnnotation,
+  onAnnotationError
+}: PreviewFileRendererProps): React.JSX.Element => (
   <PreviewImageContent
     path={item.path}
     name={item.name}
@@ -110,5 +167,11 @@ export const ImagePreviewRenderer = ({ item }: PreviewFileRendererProps): React.
     mimeType={item.mimeType}
     size={item.size}
     mtimeMs={item.mtimeMs}
+    annotationItem={item}
+    activeAnnotations={activeAnnotations}
+    onAddAnnotation={onAddAnnotation}
+    onUpdateAnnotationNote={onUpdateAnnotationNote}
+    onRemoveAnnotation={onRemoveAnnotation}
+    onAnnotationError={onAnnotationError}
   />
 )

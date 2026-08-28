@@ -1,4 +1,8 @@
-import { isModelBridgeSupported, isVendorModelMultimodal } from './provider-registry'
+import {
+  isModelBridgeSupported,
+  isVendorModelMultimodal,
+  resolveVendorModelApiEndpoints
+} from './provider-registry'
 import type { OfficialVendorId } from './provider-registry'
 import {
   isClaudeSubscriptionProvider,
@@ -110,8 +114,12 @@ export const buildConfiguredModelCatalog = (
   return buildConfiguredModelInventory(input).map((entry) => {
     const provider = input.providers.find((candidate) => candidate.id === entry.providerId)!
     const model = entry.model
+    const apiEndpoints =
+      provider.type === 'official' && provider.vendorId
+        ? resolveVendorModelApiEndpoints(provider.vendorId, model)
+        : provider.apiEndpoints
     const frameworkCompatible = isProviderUsableByFramework(
-      { apiEndpoints: provider.apiEndpoints, type: provider.type },
+      { apiEndpoints, type: provider.type },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
     )
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)

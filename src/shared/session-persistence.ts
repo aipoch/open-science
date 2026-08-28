@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import type { PersistedUploadedAttachment } from './uploads'
 import type { FileReference } from './artifacts'
+import { sanitizeAnnotations, type Annotation } from './annotations'
 import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
@@ -375,11 +376,23 @@ export const collectSessionReferences = (
   return references
 }
 
+// The resolved Agent target a user Message was sent with. Consecutive snapshots let the renderer
+// derive session config-change timeline markers without a synthetic activity. Absent on messages
+// persisted before the field existed; unknown values are discarded by the persistence sanitizer.
+export type PersistedMessageAgentTarget = {
+  frameworkId: AgentFrameworkId
+  backendId?: string
+  providerId: string
+  model?: string
+  reasoningEffort: ReasoningEffort
+}
+
 export type PersistedChatMessage = {
   id: string
   role: PersistedMessageRole
   content: string
   attribution?: MessageAttribution
+  agentTarget?: PersistedMessageAgentTarget
   status: PersistedMessageStatus
   streamId?: string
   responseToMessageId?: string
@@ -387,6 +400,8 @@ export type PersistedChatMessage = {
   // Links a message to session-level artifact metadata without duplicating file records per message.
   artifactIds?: string[]
   uploads?: PersistedUploadedAttachment[]
+  // Structured evidence staged with the Composer and sent as part of this user Message.
+  annotations?: Annotation[]
   // Delegate assignment metadata keeps execution inputs reconstructable without parsing display text.
   delegatedTask?: string
   delegatedInputVersionIds?: string[]
@@ -822,6 +837,31 @@ export const sanitizeMessageAttribution = (value: unknown): MessageAttribution |
     feature: value.feature,
     purpose: value.purpose,
     causeReviewId: value.causeReviewId
+  }
+}
+
+// Keeps only fully-valid send-target snapshots; a partial or unknown target would mark false
+// config changes, so the whole field drops instead of degrading to a torn snapshot.
+const sanitizeMessageAgentTarget = (value: unknown): PersistedMessageAgentTarget | undefined => {
+  if (!isRecord(value)) return undefined
+  const frameworkId = asString(value.frameworkId)
+  const providerId = asString(value.providerId)
+  if (
+    !frameworkId ||
+    !AGENT_FRAMEWORK_IDS.has(frameworkId as AgentFrameworkId) ||
+    !providerId ||
+    !isReasoningEffort(value.reasoningEffort)
+  ) {
+    return undefined
+  }
+  const backendId = asString(value.backendId)
+  const model = asString(value.model)
+  return {
+    frameworkId: frameworkId as AgentFrameworkId,
+    ...(backendId ? { backendId } : {}),
+    providerId,
+    ...(model ? { model } : {}),
+    reasoningEffort: value.reasoningEffort
   }
 }
 
@@ -3208,6 +3248,7 @@ const sanitizeMessage = (
   const parts = Array.isArray(message.parts)
     ? message.parts.map(sanitizeMessagePart).filter((item): item is MessagePart => !!item)
     : []
+  const annotations = role === 'user' ? sanitizeAnnotations(message.annotations) : []
   const images = sanitizeMessageImages(message.images)
   const turnUsage = role === 'agent' ? sanitizeAcpTurnTokenUsage(message.turnUsage) : undefined
   const candidateModelCallUsage =
@@ -3263,6 +3304,7 @@ const sanitizeMessage = (
   if (delegatedCallerSource) sanitized.delegatedCallerSource = delegatedCallerSource
   if (uploads.length > 0) sanitized.uploads = uploads
   if (parts.length > 0) sanitized.parts = parts
+  if (annotations.length > 0) sanitized.annotations = annotations
   if (
     role === 'user' &&
     (message.turnIntent === 'plan-first' || message.turnIntent === 'save-as-skill')
@@ -3290,6 +3332,10 @@ const sanitizeMessage = (
     sanitized.structuredOutputEvidenceInvalid = true
   }
   if (role === 'user' && message.interrupted === true) sanitized.interrupted = true
+  if (role === 'user') {
+    const agentTarget = sanitizeMessageAgentTarget(message.agentTarget)
+    if (agentTarget) sanitized.agentTarget = agentTarget
+  }
   if (role === 'agent' && sanitized.status === 'complete') {
     sanitized.completedAt = completedAt ?? sanitized.updatedAt
   }

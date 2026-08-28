@@ -20,7 +20,11 @@ import { errorLogFields } from '../logger'
 import { ComputeHostProfileOwner } from './compute-host-profile-owner'
 import { PasswordSshAdapter } from './connection-adapters'
 import { SshConfigComputeConnectionBroker } from './connection-broker'
-import { CredentialVault, type ComputeCredentialCipher } from './credential-vault'
+import {
+  CredentialVault,
+  OptionalSecureStorageStringProtection,
+  type ComputeCredentialCipher
+} from './credential-vault'
 import { createComputeHandlers } from './ipc'
 import { dispatchJob } from './job-dispatcher'
 import { ComputeJobRepository } from './job-repository'
@@ -63,7 +67,10 @@ describe('Compute password authentication release gate', () => {
 
     const secret = `spaces and 'single' "double" quotes\nUnicode 密碼 🧬 ${'長'.repeat(1024)}`
     const repository = new ComputeHostRepository(() => Promise.resolve(client))
-    const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
+    const jobRepository = new ComputeJobRepository(
+      () => Promise.resolve(client),
+      new OptionalSecureStorageStringProtection(protectedTestCipher, 'linux')
+    )
     const vault = new CredentialVault(repository, protectedTestCipher, 'linux')
     const childEnvironments: NodeJS.ProcessEnv[] = []
     const runner: SshRunner = {

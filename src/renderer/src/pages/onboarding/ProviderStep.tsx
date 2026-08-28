@@ -26,6 +26,7 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerFormModelForFramework,
   providerFormTokenLimits,
   providerKindPatch,
   type ProviderFormValue
@@ -198,12 +199,20 @@ const ProviderStep = ({
       return
     }
 
+    const providerValue =
+      formValue.type === 'official'
+        ? {
+            ...formValue,
+            model: providerFormModelForFramework(formValue, frameworkEndpoints) ?? formValue.model
+          }
+        : formValue
+
     // A provider that validates can still be unusable by the selected framework (e.g. Claude + an
     // OpenAI-only gateway). Block that before it becomes the active provider, so onboarding can't
     // finish with a pair the agent can't actually spawn.
     if (
       !isProviderUsableByFramework(
-        { apiEndpoints: providerFormApiEndpoints(formValue), type: formValue.type },
+        { apiEndpoints: providerFormApiEndpoints(providerValue), type: providerValue.type },
         { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
       )
     ) {
@@ -352,7 +361,7 @@ const ProviderStep = ({
         return
       }
 
-      const { validation } = await saveAndActivateProvider(toUpsertRequest(formValue))
+      const { validation } = await saveAndActivateProvider(toUpsertRequest(providerValue))
 
       // A validation superseded by a newer test (or a provider removed/edited mid-test) reports its
       // outcome but was not recorded; do not finish onboarding on a result the stored provider never

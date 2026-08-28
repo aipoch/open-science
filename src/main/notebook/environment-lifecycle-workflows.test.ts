@@ -27,7 +27,7 @@ import {
   createNotebookEnvironmentLifecycle,
   type NotebookEnvironmentLifecycle
 } from './environment-lifecycle-workflows'
-import type { ProvisionProgress, RuntimeProvisioner } from './provisioner'
+import type { ProvisionProgress, RuntimeProvisioner, RuntimeRepairOptions } from './provisioner'
 
 afterEach(() => clearMigrationPending())
 
@@ -38,7 +38,9 @@ const fakeProvisioner = (over: Partial<RuntimeProvisioner> = {}): RuntimeProvisi
   provisionPython: vi.fn().mockResolvedValue(undefined),
   provisionR: vi.fn().mockResolvedValue(undefined),
   upgradeIfNeeded: vi.fn().mockResolvedValue(undefined),
-  repair: vi.fn().mockResolvedValue(undefined),
+  repair: vi.fn().mockImplementation(async (_language, _onProgress, options) => {
+    await options?.onVerified?.()
+  }),
   restoreRelocatedEnvs: vi.fn().mockResolvedValue(undefined),
   cancel: vi.fn(),
   ...over
@@ -143,7 +145,10 @@ describe('createNotebookEnvironmentLifecycle', () => {
     const lifecycle = createLifecycle(provisioner)
     await lifecycle.repair('r')
     // UI repair is the user's Reset: it force-clears the quarantine (force: true).
-    expect(provisioner.repair).toHaveBeenCalledWith('r', expect.any(Function), { force: true })
+    expect(provisioner.repair).toHaveBeenCalledWith('r', expect.any(Function), {
+      force: true,
+      onVerified: expect.any(Function)
+    })
   })
 
   it('publishes a successful verified repair back to the runtime service', async () => {
@@ -155,6 +160,26 @@ describe('createNotebookEnvironmentLifecycle', () => {
 
     expect(onRepairCompleted).toHaveBeenCalledOnce()
     expect(onRepairCompleted).toHaveBeenCalledWith('r')
+  })
+
+  it('publishes repair completion before the provisioner releases the environment lock', async () => {
+    const order: string[] = []
+    const provisioner = fakeProvisioner({
+      repair: vi.fn(async (_language, _onProgress, options?: RuntimeRepairOptions) => {
+        order.push('lock:enter')
+        await options?.onVerified?.()
+        order.push('lock:exit')
+      })
+    })
+    const lifecycle = createLifecycle(provisioner, {
+      onRepairCompleted: async () => {
+        order.push('repair:completed')
+      }
+    })
+
+    await lifecycle.repair('python')
+
+    expect(order).toEqual(['lock:enter', 'repair:completed', 'lock:exit'])
   })
 
   it('does not release runtime-service quarantine when the rebuild fails', async () => {
@@ -333,7 +358,10 @@ describe('createNotebookEnvironmentLifecycle', () => {
 
     // Repair (the Reset entry) proceeds — it's the recovery, so it force-clears rather than refusing.
     await lifecycle.repair('python')
-    expect(provisioner.repair).toHaveBeenCalledWith('python', expect.any(Function), { force: true })
+    expect(provisioner.repair).toHaveBeenCalledWith('python', expect.any(Function), {
+      force: true,
+      onVerified: expect.any(Function)
+    })
 
     // A non-blocked language still provisions.
     await lifecycle.provision('r')

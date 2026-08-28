@@ -1402,6 +1402,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       const onSendEditedMessage = useCallback(
         (messageId: string, doc: ComposerDoc) => {
           if (activeSessionId) resendEditedMessage(activeSessionId, messageId, doc)
+          return { ok: true, disposition: 'sent' as const }
         },
         [activeSessionId]
       )
@@ -1837,6 +1838,77 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         '[data-review-anchor-message-id="answer-chain-root"] [data-testid="reviewer-card"]'
       )
     ).toBeNull()
+  })
+
+  it('hides a configuration divider with its owning follow-up while the presentation barrier is open', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const firstPrompt = createMessage({
+      id: 'prompt-config-barrier',
+      content: 'First send',
+      sortIndex: 1,
+      createdAt: 100,
+      agentTarget: {
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'default'
+      }
+    })
+    const firstAnswer = createMessage({
+      id: 'answer-config-barrier',
+      role: 'agent',
+      content: 'Hold this streaming presentation open until the follow-up is revealed.',
+      status: 'streaming',
+      streamId: 'stream-config-barrier',
+      responseToMessageId: firstPrompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const followUp = createMessage({
+      id: 'prompt-config-follow-up',
+      content: 'Follow-up after a model change',
+      sortIndex: 3,
+      createdAt: 102,
+      agentTarget: {
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: 'model-b',
+        reasoningEffort: 'default'
+      }
+    })
+    const render = async (messages: ChatMessage[]): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({
+              messages,
+              activeRun: { promptMessageId: firstPrompt.id, startedAt: 100 }
+            })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render([firstPrompt])
+    await render([firstPrompt, firstAnswer])
+    await render([firstPrompt, firstAnswer, followUp])
+
+    expect(container.querySelector('[data-testid="session-config-change"]')).toBeNull()
+    expect(container.textContent).not.toContain('Follow-up after a model change')
+
+    await act(async () => vi.advanceTimersByTimeAsync(5_000))
+
+    expect(container.querySelector('[data-testid="session-config-change"]')).not.toBeNull()
+    expect(container.textContent).toContain('Follow-up after a model change')
   })
 
   it('renders a Review under its visible chain root when its persisted scope anchor is dangling', async () => {

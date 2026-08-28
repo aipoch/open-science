@@ -31,9 +31,7 @@ type SessionPreviewRequest = (sessionId: string) => Promise<void> | void
 type SessionHoverPreviewContextValue = {
   activeSessionId: string | null
   closeNow: (sessionId: string) => void
-  keepOpen: () => void
   requestOpen: (sessionId: string) => void
-  scheduleClose: (sessionId: string) => void
 }
 
 const SessionHoverPreviewContext = createContext<SessionHoverPreviewContextValue | null>(null)
@@ -41,52 +39,22 @@ const SessionHoverPreviewContext = createContext<SessionHoverPreviewContextValue
 const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): React.JSX.Element => {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const activeSessionIdRef = useRef<string | null>(null)
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
-  const keepOpen = useCallback((): void => {
-    clearTimeout(closeTimerRef.current)
-    closeTimerRef.current = undefined
+  const requestOpen = useCallback((sessionId: string): void => {
+    activeSessionIdRef.current = sessionId
+    setActiveSessionId(sessionId)
   }, [])
 
-  const requestOpen = useCallback(
-    (sessionId: string): void => {
-      keepOpen()
-      activeSessionIdRef.current = sessionId
-      setActiveSessionId(sessionId)
-    },
-    [keepOpen]
-  )
+  const closeNow = useCallback((sessionId: string): void => {
+    if (activeSessionIdRef.current !== sessionId) return
 
-  const scheduleClose = useCallback(
-    (sessionId: string): void => {
-      if (activeSessionIdRef.current !== sessionId) return
-
-      keepOpen()
-      closeTimerRef.current = setTimeout(() => {
-        if (activeSessionIdRef.current !== sessionId) return
-        activeSessionIdRef.current = null
-        setActiveSessionId(null)
-      }, SESSION_HOVER_PREVIEW_SKIP_DELAY_MS)
-    },
-    [keepOpen]
-  )
-
-  const closeNow = useCallback(
-    (sessionId: string): void => {
-      if (activeSessionIdRef.current !== sessionId) return
-
-      keepOpen()
-      activeSessionIdRef.current = null
-      setActiveSessionId(null)
-    },
-    [keepOpen]
-  )
-
-  useEffect(() => () => keepOpen(), [keepOpen])
+    activeSessionIdRef.current = null
+    setActiveSessionId(null)
+  }, [])
 
   const value = useMemo(
-    () => ({ activeSessionId, closeNow, keepOpen, requestOpen, scheduleClose }),
-    [activeSessionId, closeNow, keepOpen, requestOpen, scheduleClose]
+    () => ({ activeSessionId, closeNow, requestOpen }),
+    [activeSessionId, closeNow, requestOpen]
   )
 
   return (
@@ -217,9 +185,11 @@ const SessionHoverPreview = ({
   const context = useContext(SessionHoverPreviewContext)
   if (!context) throw new Error('SessionHoverPreview must be inside SessionHoverPreviewProvider')
 
-  const { activeSessionId, closeNow, keepOpen, requestOpen, scheduleClose } = context
+  const { activeSessionId, closeNow, requestOpen } = context
   const open = activeSessionId === session.id
   const onPreviewRequestRef = useRef(onPreviewRequest)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const [descriptionLoading, setDescriptionLoading] = useState(false)
 
   useEffect(() => {
@@ -245,29 +215,44 @@ const SessionHoverPreview = ({
   return (
     <Tooltip open={open}>
       <TooltipTrigger
+        ref={triggerRef}
         asChild
         onPointerEnter={() => requestOpen(session.id)}
         onPointerLeave={(event) => {
           if (event.currentTarget.matches(':focus-visible')) return
-          scheduleClose(session.id)
+          if (
+            event.relatedTarget instanceof Node &&
+            contentRef.current?.contains(event.relatedTarget)
+          ) {
+            return
+          }
+          closeNow(session.id)
         }}
         onFocus={() => requestOpen(session.id)}
         onBlur={(event) => {
           if (event.currentTarget.matches(':hover')) return
-          scheduleClose(session.id)
+          closeNow(session.id)
         }}
       >
         {children}
       </TooltipTrigger>
       <TooltipContent
+        ref={contentRef}
         side="right"
         align="start"
-        sideOffset={10}
+        sideOffset={0}
         collisionPadding={8}
-        onPointerEnter={keepOpen}
-        onPointerLeave={() => scheduleClose(session.id)}
+        onPointerLeave={(event) => {
+          if (
+            event.relatedTarget instanceof Node &&
+            triggerRef.current?.contains(event.relatedTarget)
+          ) {
+            return
+          }
+          closeNow(session.id)
+        }}
         onEscapeKeyDown={() => closeNow(session.id)}
-        className="max-w-none overflow-visible bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
+        className="max-w-none overflow-visible bg-transparent py-0 pr-0 pl-2.5 text-inherit shadow-none motion-reduce:animate-none"
       >
         <SessionHoverPreviewCard
           session={session}

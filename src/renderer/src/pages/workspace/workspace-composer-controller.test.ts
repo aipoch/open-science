@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import type { TextAnnotation } from '../../../../shared/annotations'
 import type { CustomizePrefillIntent } from '@/stores/navigation-store'
 
 import type { UploadStagingApi } from './composer-upload-transfer'
@@ -19,6 +20,14 @@ import type { ComposerHistoryEntry } from './composer/composer-history'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
+
+const annotation = (id = 'annotation-1'): TextAnnotation => ({
+  id,
+  kind: 'text',
+  target: 'agent',
+  quote: 'Quoted Agent response',
+  source: { kind: 'agent-message', sessionId: 'session-a', messageId: 'message-a' }
+})
 
 const pastedDoc = (node: ComposerPastedTextNode): ComposerDoc => ({
   nodes: [{ type: 'text', text: 'before ' }, node, { type: 'text', text: ' after' }]
@@ -130,6 +139,176 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('owns annotations in the draft and captured send snapshot', () => {
+    const hook = renderController()
+    mounted.push(hook)
+
+    act(() => expect(hook.result.current.actions.addAnnotation(annotation())).toBeUndefined())
+
+    expect(hook.result.current.view.annotations).toEqual([annotation()])
+    expect(hook.result.current.lifecycle.captureSend().annotations).toEqual([annotation()])
+
+    act(() => hook.result.current.actions.updateAnnotationNote('annotation-1', '  Recheck this.  '))
+    expect(hook.result.current.view.annotations[0]).toMatchObject({ note: 'Recheck this.' })
+
+    act(() => hook.result.current.actions.removeAnnotation('annotation-1'))
+    expect(hook.result.current.view.annotations).toEqual([])
+  })
+
+  it('restores annotations with a failed send snapshot', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+
+    act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+    expect(hook.result.current.view.annotations).toEqual([])
+    act(() => expect(hook.result.current.lifecycle.restoreFailedSend(snapshot)).toBe(true))
+    expect(hook.result.current.view.annotations).toEqual([annotation()])
+  })
+
+  it('keeps annotations isolated by draft key', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.addAnnotation(annotation('session-a-annotation')))
+
+    hook.selectDraft('session-b')
+    expect(hook.result.current.view.annotations).toEqual([])
+    act(() => hook.result.current.actions.addAnnotation(annotation('session-b-annotation')))
+
+    hook.selectDraft('session-a')
+    expect(hook.result.current.view.annotations.map(({ id }) => id)).toEqual([
+      'session-a-annotation'
+    ])
+  })
+
+  it('keeps multiple annotated drafts isolated across Sessions and New Conversation', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    const projectAnnotation: TextAnnotation = {
+      id: 'project-source',
+      kind: 'text',
+      target: 'agent',
+      quote: 'Quoted project source',
+      note: 'Check the source.',
+      source: {
+        kind: 'project-file',
+        projectId: 'project',
+        path: 'results/report.md',
+        name: 'report.md',
+        versionId: 'version-a'
+      }
+    }
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('Session A draft')))
+    act(() => hook.result.current.actions.addAnnotation(annotation('agent-source')))
+    act(() => hook.result.current.actions.addAnnotation(projectAnnotation))
+
+    hook.selectDraft('new:project')
+    act(() => hook.result.current.actions.changeDoc(textDoc('New Conversation draft')))
+    act(() => hook.result.current.actions.addAnnotation(annotation('new-conversation-source')))
+
+    hook.selectDraft('session-b')
+    expect(hook.result.current.view).toMatchObject({ doc: emptyDoc, annotations: [] })
+
+    hook.selectDraft('session-a')
+    expect(hook.result.current.view.doc).toEqual(textDoc('Session A draft'))
+    expect(hook.result.current.view.annotations).toEqual([
+      annotation('agent-source'),
+      projectAnnotation
+    ])
+
+    hook.selectDraft('new:project')
+    expect(hook.result.current.view.doc).toEqual(textDoc('New Conversation draft'))
+    expect(hook.result.current.view.annotations).toEqual([annotation('new-conversation-source')])
+  })
+
+  it('freezes annotations in a send snapshot while the live draft remains editable', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+
+    act(() => hook.result.current.actions.updateAnnotationNote('annotation-1', 'New note'))
+    act(() => hook.result.current.actions.addAnnotation(annotation('annotation-2')))
+
+    expect(snapshot.annotations).toEqual([annotation()])
+    expect(hook.result.current.view.annotations).toEqual([
+      { ...annotation(), note: 'New note' },
+      annotation('annotation-2')
+    ])
+  })
+
+  it('captures an inline revision without mutating the active composer draft', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('Unrelated composer draft')))
+    const revisionDoc = textDoc('Edited historical prompt')
+    const revisionAnnotation = annotation('revision-annotation')
+
+    const snapshot = hook.result.current.lifecycle.captureRevision(revisionDoc, [
+      revisionAnnotation
+    ])
+
+    expect(snapshot).toMatchObject({
+      draftKey: 'session-a',
+      doc: revisionDoc,
+      annotations: [revisionAnnotation],
+      attachments: []
+    })
+    expect(hook.result.current.view.doc).toEqual(textDoc('Unrelated composer draft'))
+    expect(hook.result.current.view.annotations).toEqual([])
+  })
+
+  it('drops deleted Session drafts only after deletion succeeds', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('Delete me')))
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+
+    expect(hook.result.current.lifecycle.beginSessionDeletion('session-a')).toBe(true)
+    act(() => hook.result.current.lifecycle.settleSessionDeletion('session-a', false))
+    expect(hook.result.current.view.doc).toEqual(textDoc('Delete me'))
+    expect(hook.result.current.view.annotations).toEqual([annotation()])
+
+    expect(hook.result.current.lifecycle.beginSessionDeletion('session-a')).toBe(true)
+    act(() => hook.result.current.lifecycle.settleSessionDeletion('session-a', true))
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.view.annotations).toEqual([])
+
+    hook.selectDraft('session-b')
+    hook.selectDraft('session-a')
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.view.annotations).toEqual([])
+  })
+
+  it('removes a deleted background Session draft without affecting the active draft', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.addAnnotation(annotation('session-a-annotation')))
+    hook.selectDraft('session-b')
+    act(() => hook.result.current.actions.changeDoc(textDoc('Session B draft')))
+
+    expect(hook.result.current.lifecycle.beginSessionDeletion('session-a')).toBe(true)
+    act(() => hook.result.current.lifecycle.settleSessionDeletion('session-a', true))
+    expect(hook.result.current.view.doc).toEqual(textDoc('Session B draft'))
+
+    hook.selectDraft('session-a')
+    expect(hook.result.current.view).toMatchObject({ doc: emptyDoc, annotations: [] })
+  })
+
+  it('does not restore a failed send into a deleted Session draft', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+
+    expect(hook.result.current.lifecycle.beginSessionDeletion('session-a')).toBe(true)
+    act(() => hook.result.current.lifecycle.settleSessionDeletion('session-a', true))
+
+    expect(hook.result.current.lifecycle.restoreFailedSend(snapshot)).toBe(false)
+    expect(hook.result.current.view).toMatchObject({ doc: emptyDoc, annotations: [] })
+  })
   it('undoes typed text through the current Composer draft', () => {
     const hook = renderController()
     mounted.push(hook)

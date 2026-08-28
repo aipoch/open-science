@@ -55,6 +55,9 @@ export type OfficialModel = {
   id: string
   // Advertised context-window size for this exact model, in tokens.
   contextWindow: number
+  // Optional exact protocol override for mixed-protocol vendor catalogs. Absent means the model uses
+  // the vendor-level endpoint set.
+  apiEndpoint?: ChatApiEndpoint
   // Optional override for a model whose effort levels differ from the vendor default.
   reasoningEffort?: ReasoningEffortPresetSetting
 }
@@ -622,15 +625,94 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiEndpoints: ['openai'],
     baseUrl: 'https://opencode.ai/zen/go/v1',
     apiKeyUrl: 'https://opencode.ai/zen',
-    // The public catalog mixes Chat Completions, Responses, and Messages models but does not expose
-    // protocol metadata. Keep this list to models that use the provider's default OpenAI-compatible
-    // package instead of offering a refresh that could surface models this transport cannot drive.
+    // OpenCode documents one protocol per model. Keep the catalog bundled so deprecated and temporary
+    // free entries do not appear through the broader live model endpoint.
     models: [
       { id: 'kimi-k2.7-code', contextWindow: 262_144 },
+      {
+        id: 'grok-4.6',
+        contextWindow: 500_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'low-medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.6-luna',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-max'
+      },
+      {
+        id: 'glm-5.3-flash',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'low-high-max'
+      },
+      { id: 'glm-5.3', contextWindow: 1_000_000, reasoningEffort: 'low-high-max' },
+      { id: 'glm-5.2', contextWindow: 1_000_000, reasoningEffort: 'high-max' },
+      { id: 'glm-5.1', contextWindow: 202_752 },
       { id: 'kimi-k3', contextWindow: 1_048_576 },
-      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
-      { id: 'glm-5.3', contextWindow: 1_000_000 }
-    ]
+      { id: 'kimi-k2.6', contextWindow: 262_144 },
+      { id: 'longcat-2.0', contextWindow: 1_000_000, reasoningEffort: 'none-high' },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, reasoningEffort: 'high-max' },
+      {
+        id: 'deepseek-v4-flash',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'low-high-max'
+      },
+      {
+        id: 'deepseek-v4-flash-vision-exp',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'none-high-max'
+      },
+      { id: 'mimo-v2.5', contextWindow: 1_000_000 },
+      { id: 'mimo-v2.5-pro', contextWindow: 1_048_576 },
+      {
+        id: 'minimax-m3',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'none-high'
+      },
+      {
+        id: 'muse-spark-1.2-contributor',
+        contextWindow: 1_048_576,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'minimal-low-medium-high'
+      },
+      {
+        id: 'qwen3.8-max',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'none-high'
+      },
+      {
+        id: 'qwen3.7-max',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'none-high'
+      },
+      {
+        id: 'qwen3.7-plus',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'none-high'
+      },
+      { id: 'hy3', contextWindow: 256_000, reasoningEffort: 'none-high' }
+    ],
+    multimodal: {
+      multimodalModels: [
+        'kimi-k2.7-code',
+        'grok-4.6',
+        'gpt-5.6-luna',
+        'glm-5.3-flash',
+        'kimi-k3',
+        'kimi-k2.6',
+        'deepseek-v4-flash-vision-exp',
+        'mimo-v2.5',
+        'mimo-v2.5-pro',
+        'muse-spark-1.2-contributor',
+        'qwen3.8-max',
+        'qwen3.7-plus'
+      ]
+    }
   },
   {
     id: 'opencode',
@@ -639,15 +721,232 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiEndpoints: ['openai'],
     baseUrl: 'https://opencode.ai/zen/v1',
     apiKeyUrl: 'https://opencode.ai/zen',
-    // Zen's public list has the same mixed-protocol limitation as Go, so this catalog is deliberately
-    // curated to default OpenAI-compatible models.
+    // Zen also mixes protocols. Exclude Google-native, temporary free, deprecated, and explicitly
+    // product-excluded models while preserving the existing Kimi default.
     models: [
       { id: 'kimi-k2.7-code', contextWindow: 262_144 },
+      {
+        id: 'gpt-5.6-sol',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-max'
+      },
+      {
+        id: 'gpt-5.6-terra',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-max'
+      },
+      {
+        id: 'gpt-5.6-luna',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-max'
+      },
+      {
+        id: 'claude-fable-5',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'claude-opus-5',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'claude-sonnet-5',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'grok-4.6',
+        contextWindow: 500_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'low-medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.5',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.5-pro',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.4',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.4-pro',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.4-mini',
+        contextWindow: 400_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.4-nano',
+        contextWindow: 400_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.3-codex',
+        contextWindow: 400_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.3-codex-spark',
+        contextWindow: 128_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'low-medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.2',
+        contextWindow: 400_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-xhigh'
+      },
+      {
+        id: 'gpt-5.1',
+        contextWindow: 400_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'low-medium-high'
+      },
+      {
+        id: 'gpt-5',
+        contextWindow: 400_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'minimal-low-medium-high'
+      },
+      {
+        id: 'gpt-5-nano',
+        contextWindow: 400_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'minimal-low-medium-high'
+      },
+      {
+        id: 'claude-opus-4-8',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'claude-opus-4-7',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'claude-opus-4-6',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'low-medium-high-max'
+      },
+      {
+        id: 'claude-opus-4-5',
+        contextWindow: 200_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'low-medium-high'
+      },
+      {
+        id: 'claude-sonnet-4-6',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'low-medium-high-max'
+      },
+      { id: 'claude-sonnet-4-5', contextWindow: 1_000_000, apiEndpoint: 'anthropic' },
+      { id: 'claude-haiku-4-5', contextWindow: 200_000, apiEndpoint: 'anthropic' },
+      {
+        id: 'grok-4.5',
+        contextWindow: 500_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'low-medium-high'
+      },
+      { id: 'grok-build-0.1', contextWindow: 256_000, apiEndpoint: 'responses' },
+      {
+        id: 'muse-spark-1.2',
+        contextWindow: 1_048_576,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'minimal-low-medium-high'
+      },
+      {
+        id: 'qwen3.7-max',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'none-high'
+      },
+      {
+        id: 'qwen3.7-plus',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'none-high'
+      },
+      {
+        id: 'qwen3.5-plus',
+        contextWindow: 262_144,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'none-high'
+      },
       { id: 'kimi-k3', contextWindow: 1_048_576 },
+      { id: 'kimi-k2.6', contextWindow: 262_144, reasoningEffort: 'none-high' },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
-      { id: 'glm-5.2', contextWindow: 1_000_000 }
-    ]
+      { id: 'minimax-m3', contextWindow: 512_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000, reasoningEffort: 'high-max' },
+      { id: 'glm-5.1', contextWindow: 204_800, reasoningEffort: 'none-high' }
+    ],
+    multimodal: {
+      multimodalModels: [
+        'kimi-k2.7-code',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'claude-fable-5',
+        'claude-opus-5',
+        'claude-sonnet-5',
+        'grok-4.6',
+        'gpt-5.5',
+        'gpt-5.5-pro',
+        'gpt-5.4',
+        'gpt-5.4-pro',
+        'gpt-5.4-mini',
+        'gpt-5.4-nano',
+        'gpt-5.3-codex',
+        'gpt-5.2',
+        'gpt-5.1',
+        'gpt-5',
+        'gpt-5-nano',
+        'claude-opus-4-8',
+        'claude-opus-4-7',
+        'claude-opus-4-6',
+        'claude-opus-4-5',
+        'claude-sonnet-4-6',
+        'claude-sonnet-4-5',
+        'claude-haiku-4-5',
+        'grok-4.5',
+        'grok-build-0.1',
+        'muse-spark-1.2',
+        'qwen3.5-plus',
+        'kimi-k3',
+        'kimi-k2.6',
+        'minimax-m3'
+      ]
+    }
   },
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {
@@ -969,8 +1268,29 @@ export const isVendorModelResponsesSupported = (
   const vendor = VENDORS_BY_ID.get(vendorId)
   if (!vendor) return false
 
+  const modelEndpoint = vendor.models.find(({ id }) => id === modelId)?.apiEndpoint
+  if (modelEndpoint) return modelEndpoint === 'responses'
   if (vendor.apiEndpoints?.includes('responses')) return true
   return vendor.responsesModels?.includes(modelId) ?? false
+}
+
+// Resolves the exact protocol set for one bundled model. Mixed-protocol gateways can override the
+// vendor default with one documented endpoint; legacy `responsesModels` catalogs keep their additive
+// Responses behavior.
+export const resolveVendorModelApiEndpoints = (
+  vendorId: OfficialVendorId,
+  modelId: string | undefined
+): ChatApiEndpoint[] => {
+  const modelEndpoint = VENDORS_BY_ID.get(vendorId)?.models.find(
+    ({ id }) => id === modelId
+  )?.apiEndpoint
+  if (modelEndpoint) return [modelEndpoint]
+
+  const vendorEndpoints = resolveVendorApiEndpoints(vendorId)
+  return !vendorEndpoints.includes('responses') &&
+    isVendorModelResponsesSupported(vendorId, modelId)
+    ? [...vendorEndpoints, 'responses']
+    : vendorEndpoints
 }
 
 // Custom model ids are opaque: guessing from their name is less reliable than a stable documented

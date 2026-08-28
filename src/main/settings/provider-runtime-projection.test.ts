@@ -127,6 +127,49 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
   })
 
+  it('routes mixed OpenCode Zen models only through their documented protocol', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'opencode-zen',
+      type: 'official',
+      vendorId: 'opencode',
+      name: 'OpenCode Zen'
+    }
+
+    const responsesTarget = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: 'gpt-5.6-sol' },
+      getAgentFramework('codex')
+    )
+    const incompatibleResponsesTarget = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: 'gpt-5.6-sol' },
+      getAgentFramework('opencode')
+    )
+    const messagesTarget = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: 'claude-opus-5' },
+      getAgentFramework('claude-code')
+    )
+
+    expect(responsesTarget).toMatchObject({
+      apiEndpoints: ['responses'],
+      frameworkCompatible: true,
+      needsChatResponsesBridge: false,
+      needsNativeResponsesCompatibility: true
+    })
+    expect(incompatibleResponsesTarget).toMatchObject({
+      apiEndpoints: ['responses'],
+      frameworkCompatible: false
+    })
+    expect(messagesTarget).toMatchObject({
+      apiEndpoints: ['anthropic'],
+      frameworkCompatible: true,
+      needsChatResponsesBridge: false,
+      needsNativeResponsesCompatibility: false
+    })
+  })
+
   it('keeps an exact required model when a subscription catalog is unknown', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

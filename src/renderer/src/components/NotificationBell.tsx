@@ -30,6 +30,10 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { NotificationErrorBoundary } from './NotificationErrorBoundary'
 import { NotificationEventIcon } from './NotificationEventIcon'
 import {
+  notificationEventToneClasses,
+  resolveNotificationEventVisual
+} from './notification-event-visual'
+import {
   isVisibleNotificationBell,
   NOTIFICATION_CENTER_OPENED_EVENT,
   OPEN_NOTIFICATION_CENTER_EVENT,
@@ -77,7 +81,7 @@ const actionLabel = (
 
 const VIEWPORT_MARGIN = 8
 const PANEL_GAP = 8
-const PANEL_MAX_WIDTH = 408
+const PANEL_MAX_WIDTH = 440
 const MOBILE_MESSAGE_CENTER_QUERY = '(max-width: 47.999rem)'
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
@@ -410,7 +414,10 @@ const NotificationBellContent = ({
                       <section key={group.key} aria-labelledby={`${panelId}-${group.key}`}>
                         <div
                           id={`${panelId}-${group.key}`}
-                          className="px-2.5 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-300"
+                          className={cn(
+                            'sticky z-10 bg-bg-000 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-300',
+                            isMobile ? '-mx-2 -top-2 px-[18px]' : '-mx-1.5 -top-1.5 px-4'
+                          )}
                         >
                           {t(group.label)}
                         </div>
@@ -429,6 +436,8 @@ const NotificationBellContent = ({
                           const showEventLabel =
                             item.targetInvalidatedAt === undefined &&
                             (presented.sessionTitle !== undefined || label !== undefined)
+                          const toneClasses =
+                            notificationEventToneClasses[resolveNotificationEventVisual(item).tone]
                           return (
                             <button
                               key={item.id}
@@ -440,15 +449,13 @@ const NotificationBellContent = ({
                                 isMobile ? 'py-2.5' : 'py-2',
                                 item.readAt === undefined && 'bg-bg-100/70',
                                 item.targetInvalidatedAt !== undefined &&
-                                  'cursor-default hover:bg-transparent active:bg-transparent'
+                                  'cursor-default opacity-60 hover:bg-transparent active:bg-transparent'
                               )}
                             >
                               <span
                                 className={cn(
-                                  'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-bg-300 text-text-100',
-                                  item.kind === 'authorization.required' && 'text-session-waiting',
-                                  item.kind === 'task.completed' && 'text-success-000',
-                                  item.kind === 'task.failed' && 'text-danger-000'
+                                  'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full',
+                                  toneClasses.tile
                                 )}
                               >
                                 <NotificationEventIcon notification={item} />
@@ -472,7 +479,10 @@ const NotificationBellContent = ({
                                 <span className="mt-0.5 flex items-start gap-2">
                                   <span
                                     className={cn(
-                                      'min-w-0 flex-1 truncate font-semibold text-text-000',
+                                      'min-w-0 flex-1 truncate',
+                                      item.readAt === undefined
+                                        ? 'font-semibold text-text-000'
+                                        : 'font-medium text-text-100',
                                       isMobile ? 'text-sm' : 'text-xs'
                                     )}
                                   >
@@ -482,7 +492,7 @@ const NotificationBellContent = ({
                                 {detail ? (
                                   <span
                                     className={cn(
-                                      'mt-0.5 block truncate text-text-100',
+                                      'mt-0.5 line-clamp-2 text-text-100',
                                       isMobile ? 'text-sm leading-5' : 'text-[11px] leading-4'
                                     )}
                                   >
@@ -492,19 +502,11 @@ const NotificationBellContent = ({
                                 {showEventLabel ? (
                                   <span
                                     className={cn(
-                                      'mt-0.5 inline-flex items-center gap-1.5 font-medium',
-                                      isMobile ? 'text-xs' : 'text-[10px]',
-                                      item.kind === 'task.completed' && 'text-success-000',
-                                      item.kind === 'task.failed' && 'text-danger-000',
-                                      (item.kind === 'task.needs-attention' ||
-                                        item.kind === 'authorization.required') &&
-                                        'text-session-waiting'
+                                      'mt-1 inline-flex w-fit items-center rounded-full border px-1.5 py-px font-medium',
+                                      isMobile ? 'text-[11px]' : 'text-[10px]',
+                                      toneClasses.chip
                                     )}
                                   >
-                                    <span
-                                      className="size-1.5 rounded-full bg-current"
-                                      aria-hidden="true"
-                                    />
                                     {eventLabel}
                                   </span>
                                 ) : null}

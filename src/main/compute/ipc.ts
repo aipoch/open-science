@@ -13,6 +13,8 @@ import type {
   ComputePasswordCapability,
   ComputeHostDeletionStatus,
   ComputeJob,
+  ComputeJobsListFilter,
+  ComputeJobsPendingNotificationFilter,
   JobSummary,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
@@ -196,10 +198,10 @@ type ComputeHandlers = {
   approvalCompleteSessionCancellation: (sessionId: string) => void
   approvalBeginSessionDeletion: (sessionId: string) => void
   approvalFinishSessionDeletion: (sessionId: string, retained: boolean) => void
-  // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
-  jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
+  // Returns either a Session feed or the bounded global non-terminal activity projection.
+  jobsList: (filter: ComputeJobsListFilter) => Promise<JobSummary[]>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
-  jobsPendingNotification: (sessionId: string) => Promise<JobSummary[]>
+  jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   // Marks the given job ids as notification-consumed. Idempotent (issue 05).
   jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
 }
@@ -454,18 +456,24 @@ const createComputeHandlers = (
       if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()
       const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
-      const jobs = await jobRepository.findBySession(filter.sessionId, filter.status)
+      const jobs =
+        'nonTerminal' in filter
+          ? await jobRepository.findNonTerminal()
+          : await jobRepository.findBySession(filter.sessionId, filter.status)
       return Promise.all(
         jobs.map((j) =>
           toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
         )
       )
     },
-    jobsPendingNotification: async (sessionId) => {
+    jobsPendingNotification: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()
       const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
-      const jobs = await jobRepository.findPendingNotifications(sessionId)
+      const jobs =
+        typeof filter === 'string'
+          ? await jobRepository.findPendingNotifications(filter)
+          : await jobRepository.findPendingNotifications()
       return Promise.all(
         jobs.map((j) =>
           toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)

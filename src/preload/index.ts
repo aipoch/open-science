@@ -4,7 +4,13 @@ import { unwrapApplicationCommandOutcome } from '../shared/application-command-c
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
 import type { OpenScienceAPI } from './renderer-api'
 
-import type { ComputeApprovalDecision, ComputeApprovalRequest, JobSummary } from '../shared/compute'
+import type {
+  ComputeApprovalDecision,
+  ComputeApprovalRequest,
+  ComputeJobsListFilter,
+  ComputeJobsPendingNotificationFilter,
+  JobSummary
+} from '../shared/compute'
 import type {
   InitializeLocalePreferenceRequest,
   SetLocalePreferenceRequest
@@ -617,12 +623,12 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('compute.bookmarksGet', providerId),
     bookmarksSet: (providerId, folders) =>
       electronRendererContracts.invoke('compute.bookmarksSet', providerId, folders),
-    // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
-    jobsList: (filter: { sessionId: string; status?: string[] }) =>
+    // Returns a Session job feed or the global non-terminal activity projection.
+    jobsList: (filter: ComputeJobsListFilter) =>
       electronRendererContracts.invoke('compute.jobsList', filter),
     // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null).
-    jobsPendingNotification: (sessionId) =>
-      electronRendererContracts.invoke('compute.jobsPendingNotification', sessionId),
+    jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) =>
+      electronRendererContracts.invoke('compute.jobsPendingNotification', filter),
     // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
     jobsMarkConsumed: (sessionId, jobIds) =>
       electronRendererContracts.invoke('compute.jobsMarkConsumed', sessionId, jobIds),

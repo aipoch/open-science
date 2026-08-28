@@ -86,6 +86,35 @@ afterEach(() => {
 })
 
 describe('FilePreviewDialog closing lifecycle', () => {
+  it('forwards the Workspace annotation port to its retained file surface', () => {
+    const onAddAnnotation = vi.fn()
+    const onAnnotationError = vi.fn()
+    const activeAnnotations = [
+      {
+        id: 'annotation-1',
+        kind: 'text' as const,
+        target: 'agent' as const,
+        quote: 'Selected text',
+        source: { kind: 'agent-message' as const, sessionId: 'session-1', messageId: 'message-1' }
+      }
+    ]
+    act(() =>
+      root.render(
+        <FilePreviewDialog
+          item={item}
+          onClose={vi.fn()}
+          activeAnnotations={activeAnnotations}
+          onAddAnnotation={onAddAnnotation}
+          onAnnotationError={onAnnotationError}
+        />
+      )
+    )
+
+    expect(previewSurfaceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ activeAnnotations, onAddAnnotation, onAnnotationError })
+    )
+  })
+
   it('retains the last file surface while the controlled dialog closes', () => {
     act(() => root.render(<FilePreviewDialog item={item} onClose={vi.fn()} />))
     act(() => root.render(<FilePreviewDialog item={undefined} onClose={vi.fn()} />))
@@ -103,6 +132,9 @@ describe('FilePreviewDialog closing lifecycle', () => {
 
     expect(rootSpy).toHaveBeenCalledWith(expect.objectContaining({ modal: false }))
     expect(focusScopeSpy).toHaveBeenCalledWith({ trapped: true })
+    expect(contentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ 'data-slot': 'file-preview-dialog' })
+    )
 
     const onInteractOutside = contentSpy.mock.calls[0]?.[0].onInteractOutside as
       ((event: { preventDefault: () => void }) => void) | undefined

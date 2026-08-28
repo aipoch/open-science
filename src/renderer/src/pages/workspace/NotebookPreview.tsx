@@ -870,7 +870,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           onChange={(event) => setNamespaceFilter(event.target.value)}
           placeholder={t('Filter variables...')}
           aria-label={t('Filter variables')}
-          className="h-7 min-w-32 flex-1 rounded-md border border-border-100 bg-bg-000 px-2 text-xs text-text-100 outline-none placeholder:text-text-300 focus-visible:border-primary"
+          className="h-7 min-w-32 flex-1 rounded-md border border-input bg-bg-000 px-2 text-xs text-text-100 outline-none placeholder:text-muted-foreground focus-visible:border-primary"
         />
         <label className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] text-text-200 hover:bg-bg-200">
           <input

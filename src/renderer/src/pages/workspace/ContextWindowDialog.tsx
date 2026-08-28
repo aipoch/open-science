@@ -1165,6 +1165,17 @@ const ContextWindowDialogData = ({
     [activities, conversationGraph, granularity, messages]
   )
   const callSummary = useMemo(() => summarizeContextWindowCallPoints(callPoints), [callPoints])
+  const reportedCallCount = useMemo(
+    () =>
+      granularity !== 'call' || messages === undefined
+        ? 0
+        : messages.reduce(
+            (total, message) =>
+              message.role === 'agent' ? total + (message.turnUsage?.turnCount ?? 0) : total,
+            0
+          ),
+    [granularity, messages]
+  )
 
   return (
     <div className="space-y-6">
@@ -1197,6 +1208,17 @@ const ContextWindowDialogData = ({
       ) : (
         <>
           <ContextCallSummary summary={callSummary} />
+          {reportedCallCount > callPoints.length ? (
+            <p
+              className="rounded-md border border-status-warning-foreground/30 bg-status-warning-surface/40 px-3 py-2 text-xs leading-5 text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
+              data-slot="context-call-coverage-notice"
+            >
+              {t(
+                'Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.',
+                { detailed: callPoints.length, reported: reportedCallCount }
+              )}
+            </p>
+          ) : null}
           {callPoints.length ? (
             <ContextCallHistory points={callPoints} />
           ) : (

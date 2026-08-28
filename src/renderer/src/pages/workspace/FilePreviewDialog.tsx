@@ -9,8 +9,9 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { PreviewFileSurface } from './PreviewFileSurface'
+import type { PreviewAnnotationPort } from './previews/preview-types'
 
-type FilePreviewDialogProps = {
+type FilePreviewDialogProps = PreviewAnnotationPort & {
   item: PreviewFileItem | undefined
   onClose: () => void
 }
@@ -46,7 +47,11 @@ const setBackgroundIsolation = (isolated: boolean): void => {
 
 // The dialog is deliberately transient: Files tiles and panel previews can open it without
 // creating or removing a preview-workbench item.
-const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX.Element | null => {
+const FilePreviewDialog = ({
+  item,
+  onClose,
+  ...annotationPort
+}: FilePreviewDialogProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const dialogItem = useRetainedDialogValue(item)
   const open = Boolean(item)
@@ -95,6 +100,7 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
           className={`${dialogOverlayClassName} z-[60]`}
         />
         <Dialog.Content
+          data-slot="file-preview-dialog"
           aria-describedby={undefined}
           aria-modal="true"
           onInteractOutside={(event) => event.preventDefault()}
@@ -119,6 +125,7 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
                   // also close the dialog for the switched session to become visible.
                   onViewInContextNavigate={onClose}
                   tooltipClassName="z-[70]"
+                  {...annotationPort}
                 />
               ) : null}
             </div>

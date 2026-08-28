@@ -5,6 +5,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
+import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
 
 export const PreviewTextContent = ({
@@ -12,13 +13,15 @@ export const PreviewTextContent = ({
   name,
   source = 'artifact',
   projectId,
-  sessionId
+  sessionId,
+  annotationProps
 }: {
   path: string
   name: string
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  annotationProps?: PreviewFileRendererProps
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const state = usePreviewFileContent({ path, source, projectId, sessionId })
@@ -35,15 +38,23 @@ export const PreviewTextContent = ({
     )
   }
 
-  return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
+  const content = (
+    <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
+  )
+  return annotationProps ? (
+    <PreviewTextAnnotationSurface {...annotationProps}>{content}</PreviewTextAnnotationSurface>
+  ) : (
+    content
+  )
 }
 
-export const TextPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (
+export const TextPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => (
   <PreviewTextContent
-    path={item.path}
-    name={item.name}
-    source={item.source}
-    projectId={item.projectId}
-    sessionId={item.sessionId}
+    path={props.item.path}
+    name={props.item.name}
+    source={props.item.source}
+    projectId={props.item.projectId}
+    sessionId={props.item.sessionId}
+    annotationProps={props}
   />
 )

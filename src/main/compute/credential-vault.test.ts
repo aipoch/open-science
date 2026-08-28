@@ -10,19 +10,16 @@ const cipher = (backend: string): ComputeCredentialCipher => ({
 })
 
 describe('Compute password secure-storage capability', () => {
-  it('fails closed on Windows regardless of the OS cipher backend', () => {
+  it('uses the available OS cipher backend on Windows', () => {
     const vault = new CredentialVault(
       { getCredential: vi.fn(async () => null) },
       cipher('os_crypt'),
       'win32'
     )
 
-    expect(vault.capability()).toEqual({
-      available: false,
-      reason: 'unsupported_platform'
-    })
-    expect(() => vault.encrypt('must not persist')).toThrowError(
-      expect.objectContaining({ code: 'secure_storage_unavailable' })
+    expect(vault.capability()).toEqual({ available: true })
+    expect(vault.encrypt('windows protected secret').toString()).toBe(
+      'encrypted:windows protected secret'
     )
   })
 

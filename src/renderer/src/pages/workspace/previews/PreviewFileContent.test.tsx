@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileRendererProps } from './preview-types'
 import { createCachedImageFetchResponse } from './cached-preview-image.test-support'
 import { createManagedPreviewTestTransport } from './managed-preview-test-support'
 import { PreviewFileContent } from './PreviewFileContent'
@@ -194,12 +195,89 @@ describe('PreviewFileContent', () => {
     vi.unstubAllGlobals()
   })
 
-  const renderFile = async (item: PreviewFileItem): Promise<void> => {
+  const renderFile = async (
+    item: PreviewFileItem,
+    annotationProps: Omit<PreviewFileRendererProps, 'item'> = {}
+  ): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
-      root.render(<PreviewFileContent item={item} />)
+      root.render(<PreviewFileContent item={item} {...annotationProps} />)
     })
   }
+
+  it.each([
+    ['markdown', 'notes.md'],
+    ['text', 'notes.txt'],
+    ['code', 'analysis.py'],
+    ['fasta', 'sequence.fasta']
+  ] as const)('enables text annotations for %s previews', async (format, name) => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'selectable preview evidence',
+      encoding: 'utf8',
+      size: 27,
+      truncated: false
+    })
+
+    await renderFile(
+      createFileItem({
+        format,
+        name,
+        projectId: 'project-1',
+        selectedVersionId: 'version-2'
+      }),
+      { onAddAnnotation: vi.fn(() => undefined) }
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        container.querySelector('[data-preview-text-annotation-surface="true"]')
+      ).not.toBeNull()
+    )
+  })
+
+  it('enables annotations for HTML Source but not HTML Render', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: '<main>selectable source</main>',
+      encoding: 'utf8',
+      size: 30,
+      truncated: false
+    })
+
+    await renderFile(
+      createFileItem({ format: 'html', name: 'report.html', projectId: 'project-1' }),
+      { onAddAnnotation: vi.fn(() => undefined) }
+    )
+
+    expect(container.querySelector('iframe')).not.toBeNull()
+    expect(container.querySelector('[data-preview-text-annotation-surface="true"]')).toBeNull()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Show HTML source"]')?.click()
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        container.querySelector('[data-preview-text-annotation-surface="true"]')
+      ).not.toBeNull()
+    )
+  })
+
+  it('does not expose text annotation surfaces for CSV previews', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'sample,value\ncontrol,1',
+      encoding: 'utf8',
+      size: 22,
+      truncated: false
+    })
+
+    await renderFile(
+      createFileItem({ format: 'csv', name: 'results.csv', projectId: 'project-1' }),
+      { onAddAnnotation: vi.fn(() => undefined) }
+    )
+
+    expect(container.querySelector('table')).not.toBeNull()
+    expect(container.querySelector('[data-preview-text-annotation-surface="true"]')).toBeNull()
+  })
 
   it('reuses a loaded image when its preview is unmounted and mounted again', async () => {
     const fetchImage = vi.fn().mockResolvedValue(createCachedImageFetchResponse())
@@ -235,7 +313,10 @@ describe('PreviewFileContent', () => {
   it('shows the format-aware quiet progress state while a file is loading', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockReturnValue(new Promise(() => undefined))
 
-    await renderFile(createFileItem({ format: 'text', name: 'notes.txt' }))
+    await renderFile(
+      createFileItem({ format: 'text', name: 'notes.txt', projectId: 'project-1' }),
+      { onAddAnnotation: vi.fn(() => undefined) }
+    )
 
     const status = container.querySelector('[data-preview-status="loading"]')
     expect(status?.getAttribute('role')).toBe('status')
@@ -244,6 +325,7 @@ describe('PreviewFileContent', () => {
     expect(status?.textContent).toContain('notes.txt')
     expect(status?.querySelectorAll('[data-preview-activity-dot]')).toHaveLength(3)
     expect(status?.querySelector('[data-preview-progress]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-text-annotation-surface="true"]')).toBeNull()
   })
 
   it('restarts a failed preview when Retry is selected', async () => {

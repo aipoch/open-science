@@ -4,8 +4,9 @@ import { useTranslation } from 'react-i18next'
 
 import { PreviewPanelSurface } from './PreviewPanel'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
+import type { PreviewAnnotationPort } from './previews/preview-types'
 
-type MobilePreviewSheetProps = {
+type MobilePreviewSheetProps = PreviewAnnotationPort & {
   open: boolean
   onClose: () => void
   restoredPlanResponder?: RestoredPlanResponder
@@ -16,7 +17,8 @@ type MobilePreviewSheetProps = {
 const MobilePreviewSheet = ({
   open,
   onClose,
-  restoredPlanResponder
+  restoredPlanResponder,
+  ...annotationPort
 }: MobilePreviewSheetProps): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -49,6 +51,7 @@ const MobilePreviewSheet = ({
           <PreviewPanelSurface
             className="min-h-0 flex-1"
             restoredPlanResponder={restoredPlanResponder}
+            {...annotationPort}
           />
         </Dialog.Content>
       </Dialog.Portal>

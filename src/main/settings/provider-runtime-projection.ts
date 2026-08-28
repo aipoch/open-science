@@ -12,11 +12,10 @@ import {
   getOfficialVendorModelIds,
   isModelBridgeSupported,
   isVendorModelMultimodal,
-  isVendorModelResponsesSupported,
   resolveCustomModelContextWindow,
   resolveModelContextWindow,
-  resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
+  resolveVendorModelApiEndpoints,
   resolveVendorOpenAiBaseUrl
 } from '../../shared/provider-registry'
 import {
@@ -68,15 +67,10 @@ class ProviderRuntimeProjectionOwner {
   resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ChatApiEndpoint[] {
     if (isXaiSubscriptionProvider(provider.type)) return ['anthropic', 'openai', 'responses']
     if (provider.type === 'official' && provider.vendorId) {
-      const vendorEndpoints = resolveVendorApiEndpoints(provider.vendorId)
-      const modelToCheck = activeModel ?? defaultVendorModel(provider.vendorId)
-      if (
-        !vendorEndpoints.includes('responses') &&
-        isVendorModelResponsesSupported(provider.vendorId, modelToCheck)
-      ) {
-        return [...vendorEndpoints, 'responses']
-      }
-      return vendorEndpoints
+      return resolveVendorModelApiEndpoints(
+        provider.vendorId,
+        activeModel ?? defaultVendorModel(provider.vendorId)
+      )
     }
 
     return provider.apiEndpoints && provider.apiEndpoints.length > 0

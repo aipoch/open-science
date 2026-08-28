@@ -74,7 +74,7 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
-  it('retries a network/timeout error then succeeds', async () => {
+  it('retries an immediate network error then succeeds', async () => {
     const fetchImpl = vi
       .fn()
       .mockRejectedValueOnce(new Error('ECONNRESET'))
@@ -92,7 +92,7 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
-  it('reports the request and retry budget when every attempt times out', async () => {
+  it('stops after the first request timeout and distinguishes it from the REPL deadline', async () => {
     const fetchImpl = vi.fn(
       async (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
         new Promise((_, reject) => {
@@ -119,9 +119,10 @@ describe('ParserEngine declarative path', () => {
 
     await expect(engine.call(desc, {}, {})).rejects.toMatchObject({
       name: 'ConnectorRequestTimeoutError',
-      message: 'Connector request timed out after 3 attempts of 5ms for https://x.test/data'
+      message:
+        "Connector request timed out after 1 attempt of 5ms for https://x.test/data. This is the Connector's own deadline; increasing an outer execution timeout will not extend it. Do not retry solely with a longer timeout."
     })
-    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('resets the timeout while response body chunks keep arriving', async () => {
@@ -193,7 +194,7 @@ describe('ParserEngine declarative path', () => {
     await expect(engine.call(desc, {}, {})).rejects.toMatchObject({
       name: 'ConnectorRequestTimeoutError',
       message:
-        'Connector request exceeded the 25ms total deadline after 1 attempt for https://x.test/data'
+        "Connector request exceeded the 25ms total deadline after 1 attempt for https://x.test/data. This is the Connector's own deadline; increasing an outer execution timeout will not extend it. Do not retry solely with a longer timeout."
     })
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
@@ -265,7 +266,7 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
-  it('times out and retries when a response body stops producing chunks', async () => {
+  it('times out without retrying when a response body stops producing chunks', async () => {
     const encoder = new TextEncoder()
     const fetchImpl = vi.fn(
       async (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
@@ -303,9 +304,10 @@ describe('ParserEngine declarative path', () => {
       ])
     ).resolves.toMatchObject({
       name: 'ConnectorRequestTimeoutError',
-      message: 'Connector request timed out after 3 attempts of 5ms for https://x.test/data'
+      message:
+        "Connector request timed out after 1 attempt of 5ms for https://x.test/data. This is the Connector's own deadline; increasing an outer execution timeout will not extend it. Do not retry solely with a longer timeout."
     })
-    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('aborts an active request without retrying it', async () => {

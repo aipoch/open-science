@@ -81,19 +81,31 @@ const dispatchQueuedSession = (
             updatedAt: sessionBeforeSend.updatedAt
           }
         : undefined
-      const result = await current.runtime.sendMessage({
-        sessionId,
-        text: item.text,
-        attachments: item.snapshot.attachments,
-        referencedArtifacts: docToArtifactRefs(item.snapshot.doc),
-        parts: docToMessageParts(item.snapshot.doc),
-        cwd: item.cwd,
-        projectId: item.projectId,
-        permissionProfile: item.permissionProfile,
-        agentConfiguration: item.agentConfiguration,
-        forcedSkillIds: item.forcedSkillIds,
-        specialistId: item.specialistId
-      })
+      if (item.revisionMessageId && !current.runtime.resendEditedMessage) {
+        throw new Error('Queued message revision is unavailable.')
+      }
+      const result = item.revisionMessageId
+        ? await current.runtime.resendEditedMessage!(sessionId, item.revisionMessageId, {
+            text: item.text,
+            annotations: item.snapshot.annotations,
+            referencedArtifacts: docToArtifactRefs(item.snapshot.doc),
+            parts: docToMessageParts(item.snapshot.doc),
+            forcedSkillIds: item.forcedSkillIds
+          })
+        : await current.runtime.sendMessage({
+            sessionId,
+            text: item.text,
+            attachments: item.snapshot.attachments,
+            annotations: item.snapshot.annotations,
+            referencedArtifacts: docToArtifactRefs(item.snapshot.doc),
+            parts: docToMessageParts(item.snapshot.doc),
+            cwd: item.cwd,
+            projectId: item.projectId,
+            permissionProfile: item.permissionProfile,
+            agentConfiguration: item.agentConfiguration,
+            forcedSkillIds: item.forcedSkillIds,
+            specialistId: item.specialistId
+          })
       if (!result) {
         const latest = owner.resolveOptions(optionsRef.current)
         const latestSession = latest.getSession(sessionId)
@@ -215,7 +227,13 @@ const sendQueuedItemNow = async (
     }
     const liveTurn = isQueueLiveTurn(liveSession)
     const referencedArtifacts = docToArtifactRefs(item.snapshot.doc)
-    if (liveTurn && hasPayload && current.runtime.steerFollowUp) {
+    if (
+      liveTurn &&
+      hasPayload &&
+      !item.revisionMessageId &&
+      current.runtime.steerFollowUp &&
+      !item.snapshot.annotations?.length
+    ) {
       owner.replaceItem(sessionId, itemId, {
         phase: 'sending',
         error: undefined,

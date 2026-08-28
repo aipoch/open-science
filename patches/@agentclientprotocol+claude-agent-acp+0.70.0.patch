@@ -95,6 +95,24 @@ index f11169b..cca061f 100644
                              lastAssistantWasUsageLimit = isSyntheticUsageLimitMessage(message.message);
                              if (message.error || lastAssistantWasUsageLimit) {
                                  lastAssistantFailureTitle = assistantMessageText(message.message);
+@@ -3715,7 +3771,16 @@ export class ClaudeAcpAgent {
+         if (this.sessions[params.sessionId]) {
+             await this.teardownSession(params.sessionId);
+         }
+-        await deleteSession(params.sessionId);
++        try {
++            await deleteSession(params.sessionId);
++        }
++        catch (error) {
++            // A new Session is not written to disk until its first prompt. Deleting that
++            // in-memory-only Session is already complete after teardown, so keep deletion idempotent.
++            if (!(error instanceof Error && error.message.startsWith(`Session ${params.sessionId} not found`))) {
++                throw error;
++            }
++        }
+         return {};
+     }
+     async setSessionMode(params) {
 @@ -4995,6 +5051,7 @@ export class ClaudeAcpAgent {
          let initializationResult;
          try {

@@ -387,46 +387,56 @@ describe('native Responses compatibility', () => {
     })
   })
 
-  it('diagnoses a completed stream that stops after a Notebook file without saving an Artifact', async () => {
+  it('promotes Artifact guidance when a Notebook run returns a generated file', async () => {
     const privateAssistantText = 'I will export the private result as an artifact:'
-    const upstream = [
-      {
-        type: 'response.output_item.done',
-        output_index: 0,
-        item: {
-          id: 'message-1',
-          type: 'message',
-          role: 'assistant',
-          content: [{ type: 'output_text', text: privateAssistantText }]
-        }
-      },
-      {
-        type: 'response.completed',
-        response: {
-          id: 'response-1',
-          status: 'completed',
-          output: [
-            {
-              type: 'message',
-              role: 'assistant',
-              content: [{ type: 'output_text', text: privateAssistantText }]
-            }
-          ]
-        }
-      },
-      '[DONE]'
-    ]
-      .map((event) => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`)
-      .join('')
+    let upstreamRequest: Record<string, unknown> | undefined
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      upstreamRequest = body
+      const artifactRequired =
+        typeof body.instructions === 'string' &&
+        body.instructions.includes('<open_science_artifact_instructions>')
+      const output = artifactRequired
+        ? {
+            id: 'artifact-call-item-1',
+            type: 'function_call',
+            name: 'mcp__open_science_artifacts__write_artifact_file',
+            call_id: 'artifact-call-1',
+            arguments: JSON.stringify({
+              filename: 'private.png',
+              mimeType: 'image/png',
+              source: { kind: 'localPath', path: 'data/private.png' },
+              producerRunId: 'notebook-run-1'
+            })
+          }
+        : {
+            id: 'message-1',
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: privateAssistantText }]
+          }
+      const upstream = [
+        { type: 'response.output_item.done', output_index: 0, item: output },
+        {
+          type: 'response.completed',
+          response: {
+            id: 'response-1',
+            status: 'completed',
+            output: [output]
+          }
+        },
+        '[DONE]'
+      ]
+        .map((event) => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`)
+        .join('')
+      return new Response(upstream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    })
     const proxy = new NativeResponsesCompatibilityProxy(
       { baseUrl: 'https://api.example/v1', model: 'model-a' },
-      vi.fn(
-        async () =>
-          new Response(upstream, {
-            status: 200,
-            headers: { 'content-type': 'text/event-stream' }
-          })
-      )
+      fetchImpl
     )
     const connection = await proxy.start()
 
@@ -445,7 +455,8 @@ describe('native Responses compatibility', () => {
             {
               type: 'message',
               role: 'developer',
-              content: '<open_science_artifact_instructions>private guidance'
+              content:
+                '<open_science_artifact_instructions>private guidance</open_science_artifact_instructions>'
             },
             {
               type: 'function_call',
@@ -457,7 +468,8 @@ describe('native Responses compatibility', () => {
             {
               type: 'function_call_output',
               call_id: 'notebook-call-1',
-              output: '{"workingFiles":[{"relativePath":"data/private.png"}]}'
+              output:
+                '{"runId":"notebook-run-1","workingFiles":[{"relativePath":"data/private.png"}]}'
             }
           ],
           tools: [
@@ -490,8 +502,15 @@ describe('native Responses compatibility', () => {
       const responseBody = await response.text()
       expect(response.ok, responseBody).toBe(true)
       expect(responseBody).toContain('response.completed')
-      expect(responseBody).toContain(privateAssistantText)
-      expect(responseBody).not.toContain('write_artifact_file')
+      expect(responseBody).not.toContain(privateAssistantText)
+      expect(responseBody).toContain('write_artifact_file')
+      expect(upstreamRequest?.instructions).toContain('base provider instructions')
+      expect(upstreamRequest?.instructions).toContain(
+        '<open_science_artifact_instructions>private guidance</open_science_artifact_instructions>'
+      )
+      expect(JSON.stringify(upstreamRequest?.input)).not.toContain(
+        '<open_science_artifact_instructions>'
+      )
       const requestLog = logSpies.info.mock.calls.find(
         ([message]) => message === 'native Responses compatibility request'
       )
@@ -499,8 +518,8 @@ describe('native Responses compatibility', () => {
         ([message]) => message === 'native Responses compatibility stream completed'
       )
       expect(requestLog?.[1]).toMatchObject({
-        topLevelArtifactInstructionPresent: false,
-        developerArtifactInstructionPresent: true,
+        topLevelArtifactInstructionPresent: true,
+        developerArtifactInstructionPresent: false,
         artifactInstructionPresent: true,
         artifactToolPresent: true,
         functionCallOutputHistoryCount: 1
@@ -510,9 +529,9 @@ describe('native Responses compatibility', () => {
         terminalEventType: 'response.completed',
         terminalStatus: 'completed',
         terminalOutputItemCount: 1,
-        terminalMessageCount: 1,
-        observedFunctionCallCount: 0,
-        observedArtifactFunctionCallCount: 0
+        terminalMessageCount: 0,
+        observedFunctionCallCount: 1,
+        observedArtifactFunctionCallCount: 1
       })
       expect(
         JSON.stringify(Object.values(logSpies).flatMap((spy) => spy.mock.calls))

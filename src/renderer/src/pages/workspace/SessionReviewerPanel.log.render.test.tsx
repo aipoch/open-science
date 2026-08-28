@@ -126,6 +126,29 @@ describe('SessionReviewerPanel — Reviewer log section (issue 13/15)', () => {
     expect(container.textContent).toContain('Review complete, submitting findings.')
   })
 
+  it('shows a size-limit notice when captured log content was truncated', async () => {
+    const truncatedLog: ReviewerLogEntry[] = [
+      { kind: 'message', text: 'Partial reviewer output', textTruncated: true }
+    ]
+    act(() => {
+      root.render(
+        <SessionReviewerPanel
+          review={makeReview({ reviewerLog: truncatedLog })}
+          activeFindingId={undefined}
+        />
+      )
+    })
+
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="reviewer-log-toggle"]')
+    await act(async () => {
+      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.textContent).toContain(
+      'Reviewer log content was truncated to fit the size limit.'
+    )
+  })
+
   it('renders tool entry as collapsible row with real name visible after log expansion', async () => {
     act(() => {
       root.render(

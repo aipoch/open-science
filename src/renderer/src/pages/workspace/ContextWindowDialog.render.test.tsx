@@ -317,6 +317,105 @@ describe('ContextWindowDialog', () => {
     return withCalls
   }
 
+  const sessionWithCallsAfterRuntimeSwitch = (): ChatSession => {
+    const switched = session()
+    switched.messages.push(
+      {
+        id: 'answer-claude',
+        role: 'agent',
+        responseToMessageId: 'prompt-1',
+        content: 'Claude result',
+        eventIds: [],
+        status: 'complete',
+        turnUsage: { inputTokens: 30, cacheTokens: 6, outputTokens: 8, turnCount: 2 },
+        createdAt: 2,
+        updatedAt: 3,
+        completedAt: 3
+      },
+      {
+        id: 'prompt-2',
+        role: 'user',
+        content: 'Continue with Codex',
+        eventIds: [],
+        status: 'complete',
+        createdAt: 4,
+        updatedAt: 4
+      },
+      {
+        id: 'answer-codex',
+        role: 'agent',
+        responseToMessageId: 'prompt-2',
+        content: 'Codex result',
+        eventIds: [],
+        status: 'complete',
+        turnUsage: { inputTokens: 20, cacheTokens: 4, outputTokens: 5, turnCount: 1 },
+        modelCallUsage: [
+          {
+            id: 'answer-codex:model-call:0',
+            index: 0,
+            inputTokens: 20,
+            cacheTokens: 4,
+            outputTokens: 5,
+            contextUsedTokens: 24,
+            contextWindowSize: 25
+          }
+        ],
+        createdAt: 5,
+        updatedAt: 6,
+        completedAt: 6
+      }
+    )
+    switched.conversationGraph?.messages.push(
+      {
+        id: 'answer-claude',
+        role: 'agent',
+        responseToMessageId: 'prompt-1',
+        content: 'Claude result',
+        eventIds: [],
+        status: 'complete',
+        agentFrameId: 'root',
+        introducedOnBranchId: 'branch-1',
+        revisionRootMessageId: 'answer-claude',
+        runtimeSegmentId: 'runtime-1',
+        createdAt: 2,
+        updatedAt: 3
+      },
+      {
+        id: 'prompt-2',
+        role: 'user',
+        content: 'Continue with Codex',
+        eventIds: [],
+        status: 'complete',
+        agentFrameId: 'root',
+        introducedOnBranchId: 'branch-1',
+        revisionRootMessageId: 'prompt-2',
+        runtimeSegmentId: 'runtime-2',
+        createdAt: 4,
+        updatedAt: 4
+      },
+      {
+        id: 'answer-codex',
+        role: 'agent',
+        responseToMessageId: 'prompt-2',
+        content: 'Codex result',
+        eventIds: [],
+        status: 'complete',
+        agentFrameId: 'root',
+        introducedOnBranchId: 'branch-1',
+        revisionRootMessageId: 'answer-codex',
+        runtimeSegmentId: 'runtime-2',
+        createdAt: 5,
+        updatedAt: 6
+      }
+    )
+    const branch = switched.conversationGraph?.branches[0]
+    if (branch) {
+      branch.headMessageId = 'answer-codex'
+      branch.updatedAt = 6
+    }
+    return switched
+  }
+
   const switchToCalls = (): void => {
     const callsToggle = [
       ...document.body.querySelectorAll<HTMLButtonElement>('[role="radio"]')
@@ -383,6 +482,27 @@ describe('ContextWindowDialog', () => {
     expect(mix?.textContent).toContain('Input20 69%')
     expect(mix?.textContent).toContain('Cache4 14%')
     expect(mix?.textContent).toContain('Output5 17%')
+  })
+
+  it('discloses earlier calls without exact details after switching ACP or model', () => {
+    act(() => {
+      root.render(
+        <ContextWindowDialog
+          open
+          session={sessionWithCallsAfterRuntimeSwitch()}
+          onOpenChange={vi.fn()}
+        />
+      )
+    })
+    switchToCalls()
+
+    expect(document.body.querySelectorAll('[data-slot="context-call-point"]')).toHaveLength(1)
+    expect(document.body.querySelector('[data-slot="context-call-band"]')?.textContent).toContain(
+      'T2'
+    )
+    expect(document.body.textContent).toContain(
+      'Showing 1 of 3 reported calls because some turns have no exact call details.'
+    )
   })
 
   it('previews on hover and pins a selected call on activation', () => {

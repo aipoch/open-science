@@ -1880,6 +1880,72 @@ describe('workspace agent message sending', () => {
     vi.restoreAllMocks()
   })
 
+  it('does not pin a catalog fallback model onto an unpinned send target', async () => {
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'continue on the account default',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription',
+      agentModel: 'gpt-5.4',
+      agentConfiguration: {
+        providerId: 'builtin-codex-subscription',
+        reasoningEffort: 'default'
+      }
+    })
+
+    const target = useSessionStore.getState().sessions[0].messages[0]?.agentTarget
+    expect(target).toEqual({
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription',
+      providerId: 'builtin-codex-subscription',
+      reasoningEffort: 'default'
+    })
+    expect(target).not.toHaveProperty('model')
+  })
+
+  it('stamps an explicit configuration model onto the send target', async () => {
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'pin a model',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription',
+      agentModel: 'gpt-5.4',
+      agentConfiguration: {
+        providerId: 'builtin-codex-subscription',
+        model: 'gpt-5.4',
+        reasoningEffort: 'high'
+      }
+    })
+
+    expect(useSessionStore.getState().sessions[0].messages[0]?.agentTarget).toEqual({
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription',
+      providerId: 'builtin-codex-subscription',
+      model: 'gpt-5.4',
+      reasoningEffort: 'high'
+    })
+  })
+
   it('forwards and durably stores Plan first for an existing Session', async () => {
     const runtime = {
       state: createSnapshot(['transport-session-1']),
@@ -1904,6 +1970,224 @@ describe('workspace agent message sending', () => {
       content: 'analyze this dataset',
       turnIntent: 'plan-first'
     })
+  })
+
+  it('sends annotation-only context while preserving structured Message data', async () => {
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt
+    }
+    const annotation = {
+      id: 'annotation-1',
+      kind: 'text' as const,
+      target: 'agent' as const,
+      quote: 'The confidence intervals overlap.',
+      note: 'Explain the consequence.',
+      source: {
+        kind: 'agent-message' as const,
+        sessionId: 'transport-session-1',
+        messageId: 'agent-message-1'
+      }
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: '',
+      annotations: [annotation],
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    expect(sent).toBeDefined()
+    await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
+    expect(sendPrompt.mock.calls[0]?.[1]).toContain('[Annotations]')
+    expect(sendPrompt.mock.calls[0]?.[1]).toContain('The confidence intervals overlap.')
+    expect(useSessionStore.getState().sessions[0].messages[0]).toMatchObject({
+      role: 'user',
+      content: '',
+      annotations: [annotation]
+    })
+  })
+
+  it('dispatches mixed image annotations with fixed references, stable numbers, and natural pixels', async () => {
+    const acquire = vi.fn().mockResolvedValue({
+      id: 'fixed-image-resource',
+      url: 'open-science-preview://fixed-image-resource',
+      size: 1024,
+      mimeType: 'image/png',
+      version: 1
+    })
+    const release = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('window', { api: { previewResources: { acquire, release } } })
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt
+    }
+    const imageSource = {
+      kind: 'artifact-version' as const,
+      projectId: 'project-1',
+      sessionId: 'transport-session-1',
+      versionId: 'version-fixed',
+      name: 'figure.png',
+      path: 'artifact-version:project-1/transport-session-1/artifact-1/version-fixed',
+      mimeType: 'image/png'
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Compare these details.',
+      annotations: [
+        {
+          id: 'quote-1',
+          kind: 'text',
+          target: 'agent',
+          quote: 'First detail',
+          source: {
+            kind: 'agent-message',
+            sessionId: 'transport-session-1',
+            messageId: 'agent-1'
+          }
+        },
+        {
+          id: 'point-1',
+          kind: 'image-point',
+          target: 'agent',
+          note: 'Inspect this point',
+          source: imageSource,
+          point: { x: 0.5, y: 1 },
+          naturalSize: { width: 1000, height: 500 }
+        },
+        {
+          id: 'point-2',
+          kind: 'image-point',
+          target: 'agent',
+          note: 'Compare this point',
+          source: imageSource,
+          point: { x: 0, y: 0 },
+          naturalSize: { width: 1000, height: 500 }
+        }
+      ],
+      referencedArtifacts: [
+        {
+          id: 'artifact-1',
+          name: 'figure.png',
+          path: imageSource.path,
+          source: 'artifact',
+          versionId: imageSource.versionId
+        }
+      ],
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
+    expect(sendPrompt.mock.calls[0]?.[1]).toContain(
+      '"type":"image-point","source":{"kind":"artifact-version","artifactId":"artifact-1","versionId":"version-fixed","name":"figure.png"},"imageAttachment":1,"x":500,"y":499,"instruction":"Inspect this point"'
+    )
+    expect(sendPrompt.mock.calls[0]?.[1]).toContain(
+      '"type":"image-point","source":{"kind":"artifact-version","artifactId":"artifact-1","versionId":"version-fixed","name":"figure.png"},"imageAttachment":1,"x":0,"y":0,"instruction":"Compare this point"'
+    )
+    expect(sendPrompt.mock.calls[0]?.[4]).toEqual([
+      expect.objectContaining({ versionId: 'version-fixed', path: imageSource.path })
+    ])
+    expect(acquire).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledWith({ resourceId: 'fixed-image-resource' })
+  })
+
+  it('rejects an unavailable fixed image Version before mutating the Session or dispatching', async () => {
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const acquire = vi.fn().mockRejectedValue(new Error('Permission denied'))
+    vi.stubGlobal('window', {
+      api: { previewResources: { acquire, release: vi.fn().mockResolvedValue(undefined) } }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt
+    }
+    const sessionsBefore = useSessionStore.getState().sessions
+
+    await expect(
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'transport-session-1',
+        text: 'Inspect the fixed source.',
+        annotations: [
+          {
+            id: 'point-unavailable',
+            kind: 'image-point',
+            target: 'agent',
+            note: 'This point matters.',
+            source: {
+              kind: 'artifact-version',
+              projectId: 'project-1',
+              sessionId: 'transport-session-1',
+              versionId: 'deleted-version',
+              name: 'figure.png',
+              path: 'artifact-version:project-1/transport-session-1/artifact-1/deleted-version',
+              mimeType: 'image/png'
+            },
+            point: { x: 0.5, y: 0.5 },
+            naturalSize: { width: 800, height: 600 }
+          }
+        ],
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })
+    ).rejects.toThrow('An annotated image is no longer available')
+
+    expect(acquire).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'artifact-version:project-1/transport-session-1/artifact-1/deleted-version'
+      })
+    )
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions).toBe(sessionsBefore)
+  })
+
+  it('rejects an oversized annotation at the runtime boundary', async () => {
+    const sendPrompt = vi.fn()
+    const sent = await sendWorkspaceMessage(
+      {
+        state: createSnapshot(['transport-session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt
+      },
+      {
+        sessionId: 'transport-session-1',
+        text: '',
+        annotations: [
+          {
+            id: 'annotation-oversized',
+            kind: 'text',
+            target: 'agent',
+            quote: 'x'.repeat(4_001),
+            source: {
+              kind: 'agent-message',
+              sessionId: 'transport-session-1',
+              messageId: 'agent-message-1'
+            }
+          }
+        ],
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      }
+    )
+
+    expect(sent).toBeUndefined()
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions).toEqual([])
   })
 
   it('does not append a prompt when attachment finalization fails', async () => {
@@ -8131,6 +8415,54 @@ describe('edit resend reply streaming', () => {
     vi.unstubAllGlobals()
   })
 
+  const seedEditableConversation = (): void => {
+    const createdAt = 1710000000000
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle',
+          messages: [
+            {
+              id: 'user-1',
+              role: 'user',
+              content: 'first prompt',
+              status: 'complete',
+              eventIds: [],
+              createdAt,
+              updatedAt: createdAt
+            },
+            {
+              id: 'agent-1',
+              role: 'agent',
+              content: 'first answer',
+              status: 'complete',
+              eventIds: [],
+              createdAt: createdAt + 100,
+              updatedAt: createdAt + 100
+            },
+            {
+              id: 'user-2',
+              role: 'user',
+              content: 'second prompt',
+              status: 'complete',
+              eventIds: [],
+              createdAt: createdAt + 200,
+              updatedAt: createdAt + 200
+            }
+          ],
+          createdAt,
+          updatedAt: createdAt + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+  }
+
   it('grows an agent bubble from streamed reply events after the truncate-and-resend', async () => {
     const baseTime = 1710000000000
     useSessionStore.setState({
@@ -8224,6 +8556,98 @@ describe('edit resend reply streaming', () => {
       status: 'streaming',
       responseToMessageId: afterResend?.activeRun?.promptMessageId
     })
+  })
+
+  it('resends an annotation-only revision through the unified prompt pipeline', async () => {
+    seedEditableConversation()
+    const annotation = {
+      id: 'quote-1',
+      kind: 'text' as const,
+      target: 'agent' as const,
+      quote: 'Quoted evidence',
+      note: 'Updated note',
+      source: {
+        kind: 'agent-message' as const,
+        sessionId: 'session-1',
+        messageId: 'agent-1'
+      }
+    }
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resent = await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: 'user-2',
+      text: '',
+      annotations: [annotation]
+    })
+    await flushRuntimeTasks()
+
+    expect(resent).toBe(true)
+    expect(useSessionStore.getState().sessions[0]?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: '',
+      annotations: [annotation]
+    })
+    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toContain(
+      '"type":"quote","content":"Quoted evidence","instruction":"Updated note"'
+    )
+  })
+
+  it('revalidates a fixed image source before truncating an edited message branch', async () => {
+    seedEditableConversation()
+    const acquire = vi.fn().mockRejectedValue(new Error('missing fixed version'))
+    vi.stubGlobal('window', {
+      api: { previewResources: { acquire, release: vi.fn().mockResolvedValue(undefined) } }
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    const messagesBefore = useSessionStore.getState().sessions[0]?.messages
+    const annotation = {
+      id: 'point-1',
+      kind: 'image-point' as const,
+      target: 'agent' as const,
+      note: 'Inspect the fixed point.',
+      source: {
+        kind: 'artifact-version' as const,
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        versionId: 'deleted-version',
+        name: 'figure.png',
+        path: 'artifact-version:default-project/session-1/artifact-1/deleted-version',
+        mimeType: 'image/png'
+      },
+      point: { x: 0.25, y: 0.75 },
+      naturalSize: { width: 1200, height: 800 }
+    }
+
+    await expect(
+      resendEditedWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        messageId: 'user-2',
+        text: 'edited prompt',
+        annotations: [annotation]
+      })
+    ).rejects.toThrow('An annotated image is no longer available')
+
+    expect(acquire).toHaveBeenCalledWith(expect.objectContaining({ path: annotation.source.path }))
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual(messagesBefore)
   })
 })
 

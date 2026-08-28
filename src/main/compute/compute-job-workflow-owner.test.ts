@@ -12,6 +12,8 @@ import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import type { ConcurrencyManager } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
+import { JobPoller } from './job-poller'
+import { UnencryptedComputeJobPersistenceApprovalRequiredError } from './job-repository'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -117,7 +119,8 @@ const makeOwner = (
   publishJobUpdated?: (job: import('../../shared/compute').ComputeJob) => void,
   artifactResolver?: { resolveArtifactPath(uri: string): Promise<string> },
   storageRoot?: string,
-  concurrencyManager?: ConcurrencyManager
+  concurrencyManager?: ConcurrencyManager,
+  observeBackgroundDispatch?: (dispatch: Promise<void>) => void
 ): ComputeJobWorkflowOwner =>
   new ComputeJobWorkflowOwner(
     brokerFromRunner(runner),
@@ -127,17 +130,26 @@ const makeOwner = (
     publishJobUpdated,
     artifactResolver,
     storageRoot,
-    concurrencyManager
+    concurrencyManager,
+    observeBackgroundDispatch
   )
 
 const makeJobRepo = (
-  jobs: Map<string, import('../../shared/compute').ComputeJob> = new Map()
+  jobs: Map<string, import('../../shared/compute').ComputeJob> = new Map(),
+  fieldProtectionAvailable: boolean | (() => boolean) = true
 ): {
   repo: import('./job-repository').ComputeJobRepository
   createCalls: ReturnType<typeof vi.fn>
   updateCalls: ReturnType<typeof vi.fn>
 } => {
+  const isFieldProtectionAvailable = (): boolean =>
+    typeof fieldProtectionAvailable === 'function'
+      ? fieldProtectionAvailable()
+      : fieldProtectionAvailable
   const createCalls = vi.fn(async (request: import('./job-repository').CreateJobRequest) => {
+    if (!isFieldProtectionAvailable() && request.allowUnencryptedPersistence !== true) {
+      throw new UnencryptedComputeJobPersistenceApprovalRequiredError()
+    }
     const job: import('../../shared/compute').ComputeJob = {
       job_id: request.id,
       provider_id: request.providerId,
@@ -206,6 +218,7 @@ const makeJobRepo = (
 
   return {
     repo: {
+      isFieldProtectionAvailable: vi.fn(isFieldProtectionAvailable),
       create: createCalls,
       get: getCalls,
       update: updateCalls,
@@ -220,6 +233,65 @@ const makeJobRepo = (
 }
 
 describe('ComputeJobWorkflowOwner.submitJob', () => {
+  it('does not misclassify an unexpected live dispatch failure as restart recovery', async () => {
+    const jobs = new Map<string, import('../../shared/compute').ComputeJob>()
+    const runner: SshRunner = { run: vi.fn(() => Promise.reject(new Error('transport crashed'))) }
+    const { repo: jobRepo } = makeJobRepo(jobs)
+    const { repo: hostRepo } = makeRepo()
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(() => Promise.resolve('once' as const)),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+    let backgroundDispatch: Promise<void> | undefined
+    const service = makeOwner(
+      runner,
+      hostRepo,
+      broker,
+      jobRepo,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (dispatch) => {
+        backgroundDispatch = dispatch.catch(() => undefined)
+      }
+    )
+
+    const submitted = await service.submitJob(
+      'ssh:biowulf',
+      'test unexpected dispatch failure',
+      'echo hi',
+      {},
+      { sessionId: 's1', projectId: 'p1' }
+    )
+    expect(backgroundDispatch).toBeDefined()
+    await backgroundDispatch
+
+    const pollerRepository = {
+      ...jobRepo,
+      findNonTerminal: vi.fn(async () =>
+        [...jobs.values()].filter((job) => ['queued', 'submitted', 'running'].includes(job.status))
+      )
+    } as unknown as import('./job-repository').ComputeJobRepository
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: hostRepo,
+      jobRepository: pollerRepository,
+      dispatchTracker: sharedDispatchTracker
+    })
+
+    await poller.tick()
+
+    expect(jobs.get(submitted.job_id)).toMatchObject({
+      status: 'error',
+      error_code: 'dispatch_failed',
+      stderr_tail: 'The remote Compute Job dispatch failed unexpectedly.',
+      started_at: undefined,
+      remote_handle: undefined
+    })
+  })
+
   it('tracks a committed submitted row through dispatcher registration', async () => {
     const runner = makeFakeRunner({
       exitCode: 1,
@@ -732,6 +804,83 @@ describe('resolveInputs — mixed inputs summary', () => {
 })
 
 describe('ComputeJobWorkflowOwner.submitJob — inputs_summary in approval', () => {
+  it('requests explicit plaintext approval if protection becomes unavailable after approval', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    let fieldProtectionAvailable = true
+    const { repo: jobRepo, createCalls } = makeJobRepo(new Map(), () => fieldProtectionAvailable)
+    const { repo } = makeRepo()
+    const requestWithContext = vi.fn(async () => {
+      fieldProtectionAvailable = false
+      return 'once' as const
+    })
+    const broker = {
+      request: requestWithContext,
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = makeOwner(runner, repo, broker, jobRepo)
+
+    await expect(
+      service.submitJob(
+        'ssh:biowulf',
+        'test',
+        'echo secret',
+        {},
+        { sessionId: 's1', projectId: 'p1' }
+      )
+    ).resolves.toMatchObject({ status: 'submitted' })
+
+    expect(requestWithContext).toHaveBeenCalledTimes(2)
+    expect(requestWithContext).toHaveBeenLastCalledWith(
+      expect.objectContaining({ willPersistUnencrypted: true }),
+      expect.anything(),
+      undefined
+    )
+    expect(createCalls).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowUnencryptedPersistence: true })
+    )
+  })
+
+  it('discloses plaintext persistence when secure storage is unavailable', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo } = makeJobRepo(new Map(), false)
+    const { repo } = makeRepo()
+    const requestWithContext = vi.fn(() => Promise.resolve('once' as const))
+    const broker = {
+      request: requestWithContext,
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = makeOwner(runner, repo, broker, jobRepo)
+    await service.submitJob(
+      'ssh:biowulf',
+      'test',
+      'echo hi',
+      {},
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    expect(requestWithContext).toHaveBeenCalledWith(
+      expect.objectContaining({ willPersistUnencrypted: true }),
+      expect.anything(),
+      undefined
+    )
+  })
+
   it('passes inputs_summary to the approval request when inputs are provided', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,

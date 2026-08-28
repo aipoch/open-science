@@ -78,6 +78,8 @@ import type {
 import type {
   ComputeApprovalDecision,
   ComputeApprovalRequest,
+  ComputeJobsListFilter,
+  ComputeJobsPendingNotificationFilter,
   ComputeHost,
   ComputeHostDeletionStatus,
   ComputePasswordCapability,
@@ -805,10 +807,10 @@ export interface OpenScienceAPI {
     // Bookmark folders for the file browser Go-to/Pin feature, persisted in settings JSON.
     bookmarksGet(providerId: string): Promise<string[]>
     bookmarksSet(providerId: string, folders: string[]): Promise<void>
-    // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
-    jobsList(filter: { sessionId: string; status?: string[] }): Promise<JobSummary[]>
+    // Returns a Session job feed or the global non-terminal activity projection.
+    jobsList(filter: ComputeJobsListFilter): Promise<JobSummary[]>
     // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
-    jobsPendingNotification(sessionId: string): Promise<JobSummary[]>
+    jobsPendingNotification(filter: ComputeJobsPendingNotificationFilter): Promise<JobSummary[]>
     // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
     jobsMarkConsumed(sessionId: string, jobIds: string[]): Promise<void>
     // Fires when a job's status or tail changes (broadcast from the main-process poller).

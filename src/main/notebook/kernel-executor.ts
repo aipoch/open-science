@@ -865,7 +865,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         reject(error)
         return
       }
-      if (timeout && timeoutMs !== undefined) timeout.arm(timeoutMs)
+      if (timeout && timeoutMs !== undefined && !pending.cancelled) timeout.arm(timeoutMs)
     })
   }
 

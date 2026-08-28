@@ -135,6 +135,50 @@ const containsText = (value: unknown, marker: string): boolean => {
   return isObject(value) && Object.values(value).some((item) => containsText(item, marker))
 }
 
+const ARTIFACT_INSTRUCTIONS_START = '<open_science_artifact_instructions>'
+const ARTIFACT_INSTRUCTIONS_END = '</open_science_artifact_instructions>'
+
+const promoteArtifactDeveloperInstructions = (body: JsonObject): JsonObject => {
+  if (
+    containsText(body.instructions, ARTIFACT_INSTRUCTIONS_START) ||
+    (body.instructions != null && typeof body.instructions !== 'string') ||
+    !Array.isArray(body.input)
+  ) {
+    return body
+  }
+
+  const index = body.input.findIndex(
+    (item) =>
+      isObject(item) &&
+      item.type === 'message' &&
+      item.role === 'developer' &&
+      typeof item.content === 'string' &&
+      item.content.includes(ARTIFACT_INSTRUCTIONS_START)
+  )
+  if (index < 0) return body
+
+  const item = body.input[index] as JsonObject
+  const content = item.content as string
+  const start = content.indexOf(ARTIFACT_INSTRUCTIONS_START)
+  const end = content.indexOf(ARTIFACT_INSTRUCTIONS_END, start)
+  if (end < 0) return body
+
+  const blockEnd = end + ARTIFACT_INSTRUCTIONS_END.length
+  const artifactInstructions = content.slice(start, blockEnd)
+  const remaining = `${content.slice(0, start)}${content.slice(blockEnd)}`.trim()
+  const input = body.input.flatMap((value, itemIndex) =>
+    itemIndex !== index ? [value] : remaining ? [{ ...item, content: remaining }] : []
+  )
+
+  return {
+    ...body,
+    instructions: [body.instructions, artifactInstructions]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .join('\n\n'),
+    input
+  }
+}
+
 const isArtifactTool = (value: unknown, aliases: NativeResponsesToolAliases): boolean => {
   if (!isObject(value) || typeof value.name !== 'string') return false
   const identity =
@@ -743,9 +787,14 @@ export class NativeResponsesCompatibilityProxy {
         ? { ...scopedBody, model: this.target.model }
         : scopedBody
       const { request: flattenedRequest, aliases } = flattenNativeResponsesRequest(routedBody)
+      const compatibilityRequest =
+        Array.isArray(flattenedRequest.tools) &&
+        flattenedRequest.tools.some((tool: unknown) => isArtifactTool(tool, aliases))
+          ? promoteArtifactDeveloperInstructions(flattenedRequest)
+          : flattenedRequest
       const upstreamRequest = this.target.sanitizeRequest
-        ? this.target.sanitizeRequest(flattenedRequest)
-        : flattenedRequest
+        ? this.target.sanitizeRequest(compatibilityRequest)
+        : compatibilityRequest
       const upstreamRequestBody = JSON.stringify(upstreamRequest)
       const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
       const headersToForward = upstreamHeaders(request, resolvedKey)

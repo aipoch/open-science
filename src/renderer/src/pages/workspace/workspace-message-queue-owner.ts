@@ -28,6 +28,7 @@ type MessageQueueItem = {
   phase: MessageQueuePhase
   error?: MessageQueueError
   deferredUntilIdle?: boolean
+  revisionMessageId?: string
 }
 
 type MessageQueueAdmission = {
@@ -38,6 +39,7 @@ type MessageQueueAdmission = {
   permissionProfile: PermissionProfileId
   agentConfiguration: SessionAgentConfiguration
   specialistId: string | null | undefined
+  revisionMessageId?: string
 }
 
 type MessageQueueDispatch = {
@@ -58,7 +60,7 @@ type WorkspaceMessageQueueControllerOptions = {
     discardSnapshot: (snapshot: ComposerSendSnapshot) => void
   }
   runtime: Pick<WorkspaceAgentRuntime, 'sendMessage' | 'cancelRun'> &
-    Partial<Pick<WorkspaceAgentRuntime, 'steerFollowUp'>>
+    Partial<Pick<WorkspaceAgentRuntime, 'steerFollowUp' | 'resendEditedMessage'>>
   isBarrierInFlight: (sessionId: string) => boolean
   isPresentationRevealing: (sessionId: string) => boolean
   isSpecialistReady: (sessionId: string) => boolean

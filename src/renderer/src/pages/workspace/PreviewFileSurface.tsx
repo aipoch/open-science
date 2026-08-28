@@ -33,9 +33,10 @@ import {
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
+import type { PreviewAnnotationPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 
-type PreviewFileSurfaceProps = {
+type PreviewFileSurfaceProps = PreviewAnnotationPort & {
   item: PreviewFileItem
   contentKey?: string
   renderContent?: boolean
@@ -49,6 +50,10 @@ type PreviewFileSurfaceProps = {
   onReload?: () => void
   provenanceEntry?: 'menu' | 'leading' | 'trailing'
 }
+
+type LineageLoadState =
+  | { key: string; phase: 'loading' | 'error' }
+  | { key: string; phase: 'loaded'; value?: ArtifactLineageProvenance }
 
 const PreviewProvenanceButton = ({
   item,
@@ -370,8 +375,14 @@ const PreviewFileSurface = ({
   onClose,
   onOpenFullScreen,
   onViewInContextNavigate,
-  provenanceEntry = 'menu'
+  provenanceEntry = 'menu',
+  activeAnnotations,
+  onAddAnnotation,
+  onUpdateAnnotationNote,
+  onRemoveAnnotation,
+  onAnnotationError
 }: PreviewFileSurfaceProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [provenanceTarget, setProvenanceTarget] = useState<string>()
   // Bumping this token remounts the content tree so a local file is re-read from disk.
   const [reloadToken, setReloadToken] = useState(0)
@@ -379,10 +390,8 @@ const PreviewFileSurface = ({
     key: string
     item: PreviewFileItem
   }>()
-  const [lineageResult, setLineageResult] = useState<{
-    key: string
-    value?: ArtifactLineageProvenance
-  }>()
+  const [lineageLoadState, setLineageLoadState] = useState<LineageLoadState>()
+  const [lineageRetryToken, setLineageRetryToken] = useState(0)
   const projectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
   const storedItem = usePreviewWorkbenchStore((state) =>
     state.items.find((candidate) => candidate.id === item.id)
@@ -408,7 +417,12 @@ const PreviewFileSurface = ({
   // Artifact identity stays unchanged. Refetch and stop consuming the prior snapshot until the
   // matching lineage resolves.
   const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}:${previewItem.originSession?.state ?? ''}`
-  const lineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
+  const lineage =
+    lineageLoadState?.key === lineageRequestKey && lineageLoadState.phase === 'loaded'
+      ? lineageLoadState.value
+      : undefined
+  const lineageFailed =
+    lineageLoadState?.key === lineageRequestKey && lineageLoadState.phase === 'error'
   const exactSelectedVersion = lineage?.versions.find(
     (version) => version.versionId === previewItem.selectedVersionId
   )
@@ -443,9 +457,11 @@ const PreviewFileSurface = ({
         artifactId: previewItem.artifactId
       })
       .then((value) => {
-        if (active) setLineageResult({ key: lineageRequestKey, value })
+        if (active) setLineageLoadState({ key: lineageRequestKey, phase: 'loaded', value })
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (active) setLineageLoadState({ key: lineageRequestKey, phase: 'error' })
+      })
 
     return () => {
       active = false
@@ -453,6 +469,7 @@ const PreviewFileSurface = ({
   }, [
     lineageKey,
     lineageRequestKey,
+    lineageRetryToken,
     previewItem.artifactId,
     previewItem.sessionId,
     previewItem.source,
@@ -522,7 +539,26 @@ const PreviewFileSurface = ({
         viewInContextDisabled={originSessionArchived}
         tooltipClassName={tooltipClassName}
       />
-      {!showProvenance && lineage ? (
+      {!showProvenance && lineageFailed ? (
+        <div
+          role="alert"
+          className="flex shrink-0 items-center justify-between gap-2 border-b border-border-300/50 bg-danger-900 px-3 py-1 text-[11px] leading-4 text-danger-000"
+        >
+          <span>{t('Could not load version history.')}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => {
+              setLineageLoadState({ key: lineageRequestKey, phase: 'loading' })
+              setLineageRetryToken((token) => token + 1)
+            }}
+            className="h-5 text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
+          >
+            {t('Retry')}
+          </Button>
+        </div>
+      ) : !showProvenance && lineage ? (
         <ArtifactVersionNavigation
           lineage={lineage}
           selectedVersionId={selectedVersionId}
@@ -541,6 +577,11 @@ const PreviewFileSurface = ({
           <PreviewFileContent
             key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
             item={resolvedPreviewItem}
+            activeAnnotations={activeAnnotations}
+            onAddAnnotation={onAddAnnotation}
+            onUpdateAnnotationNote={onUpdateAnnotationNote}
+            onRemoveAnnotation={onRemoveAnnotation}
+            onAnnotationError={onAnnotationError}
           />
         ) : null}
       </div>

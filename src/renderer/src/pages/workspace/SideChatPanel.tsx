@@ -19,8 +19,13 @@ import {
   type SetStateAction
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import {
+  parseSideChatAnnotationText,
+  type SideChatAnnotationItem
+} from '../../../../shared/annotations'
 
 import { ResizableBottomPanel } from './ResizableBottomPanel'
+import { SentAnnotationCards, type SentAnnotationCardView } from './annotations/SentAnnotationCards'
 import type { SideChatEntry, SideChatView } from './use-side-chat-controller'
 
 type SideChatPanelProps = Readonly<{
@@ -43,6 +48,36 @@ type VisibleSideChatEntrySnapshot = Readonly<{
   generation: number | undefined
   entryIds: Set<string>
 }>
+
+const sideChatAnnotationViews = (
+  items: readonly SideChatAnnotationItem[]
+): readonly SentAnnotationCardView[] => {
+  let imageNumber = 0
+  return items.map((item, index) => {
+    if (item.type === 'quote') {
+      return {
+        id: `quote-${index}`,
+        kind: 'text',
+        content: item.content,
+        note: item.instruction
+      }
+    }
+    imageNumber += 1
+    const source =
+      item.source.kind === 'artifact-version'
+        ? `${item.source.name} · ${item.source.artifactId} · ${item.source.versionId}`
+        : `${item.source.name} · ${item.source.versionId}`
+    return {
+      id: `image-point-${index}`,
+      kind: 'image-point',
+      number: imageNumber,
+      x: item.x,
+      y: item.y,
+      source,
+      note: item.instruction
+    }
+  })
+}
 
 const VisibleSideChatEntrySnapshotCommit = ({
   generation,
@@ -83,6 +118,27 @@ const SideChatAssistantMessage = ({
       isAnimating={presentation.isPresenting}
       sessionLinks
     />
+  )
+}
+
+const SideChatUserMessage = ({ text }: { text: string }): React.JSX.Element => {
+  const parsed = parseSideChatAnnotationText(text)
+  if (!parsed) {
+    return (
+      <div data-side-chat-raw-message="true" className="whitespace-pre-wrap break-words">
+        {text}
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {parsed.text ? <div className="whitespace-pre-wrap break-words">{parsed.text}</div> : null}
+      <SentAnnotationCards
+        cards={sideChatAnnotationViews(parsed.items)}
+        placement={parsed.text ? 'side-chat-after-text' : 'side-chat'}
+      />
+    </>
   )
 }
 
@@ -237,8 +293,8 @@ const SideChatPanel = ({
                       key={JSON.stringify([view.generation, entry.id])}
                       className="my-3 flex justify-end"
                     >
-                      <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-bg-200 px-3 py-2 text-text-000">
-                        {entry.text}
+                      <div className="max-w-[80%] rounded-2xl bg-bg-200 px-3 py-2 text-text-000">
+                        <SideChatUserMessage text={entry.text} />
                       </div>
                     </div>
                   )

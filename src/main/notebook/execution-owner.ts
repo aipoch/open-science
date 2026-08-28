@@ -233,7 +233,7 @@ class NotebookExecutionOwner {
       session,
       runningRun,
       invoke: () =>
-        this.options.dataExecutionAdmission.runShared(admission, async (rejection) => {
+        this.options.dataExecutionAdmission.runShared(session, admission, async (rejection) => {
           if (rejection !== undefined) {
             executedOnLiveKernel = false
             return errorToExecutionResult(rejection, cwdBefore)

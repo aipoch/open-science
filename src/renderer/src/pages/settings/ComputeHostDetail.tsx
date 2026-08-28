@@ -796,7 +796,7 @@ export function ComputeHostDetail({
           <div className="mt-3 flex flex-col gap-2">
             <input
               type="text"
-              className="w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               value={scratchInput}
               onChange={(e) => {
                 setScratchInput(e.target.value)
@@ -884,7 +884,7 @@ export function ComputeHostDetail({
               type="number"
               min={1}
               max={500}
-              className="w-32 rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-32 rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               value={concurrencyInput}
               onChange={(e) => {
                 setConcurrencyInput(e.target.value)

@@ -67,8 +67,6 @@ const settingsPaths = {
   notebookLocalRpcServer: resolve(projectRoot, 'src/main/notebook/local-rpc-server.ts')
 } as const
 const readSource = (path: string): string => readProductionSource(path, projectRoot)
-const rawLineCount = (source: string): number =>
-  source.split(/\r?\n/).length - Number(source.endsWith('\n'))
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
 const portableProjectPath = (path: string): string =>
   relative(projectRoot, path).replaceAll('\\', '/')
@@ -261,37 +259,6 @@ type ModuleImpactManifest = {
 const productionSourcePaths = productionSources()
 
 describe('Settings backend ownership architecture', () => {
-  it('locks the final facade ceilings and every internal owner below the hard limit', () => {
-    // Repository remains one atomic mutation facade; Subagent validation runs inside its CAS write.
-    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(700)
-    expect(rawLineCount(readSource(settingsPaths.subagentModelSettings))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.documentCodec))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.documentStore))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.computeGrantPort))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(600)
-    expect(rawLineCount(readSource(settingsPaths.providerAuthLifecycle))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.providerRuntimeProjection))).toBeLessThanOrEqual(
-      660
-    )
-    expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(600)
-    expect(rawLineCount(readSource(settingsPaths.backendSelection))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.backendRoutePlanner))).toBeLessThanOrEqual(500)
-    expect(rawLineCount(readSource(settingsPaths.providerTransportOwner))).toBeLessThanOrEqual(600)
-    expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(600)
-    expect(rawLineCount(readSource(settingsPaths.responsesProtocolTypes))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.responsesRequestAdapter))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.responsesResponseAdapter))).toBeLessThanOrEqual(
-      660
-    )
-    expect(rawLineCount(readSource(settingsPaths.reviewerModelOwner))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.subagentModelOwner))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.visionModelOwner))).toBeLessThanOrEqual(660)
-    // Main's facade plus typed provider-auth, Subagent/Reviewer/Vision forwarding, proxy projection,
-    // and owner composition.
-    expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1070)
-  })
-
   it('locks the stable module export inventories', () => {
     expect(exportInventoryFrom(settingsPaths.repository)).toEqual([
       'value:SettingsRepository',

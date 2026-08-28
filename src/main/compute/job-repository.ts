@@ -1,9 +1,17 @@
 import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
 import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
+import {
+  OptionalSecureStorageStringProtection,
+  type ProtectedJsonContainer
+} from './credential-vault'
 
 // Only ComputeJob persistence and a transaction wrapper are needed.
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
 type ComputeJobClientProvider = () => Promise<ComputeJobClient>
+type ComputeJobFieldProtection = Pick<
+  OptionalSecureStorageStringProtection,
+  'isAvailable' | 'protect' | 'protectJson' | 'reveal' | 'revealJson'
+>
 
 export type ComputeJobOwner = Readonly<{
   projectId: string
@@ -14,6 +22,13 @@ export type ComputeJobSessionOwner = Readonly<{
   projectId: string
   sessionId: string
 }>
+
+export class UnencryptedComputeJobPersistenceApprovalRequiredError extends Error {
+  constructor() {
+    super('Compute Job plaintext persistence requires explicit approval.')
+    this.name = 'UnencryptedComputeJobPersistenceApprovalRequiredError'
+  }
+}
 
 const ownerWhere = (owner: ComputeJobOwner): { projectId: string; sessionId?: string } => ({
   projectId: owner.projectId,
@@ -36,42 +51,6 @@ const asStatus = (value: string): ComputeJobStatus => {
   return valid.includes(value as ComputeJobStatus) ? (value as ComputeJobStatus) : 'error'
 }
 
-// Maps a Prisma row to the shared ComputeJob type.
-const toJob = (row: PrismaComputeJob): ComputeJob => ({
-  job_id: row.id,
-  provider_id: row.providerId,
-  shape: row.shape,
-  session_id: row.sessionId,
-  project_id: row.projectId,
-  status: asStatus(row.status),
-  intent: row.intent,
-  command: row.command,
-  command_hash: row.commandHash,
-  environment: row.environment ?? undefined,
-  resource_request: row.resourceRequest ?? undefined,
-  input_manifest: row.inputManifest ?? undefined,
-  output_manifest: row.outputManifest ?? undefined,
-  harvest_config: row.harvestConfig ?? undefined,
-  timeout_seconds: row.timeoutSeconds ?? undefined,
-  remote_workdir: row.remoteWorkdir ?? undefined,
-  remote_handle: row.remoteHandle ?? undefined,
-  exit_code: row.exitCode ?? undefined,
-  stdout_tail: row.stdoutTail ?? undefined,
-  stderr_tail: row.stderrTail ?? undefined,
-  error_code: row.errorCode ?? undefined,
-  last_poll_error: row.lastPollError ?? undefined,
-  // Phase 3b harvest fields
-  harvest_error: row.harvestError ?? undefined,
-  left_on_remote: row.leftOnRemote ?? undefined,
-  notified_at: row.notifiedAt?.getTime(),
-  notification_consumed_at: row.notificationConsumedAt?.getTime(),
-  created_at: row.createdAt.getTime(),
-  submitted_at: row.submittedAt?.getTime(),
-  started_at: row.startedAt?.getTime(),
-  finished_at: row.finishedAt?.getTime(),
-  harvested_at: row.harvestedAt?.getTime()
-})
-
 export type CreateJobRequest = {
   id: string
   providerId: string
@@ -89,6 +68,7 @@ export type CreateJobRequest = {
   timeoutSeconds?: number
   remoteWorkdir?: string
   initialStatus?: ComputeJobStatus
+  allowUnencryptedPersistence?: boolean
 }
 
 export type UpdateJobRequest = {
@@ -116,29 +96,7 @@ export type UpdateJobRequest = {
 }
 
 type ComputeJobUpdateData = Parameters<ComputeJobClient['computeJob']['update']>[0]['data']
-
-const toUpdateData = (updates: UpdateJobRequest): ComputeJobUpdateData => {
-  const data: ComputeJobUpdateData = {}
-
-  if (updates.status !== undefined) data.status = updates.status
-  if (updates.remoteHandle !== undefined) data.remoteHandle = updates.remoteHandle
-  if ('exitCode' in updates) data.exitCode = updates.exitCode
-  if ('stdoutTail' in updates) data.stdoutTail = updates.stdoutTail
-  if ('stderrTail' in updates) data.stderrTail = updates.stderrTail
-  if ('errorCode' in updates) data.errorCode = updates.errorCode
-  if ('lastPollError' in updates) data.lastPollError = updates.lastPollError
-  if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
-  if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
-  if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
-  if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
-  if ('harvestError' in updates) data.harvestError = updates.harvestError
-  if ('leftOnRemote' in updates) data.leftOnRemote = updates.leftOnRemote
-  if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
-  if ('notificationConsumedAt' in updates)
-    data.notificationConsumedAt = updates.notificationConsumedAt
-
-  return data
-}
+type ComputeJobCreateData = Parameters<ComputeJobClient['computeJob']['create']>[0]['data']
 
 // Owns ComputeJob reads/writes. Follows the same lazy-provider pattern as ComputeHostRepository.
 export class ComputeJobRepository {
@@ -147,7 +105,14 @@ export class ComputeJobRepository {
   private readonly deletingSessions = new Set<string>()
   private readonly deletingProviders = new Set<string>()
 
-  constructor(private readonly getClient: ComputeJobClientProvider) {}
+  constructor(
+    private readonly getClient: ComputeJobClientProvider,
+    private readonly fieldProtection: ComputeJobFieldProtection = new OptionalSecureStorageStringProtection()
+  ) {}
+
+  isFieldProtectionAvailable(): boolean {
+    return this.fieldProtection.isAvailable()
+  }
 
   async beginProviderDeletion(providerId: string): Promise<void> {
     await this.runMutation(async () => {
@@ -185,7 +150,7 @@ export class ComputeJobRepository {
       where: ownerWhere(owner),
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
   }
 
   async listOwners(): Promise<ComputeJobSessionOwner[]> {
@@ -212,35 +177,55 @@ export class ComputeJobRepository {
       this.assertOwnerMutable(request.projectId, request.sessionId)
       const client = await this.getClient()
       const initialStatus = request.initialStatus ?? 'submitted'
-      const row = await client.computeJob.create({
-        data: {
-          id: request.id,
-          providerId: request.providerId,
-          shape: request.shape,
-          sessionId: request.sessionId,
-          projectId: request.projectId,
-          status: initialStatus,
-          intent: request.intent,
-          command: request.command,
-          commandHash: request.commandHash,
-          environment: request.environment,
-          resourceRequest: request.resourceRequest,
-          inputManifest: request.inputManifest,
-          outputManifest: request.outputManifest,
-          harvestConfig: request.harvestConfig,
-          timeoutSeconds: request.timeoutSeconds,
-          remoteWorkdir: request.remoteWorkdir,
-          submittedAt: initialStatus === 'submitted' ? new Date() : undefined
-        }
+      const sensitiveDataEncrypted = this.fieldProtection.isAvailable()
+      if (!sensitiveDataEncrypted && request.allowUnencryptedPersistence !== true) {
+        throw new UnencryptedComputeJobPersistenceApprovalRequiredError()
+      }
+
+      const buildData = (encrypt: boolean): ComputeJobCreateData => ({
+        id: request.id,
+        providerId: request.providerId,
+        shape: request.shape,
+        sessionId: request.sessionId,
+        projectId: request.projectId,
+        status: initialStatus,
+        intent: this.protect(request.intent, encrypt),
+        command: this.protect(request.command, encrypt),
+        commandHash: request.commandHash,
+        sensitiveDataEncrypted: encrypt,
+        environment: this.protectOptional(request.environment, encrypt),
+        resourceRequest: this.protectJsonOptional(request.resourceRequest, 'object', encrypt),
+        inputManifest: this.protectJsonOptional(request.inputManifest, 'array', encrypt),
+        outputManifest: this.protectJsonOptional(request.outputManifest, 'array', encrypt),
+        harvestConfig: this.protectJsonOptional(request.harvestConfig, 'object', encrypt),
+        timeoutSeconds: request.timeoutSeconds,
+        remoteWorkdir: this.protectOptional(request.remoteWorkdir, encrypt),
+        submittedAt: initialStatus === 'submitted' ? new Date() : undefined
       })
-      return toJob(row)
+
+      let data: ReturnType<typeof buildData>
+      try {
+        data = buildData(sensitiveDataEncrypted)
+      } catch (error) {
+        if (sensitiveDataEncrypted && !this.fieldProtection.isAvailable()) {
+          if (request.allowUnencryptedPersistence !== true) {
+            throw new UnencryptedComputeJobPersistenceApprovalRequiredError()
+          }
+          data = buildData(false)
+        } else {
+          throw error
+        }
+      }
+
+      const row = await client.computeJob.create({ data })
+      return this.toJob(row)
     })
   }
 
   async get(jobId: string): Promise<ComputeJob | null> {
     const client = await this.getClient()
     const row = await client.computeJob.findUnique({ where: { id: jobId } })
-    return row ? toJob(row) : null
+    return row ? this.toJob(row) : null
   }
 
   // Returns all non-terminal jobs (queued + submitted + running) for the poller to resume after restart.
@@ -250,7 +235,7 @@ export class ComputeJobRepository {
       where: { status: { in: ['queued', 'submitted', 'running'] } },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(rows.map(toJob))
+    return this.excludeDeletingOwners(rows.map(this.toJob))
   }
 
   // Returns all terminal jobs (success/failed/timeout) that have not yet been harvested.
@@ -264,7 +249,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(rows.map(toJob))
+    return this.excludeDeletingOwners(rows.map(this.toJob))
   }
 
   // Returns error-state jobs that have not yet emitted a compute_done notification.
@@ -281,7 +266,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(rows.map(toJob))
+    return this.excludeDeletingOwners(rows.map(this.toJob))
   }
 
   // Returns all non-terminal jobs for a given provider (used by per-host batch polling).
@@ -291,16 +276,17 @@ export class ComputeJobRepository {
       where: { providerId, status: { in: ['queued', 'submitted', 'running'] } },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
   }
 
   async update(jobId: string, updates: UpdateJobRequest): Promise<ComputeJob> {
     const client = await this.getClient()
+    const current = await client.computeJob.findUnique({ where: { id: jobId } })
     const row = await client.computeJob.update({
       where: { id: jobId },
-      data: toUpdateData(updates)
+      data: this.toUpdateData(updates, current?.sensitiveDataEncrypted === true)
     })
-    return toJob(row)
+    return this.toJob(row)
   }
 
   async updateIfStatus(
@@ -316,12 +302,12 @@ export class ComputeJobRepository {
 
         const applied = await transaction.computeJob.updateMany({
           where: { id: jobId, status: { in: [...expectedStatuses] } },
-          data: toUpdateData(updates)
+          data: this.toUpdateData(updates, current.sensitiveDataEncrypted === true)
         })
         if (applied.count === 0) return null
 
         const row = await transaction.computeJob.findUnique({ where: { id: jobId } })
-        return row ? toJob(row) : null
+        return row ? this.toJob(row) : null
       })
     })
   }
@@ -336,7 +322,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'desc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
   }
 
   // Checks if a provider has any non-terminal jobs (used by delete guard on ComputeHost).
@@ -373,20 +359,19 @@ export class ComputeJobRepository {
     })
   }
 
-  // Returns jobs for a session that have been notified (notifiedAt set) but not yet consumed
-  // (notificationConsumedAt null). Used by the renderer at session load time to find jobs that
-  // need an analysis turn (issue 05: restart recovery path).
-  async findPendingNotifications(sessionId: string): Promise<ComputeJob[]> {
+  // Returns notified jobs that have not yet been consumed, optionally scoped to one Session.
+  // The App-level analysis owner uses the global form for restart recovery.
+  async findPendingNotifications(sessionId?: string): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
       where: {
-        sessionId,
+        ...(sessionId === undefined ? {} : { sessionId }),
         notifiedAt: { not: null },
         notificationConsumedAt: null
       },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
   }
 
   // Marks a batch of jobs as notification-consumed by setting notificationConsumedAt to now.
@@ -484,7 +469,164 @@ export class ComputeJobRepository {
       where: { status: 'queued' },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
+  }
+
+  private readonly toJob = (row: PrismaComputeJob): ComputeJob => ({
+    job_id: row.id,
+    provider_id: row.providerId,
+    shape: row.shape,
+    session_id: row.sessionId,
+    project_id: row.projectId,
+    status: asStatus(row.status),
+    intent: this.reveal(row.intent, row.sensitiveDataEncrypted === true),
+    command: this.reveal(row.command, row.sensitiveDataEncrypted === true),
+    command_hash: row.commandHash,
+    environment: this.revealOptional(row.environment, row.sensitiveDataEncrypted === true),
+    resource_request: this.revealJsonOptional(
+      row.resourceRequest,
+      'object',
+      row.sensitiveDataEncrypted === true
+    ),
+    input_manifest: this.revealJsonOptional(
+      row.inputManifest,
+      'array',
+      row.sensitiveDataEncrypted === true
+    ),
+    output_manifest: this.revealJsonOptional(
+      row.outputManifest,
+      'array',
+      row.sensitiveDataEncrypted === true
+    ),
+    harvest_config: this.revealJsonOptional(
+      row.harvestConfig,
+      'object',
+      row.sensitiveDataEncrypted === true
+    ),
+    timeout_seconds: row.timeoutSeconds ?? undefined,
+    remote_workdir: this.revealOptional(row.remoteWorkdir, row.sensitiveDataEncrypted === true),
+    remote_handle: this.revealJsonOptional(
+      row.remoteHandle,
+      'object',
+      row.sensitiveDataEncrypted === true
+    ),
+    exit_code: row.exitCode ?? undefined,
+    stdout_tail: this.revealOptional(row.stdoutTail, row.sensitiveDataEncrypted === true),
+    stderr_tail: this.revealOptional(row.stderrTail, row.sensitiveDataEncrypted === true),
+    error_code: row.errorCode ?? undefined,
+    last_poll_error: this.revealOptional(row.lastPollError, row.sensitiveDataEncrypted === true),
+    harvest_error: this.revealOptional(row.harvestError, row.sensitiveDataEncrypted === true),
+    left_on_remote: this.revealJsonOptional(
+      row.leftOnRemote,
+      'array',
+      row.sensitiveDataEncrypted === true
+    ),
+    notified_at: row.notifiedAt?.getTime(),
+    notification_consumed_at: row.notificationConsumedAt?.getTime(),
+    created_at: row.createdAt.getTime(),
+    submitted_at: row.submittedAt?.getTime(),
+    started_at: row.startedAt?.getTime(),
+    finished_at: row.finishedAt?.getTime(),
+    harvested_at: row.harvestedAt?.getTime()
+  })
+
+  private toUpdateData(
+    updates: UpdateJobRequest,
+    sensitiveDataEncrypted: boolean
+  ): ComputeJobUpdateData {
+    const data: ComputeJobUpdateData = {}
+
+    if (updates.status !== undefined) data.status = updates.status
+    if (updates.remoteHandle !== undefined)
+      data.remoteHandle = this.protectJson(updates.remoteHandle, 'object', sensitiveDataEncrypted)
+    if ('exitCode' in updates) data.exitCode = updates.exitCode
+    if ('stdoutTail' in updates)
+      data.stdoutTail =
+        updates.stdoutTail === null
+          ? null
+          : this.protectOptional(updates.stdoutTail, sensitiveDataEncrypted)
+    if ('stderrTail' in updates)
+      data.stderrTail =
+        updates.stderrTail === null
+          ? null
+          : this.protectOptional(updates.stderrTail, sensitiveDataEncrypted)
+    if ('errorCode' in updates) data.errorCode = updates.errorCode
+    if ('lastPollError' in updates)
+      data.lastPollError =
+        updates.lastPollError === null
+          ? null
+          : this.protectOptional(updates.lastPollError, sensitiveDataEncrypted)
+    if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
+    if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
+    if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
+    if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
+    if ('harvestError' in updates)
+      data.harvestError =
+        updates.harvestError === null
+          ? null
+          : this.protectOptional(updates.harvestError, sensitiveDataEncrypted)
+    if ('leftOnRemote' in updates)
+      data.leftOnRemote =
+        updates.leftOnRemote === null
+          ? null
+          : this.protectJsonOptional(updates.leftOnRemote, 'array', sensitiveDataEncrypted)
+    if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
+    if ('notificationConsumedAt' in updates)
+      data.notificationConsumedAt = updates.notificationConsumedAt
+
+    return data
+  }
+
+  private protect(value: string, sensitiveDataEncrypted: boolean): string {
+    return sensitiveDataEncrypted ? this.fieldProtection.protect(value) : value
+  }
+
+  private protectOptional(
+    value: string | undefined,
+    sensitiveDataEncrypted: boolean
+  ): string | undefined {
+    return value === undefined ? undefined : this.protect(value, sensitiveDataEncrypted)
+  }
+
+  private protectJson(
+    value: string,
+    container: ProtectedJsonContainer,
+    sensitiveDataEncrypted: boolean
+  ): string {
+    return sensitiveDataEncrypted ? this.fieldProtection.protectJson(value, container) : value
+  }
+
+  private protectJsonOptional(
+    value: string | undefined,
+    container: ProtectedJsonContainer,
+    sensitiveDataEncrypted: boolean
+  ): string | undefined {
+    return value === undefined
+      ? undefined
+      : this.protectJson(value, container, sensitiveDataEncrypted)
+  }
+
+  private reveal(value: string, sensitiveDataEncrypted: boolean): string {
+    return sensitiveDataEncrypted ? this.fieldProtection.reveal(value) : value
+  }
+
+  private revealOptional(
+    value: string | null,
+    sensitiveDataEncrypted: boolean
+  ): string | undefined {
+    return value === null ? undefined : this.reveal(value, sensitiveDataEncrypted)
+  }
+
+  private revealJsonOptional(
+    value: string | null,
+    container: ProtectedJsonContainer,
+    sensitiveDataEncrypted: boolean
+  ): string | undefined {
+    return value === null
+      ? undefined
+      : sensitiveDataEncrypted
+        ? this.fieldProtection.revealJson(value, container)
+        : value
   }
 
   private assertOwnerMutable(projectId: string, sessionId: string): void {
@@ -514,5 +656,4 @@ export class ComputeJobRepository {
   }
 }
 
-export { toJob }
-export type { ComputeJobClient, ComputeJobClientProvider }
+export type { ComputeJobClient, ComputeJobClientProvider, ComputeJobFieldProtection }

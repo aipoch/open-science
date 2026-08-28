@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { ToolContext, ToolDescriptor } from '../types'
+import { abortableDelay } from '../abortable-delay'
 
 // Rfam REST API (https://rfam.org): read-only RNA family data. Mirrors the 9 upstream
 // tooluniverse/rfam methods — family metadata, seed alignment (Stockholm/FASTA), covariance
@@ -211,8 +212,6 @@ function capTextPayload(
   }
   return result
 }
-
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 type SearchSubmission = { resultURL?: string; jobId?: string; opened?: string }
 type SearchResult = { hits?: Record<string, unknown[]>; searchSequence?: string }
@@ -480,7 +479,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
           break
         }
         if (Date.now() >= deadline) break
-        await delay(pollIntervalS * 1000)
+        await abortableDelay(pollIntervalS * 1000, ctx.signal)
       }
       if (!res || res.hits == null) {
         throw new Error(`Rfam sequence search not finished after ${maxWaitS}s (${resultUrl})`)

@@ -70,11 +70,13 @@ describe('Compute password authentication release guards', () => {
     }
     expect(adapter).not.toContain('PASSWORD: password')
     expect(read('resources/compute-askpass.sh')).not.toMatch(/\$PASSWORD|%PASSWORD%/)
+    expect(read('resources/compute-askpass-win.cjs')).not.toMatch(/\$PASSWORD|%PASSWORD%/)
   })
 
   it('ships the constrained askpass helper outside the archive', () => {
     expect(read('electron-builder.yml')).toContain('- resources/**')
     expect(read('resources/compute-askpass.cjs')).toContain('OPEN_SCIENCE_ASKPASS_CAPABILITY')
+    expect(read('resources/compute-askpass-win.cjs')).toContain('OPEN_SCIENCE_ASKPASS_CAPABILITY')
   })
 
   it('routes the complete Compute Job lifecycle through the connection Broker', () => {

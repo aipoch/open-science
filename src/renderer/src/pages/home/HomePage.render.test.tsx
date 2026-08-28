@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { JobSummary } from '../../../../shared/compute'
 import type { ProjectFilesChangedEvent } from '../../../../shared/project-files'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
@@ -10,6 +11,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import { EMPTY_SNAPSHOT, useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
 import {
   createInitialSessionState,
   type ChatSession,
@@ -60,6 +62,29 @@ const session = (
     : {}),
   createdAt: updatedAt,
   updatedAt
+})
+
+const computeJob = (
+  sessionId: string,
+  status: Extract<JobSummary['status'], 'queued' | 'submitted' | 'running'>
+): JobSummary => ({
+  job_id: `job-${status}`,
+  provider_id: 'ssh:cluster',
+  display_name: 'Cluster',
+  shape: 'direct_ssh',
+  session_id: sessionId,
+  status,
+  intent: 'Run remote analysis',
+  created_at: 500_000,
+  started_at: status === 'running' ? 510_000 : undefined,
+  finished_at: undefined,
+  exit_code: undefined,
+  error_code: undefined,
+  remote_workdir: undefined,
+  stdout_tail: undefined,
+  stderr_tail: undefined,
+  notified_at: undefined,
+  notification_consumed_at: undefined
 })
 
 const pendingPlan: ActivePlanProjection = {
@@ -342,6 +367,7 @@ beforeEach(() => {
   })
   useProjectStore.setState(createInitialProjectState())
   useNavigationStore.setState({ pendingProjectCreation: false })
+  useSessionJobStore.setState(createInitialSessionJobState())
   useSessionStore.setState(createInitialSessionState())
   useSettingsStore.setState(createInitialSettingsState())
   useNotificationInboxStore.setState({
@@ -1111,6 +1137,53 @@ describe('HomePage activity overview', () => {
       container.querySelector('[aria-label="Open session Delegated runs, completed"]')
     ).toBeNull()
   })
+
+  it.each(['queued', 'submitted', 'running'] as const)(
+    'shows Running instead of an unread completion while remote compute is %s',
+    async (status) => {
+      const candidate = session('remote-compute', 'Remote analysis', 'idle', 590_000)
+      useProjectStore.setState({
+        ...createInitialProjectState(),
+        projects: [project],
+        isLoaded: true
+      })
+      useSessionStore.setState({ ...createInitialSessionState(), sessions: [candidate] })
+      useSessionJobStore.getState().applyUpdate(computeJob(candidate.id, status))
+      useNotificationInboxStore.setState({
+        revision: 1,
+        unreadCount: 1,
+        latestSequence: 1,
+        status: 'ready',
+        items: [
+          {
+            id: 'completed-while-compute-active',
+            sequence: 1,
+            dedupeKey: 'task:completed:remote-compute',
+            kind: 'task.completed',
+            projectId: project.id,
+            sessionId: candidate.id,
+            originId: 'root-run',
+            title: candidate.title,
+            summary: 'The foreground turn completed.',
+            createdAt: 590_000
+          }
+        ]
+      })
+
+      await act(async () =>
+        root.render(
+          <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+        )
+      )
+
+      expect(
+        container.querySelector('[aria-label="Open session Remote analysis, completed"]')
+      ).toBeNull()
+      expect(
+        container.querySelector('[aria-label="Open session Remote analysis, running"]')
+      ).not.toBeNull()
+    }
+  )
 
   it('keeps inactive-branch delegated work Running until its current Attempt becomes terminal', async () => {
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(600_000)
