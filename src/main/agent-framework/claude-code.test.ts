@@ -102,11 +102,27 @@ describe('claudeCodeFramework', () => {
     })
   })
 
-  it('routes canonical Skill calls through the isolated read-only runtime loader', () => {
+  it('routes canonical Skill calls through the isolated read-only runtime loader', async () => {
+    type PreToolUseCallback = (
+      input: unknown,
+      toolUseId: string | undefined,
+      options: { signal: AbortSignal }
+    ) => Promise<{
+      hookSpecificOutput?: {
+        hookEventName?: string
+        permissionDecision?: string
+      }
+    }>
+
+    const existingPreToolUseHook: PreToolUseCallback = async () => ({})
     const setup = claudeCodeFramework.buildSessionSetup({
       systemPromptAppends: [],
       skillRuntimeScope: 'all',
       sessionOptions: {
+        allowedTools: ['Read'],
+        hooks: {
+          PreToolUse: [{ matcher: 'Bash', hooks: [existingPreToolUseHook] }]
+        },
         [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
           command: '/app/electron',
           entryPath: '/app/main.js',
@@ -116,10 +132,13 @@ describe('claudeCodeFramework', () => {
     })
     const options = (setup.meta?.claudeCode as { options: Record<string, unknown> }).options
     const servers = options.mcpServers as Record<string, Record<string, unknown>>
+    const hooks = options.hooks as {
+      PreToolUse: Array<{ matcher?: string; hooks: PreToolUseCallback[] }>
+    }
 
     expect(options).not.toHaveProperty(OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION)
     expect(options.toolAliases).toEqual({ Skill: LOAD_SKILL_TOOL_CALLABLE_NAME })
-    expect(options.allowedTools).toEqual([LOAD_SKILL_TOOL_CALLABLE_NAME])
+    expect.soft(options.allowedTools).toEqual(['Read'])
     expect(servers[SKILL_RUNTIME_MCP_SERVER_NAME]).toMatchObject({
       type: 'stdio',
       command: '/app/electron',
@@ -127,6 +146,32 @@ describe('claudeCodeFramework', () => {
       env: {
         ELECTRON_RUN_AS_NODE: '1',
         [SKILL_RUNTIME_ROOT_ENV]: '/runtime/revision'
+      }
+    })
+    expect(hooks.PreToolUse[0]).toMatchObject({
+      matcher: 'Bash',
+      hooks: [existingPreToolUseHook]
+    })
+
+    const loadSkillHook = hooks.PreToolUse.find(
+      (hook) => hook.matcher === LOAD_SKILL_TOOL_CALLABLE_NAME
+    )
+    expect(loadSkillHook).toBeDefined()
+
+    const decision = await loadSkillHook!.hooks[0](
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: LOAD_SKILL_TOOL_CALLABLE_NAME,
+        tool_input: { name: 'literature-review' },
+        tool_use_id: 'tool-use-1'
+      },
+      'tool-use-1',
+      { signal: new AbortController().signal }
+    )
+    expect(decision).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow'
       }
     })
   })
