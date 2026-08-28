@@ -399,7 +399,7 @@ const NotificationBellContent = ({
                 }}
                 onUnmountAutoFocus={(event) => {
                   event.preventDefault()
-                  if (isMobile) restoreMobileFocus()
+                  if (mobileWasOpenRef.current) restoreMobileFocus()
                 }}
               >
                 <div
