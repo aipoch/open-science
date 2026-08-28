@@ -813,7 +813,7 @@ describe('OpenScienceClient', () => {
     })
     await expect(first).resolves.toMatchObject({ done: false, value: { sequence: 1 } })
 
-    firstSocket.emit('close')
+    firstSocket.emit('close', { code: 1005 })
 
     await vi.waitFor(() => expect(ReconnectingWebSocket.instances).toHaveLength(2))
     const secondSocket = ReconnectingWebSocket.instances[1]
