@@ -400,6 +400,44 @@ const PERMISSION_CANCELLED_CONTINUATION_TEXT =
 
 const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
 const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
+const AGENT_STDERR_REPORT_WINDOW_MS = 1000
+const MAX_RAW_AGENT_STDERR_SAMPLE_BYTES = 4096
+// Support-only opt-in. Raw agent stderr can contain research data, local paths, and tool output.
+const RAW_AGENT_STDERR_ENV = 'OPEN_SCIENCE_AGENT_STDERR'
+
+const utf8PrefixWithinBytes = (value: string, maxBytes: number): string => {
+  if (maxBytes <= 0) return ''
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
+
+  let low = 0
+  let high = Math.min(value.length, maxBytes)
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    if (Buffer.byteLength(value.slice(0, middle), 'utf8') <= maxBytes) low = middle
+    else high = middle - 1
+  }
+  // Do not retain half of a UTF-16 surrogate pair at the byte boundary.
+  if (low > 0 && value.charCodeAt(low - 1) >= 0xd800 && value.charCodeAt(low - 1) <= 0xdbff) {
+    low -= 1
+  }
+  return value.slice(0, low)
+}
+
+type AgentStderrWindow = {
+  process: ChildProcessWithoutNullStreams
+  framework: AgentFrameworkId
+  epoch: number
+  startedAt: number
+  chunkCount: number
+  byteCount: number
+  rawSample: string
+  rawSampleBytes: number
+  rawSampleTruncated: boolean
+  sessionId?: string
+  sessionAttributionConsistent: boolean
+  eventEligible: boolean
+  timer: ReturnType<typeof setTimeout>
+}
 
 type PlanContinuationClaimRetry = {
   commandId: string
@@ -450,6 +488,7 @@ class AcpRuntime {
   >
   private durablePlanContinuations?: Map<string, { projectId: string; commandId: string }>
   private readonly planContinuationClaimRetries = new Map<string, PlanContinuationClaimRetry>()
+  private readonly agentStderrWindows = new Map<ChildProcessWithoutNullStreams, AgentStderrWindow>()
   private restoredContinuationContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
@@ -2415,29 +2454,107 @@ class AcpRuntime {
     text: string,
     context: Parameters<AcpAgentConnectionHooks['onProcessStderr']>[1]
   ): void {
-    // Always capture agent stderr in the log — it's the primary clue when a turn stalls or the
-    // agent misbehaves (auth loops, MCP connection failures, tool errors) in a packaged build.
-    if (text) {
-      log.warn('agent stderr', {
-        text,
-        framework: context.framework,
-        status: this.snapshotOwner.status,
-        sessionCount: this.activeSessionIds().length
-      })
+    if (!text) return
+
+    const disposition = this.processEventDisposition(context.process, context.epoch)
+    const inFlight = disposition === 'current' ? this.getInFlightSessionIds() : []
+    const sessionId = inFlight.length === 1 ? inFlight[0] : undefined
+    const existing = this.agentStderrWindows.get(context.process)
+    if (existing) {
+      existing.chunkCount += 1
+      existing.byteCount += Buffer.byteLength(text, 'utf8')
+      existing.eventEligible &&= disposition === 'current'
+      if (existing.sessionId !== sessionId) {
+        existing.sessionId = undefined
+        existing.sessionAttributionConsistent = false
+      }
+      this.appendAgentStderrSample(existing, text)
+      return
     }
 
-    if (this.processEventDisposition(context.process, context.epoch) !== 'current' || !text) return
+    const timer = setTimeout(
+      () => this.flushAgentProcessStderr(context.process),
+      AGENT_STDERR_REPORT_WINDOW_MS
+    )
+    timer.unref?.()
+    const window: AgentStderrWindow = {
+      process: context.process,
+      framework: context.framework,
+      epoch: context.epoch,
+      startedAt: Date.now(),
+      chunkCount: 1,
+      byteCount: Buffer.byteLength(text, 'utf8'),
+      rawSample: '',
+      rawSampleBytes: 0,
+      rawSampleTruncated: false,
+      sessionId,
+      sessionAttributionConsistent: true,
+      eventEligible: disposition === 'current',
+      timer
+    }
+    this.appendAgentStderrSample(window, text)
+    this.agentStderrWindows.set(context.process, window)
+  }
 
-    // Attribute stderr to a session only when exactly one prompt is in flight — then it's
-    // unambiguously that turn's. With zero or multiple concurrent prompts, omit the sessionId
-    // rather than risk pinning it to the wrong conversation's waiting indicator.
-    const inFlight = this.getInFlightSessionIds()
+  private includeRawAgentStderr(): boolean {
+    return process.env[RAW_AGENT_STDERR_ENV]?.trim().toLowerCase() === 'raw'
+  }
+
+  private appendAgentStderrSample(window: AgentStderrWindow, text: string): void {
+    if (!this.includeRawAgentStderr()) return
+    let available = MAX_RAW_AGENT_STDERR_SAMPLE_BYTES - window.rawSampleBytes
+    if (available <= 0) {
+      window.rawSampleTruncated = true
+      return
+    }
+    if (window.rawSample) {
+      window.rawSample += '\n'
+      window.rawSampleBytes += 1
+      available -= 1
+    }
+    const prefix = utf8PrefixWithinBytes(text, available)
+    window.rawSample += prefix
+    window.rawSampleBytes += Buffer.byteLength(prefix, 'utf8')
+    if (prefix.length < text.length) window.rawSampleTruncated = true
+  }
+
+  private flushAgentProcessStderr(process: ChildProcessWithoutNullStreams): void {
+    const window = this.agentStderrWindows.get(process)
+    if (!window) return
+    this.agentStderrWindows.delete(process)
+    clearTimeout(window.timer)
+
+    const windowMs = Math.max(1, Date.now() - window.startedAt)
+    const includeRaw = this.includeRawAgentStderr() && window.rawSample.length > 0
+    const chunkLabel = window.chunkCount === 1 ? 'chunk' : 'chunks'
+    const summary = `Agent process stderr: ${window.chunkCount} ${chunkLabel}, ${window.byteCount} bytes; ${includeRaw ? 'bounded raw sample follows' : 'raw output omitted'}.`
+    const rawSuffix = window.rawSampleTruncated ? '\n…[truncated]' : ''
+    log.warn('agent stderr summary', {
+      errorCategory: 'process-stderr',
+      framework: window.framework,
+      status: this.snapshotOwner.status,
+      sessionCount: this.activeSessionIds().length,
+      chunkCount: window.chunkCount,
+      byteCount: window.byteCount,
+      windowMs,
+      chunksPerSecond: Number(((window.chunkCount * 1000) / windowMs).toFixed(1)),
+      ...(includeRaw
+        ? { rawSample: window.rawSample, rawSampleTruncated: window.rawSampleTruncated }
+        : {})
+    })
+
+    if (
+      !window.eventEligible ||
+      this.processEventDisposition(window.process, window.epoch) !== 'current'
+    ) {
+      return
+    }
     this.pushEvent({
       kind: 'system',
       level: 'warning',
-      sessionId: inFlight.length === 1 ? inFlight[0] : undefined,
+      sessionId: window.sessionAttributionConsistent ? window.sessionId : undefined,
       title: 'agent',
-      text
+      text: includeRaw ? `${summary}\n${window.rawSample}${rawSuffix}` : summary
     })
   }
 
@@ -2467,6 +2584,7 @@ class AcpRuntime {
     signal: NodeJS.Signals | null,
     context: Parameters<AcpAgentConnectionHooks['onProcessExit']>[2]
   ): void {
+    this.flushAgentProcessStderr(context.process)
     const processDisposition = this.processEventDisposition(context.process, context.epoch)
     log.info('agent process exit', {
       code,
