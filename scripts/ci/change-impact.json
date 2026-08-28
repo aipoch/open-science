@@ -155,7 +155,6 @@
         "src/main/settings/claude-detect.ts",
         "src/main/settings/claude-install.ts",
         "src/main/settings/codebuddy-detect.ts",
-        "src/main/settings/codebuddy-install.ts",
         "src/main/settings/codex-auth.ts",
         "src/main/settings/codex-detect.ts",
         "src/main/settings/environment-check.ts",
