@@ -20,11 +20,7 @@ const SESSION_HOVER_PREVIEW_DELAY_MS = 0
 // Radix-internal close grace while the pointer crosses from the row onto the card; the explicit
 // pointer-leave handlers below still close the card as soon as the hover region is left for good.
 const SESSION_HOVER_PREVIEW_SKIP_DELAY_MS = 300
-// align="start" anchors the card's top edge to the trigger's top edge; the trigger is the whole
-// session row (py-1.5) and the card adds 1px border + p-4, so shift the card up to land the card
-// title on the same baseline as the hovered row title (Popper rounds subpixels, hence -12 for the
-// 11px design offset). For a title-only card this also centers the card vertically on the row.
-const SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX = -12
+const SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX = 0
 
 type SessionPreviewContent = {
   title: string
@@ -398,7 +394,7 @@ const SessionHoverPreview = ({
           requestClose()
         }}
         onEscapeKeyDown={() => requestClose()}
-        className="max-w-none overflow-visible bg-transparent py-0 pr-0 pl-2.5 text-inherit shadow-none motion-reduce:animate-none"
+        className="max-w-none overflow-visible border-0 bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
       >
         <SessionHoverPreviewCard
           session={session}
