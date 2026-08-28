@@ -1003,12 +1003,22 @@ describe('task CLI', () => {
     const stableSessionId = 'stable-app-session'
     const providerSessionId = 'provider-session'
     const stableEvent = {
+      runId: 'run-1',
+      sessionId: stableSessionId,
+      projectId: 'project-1',
       type: 'run.event',
       data: { sessionId: stableSessionId, kind: 'tool' }
     }
     const client = {
       listProjects,
       events: async function* () {
+        yield {
+          runId: 'previous-run',
+          sessionId: stableSessionId,
+          projectId: 'project-1',
+          type: 'run.event',
+          data: { sessionId: stableSessionId, kind: 'tool' }
+        }
         yield { type: 'run.event', data: { sessionId: providerSessionId, kind: 'tool' } }
         yield stableEvent
       },
@@ -1058,6 +1068,10 @@ describe('task CLI', () => {
       type: string
       data: { sessionId: string }
     }> {
+      yield {
+        type: 'stream.resync-required',
+        data: { sessionId: 'session-1' }
+      }
       yield { type: 'permission.requested', data: { sessionId: 'session-1' } }
     }
     const client = {
@@ -1099,9 +1113,10 @@ describe('task CLI', () => {
     )
 
     expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 60_000 })
-    expect(warn).toHaveBeenCalledWith(
+    expect(warn.mock.calls.map(([message]) => message)).toEqual([
+      'Run event history could not be fully replayed. Final Run state will still be read from Open Science.',
       'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'
-    )
+    ])
   })
 
   it('prints provider-neutral Run progress and liveness heartbeats while waiting', async () => {

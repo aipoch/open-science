@@ -458,7 +458,10 @@ export class RemoteSessionPairingManager {
     url: URL
   ): ReturnType<ExternalWebAccess['authorizeWebSocket']> {
     const authorizationGeneration = this.options.authorizationGeneration?.() ?? 0
-    if (url.pathname !== '/events' || !this.isExpectedRemoteRequest(request, true)) {
+    if (
+      !['/events', '/api/v1/events'].includes(url.pathname) ||
+      !this.isExpectedRemoteRequest(request, true)
+    ) {
       return undefined
     }
     const sessionAccess = await this.getSessionAccess(request)

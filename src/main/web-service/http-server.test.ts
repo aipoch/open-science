@@ -746,6 +746,13 @@ describe('startWebHttpServer', () => {
       token: 'test-token',
       staticRoot,
       rpc,
+      tasks: {
+        subscribeProgress: () => () => undefined,
+        resolveActiveRun: (sessionId: string) =>
+          sessionId === 'session-1'
+            ? { runId: 'run-1', sessionId, projectId: 'project-1' }
+            : undefined
+      } as never,
       bootstrap: {
         appName: 'Open Science',
         appVersion: '0.0.0',
@@ -922,6 +929,10 @@ describe('startWebHttpServer', () => {
     await vi.waitFor(() => {
       expect(publicMessages).toEqual([
         {
+          sequence: 1,
+          runId: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
           type: 'run.event',
           data: {
             id: 'event-1',
@@ -933,6 +944,10 @@ describe('startWebHttpServer', () => {
           }
         },
         {
+          sequence: 2,
+          runId: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
           type: 'permission.requested',
           data: {
             sessionId: 'session-1',
@@ -953,6 +968,13 @@ describe('startWebHttpServer', () => {
       port: 0,
       token: 'test-token',
       staticRoot: '/unused',
+      tasks: {
+        subscribeProgress: () => () => undefined,
+        resolveActiveRun: (sessionId: string) =>
+          sessionId === 'session-1'
+            ? { runId: 'run-1', sessionId, projectId: 'project-1' }
+            : undefined
+      } as never,
       rpc: {
         channels: () => [],
         invoke: vi.fn(),
@@ -1019,12 +1041,80 @@ describe('startWebHttpServer', () => {
     ).resolves.toBe('closed')
   })
 
+  it('keeps non-Task Session events off the public Task event stream', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      tasks: {
+        subscribeProgress: () => () => undefined,
+        resolveActiveRun: (sessionId: string) =>
+          sessionId === 'session-1'
+            ? { runId: 'run-1', sessionId, projectId: 'project-1' }
+            : undefined
+      } as never,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/events?token=test-token`)
+    await new Promise<void>((resolve) => socket.once('open', resolve))
+    const outcome = new Promise<'leaked'>((resolve) =>
+      socket.once('message', () => resolve('leaked'))
+    )
+
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'desktop-event',
+        timestamp: 1,
+        level: 'info',
+        sessionId: 'desktop-session',
+        kind: 'message',
+        text: 'Private desktop Session detail'
+      }
+    ])
+    applicationEvents.publish('acp:permission-request', {
+      sessionId: 'desktop-session',
+      requestId: 'desktop-permission',
+      toolCallId: 'desktop-tool',
+      title: 'Private desktop permission',
+      options: []
+    })
+
+    await expect(
+      Promise.race([
+        outcome,
+        new Promise<'not-delivered'>((resolve) => setTimeout(() => resolve('not-delivered'), 50))
+      ])
+    ).resolves.toBe('not-delivered')
+    socket.close()
+  })
+
   it('replays internal renderer events published while the Web client is disconnected', async () => {
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
       staticRoot: '/unused',
+      tasks: {
+        subscribeProgress: () => () => undefined,
+        resolveActiveRun: (sessionId: string) =>
+          sessionId === 'session-1'
+            ? { runId: 'run-1', sessionId, projectId: 'project-1' }
+            : undefined
+      } as never,
       rpc: {
         channels: () => [],
         invoke: vi.fn(),
@@ -1085,7 +1175,7 @@ describe('startWebHttpServer', () => {
     await firstClosed
 
     applicationEvents.publish('acp:permission-request', {
-      sessionId: 'session-1',
+      sessionId: 'internal-session',
       requestId: 'permission-1',
       toolCallId: 'tool-1',
       title: 'Run command',
@@ -1154,6 +1244,106 @@ describe('startWebHttpServer', () => {
       })
     ])
     publicSocket.close()
+  })
+
+  it('replays owned public Task events from the requested sequence', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      tasks: {
+        subscribeProgress: () => () => undefined,
+        resolveActiveRun: (sessionId: string) =>
+          sessionId === 'task-session'
+            ? { runId: 'run-1', sessionId, projectId: 'project-1' }
+            : undefined
+      } as never,
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const baseUrl = new URL(`ws://127.0.0.1:${server.port}/api/v1/events`)
+    baseUrl.searchParams.set('token', 'test-token')
+    baseUrl.searchParams.set('eventProtocol', '1')
+    const firstSocket = new WebSocket(baseUrl)
+    const firstMessage = new Promise<unknown>((resolve) =>
+      firstSocket.once('message', (data) => resolve(JSON.parse(data.toString())))
+    )
+    await new Promise<void>((resolve) => firstSocket.once('open', resolve))
+    const ready = await Promise.race([
+      firstMessage,
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(() => reject(new Error('Timed out waiting for public stream readiness.')), 250)
+      )
+    ])
+    expect(ready).toMatchObject({
+      type: 'stream.ready',
+      data: { protocolVersion: 1, latestSequence: 0, streamId: expect.any(String) }
+    })
+    const streamId = (ready as { data: { streamId: string } }).data.streamId
+    const firstClosed = new Promise<void>((resolve) => firstSocket.once('close', () => resolve()))
+    firstSocket.close()
+    await firstClosed
+
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'event-1',
+        timestamp: 1,
+        level: 'info',
+        sessionId: 'task-session',
+        kind: 'message',
+        text: 'Task output'
+      }
+    ])
+
+    const resumeUrl = new URL(baseUrl)
+    resumeUrl.searchParams.set('stream', streamId)
+    resumeUrl.searchParams.set('after', '0')
+    const replayed: unknown[] = []
+    const secondSocket = new WebSocket(resumeUrl)
+    const replayReady = new Promise<void>((resolve) => {
+      secondSocket.on('message', (data) => {
+        const message = JSON.parse(data.toString())
+        replayed.push(message)
+        if (message.type === 'stream.ready') resolve()
+      })
+    })
+    await replayReady
+
+    expect(replayed).toEqual([
+      {
+        sequence: 1,
+        runId: 'run-1',
+        sessionId: 'task-session',
+        projectId: 'project-1',
+        type: 'run.event',
+        data: {
+          id: 'event-1',
+          timestamp: 1,
+          level: 'info',
+          sessionId: 'task-session',
+          kind: 'message',
+          text: 'Task output'
+        }
+      },
+      {
+        type: 'stream.ready',
+        data: { protocolVersion: 1, streamId, latestSequence: 1 }
+      }
+    ])
+    secondSocket.close()
   })
 
   it('sends opt-in liveness frames on internal and public event sockets', async () => {
@@ -2356,6 +2546,10 @@ describe('startWebHttpServer', () => {
       heartbeat: false
     })
     await expect(progressMessage).resolves.toEqual({
+      sequence: 1,
+      runId: 'run-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
       type: 'run.progress',
       data: {
         runId: 'run-1',

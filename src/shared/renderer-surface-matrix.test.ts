@@ -329,7 +329,16 @@ describe('renderer surface compatibility matrix', () => {
     expect(projected.electronPayload).toEqual([TERMINAL_EVENT_FIXTURE])
     expect(projected.webPayload).toEqual([TERMINAL_EVENT_FIXTURE])
     expect(projectTaskRuntimeEvent(event)).toEqual(TERMINAL_EVENT_FIXTURE)
-    expect(projectPublicTaskEvent(event)).toEqual({
+    expect(
+      projectPublicTaskEvent(event, (sessionId) => ({
+        runId: 'run-1',
+        sessionId,
+        projectId: 'project-1'
+      }))
+    ).toEqual({
+      runId: 'run-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
       type: 'run.event',
       data: TERMINAL_EVENT_FIXTURE
     })

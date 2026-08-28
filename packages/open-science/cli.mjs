@@ -1023,6 +1023,10 @@ const resolveCliProjectId = async (client, selector) =>
 const emitRunEvent = (event, options, deps) => {
   if (options.jsonl) {
     deps.log(JSON.stringify(event))
+  } else if (event.type === 'stream.resync-required') {
+    deps.warn(
+      'Run event history could not be fully replayed. Final Run state will still be read from Open Science.'
+    )
   } else if (event.type === 'run.progress') {
     if (event.data?.heartbeat) {
       const seconds = Math.max(1, Math.round((event.data.elapsedMs ?? 0) / 1_000))
@@ -1057,15 +1061,20 @@ const emitRunEvent = (event, options, deps) => {
   }
 }
 
-const streamRunEvents = async (eventStream, sessionIdRef, options, deps, signal) => {
+const isEventForRun = (event, run) => {
+  if (event?.runId) return event.runId === run.runId
+  const sessionId = event?.sessionId ?? event?.data?.sessionId
+  return !sessionId || sessionId === run.sessionId
+}
+
+const streamRunEvents = async (eventStream, runRef, options, deps, signal) => {
   try {
     for await (const event of eventStream) {
-      const eventSessionId = event?.data?.sessionId
-      if (!sessionIdRef.current) {
-        sessionIdRef.pending.push(event)
+      if (!runRef.current) {
+        runRef.pending.push(event)
         continue
       }
-      if (eventSessionId && eventSessionId !== sessionIdRef.current) continue
+      if (!isEventForRun(event, runRef.current)) continue
       emitRunEvent(event, options, deps)
     }
   } catch (error) {
@@ -1194,7 +1203,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const projectId = await resolveCliProjectId(client, options.project)
     const prompt = await readPrompt(options, deps)
     if (!prompt) throw new CliUsageError('Prompt is required.')
-    const sessionIdRef = { current: options.session, pending: [] }
+    const runRef = { current: undefined, pending: [] }
     const abortController = new AbortController()
     const eventStream =
       options.wait && !options.json && typeof client.events === 'function'
@@ -1202,7 +1211,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         : undefined
     await eventStream?.ready
     const eventTask = eventStream
-      ? streamRunEvents(eventStream, sessionIdRef, options, deps, abortController.signal)
+      ? streamRunEvents(eventStream, runRef, options, deps, abortController.signal)
       : undefined
     let result
     try {
@@ -1221,12 +1230,9 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         ...(options.delegation ? { delegationPolicy: options.delegation } : {}),
         ...(options.computeHosts !== undefined ? { computeHostIds: options.computeHosts } : {})
       })
-      sessionIdRef.current = started.sessionId
-      for (const event of sessionIdRef.pending.splice(0)) {
-        const eventSessionId = event?.data?.sessionId
-        if (!eventSessionId || eventSessionId === sessionIdRef.current) {
-          emitRunEvent(event, options, deps)
-        }
+      runRef.current = { runId: started.id, sessionId: started.sessionId }
+      for (const event of runRef.pending.splice(0)) {
+        if (isEventForRun(event, runRef.current)) emitRunEvent(event, options, deps)
       }
       try {
         const waitOptions = {

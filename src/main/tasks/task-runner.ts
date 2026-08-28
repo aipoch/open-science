@@ -46,6 +46,7 @@ import type {
   TaskApiErrorCode,
   TaskProject,
   TaskRun,
+  TaskRunIdentity,
   TaskRunProgressEvent,
   TaskRunProgressPhase,
   TaskRunReview,
@@ -547,6 +548,14 @@ class TaskRunner {
   subscribeProgress(listener: (event: TaskRunProgressEvent) => void): () => void {
     this.progressListeners.add(listener)
     return () => this.progressListeners.delete(listener)
+  }
+
+  resolveActiveRun(sessionId: string, promptMessageId?: string): TaskRunIdentity | undefined {
+    const runId = this.activeRunBySession.get(sessionId)
+    const run = runId ? this.runs.get(runId) : undefined
+    if (!run || run.status !== 'running') return undefined
+    if (promptMessageId !== undefined && promptMessageId !== run.promptMessageId) return undefined
+    return { runId: run.id, sessionId: run.sessionId, projectId: run.projectId }
   }
 
   async listProjects(): Promise<TaskProject[]> {

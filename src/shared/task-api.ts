@@ -5,6 +5,8 @@ import type { ReviewLifecycle, ReviewOutcome, ReviewRunNotStartedReason } from '
 import type { DelegationPolicy, PersistedSessionStatus } from './session-persistence'
 import type { ActivePlanProjection } from './session-plan/contract'
 
+export const TASK_EVENT_STREAM_PROTOCOL_VERSION = 1 as const
+
 export type TaskRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
 export type TaskRunProgressPhase =
@@ -26,6 +28,8 @@ export type TaskRunProgressEvent = {
   elapsedMs: number
   heartbeat: boolean
 }
+
+export type TaskRunIdentity = Pick<TaskRunProgressEvent, 'runId' | 'sessionId' | 'projectId'>
 
 export type StartTaskRunRequest = {
   /** Project ID. The external field name remains `project`. */

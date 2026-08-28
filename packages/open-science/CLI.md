@@ -328,7 +328,10 @@ The event stream includes `run.progress` phase changes and ten-second liveness h
 first visible provider output. Each progress payload includes `runId`, `sessionId`, `projectId`,
 `phase`, `timestamp`, `elapsedMs`, and `heartbeat`. Its timer starts after Task has prepared the
 Session and registered its Run; Session creation or resume time before registration is outside this
-stream.
+stream. Every emitted Run event also carries top-level `sequence`, `runId`, `sessionId`, and
+`projectId` fields. The client reconnects with its last sequence after an unexpected disconnect. If
+the bounded, process-local replay suffix is unavailable, JSON Lines output includes a
+`stream.resync-required` control event and final Run state still comes from the Task HTTP API.
 
 ```bash
 open-science run \

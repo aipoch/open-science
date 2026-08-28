@@ -104,6 +104,40 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it('resolves only the active Task Run that owns a Session and prompt', async () => {
+    let finishPrompt: (() => void) | undefined
+    const prompt = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const ids = ['prompt-1', 'run-1', 'session-1']
+    const runner = createRunner({
+      createId: () => ids.shift() ?? 'generated-id',
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-1' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => prompt
+      }
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+    expect(runner.resolveActiveRun('desktop-session')).toBeUndefined()
+    expect(runner.resolveActiveRun(started.sessionId, 'stale-prompt')).toBeUndefined()
+    expect(runner.resolveActiveRun(started.sessionId, 'prompt-1')).toEqual({
+      runId: started.id,
+      sessionId: started.sessionId,
+      projectId: started.projectId
+    })
+
+    finishPrompt?.()
+    await runner.waitForRun(started.id)
+    expect(runner.resolveActiveRun(started.sessionId)).toBeUndefined()
+    await runner.dispose()
+  })
+
   it('does not retain raw runtime event payloads during or after a Run', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let finishPrompt: (() => void) | undefined

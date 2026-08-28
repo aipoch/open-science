@@ -127,6 +127,15 @@ describe('RemoteSessionPairingManager', () => {
         new URL('https://home.example.ts.net/api/bootstrap')
       )
     ).resolves.toMatchObject({ kind: 'authorized' })
+    await expect(
+      manager.webAccess.authorizeWebSocket(
+        request('/api/v1/events', {
+          cookie: sessionCookie,
+          origin: 'https://home.example.ts.net'
+        }),
+        new URL('https://home.example.ts.net/api/v1/events')
+      )
+    ).resolves.toMatchObject({ sessionId: expect.any(String) })
     expect(manager.trustedViews()).toHaveLength(0)
     expect(changed).toHaveBeenCalled()
   })

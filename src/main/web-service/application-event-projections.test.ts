@@ -11,6 +11,12 @@ import {
 } from './application-event-projections'
 
 describe('application event projections', () => {
+  const activeRun = {
+    runId: 'run-1',
+    sessionId: 'session-1',
+    projectId: 'project-1'
+  }
+
   it('projects Task-owned progress without routing it through renderer events', () => {
     const progress: TaskRunProgressEvent = {
       runId: 'run-1',
@@ -23,6 +29,7 @@ describe('application event projections', () => {
     }
 
     expect(projectPublicTaskProgressEvent(progress)).toEqual({
+      ...activeRun,
       type: 'run.progress',
       data: progress
     })
@@ -53,7 +60,12 @@ describe('application event projections', () => {
       channel: 'acp:event',
       payload: [payload]
     })
-    expect(projectPublicTaskEvent(event)).toEqual({ type: 'run.event', data: payload })
+    expect(projectPublicTaskEvent(event)).toBeUndefined()
+    expect(projectPublicTaskEvent(event, () => activeRun)).toEqual({
+      ...activeRun,
+      type: 'run.event',
+      data: payload
+    })
   })
 
   it('keeps Specialist events out of Web and public Task surfaces', () => {
@@ -117,7 +129,9 @@ describe('application event projections', () => {
       payload: {} as Extract<ApplicationEvent, { channel: 'compute:job-updated' }>['payload']
     }
 
-    expect(projectPublicTaskEvent(permission)).toEqual({
+    expect(projectPublicTaskEvent(permission)).toBeUndefined()
+    expect(projectPublicTaskEvent(permission, () => activeRun)).toEqual({
+      ...activeRun,
       type: 'permission.requested',
       data: permission.payload
     })

@@ -7,7 +7,9 @@ const defaultSleep = (milliseconds) =>
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 30_000
+const EVENT_RECONNECT_DELAY_MS = 100
 const MAX_BUFFERED_EVENTS = 1_024
+const TASK_EVENT_STREAM_PROTOCOL_VERSION = 1
 
 export class OpenScienceApiError extends Error {
   constructor(message, { code = 'request_failed', status } = {}) {
@@ -309,20 +311,17 @@ export class OpenScienceClient {
     if (!WebSocketImpl) throw new Error('A WebSocket implementation is required.')
     signal?.throwIfAborted()
     resolveRequestTimeout(DEFAULT_EVENT_IDLE_TIMEOUT_MS, idleTimeoutMs)
-    const endpoint = new URL('/api/v1/events', this.baseUrl)
-    endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
-    endpoint.searchParams.set('token', this.token)
-    endpoint.searchParams.set('client', `sdk-${globalThis.crypto.randomUUID()}`)
-    endpoint.searchParams.set('liveness', '1')
-    const socket = new WebSocketImpl(endpoint)
+    const clientId = `sdk-${globalThis.crypto.randomUUID()}`
     const queue = []
     const waiters = []
     let finished = false
     let failure
+    let socket
     let resolveReady
     let rejectReady
     let readySettled = false
-    let opened = false
+    let streamId
+    let lastSequence = 0
     let idleTimer
     const ready = new Promise((resolve, reject) => {
       resolveReady = resolve
@@ -352,7 +351,7 @@ export class OpenScienceClient {
       failure = error
       clearTimeout(idleTimer)
       if (discardQueue) queue.splice(0)
-      if (!opened) {
+      if (!readySettled) {
         settleReady(
           error ??
             new OpenScienceApiError('Open Science event stream closed before it was ready.', {
@@ -361,7 +360,7 @@ export class OpenScienceClient {
         )
       }
       signal?.removeEventListener('abort', abort)
-      if (closeSocket) socket.close()
+      if (closeSocket) socket?.close()
       flush()
     }
     const fail = (message, code) => {
@@ -382,21 +381,7 @@ export class OpenScienceClient {
         idleTimeoutMs
       )
     }
-    armIdleTimeout()
-    socket.addEventListener('message', (event) => {
-      if (finished) return
-      armIdleTimeout()
-      let parsed
-      try {
-        parsed = JSON.parse(String(event.data))
-      } catch {
-        fail(
-          'Open Science event stream returned an invalid message.',
-          'event_stream_invalid_message'
-        )
-        return
-      }
-      if (parsed?.type === 'connection.heartbeat') return
+    const enqueue = (event) => {
       if (queue.length >= MAX_BUFFERED_EVENTS) {
         fail(
           'Open Science event stream exceeded its buffered event limit.',
@@ -404,38 +389,125 @@ export class OpenScienceClient {
         )
         return
       }
-      queue.push(parsed)
+      queue.push(event)
       flush()
-    })
-    socket.addEventListener('open', () => {
-      if (finished) return
-      opened = true
-      armIdleTimeout()
-      settleReady()
-    })
-    socket.addEventListener('error', () => {
-      fail('Open Science event stream failed.', 'event_stream_failed')
-    })
-    socket.addEventListener('close', () => {
-      if (!opened) {
-        finish({
-          error: new OpenScienceApiError('Open Science event stream closed before it was ready.', {
-            code: 'event_stream_failed'
-          }),
-          discardQueue: true
-        })
-        return
+    }
+    const scheduleReconnect = () => {
+      void sleepWithSignal(this.sleep, EVENT_RECONNECT_DELAY_MS, signal).then(
+        () => {
+          if (!finished) connect()
+        },
+        (error) => {
+          if (!finished) finish({ error, discardQueue: true })
+        }
+      )
+    }
+    const connect = () => {
+      const endpoint = new URL('/api/v1/events', this.baseUrl)
+      endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
+      endpoint.searchParams.set('token', this.token)
+      endpoint.searchParams.set('client', clientId)
+      endpoint.searchParams.set('liveness', '1')
+      endpoint.searchParams.set('eventProtocol', String(TASK_EVENT_STREAM_PROTOCOL_VERSION))
+      if (streamId !== undefined) {
+        endpoint.searchParams.set('stream', streamId)
+        endpoint.searchParams.set('after', String(lastSequence))
       }
-      finish()
-    })
+      const current = new WebSocketImpl(endpoint)
+      socket = current
+      let connectionOpened = false
+      current.addEventListener('message', (event) => {
+        if (finished || socket !== current) return
+        armIdleTimeout()
+        let parsed
+        try {
+          parsed = JSON.parse(String(event.data))
+        } catch {
+          fail(
+            'Open Science event stream returned an invalid message.',
+            'event_stream_invalid_message'
+          )
+          return
+        }
+        if (parsed?.type === 'connection.heartbeat') return
+        if (parsed?.type === 'stream.ready') {
+          if (
+            parsed.data?.protocolVersion !== TASK_EVENT_STREAM_PROTOCOL_VERSION ||
+            typeof parsed.data?.streamId !== 'string' ||
+            !Number.isSafeInteger(parsed.data?.latestSequence)
+          ) {
+            fail(
+              'Open Science event stream returned an invalid message.',
+              'event_stream_invalid_message'
+            )
+            return
+          }
+          streamId = parsed.data.streamId
+          lastSequence = parsed.data.latestSequence
+          return
+        }
+        if (parsed?.type === 'stream.resync-required') {
+          if (
+            parsed.data?.protocolVersion !== TASK_EVENT_STREAM_PROTOCOL_VERSION ||
+            typeof parsed.data?.streamId !== 'string' ||
+            !Number.isSafeInteger(parsed.data?.latestSequence)
+          ) {
+            fail(
+              'Open Science event stream returned an invalid message.',
+              'event_stream_invalid_message'
+            )
+            return
+          }
+          streamId = parsed.data.streamId
+          lastSequence = parsed.data.latestSequence
+          enqueue(parsed)
+          return
+        }
+        if (Number.isSafeInteger(parsed?.sequence)) {
+          if (parsed.sequence <= lastSequence) return
+          lastSequence = parsed.sequence
+        }
+        enqueue(parsed)
+      })
+      current.addEventListener('open', () => {
+        if (finished || socket !== current) return
+        connectionOpened = true
+        armIdleTimeout()
+        settleReady()
+      })
+      current.addEventListener('error', () => {
+        if (finished || socket !== current) return
+        if (!readySettled) {
+          fail('Open Science event stream failed.', 'event_stream_failed')
+        } else {
+          current.close()
+        }
+      })
+      current.addEventListener('close', () => {
+        if (finished || socket !== current) return
+        if (!connectionOpened && !readySettled) {
+          finish({
+            error: new OpenScienceApiError(
+              'Open Science event stream closed before it was ready.',
+              { code: 'event_stream_failed' }
+            ),
+            discardQueue: true
+          })
+          return
+        }
+        scheduleReconnect()
+      })
+    }
     const abort = () => {
-      if (!opened) {
+      if (!readySettled) {
         finish({ error: signal.reason, closeSocket: true, discardQueue: true })
       } else {
         finish({ closeSocket: true })
       }
     }
     signal?.addEventListener('abort', abort, { once: true })
+    armIdleTimeout()
+    connect()
 
     return {
       ready,

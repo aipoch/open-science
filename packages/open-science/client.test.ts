@@ -638,6 +638,12 @@ describe('OpenScienceClient', () => {
     FakeWebSocket.instance.emit('open')
     FakeWebSocket.instance.emit('message', {
       data: JSON.stringify({
+        type: 'stream.ready',
+        data: { protocolVersion: 1, streamId: 'stream-1', latestSequence: 0 }
+      })
+    })
+    FakeWebSocket.instance.emit('message', {
+      data: JSON.stringify({
         type: 'connection.heartbeat',
         data: { timestamp: 100 }
       })
@@ -699,8 +705,52 @@ describe('OpenScienceClient', () => {
     expect(FakeWebSocket.instance.url.searchParams.get('token')).toBe('token-1')
     expect(FakeWebSocket.instance.url.searchParams.get('client')).toMatch(/^sdk-/)
     expect(FakeWebSocket.instance.url.searchParams.get('liveness')).toBe('1')
+    expect(FakeWebSocket.instance.url.searchParams.get('eventProtocol')).toBe('1')
     await events.return?.()
     expect(FakeWebSocket.instance.closed).toBe(true)
+  })
+
+  it('yields an explicit resync state without exposing stream readiness frames', async () => {
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'token-1',
+      fetch: vi.fn()
+    })
+    const events = client.events({ WebSocket: ControllableWebSocket as never })
+    const iterator = events[Symbol.asyncIterator]()
+    ControllableWebSocket.instance.emit('open')
+    ControllableWebSocket.instance.emit('message', {
+      data: JSON.stringify({
+        type: 'stream.ready',
+        data: { protocolVersion: 1, streamId: 'stream-2', latestSequence: 7 }
+      })
+    })
+    const next = iterator.next()
+    ControllableWebSocket.instance.emit('message', {
+      data: JSON.stringify({
+        type: 'stream.resync-required',
+        data: {
+          protocolVersion: 1,
+          streamId: 'stream-2',
+          latestSequence: 9,
+          reason: 'cursor-expired'
+        }
+      })
+    })
+
+    await expect(next).resolves.toEqual({
+      done: false,
+      value: {
+        type: 'stream.resync-required',
+        data: {
+          protocolVersion: 1,
+          streamId: 'stream-2',
+          latestSequence: 9,
+          reason: 'cursor-expired'
+        }
+      }
+    })
+    await iterator.return?.()
   })
 
   it('rejects event readiness when the socket reports a connection error', async () => {
@@ -717,6 +767,79 @@ describe('OpenScienceClient', () => {
       code: 'event_stream_failed',
       message: 'Open Science event stream failed.'
     })
+  })
+
+  it('keeps iterating after an established event socket closes unexpectedly', async () => {
+    class ReconnectingWebSocket extends ControllableWebSocket {
+      static readonly instances: ReconnectingWebSocket[] = []
+
+      constructor(url: URL) {
+        super(url)
+        ReconnectingWebSocket.instances.push(this)
+      }
+    }
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'token-1',
+      fetch: vi.fn()
+    })
+    const events = client.events({ WebSocket: ReconnectingWebSocket as never })
+    const iterator = events[Symbol.asyncIterator]()
+    const firstSocket = ReconnectingWebSocket.instances[0]
+    firstSocket.emit('open')
+    await events.ready
+    firstSocket.emit('message', {
+      data: JSON.stringify({
+        type: 'stream.ready',
+        data: { protocolVersion: 1, streamId: 'stream-1', latestSequence: 0 }
+      })
+    })
+    const first = iterator.next()
+    firstSocket.emit('message', {
+      data: JSON.stringify({
+        sequence: 1,
+        runId: 'run-1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        type: 'run.progress',
+        data: { runId: 'run-1' }
+      })
+    })
+    await expect(first).resolves.toMatchObject({ done: false, value: { sequence: 1 } })
+
+    firstSocket.emit('close')
+
+    await vi.waitFor(() => expect(ReconnectingWebSocket.instances).toHaveLength(2))
+    const secondSocket = ReconnectingWebSocket.instances[1]
+    expect(secondSocket.url.searchParams.get('eventProtocol')).toBe('1')
+    expect(secondSocket.url.searchParams.get('stream')).toBe('stream-1')
+    expect(secondSocket.url.searchParams.get('after')).toBe('1')
+    secondSocket.emit('open')
+    const next = iterator.next()
+    secondSocket.emit('message', {
+      data: JSON.stringify({
+        sequence: 2,
+        runId: 'run-1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        type: 'run.progress',
+        data: {
+          runId: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          phase: 'provider-accepted',
+          timestamp: 250,
+          elapsedMs: 249,
+          heartbeat: false
+        }
+      })
+    })
+
+    await expect(next).resolves.toMatchObject({
+      done: false,
+      value: { sequence: 2, type: 'run.progress', data: { runId: 'run-1' } }
+    })
+    await iterator.return?.()
   })
 
   it('fails a ready event iterator when the connection stops receiving liveness frames', async () => {

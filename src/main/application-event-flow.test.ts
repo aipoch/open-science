@@ -115,7 +115,11 @@ describe('application event flow', () => {
         const batch = rendererProjection.payload as readonly AcpRuntimeEvent[]
         order.push(`web:${batch[0]?.kind}`)
       }
-      const publicProjection = projectPublicTaskEvent(event)
+      const publicProjection = projectPublicTaskEvent(event, (sessionId) => ({
+        runId: 'run-1',
+        sessionId,
+        projectId: 'project-1'
+      }))
       if (publicProjection?.type === 'run.event') {
         order.push(`public:${publicProjection.data.kind}`)
       }

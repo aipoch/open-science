@@ -48,7 +48,9 @@ import type {
   TaskPlanResponseRequest,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
+import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
+import { PublicTaskEventStream } from './public-task-event-stream'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
@@ -127,7 +129,7 @@ type WebServerOptions = {
     | 'releaseArtifact'
     | 'runWithCallerContext'
   > &
-    Partial<Pick<HeadlessTaskApi, 'getSessionPlan' | 'respondSessionPlan'>>
+    Partial<Pick<HeadlessTaskApi, 'getSessionPlan' | 'respondSessionPlan' | 'resolveActiveRun'>>
   onShutdownRequest?: () => void
   bootstrap: {
     appName: string
@@ -900,11 +902,12 @@ const serveStatic = async (
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
   const sockets = new Set<WebSocket>()
   const externalSockets = new Map<WebSocket, string | undefined>()
-  const publicEventSockets = new Set<WebSocket>()
+  const publicEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
   const internalEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
   const livenessSockets = new Set<WebSocket>()
   const awaitingPong = new WeakSet<WebSocket>()
   const internalEventStream = new InternalWebEventStream()
+  const publicTaskEventStream = new PublicTaskEventStream()
   const commandClient = createApplicationCommandClient()
   const taskIdempotencyRegistry = new TaskIdempotencyRegistry()
   const requestBodyBudgetRegistry = new RequestBodyBudgetRegistry(
@@ -1196,7 +1199,27 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     socket.on('pong', () => awaitingPong.delete(socket))
     if (url.searchParams.get('liveness') === '1') livenessSockets.add(socket)
     if (url.pathname === '/api/v1/events') {
-      publicEventSockets.add(socket)
+      const requestedProtocol = url.searchParams.get('eventProtocol')
+      if (requestedProtocol === null) {
+        publicEventSockets.set(socket, 'legacy')
+      } else if (requestedProtocol !== String(TASK_EVENT_STREAM_PROTOCOL_VERSION)) {
+        socket.close(1002, 'Unsupported event stream protocol')
+        return
+      } else {
+        publicEventSockets.set(socket, 'replay')
+        const streamId = url.searchParams.get('stream')
+        const afterValue = url.searchParams.get('after')
+        const messages =
+          streamId === null && afterValue === null
+            ? [publicTaskEventStream.ready()]
+            : publicTaskEventStream.resume({
+                streamId: streamId ?? '',
+                after: afterValue === null ? Number.NaN : Number(afterValue)
+              })
+        for (const message of messages) {
+          if (!sendWebSocketMessage(socket, message)) break
+        }
+      }
     } else {
       const requestedProtocol = url.searchParams.get('eventProtocol')
       // A page loaded before this server upgrade has no cursor query. Keep it live-only until its
@@ -1221,9 +1244,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
     const internalProjection = projectWebRendererEvent(event)
-    const publicMessages = projectPublicTaskEvents(event).map((projection) =>
-      JSON.stringify(projection)
-    )
+    const publicMessages = projectPublicTaskEvents(event, (sessionId, promptMessageId) =>
+      options.tasks?.resolveActiveRun?.(sessionId, promptMessageId)
+    ).map((projection) => publicTaskEventStream.publish(projection))
     const legacyInternalMessage = internalProjection
       ? JSON.stringify(internalProjection)
       : undefined
@@ -1243,8 +1266,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     }
   })
   const removeTaskProgressSink = options.tasks?.subscribeProgress((event) => {
-    const message = JSON.stringify(projectPublicTaskProgressEvent(event))
-    for (const socket of publicEventSockets) {
+    const message = publicTaskEventStream.publish(projectPublicTaskProgressEvent(event))
+    for (const socket of publicEventSockets.keys()) {
       sendWebSocketMessage(socket, message)
     }
   })
