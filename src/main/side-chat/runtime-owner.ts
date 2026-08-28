@@ -434,9 +434,11 @@ class SideChatRuntimeOwner {
       const bridge = initialBackend.responsesBridgeLease
 
       const runtimeRef: { current?: SideChatRuntimePort } = {}
+      const auxiliaryUsage = this.createRuntimeAuxiliaryUsage(() => activeChat)
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: this.options.appVersion,
         defaultCwd: cwd,
+        ...(auxiliaryUsage ? { auxiliaryUsage } : {}),
         resolveBackend: () => {
           if (backend) {
             backendTransferred = true
@@ -919,9 +921,11 @@ class SideChatRuntimeOwner {
       const initialBackend = backend
       const bridge = initialBackend.responsesBridgeLease
       const runtimeRef: { current?: SideChatRuntimePort } = {}
+      const auxiliaryUsage = this.createRuntimeAuxiliaryUsage(() => activeChat)
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: this.options.appVersion,
         defaultCwd: cwd,
+        ...(auxiliaryUsage ? { auxiliaryUsage } : {}),
         resolveBackend: () => {
           if (backend) {
             backendTransferred = true
@@ -1238,6 +1242,39 @@ class SideChatRuntimeOwner {
           ...diagnosticErrorFields(error)
         })
       })
+  }
+
+  private createRuntimeAuxiliaryUsage(
+    active: () => ActiveSideChat | undefined
+  ): AcpRuntimeOptions['auxiliaryUsage'] {
+    const recordUsage = this.options.recordUsage
+    if (!recordUsage) return undefined
+
+    const resolveActive = (runtimeSessionId: string): ActiveSideChat | undefined => {
+      const current = active()
+      if (
+        !current ||
+        current.closing ||
+        current.runtimeSessionId !== runtimeSessionId ||
+        this.activeByParent.get(current.parentSessionId) !== current
+      ) {
+        return undefined
+      }
+      return current
+    }
+
+    return {
+      projectIdForSession: async (runtimeSessionId) => resolveActive(runtimeSessionId)?.projectId,
+      record: async (record) => {
+        const current = resolveActive(record.sessionId)
+        if (!current) return
+        await recordUsage({
+          ...record,
+          projectId: current.projectId,
+          sessionId: current.parentSessionId
+        })
+      }
+    }
   }
 
   private handleRuntimeEvent(active: ActiveSideChat, event: AcpRuntimeEvent): void {
