@@ -9,6 +9,7 @@ const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
 const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability journey.'
 const BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT =
   'Run the buffered text tool layout stability journey.'
+const AGENT_STDERR_SUMMARY = 'Agent process stderr: 1 chunk, 22 bytes; raw output omitted.'
 
 test.use({ windowMode: 'normal' })
 
@@ -17,7 +18,7 @@ const cases = [
   {
     name: 'with agent status',
     prompt: TOOL_STATUS_LAYOUT_SHIFT_PROMPT,
-    agentStatus: 'Layout fixture status.'
+    agentStatus: AGENT_STDERR_SUMMARY
   }
 ] as const
 

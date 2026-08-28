@@ -571,7 +571,7 @@ if (process.argv.includes('--version')) {
           if (prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT)) {
             process.stderr.write('Layout fixture status.\n')
           }
-          await delay(750)
+          await delay(prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT) ? 2_000 : 750)
 
           const finalMessageId = `e2e-message-${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
