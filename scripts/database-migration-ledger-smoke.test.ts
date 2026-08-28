@@ -20,7 +20,7 @@ import { PrismaClient } from '@prisma/client'
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
     expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
-      '0e27d60b24a623fd0b080266be42e4560ad7dd4188c93b081ee94a655c800ba9'
+      'ceb7280f5f87150c99c5807bf88353ed0fa2b589f8c862fc62e4d2a81e2a01fc'
     )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
@@ -50,7 +50,7 @@ describe('packaged database migration ledger smoke', () => {
       await client.$executeRawUnsafe('DROP INDEX "Review_sessionId_idx"')
       await client.$executeRawUnsafe('DROP INDEX "Finding_reviewId_idx"')
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage')`
       )
       await client.$executeRawUnsafe(
         'ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"'

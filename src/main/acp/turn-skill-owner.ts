@@ -36,6 +36,9 @@ type ProviderPreparationInput = Readonly<{
     bridgeSkillsAvailable: boolean
     selectSkills: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
     signal?: AbortSignal
+    observeUsage?: Parameters<
+      NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
+    >[3]
   }>
   codebuddy?: Readonly<{
     root?: string
@@ -411,7 +414,9 @@ class AcpTurnSkillOwner {
     }
     if (catalog.length === 0) return []
     try {
-      const selected = await codex.selectSkills(input.selectionText, catalog, codex.signal)
+      const selected = codex.observeUsage
+        ? await codex.selectSkills(input.selectionText, catalog, codex.signal, codex.observeUsage)
+        : await codex.selectSkills(input.selectionText, catalog, codex.signal)
       if (!selected) return []
       const offered = new Set(catalog.map((skill) => `${skill.name}\u0000${skill.path}`))
       return selected.filter((skill) => offered.has(`${skill.name}\u0000${skill.path}`))

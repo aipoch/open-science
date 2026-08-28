@@ -175,6 +175,12 @@ type AcpRuntimeOptions = {
   appVersion: string
   defaultCwd: string
   callbacks?: AcpRuntimeCallbacks
+  auxiliaryUsage?: Readonly<{
+    projectIdForSession: (sessionId: string) => Promise<string | undefined>
+    record: (
+      input: import('../session-persistence/auxiliary-turn-usage').SessionAuxiliaryTurnUsageRecord
+    ) => Promise<unknown>
+  }>
   permissionGrantStore?: ConversationPermissionGrantStore
   permissionGrantRegistry?: PermissionGrantRegistry
   permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
@@ -717,6 +723,16 @@ class AcpRuntime {
 
   captureBackend(): AcpBackendGenerationView {
     return this.backend
+  }
+
+  beginProviderTurnObservation(input: {
+    providerSessionId: string
+    cwd: string
+  }): ReturnType<AcpProviderPromptExecutor['beginObservation']> {
+    return this.providerPromptExecutor.beginObservation({
+      ...input,
+      frameworkId: this.framework.id
+    })
   }
 
   captureSessionModel(

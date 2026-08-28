@@ -307,7 +307,8 @@ describe('AcpPromptPreparationOwner', () => {
         home: '/codex',
         bridgeSkillsAvailable: true,
         selectSkills: expect.any(Function),
-        signal: expect.any(AbortSignal)
+        signal: expect.any(AbortSignal),
+        observeUsage: expect.any(Function)
       }
     })
     expect(fixture.promptContent.prepare).toHaveBeenCalledWith(

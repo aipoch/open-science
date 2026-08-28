@@ -212,6 +212,10 @@ import { registerSideChatIpcHandlers } from './side-chat/ipc'
 import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
 import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { MainMessageAttributionAuthority } from './session-persistence/message-attribution-authority'
+import {
+  SessionAuxiliaryTurnUsageRecorder,
+  type SessionAuxiliaryTurnUsageRecord
+} from './session-persistence/auxiliary-turn-usage'
 import { SessionDeletionOwner } from './session-deletion/owner'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
 import { tryDecryptKey } from './settings/crypto'
@@ -532,6 +536,20 @@ const createApplicationModules = async (
       ),
     (projectId, sessionId) => runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false
   )
+  const auxiliaryUsageLog = createLogger('session-usage:auxiliary')
+  const auxiliaryUsageRecorder = new SessionAuxiliaryTurnUsageRecorder(() =>
+    getProjectDbClient(resolveStorageRoot())
+  )
+  const recordAuxiliaryUsage = async (record: SessionAuxiliaryTurnUsageRecord): Promise<void> => {
+    try {
+      await auxiliaryUsageRecorder.record(record)
+    } catch (error) {
+      auxiliaryUsageLog.warn('auxiliary turn Usage persistence failed', {
+        source: record.source,
+        ...diagnosticErrorFields(error)
+      })
+    }
+  }
   const projectRepository = createDefaultProjectRepository()
   const previewStateRepository = createDefaultPreviewStateRepository()
 
@@ -1911,7 +1929,8 @@ const createApplicationModules = async (
       profileNamespace: 'host-llm',
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context)
-    })
+    }),
+    recordUsage: recordAuxiliaryUsage
   })
   const hostViewImageService = new HostViewImageService({
     catalog: projectFilesRepository,
@@ -2072,7 +2091,8 @@ const createApplicationModules = async (
     new ImageInputCompatibilityOwner({
       captureTarget: () => settingsService.admitVisionModel(),
       runner: visionInferenceRunner,
-      evidenceRepository: visionEvidenceRepository
+      evidenceRepository: visionEvidenceRepository,
+      recordUsage: recordAuxiliaryUsage
     }),
     (owner) => ({
       name: 'image-input-compatibility',
@@ -2246,6 +2266,11 @@ const createApplicationModules = async (
       sideChatRelays: mainPromptSideChatRelay,
       imageInputCompatibility,
       memory: memoryService,
+      auxiliaryUsage: {
+        projectIdForSession: (sessionId) =>
+          sessionPersistenceCoordinator.sessionProjectId(sessionId),
+        record: recordAuxiliaryUsage
+      },
       resolveComputeExecutionTargetIds: (sessionId) => hostsRegistry.getSelected(sessionId)
     },
     (options) => {
@@ -2316,6 +2341,7 @@ const createApplicationModules = async (
             sideChatId
           })
       },
+      recordUsage: recordAuxiliaryUsage,
       onEvent: (event) => broadcastToRenderers('side-chat:event', event),
       setParentInteractionsPaused: (sessionId, paused) => {
         if (paused) {
@@ -2428,7 +2454,8 @@ const createApplicationModules = async (
       configRoot,
       captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
       resolveTarget: (target, context) =>
-        settingsService.resolveExplicitAgentBackend(target, context)
+        settingsService.resolveExplicitAgentBackend(target, context),
+      recordUsage: recordAuxiliaryUsage
     },
     (options) => {
       const runner = new ArtifactCodeReconstructionRunner(options)
@@ -3273,7 +3300,8 @@ const createApplicationModules = async (
       projectId: string,
       sessionId: string,
       mutation: () => Promise<Result>
-    ) => sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+    ) => sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
+    recordUsage: recordAuxiliaryUsage
   }
   const reviewerCommandOwner = createReviewerCommandOwner(reviewerOptions)
   reviewerCommandOwnerRef.current = reviewerCommandOwner

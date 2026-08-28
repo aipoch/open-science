@@ -34,7 +34,8 @@ type CodeReconstructionRunner = {
   captureTarget(): Promise<ExplicitAgentBackendTarget>
   run(
     prompt: string,
-    target: ExplicitAgentBackendTarget
+    target: ExplicitAgentBackendTarget,
+    context: Readonly<{ projectId: string; sessionId: string }>
   ): Promise<{ text: string; frameworkId: AgentFrameworkId; model: string }>
 }
 
@@ -672,7 +673,10 @@ export class ArtifactCodeReconstructionService {
       // resolved at spawn time by the runner.
       const target = await this.options.runner.captureTarget()
       const context = buildContext(source)
-      const result = await this.options.runner.run(buildPrompt(context.serialized), target)
+      const result = await this.options.runner.run(buildPrompt(context.serialized), target, {
+        projectId: request.projectId,
+        sessionId: request.appSessionId
+      })
       const code = normalizeResponse(result.text)
       value = {
         origin: 'llm',

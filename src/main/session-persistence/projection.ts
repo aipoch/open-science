@@ -16,7 +16,7 @@ import {
 } from '../../shared/session-persistence'
 
 const PROJECTION_STATE_ID = 'session-projection'
-const PROJECTION_VERSION = 2
+const PROJECTION_VERSION = 3
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
@@ -59,6 +59,19 @@ type SessionProjection = Readonly<{
     outputTokens: bigint
     contextUsedTokens: bigint | null
     contextWindowSize: bigint | null
+  }>
+  sessionDetailsUsage: Array<{
+    eventId: string
+    source: 'session-details'
+    frameworkId: string
+    model: string | null
+    completedAtMs: bigint
+    inputTokens: bigint
+    cacheTokens: bigint
+    cachedReadTokens: bigint | null
+    cachedWriteTokens: bigint | null
+    outputTokens: bigint
+    modelCallCount: number | null
   }>
   runs: Array<{ messageId: string; createdAtMs: bigint }>
   artifactRefs: Array<{ artifactId: string; artifactCreatedAtMs: bigint | null }>
@@ -140,6 +153,23 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
     assertNullableBigInt(usage.cachedWriteTokens, 'turnUsage.cachedWriteTokens')
     assertBigInt(usage.outputTokens, 'turnUsage.outputTokens')
     if (usage.modelCallCount !== null) assertInt(usage.modelCallCount, 'turnUsage.modelCallCount')
+  }
+  for (const usage of projection.sessionDetailsUsage) {
+    assertNonEmptyText(usage.eventId, 'sessionDetailsUsage.eventId')
+    assertNonEmptyText(usage.frameworkId, 'sessionDetailsUsage.frameworkId')
+    assertNullableNonEmptyText(usage.model, 'sessionDetailsUsage.model')
+    assertBigInt(usage.completedAtMs, 'sessionDetailsUsage.completedAtMs')
+    assertBigInt(usage.inputTokens, 'sessionDetailsUsage.inputTokens')
+    assertBigInt(usage.cacheTokens, 'sessionDetailsUsage.cacheTokens')
+    assertNullableBigInt(usage.cachedReadTokens, 'sessionDetailsUsage.cachedReadTokens')
+    assertNullableBigInt(usage.cachedWriteTokens, 'sessionDetailsUsage.cachedWriteTokens')
+    assertBigInt(usage.outputTokens, 'sessionDetailsUsage.outputTokens')
+    if (usage.modelCallCount !== null) {
+      assertInt(usage.modelCallCount, 'sessionDetailsUsage.modelCallCount')
+      if (usage.modelCallCount === 0) {
+        throw new Error('Session projection sessionDetailsUsage.modelCallCount must be positive.')
+      }
+    }
   }
   assertUnique(
     projection.turnUsage.map(({ messageId }) => messageId),
@@ -257,11 +287,38 @@ const hasPendingArtifact = (session: PersistedChatSession): boolean => {
 export const buildSessionProjection = (session: PersistedChatSession): SessionProjection => {
   const turnUsage: SessionProjection['turnUsage'][number][] = []
   const modelCalls: SessionProjection['modelCalls'][number][] = []
+  const sessionDetailsUsage: SessionProjection['sessionDetailsUsage'][number][] = []
   const runs: SessionProjection['runs'][number][] = []
   const associatedArtifactCreatedAt = new Map<string, number>()
   const runtimeSegments = new Map(
     (session.conversationGraph?.runtimeSegments ?? []).map((segment) => [segment.id, segment])
   )
+  const details = session.sessionDetailsGeneration
+  if (
+    details &&
+    'completedAt' in details &&
+    'frameworkId' in details &&
+    details.frameworkId &&
+    'usage' in details &&
+    details.usage
+  ) {
+    sessionDetailsUsage.push({
+      eventId: details.requestId,
+      source: 'session-details',
+      frameworkId: details.frameworkId,
+      model: details.model || null,
+      completedAtMs: toBigInt(details.completedAt),
+      inputTokens: toBigInt(details.usage.inputTokens),
+      cacheTokens: toBigInt(details.usage.cacheTokens),
+      cachedReadTokens: toOptionalBigInt(details.usage.cachedReadTokens),
+      cachedWriteTokens: toOptionalBigInt(details.usage.cachedWriteTokens),
+      outputTokens: toBigInt(details.usage.outputTokens),
+      modelCallCount:
+        details.usage.turnCount === undefined || details.usage.turnCount <= 0
+          ? null
+          : finiteNonNegativeInteger(details.usage.turnCount)
+    })
+  }
 
   for (const { message, isRootFrame, runtimeSegmentId } of projectionMessages(session)) {
     const associationTimestamp = message.completedAt ?? message.createdAt
@@ -376,6 +433,7 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
     },
     turnUsage,
     modelCalls,
+    sessionDetailsUsage,
     runs,
     artifactRefs
   }
@@ -420,6 +478,9 @@ const replaceChildren = async (
   projection: SessionProjection
 ): Promise<void> => {
   await tx.sessionTurnUsage.deleteMany({ where: { sessionId } })
+  await tx.sessionAuxiliaryTurnUsage.deleteMany({
+    where: { sessionId, source: 'session-details' }
+  })
   await tx.sessionRun.deleteMany({ where: { sessionId } })
   await tx.sessionArtifactRef.deleteMany({ where: { sessionId } })
   if (projection.turnUsage.length > 0) {
@@ -430,6 +491,11 @@ const replaceChildren = async (
   if (projection.modelCalls.length > 0) {
     await tx.sessionModelCallUsage.createMany({
       data: projection.modelCalls.map((usage) => ({ sessionId, ...usage }))
+    })
+  }
+  if (projection.sessionDetailsUsage.length > 0) {
+    await tx.sessionAuxiliaryTurnUsage.createMany({
+      data: projection.sessionDetailsUsage.map((usage) => ({ sessionId, ...usage }))
     })
   }
   if (projection.runs.length > 0) {
@@ -665,6 +731,7 @@ export class SessionProjectionRepository {
         return
       }
       await tx.sessionTurnUsage.deleteMany({ where: { sessionId } })
+      await tx.sessionAuxiliaryTurnUsage.deleteMany({ where: { sessionId } })
       await tx.sessionRun.deleteMany({ where: { sessionId } })
       await tx.sessionArtifactRef.deleteMany({ where: { sessionId } })
       await tx.session.updateMany({
@@ -700,6 +767,9 @@ export class SessionProjectionRepository {
     const modelCalls = projected.flatMap(({ session, projection }) =>
       projection.modelCalls.map((usage) => ({ sessionId: session.id, ...usage }))
     )
+    const sessionDetailsUsage = projected.flatMap(({ session, projection }) =>
+      projection.sessionDetailsUsage.map((usage) => ({ sessionId: session.id, ...usage }))
+    )
     const runs = projected.flatMap(({ session, projection }) =>
       projection.runs.map((run) => ({ sessionId: session.id, ...run }))
     )
@@ -721,7 +791,14 @@ export class SessionProjectionRepository {
             ...(liveSessionIds.length > 0 ? [{ id: { in: liveSessionIds } }] : [])
           ]
         }
-      })
+      }),
+      ...(liveSessionIds.length > 0
+        ? [
+            client.sessionAuxiliaryTurnUsage.deleteMany({
+              where: { sessionId: { in: liveSessionIds }, source: 'session-details' }
+            })
+          ]
+        : [])
     ]
     for (const chunk of chunksOf(projected, 40)) {
       writes.push(
@@ -735,6 +812,9 @@ export class SessionProjectionRepository {
     }
     for (const chunk of chunksOf(modelCalls, 100)) {
       writes.push(client.sessionModelCallUsage.createMany({ data: chunk }))
+    }
+    for (const chunk of chunksOf(sessionDetailsUsage, 100)) {
+      writes.push(client.sessionAuxiliaryTurnUsage.createMany({ data: chunk }))
     }
     for (const chunk of chunksOf(runs, 200)) {
       writes.push(client.sessionRun.createMany({ data: chunk }))
@@ -774,13 +854,14 @@ export class SessionProjectionRepository {
 
   async usage(): Promise<SessionUsageProjection> {
     const client = await this.client()
-    const [projects, sessions, usage, runs, artifacts] = await client.$transaction([
+    const [projects, sessions, usage, auxiliaryUsage, runs, artifacts] = await client.$transaction([
       client.project.findMany({ select: { createdAt: true } }),
       client.session.findMany({
         where: { deletedAtMs: null },
-        select: { createdAtMs: true }
+        select: { id: true, createdAtMs: true }
       }),
       client.sessionTurnUsage.findMany({ where: { session: { deletedAtMs: null } } }),
+      client.sessionAuxiliaryTurnUsage.findMany(),
       client.sessionRun.findMany({
         where: { session: { deletedAtMs: null } },
         select: { createdAtMs: true }
@@ -790,6 +871,7 @@ export class SessionProjectionRepository {
         select: { artifactId: true, artifactCreatedAtMs: true }
       })
     ])
+    const liveSessionIds = new Set(sessions.map(({ id }) => id))
     const artifactCreatedAt = new Map<string, number | undefined>()
     for (const artifact of artifacts) {
       const timestamp =
@@ -806,13 +888,28 @@ export class SessionProjectionRepository {
         (timestamp): timestamp is number => timestamp !== undefined
       ),
       runsAt: runs.map(({ createdAtMs }) => Number(createdAtMs)),
-      usageEvents: usage.map((event) => ({
-        timestamp: Number(event.completedAtMs),
-        inputTokens: Number(event.inputTokens),
-        cacheTokens: Number(event.cacheTokens),
-        outputTokens: Number(event.outputTokens),
-        rootRunUsage: event.isRootFrame
-      })),
+      usageEvents: [
+        ...usage.map((event) => ({
+          timestamp: Number(event.completedAtMs),
+          inputTokens: Number(event.inputTokens),
+          cacheTokens: Number(event.cacheTokens),
+          outputTokens: Number(event.outputTokens),
+          rootRunUsage: event.isRootFrame
+        })),
+        ...auxiliaryUsage.flatMap((event) =>
+          liveSessionIds.has(event.sessionId)
+            ? [
+                {
+                  timestamp: Number(event.completedAtMs),
+                  inputTokens: Number(event.inputTokens),
+                  cacheTokens: Number(event.cacheTokens),
+                  outputTokens: Number(event.outputTokens),
+                  rootRunUsage: false
+                }
+              ]
+            : []
+        )
+      ],
       totalArtifacts: artifactCreatedAt.size
     }
   }

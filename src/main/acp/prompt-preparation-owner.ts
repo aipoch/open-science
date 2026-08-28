@@ -6,7 +6,7 @@ import type { UploadedAttachment } from '../../shared/uploads'
 import type { FileReference } from '../../shared/artifacts'
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import type { ResolvedAgentBackend } from '../agent-framework'
+import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework'
 import { createLogger, errorLogFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
@@ -161,6 +161,17 @@ class AcpPromptPreparationOwner {
       const requestText = this.options.presentation.continuationText(input.request)
       const computeExecutionTargetReminder =
         this.options.presentation.computeExecutionTargetReminder(input.selectedComputeHostIds ?? [])
+      const observeSelectorUsage = ({
+        usage,
+        sourceInvocationId
+      }: SkillSelectorUsageObservation): void => {
+        const contextUsedTokens = usage.inputTokens + (usage.cachedReadTokens ?? 0)
+        preDispatchModelCalls.push({
+          ...usage,
+          ...(sourceInvocationId ? { sourceInvocationId } : {}),
+          ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {})
+        })
+      }
       const skillPreparation = await input.turnSkill.prepareProvider({
         frameworkId: input.backend.framework.id,
         selectionText: [input.request.text, computeExecutionTargetReminder]
@@ -170,9 +181,10 @@ class AcpPromptPreparationOwner {
         codex: {
           home: input.backend.adapter.codexHome,
           bridgeSkillsAvailable: input.bridgeSkillsAvailable,
-          selectSkills: async (text, catalog, signal) =>
-            (await this.options.selectBridgeSkills(text, catalog, signal)) ?? [],
-          signal: input.signal
+          selectSkills: async (text, catalog, signal, observeUsage) =>
+            (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ?? [],
+          signal: input.signal,
+          observeUsage: observeSelectorUsage
         },
         ...(input.backend.framework.id === 'codebuddy'
           ? {
@@ -183,14 +195,7 @@ class AcpPromptPreparationOwner {
                   (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ??
                   [],
                 signal: input.signal,
-                observeUsage: ({ usage, sourceInvocationId }) => {
-                  const contextUsedTokens = usage.inputTokens + (usage.cachedReadTokens ?? 0)
-                  preDispatchModelCalls.push({
-                    ...usage,
-                    ...(sourceInvocationId ? { sourceInvocationId } : {}),
-                    ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {})
-                  })
-                }
+                observeUsage: observeSelectorUsage
               }
             }
           : {})

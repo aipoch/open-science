@@ -468,6 +468,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
   it('coalesces streamed transcript chunks into the latest durable projection', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-coalesce-'))
     const persistence = createPersistence()
+    const recordUsage = vi.fn(async () => undefined)
     let runtimeOptions: AcpRuntimeOptions | undefined
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
@@ -476,6 +477,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
       relay: createRelayOwner(),
       persistence,
+      recordUsage,
       onEvent: vi.fn(),
       createRuntime: (options) => {
         runtimeOptions = options
@@ -510,7 +512,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
               id: 'stop-coalesced',
               timestamp: 101,
               sessionId: request.sessionId,
-              kind: 'stop'
+              kind: 'stop',
+              turnUsage: { inputTokens: 9, cacheTokens: 2, outputTokens: 3, turnCount: 1 }
             } as never)
             return { stopReason: 'end_turn' as const }
           }),
@@ -528,6 +531,20 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       text: 'Stream'
     })
     await vi.waitFor(() => expect(persistence.save).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(recordUsage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: 'project-1',
+          sessionId: 'main-coalesce',
+          eventId: 'stop-coalesced',
+          source: 'side-chat',
+          frameworkId: 'claude-code',
+          model: 'model-a',
+          completedAtMs: 101,
+          usage: expect.objectContaining({ inputTokens: 9, outputTokens: 3 })
+        })
+      )
+    )
     expect(owner.list().chats[0]?.entries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: 'assistant-coalesced', text: 'x'.repeat(20_000) })

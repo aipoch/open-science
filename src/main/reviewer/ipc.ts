@@ -19,6 +19,7 @@ import { runReview } from './orchestrator'
 import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { ReviewerAcpRuntime } from './acp-runtime'
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
@@ -116,6 +117,7 @@ type ReviewerIpcOptions = {
     session: PersistedChatSession,
     configuration: SessionAgentConfiguration
   ) => Promise<PersistedChatSession>
+  recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
 }
 
 type ReviewerCommandOwner = Readonly<{
@@ -460,7 +462,8 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           fixLoopAbortControllers.delete(effectiveMainSessionKey)
           broadcastFixLoopEnd(projectId, effectiveMainSessionId)
         },
-        fixLoopAbortSignal: projectAdmission.signal
+        fixLoopAbortSignal: projectAdmission.signal,
+        recordUsage: options.recordUsage
       })
         .catch((error: unknown) => {
           // runReview records expected failures as lifecycle='error' itself; an unexpected throw here

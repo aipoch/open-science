@@ -212,6 +212,36 @@ const composeAcpRuntimePromptOwners = (
       })
     },
     serialization: base.providerPromptSerialization,
+    ...(options.auxiliaryUsage
+      ? {
+          usage: {
+            begin: (input) => base.providerPromptExecutor.beginObservation(input),
+            cwd: (sessionId) =>
+              session.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd ??
+              base.snapshotOwner.cwd,
+            model: () =>
+              base.backendGeneration.current.context.model ??
+              base.backendGeneration.current.session.model,
+            record: async ({ sessionId, eventId, frameworkId, model, completedAtMs, facts }) => {
+              const projectId = await options.auxiliaryUsage!.projectIdForSession(sessionId)
+              if (!projectId) return
+              await options.auxiliaryUsage!.record({
+                projectId,
+                sessionId,
+                eventId,
+                source: 'context-compaction',
+                frameworkId,
+                model,
+                completedAtMs,
+                usage: {
+                  ...facts.turnUsage!,
+                  ...(facts.modelTurnCount === undefined ? {} : { turnCount: facts.modelTurnCount })
+                }
+              })
+            }
+          }
+        }
+      : {}),
     cancelCompaction: async (sessionId) => {
       const connection = base.connectionResources.connection
       const active = activeSession(sessionId)

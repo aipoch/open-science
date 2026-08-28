@@ -502,4 +502,22 @@ describe('AcpProviderPromptExecutor', () => {
     fixture.executor.observeProviderMessage(providerMessage)
     expect(fixture.probe.observe).toHaveBeenCalledOnce()
   })
+
+  it('observes externally driven turns through the provider message route', async () => {
+    const fixture = setup()
+    const response: PromptResponse = { stopReason: 'end_turn' }
+    const observation = await fixture.executor.beginObservation({
+      providerSessionId: 'provider-1',
+      cwd: '/workspace',
+      frameworkId: 'claude-code'
+    })
+    const providerMessage = { sessionId: 'provider-1', message: { type: 'result' } }
+
+    fixture.executor.observeProviderMessage(providerMessage)
+    await observation.finalize({ response })
+    fixture.executor.observeProviderMessage(providerMessage)
+
+    expect(fixture.probe.observe).toHaveBeenCalledOnce()
+    expect(fixture.probe.finalize).toHaveBeenCalledWith({ response })
+  })
 })

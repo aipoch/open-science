@@ -41,6 +41,13 @@ type AcpProviderPromptExecutorOptions = Readonly<{
   opencodeUsageFetch?: typeof fetch
 }>
 
+type ProviderTurnObservationInput = Readonly<{
+  providerSessionId: string
+  cwd: string
+  frameworkId: AgentFrameworkId
+  reportBestEffortFailure?: (stage: ProviderPromptObservationStage, error: unknown) => void
+}>
+
 type ProviderPromptOutcome =
   | Readonly<{ kind: 'not-dispatched' }>
   | Readonly<{ kind: 'superseded'; response: PromptResponse }>
@@ -152,6 +159,53 @@ class AcpProviderPromptExecutor {
       observation.probe.observe(message)
     } catch (error) {
       reportBestEffort(observation.report, 'observe', error)
+    }
+  }
+
+  async beginObservation(input: ProviderTurnObservationInput): Promise<AcpProviderTurnProbe> {
+    const token = Symbol(input.providerSessionId)
+    let probe = NOOP_PROBE
+    try {
+      probe = await this.adapterFor(input.frameworkId).begin({
+        providerSessionId: input.providerSessionId,
+        cwd: input.cwd
+      })
+    } catch (error) {
+      reportBestEffort(input.reportBestEffortFailure, 'begin', error)
+    }
+    this.observations.set(input.providerSessionId, {
+      token,
+      probe,
+      report: input.reportBestEffortFailure
+    })
+    let open = true
+    const release = (): void => {
+      if (this.observations.get(input.providerSessionId)?.token === token) {
+        this.observations.delete(input.providerSessionId)
+      }
+    }
+    return {
+      finalize: async ({ response }) => {
+        if (!open) return EMPTY_FACTS
+        open = false
+        release()
+        try {
+          return normalizeFacts(response, await probe.finalize({ response }))
+        } catch (error) {
+          reportBestEffort(input.reportBestEffortFailure, 'finalize', error)
+          return normalizeFacts(response, EMPTY_FACTS)
+        }
+      },
+      cancel: async () => {
+        if (!open) return
+        open = false
+        release()
+        try {
+          await probe.cancel()
+        } catch (error) {
+          reportBestEffort(input.reportBestEffortFailure, 'cancel', error)
+        }
+      }
     }
   }
 
@@ -285,4 +339,9 @@ class AcpProviderPromptExecutor {
 }
 
 export { AcpProviderPromptExecutor }
-export type { ProviderPromptExecutionInput, ProviderPromptObservationStage, ProviderPromptOutcome }
+export type {
+  ProviderPromptExecutionInput,
+  ProviderPromptObservationStage,
+  ProviderPromptOutcome,
+  ProviderTurnObservationInput
+}

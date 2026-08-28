@@ -140,6 +140,27 @@ model SessionModelCallUsage {
   @@unique([sessionId, messageId, callIndex])
 }
 
+// One provider-reported logical turn outside the durable Agent message graph. These facts have no
+// Session foreign key because a projection rebuild temporarily deletes and recreates live Session
+// rows; direct auxiliary consumption must survive that rebuild.
+model SessionAuxiliaryTurnUsage {
+  sessionId         String
+  eventId           String
+  source            String
+  frameworkId       String
+  model             String?
+  completedAtMs     BigInt
+  inputTokens       BigInt
+  cacheTokens       BigInt
+  cachedReadTokens  BigInt?
+  cachedWriteTokens BigInt?
+  outputTokens      BigInt
+  modelCallCount    Int?
+
+  @@id([sessionId, eventId])
+  @@index([completedAtMs])
+}
+
 // One user-authored root-frame run, excluding hidden control and delegated caller messages.
 model SessionRun {
   sessionId   String

@@ -158,6 +158,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
   resolveComputeExecutionTargetIds?: AcpRuntimeOptions['resolveComputeExecutionTargetIds']
   memory?: AcpRuntimeOptions['memory']
+  auxiliaryUsage?: AcpRuntimeOptions['auxiliaryUsage']
 }
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
@@ -199,7 +200,8 @@ const createAcpRuntime = ({
   sideChatRelays,
   imageInputCompatibility,
   resolveComputeExecutionTargetIds,
-  memory
+  memory,
+  auxiliaryUsage
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
@@ -254,6 +256,7 @@ const createAcpRuntime = ({
           : settingsService.captureActiveAgentBackendSelection()
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: app.getVersion(),
+        auxiliaryUsage,
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
         resolveBackend: async (context) =>

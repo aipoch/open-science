@@ -36,6 +36,7 @@ import {
   MEMORY_AUXILIARY_SCHEMA_OBJECTS,
   MEMORY_AUXILIARY_TABLE_NAMES
 } from './migrations/0017-agent-memory-project-scope'
+import { sessionAuxiliaryTurnUsageMigration } from './migrations/0018-session-auxiliary-turn-usage'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -279,6 +280,12 @@ const AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM = checksumMigrationPayload(
   agentMemoryProjectScopeMigration.verifiers,
   agentMemoryProjectScopeMigration.operations
 )
+const SESSION_AUXILIARY_TURN_USAGE_CHECKSUM = checksumMigrationPayload(
+  sessionAuxiliaryTurnUsageMigration.id,
+  sessionAuxiliaryTurnUsageMigration.statements,
+  sessionAuxiliaryTurnUsageMigration.verifiers,
+  sessionAuxiliaryTurnUsageMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
@@ -341,6 +348,16 @@ const CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
 const AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
   Object.fromEntries(
     agentMemoryProjectScopeMigration.verifiers
+      .filter((verifier) => verifier.kind === 'check-constraints-exist')
+      .flatMap((verifier) => verifier.tables)
+      .map(({ table, constraints }) => [
+        table,
+        Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+      ])
+  )
+const SESSION_AUXILIARY_TURN_USAGE_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
+  Object.fromEntries(
+    sessionAuxiliaryTurnUsageMigration.verifiers
       .filter((verifier) => verifier.kind === 'check-constraints-exist')
       .flatMap((verifier) => verifier.tables)
       .map(({ table, constraints }) => [
@@ -459,6 +476,12 @@ const MIGRATION_MANIFEST = [
   {
     ...agentMemoryProjectScopeMigration,
     checksum: AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionAuxiliaryTurnUsageMigration,
+    checksum: SESSION_AUXILIARY_TURN_USAGE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -724,6 +747,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
     triggerNames: memoryTriggerNames
   })
   await runMigrationVerifiers(client, agentMemoryProjectScopeMigration.verifiers)
+  await runMigrationVerifiers(client, sessionAuxiliaryTurnUsageMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1380,6 +1404,11 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === agentMemoryProjectScopeMigration.id &&
       candidate.checksum === AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM
   )
+  const adoptsSessionAuxiliaryTurnUsage = manifest.some(
+    (candidate) =>
+      candidate.id === sessionAuxiliaryTurnUsageMigration.id &&
+      candidate.checksum === SESSION_AUXILIARY_TURN_USAGE_CHECKSUM
+  )
   const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
@@ -1388,7 +1417,8 @@ const migrateApplicationDatabaseWithManifest = async (
     adoptsVisionEvidence ? VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS : {},
     adoptsComputePasswordAuth ? COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS : {},
     adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsAgentMemoryProjectScope ? AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsAgentMemoryProjectScope ? AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS : {},
+    adoptsSessionAuxiliaryTurnUsage ? SESSION_AUXILIARY_TURN_USAGE_ALLOWED_SUFFIX_CHECKS : {}
   )
 
   let nextIndex = appliedCount

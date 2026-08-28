@@ -307,7 +307,8 @@ type NotebookLocalRpcServerOptions = {
     listModels(): Promise<readonly string[]>
     call(
       input: HostLlmCallInput,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      context?: Readonly<{ projectId: string; sessionId: string }>
     ): Promise<HostLlmResult | readonly HostLlmBatchItem[]>
   }
   hostViewImage?: {
@@ -2152,17 +2153,23 @@ class NotebookLocalRpcServer {
     if (method === 'llmCall') {
       if (!this.hostModel) throw new Error('host.llm is not configured.')
       const {
-        sessionId: _sessionId,
-        projectId: _projectId,
+        sessionId,
+        projectId,
         provenanceContext: _provenanceContext,
         registeredInputFiles: _registeredInputFiles,
         ...input
       } = params
-      void _sessionId
-      void _projectId
+      if (
+        typeof sessionId !== 'string' ||
+        !sessionId ||
+        typeof projectId !== 'string' ||
+        !projectId
+      ) {
+        throw new RpcHttpError(403, 'host.llm trusted Session identity is incomplete.')
+      }
       void _provenanceContext
       void _registeredInputFiles
-      return this.hostModel.call(input as HostLlmCallInput, signal)
+      return this.hostModel.call(input as HostLlmCallInput, signal, { projectId, sessionId })
     }
 
     if (method === 'currentModelCall') {

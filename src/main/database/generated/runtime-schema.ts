@@ -94,6 +94,25 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "SessionModelCallUsage_identity_check" CHECK (length(trim("messageId")) > 0 AND length(trim("callId")) > 0 AND "callIndex" >= 0 AND ("sourceInvocationId" IS NULL OR length(trim("sourceInvocationId")) > 0) AND ("frameworkId" IS NULL OR length(trim("frameworkId")) > 0) AND ("backendId" IS NULL OR length(trim("backendId")) > 0) AND ("model" IS NULL OR length(trim("model")) > 0)),
     CONSTRAINT "SessionModelCallUsage_nonnegative_check" CHECK ("inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("contextUsedTokens" IS NULL OR "contextUsedTokens" >= 0) AND ("contextWindowSize" IS NULL OR "contextWindowSize" > 0))
 );`,
+  `CREATE TABLE IF NOT EXISTS "SessionAuxiliaryTurnUsage" (
+    "sessionId" TEXT NOT NULL,
+    "eventId" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "frameworkId" TEXT NOT NULL,
+    "model" TEXT,
+    "completedAtMs" BIGINT NOT NULL,
+    "inputTokens" BIGINT NOT NULL,
+    "cacheTokens" BIGINT NOT NULL,
+    "cachedReadTokens" BIGINT,
+    "cachedWriteTokens" BIGINT,
+    "outputTokens" BIGINT NOT NULL,
+    "modelCallCount" INTEGER,
+
+    PRIMARY KEY ("sessionId", "eventId"),
+    CONSTRAINT "SessionAuxiliaryTurnUsage_identity_check" CHECK (length(trim("sessionId")) > 0 AND length(trim("eventId")) > 0 AND length(trim("frameworkId")) > 0 AND ("model" IS NULL OR length(trim("model")) > 0)),
+    CONSTRAINT "SessionAuxiliaryTurnUsage_source_check" CHECK ("source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction')),
+    CONSTRAINT "SessionAuxiliaryTurnUsage_nonnegative_check" CHECK ("completedAtMs" >= 0 AND "inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("modelCallCount" IS NULL OR "modelCallCount" > 0))
+);`,
   `CREATE TABLE IF NOT EXISTS "SessionRun" (
     "sessionId" TEXT NOT NULL,
     "messageId" TEXT NOT NULL,
@@ -642,6 +661,7 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "PendingSessionReconciliation_projectId_idx" ON "PendingSessionReconciliation"("projectId");`,
   `CREATE INDEX IF NOT EXISTS "SessionTurnUsage_completedAtMs_idx" ON "SessionTurnUsage"("completedAtMs");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "SessionModelCallUsage_sessionId_messageId_callIndex_key" ON "SessionModelCallUsage"("sessionId", "messageId", "callIndex");`,
+  `CREATE INDEX IF NOT EXISTS "SessionAuxiliaryTurnUsage_completedAtMs_idx" ON "SessionAuxiliaryTurnUsage"("completedAtMs");`,
   `CREATE INDEX IF NOT EXISTS "SessionRun_createdAtMs_idx" ON "SessionRun"("createdAtMs");`,
   `CREATE INDEX IF NOT EXISTS "SessionArtifactRef_artifactId_artifactCreatedAtMs_idx" ON "SessionArtifactRef"("artifactId", "artifactCreatedAtMs");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "PermissionGrant_fingerprint_key" ON "PermissionGrant"("fingerprint");`,
@@ -722,6 +742,7 @@ const RUNTIME_SCHEMA_TABLES = [
   'PendingSessionReconciliation',
   'SessionTurnUsage',
   'SessionModelCallUsage',
+  'SessionAuxiliaryTurnUsage',
   'SessionRun',
   'SessionArtifactRef',
   'PermissionGrant',

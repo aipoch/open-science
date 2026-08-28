@@ -8,6 +8,7 @@ import type { ContextUsageTracker, SessionEstimateInput } from './context-usage-
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import type { RuntimeEventInput } from './runtime-snapshot-owner'
+import type { AcpProviderTurnProbe, AcpProviderTurnResult } from './provider-turn-adapter'
 import type {
   AcpCompactionSessionInteractionScope,
   AcpPromptSessionInteractionScope,
@@ -39,6 +40,23 @@ type AcpContextCompactionWorkflowOptions = Readonly<{
   cancelCompaction: (sessionId: string) => Promise<void>
   beforePromptDispatch?: (input: { appSessionId: string; session: ActiveSession }) => Promise<void>
   serialization: Pick<AcpProviderPromptSerializationOwner, 'run'>
+  usage?: Readonly<{
+    begin: (input: {
+      providerSessionId: string
+      cwd: string
+      frameworkId: AgentFramework['id']
+    }) => Promise<AcpProviderTurnProbe>
+    record: (input: {
+      sessionId: string
+      eventId: string
+      frameworkId: AgentFramework['id']
+      model?: string
+      completedAtMs: number
+      facts: AcpProviderTurnResult
+    }) => Promise<unknown>
+    cwd: (sessionId: string) => string
+    model: () => string | undefined
+  }>
 }>
 
 type AcpAutomaticCompactionRequest = Readonly<{
@@ -207,62 +225,93 @@ class AcpContextCompactionWorkflow {
         this.options.sessions.currentFramework(),
         async () => {
           await this.options.beforePromptDispatch?.({ appSessionId: sessionId, session })
-          let failureText: string | undefined
-          const promptFailure = new Promise<never>((_, reject) => {
-            session.prompt([{ type: 'text', text: strategy.command }]).catch(reject)
+          const frameworkId = this.options.sessions.currentFramework().id
+          let usageProbe = await this.options.usage?.begin({
+            providerSessionId: session.sessionId,
+            cwd: this.options.usage.cwd(sessionId),
+            frameworkId
           })
-          for (;;) {
-            const message = await Promise.race([session.nextUpdate(), promptFailure])
-            if (message.kind === 'stop') {
-              if (message.response.stopReason === 'cancelled') {
-                restoreContext()
+          try {
+            let failureText: string | undefined
+            const promptFailure = new Promise<never>((_, reject) => {
+              session.prompt([{ type: 'text', text: strategy.command }]).catch(reject)
+            })
+            for (;;) {
+              const message = await Promise.race([session.nextUpdate(), promptFailure])
+              if (message.kind === 'stop') {
+                if (usageProbe) {
+                  const facts = await usageProbe.finalize({ response: message.response })
+                  usageProbe = undefined
+                  if (facts.turnUsage) {
+                    await this.options.usage
+                      ?.record({
+                        sessionId,
+                        eventId: toolCallId,
+                        frameworkId,
+                        model: this.options.usage.model(),
+                        completedAtMs: Date.now(),
+                        facts
+                      })
+                      .catch((error) =>
+                        log.warn(
+                          'context compaction Usage persistence failed',
+                          errorLogFields(error)
+                        )
+                      )
+                  }
+                }
+                if (message.response.stopReason === 'cancelled') {
+                  restoreContext()
+                  this.publishEvent({
+                    kind: 'compaction',
+                    compactionReason: reason,
+                    level: 'info',
+                    sessionId,
+                    status: 'cancelled',
+                    title: 'Context compaction cancelled',
+                    toolCallId
+                  })
+                  return message.response
+                }
+                if (message.response.stopReason !== 'end_turn') {
+                  throw new Error(
+                    `Context compaction stopped before completion: ${message.response.stopReason}`
+                  )
+                }
+                if (failureText) throw new Error(failureText)
+                this.options.context.resetAfterCompaction(
+                  sessionId,
+                  this.options.contextEstimateInput(sessionId),
+                  checkpoint,
+                  this.options.selectedContextWindow(sessionId)
+                )
+                this.options.promptContent.resetSession(sessionId)
                 this.publishEvent({
                   kind: 'compaction',
                   compactionReason: reason,
                   level: 'info',
                   sessionId,
-                  status: 'cancelled',
-                  title: 'Context compaction cancelled',
+                  status: 'completed',
+                  title: 'Context compacted',
                   toolCallId
                 })
                 return message.response
               }
-              if (message.response.stopReason !== 'end_turn') {
-                throw new Error(
-                  `Context compaction stopped before completion: ${message.response.stopReason}`
-                )
-              }
-              if (failureText) throw new Error(failureText)
-              this.options.context.resetAfterCompaction(
-                sessionId,
-                this.options.contextEstimateInput(sessionId),
-                checkpoint,
-                this.options.selectedContextWindow(sessionId)
-              )
-              this.options.promptContent.resetSession(sessionId)
-              this.publishEvent({
-                kind: 'compaction',
-                compactionReason: reason,
-                level: 'info',
-                sessionId,
-                status: 'completed',
-                title: 'Context compacted',
-                toolCallId
-              })
-              return message.response
-            }
 
-            const update = message.notification.update
-            if (
-              !failureText &&
-              strategy.failureTextPrefix &&
-              update.sessionUpdate === 'agent_message_chunk' &&
-              update.content.type === 'text' &&
-              update.content.text.trimStart().startsWith(strategy.failureTextPrefix)
-            ) {
-              failureText = update.content.text.trim()
+              const update = message.notification.update
+              if (
+                !failureText &&
+                strategy.failureTextPrefix &&
+                update.sessionUpdate === 'agent_message_chunk' &&
+                update.content.type === 'text' &&
+                update.content.text.trimStart().startsWith(strategy.failureTextPrefix)
+              ) {
+                failureText = update.content.text.trim()
+              }
+              this.options.routeHiddenNotification(message.notification, sessionId)
             }
-            this.options.routeHiddenNotification(message.notification, sessionId)
+          } finally {
+            await Promise.resolve(usageProbe?.cancel()).catch(() => undefined)
           }
         }
       )

@@ -14,6 +14,8 @@ import type {
 } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createLogger, errorLogFields } from '../logger'
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
+import type { AcpProviderTurnProbe } from '../acp/provider-turn-adapter'
 import type { ReviewerAcpRuntime } from './acp-runtime'
 import { resolveTurnScopeWithArtifactDigests } from './artifact-digest'
 import { ReviewerHostServer, type ArtifactVersionContentResolver } from './host-sdk'
@@ -49,6 +51,7 @@ type CommonAssessmentOptions = {
   reviewerTimeoutMs: number
   reviewerMaxUpdates: number
   abortSignal?: AbortSignal
+  recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
 }
 
 type InitialAssessmentOptions = CommonAssessmentOptions & {
@@ -154,7 +157,8 @@ export const runReviewAssessment = async (
     onReviewUpdate,
     reviewerTimeoutMs,
     reviewerMaxUpdates,
-    abortSignal
+    abortSignal,
+    recordUsage
   } = options
   const trackedChecks = options.mode === 'tracked' ? options.trackedChecks : []
 
@@ -229,8 +233,9 @@ export const runReviewAssessment = async (
     await mcpServer.start()
 
     const reviewerPrompt = buildReviewerPrompt(scope, options.mode, trackedChecks)
+    const reviewerCwd = session.cwd || homedir()
     const built = await acpRuntime.buildReviewerSession({
-      cwd: session.cwd || homedir(),
+      cwd: reviewerCwd,
       mcpServers: [mcpServer.toAcpMcpServerConfig()],
       systemPromptAppend: REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND
     })
@@ -250,12 +255,56 @@ export const runReviewAssessment = async (
     const reviewerPromptText = built.promptPrefix
       ? `${built.promptPrefix}\n\n${reviewerPrompt}`
       : reviewerPrompt
-    reviewerSession.prompt([{ type: 'text', text: reviewerPromptText }])
-    const stopReason = await driveReviewerToStop(
-      reviewerSession,
-      { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates, signal: abortSignal },
-      reviewerLogDriveCallbacks
-    )
+    const runReviewerTurn = async (
+      prompt: string,
+      eventId: string
+    ): Promise<string | undefined> => {
+      let probe: AcpProviderTurnProbe | undefined
+      let response: Parameters<AcpProviderTurnProbe['finalize']>[0]['response'] | undefined
+      try {
+        probe = await acpRuntime.beginProviderTurnObservation?.({
+          providerSessionId: reviewerSession!.sessionId,
+          cwd: reviewerCwd
+        })
+        const promptRequest = reviewerSession!.prompt([{ type: 'text', text: prompt }])
+        void Promise.resolve(promptRequest).catch(() => undefined)
+        const stopReason = await driveReviewerToStop(
+          reviewerSession!,
+          { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates, signal: abortSignal },
+          {
+            ...reviewerLogDriveCallbacks,
+            onStop: (value) => {
+              response = value
+            }
+          }
+        )
+        if (probe && response) {
+          const facts = await probe.finalize({ response })
+          probe = undefined
+          if (facts.turnUsage && recordUsage && backend) {
+            await recordUsage({
+              projectId,
+              sessionId,
+              eventId,
+              source: 'reviewer',
+              frameworkId: backend.framework.id,
+              model: runtimeModel ?? (review.model || undefined),
+              completedAtMs: Date.now(),
+              usage: {
+                ...facts.turnUsage,
+                ...(facts.modelTurnCount === undefined ? {} : { turnCount: facts.modelTurnCount })
+              }
+            }).catch((error) =>
+              log.warn('Reviewer Usage persistence failed', errorLogFields(error))
+            )
+          }
+        }
+        return stopReason
+      } finally {
+        await Promise.resolve(probe?.cancel()).catch(() => undefined)
+      }
+    }
+    const stopReason = await runReviewerTurn(reviewerPromptText, `${review.id}:initial`)
     if (options.mode === 'initial') {
       log.info('reviewer session stopped', { reviewId: review.id, stopReason })
     }
@@ -264,11 +313,9 @@ export const runReviewAssessment = async (
         reviewId: review.id,
         stopReason
       })
-      reviewerSession.prompt([{ type: 'text', text: REVIEWER_PROTOCOL_RECOVERY_PROMPT }])
-      const recoveryStopReason = await driveReviewerToStop(
-        reviewerSession,
-        { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates, signal: abortSignal },
-        reviewerLogDriveCallbacks
+      const recoveryStopReason = await runReviewerTurn(
+        REVIEWER_PROTOCOL_RECOVERY_PROMPT,
+        `${review.id}:recovery`
       )
       log.info('reviewer recovery session stopped', {
         reviewId: review.id,

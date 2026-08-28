@@ -13,6 +13,7 @@ import {
 import type { ReviewerAcpRuntime } from './acp-runtime'
 import { ReviewerCorrectionOwner } from './correction'
 import type { ArtifactVersionContentResolver } from './host-sdk'
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import { runReviewAssessment } from './review-assessment-owner'
 import type { ReviewRepository } from './repository'
 import { toErrorMessage } from '../error-message'
@@ -61,6 +62,7 @@ type ReviewerFixLoopOptions = {
   sessionRefreshTimeoutMs: number
   // Optional abort signal: when aborted, the loop exits at the next round boundary.
   abortSignal?: AbortSignal
+  recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
 }
 
 const waitForCorrectionAgentMessage = async (options: {
@@ -129,7 +131,8 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
     reviewerMaxUpdates,
     maxRounds,
     sessionRefreshTimeoutMs,
-    abortSignal
+    abortSignal,
+    recordUsage
   } = options
 
   let openChecks = [...options.openChecks]
@@ -321,7 +324,8 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       onReviewUpdate,
       reviewerTimeoutMs,
       reviewerMaxUpdates,
-      trackedChecks: openChecks
+      trackedChecks: openChecks,
+      recordUsage
     })
     const reReviewResult = scopedResult.review
 

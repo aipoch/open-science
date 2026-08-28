@@ -1,4 +1,7 @@
+import { randomUUID } from 'node:crypto'
+
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import type { AcpBackendGenerationView } from '../acp/backend-generation-owner'
 import { getAgentFramework } from '../agent-framework'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
@@ -71,7 +74,10 @@ type HostModelServiceOptions = Readonly<{
   ) => Readonly<{ backend: AcpBackendGenerationView; appliedModel?: string }> | undefined
   captureModelCatalog: () => Promise<HostModelCatalogSnapshot>
   runner: HostLlmRunner
+  recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
 }>
+
+type HostLlmCallContext = Readonly<{ projectId: string; sessionId: string }>
 
 const exactKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
   Object.keys(value).every((key) => allowed.includes(key))
@@ -259,7 +265,8 @@ class HostModelService {
 
   async call(
     input: HostLlmCallInput,
-    callerSignal?: AbortSignal
+    callerSignal?: AbortSignal,
+    context?: HostLlmCallContext
   ): Promise<HostLlmResult | readonly HostLlmBatchItem[]> {
     if (this.shuttingDown) throw new Error('host.llm is shutting down.')
     if (!isRecord(input)) throw new TypeError('host.llm RPC input must be an object.')
@@ -292,13 +299,13 @@ class HostModelService {
       if (parsed.every((request) => 'error' in request)) {
         return Object.freeze(parsed.map((request) => Object.freeze({ error: request.error! })))
       }
-      return this.runBatch(parsed, concurrency, callerSignal)
+      return this.runBatch(parsed, concurrency, callerSignal, context)
     }
 
     if (!exactKeys(payload, ['request']) || !Object.hasOwn(payload, 'request')) {
       throw new TypeError('host.llm single input must contain only request.')
     }
-    return this.runSingle(promptFor(payload.request), callerSignal)
+    return this.runSingle(promptFor(payload.request), callerSignal, context)
   }
 
   private async captureTarget(signal: AbortSignal): Promise<ExplicitAgentBackendTarget> {
@@ -380,30 +387,73 @@ class HostModelService {
   private async runInference(
     prompt: string,
     target: ExplicitAgentBackendTarget,
-    signal: AbortSignal
+    signal: AbortSignal,
+    context?: HostLlmCallContext
   ): Promise<RestrictedInferenceResult> {
     const release = await this.acquireRunSlot(signal)
     try {
       if (signal.aborted) throw new RestrictedInferenceError('cancelled', 'Cancelled.')
-      return await this.options.runner.run({
-        prompt,
-        target,
-        systemPrompt: HOST_LLM_SYSTEM_PROMPT,
-        agentName: 'open-science-host-llm',
-        description: 'One-shot host.llm inference without tools.',
-        signal,
-        outputLimitBytes: DEFAULT_OUTPUT_LIMIT_BYTES
-      })
+      const eventId = randomUUID()
+      try {
+        const result = await this.options.runner.run({
+          prompt,
+          target,
+          systemPrompt: HOST_LLM_SYSTEM_PROMPT,
+          agentName: 'open-science-host-llm',
+          description: 'One-shot host.llm inference without tools.',
+          signal,
+          outputLimitBytes: DEFAULT_OUTPUT_LIMIT_BYTES
+        })
+        await this.recordUsage(context, eventId, result.frameworkId, result.model, result.usage)
+        return result
+      } catch (error) {
+        const usage = error instanceof RestrictedInferenceError ? error.usage : undefined
+        await this.recordUsage(
+          context,
+          eventId,
+          target.frameworkId,
+          target.model.kind === 'required' ? target.model.id : undefined,
+          usage
+        )
+        throw error
+      }
     } finally {
       release()
     }
   }
 
-  private async runSingle(prompt: string, callerSignal?: AbortSignal): Promise<HostLlmResult> {
+  private async recordUsage(
+    context: HostLlmCallContext | undefined,
+    eventId: string,
+    frameworkId: SessionAuxiliaryTurnUsageRecord['frameworkId'],
+    model: string | undefined,
+    usage: RestrictedInferenceResult['usage']
+  ): Promise<void> {
+    if (!context || !usage || !this.options.recordUsage) return
+    await this.options
+      .recordUsage({
+        ...context,
+        eventId,
+        source: 'host-llm',
+        frameworkId,
+        model,
+        completedAtMs: Date.now(),
+        usage
+      })
+      .catch(() => undefined)
+  }
+
+  private async runSingle(
+    prompt: string,
+    callerSignal?: AbortSignal,
+    context?: HostLlmCallContext
+  ): Promise<HostLlmResult> {
     const scope = this.callScope(callerSignal)
     try {
       const target = await this.captureTarget(scope.controller.signal)
-      return projectResult(await this.runInference(prompt, target, scope.controller.signal))
+      return projectResult(
+        await this.runInference(prompt, target, scope.controller.signal, context)
+      )
     } catch (error) {
       throw new Error(publicError(error))
     } finally {
@@ -414,7 +464,8 @@ class HostModelService {
   private async runBatch(
     parsed: readonly (Readonly<{ prompt: string }> | Readonly<{ error: string }>)[],
     concurrency: number,
-    callerSignal?: AbortSignal
+    callerSignal?: AbortSignal,
+    context?: HostLlmCallContext
   ): Promise<readonly HostLlmBatchItem[]> {
     const scope = this.callScope(callerSignal)
     try {
@@ -436,7 +487,7 @@ class HostModelService {
           }
           try {
             results[index] = projectResult(
-              await this.runInference(request.prompt, target, scope.controller.signal)
+              await this.runInference(request.prompt, target, scope.controller.signal, context)
             )
           } catch (error) {
             if (scope.controller.signal.aborted) throw error
@@ -481,6 +532,7 @@ export type {
   HostLlmRequest,
   HostLlmResult,
   HostModelServiceOptions,
+  HostLlmCallContext,
   HostModelCatalogSnapshot,
   HostLlmUsage
 }

@@ -72,6 +72,7 @@ const createHarness = (input?: {
   session?: FakeSession
   cancelCompaction?: (sessionId: string) => Promise<void>
   beforePromptDispatch?: (input: { appSessionId: string; session: ActiveSession }) => Promise<void>
+  usage?: ConstructorParameters<typeof AcpContextCompactionWorkflow>[0]['usage']
 }): {
   cancelCompaction: ReturnType<typeof vi.fn>
   context: ContextUsageTracker
@@ -114,6 +115,7 @@ const createHarness = (input?: {
     emitState,
     errorMessage: (error) => (error instanceof Error ? error.message : String(error)),
     beforePromptDispatch: input?.beforePromptDispatch,
+    usage: input?.usage,
     serialization: new AcpProviderPromptSerializationOwner(),
     cancelCompaction
   })
@@ -133,6 +135,36 @@ const createHarness = (input?: {
 }
 
 describe('AcpContextCompactionWorkflow', () => {
+  it('records provider usage for the hidden native compaction turn', async () => {
+    const session = fakeSession([stop('end_turn')])
+    const record = vi.fn(async () => undefined)
+    const finalize = vi.fn(async () => ({
+      turnUsage: { inputTokens: 20, cacheTokens: 4, outputTokens: 2 },
+      modelTurnCount: 1
+    }))
+    const harness = createHarness({
+      session,
+      usage: {
+        begin: vi.fn(async () => ({ finalize, cancel: vi.fn() })),
+        record,
+        cwd: () => '/workspace',
+        model: () => 'model-a'
+      }
+    })
+
+    await harness.workflow.compact({ sessionId: 'app-session' })
+
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'app-session',
+        eventId: expect.stringMatching(/^context-compaction:/u),
+        frameworkId: 'claude-code',
+        model: 'model-a',
+        facts: expect.objectContaining({ modelTurnCount: 1 })
+      })
+    )
+  })
+
   it('runs a manual native control turn without projecting its hidden output', async () => {
     const hidden = notification('Compacting conversation history')
     const session = fakeSession([update(hidden), stop('end_turn')])
