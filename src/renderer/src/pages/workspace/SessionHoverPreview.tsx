@@ -1,8 +1,3 @@
-/* Hallmark · macrostructure: anchored session context card · genre: modern-minimal · theme: Open Science
- * states: default · hover · focus · active · disabled · loading · error · success
- * contrast: pass (40–41) · slop: pass (applicable component gates)
- * pre-emit critique: P5 H4 E5 S5 R5 V4
- */
 import {
   createContext,
   useCallback,
@@ -14,12 +9,22 @@ import {
   type ReactElement,
   type ReactNode
 } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { SESSION_DETAILS_TITLE_MAX_LENGTH } from '../../../../shared/session-persistence'
 
 const SESSION_HOVER_PREVIEW_DELAY_MS = 0
+// Radix-internal close grace while the pointer crosses from the row onto the card; the explicit
+// pointer-leave handlers below still close the card as soon as the hover region is left for good.
 const SESSION_HOVER_PREVIEW_SKIP_DELAY_MS = 300
+// align="start" anchors the card's top edge to the trigger's top edge; the trigger is the whole
+// session row (py-1.5) and the card adds 1px border + p-4, so shift the card up to land the card
+// title on the same baseline as the hovered row title (Popper rounds subpixels, hence -12 for the
+// 11px design offset). For a title-only card this also centers the card vertically on the row.
+const SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX = -12
 
 type SessionPreviewContent = {
   title: string
@@ -27,6 +32,7 @@ type SessionPreviewContent = {
 }
 type SessionPreviewDetails = SessionPreviewContent & { id: string }
 type SessionPreviewRequest = (sessionId: string) => Promise<void> | void
+type SessionRenameRequest = (title: string) => void
 
 type SessionHoverPreviewContextValue = {
   activeSessionId: string | null
@@ -59,12 +65,7 @@ const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): Rea
 
   return (
     <SessionHoverPreviewContext.Provider value={value}>
-      <TooltipProvider
-        delayDuration={SESSION_HOVER_PREVIEW_DELAY_MS}
-        skipDelayDuration={SESSION_HOVER_PREVIEW_SKIP_DELAY_MS}
-      >
-        {children}
-      </TooltipProvider>
+      {children}
     </SessionHoverPreviewContext.Provider>
   )
 }
@@ -134,13 +135,102 @@ const SessionTitleMarquee = ({
   )
 }
 
+const sessionHoverPreviewTitleClassName = 'truncate text-sm font-semibold leading-5'
+
+// Click-to-edit title for the hover card. Enter or blur commits a non-empty trimmed title,
+// Escape cancels; editing state is mirrored to the parent so the card stays open mid-edit.
+const SessionHoverPreviewTitle = ({
+  title,
+  canRename,
+  onRenameTitle,
+  onEditingChange
+}: {
+  title: string
+  canRename: boolean
+  onRenameTitle?: SessionRenameRequest
+  onEditingChange?: (editing: boolean) => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [editing, setEditing] = useState(false)
+  const editingRef = useRef(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const updateEditing = useCallback(
+    (next: boolean): void => {
+      editingRef.current = next
+      setEditing(next)
+      onEditingChange?.(next)
+    },
+    [onEditingChange]
+  )
+
+  const commit = useCallback((): void => {
+    if (!editingRef.current) return
+    const nextTitle = inputRef.current?.value.trim() ?? ''
+    updateEditing(false)
+    if (nextTitle && nextTitle !== title) onRenameTitle?.(nextTitle)
+  }, [onRenameTitle, title, updateEditing])
+
+  if (!canRename) {
+    return <p className={sessionHoverPreviewTitleClassName}>{title}</p>
+  }
+
+  if (editing) {
+    return (
+      <Input
+        ref={inputRef}
+        defaultValue={title}
+        autoFocus
+        maxLength={SESSION_DETAILS_TITLE_MAX_LENGTH}
+        aria-label={t('Session title')}
+        className="h-auto rounded-sm px-1 py-0 text-sm font-semibold leading-5"
+        onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            commit()
+            return
+          }
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            updateEditing(false)
+          }
+        }}
+        onBlur={commit}
+      />
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      data-slot="session-hover-preview-title-button"
+      aria-label={t('Rename session title')}
+      className={cn(
+        'block w-full cursor-pointer rounded-sm text-left outline-none',
+        'hover:bg-bg-300 focus-visible:ring-2 focus-visible:ring-ring',
+        sessionHoverPreviewTitleClassName
+      )}
+      onClick={() => updateEditing(true)}
+    >
+      {title}
+    </button>
+  )
+}
+
 const SessionHoverPreviewCard = ({
   session,
   descriptionLoading = false,
+  canRename = false,
+  onRenameTitle,
+  onEditingChange,
   className
 }: {
   session: SessionPreviewContent
   descriptionLoading?: boolean
+  canRename?: boolean
+  onRenameTitle?: SessionRenameRequest
+  onEditingChange?: (editing: boolean) => void
   className?: string
 }): React.JSX.Element => {
   const description = session.description?.trim()
@@ -155,11 +245,14 @@ const SessionHoverPreviewCard = ({
         className
       )}
     >
-      <p className="truncate text-[15px] font-semibold leading-5 tracking-[-0.01em]">
-        {session.title}
-      </p>
+      <SessionHoverPreviewTitle
+        title={session.title}
+        canRename={canRename}
+        onRenameTitle={onRenameTitle}
+        onEditingChange={onEditingChange}
+      />
       {description ? (
-        <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-5 text-muted-foreground">
+        <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-4 text-muted-foreground">
           {description}
         </p>
       ) : descriptionLoading ? (
@@ -176,10 +269,14 @@ const SessionHoverPreviewCard = ({
 const SessionHoverPreview = ({
   session,
   onPreviewRequest,
+  canRename = false,
+  onRenameTitle,
   children
 }: {
   session: SessionPreviewDetails
   onPreviewRequest?: SessionPreviewRequest
+  canRename?: boolean
+  onRenameTitle?: SessionRenameRequest
   children: ReactElement
 }): React.JSX.Element => {
   const context = useContext(SessionHoverPreviewContext)
@@ -188,9 +285,14 @@ const SessionHoverPreview = ({
   const { activeSessionId, closeNow, requestOpen } = context
   const open = activeSessionId === session.id
   const onPreviewRequestRef = useRef(onPreviewRequest)
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  // Radix types the trigger ref as its default anchor element; with asChild the rendered element
+  // is the caller's child, and only Element-level APIs (contains/matches) are used here.
+  const triggerRef = useRef<HTMLAnchorElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const [descriptionLoading, setDescriptionLoading] = useState(false)
+  // While the inline title editor is active the card is pinned open; pointer leaves and
+  // Radix-initiated close requests are ignored until the edit commits or cancels.
+  const editingRef = useRef(false)
 
   useEffect(() => {
     onPreviewRequestRef.current = onPreviewRequest
@@ -212,9 +314,40 @@ const SessionHoverPreview = ({
 
   useEffect(() => () => closeNow(session.id), [closeNow, session.id])
 
+  const requestClose = useCallback((): void => {
+    if (editingRef.current) return
+    // Focus moved into the portaled card (e.g. Tab from the row to the rename control): keep the
+    // interactive card open until that focus leaves the card.
+    if (contentRef.current?.contains(document.activeElement)) return
+    closeNow(session.id)
+  }, [closeNow, session.id])
+
+  const handleEditingChange = useCallback(
+    (editing: boolean): void => {
+      editingRef.current = editing
+      if (editing) return
+      // Editing ended (commit or cancel): resume normal close semantics by closing immediately
+      // when the pointer is no longer over the trigger or the card.
+      if (triggerRef.current?.matches(':hover') || contentRef.current?.matches(':hover')) return
+      closeNow(session.id)
+    },
+    [closeNow, session.id]
+  )
+
   return (
-    <Tooltip open={open}>
-      <TooltipTrigger
+    <HoverCard
+      open={open}
+      openDelay={SESSION_HOVER_PREVIEW_DELAY_MS}
+      closeDelay={SESSION_HOVER_PREVIEW_SKIP_DELAY_MS}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) {
+          requestOpen(session.id)
+          return
+        }
+        requestClose()
+      }}
+    >
+      <HoverCardTrigger
         ref={triggerRef}
         asChild
         onPointerEnter={() => requestOpen(session.id)}
@@ -226,21 +359,34 @@ const SessionHoverPreview = ({
           ) {
             return
           }
-          closeNow(session.id)
+          requestClose()
         }}
         onFocus={() => requestOpen(session.id)}
         onBlur={(event) => {
           if (event.currentTarget.matches(':hover')) return
-          closeNow(session.id)
+          if (
+            event.relatedTarget instanceof Node &&
+            contentRef.current?.contains(event.relatedTarget)
+          ) {
+            // Internal focus transition; preventDefault also skips Radix's composed trigger-blur
+            // close (composeEventHandlers honors defaultPrevented).
+            event.preventDefault()
+            return
+          }
+          // Defer the close decision until focus settles: document.activeElement then reflects the
+          // destination even when relatedTarget is null (programmatic focus moves), and
+          // requestClose keeps the card open while focus stays inside it.
+          setTimeout(requestClose, 0)
         }}
       >
         {children}
-      </TooltipTrigger>
-      <TooltipContent
+      </HoverCardTrigger>
+      <HoverCardContent
         ref={contentRef}
         side="right"
         align="start"
         sideOffset={0}
+        alignOffset={SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX}
         collisionPadding={8}
         onPointerLeave={(event) => {
           if (
@@ -249,21 +395,25 @@ const SessionHoverPreview = ({
           ) {
             return
           }
-          closeNow(session.id)
+          requestClose()
         }}
-        onEscapeKeyDown={() => closeNow(session.id)}
+        onEscapeKeyDown={() => requestClose()}
         className="max-w-none overflow-visible bg-transparent py-0 pr-0 pl-2.5 text-inherit shadow-none motion-reduce:animate-none"
       >
         <SessionHoverPreviewCard
           session={session}
           descriptionLoading={open && descriptionLoading}
+          canRename={canRename}
+          onRenameTitle={onRenameTitle}
+          onEditingChange={handleEditingChange}
         />
-      </TooltipContent>
-    </Tooltip>
+      </HoverCardContent>
+    </HoverCard>
   )
 }
 
 export {
+  SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX,
   SESSION_HOVER_PREVIEW_DELAY_MS,
   SESSION_HOVER_PREVIEW_SKIP_DELAY_MS,
   SessionHoverPreview,
@@ -271,4 +421,4 @@ export {
   SessionHoverPreviewProvider,
   SessionTitleMarquee
 }
-export type { SessionPreviewRequest }
+export type { SessionPreviewRequest, SessionRenameRequest }

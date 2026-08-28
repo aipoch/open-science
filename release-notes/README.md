@@ -20,7 +20,7 @@ The files contain the concise Markdown shown in the update dialog. Keep the full
 GitHub Release body and link to them from the dialog as usual.
 
 `en.md` is required because it is the fallback for missing translations and the compatibility source
-for electron-updater feeds used by older clients. The seven translated files are optional; when one is
+for electron-updater feeds used by older clients. The eight translated files are optional; when one is
 missing, current clients identify the fallback and show English.
 
 `Mirror to website` reads `release-notes/<version>/` when it builds `version.json`. Its `dry_run` input
