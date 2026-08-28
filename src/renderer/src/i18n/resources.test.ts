@@ -1441,6 +1441,7 @@ describe('mandatory product glossary', () => {
       duplicate: de.renderer.Duplicate,
       engineering: de.renderer.Engineering,
       environment: de.renderer.Environment,
+      flask: de.renderer.Flask,
       guide: de.renderer.Guide,
       host: de.renderer.Host,
       interruptAndMove: de.renderer['Interrupt and move'],
@@ -1450,7 +1451,12 @@ describe('mandatory product glossary', () => {
       pin: de.renderer.Pin,
       pinProject: de.renderer['Pin project'],
       port: de.renderer.Port,
+      providerConnection: de.renderer['Could not test the provider connection.'],
       resendOnBranch: de.renderer['Resend on a new branch?'],
+      runtimeSwitch:
+        de.renderer[
+          "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
+        ],
       stick: de.renderer.Stick,
       storage: de.renderer.Storage,
       unpinProject: de.renderer['Unpin project'],
@@ -1463,7 +1469,8 @@ describe('mandatory product glossary', () => {
       duplicate: 'Duplizieren',
       engineering: 'Ingenieurwesen',
       environment: 'Umgebung',
-      guide: 'Anleitung',
+      flask: 'Erlenmeyerkolben',
+      guide: 'Begleiter',
       host: 'Host',
       interruptAndMove: 'Unterbrechen und verschieben',
       keepClientSecret: 'Gespeichertes Client-Geheimnis beibehalten',
@@ -1472,7 +1479,10 @@ describe('mandatory product glossary', () => {
       pin: 'Anheften',
       pinProject: 'Projekt anheften',
       port: 'Port',
+      providerConnection: 'Die Verbindung zum Anbieter konnte nicht getestet werden.',
       resendOnBranch: 'In einem neuen Branch erneut senden?',
+      runtimeSwitch:
+        'Wählen Sie das Coding-Agent-Backend für Ihre Sitzungen aus. Wählen Sie zum Wechseln eine Karte aus. Dabei wird eine neue Agentensitzung gestartet und das Transkript offener Konversationen im neuen Backend wiedergegeben. Die aktive Laufzeit kann nicht deinstalliert werden; wechseln Sie zuerst zur anderen Laufzeit.',
       stick: 'Stäbchen',
       storage: 'Speicher',
       unpinProject: 'Projekt nicht mehr anheften',

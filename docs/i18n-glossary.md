@@ -102,8 +102,8 @@ third-party names and technical identifiers, including `Claude Connectors Direct
 
 ## Simplified / Traditional divergences
 
-The highest-risk table. A character converter gets most of the Chinese pairs wrong; the Japanese,
-German, Japanese, Korean, and Russian columns record their corresponding independent translations.
+The highest-risk table. A character converter gets most of the Chinese pairs wrong; the German,
+Japanese, Korean, and Russian columns record their corresponding independent translations.
 
 | en                 | de                   | ja           | ko          | ru                      | zh-Hans | zh-Hant  |
 | ------------------ | -------------------- | ------------ | ----------- | ----------------------- | ------- | -------- |
