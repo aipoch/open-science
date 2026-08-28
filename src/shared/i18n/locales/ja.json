@@ -2201,7 +2201,6 @@
     "Token usage unavailable for this response": "この応答のトークン使用量は利用できません",
     "Token: {{masked}}": "トークン：{{masked}}",
     "Tool": "ツール",
-    "Tool output image": "ツール出力イメージ",
     "Tool search": "ツール検索",
     "Tools": "ツール",
     "Tools and agents": "ツールとエージェント",

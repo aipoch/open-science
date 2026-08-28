@@ -830,7 +830,7 @@ describe('renderer session persistence bridge', () => {
     expect(upload).toMatchObject({ id: 'upload-1', versionId: 'upload-version-1' })
     expect(upload).not.toHaveProperty('path')
     expect(toRuntimeUploadedAttachment(upload!, stored.projectId).path).toBe(
-      'upload-version:project-a/session-1/upload-version-1'
+      'upload-version:project-a/session-1/upload-1/upload-version-1'
     )
     expect(saveSession).toHaveBeenCalledOnce()
   })

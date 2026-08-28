@@ -10,7 +10,14 @@ import { PreviewImageContent as CachedPreviewImageContent } from './previews/ren
 let previewVersion = 0
 const PreviewImageContent = (
   props: ComponentProps<typeof CachedPreviewImageContent>
-): React.JSX.Element => <CachedPreviewImageContent {...props} mtimeMs={previewVersion} />
+): React.JSX.Element => (
+  <CachedPreviewImageContent
+    projectId="project-1"
+    managedFileId="artifact-1"
+    {...props}
+    mtimeMs={previewVersion}
+  />
+)
 
 describe('PreviewUnsupportedContent', () => {
   let container: HTMLDivElement
@@ -40,7 +47,13 @@ describe('PreviewUnsupportedContent', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
-        <PreviewUnsupportedContent source="upload" path="/workspace/report.ppt" name="report.ppt" />
+        <PreviewUnsupportedContent
+          source="upload"
+          path="/workspace/report.ppt"
+          name="report.ppt"
+          projectId="project-1"
+          fileId="upload-1"
+        />
       )
     })
 
@@ -64,7 +77,8 @@ describe('PreviewUnsupportedContent', () => {
 
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/workspace/report.ppt',
+      projectId: 'project-1',
+      fileId: 'upload-1',
       suggestedName: 'report.ppt'
     })
     expect(window.api.artifacts.openFile).not.toHaveBeenCalled()
@@ -178,6 +192,7 @@ describe('PreviewImageContent', () => {
           source="upload"
           projectId="project-1"
           sessionId="session-1"
+          managedFileId="upload-1"
           path="upload-version:upload-version-1"
           name="photo.png"
         />
@@ -187,8 +202,7 @@ describe('PreviewImageContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
       projectId: 'project-1',
-      sessionId: 'session-1',
-      path: 'upload-version:upload-version-1'
+      fileId: 'upload-1'
     })
     expect(container.querySelector('img')?.getAttribute('src')).toMatch(/^blob:/)
   })

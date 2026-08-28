@@ -667,6 +667,56 @@ const createTemporaryRoot = async (): Promise<string> => {
   return temporaryRoot
 }
 
+const createManagedReadLease = async ({
+  source,
+  projectId,
+  sessionId,
+  fileId,
+  path,
+  name,
+  mimeType
+}: {
+  source: 'artifact' | 'upload'
+  projectId: string
+  sessionId: string
+  fileId: string
+  path: string
+  name: string
+  mimeType?: string
+}): Promise<Record<string, unknown>> => {
+  const content = await readFile(path)
+  const checksum = createHash('sha256').update(content).digest('hex')
+  const versionId = `version-${fileId}`
+  return {
+    path,
+    size: content.byteLength,
+    read: vi.fn(async () => content),
+    readRange: vi.fn(async (begin: number, end: number) => content.subarray(begin, end)),
+    copyTo: vi.fn(async (destinationPath: string) =>
+      writeFile(destinationPath, content, { flag: 'wx' })
+    ),
+    verifyUnchanged: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+    logicalFile: {
+      source,
+      id: fileId,
+      projectId,
+      sessionId,
+      displayName: name,
+      currentVersionId: versionId
+    },
+    version: {
+      id: versionId,
+      fileId,
+      versionNumber: 1,
+      filename: name,
+      contentType: mimeType,
+      checksum,
+      createdAt: new Date('2026-01-01T00:00:00.000Z')
+    }
+  }
+}
+
 const buildStoredSkillArchive = (skillName: string): Buffer => {
   const path = Buffer.from('SKILL.md', 'utf8')
   const content = Buffer.from(`---\nname: ${skillName}\n---\nFollow the workflow.`, 'utf8')
@@ -7069,6 +7119,26 @@ describe('ACP runtime session management', () => {
       'remote-session-1',
       [mentionedUpload]
     )
+    const managedUploads = new Map(
+      [historyUpload, currentUpload, mentionedReference].map((upload) => [upload.id, upload])
+    )
+    const openLatest = vi.fn(({ fileId }: { fileId: string }) => {
+      const upload = managedUploads.get(fileId)
+      if (!upload) throw new Error(`Missing managed upload fixture: ${fileId}`)
+      const path =
+        upload === mentionedReference
+          ? upload.path
+          : join(root, 'uploads', 'default-project', 'remote-session-1', upload.originalName)
+      return createManagedReadLease({
+        source: 'upload',
+        projectId: 'default-project',
+        sessionId: 'remote-session-1',
+        fileId,
+        path,
+        name: upload.originalName,
+        mimeType: upload.mimeType
+      })
+    })
     const process = new FakeAgentProcess()
     const receivedPrompts: ContentBlock[][] = []
     startFakeAgent(process, ['remote-session-1'], {
@@ -7080,7 +7150,14 @@ describe('ACP runtime session management', () => {
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      uploads: { repository: uploadRepository }
+      uploads: { repository: uploadRepository },
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        mcpEntryPath: '/unused',
+        managedFileVersions: { openLatest } as never
+      }
     })
     const historyImageData = Buffer.from('history-image').toString('base64')
 
@@ -7103,6 +7180,7 @@ describe('ACP runtime session management', () => {
           name: mentionedReference.originalName,
           path: mentionedReference.path,
           source: 'upload',
+          sourceFileId: mentionedReference.id,
           mimeType: mentionedReference.mimeType
         }
       ]
@@ -8966,6 +9044,75 @@ describe('ACP runtime session management', () => {
         encoding: 'base64'
       }
     })
+    const managedFiles = new Map<
+      string,
+      {
+        source: 'artifact' | 'upload'
+        path: string
+        name: string
+        mimeType?: string
+      }
+    >([
+      [
+        uploadRef.id,
+        {
+          source: 'upload',
+          path: uploadRef.path,
+          name: uploadRef.originalName,
+          mimeType: uploadRef.mimeType
+        }
+      ],
+      [
+        imageArtifact.id,
+        {
+          source: 'artifact',
+          path: imageArtifact.path,
+          name: imageArtifact.name,
+          mimeType: imageArtifact.mimeType
+        }
+      ],
+      [
+        binaryArtifact.id,
+        {
+          source: 'artifact',
+          path: binaryArtifact.path,
+          name: binaryArtifact.name,
+          mimeType: binaryArtifact.mimeType
+        }
+      ],
+      [
+        skillArtifact.id,
+        {
+          source: 'artifact',
+          path: skillArtifact.path,
+          name: skillArtifact.name,
+          mimeType: skillArtifact.mimeType
+        }
+      ]
+    ])
+    const openLatest = vi.fn(
+      async ({
+        source,
+        projectId,
+        fileId
+      }: {
+        source: 'artifact' | 'upload'
+        projectId: string
+        fileId: string
+      }) => {
+        const file = managedFiles.get(fileId)
+        if (!file) throw new Error(`Missing managed fixture: ${fileId}`)
+        return createManagedReadLease({
+          source,
+          projectId,
+          sessionId: 'remote-session-1',
+          fileId,
+          path: file.path,
+          name: file.name,
+          mimeType: file.mimeType
+        })
+      }
+    )
 
     const process = new FakeAgentProcess()
     const receivedPrompts: ContentBlock[][] = []
@@ -8984,7 +9131,8 @@ describe('ACP runtime session management', () => {
         dataRoot: root,
         projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
-        repository: artifactRepository
+        repository: artifactRepository,
+        managedFileVersions: { openLatest } as never
       }
     })
 
@@ -8998,6 +9146,7 @@ describe('ACP runtime session management', () => {
           name: uploadRef.originalName,
           path: uploadRef.path,
           source: 'upload',
+          sourceFileId: uploadRef.id,
           mimeType: uploadRef.mimeType
         },
         {
@@ -9005,6 +9154,7 @@ describe('ACP runtime session management', () => {
           name: imageArtifact.name,
           path: imageArtifact.path,
           source: 'artifact',
+          sourceFileId: imageArtifact.id,
           mimeType: imageArtifact.mimeType
         },
         {
@@ -9012,6 +9162,7 @@ describe('ACP runtime session management', () => {
           name: binaryArtifact.name,
           path: binaryArtifact.path,
           source: 'artifact',
+          sourceFileId: binaryArtifact.id,
           mimeType: binaryArtifact.mimeType
         },
         {
@@ -9019,6 +9170,7 @@ describe('ACP runtime session management', () => {
           name: skillArtifact.name,
           path: skillArtifact.path,
           source: 'artifact',
+          sourceFileId: skillArtifact.id,
           mimeType: skillArtifact.mimeType
         }
       ]
@@ -9032,7 +9184,7 @@ describe('ACP runtime session management', () => {
       resource: {
         mimeType: 'text/plain',
         text: 'referenced upload text',
-        uri: expect.stringContaining('summary.txt')
+        uri: expect.stringMatching(/^file:.*\.txt$/u)
       }
     })
     // Referenced image artifact -> base64 image block.
@@ -9040,7 +9192,7 @@ describe('ACP runtime session management', () => {
       type: 'image',
       mimeType: 'image/png',
       data: createPngBytes('runtime referenced image').toString('base64'),
-      uri: expect.stringContaining('chart.png')
+      uri: expect.stringMatching(/^file:.*\.png$/u)
     })
     // Referenced binary artifact -> provider-neutral local file descriptor.
     expect(receivedPrompts[0][3]).toMatchObject({ type: 'text' })
@@ -9196,6 +9348,25 @@ describe('ACP runtime session management', () => {
       'remote-session-2',
       [staged[1]]
     )
+    const skillUploads = new Map([
+      [currentSessionUpload.id, currentSessionUpload],
+      [otherSessionUpload.id, otherSessionUpload]
+    ])
+    const openLatest = vi.fn(
+      async ({ projectId, fileId }: { projectId: string; fileId: string }) => {
+        const attachment = skillUploads.get(fileId)
+        if (!attachment) throw new Error(`Missing managed fixture: ${fileId}`)
+        return createManagedReadLease({
+          source: 'upload',
+          projectId,
+          sessionId: attachment.sessionId,
+          fileId,
+          path: attachment.path,
+          name: attachment.originalName,
+          mimeType: attachment.mimeType
+        })
+      }
+    )
 
     const process = new FakeAgentProcess()
     const receivedPrompts: ContentBlock[][] = []
@@ -9208,7 +9379,14 @@ describe('ACP runtime session management', () => {
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      uploads: { repository: uploadRepository }
+      uploads: { repository: uploadRepository },
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        mcpEntryPath: '/unused',
+        managedFileVersions: { openLatest } as never
+      }
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
@@ -9231,6 +9409,7 @@ describe('ACP runtime session management', () => {
           name: currentSessionUpload.originalName,
           path: currentSessionUpload.path,
           source: 'upload',
+          sourceFileId: currentSessionUpload.id,
           mimeType: currentSessionUpload.mimeType
         },
         {
@@ -9238,6 +9417,7 @@ describe('ACP runtime session management', () => {
           name: otherSessionUpload.originalName,
           path: otherSessionUpload.path,
           source: 'upload',
+          sourceFileId: otherSessionUpload.id,
           mimeType: otherSessionUpload.mimeType
         }
       ]
@@ -9272,6 +9452,32 @@ describe('ACP runtime session management', () => {
     const [attachment] = await legacyUploads.finalizePendingSessionUploads('owning-session', [
       staged
     ])
+    const openLatest = vi.fn(({ projectId, fileId }: { projectId: string; fileId: string }) =>
+      createManagedReadLease({
+        source: 'upload',
+        projectId,
+        sessionId: 'owning-session',
+        fileId,
+        path: attachment.path,
+        name: attachment.originalName,
+        mimeType: attachment.mimeType
+      })
+    )
+    const openVersion = vi.fn(
+      ({ projectId, fileId }: { projectId: string; fileId: string }, versionId: string) => {
+        if (versionId !== `version-${fileId}`)
+          throw new Error('Unexpected managed Version fixture.')
+        return createManagedReadLease({
+          source: 'upload',
+          projectId,
+          sessionId: 'owning-session',
+          fileId,
+          path: attachment.path,
+          name: attachment.originalName,
+          mimeType: attachment.mimeType
+        })
+      }
+    )
     const client = createProjectDbClient(root)
     temporaryDisconnections.push(() => client.$disconnect())
     await migrateApplicationDatabase(client)
@@ -9287,6 +9493,7 @@ describe('ACP runtime session management', () => {
     })
     const importer = new ConversationSkillImporter({
       uploads,
+      managedFileVersions: { openVersion } as never,
       createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
         approvalBroker.createCancellationGuard(sessionId, turnToken, attachmentUri),
       previewBundle: async () => ({
@@ -9345,6 +9552,13 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       uploads: { repository: uploads },
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'project-1',
+        mcpEntryPath: '/unused',
+        managedFileVersions: { openLatest } as never
+      },
       skillImport: {
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({
@@ -9379,6 +9593,7 @@ describe('ACP runtime session management', () => {
           name: attachment.originalName,
           path: attachment.path,
           source: 'upload',
+          sourceFileId: attachment.id,
           mimeType: attachment.mimeType
         }
       ]
@@ -9402,7 +9617,7 @@ describe('ACP runtime session management', () => {
         turnToken: 'retry-turn',
         attachmentUri: advertisedAttachmentUri
       })
-    ).rejects.toThrow(/different (?:project or )?session/)
+    ).rejects.toThrow(/not authorized/)
   })
 
   it('resolves a bare-filename artifact write against the final-session notebook dir despite the alias', async () => {
@@ -25321,7 +25536,7 @@ describe('Specialist Skill scoping', () => {
     })
   })
 
-  it('keeps the Artifact provenance receiver when constructing the production Plan service', async () => {
+  it('keeps Artifact provenance writes while the production Plan service reads managed Versions', async () => {
     const root = await createTemporaryRoot()
     const planPath = join(root, 'plan.json')
     let serializedPlan = ''
@@ -25349,12 +25564,29 @@ describe('Specialist Skill scoping', () => {
           checksum: checksum(serializedPlan),
           createdAt: new Date(0).toISOString()
         }
-      },
-      async resolveVersionContent(this: unknown) {
-        expect(this).toBe(provenance)
-        return { path: planPath, filename: 'plan.json', checksum: checksum(serializedPlan) }
       }
     }
+    const openVersion = vi.fn(async () => {
+      const content = Buffer.from(serializedPlan)
+      return {
+        path: planPath,
+        size: content.byteLength,
+        readRange: vi.fn(async (offset: number, length: number) =>
+          content.subarray(offset, offset + length)
+        ),
+        verifyUnchanged: vi.fn(async () => undefined),
+        close: vi.fn(async () => undefined),
+        logicalFile: {
+          source: 'artifact' as const,
+          id: 'artifact-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          displayName: 'plan.json',
+          currentVersionId: 'version-1'
+        },
+        version: { checksum: checksum(serializedPlan) }
+      }
+    })
     let context: import('../../shared/session-persistence').SessionRuntimeContext = {
       version: 1,
       revision: 0
@@ -25369,7 +25601,8 @@ describe('Specialist Skill scoping', () => {
         mcpEntryPath: '/unused',
         repository: new ArtifactRepository(root),
         runRegistry: new ArtifactRunRegistry(),
-        provenance
+        provenance,
+        managedFileVersions: { openVersion } as never
       },
       plan: {
         mcpEntryPath: '/unused',
@@ -25429,6 +25662,10 @@ describe('Specialist Skill scoping', () => {
           }
         })
       ).resolves.toMatchObject({ projection: { artifactVersionId: 'version-1' } })
+      expect(openVersion).toHaveBeenCalledWith(
+        { source: 'artifact', projectId: 'project-1', fileId: 'artifact-1' },
+        'version-1'
+      )
     } finally {
       await owners.artifactTurns!.dispose(turn)
       owners.sessionInteractions.release(execution)

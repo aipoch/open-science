@@ -2300,7 +2300,6 @@
     "Token usage unavailable for this response": "El uso de tokens no está disponible para esta respuesta",
     "Token: {{masked}}": "Token: {{masked}}",
     "Tool": "Herramienta",
-    "Tool output image": "Imagen de salida de herramienta",
     "Tool search": "Búsqueda de herramientas",
     "Tools": "Herramientas",
     "Tools and agents": "Herramientas y agentes",

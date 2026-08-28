@@ -2300,7 +2300,6 @@
     "Token usage unavailable for this response": "Utilisation du jeton indisponible pour cette réponse",
     "Token: {{masked}}": "Jeton : {{masked}}",
     "Tool": "Outil",
-    "Tool output image": "Image de sortie de l'outil",
     "Tool search": "Recherche d'outils",
     "Tools": "Outils",
     "Tools and agents": "Outils et agents",

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import type { FileReference } from '../../shared/artifacts'
 import { codexFramework } from '../agent-framework/codex'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
@@ -47,10 +48,10 @@ const setup = (
   const turn = contextTurn()
   const promptClose = vi.fn()
   const promptContent = {
-    prepare: vi.fn(async () => ({
+    prepare: vi.fn(async (input: { references: readonly FileReference[] }) => ({
       content: 'provider-content',
       historyImageCount: 0,
-      turnInputs: { uploads: [], references: [] },
+      turnInputs: { uploads: [], references: [...(input.references ?? [])] },
       close: promptClose
     }))
   }
@@ -288,7 +289,7 @@ describe('AcpPromptPreparationOwner', () => {
     expect(handle.promptPrefix).not.toContain('ssh:cedar-gpu')
   })
 
-  it('stops a superseded prompt after stalled content preparation and releases its grant', async () => {
+  it('stops a superseded prompt after stalled content preparation before acquiring a grant', async () => {
     const fixture = setup()
     let resolveContent!: () => void
     fixture.promptContent.prepare.mockImplementationOnce(
@@ -312,7 +313,7 @@ describe('AcpPromptPreparationOwner', () => {
     const handle = await pending
 
     expect(handle.status).toBe('cancelled')
-    expect(fixture.releaseGrant).toHaveBeenCalledTimes(1)
+    expect(fixture.releaseGrant).not.toHaveBeenCalled()
     expect(fixture.promptClose).toHaveBeenCalledTimes(1)
     expect(fixture.contextUsage.beginTurn).not.toHaveBeenCalled()
     expect(fixture.registerTurnInputs).not.toHaveBeenCalled()

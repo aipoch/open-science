@@ -135,7 +135,6 @@ describe('TIFF artifact thumbnail', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: 'project-1',
-        sessionId: 'session-1',
         source: 'upload',
         fileId: 'upload-1',
         versionId: 'upload-v3',
@@ -188,7 +187,6 @@ describe('TIFF artifact thumbnail', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: 'project-1',
-        sessionId: 'session-1',
         source: 'artifact',
         fileId: 'artifact-1',
         versionId: 'artifact-v2'
@@ -208,10 +206,28 @@ describe('TIFF artifact thumbnail', () => {
       mtimeMs: 1710000000000
     }
     root = createRoot(container)
-    await act(async () => root.render(<ArtifactPreview artifact={artifact} isVisible />))
+    await act(async () =>
+      root.render(
+        <ArtifactPreview
+          artifact={artifact}
+          projectId="project-1"
+          managedFileId="artifact-1"
+          isVisible
+        />
+      )
+    )
     await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
 
-    await act(async () => root.render(<ArtifactPreview artifact={artifact} isVisible={false} />))
+    await act(async () =>
+      root.render(
+        <ArtifactPreview
+          artifact={artifact}
+          projectId="project-1"
+          managedFileId="artifact-1"
+          isVisible={false}
+        />
+      )
+    )
 
     await vi.waitFor(() => expect(container.querySelector('canvas')).toBeNull())
     expect(container.textContent).toContain('TIFF')
@@ -223,6 +239,8 @@ describe('TIFF artifact thumbnail', () => {
     await act(async () => {
       root.render(
         <ArtifactPreview
+          projectId="project-1"
+          managedFileId="artifact-1"
           artifact={{
             id: 'artifact-1',
             kind: 'managed-file',

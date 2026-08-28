@@ -2272,7 +2272,6 @@
     "Token usage unavailable for this response": "此回复没有词元用量数据",
     "Token: {{masked}}": "令牌：{{masked}}",
     "Tool": "工具",
-    "Tool output image": "工具输出图片",
     "Tool search": "工具搜索",
     "Tools": "工具",
     "Tools and agents": "工具与智能体",

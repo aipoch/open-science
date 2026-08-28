@@ -55,9 +55,7 @@ describe('ImagePreviewRenderer', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/stale/projection/chart.png',
       projectId: 'project-1',
-      sessionId: 'session-1',
       fileId: 'artifact-1'
     })
   })

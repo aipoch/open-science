@@ -12,10 +12,12 @@ import type {
   ScannedSkillView,
   SkillBundlePreviewResult
 } from '../../shared/settings'
+import { parseUploadVersionReference } from '../../shared/uploads'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { UploadRepository } from '../uploads/repository'
 import { GITHUB_TOTAL_TIMEOUT_MS } from './github-import'
 import { SKILL_IMPORT_LIMITS } from './import-limits'
-import { isImportableSkillArchivePath } from './skill-archive-sniffer'
+import { isImportableSkillArchive, isImportableSkillArchivePath } from './skill-archive-sniffer'
 
 type SkillImportApprovalInfo = Omit<ConversationSkillImportApprovalRequest, 'id'>
 
@@ -185,6 +187,7 @@ class SkillImportApprovalBroker {
 
 type ConversationSkillImporterOptions = {
   uploads: Pick<UploadRepository, 'resolveManagedUpload' | 'resolveSessionUpload'>
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
   createCancellationGuard: (
     sessionId: string,
     turnToken: string,
@@ -225,7 +228,18 @@ type ConversationSkillGitHubImportRequest = {
 type ConversationSkillImportRequest =
   ConversationSkillAttachmentImportRequest | ConversationSkillGitHubImportRequest
 
-const attachmentPathFromUri = (uri: string): string => {
+type AttachmentReference =
+  | {
+      kind: 'upload-version'
+      value: string
+      identity: NonNullable<ReturnType<typeof parseUploadVersionReference>>
+    }
+  | { kind: 'path'; value: string }
+
+const attachmentReferenceFromUri = (uri: string): AttachmentReference => {
+  const versionIdentity = parseUploadVersionReference(uri)
+  if (versionIdentity) return { kind: 'upload-version', value: uri, identity: versionIdentity }
+
   let parsed: URL
   try {
     parsed = new URL(uri)
@@ -235,7 +249,7 @@ const attachmentPathFromUri = (uri: string): string => {
   if (parsed.protocol !== 'file:') {
     throw new Error('Skill import only accepts an attached local .zip or .skill bundle.')
   }
-  return fileURLToPath(parsed)
+  return { kind: 'path', value: fileURLToPath(parsed) }
 }
 
 const sha256 = (value: Buffer): string => createHash('sha256').update(value).digest('hex')
@@ -289,11 +303,39 @@ class ConversationSkillImporter {
     paths: string[]
   ): Promise<() => void> {
     const managedUploads = await Promise.all(
-      paths.map((path) => this.options.uploads.resolveManagedUpload({ path }, { projectId }))
+      paths.map(async (path) => {
+        const versionIdentity = parseUploadVersionReference(path)
+        if (!versionIdentity) {
+          const upload = await this.options.uploads.resolveManagedUpload({ path }, { projectId })
+          return upload.path
+        }
+        if (
+          versionIdentity.projectId !== projectId ||
+          !versionIdentity.fileId ||
+          !versionIdentity.sessionId
+        ) {
+          throw new Error('Upload Version belongs to a different project or is missing its scope.')
+        }
+        if (!this.options.managedFileVersions) {
+          throw new Error('Managed Upload Version access is not configured.')
+        }
+        const lease = await this.options.managedFileVersions.openVersion(
+          { source: 'upload', projectId, fileId: versionIdentity.fileId },
+          versionIdentity.versionId
+        )
+        try {
+          if (lease.logicalFile.sessionId !== versionIdentity.sessionId) {
+            throw new Error('Upload Version belongs to a different Session.')
+          }
+          return path
+        } finally {
+          await lease.close()
+        }
+      })
     )
     const grant = {
       projectId,
-      paths: new Set(managedUploads.map((upload) => upload.path))
+      paths: new Set(managedUploads)
     }
     this.referencedUploadGrants.set(sessionId, grant)
 
@@ -313,89 +355,146 @@ class ConversationSkillImporter {
       request.attachmentUri
     )
     if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
-    const requestedPath = attachmentPathFromUri(request.attachmentUri)
+    const requested = attachmentReferenceFromUri(request.attachmentUri)
     const grant = this.referencedUploadGrants.get(request.sessionId)
-    const managedUpload = await this.options.uploads.resolveManagedUpload({ path: requestedPath })
-    const resolvedUpload = grant?.paths.has(managedUpload.path)
-      ? managedUpload
-      : await this.options.uploads.resolveSessionUpload(
-          request.sessionId,
-          { path: requestedPath },
-          grant?.projectId
-        )
-    const filePath = resolvedUpload.path
-    const attachmentName = resolvedUpload.name
-    if (!['.zip', '.skill'].includes(extname(attachmentName).toLowerCase())) {
-      throw new Error('Skill import only accepts an attached .zip or .skill bundle.')
-    }
-    if ((await stat(filePath)).size > SKILL_IMPORT_LIMITS.maxBundleBytes) {
-      throw new Error('The attached Skill bundle is too large to import.')
-    }
-    // Prompt tags are guidance for the model, not an authorization boundary. Re-run the same bounded
-    // classifier here so a forged tool call cannot turn an ordinary session ZIP into an import flow.
-    if (!(await isImportableSkillArchivePath(filePath))) {
-      throw new Error('The attached archive is not eligible for Skill import.')
-    }
+    let attachmentName: string
+    let size: number
+    let readBundle: () => Promise<Buffer>
+    let isEligible: () => Promise<boolean>
+    let verifyUnchanged: () => Promise<void>
+    let close: () => Promise<void>
 
-    const previewed = await (async () => {
-      const bundle = await readFile(filePath)
-      return { digest: sha256(bundle), preview: await this.options.previewBundle(bundle) }
-    })()
-    const preview = previewed.preview
-    if (preview.previews.length === 0) {
-      throw new Error('The attached bundle does not contain an importable Skill.')
-    }
-
-    const approval = await this.options.requestApproval(
-      {
-        sessionId: request.sessionId,
-        source: { kind: 'attachment', label: attachmentName },
-        ...preview
-      },
-      cancellation
-    )
-    if (cancellation.isCancelled() || approval.cancelled || approval.items.length === 0) {
-      return { status: 'cancelled', skills: [] }
-    }
-
-    const items = validateSelections(preview, approval.items)
-    if ((await stat(filePath)).size > SKILL_IMPORT_LIMITS.maxBundleBytes) {
-      throw new Error('The attached Skill bundle changed after it was previewed.')
-    }
-    const bundle = await readFile(filePath)
-    if (sha256(bundle) !== previewed.digest) {
-      throw new Error('The attached Skill bundle changed after it was previewed.')
-    }
-    if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
-    const outcomes = await this.options.importBundle(bundle, items)
-    const previewsByPath = new Map(
-      preview.previews.map((candidate) => [candidate.subPath, candidate])
-    )
-    const skills: ConversationSkillImportResult['skills'] = []
-    const errors: NonNullable<ConversationSkillImportResult['errors']> = []
-
-    for (const entry of outcomes) {
-      const name = previewsByPath.get(entry.subPath)?.name ?? entry.subPath
-      if (entry.outcome) {
-        skills.push({
-          id: entry.outcome.id,
-          name,
-          status: entry.outcome.status
-        })
-      } else {
-        errors.push({ name, error: entry.error ?? 'Import failed.' })
+    if (requested.kind === 'upload-version') {
+      const { identity } = requested
+      if (
+        !grant?.paths.has(requested.value) ||
+        grant.projectId !== identity.projectId ||
+        !identity.projectId ||
+        !identity.fileId ||
+        !identity.sessionId
+      ) {
+        throw new Error('Upload Version is not authorized for this conversation turn.')
       }
+      if (!this.options.managedFileVersions) {
+        throw new Error('Managed Upload Version access is not configured.')
+      }
+      const lease = await this.options.managedFileVersions.openVersion(
+        { source: 'upload', projectId: identity.projectId, fileId: identity.fileId },
+        identity.versionId
+      )
+      if (lease.logicalFile.sessionId !== identity.sessionId) {
+        await lease.close()
+        throw new Error('Upload Version belongs to a different Session.')
+      }
+      attachmentName = lease.version.filename
+      size = lease.size
+      readBundle = async () => Buffer.from(await lease.readRange(0, lease.size))
+      isEligible = () =>
+        isImportableSkillArchive({
+          size: lease.size,
+          read: async (position, length) =>
+            Buffer.from(await lease.readRange(position, position + length))
+        })
+      verifyUnchanged = lease.verifyUnchanged
+      close = lease.close
+    } else {
+      const managedUpload = await this.options.uploads.resolveManagedUpload({
+        path: requested.value
+      })
+      const resolvedUpload = grant?.paths.has(managedUpload.path)
+        ? managedUpload
+        : await this.options.uploads.resolveSessionUpload(
+            request.sessionId,
+            { path: requested.value },
+            grant?.projectId
+          )
+      const filePath = resolvedUpload.path
+      attachmentName = resolvedUpload.name
+      size = (await stat(filePath)).size
+      readBundle = () => readFile(filePath)
+      isEligible = () => isImportableSkillArchivePath(filePath)
+      verifyUnchanged = async () => {
+        if ((await stat(filePath)).size > SKILL_IMPORT_LIMITS.maxBundleBytes) {
+          throw new Error('The attached Skill bundle changed after it was previewed.')
+        }
+      }
+      close = async () => undefined
     }
 
-    const changed = skills.some(
-      (skill) => skill.status === 'imported' || skill.status === 'updated'
-    )
-    if (changed) this.options.onSkillsChanged?.()
+    try {
+      if (!['.zip', '.skill'].includes(extname(attachmentName).toLowerCase())) {
+        throw new Error('Skill import only accepts an attached .zip or .skill bundle.')
+      }
+      if (size > SKILL_IMPORT_LIMITS.maxBundleBytes) {
+        throw new Error('The attached Skill bundle is too large to import.')
+      }
+      // Prompt tags are guidance for the model, not an authorization boundary. Re-run the same
+      // bounded classifier here so a forged tool call cannot turn an ordinary archive into an import.
+      if (!(await isEligible())) {
+        throw new Error('The attached archive is not eligible for Skill import.')
+      }
 
-    return {
-      status: errors.length > 0 ? 'partial' : changed ? 'imported' : 'unchanged',
-      skills,
-      ...(errors.length > 0 ? { errors } : {})
+      const previewBundle = await readBundle()
+      const previewed = {
+        digest: sha256(previewBundle),
+        preview: await this.options.previewBundle(previewBundle)
+      }
+      const preview = previewed.preview
+      if (preview.previews.length === 0) {
+        throw new Error('The attached bundle does not contain an importable Skill.')
+      }
+
+      const approval = await this.options.requestApproval(
+        {
+          sessionId: request.sessionId,
+          source: { kind: 'attachment', label: attachmentName },
+          ...preview
+        },
+        cancellation
+      )
+      if (cancellation.isCancelled() || approval.cancelled || approval.items.length === 0) {
+        return { status: 'cancelled', skills: [] }
+      }
+
+      const items = validateSelections(preview, approval.items)
+      await verifyUnchanged()
+      const bundle = await readBundle()
+      if (sha256(bundle) !== previewed.digest) {
+        throw new Error('The attached Skill bundle changed after it was previewed.')
+      }
+      if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
+      const outcomes = await this.options.importBundle(bundle, items)
+      const previewsByPath = new Map(
+        preview.previews.map((candidate) => [candidate.subPath, candidate])
+      )
+      const skills: ConversationSkillImportResult['skills'] = []
+      const errors: NonNullable<ConversationSkillImportResult['errors']> = []
+
+      for (const entry of outcomes) {
+        const name = previewsByPath.get(entry.subPath)?.name ?? entry.subPath
+        if (entry.outcome) {
+          skills.push({
+            id: entry.outcome.id,
+            name,
+            status: entry.outcome.status
+          })
+        } else {
+          errors.push({ name, error: entry.error ?? 'Import failed.' })
+        }
+      }
+
+      const changed = skills.some(
+        (skill) => skill.status === 'imported' || skill.status === 'updated'
+      )
+      if (changed) this.options.onSkillsChanged?.()
+
+      return {
+        status: errors.length > 0 ? 'partial' : changed ? 'imported' : 'unchanged',
+        skills,
+        ...(errors.length > 0 ? { errors } : {})
+      }
+    } finally {
+      await close()
     }
   }
 

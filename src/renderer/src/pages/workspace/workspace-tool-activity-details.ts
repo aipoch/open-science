@@ -32,16 +32,7 @@ type ToolDiffSection = {
 }
 
 // An artifact-save tool result that echoes an image file; rendered as an inline preview.
-type ToolImageSection = {
-  kind: 'image'
-  label: string
-  path: string
-  mimeType: string
-  name?: string
-  sizeLabel?: string
-}
-
-type ToolDetailSection = ToolCodeSection | ToolDiffSection | ToolImageSection
+type ToolDetailSection = ToolCodeSection | ToolDiffSection
 
 type ToolActivityDetails = {
   displayName: string
@@ -549,25 +540,6 @@ const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | und
   const sizeLabel = formatByteSize(size)
 
   if (!filename && !path) return undefined
-
-  // Image artifacts render an inline preview instead of a raw JSON metadata dump.
-  if (path && mimeType?.startsWith('image/')) {
-    const imageSection: ToolImageSection = {
-      kind: 'image',
-      label: 'Output',
-      path,
-      mimeType,
-      name: filename,
-      sizeLabel
-    }
-
-    return {
-      displayName: 'Write file',
-      subtitle: filename ?? path,
-      metaLabel: sizeLabel,
-      sections: [imageSection]
-    }
-  }
 
   const summary: Record<string, string> = {}
 
@@ -1161,10 +1133,4 @@ export {
   parseManagePackagesResult,
   isSkillActivity
 }
-export type {
-  ToolActivityDetails,
-  ToolCodeSection,
-  ToolDetailSection,
-  ToolDiffSection,
-  ToolImageSection
-}
+export type { ToolActivityDetails, ToolCodeSection, ToolDetailSection, ToolDiffSection }

@@ -8,7 +8,6 @@ import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 import { formatNotebookRunOutputLineMeta } from './notebook-run-figures'
-import { createManagedPreviewTestTransport } from './previews/managed-preview-test-support'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { i18next } from '@/i18n'
@@ -49,21 +48,6 @@ const createNotebookRun = (overrides: Partial<NotebookRunRecord> = {}): Notebook
   ],
   ...overrides
 })
-
-const installManagedImagePreview = (
-  readPreview: Window['api']['artifacts']['readPreview']
-): void => {
-  const transport = createManagedPreviewTestTransport({
-    encoding: 'base64',
-    read: (_source, request) => readPreview(request)
-  })
-  window.api.previewResources = {
-    acquire: vi.fn(transport.acquire),
-    readRange: vi.fn(),
-    release: vi.fn(transport.release)
-  }
-  vi.stubGlobal('fetch', vi.fn(transport.fetch))
-}
 
 describe('WorkspaceToolDetailsRow', () => {
   let container: HTMLDivElement
@@ -121,22 +105,9 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(formatNotebookRunOutputLineMeta(failedRun, i18next.t)).toBe('2 lines of output')
   })
 
-  it('renders an image artifact-write result as an inline image preview', async () => {
-    const readPreview = vi.fn().mockResolvedValue({
-      content: 'aGVsbG8=',
-      encoding: 'base64',
-      size: 6,
-      truncated: false
-    })
-    window.api = {
-      artifacts: {
-        openFile: vi.fn(),
-        readPreview,
-        finalizeRunArtifacts: vi.fn()
-      }
-    } as unknown as Window['api']
-    installManagedImagePreview(readPreview)
-
+  it('does not read a path-only image artifact without a logical identity', async () => {
+    const acquire = vi.fn()
+    window.api = { previewResources: { acquire } } as unknown as Window['api']
     const activity = createActivity({
       providerToolName: 'write_artifact_file',
       toolKind: 'other',
@@ -161,7 +132,7 @@ describe('WorkspaceToolDetailsRow', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.sections[0]?.kind).toBe('image')
+    expect(details?.sections[0]?.kind).toBe('code')
 
     root = createRoot(container)
     await act(async () => {
@@ -175,81 +146,10 @@ describe('WorkspaceToolDetailsRow', () => {
       )
     })
 
-    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
-      source: 'artifact',
-      path: '/artifacts/.pending/run-1/sin_curve.png'
-    })
-
-    await waitFor(() =>
-      expect(container.querySelector('[data-testid="tool-output-image"]')).not.toBeNull()
-    )
-    const image = container.querySelector('[data-testid="tool-output-image"]')
-    expect(image?.getAttribute('src')).toBe('data:image/png;base64,aGVsbG8=')
+    expect(acquire).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="tool-output-image"]')).toBeNull()
     expect(container.textContent).toContain('sin_curve.png')
     expect(container.textContent).toContain('56 KB')
-  })
-
-  it('falls back to the filename while the image preview is still loading', async () => {
-    let resolveRead: ((value: unknown) => void) | undefined
-    const readPreview = vi.fn().mockReturnValue(
-      new Promise((resolve) => {
-        resolveRead = resolve
-      })
-    )
-    window.api = {
-      artifacts: {
-        openFile: vi.fn(),
-        readPreview,
-        finalizeRunArtifacts: vi.fn()
-      }
-    } as unknown as Window['api']
-    installManagedImagePreview(readPreview)
-
-    const activity = createActivity({
-      providerToolName: 'write_artifact_file',
-      toolKind: 'other',
-      rawInput: { filename: 'sin_curve.png', mimeType: 'image/png' },
-      toolContent: [
-        {
-          type: 'content',
-          content: {
-            type: 'text',
-            text: JSON.stringify({
-              artifact: {
-                name: 'sin_curve.png',
-                path: '/artifacts/.pending/run-1/sin_curve.png',
-                mimeType: 'image/png',
-                size: 57344
-              }
-            })
-          }
-        }
-      ]
-    })
-    const details = buildToolActivityDetails(activity)
-
-    root = createRoot(container)
-    await act(async () => {
-      root.render(
-        <WorkspaceToolDetailsRow
-          activity={activity}
-          details={details!}
-          isExpanded={true}
-          onToggle={vi.fn()}
-        />
-      )
-    })
-
-    expect(container.querySelector('[data-testid="tool-output-image"]')).toBeNull()
-    expect(container.textContent).toContain('Loading preview')
-
-    await act(async () => {
-      resolveRead?.({ content: 'aGVsbG8=', encoding: 'base64', size: 6, truncated: false })
-    })
-
-    await waitFor(() =>
-      expect(container.querySelector('[data-testid="tool-output-image"]')).not.toBeNull()
-    )
   })
 
   it('renders a non-image, non-JSON tool output as a code section', async () => {
@@ -262,7 +162,6 @@ describe('WorkspaceToolDetailsRow', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.sections.some((section) => section.kind === 'image')).toBe(false)
     expect(details?.sections[1]?.kind).toBe('code')
 
     root = createRoot(container)

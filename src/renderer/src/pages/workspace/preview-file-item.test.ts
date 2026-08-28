@@ -227,7 +227,7 @@ describe('preview file item helpers', () => {
       managedFileId: 'upload-1',
       versionNumber: 2,
       projectId: 'project-1',
-      path: 'upload-version:project-1/session-1/upload-version-2'
+      path: 'upload-version:project-1/session-1/upload-1/upload-version-2'
     })
     expect(item).not.toHaveProperty('selectedVersionId')
   })
@@ -331,7 +331,7 @@ describe('preview file item helpers', () => {
         id: 'upload:upload-file-3',
         sourceFileId: 'upload-file-3',
         name: 'shared.csv',
-        path: 'upload-version:project-1/source-session/upload-version-4',
+        path: 'upload-version:project-1/source-session/upload-file-3/upload-version-4',
         source: 'upload',
         versionId: 'upload-version-4'
       }),

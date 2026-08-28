@@ -2211,7 +2211,6 @@
     "Token usage unavailable for this response": "이 응답의 토큰 사용량을 확인할 수 없습니다.",
     "Token: {{masked}}": "토큰: {{masked}}",
     "Tool": "도구",
-    "Tool output image": "도구 출력 이미지",
     "Tool search": "도구 검색",
     "Tools": "도구",
     "Tools and agents": "도구 및 에이전트",

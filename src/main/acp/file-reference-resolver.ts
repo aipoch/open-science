@@ -40,6 +40,7 @@ export type ResolvedFileReference = {
   size: number
   allowSkillImportReference: boolean
   sourceFileId?: string
+  sourceSessionId?: string
   versionId?: string
   checksum?: string
   trustedLease?: TrustedFileReferenceLease
@@ -389,6 +390,7 @@ export const createManagedFileReferenceResolver = (dependencies: {
           mimeType: logical.version.contentType ?? reference.mimeType,
           allowSkillImportReference: true,
           sourceFileId: logical.logicalFile.id,
+          sourceSessionId: logical.logicalFile.sessionId,
           versionId: logical.version.id,
           checksum: logical.version.checksum,
           trustedLease: logical
@@ -409,6 +411,7 @@ export const createManagedFileReferenceResolver = (dependencies: {
           mimeType: logical.version.contentType ?? reference.mimeType,
           allowSkillImportReference: false,
           sourceFileId: logical.logicalFile.id,
+          sourceSessionId: logical.logicalFile.sessionId,
           versionId: logical.version.id,
           checksum: logical.version.checksum,
           trustedLease: logical

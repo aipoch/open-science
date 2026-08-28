@@ -218,7 +218,7 @@ describe('continueInterruptedTurn', () => {
         attachments: [
           expect.objectContaining({
             id: 'upload-1',
-            path: 'upload-version:project-1/session-1/upload-version-1'
+            path: 'upload-version:project-1/session-1/upload-1/upload-version-1'
           })
         ],
         suppressUserMessage: true

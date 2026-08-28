@@ -97,6 +97,7 @@ type PreparedAcpPromptContent = {
 type ResolvedPromptFile = {
   absolutePath: string
   uri: string
+  skillImportUri?: string
   name: string
   mimeType?: string
   size: number
@@ -445,6 +446,7 @@ class AcpPromptContentOwner {
               mimeType: exactAttachment.mimeType,
               size: lease.size,
               allowSkillImportReference: true,
+              skillImportUri: exactAttachment.path,
               trustedLease: lease
             },
             fileTextBudget,
@@ -510,19 +512,35 @@ class AcpPromptContentOwner {
       const snapshot = resolvedReference.trustedLease
         ? await snapshots.create(resolvedReference.name, resolvedReference.trustedLease)
         : undefined
+      const versionReference =
+        reference.source === 'upload' &&
+        resolvedReference.sourceFileId &&
+        resolvedReference.sourceSessionId &&
+        resolvedReference.versionId
+          ? createUploadVersionReference(resolvedReference.versionId, {
+              projectId: input.projectId,
+              sessionId: resolvedReference.sourceSessionId,
+              fileId: resolvedReference.sourceFileId
+            })
+          : undefined
       const promptReference = snapshot
         ? {
             ...resolvedReference,
             absolutePath: snapshot.absolutePath,
-            uri: snapshot.uri
+            uri: snapshot.uri,
+            ...(versionReference ? { skillImportUri: versionReference } : {})
           }
-        : resolvedReference
+        : {
+            ...resolvedReference,
+            ...(versionReference ? { skillImportUri: versionReference } : {})
+          }
       const exactReference: FileReference =
         reference.source !== 'linked-folder' &&
         resolvedReference.sourceFileId &&
         resolvedReference.versionId
           ? {
               ...reference,
+              ...(versionReference ? { path: versionReference } : {}),
               sourceFileId: resolvedReference.sourceFileId,
               name: resolvedReference.name,
               versionId: resolvedReference.versionId,
@@ -556,19 +574,21 @@ class AcpPromptContentOwner {
     fileTextBudget: PromptFileTextBudget,
     isHistoryUpload: boolean
   ): Promise<ContentBlock[]> {
-    const { absolutePath, uri, name, mimeType, size, allowSkillImportReference } = descriptor
+    const { absolutePath, uri, skillImportUri, name, mimeType, size, allowSkillImportReference } =
+      descriptor
 
     const attachmentTextReference = (
       tag: 'attached_skill_package' | 'attached_local_archive',
       skillImportEligible: boolean,
-      turnToken?: string
+      turnToken?: string,
+      attachmentUri: string = uri
     ): ContentBlock => ({
       type: 'text',
       text: [
         `<${tag}>`,
         JSON.stringify({
           name,
-          uri,
+          uri: attachmentUri,
           mimeType,
           size,
           skillImportEligible,
@@ -617,12 +637,13 @@ class AcpPromptContentOwner {
     ) {
       const turnToken = input.skillImportTurnToken
       if (turnToken) {
+        const attachmentUri = skillImportUri ?? uri
         try {
-          input.onSkillImportAttachmentEligible?.(uri)
+          input.onSkillImportAttachmentEligible?.(attachmentUri)
         } catch {
           // Eligibility notification is observational and must not abort prompt preparation.
         }
-        return [attachmentTextReference('attached_skill_package', true, turnToken)]
+        return [attachmentTextReference('attached_skill_package', true, turnToken, attachmentUri)]
       }
     }
 

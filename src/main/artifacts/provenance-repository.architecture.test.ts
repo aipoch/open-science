@@ -418,7 +418,6 @@ describe('Artifact Provenance repository architecture', () => {
         'src/main/artifacts/code-reconstruction.test.ts',
         'src/main/notebook/local-rpc-server.test.ts',
         'src/main/reviewer/ipc.test.ts',
-        'src/main/session-artifact-file-resolver.test.ts',
         'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts',
         'src/main/session-persistence/coordinator.test.ts',
         'src/main/session-persistence/deletion-integration.test.ts',

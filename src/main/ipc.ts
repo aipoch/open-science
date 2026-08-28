@@ -1445,6 +1445,7 @@ const createApplicationModules = async (
       onSkillImportLifecycleSettled: (id, state) =>
         void taskNotifications.settleAuthorization('skill-import', id, state),
       uploads: uploadRepository,
+      managedFileVersions: managedFileVersionService,
       fetchImpl: netFetchStandard,
       resolveApiKey: (ref) => tryDecryptKey(ref),
       permissionGrantRegistry,

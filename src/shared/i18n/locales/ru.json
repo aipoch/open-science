@@ -2314,7 +2314,6 @@
     "Token usage unavailable for this response": "Расход токенов недоступен для этого ответа",
     "Token: {{masked}}": "Токен: {{masked}}",
     "Tool": "Инструмент",
-    "Tool output image": "Изображение вывода инструмента",
     "Tool search": "Поиск инструмента",
     "Tools": "Инструменты",
     "Tools and agents": "Инструменты и агенты",
