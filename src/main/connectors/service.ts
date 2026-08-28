@@ -392,9 +392,12 @@ export class ConnectorService {
     )
     let credentials = credentialResult.credentials
 
-    // Collecting a credential can leave the call parked for minutes. Re-read enablement and policy
-    // after that wait so a concurrent Block/Disable wins, while retaining a Once approval already
-    // granted to this exact call.
+    // Collecting a credential can leave the call parked for minutes. Re-read the Specialist profile,
+    // or Main enablement and policy, so a concurrent access revocation wins while retaining a Once
+    // approval already granted to this exact Main call.
+    if (credentialResult.prompted && access.specialistScoped) {
+      await this.resolveAccess(connector, context, [connector], signal)
+    }
     if (credentialResult.prompted && !access.bypassMainPolicy) {
       authorization = await this.ensureAuthorized(
         connector,

@@ -1830,6 +1830,63 @@ describe('ConnectorService specialist capability gate', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ['disabled', specialist({ enabled: false }), /specialist_unavailable/],
+    ['deleted', undefined, /specialist_unavailable/],
+    [
+      'removed from the Connector scope',
+      specialist({
+        capabilityMode: 'selected',
+        selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
+      }),
+      /specialist_capability_denied/
+    ]
+  ] as const)(
+    'does not dispatch OpenAlex when the Specialist is %s during credential recovery',
+    async (_change, revokedProfile, expectedError) => {
+      let connectors = {
+        enabledIds: [] as string[],
+        autoAllowIds: [] as string[],
+        openAlexApiKeyRef: undefined as string | undefined
+      }
+      let current: SpecialistProfileView | undefined = specialist()
+      let settleCredential: ((configured: boolean) => void) | undefined
+      const fetchImpl = vi.fn()
+      const requestCredential = vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            settleCredential = resolve
+          })
+      )
+      const svc = new ConnectorService({
+        engine: new ParserEngine({ fetchImpl }),
+        getConnectors: () => connectors,
+        getConnectorsFresh: async () => connectors,
+        resolveApiKey: (ref) => (ref === 'encrypted-ref' ? 'OPENALEX_KEY' : undefined),
+        resolveSpecialistProfile: async () => current,
+        requestCredential
+      })
+      const call = svc.call(
+        'literature',
+        'openalex_search_works',
+        { query: 'CRISPR', max_records: 1 },
+        {
+          origin: 'agent',
+          sessionId: 'specialist-credential-recovery',
+          specialistId: 'specialist-1'
+        }
+      )
+
+      await vi.waitFor(() => expect(requestCredential).toHaveBeenCalledOnce())
+      current = revokedProfile
+      connectors = { ...connectors, openAlexApiKeyRef: 'encrypted-ref' }
+      settleCredential?.(true)
+
+      await expect(call).rejects.toThrow(expectedError)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps Main and Specialist connector scopes independent and enforces both modes before dispatch', async () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })
     let current = specialist()
