@@ -235,6 +235,8 @@ describe('Host SDK help', () => {
     expect(named(requestFields, 'name').description).toMatch(/1–48.*emoji.*current branch/i)
     expect(named(requestFields, 'profile').description).toMatch(/omit.*inherit/i)
     expect(named(requestFields, 'inputs').description).toMatch(/immutable.*\.\/inputs\//i)
+    expect(named(requestFields, 'inputs').description).toMatch(/version_id\/versionId.*strings/i)
+    expect(named(requestFields, 'inputs').description).toMatch(/read-only.*\.\/inputs\//i)
     expect(requestFields).not.toContainEqual(expect.objectContaining({ name: 'context' }))
 
     const optionFields = fields(canonical.options)

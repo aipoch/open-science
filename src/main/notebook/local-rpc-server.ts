@@ -78,6 +78,7 @@ import type {
   DurableDelegatedWork
 } from '../delegation/durable-delegated-work'
 import {
+  DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
   assertDelegateInputShape,
   assertDelegateRequestShape
 } from '../delegation/delegated-work-admission'
@@ -1004,9 +1005,7 @@ class NotebookLocalRpcServer {
       if (pending) return pending
       const lookup = (async () => {
         if (!this.delegationInputCatalog) {
-          throw new Error(
-            'delegation inputs must be immutable Upload or Artifact Version identities'
-          )
+          throw new Error(DELEGATION_INPUT_UNAVAILABLE_MESSAGE)
         }
         const candidates = await this.delegationInputCatalog.readHostArtifactCatalog({
           projectId: caller.session.projectId,
@@ -1019,9 +1018,7 @@ class NotebookLocalRpcServer {
           item.projectId !== caller.session.projectId ||
           item.sessionId !== caller.session.sessionId
         ) {
-          throw new Error(
-            'delegation inputs must be immutable Upload or Artifact Version identities'
-          )
+          throw new Error(DELEGATION_INPUT_UNAVAILABLE_MESSAGE)
         }
         return item.source === 'upload'
           ? createUploadVersionReference(item.versionId, {
