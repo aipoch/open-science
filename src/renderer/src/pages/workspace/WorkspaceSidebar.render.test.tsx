@@ -357,6 +357,84 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('closes the Session preview when its actions menu opens', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const session = createSession({ id: 'menu-session', title: 'Menu Session' })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <WorkspaceSidebar
+            projectName="Example project"
+            sessions={[session]}
+            activeSessionId={session.id}
+            canCreateConversation
+            canMutateConversations
+            canDeleteConversations
+            onGoHome={vi.fn()}
+            onNewConversation={vi.fn()}
+            isFilesOpen={false}
+            onOpenFiles={vi.fn()}
+            onOpenSession={vi.fn()}
+            onRenameSession={vi.fn()}
+            canDownloadArtifacts
+            onDownloadArtifacts={vi.fn()}
+            onViewNotebook={vi.fn()}
+            onExportSession={vi.fn()}
+            onTogglePin={vi.fn()}
+            onDeleteSession={vi.fn()}
+            onOpenSettings={vi.fn()}
+            onOpenProjectSettings={vi.fn()}
+            onNewProject={vi.fn()}
+            canDownloadProjectArtifacts
+            onDownloadProjectArtifacts={vi.fn()}
+          />
+        )
+      })
+
+      const actionsTrigger = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Open actions for Menu Session"]'
+      )
+      if (!actionsTrigger) throw new Error('Session actions trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+
+      await act(async () => actionsTrigger.dispatchEvent(pointerOver))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
+
+      await act(async () =>
+        actionsTrigger.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      )
+
+      expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).not.toBeNull()
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+
+      const actionsMenu = document.body.querySelector<HTMLElement>(
+        '[data-slot="dropdown-menu-content"]'
+      )
+      if (!actionsMenu) throw new Error('Session actions menu did not render')
+      await act(async () =>
+        actionsMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      )
+
+      expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull()
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+
+      await act(async () =>
+        actionsTrigger.dispatchEvent(
+          new FocusEvent('focusin', { bubbles: true, relatedTarget: actionsMenu })
+        )
+      )
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
   it('closes an active Session preview when its row is removed', async () => {
     vi.useFakeTimers()
     const { SessionHoverPreview, SessionHoverPreviewProvider } =
@@ -420,6 +498,10 @@ describe('WorkspaceSidebar accessible render', () => {
       })
       const trigger = container.querySelector('button')
       if (!trigger) throw new Error('Session preview trigger did not render')
+      const matches = trigger.matches.bind(trigger)
+      vi.spyOn(trigger, 'matches').mockImplementation((selector) =>
+        selector === ':focus-visible' ? true : matches(selector)
+      )
 
       await act(async () => trigger.focus())
 
@@ -634,6 +716,10 @@ describe('WorkspaceSidebar accessible render', () => {
       })
       const [trigger, outside] = Array.from(container.querySelectorAll('button'))
       if (!trigger || !outside) throw new Error('Session preview triggers did not render')
+      const matches = trigger.matches.bind(trigger)
+      vi.spyOn(trigger, 'matches').mockImplementation((selector) =>
+        selector === ':focus-visible' ? true : matches(selector)
+      )
 
       await act(async () => trigger.focus())
       const titleButton = document.body.querySelector<HTMLElement>(
