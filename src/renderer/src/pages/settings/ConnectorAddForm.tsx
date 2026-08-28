@@ -1080,7 +1080,7 @@ export function ConnectorAddForm({
         ) : null}
 
         <div className="flex items-center justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel}>
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
             {tCommon('Cancel')}
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>

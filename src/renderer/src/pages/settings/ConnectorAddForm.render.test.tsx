@@ -493,6 +493,54 @@ describe('ConnectorAddForm (remote server)', () => {
     expect(onDone).toHaveBeenCalledOnce()
   })
 
+  it('keeps Cancel disabled while an OAuth server is being added', async () => {
+    const created = {
+      id: 'oauth-mcp',
+      name: 'oauth-mcp',
+      displayName: 'OAuth MCP',
+      transport: 'streamable_http' as const,
+      enabled: false,
+      url: 'https://mcp.example.test',
+      oauth: { hasTokens: false }
+    }
+    let resolveAdd!: (server: typeof created) => void
+    const onCancel = vi.fn()
+    useSettingsStore.setState({
+      addCustomServer: vi.fn(
+        () =>
+          new Promise<typeof created>((resolve) => {
+            resolveAdd = resolve
+          })
+      ),
+      authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
+      cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined)
+    })
+    act(() => {
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={onCancel} />
+      )
+    })
+
+    setValue('Display name', 'OAuth MCP')
+    setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
+    selectOption('Authentication', 'OAuth')
+    checkTrust()
+    act(() => addButton()?.click())
+
+    const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Cancel'
+    )
+    expect(cancel?.disabled).toBe(true)
+    act(() => cancel?.click())
+    expect(onCancel).not.toHaveBeenCalled()
+
+    await act(async () => resolveAdd(created))
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledWith({
+      id: 'oauth-mcp'
+    })
+  })
+
   it('shows the default callback before revealing a different registered URI', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {
