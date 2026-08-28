@@ -72,6 +72,7 @@ const createHarness = (): ConnectorApplicationHarness => {
     uploads: {} as ConnectorApplicationDeps['uploads'],
     fetchImpl: vi.fn() as unknown as typeof fetch,
     resolveApiKey: vi.fn(),
+    canRequestCredential: vi.fn().mockReturnValue(true),
     resolveSpecialistProfile: vi.fn().mockResolvedValue(undefined),
     mcpClientManager: mcpClientManager as unknown as NonNullable<
       ConnectorApplicationDeps['mcpClientManager']
@@ -135,6 +136,25 @@ describe('Connector application composition', () => {
     expect(forwardedSignal.aborted).toBe(true)
 
     await runtime.dispose()
+  })
+
+  it('fails closed when no local credential owner is available', async () => {
+    const { deps } = createHarness()
+    vi.mocked(deps.canRequestCredential).mockReturnValue(false)
+    const module = await createConnectorApplicationModule(deps)
+
+    await expect(
+      module.capability.connectorService.call(
+        'literature',
+        'openalex_search_works',
+        { query: 'CRISPR', max_records: 1 },
+        { origin: 'internal' }
+      )
+    ).rejects.toThrow(/credential_required/)
+    expect(deps.broadcastCredentialRequest).not.toHaveBeenCalled()
+    expect(deps.fetchImpl).not.toHaveBeenCalled()
+
+    await module.dispose?.()
   })
 
   it('closes the MCP manager when construction fails before runtime ownership', async () => {

@@ -1473,6 +1473,7 @@ const createApplicationModules = async (
       uploads: uploadRepository,
       fetchImpl: netFetchStandard,
       resolveApiKey: (ref) => tryDecryptKey(ref),
+      canRequestCredential: () => !headless && BrowserWindow.getAllWindows().length > 0,
       permissionGrantRegistry,
       resolveSpecialistProfile: async (specialistId) => {
         try {

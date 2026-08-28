@@ -39,6 +39,7 @@ export type ConnectorApplicationDeps = {
   uploads: Pick<UploadRepository, 'resolveManagedUpload' | 'resolveSessionUpload'>
   fetchImpl: typeof fetch
   resolveApiKey: (ref?: string) => string | undefined
+  canRequestCredential: () => boolean
   permissionGrantRegistry?: PermissionGrantRegistry
   resolveSpecialistProfile: (specialistId: string) => Promise<SpecialistView | undefined>
   localToolHandlers?: Record<
@@ -161,7 +162,10 @@ const createConnectorApplication = (
         },
         signal
       ),
-    requestCredential: (request, signal) => credentialRequests.request(request, signal),
+    requestCredential: (request, signal) =>
+      deps.canRequestCredential()
+        ? credentialRequests.request(request, signal)
+        : Promise.resolve(false),
     resolveSpecialistProfile: deps.resolveSpecialistProfile,
     onCustomServerAvailabilityChanged: (serverId, availability) =>
       runtimeSettings.setCustomServerDispatchAvailability(serverId, availability),
