@@ -178,6 +178,7 @@ export const createCodeBuddyFramework = ({
         CODEBUDDY_SKIP_GIT_BASH_CHECK: '1',
         DISABLE_AUTOUPDATER: '1',
         DISABLE_TELEMETRY: '1',
+        DISABLE_ERROR_REPORTING: '1',
         NO_BROWSER: '1'
       },
       configFiles: [
