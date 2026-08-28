@@ -67,6 +67,35 @@ const stubMobileViewport = (): void => {
   )
 }
 
+const stubMutableViewport = (): { setMobile: (mobile: boolean) => void } => {
+  let matches = false
+  const listeners = new Set<() => void>()
+  const media = {
+    get matches() {
+      return matches
+    },
+    media: '(max-width: 47.999rem)',
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn((_event: string, listener: () => void) => listeners.add(listener)),
+    removeEventListener: vi.fn((_event: string, listener: () => void) =>
+      listeners.delete(listener)
+    ),
+    dispatchEvent: vi.fn()
+  }
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn(() => media)
+  )
+  return {
+    setMobile: (mobile) => {
+      matches = mobile
+      listeners.forEach((listener) => listener())
+    }
+  }
+}
+
 describe('NotificationBell', () => {
   it('renders a red-dot entry point with an accessible unread count and pending state', async () => {
     await act(async () => root.render(<NotificationBell />))
@@ -669,5 +698,30 @@ describe('NotificationBell', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     })
     expect(document.activeElement).toBe(visibleTrigger)
+  })
+
+  it('moves focus into an open message center when the viewport becomes mobile', async () => {
+    const viewport = stubMutableViewport()
+    container.id = 'root'
+    await act(async () => root.render(<NotificationBell />))
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')
+    trigger?.focus()
+    await act(async () => trigger?.click())
+    expect(
+      document.body
+        .querySelector<HTMLElement>('[aria-label="Message center"]')
+        ?.hasAttribute('aria-modal')
+    ).toBe(false)
+
+    await act(async () => viewport.setMobile(true))
+
+    const dialog = document.body.querySelector<HTMLElement>('[aria-label="Message center"]')
+    expect(dialog?.getAttribute('aria-modal')).toBe('true')
+    expect(container.inert).toBe(true)
+    expect(dialog?.contains(document.activeElement)).toBe(true)
+
+    await act(async () => trigger?.focus())
+    expect(dialog?.contains(document.activeElement)).toBe(true)
   })
 })

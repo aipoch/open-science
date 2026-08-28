@@ -133,6 +133,7 @@ const NotificationBellContent = ({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const mobileWasOpenRef = useRef(false)
+  const previousIsMobileRef = useRef(isMobile)
   const [position, setPosition] = useState<CSSProperties>({
     left: VIEWPORT_MARGIN,
     top: VIEWPORT_MARGIN
@@ -209,6 +210,12 @@ const NotificationBellContent = ({
     if (!open) return
     if (!isMobile) updatePanelPosition()
   }, [isMobile, open, updatePanelPosition])
+
+  useEffect(() => {
+    const becameMobile = isMobile && !previousIsMobileRef.current
+    previousIsMobileRef.current = isMobile
+    if (open && becameMobile) panelRef.current?.focus()
+  }, [isMobile, open])
 
   useEffect(() => {
     if (!open || !isMobile) return
