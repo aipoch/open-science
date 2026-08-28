@@ -69,7 +69,11 @@ import {
   getArtifactName,
   shouldReadArtifactPreview
 } from './artifact-preview-utils'
-import { FILE_MISSING_TAG_KEY, isUnavailableFileError } from './previews/preview-errors'
+import {
+  FILE_MISSING_TAG_KEY,
+  isManagedFilePublicationPendingError,
+  isUnavailableFileError
+} from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import { resolveSessionProviderId } from './error-report'
@@ -875,7 +879,9 @@ const VisibleArtifactPreview = ({
       })
       .catch((error: unknown) => {
         // Missing or cross-root files are represented by the card badge, not noisy console errors.
-        if (!isUnavailableFileError(error)) console.error('Failed to read artifact preview', error)
+        if (!isUnavailableFileError(error) && !isManagedFilePublicationPendingError(error)) {
+          console.error('Failed to read artifact preview', error)
+        }
         if (!canceled) setPreviewState({ requestKey, preview: undefined })
       })
 

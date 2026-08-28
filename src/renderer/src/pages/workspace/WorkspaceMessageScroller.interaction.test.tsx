@@ -3648,6 +3648,62 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
   })
 
+  it('keeps an unpublished managed thumbnail quiet while finalization is pending', async () => {
+    const enterViewport = installIntersectionObserver()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    window.api.artifacts.readPreview = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Error invoking remote method 'artifacts:read-preview': ManagedFileVersionError: Managed file has no published version."
+        )
+      )
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the file',
+          artifactIds: ['artifact-version-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          artifactId: 'managed-artifact-1',
+          versionId: 'artifact-version-1',
+          kind: 'managed-file',
+          path: '/workspace/.pending/report.txt',
+          name: 'report.txt',
+          mimeType: 'text/plain',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    try {
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+
+      await act(async () => {
+        enterViewport()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(consoleError).not.toHaveBeenCalled()
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
   it('mounts desktop Run Marks from visible human prompts', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
