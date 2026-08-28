@@ -2144,6 +2144,7 @@
     "Show more": "展开",
     "Show output": "显示输出",
     "Show relevant {{count}} packages_other": "显示相关的 {{count}} 个软件包",
+    "Show remaining {{count}} projects_other": "显示剩余的 {{count}} 个项目",
     "Show rendered HTML": "显示渲染后的 HTML",
     "Show repositories": "显示仓库",
     "Showing data from {{time}}": "显示的是 {{time}} 的数据",

@@ -5,6 +5,8 @@ import {
   hydratePersistedSessionIfPresent,
   loadPersistedSession
 } from '@/lib/session-persistence/session-persistence'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 
@@ -13,7 +15,7 @@ import { WorkspaceSidebar } from './WorkspaceSidebar'
 
 type WorkspaceSidebarContainerProps = Omit<
   React.ComponentProps<typeof WorkspaceSidebar>,
-  'sessions' | 'starNudgeKey' | 'onPreviewSession'
+  'sessions' | 'starNudgeKey' | 'onPreviewSession' | 'otherProjects' | 'onOpenProject'
 > & {
   projectId: string
   isProjectArchived: boolean
@@ -42,6 +44,18 @@ const WorkspaceSidebarContainer = ({
         )
       ),
     [pendingCredentialRequests]
+  )
+  const otherProjects = useProjectStore(
+    useShallow((state) =>
+      state.projects.filter(
+        (project) => project.id !== projectId && project.archivedAt === undefined
+      )
+    )
+  )
+  const openProject = useNavigationStore((state) => state.openProject)
+  const handleOpenProject = useCallback(
+    (targetProjectId: string): void => openProject(targetProjectId, 'user'),
+    [openProject]
   )
   const loadPreviewSession = useCallback(
     (sessionId: string): Promise<void> | void => {
@@ -75,6 +89,8 @@ const WorkspaceSidebarContainer = ({
       starNudgeKey={projectId}
       sessions={sessions}
       credentialPendingSessionIds={credentialPendingSessionIds}
+      otherProjects={otherProjects}
+      onOpenProject={handleOpenProject}
       onPreviewSession={loadPreviewSession}
     />
   )

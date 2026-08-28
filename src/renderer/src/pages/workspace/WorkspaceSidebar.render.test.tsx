@@ -9,6 +9,7 @@ import { useUpdateStore } from '@/stores/update-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
+import { clickRadixMenuItem, openRadixMenu } from '../settings/test-utils'
 
 vi.mock('react-i18next', () => createI18nTestStub())
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -1018,6 +1019,99 @@ describe('WorkspaceSidebar accessible render', () => {
     )
     ;(newProjectItem?.props.onSelect as () => void)()
     expect(onNewProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows five other projects, expands in place, switches projects, and resets after close', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const onOpenProject = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const otherProjects = Array.from({ length: 7 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: index === 4 ? '' : `Description ${index + 1}`
+    }))
+
+    try {
+      await act(async () => {
+        root.render(
+          <WorkspaceSidebar
+            projectName="Example project"
+            otherProjects={otherProjects}
+            sessions={[createSession({ id: 'session-a' })]}
+            activeSessionId="session-a"
+            canCreateConversation
+            canMutateConversations
+            canDeleteConversations
+            onGoHome={vi.fn()}
+            onNewConversation={vi.fn()}
+            isFilesOpen={false}
+            onOpenFiles={vi.fn()}
+            onOpenSession={vi.fn()}
+            onOpenProject={onOpenProject}
+            onRenameSession={vi.fn()}
+            canDownloadArtifacts
+            onDownloadArtifacts={vi.fn()}
+            onViewNotebook={vi.fn()}
+            onTogglePin={vi.fn()}
+            onDeleteSession={vi.fn()}
+            onOpenSettings={vi.fn()}
+            onOpenProjectSettings={vi.fn()}
+            onNewProject={vi.fn()}
+          />
+        )
+      })
+
+      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]'))
+
+      const projectMenu = document.body.querySelector<HTMLElement>('[aria-label="Project actions"]')
+      expect(projectMenu?.className).toContain(
+        'max-h-[var(--radix-dropdown-menu-content-available-height)]'
+      )
+      expect(projectMenu?.className).toContain('overflow-y-auto')
+      expect(projectMenu?.getAttribute('data-side')).toBeTruthy()
+
+      let projectItems = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[data-project-id]')
+      )
+      expect(projectItems.map((item) => item.dataset.projectId)).toEqual([
+        'project-1',
+        'project-2',
+        'project-3',
+        'project-4',
+        'project-5'
+      ])
+      expect(projectItems[0]?.textContent).toContain('Project 1')
+      expect(projectItems[0]?.textContent).toContain('Description 1')
+      expect(projectItems[4]?.textContent).not.toContain('Description')
+
+      const menuItems = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+      const showRemainingItem = menuItems.find(
+        (item) => item.textContent?.trim() === 'Show remaining 2 projects'
+      )
+      const newProjectItem = menuItems.find((item) => item.textContent?.trim() === 'New project')
+      expect(showRemainingItem).toBeDefined()
+      expect(newProjectItem).toBeDefined()
+      expect(showRemainingItem?.compareDocumentPosition(newProjectItem!)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      )
+
+      clickRadixMenuItem(showRemainingItem)
+
+      projectItems = Array.from(document.body.querySelectorAll<HTMLElement>('[data-project-id]'))
+      expect(projectItems).toHaveLength(7)
+      expect(document.body.querySelector('[aria-label="Project actions"]')).not.toBeNull()
+
+      clickRadixMenuItem(projectItems[6])
+      expect(onOpenProject).toHaveBeenCalledWith('project-7')
+
+      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]'))
+      expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(5)
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
   })
 
   it('disables Download artifacts when the project has no downloadable files', async () => {
