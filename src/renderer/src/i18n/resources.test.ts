@@ -3047,9 +3047,10 @@ describe('European Portuguese safety copy', () => {
       "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.",
       'O armazenamento seguro não está disponível. O comando, os caminhos e a saída desta tarefa podem ser guardados sem encriptação.'
     ],
-    ['Filter Marketplace Specialists', 'Filtrar Especialistas do Mercado'],
+    ['Filter Marketplace Specialists', 'Filtrar especialistas do mercado'],
     ['Updates available', 'Atualizações disponíveis'],
-    ['No Specialists match this filter.', 'Nenhum Especialista corresponde a este filtro.'],
+    ['No Specialists match this filter.', 'Nenhum especialista corresponde a este filtro.'],
+    ['No Specialists match “{{query}}”.', 'Nenhum especialista corresponde a “{{query}}”.'],
     ['Show all', 'Mostrar tudo'],
     [
       'Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.',
@@ -3073,6 +3074,36 @@ describe('European Portuguese safety copy', () => {
     ['Rename session title', 'Alterar o título da sessão']
   ])('uses reviewed European Portuguese copy for newly merged surface %s', (key, expected) => {
     expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it.each([
+    [
+      ' (control tab falls back to most recent data kernel)',
+      ' (o separador de controlo recorre ao kernel de dados mais recente)'
+    ],
+    [
+      "A conversation can't be resumed on a different backend, so switching starts a fresh agent session. Open conversations keep their existing messages, and their transcript is replayed to {{name}} so it can pick up where you left off (tool state is not carried over). New conversations are unaffected.",
+      'Uma conversa não pode ser retomada num backend diferente, pelo que a mudança inicia uma nova sessão do agente. As conversas abertas mantêm as mensagens existentes e a respetiva transcrição é reproduzida para {{name}}, para que possa retomar de onde ficou (o estado das ferramentas não é transferido). As novas conversas não são afetadas.'
+    ],
+    [
+      'Leave empty to use User from ~/.ssh/config.',
+      'Deixe em branco para usar User de ~/.ssh/config.'
+    ],
+    ['Specialist icon', 'Ícone do especialista'],
+    ['System prompt', 'Prompt do sistema'],
+    ['Try again', 'Tentar novamente'],
+    ['Specialist appearance picker — 8 states', 'Seletor de aparência do especialista — 8 estados'],
+    ['All Agents/Specialists', 'Todos os agentes/especialistas']
+  ])('uses native European Portuguese copy for review finding %s', (key, expected) => {
+    expect(catalog('pt-PT')[key]).toBe(expected)
+  })
+
+  it('uses sentence case for Main Agent throughout the European Portuguese catalog', () => {
+    const offenders = allCatalogEntries('pt-PT')
+      .filter(([, value]) => /Agente Principal/u.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
   })
 
   it.each([
