@@ -1,5 +1,6 @@
 import type { ToolContext, ToolDescriptor } from '../types'
 import { netFetchStandard } from '../../skills/net-fetch'
+import { withTimeoutSignal } from '../request-policy'
 
 // Reactome AnalysisService (over-representation / pathway projection).
 //
@@ -50,19 +51,13 @@ async function reactomeFetch(
   init?: RequestInit,
   signal?: AbortSignal
 ): Promise<Response> {
-  signal?.throwIfAborted()
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS)
-  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
-  try {
-    return await netFetchStandard(url, {
+  return withTimeoutSignal(HTTP_TIMEOUT_MS, signal, (requestSignal) =>
+    netFetchStandard(url, {
       ...init,
       headers: { 'user-agent': USER_AGENT, accept: 'application/json', ...init?.headers },
       signal: requestSignal
     })
-  } finally {
-    clearTimeout(timer)
-  }
+  )
 }
 
 // Space in "Homo sapiens" must survive as %20 (encodeURIComponent, not the + of URLSearchParams).

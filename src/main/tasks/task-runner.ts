@@ -50,6 +50,7 @@ import type {
   TaskSessionSummary,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
+import { toErrorMessage } from '../error-message'
 
 type TaskProjectPort = {
   list(): Promise<Project[]>
@@ -203,7 +204,7 @@ class PartialTaskCompletionError extends Error {
     readonly completion: CompletedTaskSession,
     readonly failure: unknown
   ) {
-    super(failure instanceof Error ? failure.message : String(failure))
+    super(toErrorMessage(failure))
     this.name = 'PartialTaskCompletionError'
   }
 }
@@ -842,10 +843,7 @@ class TaskRunner {
       try {
         resolved = await this.dependencies.specialists.resolve(requestedSpecialist)
       } catch (error) {
-        throw new TaskRunnerError(
-          'specialist_not_found',
-          error instanceof Error ? error.message : String(error)
-        )
+        throw new TaskRunnerError('specialist_not_found', toErrorMessage(error))
       }
       if (existing && existing.specialistId !== resolved.id) {
         throw new TaskRunnerError(
@@ -1099,7 +1097,7 @@ class TaskRunner {
             run.review = {
               started: false,
               reason: 'run-failed',
-              errorMessage: error instanceof Error ? error.message : String(error)
+              errorMessage: toErrorMessage(error)
             }
           }
         } finally {
@@ -1132,8 +1130,7 @@ class TaskRunner {
     const runtimeError = [...run.events]
       .reverse()
       .find((event) => event.kind === 'error' && event.text?.trim())
-    const message =
-      runtimeError?.text?.trim() || (failure instanceof Error ? failure.message : String(failure))
+    const message = runtimeError?.text?.trim() || toErrorMessage(failure)
     const failed: PersistedChatSession = {
       ...(completed?.session ?? session),
       status: 'error',

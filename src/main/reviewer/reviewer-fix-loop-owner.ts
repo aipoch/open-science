@@ -15,6 +15,7 @@ import { ReviewerCorrectionOwner } from './correction'
 import type { ArtifactVersionContentResolver } from './host-sdk'
 import { runReviewAssessment } from './review-assessment-owner'
 import type { ReviewRepository } from './repository'
+import { toErrorMessage } from '../error-message'
 
 const log = createLogger('reviewer:orchestrator')
 
@@ -185,7 +186,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       log.warn('fix loop: failed to load durable session before correction', {
         sessionId,
         round,
-        error: error instanceof Error ? error.message : String(error)
+        error: toErrorMessage(error)
       })
       await markOpenChecksUnaddressed('correction_failed', 'Could not load the durable session.')
       return
@@ -234,7 +235,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       log.warn('fix loop: failed to derive correction provenance', {
         sessionId,
         round,
-        error: error instanceof Error ? error.message : String(error)
+        error: toErrorMessage(error)
       })
     }
 
@@ -268,7 +269,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       log.warn('fix loop: failed while refreshing durable correction turn', {
         sessionId,
         round,
-        error: error instanceof Error ? error.message : String(error)
+        error: toErrorMessage(error)
       })
       await markOpenChecksUnaddressed(
         'correction_failed',

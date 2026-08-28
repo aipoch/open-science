@@ -1,6 +1,7 @@
 import type { ToolDescriptor } from '../types'
 import { netFetchStandard } from '../../skills/net-fetch'
 import { abortableDelay } from '../abortable-delay'
+import { withTimeoutSignal } from '../request-policy'
 
 // CartBlanche22 (ZINC22 purchasable-compound search) — every search endpoint is ASYNC and
 // POST-only (form-encoded): submit returns a task receipt {"task": "<uuid>"}, and the result is
@@ -188,19 +189,13 @@ async function fetchWithTimeout(
   timeoutMs: number,
   signal?: AbortSignal
 ): Promise<Response> {
-  signal?.throwIfAborted()
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs))
-  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
-  try {
-    return await netFetchStandard(url, {
+  return withTimeoutSignal(Math.max(1, timeoutMs), signal, (requestSignal) =>
+    netFetchStandard(url, {
       ...init,
       headers: { 'user-agent': USER_AGENT, ...init.headers },
       signal: requestSignal
     })
-  } finally {
-    clearTimeout(timer)
-  }
+  )
 }
 
 // POST form fields to a CartBlanche22 search endpoint; return the task uuid.

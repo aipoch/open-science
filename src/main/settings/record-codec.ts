@@ -23,6 +23,7 @@ import type {
   StoredCustomMcpServer,
   StoredProvider
 } from './types'
+import { isRecord } from './value-guards'
 
 const log = createLogger('settings.repository')
 
@@ -55,9 +56,6 @@ const CUSTOM_MCP_TRANSPORTS = new Set<StoredCustomMcpServer['transport']>([
 ])
 
 // Treat only plain JSON objects as records before rebuilding durable values.
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined
 

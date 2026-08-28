@@ -3184,7 +3184,7 @@ describe('Brazilian Portuguese safety copy', () => {
 
   it('does not contain known machine-translation artifacts', () => {
     const artifacts =
-      /Argóis|Respondedo|Aprovaçãos|execuçãos|Provença|esto aplicativo|jogada interrompida|painel de detalhes de close|não são sandboxed|carregar anfitriões|Designação das mercadorias|Exportar a Marcação|código Claude|Lista de conexões|Duplicar o nome|não incluem segredos|se inscreve em você|tempos de execução do Notebook|mudar a hora de correr|apenas edita para arquivos|\bquiseres\b|\blinha de comandos\b|\ba reparar\b|\bpartilhad[ao]s?\b|\bcorreu mal\b|\bsondad\p{L}*|\bfacultativ\p{L}*|\bscoping\b|\bconversação\b|\bligação\b|\bapag(?:ar|ad[ao]s?)\b|\bdeletad[ao]s?\b|\bgerir\b|\brecolha\b|\b(?:uma|a|da|na|esta|nenhuma) host\b|\bpára\b|\bsonda\b/iu
+      /Argóis|Respondedo|Aprovaçãos|execuçãos|Provença|esto aplicativo|jogada interrompida|painel de detalhes de close|não são sandboxed|carregar anfitriões|Designação das mercadorias|Exportar a Marcação|código Claude|Lista de conexões|Duplicar o nome|não incluem segredos|se inscreve em você|tempos de execução do Notebook|mudar a hora de correr|apenas edita para arquivos|streaming de arquivos salva|tokens compartilhadas|não assinado em|inscrição do navegador|agentes de execução|GitHub número|Claude dona de aplicativos|estão indisponível|Atualizar baixado|Correr o código|Assine a sessão|precisa de entrar|Inicie sessão|Biocondutor|\bquiseres\b|\blinha de comandos\b|\ba reparar\b|\bpartilh\p{L}*|\bcorreu mal\b|\btransferir\b|\binvestigação\b|\bem bruto\b|\beliminar\b|\bsondad\p{L}*|\bfacultativ\p{L}*|\bscoping\b|\bconversação\b|\bligação\b|\bapag(?:ar|ad[ao]s?)\b|\bdeletad[ao]s?\b|\bgerir\b|\brecolha\b|\b(?:uma|a|da|na|esta|nenhuma) host\b|\bpára\b|\bsonda\b/iu
     const offenders = Object.entries(catalog('pt-BR'))
       .filter(([, value]) => artifacts.test(value))
       .map(([key]) => key)
@@ -3209,7 +3209,111 @@ describe('Brazilian Portuguese safety copy', () => {
     ['Runtimes', 'Ambientes de execução'],
     ['Notebook runtimes', 'Ambientes de execução do Notebook'],
     ['Compute', 'Computação'],
-    ['Test & continue', 'Testar e continuar']
+    ['Test & continue', 'Testar e continuar'],
+    ['Not signed in', 'Login não realizado'],
+    ['OAuth (browser sign-in)', 'OAuth (login pelo navegador)'],
+    [
+      'One or more agent runtimes could not be detected.',
+      'Não foi possível detectar um ou mais ambientes de execução do agente.'
+    ],
+    [
+      'Plan approved, but execution was interrupted. Send a message to continue.',
+      'Plano aprovado, mas a execução foi interrompida. Envie uma mensagem para continuar.'
+    ],
+    [
+      'The encrypted credential cannot be used on this device. Password authentication is blocked and does not fall back to SSH configuration.',
+      'A credencial criptografada não pode ser usada neste dispositivo. A autenticação por senha está bloqueada e não usa a configuração SSH como alternativa.'
+    ],
+    [
+      'The saved credential is missing. Password authentication is blocked and does not fall back to SSH configuration.',
+      'A credencial salva está ausente. A autenticação por senha está bloqueada e não usa a configuração SSH como alternativa.'
+    ],
+    ['Test and update', 'Testar e atualizar'],
+    ['Compute execution target: {{name}}', 'Destino de execução de computação: {{name}}'],
+    ['Compute execution targets: {{names}}', 'Destinos de execução de computação: {{names}}'],
+    ['Sign in to {{name}}', 'Fazer login em {{name}}'],
+    ['{{name}} needs sign-in', '{{name}} requer login'],
+    [
+      'Authorization expired or was revoked. Sign in again to keep this Connector available.',
+      'A autorização expirou ou foi revogada. Faça login novamente para manter este Conector disponível.'
+    ],
+    ['Bioconductor', 'Bioconductor'],
+    ['Open GitHub issue', 'Abrir issue no GitHub'],
+    ['Detach connector', 'Desvincular o conector'],
+    ['Run JS code?', 'Executar código JS?'],
+    ['Download manually', 'Baixar manualmente'],
+    ['Download failed', 'Falha no download'],
+    ['Download failed for {{name}}', 'Falha no download de {{name}}'],
+    ['Download failed. Try again', 'O download falhou. Tente novamente'],
+    ['Download notebooks', 'Baixar Notebooks'],
+    ['Download script', 'Baixar script'],
+    [
+      'Downloads a self-contained OpenCode — no Node.js or npm required.',
+      'Baixa um OpenCode independente — sem exigir Node.js ou npm.'
+    ],
+    [
+      'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',
+      'Artefatos baixados: {{downloaded}} de {{total}}. Falhas: {{failed}}.'
+    ],
+    [
+      'Drag to rotate · Scroll to zoom · Shift + drag to pan',
+      'Arraste para girar · Role para aplicar zoom · Shift + arraste para deslocar'
+    ],
+    [
+      'Maximum input tokens must be a positive whole number of tokens.',
+      'O número máximo de tokens de entrada deve ser um número inteiro positivo.'
+    ],
+    [
+      'Maximum output tokens must be a positive whole number of tokens.',
+      'O número máximo de tokens de saída deve ser um número inteiro positivo.'
+    ],
+    ['Maximum output tokens', 'Máximo de tokens de saída'],
+    [
+      'Install Claude Agent below, or install it manually and re-detect.',
+      'Instale o Claude Agent abaixo ou instale-o manualmente e faça uma nova detecção.'
+    ],
+    ['Install log', 'Log da instalação'],
+    ['Install progress', 'Progresso da instalação'],
+    ['Install source', 'Fonte da instalação'],
+    [
+      'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.',
+      'Permite que o Open Science instale pacotes neste ambiente. As instalações são feitas no seu próprio ambiente, não no armazenamento gerenciado pelo aplicativo.'
+    ],
+    ['Offline', 'Offline'],
+    [
+      "This data folder was last written by a newer release. Older builds can't safely read its newer format.",
+      'Esta pasta de dados foi gravada pela última vez por uma versão mais recente. As compilações mais antigas não conseguem ler com segurança esse formato mais recente.'
+    ],
+    [
+      'The producer run could not be identified from the captured evidence.',
+      'Não foi possível identificar a execução produtora com base nas evidências capturadas.'
+    ],
+    ['Streamable HTTP', 'Streamable HTTP'],
+    [
+      'MCP server must define either command or url.',
+      'O servidor MCP deve definir command ou url.'
+    ],
+    [
+      'Credential values were excluded and must be entered locally.',
+      'Os valores de credenciais foram excluídos e devem ser inseridos localmente.'
+    ],
+    [
+      'MCP Registry server.json manifests cannot be imported as installed MCP client configurations.',
+      'Os manifestos server.json do MCP Registry não podem ser importados como configurações instaladas de cliente MCP.'
+    ],
+    ['Failed to set concurrency limit.', 'Não foi possível definir o limite de concorrência.'],
+    [
+      'Run {{runNumber}} · Message {{messageNumber}}',
+      'Execução {{runNumber}} · Mensagem {{messageNumber}}'
+    ],
+    [
+      'Run {{run}}, {{state}}, {{tokens}} context-window tokens',
+      'Execução {{run}}, {{state}}, {{tokens}} tokens da janela de contexto'
+    ],
+    [
+      'Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.',
+      'A execução [{{index}}] alterou {{names}} posteriormente. Esta saída é o instantâneo registrado antes dessa alteração; esta execução foi concluída normalmente.'
+    ]
   ])('keeps reviewed high-risk Brazilian Portuguese copy exact in %s', (key, expected) => {
     expect(catalog('pt-BR')[key]).toBe(expected)
   })
