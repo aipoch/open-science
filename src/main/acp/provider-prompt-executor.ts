@@ -185,6 +185,9 @@ class AcpProviderPromptExecutor {
       }
     }
     return {
+      observe: (message) => {
+        if (open) this.observeProviderMessage(message)
+      },
       finalize: async ({ response }) => {
         if (!open) return EMPTY_FACTS
         open = false

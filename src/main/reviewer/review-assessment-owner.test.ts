@@ -31,6 +31,10 @@ const harness = vi.hoisted(() => ({
         kind: string
         stopReason?: string
         response?: { stopReason: 'end_turn' }
+        notification?: {
+          sessionId: string
+          update: { sessionUpdate: string; [key: string]: unknown }
+        }
         update?: { sessionUpdate?: string; [key: string]: unknown }
       }>)
     | undefined,
@@ -320,19 +324,33 @@ describe('review assessment owner', () => {
   it('records normalized Reviewer usage for the owning Session', async () => {
     const reviewRepository = makeRepository()
     const acpRuntime = runtime('reviewer-runtime-model')
+    const observe = vi.fn()
     const finalize = vi.fn(async () => ({
       turnUsage: { inputTokens: 13, cacheTokens: 2, outputTokens: 5 },
       modelTurnCount: 2
     }))
     vi.mocked(acpRuntime).beginProviderTurnObservation = vi.fn(async () => ({
+      observe,
       finalize,
       cancel: vi.fn()
     }))
-    harness.nextUpdate = async () => ({
-      kind: 'stop',
-      stopReason: 'end_turn',
-      response: { stopReason: 'end_turn' }
-    })
+    const usageNotification = {
+      sessionId: 'reviewer-session',
+      update: { sessionUpdate: 'usage_update', used: 10, size: 128_000 }
+    }
+    const updates = [
+      {
+        kind: 'session_update',
+        notification: usageNotification,
+        update: usageNotification.update
+      },
+      {
+        kind: 'stop',
+        stopReason: 'end_turn',
+        response: { stopReason: 'end_turn' as const }
+      }
+    ]
+    harness.nextUpdate = async () => updates.shift()!
     const recordUsage = vi.fn(async () => undefined)
 
     await runReviewAssessment({
@@ -357,6 +375,7 @@ describe('review assessment owner', () => {
       providerSessionId: 'reviewer-session',
       cwd: '/tmp/reviewer-session'
     })
+    expect(observe).toHaveBeenCalledWith(usageNotification)
   })
 
   it('completes an explicit empty initial assessment and classifies its completion log', async () => {

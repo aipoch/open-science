@@ -298,6 +298,7 @@ class AcpContextCompactionWorkflow {
                 return message.response
               }
 
+              usageProbe?.observe?.(message.notification)
               const update = message.notification.update
               if (
                 !failureText &&

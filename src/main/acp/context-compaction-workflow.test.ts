@@ -136,8 +136,10 @@ const createHarness = (input?: {
 
 describe('AcpContextCompactionWorkflow', () => {
   it('records provider usage for the hidden native compaction turn', async () => {
-    const session = fakeSession([stop('end_turn')])
+    const hidden = notification('Compacting conversation history')
+    const session = fakeSession([update(hidden), stop('end_turn')])
     const record = vi.fn(async () => undefined)
+    const observe = vi.fn()
     const finalize = vi.fn(async () => ({
       turnUsage: { inputTokens: 20, cacheTokens: 4, outputTokens: 2 },
       modelTurnCount: 1
@@ -145,7 +147,7 @@ describe('AcpContextCompactionWorkflow', () => {
     const harness = createHarness({
       session,
       usage: {
-        begin: vi.fn(async () => ({ finalize, cancel: vi.fn() })),
+        begin: vi.fn(async () => ({ observe, finalize, cancel: vi.fn() })),
         record,
         cwd: () => '/workspace',
         model: () => 'model-a'
@@ -154,6 +156,7 @@ describe('AcpContextCompactionWorkflow', () => {
 
     await harness.workflow.compact({ sessionId: 'app-session' })
 
+    expect(observe).toHaveBeenCalledWith(hidden)
     expect(record).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'app-session',

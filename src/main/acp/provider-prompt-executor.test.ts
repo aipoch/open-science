@@ -513,9 +513,9 @@ describe('AcpProviderPromptExecutor', () => {
     })
     const providerMessage = { sessionId: 'provider-1', message: { type: 'result' } }
 
-    fixture.executor.observeProviderMessage(providerMessage)
+    observation.observe?.(providerMessage)
     await observation.finalize({ response })
-    fixture.executor.observeProviderMessage(providerMessage)
+    observation.observe?.(providerMessage)
 
     expect(fixture.probe.observe).toHaveBeenCalledOnce()
     expect(fixture.probe.finalize).toHaveBeenCalledWith({ response })

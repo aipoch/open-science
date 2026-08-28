@@ -273,6 +273,7 @@ export const runReviewAssessment = async (
           { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates, signal: abortSignal },
           {
             ...reviewerLogDriveCallbacks,
+            onNotification: (notification) => probe?.observe?.(notification),
             onStop: (value) => {
               response = value
             }
