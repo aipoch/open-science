@@ -250,22 +250,25 @@ export class UpdateService implements UpdateStrategy {
     operation.phase('validate-source')
 
     // Defense-in-depth: the sha256 comes from the same manifest as the URL, so it can't catch a
-    // tampered manifest pointing at a hostile host. Require the download to stay on the trusted host.
-    let trustedHost: string
+    // tampered manifest pointing at a hostile source. Keep the installer on the manifest's HTTPS origin.
+    let trustedOrigin: string
     try {
-      trustedHost = new URL(this.manifestUrl).host
+      const manifestUrl = new URL(this.manifestUrl)
+      if (manifestUrl.protocol !== 'https:') throw new URIError('Manifest URL must use HTTPS')
+      trustedOrigin = manifestUrl.origin
     } catch (error) {
       operation.fail(error, { reason: 'invalid-manifest-url' })
       if (this.downloadOperation === operation) this.downloadOperation = undefined
       throw error
     }
-    let downloadHost: string
+    let downloadOrigin: string
     try {
-      downloadHost = new URL(download.url).host
+      const downloadUrl = new URL(download.url)
+      downloadOrigin = downloadUrl.protocol === 'https:' ? downloadUrl.origin : ''
     } catch {
-      downloadHost = ''
+      downloadOrigin = ''
     }
-    if (downloadHost !== trustedHost) {
+    if (downloadOrigin !== trustedOrigin) {
       this.setStatus({ ...this.status, state: 'error', error: 'Untrusted download host' })
       operation.fail(new URIError('Untrusted update source'), { reason: 'untrusted-source' })
       if (this.downloadOperation === operation) this.downloadOperation = undefined

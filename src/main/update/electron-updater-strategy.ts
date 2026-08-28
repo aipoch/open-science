@@ -195,9 +195,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private applying = false
   private installerStarted = false
   private pendingInstallRollback?: () => void
-  // In-flight manifest notes fetch for the current update, awaited by check() so the returned
-  // status reflects the hydrated notes.
-  private notesHydration?: Promise<void>
   // Pre-install backend-shutdown gate, owned immutably for the strategy lifetime.
   private readonly installGate?: InstallGate
   private readonly markUpdateShutdown: () => () => void
@@ -261,7 +258,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       // electron-updater's *.yml feed carries no release notes, so the dialog would only get a
       // GitHub link. Hydrate the notes from the CDN manifest (the same version.json the installer
       // flow reads) so the "What's new" section renders in-app.
-      if (i.version) this.notesHydration = this.hydrateNotes(i.version)
+      if (i.version) void this.hydrateNotes(i.version)
     })
     this.updater.on('update-not-available', (info) => {
       if (this.readyCheckStatus && this.status === this.readyCheckStatus) return
@@ -396,8 +393,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
             })
           }
         }
-        // Wait for the notes fetch triggered by update-available so the returned status carries them.
-        await this.notesHydration
         providerFailure ??= this.readyCheckError
         if (providerFailure) {
           operation.fail(providerFailure, { result: 'error' })

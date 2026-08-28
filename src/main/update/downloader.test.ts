@@ -11,6 +11,12 @@ import { downloadInstaller } from './downloader'
 
 const sha256 = (buf: Buffer): string => createHash('sha256').update(buf).digest('hex')
 
+const responseAt = (url: string, body: BodyInit, init: ResponseInit = {}): Response => {
+  const response = new Response(body, init)
+  Object.defineProperty(response, 'url', { value: url })
+  return response
+}
+
 let dir = ''
 afterEach(async () => {
   if (dir) await rm(dir, { recursive: true, force: true })
@@ -23,7 +29,9 @@ describe('downloadInstaller', () => {
     const body = Buffer.from('installer-bytes')
     const progresses: DownloadProgress[] = []
     const fetchImpl = (() =>
-      Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+      Promise.resolve(
+        responseAt('https://cdn/open-science-0.3.0-mac-arm64.dmg', body, { status: 200 })
+      )) as unknown as typeof fetch
 
     const path = await downloadInstaller(
       {
@@ -52,7 +60,9 @@ describe('downloadInstaller', () => {
     const target = join(dir, 'x.dmg')
     const body = Buffer.from('installer-bytes')
     const fetchImpl = (() =>
-      Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+      Promise.resolve(
+        responseAt('https://cdn/x.dmg', body, { status: 200 })
+      )) as unknown as typeof fetch
 
     await expect(
       downloadInstaller(
@@ -87,7 +97,7 @@ describe('downloadInstaller', () => {
           else signal?.addEventListener('abort', onAbort)
         }
       })
-      return Promise.resolve(new Response(body, { status: 200 }))
+      return Promise.resolve(responseAt('https://cdn/z.dmg', body, { status: 200 }))
     }) as unknown as typeof fetch
 
     const promise = downloadInstaller(
