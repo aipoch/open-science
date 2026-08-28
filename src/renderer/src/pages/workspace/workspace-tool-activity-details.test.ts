@@ -4,12 +4,13 @@ import type { ToolActivity } from '@/stores/session-store'
 
 import {
   buildToolActivityDetails,
-  getLoadedSkillName,
+  getSkillLoadDocument,
   getToolDisplayName,
   isEditActivity,
   isSkillActivity,
   parseManagePackagesResult
 } from './workspace-tool-activity-details'
+import { getLoadedSkillName } from './workspace-skill-load'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   id: 'tool-1',
@@ -80,6 +81,41 @@ describe('workspace tool activity details', () => {
     expect(details?.displayName).toBe('Skill')
     expect(details?.subtitle).toBe('mcp-pubmed')
     expect(details?.sections.map((section) => section.label)).toEqual(['Input', 'Output'])
+  })
+
+  it('extracts the renderable SKILL.md document from a load_skill output', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__skills__load_skill',
+      title: 'mcp__skills__load_skill',
+      rawInput: { skill: 'mcp-pubmed' },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: 'Base directory for this skill: /skills/mcp-pubmed\n\n---\nname: mcp-pubmed\ndescription: Search PubMed\n---\n\n# mcp-pubmed\n\nSearch PubMed articles.'
+          }
+        }
+      ]
+    })
+
+    expect(getSkillLoadDocument(activity)).toBe('# mcp-pubmed\n\nSearch PubMed articles.')
+  })
+
+  it('returns no Skill document when a load_skill output is not a document', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__skills__load_skill',
+      title: 'mcp__skills__load_skill',
+      status: 'failed',
+      toolContent: [
+        {
+          type: 'content',
+          content: { type: 'text', text: 'Unknown skill: nope' }
+        }
+      ]
+    })
+
+    expect(getSkillLoadDocument(activity)).toBeUndefined()
   })
 
   it('reads the Skill name from the Codex arguments envelope on a load_skill row', () => {
