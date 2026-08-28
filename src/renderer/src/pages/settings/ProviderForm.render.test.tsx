@@ -33,11 +33,13 @@ const render = (
   {
     onChange = vi.fn(),
     errors,
+    hasStoredKey = false,
     showCodexSubscriptions = false,
     showClaudeIsolated = false
   }: {
     onChange?: () => void
     errors?: ProviderFormErrors
+    hasStoredKey?: boolean
     showCodexSubscriptions?: boolean
     showClaudeIsolated?: boolean
   } = {}
@@ -48,6 +50,7 @@ const render = (
         value={value}
         onChange={onChange}
         errors={errors}
+        hasStoredKey={hasStoredKey}
         showCodexSubscriptions={showCodexSubscriptions}
         showClaudeIsolated={showClaudeIsolated}
       />
@@ -569,8 +572,35 @@ describe('ProviderForm field switching', () => {
       }
     })
 
-    expect(container.textContent).toContain('Base URL is required.')
-    expect(container.textContent).toContain('API key is required.')
-    expect(container.textContent).toContain('Model is required.')
+    const baseUrl = container.querySelector<HTMLInputElement>('[aria-label="Base URL"]')
+    const key = container.querySelector<HTMLInputElement>('[aria-label="API key"]')
+    const model = container.querySelector<HTMLInputElement>('[aria-label="Model"]')
+
+    for (const [field, errorId] of [
+      [baseUrl, 'provider-base-url-error'],
+      [key, 'provider-key-error'],
+      [model, 'provider-model-error']
+    ] as const) {
+      expect(field?.getAttribute('aria-required')).toBe('true')
+      expect(field?.getAttribute('aria-invalid')).toBe('true')
+      expect(field?.getAttribute('aria-describedby')).toBe(errorId)
+      expect(container.querySelector(`#${errorId}`)).not.toBeNull()
+    }
+
+    expect(container.querySelector('#provider-base-url-error')?.textContent).toBe(
+      'Base URL is required.'
+    )
+    expect(container.querySelector('#provider-key-error')?.textContent).toBe('API key is required.')
+    expect(container.querySelector('#provider-model-error')?.textContent).toBe('Model is required.')
+  })
+
+  it('does not require a replacement API key when an edit keeps the stored key', () => {
+    render(createEmptyProviderFormValue({ type: 'official' }), { hasStoredKey: true })
+
+    expect(
+      container
+        .querySelector<HTMLInputElement>('[aria-label="API key"]')
+        ?.getAttribute('aria-required')
+    ).toBeNull()
   })
 })

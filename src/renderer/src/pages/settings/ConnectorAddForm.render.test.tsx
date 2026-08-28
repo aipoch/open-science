@@ -243,6 +243,18 @@ describe('ConnectorAddForm (local command)', () => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
     })
 
+    expect(
+      document.body.querySelector('[aria-label="Display name"]')?.getAttribute('aria-required')
+    ).toBe('true')
+    expect(
+      document.body.querySelector('[aria-label="Command"]')?.getAttribute('aria-required')
+    ).toBe('true')
+    expect(
+      document.body
+        .querySelector('[aria-label="I trust this connector"]')
+        ?.getAttribute('aria-required')
+    ).toBe('true')
+
     setValue('Display name', 'Memory')
     expect(addButton()?.disabled).toBe(true)
 
@@ -341,6 +353,14 @@ describe('ConnectorAddForm (local command)', () => {
       document.body.querySelector<HTMLTextAreaElement>('[aria-label="Environment variables"]')
         ?.value
     ).toBe('API_TOKEN=')
+    const environment = document.body.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Environment variables"]'
+    )
+    expect(environment?.getAttribute('aria-required')).toBe('true')
+    expect(environment?.getAttribute('aria-describedby')).toBe('connector-env-help')
+    expect(document.body.querySelector('#connector-env-help')?.textContent).toContain(
+      'Required: API_TOKEN.'
+    )
     checkTrust()
     expect(addButton()?.disabled).toBe(true)
 
@@ -368,7 +388,36 @@ describe('ConnectorAddForm (remote server)', () => {
       )
     })
 
-    expect(document.body.querySelector('[aria-label="Server URL"]')).not.toBeNull()
+    expect(
+      document.body.querySelector('[aria-label="Server URL"]')?.getAttribute('aria-required')
+    ).toBe('true')
+  })
+
+  it('associates imported required header names with the Headers field', () => {
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          initialTemplate={{
+            schemaVersion: 1,
+            kind: 'open-science.connector',
+            name: 'header-auth',
+            displayName: 'Header Auth',
+            transport: 'streamable_http',
+            url: 'https://mcp.example.test',
+            requiredSecrets: { headers: ['Authorization'] }
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    const headers = document.body.querySelector('[aria-label="Headers"]')
+    expect(headers?.getAttribute('aria-required')).toBe('true')
+    expect(headers?.getAttribute('aria-describedby')).toBe('connector-headers-help')
+    expect(document.body.querySelector('#connector-headers-help')?.textContent).toContain(
+      'Required: Authorization.'
+    )
   })
 
   it('reveals uncommon OAuth registration settings only when selected', () => {
@@ -421,6 +470,19 @@ describe('ConnectorAddForm (remote server)', () => {
         '(optional)'
       )
     }
+    expect(authorizationServer?.getAttribute('aria-required')).toBe('true')
+    const clientId = document.body.querySelector('[aria-label="Client ID"]')
+    expect(clientId?.getAttribute('aria-required')).toBe('true')
+
+    setValue('Client secret', 'configured-secret')
+    expect(authorizationServer?.getAttribute('aria-invalid')).toBe('true')
+    expect(authorizationServer?.getAttribute('aria-describedby')).toBe(
+      'connector-oauth-server-error'
+    )
+    expect(clientId?.getAttribute('aria-invalid')).toBe('true')
+    expect(clientId?.getAttribute('aria-describedby')).toBe('connector-oauth-client-id-error')
+    expect(document.body.querySelector('#connector-oauth-server-error')).not.toBeNull()
+    expect(document.body.querySelector('#connector-oauth-client-id-error')).not.toBeNull()
     expect(document.body.querySelector('[aria-label="Default callback URI"]')).not.toBeNull()
   })
 
@@ -562,6 +624,9 @@ describe('ConnectorAddForm (remote server)', () => {
     expect(
       document.body.querySelector<HTMLInputElement>('[aria-label="Redirect URI"]')?.value
     ).toBe('http://127.0.0.1:8080/callback')
+    expect(
+      document.body.querySelector('[aria-label="Client secret"]')?.getAttribute('aria-required')
+    ).toBe('true')
     checkTrust()
     expect(addButton()?.disabled).toBe(true)
     setValue('Client secret', 'local-client-secret')

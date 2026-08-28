@@ -297,6 +297,11 @@ export function ConnectorAddForm({
   const requiredEnvironment = initialTemplate?.requiredSecrets?.environment ?? []
   const requiredHeaders = initialTemplate?.requiredSecrets?.headers ?? []
   const requiresOAuthClientSecret = initialTemplate?.requiredSecrets?.oauthClientSecret === true
+  const authorizationServerError =
+    usePreRegisteredOAuthClient &&
+    Boolean(clientId.trim() || clientSecret.trim()) &&
+    !authorizationServerUrl.trim()
+  const clientIdError = Boolean(clientSecret.trim() && !clientId.trim())
   const copyDefaultCallbackUri = async (): Promise<void> => {
     if (!navigator.clipboard?.writeText) return
     try {
@@ -489,6 +494,7 @@ export function ConnectorAddForm({
           <Input
             id="connector-name"
             aria-label={t('Display name')}
+            aria-required="true"
             value={displayName}
             placeholder={t('e.g. Memory server')}
             onChange={(event) => setDisplayName(event.target.value)}
@@ -502,7 +508,7 @@ export function ConnectorAddForm({
               <RequiredMark />
             </label>
             <Select value={commandChoice} onValueChange={setCommandChoice}>
-              <SelectTrigger aria-label={t('Command')}>
+              <SelectTrigger id="connector-command" aria-label={t('Command')} aria-required="true">
                 <span>
                   {t(
                     COMMAND_OPTIONS.find((o) => o.value === commandChoice)?.labelKey ??
@@ -521,6 +527,7 @@ export function ConnectorAddForm({
             {commandChoice === 'other' ? (
               <Input
                 aria-label={t('Custom command')}
+                aria-required="true"
                 value={customCommand}
                 placeholder="/absolute/path/to/executable"
                 className="font-mono"
@@ -537,6 +544,7 @@ export function ConnectorAddForm({
             <Input
               id="connector-url"
               aria-label={t('Server URL')}
+              aria-required="true"
               value={url}
               placeholder="https://example.com/mcp"
               className="font-mono"
@@ -572,6 +580,7 @@ export function ConnectorAddForm({
                 <Input
                   id="connector-name-id"
                   aria-label={t('Connector name')}
+                  aria-required={!isEdit || undefined}
                   value={currentName}
                   disabled={isEdit}
                   aria-invalid={nameError ? true : undefined}
@@ -682,13 +691,15 @@ export function ConnectorAddForm({
                     <Textarea
                       id="connector-env"
                       aria-label={t('Environment variables')}
+                      aria-required={requiredEnvironment.length > 0 || undefined}
+                      aria-describedby="connector-env-help"
                       value={envText}
                       rows={3}
                       placeholder={'KEY=value\nANOTHER_KEY=value'}
                       className="resize-y font-mono text-[13px]"
                       onChange={(event) => setEnvText(event.target.value)}
                     />
-                    <p className={helperClassName}>
+                    <p id="connector-env-help" className={helperClassName}>
                       {t('One KEY=VALUE per line.')}
                       {initialTemplate?.requiredSecrets?.environment?.length
                         ? ' ' +
@@ -800,15 +811,22 @@ export function ConnectorAddForm({
                           <Input
                             id="connector-oauth-server"
                             aria-label={t('Authorization server URL')}
+                            aria-required={usePreRegisteredOAuthClient || undefined}
+                            aria-invalid={authorizationServerError || undefined}
+                            aria-describedby={
+                              authorizationServerError ? 'connector-oauth-server-error' : undefined
+                            }
                             value={authorizationServerUrl}
                             placeholder={t('Auto-discover from MCP server')}
                             className="font-mono"
                             onChange={(event) => setAuthorizationServerUrl(event.target.value)}
                           />
-                          {usePreRegisteredOAuthClient &&
-                          (clientId.trim() || clientSecret.trim()) &&
-                          !authorizationServerUrl.trim() ? (
-                            <p className="text-xs leading-5 text-destructive">
+                          {authorizationServerError ? (
+                            <p
+                              id="connector-oauth-server-error"
+                              className="text-xs leading-5 text-destructive"
+                              role="alert"
+                            >
                               {t(
                                 'Authorization server URL is required for a pre-registered client.'
                               )}
@@ -859,6 +877,11 @@ export function ConnectorAddForm({
                             <Input
                               id="connector-oauth-client-id"
                               aria-label={t('Client ID')}
+                              aria-required="true"
+                              aria-invalid={clientIdError || undefined}
+                              aria-describedby={
+                                clientIdError ? 'connector-oauth-client-id-error' : undefined
+                              }
                               value={clientId}
                               placeholder={t('Pre-registered client ID')}
                               className="font-mono"
@@ -872,8 +895,12 @@ export function ConnectorAddForm({
                                 }
                               }}
                             />
-                            {clientSecret.trim() && !clientId.trim() ? (
-                              <p className="text-xs leading-5 text-destructive">
+                            {clientIdError ? (
+                              <p
+                                id="connector-oauth-client-id-error"
+                                className="text-xs leading-5 text-destructive"
+                                role="alert"
+                              >
                                 {t('Client ID is required when a client secret is configured.')}
                               </p>
                             ) : null}
@@ -955,6 +982,7 @@ export function ConnectorAddForm({
                             <Input
                               id="connector-oauth-client-secret"
                               aria-label={t('Client secret')}
+                              aria-required={requiresOAuthClientSecret || undefined}
                               type="password"
                               value={clientSecret}
                               placeholder={
@@ -1026,13 +1054,15 @@ export function ConnectorAddForm({
                       <Textarea
                         id="connector-headers"
                         aria-label={t('Headers')}
+                        aria-required={requiredHeaders.length > 0 || undefined}
+                        aria-describedby="connector-headers-help"
                         value={headersText}
                         rows={3}
                         placeholder={'Authorization: Bearer <token>\nX-Api-Key: <key>'}
                         className="resize-y font-mono text-[13px]"
                         onChange={(event) => setHeadersText(event.target.value)}
                       />
-                      <p className={helperClassName}>
+                      <p id="connector-headers-help" className={helperClassName}>
                         <Trans
                           i18nKey="One <code>Name: Value</code> per line (not JSON)."
                           components={{ code: <span className="font-mono" /> }}
@@ -1063,6 +1093,7 @@ export function ConnectorAddForm({
             <input
               type="checkbox"
               aria-label={t('I trust this connector')}
+              aria-required="true"
               checked={trusted}
               className="mt-0.5 size-4 shrink-0"
               onChange={(event) => setTrusted(event.target.checked)}
