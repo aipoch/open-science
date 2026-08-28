@@ -10,7 +10,6 @@ import {
 } from '../application-command-router'
 import { canSatisfyHumanApproval, type CallerContext } from '../caller-context'
 import type { ApprovalBroker } from '../connectors/approval-broker'
-import type { CredentialRequestBroker } from '../connectors/credential-request-broker'
 import type { SkillImportApprovalBroker } from '../skills/conversation-import'
 import { readConversationSkillImportEnabled } from './transport-validation'
 import type { ConnectorSettingsWorkflows } from './workflows/connectors'
@@ -190,16 +189,6 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     readonly [],
     ReturnType<ApprovalBroker['replayPending']>
   >('connectors:approval-replay-pending'),
-  respondConnectorCredentialRequest: defineApplicationCommand<
-    'connectors:credential-respond',
-    readonly [request: { id: string; configured: boolean }],
-    ReturnType<CredentialRequestBroker['respond']>
-  >('connectors:credential-respond'),
-  replayPendingConnectorCredentialRequests: defineApplicationCommand<
-    'connectors:credential-replay-pending',
-    readonly [],
-    ReturnType<CredentialRequestBroker['replayPending']>
-  >('connectors:credential-replay-pending'),
   respondSkillImportApproval: defineApplicationCommand<
     'skills:conversation-import-respond',
     readonly [response: ConversationSkillImportApprovalResponse],
@@ -249,8 +238,6 @@ const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.respondConnectorApproval,
     settingsIntegrationApplicationCommands.replayConnectorApproval,
     settingsIntegrationApplicationCommands.replayPendingConnectorApprovals,
-    settingsIntegrationApplicationCommands.respondConnectorCredentialRequest,
-    settingsIntegrationApplicationCommands.replayPendingConnectorCredentialRequests,
     settingsIntegrationApplicationCommands.respondSkillImportApproval,
     settingsIntegrationApplicationCommands.replayPendingSkillImportApprovals
   ] as const
@@ -260,7 +247,6 @@ type IntegrationSettingsApplicationCommandDependencies = Readonly<{
   skills: SkillIntegrationWorkflows
   connectors: ConnectorIntegrationWorkflows
   connectorApprovals: Pick<ApprovalBroker, 'getPending' | 'replayPending' | 'respond'>
-  credentialRequests: Pick<CredentialRequestBroker, 'replayPending' | 'respond'>
   skillImportApprovals: Pick<SkillImportApprovalBroker, 'respond' | 'replayPending'>
 }>
 
@@ -341,18 +327,6 @@ const registerIntegrationSettingsApplicationCommands = (
           throw new Error('Only a current human caller can reopen connector approval requests.')
         }
         return dependencies.connectorApprovals.replayPending()
-      },
-      'connectors:credential-respond': ({ args, callerContext }) => {
-        if (!canSatisfyHumanApproval(callerContext)) {
-          throw new Error('Only a current human caller can respond to credential requests.')
-        }
-        return dependencies.credentialRequests.respond(args[0].id, args[0].configured)
-      },
-      'connectors:credential-replay-pending': ({ callerContext }) => {
-        if (!canSatisfyHumanApproval(callerContext)) {
-          throw new Error('Only a current human caller can reopen credential requests.')
-        }
-        return dependencies.credentialRequests.replayPending()
       },
       'skills:conversation-import-respond': ({ args, callerContext }) => {
         if (!canSatisfyHumanApproval(callerContext)) {

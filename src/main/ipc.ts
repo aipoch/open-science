@@ -3369,7 +3369,6 @@ const createApplicationModules = async (
       skills: settingsWorkflows.skills,
       connectors: settingsWorkflows.connectors,
       connectorApprovals: approvalBroker,
-      credentialRequests: credentialRequestBroker,
       skillImportApprovals: skillImportApprovalBroker
     },
     settingsRuntime: { workflows: settingsWorkflows.runtime },

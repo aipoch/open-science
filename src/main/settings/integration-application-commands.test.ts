@@ -59,8 +59,6 @@ const expectedApprovalChannels = [
   'connectors:approval-respond',
   'connectors:approval-replay',
   'connectors:approval-replay-pending',
-  'connectors:credential-respond',
-  'connectors:credential-replay-pending',
   'skills:conversation-import-respond',
   'skills:conversation-import-replay-pending'
 ] as const
@@ -129,7 +127,6 @@ const createDependencies = (): Readonly<{
         replayPending: vi.fn(),
         respond: vi.fn()
       },
-      credentialRequests: { respond: vi.fn(), replayPending: vi.fn() },
       skillImportApprovals: { respond: vi.fn(), replayPending: vi.fn() }
     },
     skillMethod: skills.method,
@@ -138,7 +135,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 29-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 27-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -172,7 +169,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(29)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(27)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -181,7 +178,7 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(29)
+    expect(integrationContracts).toHaveLength(27)
     expect(
       integrationContracts
         ?.filter(
