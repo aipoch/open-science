@@ -89,6 +89,7 @@ import {
   type MemoryAgentContext
 } from '../../shared/memory'
 import type { MemoryService } from '../memory/service'
+import { isRecord } from './value-guards'
 
 const log = createLogger('notebook:local-rpc')
 const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
@@ -430,9 +431,6 @@ const isArtifactRpcMethod = (method: string): method is ArtifactRpcMethod =>
   ARTIFACT_RPC_METHODS.has(method as ArtifactRpcMethod)
 
 // Narrows parsed JSON into a plain object before dispatching RPC params.
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 // Session, prompt, method, and one-shot ownership are checked separately. This digest binds the
 // authorization to executable input so a racing same-method request cannot take another Tool's join.
 const notebookExecutionInputFingerprint = (

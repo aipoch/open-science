@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 
 import { terminateProcessTree } from '../process-tree'
 import { condaActivatedPath } from './runtime-paths'
+import { toErrorMessage } from '../error-message'
 
 const execFileAsync = promisify(execFile)
 
@@ -37,7 +38,7 @@ const hasMicromambaErrorData = (error: unknown): error is { data: MicromambaErro
 // structured payload (e.g. captureMicromamba, spawn-failure). Recovery heuristics regex-match this, so
 // it must reconstruct what the pre-excerpt `Error.message` used to contain.
 export const micromambaDiagnosticText = (error: unknown): string => {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = toErrorMessage(error)
   if (!hasMicromambaErrorData(error)) return message
   const { stdoutTail, stderrTail } = error.data
   return [
@@ -198,13 +199,7 @@ export const runMicromamba = (
     try {
       onBeforeSpawn?.()
     } catch (error) {
-      reject(
-        new Error(
-          `Failed to record the spawn intent; not spawning: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        )
-      )
+      reject(new Error(`Failed to record the spawn intent; not spawning: ${toErrorMessage(error)}`))
       return
     }
 
@@ -293,9 +288,9 @@ export const runMicromamba = (
         onChild?.(child.pid)
       } catch (error) {
         recordingError = new Error(
-          `Failed to record the runtime worker PID; aborted to avoid an unrecoverable process: ${
-            error instanceof Error ? error.message : String(error)
-          }`
+          `Failed to record the runtime worker PID; aborted to avoid an unrecoverable process: ${toErrorMessage(
+            error
+          )}`
         )
         void terminateTree()
         // If confirmed, the close handler below rejects with recordingError. If not, terminateTree's

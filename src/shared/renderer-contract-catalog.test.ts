@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
 import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
-  RENDERER_CONTRACT_CATALOG
+  RENDERER_CONTRACT_CATALOG,
+  RENDERER_CONTRACT_GROUPS
 } from './renderer-contract-catalog'
 import { projectRendererContractMaps } from './renderer-contract'
 
@@ -207,6 +208,80 @@ describe('renderer contract catalog', () => {
       deactivateChannel: 'shortcut:window-find-unready',
       deactivate: 'on-dispose'
     })
+  })
+
+  it('publishes the complete Memory capability from the typed renderer contract', () => {
+    const memory = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'memory')
+
+    expect(
+      memory?.contracts.map(({ publicPath, channel, kind, applicationCommand }) => ({
+        publicPath,
+        channel,
+        kind,
+        applicationCommand
+      }))
+    ).toEqual([
+      {
+        publicPath: 'memory.clearAll',
+        channel: 'memory:clear-all',
+        kind: 'method',
+        applicationCommand: 'runtime-validated'
+      },
+      {
+        publicPath: 'memory.createCategory',
+        channel: 'memory:create-category',
+        kind: 'method',
+        applicationCommand: 'runtime-validated'
+      },
+      {
+        publicPath: 'memory.createEntry',
+        channel: 'memory:create-entry',
+        kind: 'method',
+        applicationCommand: 'runtime-validated'
+      },
+      {
+        publicPath: 'memory.deleteCategory',
+        channel: 'memory:delete-category',
+        kind: 'method',
+        applicationCommand: 'runtime-validated'
+      },
+      {
+        publicPath: 'memory.deleteEntry',
+        channel: 'memory:delete-entry',
+        kind: 'method',
+        applicationCommand: 'runtime-validated'
+      },
+      {
+        publicPath: 'memory.onChanged',
+        channel: 'memory:changed',
+        kind: 'event',
+        applicationCommand: undefined
+      },
+      {
+        publicPath: 'memory.setEnabled',
+        channel: 'memory:set-enabled',
+        kind: 'method',
+        applicationCommand: 'runtime-validated'
+      },
+      {
+        publicPath: 'memory.snapshot',
+        channel: 'memory:snapshot',
+        kind: 'method',
+        applicationCommand: 'runtime-validated'
+      },
+      {
+        publicPath: 'memory.updateCategory',
+        channel: 'memory:update-category',
+        kind: 'method',
+        applicationCommand: 'runtime-validated'
+      },
+      {
+        publicPath: 'memory.updateEntry',
+        channel: 'memory:update-entry',
+        kind: 'method',
+        applicationCommand: 'runtime-validated'
+      }
+    ])
   })
 
   it('marks the runtime-validated command slice', () => {

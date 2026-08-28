@@ -21,6 +21,7 @@ import type {
   RestrictedInferenceRunInput
 } from './restricted-inference-runner'
 import type { VisionEvidencePersistence, VisionEvidenceSource } from './vision-evidence-repository'
+import { isRecord } from './value-guards'
 
 const EVIDENCE_SCHEMA_VERSION = 2
 const MAX_CACHE_ENTRIES = 64
@@ -92,9 +93,6 @@ type PrepareImageInputCompatibilityInput = Readonly<{
 
 type ImageRelayBlock =
   Extract<ContentBlock, { type: 'image' }> | Extract<ContentBlock, { type: 'resource_link' }>
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const stringValue = (value: unknown): string => {
   if (typeof value !== 'string') {

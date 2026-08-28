@@ -25,6 +25,7 @@ import {
   notebookLaneScope,
   type NotebookLaneIdentity
 } from './lane-identity'
+import { isRecord } from './value-guards'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const MAX_DOCUMENT_CACHE_ENTRIES = 8
@@ -114,9 +115,6 @@ class CorruptNotebookDocumentError extends Error {
     super('Notebook document is corrupt.')
   }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const notebookRunCandidate = (value: unknown): boolean => {
   if (!isRecord(value)) return false

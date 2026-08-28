@@ -6,6 +6,7 @@ import {
   sanitizeAcpMessageImage,
   type AcpRuntimeEvent
 } from '../../shared/acp'
+import { isRecord } from './value-guards'
 
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
@@ -17,9 +18,6 @@ const SKILL_TOOL_TITLE_PATTERN = /^(?:run|loaded)\s+skill(?:\?|:|\s|$)/iu
 const SKILL_CONTENT_PATTERN = /^\s*<skill_content(?:\s|>)/iu
 
 // Narrows protocol extension values before reading provider-specific metadata.
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 // Trims provider strings so blank metadata cannot override safer fallbacks.
 const trimProviderValue = (value: unknown): string | undefined => {
   if (typeof value !== 'string') return undefined

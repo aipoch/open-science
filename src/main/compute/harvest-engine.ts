@@ -46,6 +46,7 @@ import {
 import { getNotebookSessionRoot } from '../notebook/repository'
 import { buildComputeDonePayload } from './job-notifier'
 import { withDataRootWrite } from '../storage/migration-state'
+import { toErrorMessage } from '../error-message'
 
 const MIB_BYTES = 1024 * 1024
 export const HARVEST_FREE_DISK_RESERVE_BYTES = 2 * 1024 * MIB_BYTES
@@ -378,7 +379,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     host = await hostRepository.get(job.provider_id)
   } catch (err) {
     if (deps.signal?.aborted) throw err
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = toErrorMessage(err)
     await finalizeAndReturn(`host lookup failed: ${msg}`, '[]')
     return
   }
@@ -452,7 +453,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     }
   } catch (err) {
     if (deps.signal?.aborted) throw err
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = toErrorMessage(err)
     await finalizeAndReturn(`free-space check failed: ${msg}`, '[]')
     return
   }
@@ -533,7 +534,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
             : 'exceeds_max_total_mb'
         recordLimit(relativePath, Math.max(expectedBytes, maxBytes + 1), reason)
       }
-      const message = error instanceof Error ? error.message : String(error)
+      const message = toErrorMessage(error)
       errors.push(message)
       return false
     }

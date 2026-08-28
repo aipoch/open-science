@@ -13,6 +13,7 @@ const source = ts.createSourceFile(catalogPath, sourceText, ts.ScriptTarget.Late
 
 const stringLiteral = (node, label) => {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
+  if (ts.isIdentifier(node)) return node.text
   throw new Error(`Renderer contract ${label} must be a string literal.`)
 }
 
@@ -34,46 +35,56 @@ const projectionFor = (node) => {
 const invoke = {}
 const events = {}
 
-let groups
+let contract
 const findCatalog = (node) => {
+  const argument =
+    ts.isVariableDeclaration(node) &&
+    node.initializer &&
+    ts.isCallExpression(node.initializer) &&
+    node.initializer.arguments[0]
+      ? node.initializer.arguments[0]
+      : undefined
+  const value = argument && ts.isAsExpression(argument) ? argument.expression : argument
   if (
     ts.isVariableDeclaration(node) &&
     ts.isIdentifier(node.name) &&
-    node.name.text === 'RENDERER_CONTRACT_GROUPS' &&
-    node.initializer &&
-    ts.isCallExpression(node.initializer) &&
-    node.initializer.arguments[0] &&
-    ts.isArrayLiteralExpression(node.initializer.arguments[0])
+    node.name.text === 'RENDERER_API_CONTRACT' &&
+    value &&
+    ts.isObjectLiteralExpression(value)
   ) {
-    groups = node.initializer.arguments[0]
+    contract = value
   }
   ts.forEachChild(node, findCatalog)
 }
 findCatalog(source)
-if (!groups) throw new Error('Renderer contract group manifest was not found.')
+if (!contract) throw new Error('Typed renderer contract was not found.')
 
-for (const group of groups.elements) {
-  if (!ts.isCallExpression(group) || group.expression.getText(source) !== 'group') {
-    throw new Error('Renderer contract manifest may only contain group(...) calls.')
+for (const property of contract.properties) {
+  if (!ts.isPropertyAssignment(property)) {
+    throw new Error('Renderer contract may only contain property assignments.')
   }
-  const publicRoot = stringLiteral(group.arguments[1], 'public root')
-  const entries = group.arguments[2]
-  if (!entries || !ts.isArrayLiteralExpression(entries)) {
-    throw new Error('Renderer contract group entries must be an array literal.')
+  const path = stringLiteral(property.name, 'public path')
+  const initializer = property.initializer
+  if (
+    !ts.isCallExpression(initializer) ||
+    !ts.isCallExpression(initializer.expression) ||
+    !ts.isIdentifier(initializer.expression.expression)
+  ) {
+    throw new Error(`Renderer contract entry must use a typed builder: ${path}`)
   }
-  for (const entry of entries.elements) {
-    if (!ts.isArrayLiteralExpression(entry)) {
-      throw new Error('Renderer contract entries must be tuple literals.')
-    }
-    const member = stringLiteral(entry.elements[0], 'member')
-    const projection = projectionFor(entry.elements[2])
-    if (projection === 'none') continue
-    const channel = stringLiteral(entry.elements[1], 'channel')
-    const path = publicRoot ? `${publicRoot}.${member}` : member
-    const target = projection === 'invoke' ? invoke : events
-    if (Object.hasOwn(target, path)) throw new Error(`Duplicate projected renderer path: ${path}`)
-    target[path] = channel
+  const builder = initializer.expression.expression.text
+  if (builder === 'value') continue
+  if (builder !== 'callable') throw new Error(`Unknown renderer contract builder: ${builder}`)
+  const metadata = initializer.arguments[1]
+  if (!metadata || !ts.isArrayLiteralExpression(metadata)) {
+    throw new Error(`Renderer contract metadata must be a tuple: ${path}`)
   }
+  const projection = projectionFor(metadata.elements[1])
+  if (projection === 'none') continue
+  const channel = stringLiteral(metadata.elements[0], 'channel')
+  const target = projection === 'invoke' ? invoke : events
+  if (Object.hasOwn(target, path)) throw new Error(`Duplicate projected renderer path: ${path}`)
+  target[path] = channel
 }
 
 const sorted = (value) =>

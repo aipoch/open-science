@@ -15,14 +15,12 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import type { AcpSessionRegistry } from './session-registry'
+import { isRecord } from './value-guards'
 
 const CODEX_COMPACTION_WARNING =
   'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
 const CODEX_LEGACY_COMPACTION_NOTICE = "*Context compacted to fit the model's context window.*"
 const AGENT_USER_CHOICE_TOOL = 'open-science-notebook/ask_user_question'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const isCodexAppOwnedUserChoiceTool = (
   notification: Readonly<SessionNotification>,
