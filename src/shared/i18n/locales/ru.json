@@ -427,6 +427,8 @@
     "Checking for updates…": "Проверка обновлений…",
     "Checking the Office file": "Проверка файла Office",
     "Checking…": "Проверка…",
+    "Desktop only": "Только в настольном приложении",
+    "This credential can only be configured in the local desktop app.": "Эти учётные данные можно настроить только в локальном настольном приложении.",
     "Checks": "Проверки",
     "Choose Skills to include": "Выберите навыки для включения",
     "Choose ZIP": "Выберите ZIP",

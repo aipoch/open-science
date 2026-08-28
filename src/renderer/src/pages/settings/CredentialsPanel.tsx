@@ -15,6 +15,7 @@ import { MaskedPasswordField } from './MaskedPasswordField'
 export type CredentialsServiceId = 'github' | 'literature' | 'openalex'
 export type CredentialsView =
   { kind: 'list' } | { kind: 'service'; serviceId: CredentialsServiceId }
+type DesktopCredentialAvailability = 'checking' | 'available' | 'unavailable'
 
 type CredentialsPanelProps = {
   view: CredentialsView
@@ -25,6 +26,8 @@ type CredentialsPanelProps = {
 
 const statusLabel = (configured: boolean): React.JSX.Element | null =>
   configured ? <Check className="size-4 text-primary" aria-hidden="true" /> : null
+const isLocalOnlyActionError = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes('only available in the local desktop app')
 
 export function CredentialsPanel({
   view,
@@ -43,6 +46,8 @@ export function CredentialsPanel({
   const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const [githubConfigured, setGithubConfigured] = useState(false)
+  const [desktopCredentialAvailability, setDesktopCredentialAvailability] =
+    useState<DesktopCredentialAvailability>('checking')
   const activeServiceId = view.kind === 'service' ? view.serviceId : undefined
   const [apiKeyDraft, setApiKeyDraft] = useState<{
     serviceId: CredentialsServiceId
@@ -75,8 +80,15 @@ export function CredentialsPanel({
     void loadConnectors().catch(() => undefined)
     void window.api.settings
       .getGitHubTokenStatus()
-      .then((status) => setGithubConfigured(status.configured))
-      .catch(() => undefined)
+      .then((status) => {
+        setGithubConfigured(status.configured)
+        setDesktopCredentialAvailability('available')
+      })
+      .catch((error: unknown) => {
+        setDesktopCredentialAvailability(
+          isLocalOnlyActionError(error) ? 'unavailable' : 'available'
+        )
+      })
   }, [loadConnectors])
 
   const saveOpenAlex = async (): Promise<void> => {
@@ -160,6 +172,29 @@ export function CredentialsPanel({
   }
 
   if (view.kind === 'service') {
+    const isDesktopOnlyService = view.serviceId === 'github' || view.serviceId === 'openalex'
+    if (isDesktopOnlyService && desktopCredentialAvailability === 'checking') {
+      return <p className="p-5 text-sm text-muted-foreground">{t('Checking…')}</p>
+    }
+    if (isDesktopOnlyService && desktopCredentialAvailability === 'unavailable') {
+      const serviceLabel = view.serviceId === 'github' ? t('GitHub') : t('OpenAlex')
+      return (
+        <div className="space-y-5 p-5">
+          <div>
+            <h2 className="text-base font-semibold">{serviceLabel}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t('This credential can only be configured in the local desktop app.')}
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" onClick={() => onNavigate({ kind: 'list' })}>
+              {t('Cancel')}
+            </Button>
+          </div>
+        </div>
+      )
+    }
+
     if (view.serviceId === 'github') {
       return (
         <div className="p-5">
@@ -289,6 +324,7 @@ export function CredentialsPanel({
       label: t('GitHub'),
       description: t('Personal access token for GitHub Skill discovery and imports.'),
       configured: githubConfigured,
+      desktopOnly: true,
       Icon: GitHubMark
     },
     {
@@ -296,6 +332,7 @@ export function CredentialsPanel({
       label: t('Literature access'),
       description: t('Contact email and optional NCBI API key for research services.'),
       configured: Boolean(ncbi.contactEmail || ncbi.hasApiKey),
+      desktopOnly: false,
       Icon: BookOpen
     },
     {
@@ -303,6 +340,7 @@ export function CredentialsPanel({
       label: t('OpenAlex'),
       description: t('API key required by OpenAlex tools in the Literature Connector.'),
       configured: openAlex.hasApiKey,
+      desktopOnly: true,
       Icon: BookOpen
     }
   ]
@@ -317,27 +355,38 @@ export function CredentialsPanel({
           )}
         </p>
         <div className="mt-4 divide-y divide-border rounded-xl border border-border">
-          {services.map(({ id, label, description, configured, Icon }) => (
-            <div key={id} className="flex items-center gap-3 px-4 py-3">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
-                <Icon className="size-4" aria-hidden="true" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  {label}
-                  {statusLabel(configured)}
+          {services.map(({ id, label, description, configured, desktopOnly, Icon }) => {
+            const checking = desktopOnly && desktopCredentialAvailability === 'checking'
+            const unavailable = desktopOnly && desktopCredentialAvailability === 'unavailable'
+            return (
+              <div key={id} className="flex items-center gap-3 px-4 py-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
+                  <Icon className="size-4" aria-hidden="true" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    {label}
+                    {statusLabel(configured)}
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground">{description}</p>
                 </div>
-                <p className="truncate text-xs text-muted-foreground">{description}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={checking || unavailable}
+                  onClick={() => onNavigate({ kind: 'service', serviceId: id })}
+                >
+                  {checking
+                    ? t('Checking…')
+                    : unavailable
+                      ? t('Desktop only')
+                      : configured
+                        ? t('Manage')
+                        : t('Connect')}
+                </Button>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onNavigate({ kind: 'service', serviceId: id })}
-              >
-                {configured ? t('Manage') : t('Connect')}
-              </Button>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </section>
 

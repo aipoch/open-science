@@ -411,6 +411,8 @@
     "Checking for updates…": "업데이트 확인 중…",
     "Checking the Office file": "Office 파일 확인 중",
     "Checking…": "확인 중…",
+    "Desktop only": "데스크톱 전용",
+    "This credential can only be configured in the local desktop app.": "이 자격 증명은 로컬 데스크톱 앱에서만 구성할 수 있습니다.",
     "Checks": "검사",
     "Choose Skills to include": "포함할 스킬 선택",
     "Choose ZIP": "ZIP을 선택하세요",

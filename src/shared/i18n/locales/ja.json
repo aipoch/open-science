@@ -411,6 +411,8 @@
     "Checking for updates…": "アップデートをチェック中…",
     "Checking the Office file": "Office ファイルを確認する",
     "Checking…": "確認中…",
+    "Desktop only": "デスクトップのみ",
+    "This credential can only be configured in the local desktop app.": "この認証情報はローカルのデスクトップアプリでのみ設定できます。",
     "Checks": "チェック",
     "Choose Skills to include": "含めるスキルを選択",
     "Choose ZIP": "ZIP を選択",

@@ -72,15 +72,16 @@ describe('CredentialsPanel', () => {
     expect(onOpenConnector).toHaveBeenCalledWith('custom-search')
   })
 
-  it('keeps credential drafts isolated between service forms', () => {
+  it('keeps credential drafts isolated between service forms', async () => {
     const props = {
       onNavigate: vi.fn(),
       onOpenConnector: vi.fn(),
       onOpenProvider: vi.fn()
     }
-    act(() =>
+    await act(async () => {
       root.render(<CredentialsPanel {...props} view={{ kind: 'service', serviceId: 'openalex' }} />)
-    )
+      await Promise.resolve()
+    })
     const openAlexField = document.body.querySelector<HTMLInputElement>('#service-api-key')!
     const paste = new Event('paste', { bubbles: true, cancelable: true })
     Object.defineProperty(paste, 'clipboardData', {
@@ -96,6 +97,46 @@ describe('CredentialsPanel', () => {
     )
 
     expect(document.body.querySelector<HTMLInputElement>('#service-api-key')?.value).toBe('')
+  })
+
+  it('keeps desktop-only credentials visible but unavailable on remote Web', async () => {
+    window.api.settings.getGitHubTokenStatus = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          'This action is only available in the local desktop app (settings:get-github-token-status).'
+        )
+      )
+    const props = {
+      onNavigate: vi.fn(),
+      onOpenConnector: vi.fn(),
+      onOpenProvider: vi.fn()
+    }
+
+    await act(async () => {
+      root.render(<CredentialsPanel {...props} view={{ kind: 'list' }} />)
+      await Promise.resolve()
+    })
+
+    const desktopOnlyButtons = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).filter((button) => button.textContent === 'Desktop only')
+    expect(desktopOnlyButtons).toHaveLength(2)
+    expect(desktopOnlyButtons.every((button) => button.disabled)).toBe(true)
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Connect' && !button.disabled
+      )
+    ).toBeDefined()
+
+    act(() =>
+      root.render(<CredentialsPanel {...props} view={{ kind: 'service', serviceId: 'openalex' }} />)
+    )
+
+    expect(document.body.textContent).toContain(
+      'This credential can only be configured in the local desktop app.'
+    )
+    expect(document.body.querySelector('#service-api-key')).toBeNull()
   })
 
   it('removes a stored NCBI key without clearing the contact email', async () => {

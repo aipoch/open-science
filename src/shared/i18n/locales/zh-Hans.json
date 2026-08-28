@@ -507,6 +507,8 @@
     "Checking for updates…": "正在检查更新…",
     "Checking the Office file": "正在检查 Office 文件",
     "Checking…": "检查中…",
+    "Desktop only": "仅限桌面端",
+    "This credential can only be configured in the local desktop app.": "此凭据只能在本地桌面应用中配置。",
     "Checks": "检查项",
     "Choose Skills to include": "选择要包含的技能",
     "Choose ZIP": "选择 ZIP",

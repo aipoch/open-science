@@ -423,6 +423,8 @@
     "Checking for updates…": "Vérification des mises à jour…",
     "Checking the Office file": "Vérification du fichier Office",
     "Checking…": "Vérification…",
+    "Desktop only": "Application de bureau uniquement",
+    "This credential can only be configured in the local desktop app.": "Ces informations d’identification ne peuvent être configurées que dans l’application de bureau locale.",
     "Checks": "Vérifications",
     "Choose Skills to include": "Choisissez les compétences à inclure",
     "Choose ZIP": "Choisir un ZIP",
