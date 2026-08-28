@@ -3071,7 +3071,19 @@ describe('European Portuguese safety copy', () => {
     ],
     ['{{framework}} · {{model}} · {{effort}}', '{{framework}} · {{model}} · {{effort}}'],
     ['Session title', 'Título da sessão'],
-    ['Rename session title', 'Alterar o título da sessão']
+    ['Rename session title', 'Alterar o título da sessão'],
+    [
+      "Tencent's coding agent for the terminal.",
+      'Agente de programação da Tencent para a linha de comandos.'
+    ],
+    [
+      'CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.',
+      'O CodeBuddy é necessário para este framework. Instale-o abaixo ou manualmente e volte a detetá-lo.'
+    ],
+    [
+      'Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.',
+      'Transfere o CodeBuddy para o ambiente de execução gerido pela aplicação e executa-o nesse ambiente — não é necessária uma instalação global do Node.js nem do npm.'
+    ]
   ])('uses reviewed European Portuguese copy for newly merged surface %s', (key, expected) => {
     expect(catalog('pt-PT')[key]).toBe(expected)
   })

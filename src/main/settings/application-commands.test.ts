@@ -21,6 +21,7 @@ const expectedChannels = [
   'settings:cancel-isolated-claude-login',
   'settings:check-environment',
   'settings:detect-claude',
+  'settings:detect-codebuddy',
   'settings:detect-codex',
   'settings:detect-opencode',
   'settings:get-connector-detail',
@@ -30,6 +31,7 @@ const expectedChannels = [
   'settings:get-settings',
   'settings:get-skill-detail',
   'settings:install-claude',
+  'settings:install-codebuddy',
   'settings:install-codex',
   'settings:install-opencode',
   'settings:encryption-available',
@@ -119,7 +121,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings core application commands', () => {
-  it('installs the exact 41-command inventory and dispatches a remote-safe preflight query', async () => {
+  it('installs the exact command inventory and dispatches a remote-safe preflight query', async () => {
     const { dependencies, serviceMethod } = createDependencies()
     const preflight = { agentReady: true }
     serviceMethod('getPreflight').mockResolvedValue(preflight)

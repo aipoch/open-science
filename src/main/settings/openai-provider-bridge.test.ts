@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { adaptCodeBuddyChatCompletionsRequest } from './codebuddy-chat-request-adapter'
 import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
 import { OPENCODE_TOOL_IMAGE_REQUEST_FIXTURE } from './provider-tool-image-wire.test-fixtures'
 
@@ -356,6 +357,57 @@ describe('OpenAiProviderBridge', () => {
     expect(upstream.requests[0].body).toMatchObject({
       model: 'model-a',
       messages: OPENCODE_TOOL_IMAGE_REQUEST_FIXTURE.messages
+    })
+  })
+
+  it('applies a target-scoped CodeBuddy request adapter before forwarding', async () => {
+    const upstream = createUpstream()
+    servers.push(upstream.server)
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'codebuddy/provider/model-a',
+      wire: 'chat-completions',
+      endpoint: `${await listen(upstream.server)}/v1/chat/completions`,
+      key: 'key-a',
+      model: 'model-a',
+      adaptRequest: adaptCodeBuddyChatCompletionsRequest
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'untrusted',
+        messages: [
+          {
+            role: 'user',
+            content:
+              'Earlier image.\n<image_local_path>/data/clipboard-images/clipboard-2026-08-27T12-02-12-366Z-c876a6d7.png</image_local_path>'
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: '<image_local_path>/data/clipboard-images/clipboard-2026-08-27T12-02-12-366Z-c876a6d7.png</image_local_path>'
+              },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,AQID' } }
+            ]
+          }
+        ]
+      })
+    })
+
+    expect(upstream.requests[0].body).toEqual({
+      model: 'model-a',
+      messages: [
+        { role: 'user', content: 'Earlier image.' },
+        {
+          role: 'user',
+          content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AQID' } }]
+        }
+      ]
     })
   })
 })

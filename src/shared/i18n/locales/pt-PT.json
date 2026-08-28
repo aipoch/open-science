@@ -3737,6 +3737,9 @@
     "The vendor returned a model ID longer than {{limit}} characters.": "O fornecedor devolveu um ID de modelo com mais de {{limit}} caracteres.",
     "Claude token must not exceed {{limit}} bytes.": "O token Claude não pode exceder {{limit}} bytes.",
     "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
-    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "A configuração da sessão foi alterada para {{framework}} · {{model}} · {{effort}}"
+    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "A configuração da sessão foi alterada para {{framework}} · {{model}} · {{effort}}",
+    "Tencent's coding agent for the terminal.": "Agente de programação da Tencent para a linha de comandos.",
+    "CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.": "O CodeBuddy é necessário para este framework. Instale-o abaixo ou manualmente e volte a detetá-lo.",
+    "Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.": "Transfere o CodeBuddy para o ambiente de execução gerido pela aplicação e executa-o nesse ambiente — não é necessária uma instalação global do Node.js nem do npm."
   }
 }

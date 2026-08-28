@@ -2,10 +2,11 @@ import type { ActiveSession, PromptResponse, SessionNotification } from '@agentc
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
-import { claudeCodeFramework } from '../agent-framework'
+import { claudeCodeFramework, codeBuddyFramework } from '../agent-framework'
 import type { AgentFramework } from '../agent-framework/types'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
+import { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
 
 type NextUpdate = Awaited<ReturnType<ActiveSession['nextUpdate']>>
@@ -44,10 +45,13 @@ const notification = (text: string): SessionNotification => ({
 const update = (message: SessionNotification): NextUpdate =>
   ({ kind: 'session_update', notification: message, update: message.update }) as NextUpdate
 
-const fakeSession = (messages: Array<NextUpdate | Promise<NextUpdate>> = []): FakeSession => {
+const fakeSession = (
+  messages: Array<NextUpdate | Promise<NextUpdate>> = [],
+  sessionId = 'provider-session'
+): FakeSession => {
   const queue = [...messages]
   return {
-    sessionId: 'provider-session',
+    sessionId,
     prompt: vi.fn(async () => undefined),
     nextUpdate: vi.fn(async () => {
       const message = queue.shift()
@@ -67,6 +71,7 @@ const createHarness = (input?: {
   framework?: AgentFramework
   session?: FakeSession
   cancelCompaction?: (sessionId: string) => Promise<void>
+  beforePromptDispatch?: (input: { appSessionId: string; session: ActiveSession }) => Promise<void>
 }): {
   cancelCompaction: ReturnType<typeof vi.fn>
   context: ContextUsageTracker
@@ -108,6 +113,8 @@ const createHarness = (input?: {
     pushEvent,
     emitState,
     errorMessage: (error) => (error instanceof Error ? error.message : String(error)),
+    beforePromptDispatch: input?.beforePromptDispatch,
+    serialization: new AcpProviderPromptSerializationOwner(),
     cancelCompaction
   })
 
@@ -245,6 +252,44 @@ describe('AcpContextCompactionWorkflow', () => {
       { compactionReason: 'automatic', status: 'completed' }
     ])
     expect(harness.interactions.current('app-session')).toBeUndefined()
+  })
+
+  it('uses the host threshold for a long CodeBuddy session', async () => {
+    const session = fakeSession([stop('end_turn')])
+    const harness = createHarness({ framework: codeBuddyFramework, session })
+    harness.context.reconcileProviderUsage('app-session', { used: 179_999, size: 200_000 })
+
+    await expect(harness.workflow.compactIfIdle('app-session')).resolves.toBeUndefined()
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+    await expect(harness.workflow.compactIfIdle('app-session')).resolves.toEqual({
+      stopReason: 'end_turn'
+    })
+
+    expect(session.prompt).toHaveBeenCalledOnce()
+    expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: '/compact' }])
+  })
+
+  it('activates the target CodeBuddy provider session before compacting it', async () => {
+    const target = fakeSession([stop('end_turn')], 'provider-session-b')
+    const beforePromptDispatch = vi.fn(async () => undefined)
+    const harness = createHarness({
+      framework: codeBuddyFramework,
+      session: target,
+      beforePromptDispatch
+    })
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+
+    await expect(harness.workflow.compact({ sessionId: 'app-session' })).resolves.toEqual({
+      stopReason: 'end_turn'
+    })
+
+    expect(beforePromptDispatch).toHaveBeenCalledWith({
+      appSessionId: 'app-session',
+      session: target
+    })
+    expect(beforePromptDispatch.mock.invocationCallOrder[0]).toBeLessThan(
+      target.prompt.mock.invocationCallOrder[0]
+    )
   })
 
   it('does not compact while idle when no native threshold is declared', async () => {

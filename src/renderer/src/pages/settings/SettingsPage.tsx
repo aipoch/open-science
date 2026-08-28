@@ -342,6 +342,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const codex = useSettingsStore((state) => state.codex)
   const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
   const detectCodex = useSettingsStore((state) => state.detectCodex)
+  const codebuddy = useSettingsStore((state) => state.codebuddy)
+  const isDetectingCodeBuddy = useSettingsStore((state) => state.isDetectingCodeBuddy)
+  const detectCodeBuddy = useSettingsStore((state) => state.detectCodeBuddy)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const load = useSettingsStore((state) => state.load)
   const persistProvider = useSettingsStore((state) => state.persistProvider)
@@ -369,6 +372,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const mobileNavRef = useRef<HTMLElement | null>(null)
   const mobileNavTriggerRef = useRef<HTMLButtonElement | null>(null)
   const mobileNavWasOpenRef = useRef(false)
+  const codebuddyAutoDetectAttempted = useRef(false)
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
@@ -487,6 +491,23 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       void detectCodex()
     }
   }, [open, activePanel, agentFrameworkId, codex?.resolvedPath, isDetectingCodex, detectCodex])
+
+  useEffect(() => {
+    if (!open) {
+      codebuddyAutoDetectAttempted.current = false
+      return
+    }
+
+    if (
+      activePanel === 'agent' &&
+      !codebuddyAutoDetectAttempted.current &&
+      !codebuddy?.resolvedPath &&
+      !isDetectingCodeBuddy
+    ) {
+      codebuddyAutoDetectAttempted.current = true
+      void detectCodeBuddy()
+    }
+  }, [open, activePanel, codebuddy?.resolvedPath, isDetectingCodeBuddy, detectCodeBuddy])
 
   const isUsageVisible = open && activePanel === 'usage'
   const sessions = useSessionStore((state) =>

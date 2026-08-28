@@ -3476,6 +3476,9 @@
     "The vendor returned a model ID longer than {{limit}} characters.": "공급업체에서 {{limit}}자보다 긴 모델 ID를 반환했습니다.",
     "Claude token must not exceed {{limit}} bytes.": "Claude 토큰은 {{limit}}바이트를 초과할 수 없습니다.",
     "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
-    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "세션 구성이 변경되었습니다: {{framework}} · {{model}} · {{effort}}"
+    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "세션 구성이 변경되었습니다: {{framework}} · {{model}} · {{effort}}",
+    "Tencent's coding agent for the terminal.": "Tencent의 터미널용 코딩 에이전트입니다.",
+    "CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.": "이 프레임워크에는 CodeBuddy가 필요합니다. 아래에서 설치하거나 수동으로 설치한 뒤 다시 감지하세요.",
+    "Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.": "CodeBuddy를 앱 관리 런타임에 다운로드하고 앱 런타임으로 실행합니다. 전역 Node.js나 npm은 필요하지 않습니다."
   }
 }

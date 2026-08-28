@@ -75,8 +75,10 @@ type PreloadApi = {
   }
   settings: {
     detectOpencode: () => unknown
+    detectCodeBuddy: () => unknown
     detectCodex: () => unknown
     installOpencode: (request: unknown) => unknown
+    installCodeBuddy: (request: unknown) => unknown
     installCodex: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
     setNotificationsEnabled: (request: unknown) => unknown
@@ -89,6 +91,7 @@ type PreloadApi = {
     listAppIcons: () => unknown
     uninstallClaude: () => unknown
     uninstallOpencode: () => unknown
+    uninstallCodeBuddy: () => unknown
     uninstallCodex: () => unknown
     cancelCodexLogin: () => unknown
     loginIsolatedCodex: () => unknown
@@ -467,6 +470,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.deleteProvider',
       'settings.deleteSkill',
       'settings.detectClaude',
+      'settings.detectCodeBuddy',
       'settings.detectCodex',
       'settings.detectOpencode',
       'settings.exportCustomServerTemplate',
@@ -482,6 +486,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.importSkillZip',
       'settings.importSkillZipBatch',
       'settings.installClaude',
+      'settings.installCodeBuddy',
       'settings.installCodex',
       'settings.installOpencode',
       'settings.isEncryptionAvailable',
@@ -546,6 +551,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setToolPermission',
       'settings.setVisionModel',
       'settings.uninstallClaude',
+      'settings.uninstallCodeBuddy',
       'settings.uninstallCodex',
       'settings.uninstallOpencode',
       'settings.updateCustomServer',
@@ -1188,6 +1194,18 @@ const cases: ForwardingCase[] = [
     args: [sampleInstall]
   },
   {
+    name: 'settings.detectCodeBuddy → settings:detect-codebuddy (no args)',
+    invoke: (a) => a.settings.detectCodeBuddy(),
+    channel: 'settings:detect-codebuddy',
+    args: []
+  },
+  {
+    name: 'settings.installCodeBuddy → settings:install-codebuddy',
+    invoke: (a) => a.settings.installCodeBuddy({ source: 'managed' }),
+    channel: 'settings:install-codebuddy',
+    args: [{ source: 'managed' }]
+  },
+  {
     name: 'settings.detectCodex → settings:detect-codex (no args)',
     invoke: (a) => a.settings.detectCodex(),
     channel: 'settings:detect-codex',
@@ -1257,6 +1275,12 @@ const cases: ForwardingCase[] = [
     name: 'settings.uninstallOpencode → settings:uninstall-opencode (no args)',
     invoke: (a) => a.settings.uninstallOpencode(),
     channel: 'settings:uninstall-opencode',
+    args: []
+  },
+  {
+    name: 'settings.uninstallCodeBuddy → settings:uninstall-codebuddy (no args)',
+    invoke: (a) => a.settings.uninstallCodeBuddy(),
+    channel: 'settings:uninstall-codebuddy',
     args: []
   },
   {

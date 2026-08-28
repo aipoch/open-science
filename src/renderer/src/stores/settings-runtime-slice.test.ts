@@ -29,11 +29,14 @@ type RuntimeCommands = Pick<
   | 'detectClaude'
   | 'detectOpencode'
   | 'detectCodex'
+  | 'detectCodeBuddy'
   | 'installClaude'
   | 'installOpencode'
   | 'installCodex'
+  | 'installCodeBuddy'
   | 'uninstallClaude'
   | 'uninstallOpencode'
+  | 'uninstallCodeBuddy'
   | 'uninstallCodex'
   | 'onInstallLog'
 >
@@ -59,9 +62,11 @@ const snapshot = (): SettingsSnapshot => ({
   agentFrameworks: [],
   opencode: {},
   codex: {},
+  codebuddy: {},
   claudeManaged: false,
   opencodeManaged: false,
   codexManaged: false,
+  codebuddyManaged: false,
   reasoningEffort: 'default',
   notificationsEnabled: true,
   conversationSkillImportEnabled: true,
@@ -72,6 +77,7 @@ const preflight = (): Preflight => ({
   claudeReady: false,
   opencodeReady: false,
   codexReady: false,
+  codebuddyReady: false,
   agentFrameworkId: 'claude-code',
   agentReady: false,
   activeProviderReady: false
@@ -113,11 +119,14 @@ const createCommands = (): RuntimeCommandMocks => ({
   detectClaude: vi.fn().mockResolvedValue({ found: true, path: '/bin/claude', version: '1.0.0' }),
   detectOpencode: vi.fn().mockResolvedValue(snapshot()),
   detectCodex: vi.fn().mockResolvedValue(snapshot()),
+  detectCodeBuddy: vi.fn().mockResolvedValue(snapshot()),
   installClaude: vi.fn().mockResolvedValue({ installId: 'claude-1', ok: true }),
   installOpencode: vi.fn().mockResolvedValue({ installId: 'opencode-1', ok: true }),
   installCodex: vi.fn().mockResolvedValue({ installId: 'codex-1', ok: true }),
+  installCodeBuddy: vi.fn().mockResolvedValue({ installId: 'codebuddy-1', ok: true }),
   uninstallClaude: vi.fn().mockResolvedValue(snapshot()),
   uninstallOpencode: vi.fn().mockResolvedValue(snapshot()),
+  uninstallCodeBuddy: vi.fn().mockResolvedValue(snapshot()),
   uninstallCodex: vi.fn().mockResolvedValue(snapshot()),
   onInstallLog: vi.fn().mockReturnValue(vi.fn())
 })
@@ -216,6 +225,35 @@ describe('runtime setup slice: install lifecycle', () => {
       installProgress: null,
       installError: undefined
     })
+  })
+
+  it('uses the app-managed CodeBuddy install source by default', async () => {
+    await store.getState().installCodeBuddy()
+
+    expect(commands.installCodeBuddy).toHaveBeenCalledWith({ source: 'managed' })
+  })
+
+  it('clears stale success logs when CodeBuddy install is not present in the refreshed snapshot', async () => {
+    let emit: (event: ClaudeInstallEvent) => void = () => undefined
+    commands.onInstallLog.mockImplementation((listener) => {
+      emit = listener
+      return vi.fn()
+    })
+    commands.installCodeBuddy.mockImplementation(async () => {
+      emit({
+        kind: 'log',
+        installId: 'codebuddy-1',
+        stream: 'system',
+        chunk: 'Installed CodeBuddy 2.138.0.\n'
+      })
+      return { installId: 'codebuddy-1', ok: true }
+    })
+    commands.getSettings.mockResolvedValue(snapshot())
+
+    await store.getState().installCodeBuddy()
+
+    expect(store.getState().installStates.codebuddy.installLogs).toEqual([])
+    expect(store.getState().installStates.codebuddy.installError).toBeUndefined()
   })
 
   it('commits a 10,000-chunk log burst in two store updates and keeps the tail', async () => {
@@ -587,7 +625,8 @@ describe('runtime setup slice: discovery lifecycle', () => {
 
   it.each([
     ['detectOpencode', 'isDetectingOpencode'],
-    ['detectCodex', 'isDetectingCodex']
+    ['detectCodex', 'isDetectingCodex'],
+    ['detectCodeBuddy', 'isDetectingCodeBuddy']
   ] as const)('reconciles the snapshot and clears the flag after %s', async (action, flag) => {
     await store.getState()[action]()
 
@@ -599,7 +638,8 @@ describe('runtime setup slice: discovery lifecycle', () => {
 
   it.each([
     ['detectOpencode', 'isDetectingOpencode'],
-    ['detectCodex', 'isDetectingCodex']
+    ['detectCodex', 'isDetectingCodex'],
+    ['detectCodeBuddy', 'isDetectingCodeBuddy']
   ] as const)('propagates %s failure and still clears its flag', async (action, flag) => {
     const failure = new Error(`${action} unavailable`)
     commands[action].mockRejectedValue(failure)
@@ -608,12 +648,30 @@ describe('runtime setup slice: discovery lifecycle', () => {
     expect(store.getState()[flag]).toBe(false)
     expect(reconcileSnapshot).not.toHaveBeenCalled()
   })
+
+  it('clears stale CodeBuddy install logs after re-detect confirms it is missing', async () => {
+    store.setState((state) => ({
+      installStates: {
+        ...state.installStates,
+        codebuddy: {
+          ...state.installStates.codebuddy,
+          installLogs: ['Installed CodeBuddy 2.138.0.\n']
+        }
+      }
+    }))
+    commands.detectCodeBuddy.mockResolvedValue(snapshot())
+
+    await store.getState().detectCodeBuddy()
+
+    expect(store.getState().installStates.codebuddy.installLogs).toEqual([])
+  })
 })
 
 describe('runtime setup slice: uninstall lifecycle', () => {
   it.each([
     ['uninstallClaude', 'uninstallClaude'],
     ['uninstallOpencode', 'uninstallOpencode'],
+    ['uninstallCodeBuddy', 'uninstallCodeBuddy'],
     ['uninstallCodex', 'uninstallCodex']
   ] as const)('reconciles and refreshes after %s', async (action, command) => {
     const { commands, reconcileSnapshot, store } = createHarness()

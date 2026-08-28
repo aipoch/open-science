@@ -27,9 +27,12 @@ type SettingsApi = {
   detectClaude: ReturnType<typeof vi.fn>
   detectOpencode: ReturnType<typeof vi.fn>
   detectCodex: ReturnType<typeof vi.fn>
+  detectCodeBuddy: ReturnType<typeof vi.fn>
   installClaude: ReturnType<typeof vi.fn>
   installOpencode: ReturnType<typeof vi.fn>
   installCodex: ReturnType<typeof vi.fn>
+  installCodeBuddy: ReturnType<typeof vi.fn>
+  uninstallCodeBuddy: ReturnType<typeof vi.fn>
   uninstallCodex: ReturnType<typeof vi.fn>
   onInstallLog: ReturnType<typeof vi.fn>
   setAgentFramework: ReturnType<typeof vi.fn>
@@ -98,9 +101,11 @@ const snapshot = (providers: SettingsSnapshot['providers']): SettingsSnapshot =>
   agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }],
   opencode: {},
   codex: {},
+  codebuddy: {},
   claudeManaged: false,
   opencodeManaged: false,
   codexManaged: false,
+  codebuddyManaged: false,
   reasoningEffort: 'default',
   notificationsEnabled: true,
   conversationSkillImportEnabled: true,
@@ -163,9 +168,19 @@ beforeEach(() => {
         codex: { resolvedPath: '/bin/codex-acp', version: '1.1.4' }
       })
     }),
+    detectCodeBuddy: vi.fn().mockImplementation(() => {
+      callLog.push('detectCodeBuddy')
+      return Promise.resolve({
+        ...snapshot([]),
+        agentFrameworkId: 'codebuddy',
+        codebuddy: { resolvedPath: '/bin/codebuddy', version: '2.138.0' }
+      })
+    }),
     installClaude: vi.fn().mockResolvedValue({ installId: 'claude-1', ok: true }),
     installOpencode: vi.fn().mockResolvedValue({ installId: 'opencode-1', ok: true }),
     installCodex: vi.fn().mockResolvedValue({ installId: 'codex-1', ok: true }),
+    installCodeBuddy: vi.fn().mockResolvedValue({ installId: 'codebuddy-1', ok: true }),
+    uninstallCodeBuddy: vi.fn().mockResolvedValue(snapshot([])),
     uninstallCodex: vi.fn().mockResolvedValue(snapshot([])),
     onInstallLog: vi.fn().mockReturnValue(vi.fn()),
     setAgentFramework: vi.fn().mockImplementation((request: { id: string }) => {

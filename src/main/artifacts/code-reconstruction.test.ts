@@ -166,7 +166,7 @@ const provenance = (): ArtifactVersionProvenance => ({
 })
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-const makeHarness = (value = provenance()) => {
+const makeHarness = (value = provenance(), frameworkId: 'codex' | 'codebuddy' = 'codex') => {
   let cache: string | undefined
   const getVersionProvenance = vi.fn(async () => value)
   const readCodeReconstructionCache = vi.fn(async () => cache)
@@ -180,12 +180,12 @@ const makeHarness = (value = provenance()) => {
     void target
     return {
       text: '```python\nimport pandas as pd\ndf = pd.read_csv("groups.csv")\nplot(df)\n```',
-      frameworkId: 'codex' as const,
+      frameworkId,
       model: 'model-a'
     }
   })
   const captureTarget = vi.fn(async () => ({
-    frameworkId: 'codex' as const,
+    frameworkId,
     providerId: 'provider-a',
     model: { kind: 'required' as const, id: 'model-a' },
     reasoningEffort: 'high' as const
@@ -242,6 +242,19 @@ describe('ArtifactCodeReconstructionService', () => {
     expect(harness.run.mock.calls[0]?.[0]).toContain('saved cos.png')
     expect(harness.writeCodeReconstructionCache).toHaveBeenCalledOnce()
 
+    await expect(harness.service.get(request)).resolves.toEqual(generated)
+    expect(harness.run).toHaveBeenCalledOnce()
+  })
+
+  it('round-trips a CodeBuddy reconstruction through the durable cache', async () => {
+    const harness = makeHarness(provenance(), 'codebuddy')
+
+    const generated = await harness.service.generate(request)
+
+    expect(generated).toMatchObject({
+      state: 'cached',
+      value: { frameworkId: 'codebuddy', model: 'model-a' }
+    })
     await expect(harness.service.get(request)).resolves.toEqual(generated)
     expect(harness.run).toHaveBeenCalledOnce()
   })

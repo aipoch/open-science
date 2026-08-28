@@ -1,4 +1,4 @@
-import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import type { ActiveSession, ClientConnection, McpServer } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -56,6 +56,7 @@ const createHarness = (options: {
   projectAgentContext?: string
   projectAgentContextError?: Error
   specialistIdentity?: { append: string; prefix: string }
+  capabilityMcpServers?: McpServer[]
 }): CreatorHarness => {
   const order = options.order ?? []
   const sessionSetupAppends: string[][] = []
@@ -102,17 +103,27 @@ const createHarness = (options: {
   const release = vi.fn()
   const provision = vi.fn(async () => {
     order.push('capability provision')
+    const mcpServers = options.capabilityMcpServers ?? []
+    const descriptor = {
+      role: 'primary' as const,
+      delegation: 'denied' as const,
+      transport: 'none' as const,
+      capabilities: options.descriptorCapabilities ?? [],
+      canonicalMcpServerNames: [],
+      modelFacingMcpServerNames: [],
+      controlRpcMethods: []
+    }
     return {
-      mcpServers: [],
-      descriptor: {
-        role: 'primary' as const,
-        delegation: 'denied' as const,
-        transport: 'none' as const,
-        capabilities: options.descriptorCapabilities ?? [],
-        canonicalMcpServerNames: [],
-        modelFacingMcpServerNames: [],
-        controlRpcMethods: []
-      },
+      mcpServers,
+      descriptor,
+      includeFrameworkMcpServers: (servers: readonly McpServer[]) => ({
+        mcpServers: [...mcpServers, ...servers],
+        descriptor: {
+          ...descriptor,
+          canonicalMcpServerNames: servers.map((server) => server.name),
+          modelFacingMcpServerNames: servers.map((server) => server.name)
+        }
+      }),
       commit,
       release
     }
@@ -186,6 +197,36 @@ const createHarness = (options: {
 }
 
 describe('AcpProviderSessionCreator', () => {
+  it('merges framework-contributed MCP servers into session/new', async () => {
+    const capabilityServer: McpServer = {
+      type: 'http',
+      name: 'open-science-notebook',
+      url: 'http://127.0.0.1:4321/mcp',
+      headers: []
+    }
+    const skillServer: McpServer = {
+      name: 'skills',
+      command: '/app/electron',
+      args: ['/app/main.js', '--open-science-skill-runtime-mcp'],
+      env: []
+    }
+    const harness = createHarness({
+      order: [],
+      capabilityMcpServers: [capabilityServer],
+      framework: {
+        ...claudeCodeFramework,
+        buildSessionSetup: () => ({ mcpServers: [skillServer] })
+      }
+    })
+
+    await harness.creator.create({ cwd: '/workspace', projectId: 'project-a' })
+
+    expect(harness.buildSession).toHaveBeenCalledWith({
+      cwd: resolve('/workspace'),
+      mcpServers: [capabilityServer, skillServer]
+    })
+  })
+
   it('publishes the provider-returned id as the fresh application Session id', async () => {
     const harness = createHarness({ order: [] })
 

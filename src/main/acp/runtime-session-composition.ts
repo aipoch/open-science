@@ -189,7 +189,10 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     clearTimer: base.clearTimer,
     onPermissionSettled: callbacks.onPermissionSettled,
     onToolPermissionSettled: (request, state, context) => {
-      if (state === 'resolved') return
+      const frameworkId = sessionRegistry
+        .lookup(request.sessionId)
+        ?.aggregate.snapshot().frameworkId
+      if (state === 'resolved' && frameworkId !== 'codebuddy') return
       publication.pushEvent({
         kind: 'tool',
         level: 'info',
@@ -199,8 +202,18 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         title: request.title,
         providerToolName: request.providerToolName ?? request.mcpIdentity,
         rawInput: request.rawInput,
-        status: state === 'rejected' ? 'completed' : 'in_progress',
-        toolDisposition: state === 'rejected' ? 'declined' : 'permission-closed'
+        status:
+          state === 'rejected'
+            ? 'completed'
+            : state === 'resolved'
+              ? (request.status ?? 'in_progress')
+              : 'in_progress',
+        ...(state === 'resolved'
+          ? {}
+          : {
+              toolDisposition:
+                state === 'rejected' ? ('declined' as const) : ('permission-closed' as const)
+            })
       })
     },
     onNotebookExecutionAuthorized: (authorization) => {

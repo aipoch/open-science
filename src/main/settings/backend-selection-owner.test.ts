@@ -38,6 +38,18 @@ describe('BackendSelectionOwner', () => {
     expect(JSON.stringify(selection)).not.toMatch(/credential|provider|model|reasoning|lease/i)
   })
 
+  it('honors the CodeBuddy framework override', async () => {
+    const owner = new BackendSelectionOwner({
+      readSettings: vi.fn(async () => settings()),
+      readFrameworkOverride: vi.fn(() => 'codebuddy'),
+      resolveRuntimeReasoningEffortProfile: vi.fn()
+    })
+
+    await expect(owner.captureConfiguredSelection()).resolves.toEqual({
+      frameworkId: 'codebuddy'
+    })
+  })
+
   it('freezes the explicit provider, model, framework, and reasoning intent without secrets', async () => {
     const owner = new BackendSelectionOwner({
       readSettings: vi.fn(async () => settings()),

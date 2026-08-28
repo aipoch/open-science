@@ -94,6 +94,7 @@ type NotebookLocalRpcServerOptions = {
   requestBytes?: number
   now?: () => number
   onSessionReleased?: (sessionId: string) => void
+  isHostSkillsAvailable?: (sessionId: string) => boolean
   transport?: LocalRpcListenOptions['transport']
   connectorService?: {
     call(
@@ -471,6 +472,7 @@ class NotebookLocalRpcServer {
   private readonly requestBytes: number
   private readonly now: () => number
   private readonly onSessionReleased: NotebookLocalRpcServerOptions['onSessionReleased']
+  private readonly isHostSkillsAvailable: NotebookLocalRpcServerOptions['isHostSkillsAvailable']
   private readonly transport: NotebookLocalRpcServerOptions['transport']
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
@@ -526,6 +528,7 @@ class NotebookLocalRpcServer {
     this.requestBytes = options.requestBytes ?? LOCAL_RESOURCE_BUDGETS.requestBytes
     this.now = options.now ?? Date.now
     this.onSessionReleased = options.onSessionReleased
+    this.isHostSkillsAvailable = options.isHostSkillsAvailable
     this.transport = options.transport
     this.connectorService = options.connectorService
     this.computeService = options.computeService
@@ -1327,7 +1330,9 @@ class NotebookLocalRpcServer {
         mcp: Boolean(this.connectorService),
         compute: Boolean(this.computeService),
         agents: Boolean(this.agentsService),
-        skills: Boolean(this.skillsService),
+        skills:
+          Boolean(this.skillsService) &&
+          (this.isHostSkillsAvailable?.(sessionBinding.sessionId) ?? true),
         artifacts: Boolean(this.hostArtifacts),
         lineage: Boolean(this.hostLineage),
         frames: Boolean(this.hostFrames),
@@ -1509,6 +1514,12 @@ class NotebookLocalRpcServer {
           }
           if (method === 'capabilitiesCall' || method === 'hostSdkHelp') {
             hostCapabilities = await this.projectHostCapabilities(sessionBinding)
+          }
+          if (
+            method === 'skillsCall' &&
+            !(this.isHostSkillsAvailable?.(sessionBinding.sessionId) ?? true)
+          ) {
+            throw new RpcHttpError(403, 'host.skills is unavailable for this Agent framework.')
           }
           if (
             method === 'delegatedWorkCall' &&

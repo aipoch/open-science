@@ -11,6 +11,7 @@ import type {
   ClaudeInstallResult,
   EnvironmentCheckResult,
   InstallClaudeRequest,
+  InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
   Preflight,
@@ -46,6 +47,11 @@ import {
   type OpencodeDetectDeps
 } from './opencode-detect'
 import {
+  detectCodeBuddy,
+  isSupportedCodeBuddyVersion,
+  type CodeBuddyDetectDeps
+} from './codebuddy-detect'
+import {
   detectCodex,
   parseVersion as parseCodexVersion,
   runAcpInitializeSmoke,
@@ -72,6 +78,13 @@ import {
   uninstallManagedOpencode,
   type InstallManagedOpencodeOptions
 } from './managed-opencode'
+import {
+  installManagedCodeBuddy,
+  isManagedCodeBuddyPath,
+  managedCodeBuddyDir,
+  uninstallManagedCodeBuddy,
+  type InstallManagedCodeBuddyOptions
+} from './managed-codebuddy'
 import {
   ensureManagedCodexContextUsage,
   installManagedCodex,
@@ -216,6 +229,7 @@ type ConfiguredRuntimeProbe = {
   fingerprint: string
   claudeVersion: string | null
   opencodeVersion: string | null
+  codebuddyVersion: string | null
   codex: ConfiguredCodexRuntimeProbe
 }
 
@@ -234,12 +248,14 @@ type ReusableRuntimeProbe = {
 const runtimeProbeFingerprint = (input: {
   claudePath?: string
   opencodePath?: string
+  codebuddyPath?: string
   codexAdapterPath?: string
   codexNativePath?: string
 }): string =>
   JSON.stringify([
     input.claudePath ?? null,
     input.opencodePath ?? null,
+    input.codebuddyPath ?? null,
     input.codexAdapterPath ?? null,
     input.codexNativePath ?? null
   ])
@@ -248,6 +264,7 @@ const storedRuntimeProbeFingerprint = (settings: StoredSettings): string =>
   runtimeProbeFingerprint({
     claudePath: settings.claude?.resolvedPath,
     opencodePath: settings.opencodePath,
+    codebuddyPath: settings.codebuddyPath,
     codexAdapterPath: settings.codex?.resolvedPath,
     codexNativePath: settings.codex?.nativePath
   })
@@ -271,6 +288,7 @@ export type AgentRuntimeManagerOptions = {
   allocateSettingsIdSequence: () => number
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
+  codebuddyDetectDeps?: CodeBuddyDetectDeps
   codexDetectDeps?: CodexDetectDeps
   allocateOpenCodeUsagePort?: () => Promise<number>
   executeClaudeProbe?: ExecuteClaudeProbe
@@ -279,6 +297,9 @@ export type AgentRuntimeManagerOptions = {
   ) => Promise<ManagedInstallOutcome>
   installManagedOpencodeImpl?: (
     options: InstallManagedOpencodeOptions
+  ) => Promise<ManagedInstallOutcome>
+  installManagedCodeBuddyImpl?: (
+    options: InstallManagedCodeBuddyOptions
   ) => Promise<ManagedInstallOutcome>
   installManagedCodexImpl?: (
     options: InstallManagedCodexOptions
@@ -298,6 +319,7 @@ export class AgentRuntimeManager {
   private readonly allocateSettingsIdSequence: () => number
   private readonly detectDeps: ClaudeDetectDeps
   private readonly opencodeDetectDeps: OpencodeDetectDeps
+  private readonly codebuddyDetectDeps: CodeBuddyDetectDeps
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
@@ -309,6 +331,9 @@ export class AgentRuntimeManager {
   ) => Promise<ManagedInstallOutcome>
   private readonly installManagedOpencodeImpl: (
     options: InstallManagedOpencodeOptions
+  ) => Promise<ManagedInstallOutcome>
+  private readonly installManagedCodeBuddyImpl: (
+    options: InstallManagedCodeBuddyOptions
   ) => Promise<ManagedInstallOutcome>
   private readonly installManagedCodexImpl: (
     options: InstallManagedCodexOptions
@@ -334,6 +359,14 @@ export class AgentRuntimeManager {
       ...baseOpencodeDetectDeps,
       extraDirs: [...(baseOpencodeDetectDeps.extraDirs ?? []), managedOpencodeDir(this.storageRoot)]
     }
+    const baseCodeBuddyDetectDeps = options.codebuddyDetectDeps ?? createOpencodeDetectDeps()
+    this.codebuddyDetectDeps = {
+      ...baseCodeBuddyDetectDeps,
+      extraDirs: [
+        ...(baseCodeBuddyDetectDeps.extraDirs ?? []),
+        managedCodeBuddyDir(this.storageRoot)
+      ]
+    }
 
     const managedAdapterPath = managedCodexAdapterEntry(this.storageRoot)
     const managedNativePath = managedCodexBinary(this.storageRoot)
@@ -355,6 +388,8 @@ export class AgentRuntimeManager {
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
+    this.installManagedCodeBuddyImpl =
+      options.installManagedCodeBuddyImpl ?? installManagedCodeBuddy
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
     this.resolveProxyEnvironment =
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
@@ -395,6 +430,7 @@ export class AgentRuntimeManager {
       settings,
       claudePathExists: runtimeProbe.claudeVersion !== null,
       opencodePathExists: runtimeProbe.opencodeVersion !== null,
+      codebuddyPathExists: isSupportedCodeBuddyVersion(runtimeProbe.codebuddyVersion),
       codexPathExists: codexVersionsFromProbe(runtimeProbe.codex) !== undefined,
       agentFrameworkId,
       isProviderKeyUsable: (provider) =>
@@ -407,13 +443,20 @@ export class AgentRuntimeManager {
     const settings = await this.repository.getSettings()
     const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
-    const [claudeRuntime, opencodeRuntime, codexRuntime] = await Promise.all([
+    const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime] = await Promise.all([
       this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion),
       this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion),
+      this.resolveCodeBuddyRuntime(settings, runtimeProbe?.codebuddyVersion),
       this.resolveCodexRuntime(settings, runtimeProbe?.codex)
     ])
 
-    this.storeResolvedRuntimeProbe(settings, claudeRuntime, opencodeRuntime, codexRuntime)
+    this.storeResolvedRuntimeProbe(
+      settings,
+      claudeRuntime,
+      opencodeRuntime,
+      codebuddyRuntime,
+      codexRuntime
+    )
 
     return runEnvironmentCheck({
       storageRoot: this.storageRoot,
@@ -433,6 +476,11 @@ export class AgentRuntimeManager {
           id: 'codex',
           label: getAgentFramework('codex').displayName,
           runtime: codexRuntime
+        },
+        {
+          id: 'codebuddy',
+          label: getAgentFramework('codebuddy').displayName,
+          runtime: codebuddyRuntime
         }
       ],
       encryptionAvailable: isEncryptionAvailable()
@@ -462,6 +510,16 @@ export class AgentRuntimeManager {
     } else {
       const cached = (await this.repository.getSettings()).opencodePath
       if (cached && !(await this.pathExists(cached))) await this.repository.clearOpencodeInfo()
+    }
+  }
+
+  async detectCodeBuddy(): Promise<void> {
+    const detected = await detectCodeBuddy(this.codebuddyDetectDeps)
+    if (detected) {
+      await this.repository.setCodeBuddyInfo(detected.resolvedPath, detected.version)
+    } else {
+      const cached = (await this.repository.getSettings()).codebuddyPath
+      if (cached) await this.repository.clearCodeBuddyInfo()
     }
   }
 
@@ -551,6 +609,24 @@ export class AgentRuntimeManager {
       })
       if (result.ok) await this.detectOpencode()
       return result
+    })
+  }
+
+  async installCodeBuddy(
+    _request: InstallCodeBuddyRequest,
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<ClaudeInstallResult> {
+    const installId = `install-codebuddy-${Date.now()}-${this.allocateSettingsIdSequence()}`
+    return this.runExclusiveInstall(installId, async () => {
+      const outcome = await this.installManagedCodeBuddyImpl({
+        installId,
+        onEvent,
+        dataRoot: this.storageRoot
+      })
+      if (outcome.result.ok && outcome.resolvedPath) {
+        await this.repository.setCodeBuddyInfo(outcome.resolvedPath, outcome.version)
+      }
+      return outcome.result
     })
   }
 
@@ -654,6 +730,21 @@ export class AgentRuntimeManager {
     return { activeBackendAffected: wasActive }
   }
 
+  async uninstallCodeBuddy(): Promise<RuntimeUninstallResult> {
+    const settings = await this.repository.getSettings()
+    const resolvedPath = settings.codebuddyPath
+    const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'codebuddy'
+
+    if (!resolvedPath || !isManagedCodeBuddyPath(resolvedPath, this.storageRoot)) {
+      return { activeBackendAffected: false }
+    }
+
+    await uninstallManagedCodeBuddy(this.storageRoot)
+    await this.detectCodeBuddy()
+    await this.autoSwitchAwayFrom('codebuddy')
+    return { activeBackendAffected: wasActive }
+  }
+
   async uninstallCodex(): Promise<RuntimeUninstallResult> {
     const settings = await this.repository.getSettings()
     const resolvedPath = settings.codex?.resolvedPath
@@ -673,6 +764,7 @@ export class AgentRuntimeManager {
   isManagedRuntimePath(frameworkId: AgentFrameworkId, path: string): boolean {
     if (frameworkId === 'claude-code') return isManagedClaudePath(path, this.storageRoot)
     if (frameworkId === 'opencode') return isManagedOpencodePath(path, this.storageRoot)
+    if (frameworkId === 'codebuddy') return isManagedCodeBuddyPath(path, this.storageRoot)
     return isManagedCodexPath(path, this.storageRoot)
   }
 
@@ -692,13 +784,15 @@ export class AgentRuntimeManager {
   async materializeAgentSkills(
     settings: StoredSettings,
     configRoot: string,
-    forcedSkillIds: ReadonlySet<string>
+    forcedSkillIds: ReadonlySet<string>,
+    options: Readonly<{ directoryLayout?: SkillDirectoryLayout }> = {}
   ): Promise<string[]> {
     return this.materializeSkillProjection(
       settings,
       configRoot,
       forcedSkillIds,
-      this.connectors.enabledConnectorIds(settings.connectors)
+      this.connectors.enabledConnectorIds(settings.connectors),
+      options
     )
   }
 
@@ -777,6 +871,20 @@ export class AgentRuntimeManager {
     if (!detected) {
       throw new Error(
         'opencode executable not found. Install opencode or set its path in settings.'
+      )
+    }
+    return detected.resolvedPath
+  }
+
+  async resolveCodeBuddyExecutable(storedPath: string | undefined): Promise<string> {
+    if (storedPath && (await this.pathExists(storedPath))) {
+      const version = await this.codebuddyDetectDeps.getVersion(storedPath).catch(() => undefined)
+      if (isSupportedCodeBuddyVersion(version)) return storedPath
+    }
+    const detected = await detectCodeBuddy(this.codebuddyDetectDeps)
+    if (!detected) {
+      throw new Error(
+        'CodeBuddy executable not found. Install CodeBuddy or re-detect it in settings.'
       )
     }
     return detected.resolvedPath
@@ -931,6 +1039,32 @@ export class AgentRuntimeManager {
     }
     if (cachedPath && !(await this.pathExists(cachedPath)))
       await this.repository.clearOpencodeInfo()
+    return { found: false }
+  }
+
+  private async resolveCodeBuddyRuntime(
+    settings: StoredSettings,
+    probedVersion?: string | null
+  ): Promise<ClaudeDetectResult> {
+    const cachedPath = settings.codebuddyPath
+    if (cachedPath) {
+      const version =
+        probedVersion === undefined
+          ? await this.codebuddyDetectDeps.getVersion(cachedPath)
+          : (probedVersion ?? undefined)
+      if (isSupportedCodeBuddyVersion(version)) {
+        if (version !== settings.codebuddyVersion) {
+          await this.repository.setCodeBuddyInfo(cachedPath, version)
+        }
+        return { found: true, path: cachedPath, version }
+      }
+    }
+    const detected = await detectCodeBuddy(this.codebuddyDetectDeps)
+    if (detected) {
+      await this.repository.setCodeBuddyInfo(detected.resolvedPath, detected.version)
+      return { found: true, path: detected.resolvedPath, version: detected.version }
+    }
+    if (cachedPath) await this.repository.clearCodeBuddyInfo()
     return { found: false }
   }
 
@@ -1114,17 +1248,21 @@ export class AgentRuntimeManager {
   }
 
   private async probeConfiguredRuntimes(settings: StoredSettings): Promise<ConfiguredRuntimeProbe> {
-    const [claudeVersion, opencodeVersion, codex] = await Promise.all([
+    const [claudeVersion, opencodeVersion, codebuddyVersion, codex] = await Promise.all([
       settings.claude?.resolvedPath
         ? this.detectDeps.getVersion(settings.claude.resolvedPath)
         : undefined,
       settings.opencodePath ? this.opencodeDetectDeps.getVersion(settings.opencodePath) : undefined,
+      settings.codebuddyPath
+        ? this.codebuddyDetectDeps.getVersion(settings.codebuddyPath)
+        : undefined,
       this.probeConfiguredCodexRuntime(settings.codex)
     ])
     return {
       fingerprint: storedRuntimeProbeFingerprint(settings),
       claudeVersion: claudeVersion ?? null,
       opencodeVersion: opencodeVersion ?? null,
+      codebuddyVersion: codebuddyVersion ?? null,
       codex
     }
   }
@@ -1153,10 +1291,12 @@ export class AgentRuntimeManager {
     settings: StoredSettings,
     claudeRuntime: ClaudeDetectResult,
     opencodeRuntime: ClaudeDetectResult,
+    codebuddyRuntime: ClaudeDetectResult,
     codexRuntime: ClaudeDetectResult
   ): void {
     const claudePath = claudeRuntime.found ? claudeRuntime.path : settings.claude?.resolvedPath
     const opencodePath = opencodeRuntime.found ? opencodeRuntime.path : settings.opencodePath
+    const codebuddyPath = codebuddyRuntime.found ? codebuddyRuntime.path : settings.codebuddyPath
     const codexAdapterPath =
       codexRuntime.codexComponents?.adapterPath ??
       (codexRuntime.found ? codexRuntime.path : settings.codex?.resolvedPath)
@@ -1168,11 +1308,13 @@ export class AgentRuntimeManager {
       fingerprint: runtimeProbeFingerprint({
         claudePath,
         opencodePath,
+        codebuddyPath,
         codexAdapterPath,
         codexNativePath
       }),
       claudeVersion: claudeRuntime.found ? (claudeRuntime.version ?? null) : null,
       opencodeVersion: opencodeRuntime.found ? (opencodeRuntime.version ?? null) : null,
+      codebuddyVersion: codebuddyRuntime.found ? (codebuddyRuntime.version ?? null) : null,
       codex: {
         ...(codexAdapterPath === controlledAdapterPath
           ? {
@@ -1199,7 +1341,7 @@ export class AgentRuntimeManager {
     const active = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     if (active !== uninstalled) return
 
-    const candidates: AgentFrameworkId[] = ['claude-code', 'opencode', 'codex']
+    const candidates: AgentFrameworkId[] = ['claude-code', 'opencode', 'codex', 'codebuddy']
     for (const candidate of candidates) {
       if (candidate === uninstalled) continue
       const path =
@@ -1207,7 +1349,9 @@ export class AgentRuntimeManager {
           ? settings.claude?.resolvedPath
           : candidate === 'opencode'
             ? settings.opencodePath
-            : settings.codex?.resolvedPath
+            : candidate === 'codebuddy'
+              ? settings.codebuddyPath
+              : settings.codex?.resolvedPath
       if (!path) continue
 
       const version =
@@ -1215,14 +1359,18 @@ export class AgentRuntimeManager {
           ? await this.detectDeps.getVersion(path)
           : candidate === 'opencode'
             ? await this.opencodeDetectDeps.getVersion(path)
-            : await this.codexDetectDeps.getAdapterVersion(path)
+            : candidate === 'codebuddy'
+              ? await this.codebuddyDetectDeps.getVersion(path)
+              : await this.codexDetectDeps.getAdapterVersion(path)
       const ready =
         candidate === 'codex'
           ? !!version &&
             isSupportedCodexAcpVersion(parseCodexVersion(version) ?? '') &&
             !!settings.codex?.nativePath &&
             !!(await this.codexDetectDeps.getCodexVersion(settings.codex.nativePath))
-          : !!version
+          : candidate === 'codebuddy'
+            ? isSupportedCodeBuddyVersion(version)
+            : !!version
       if (ready) {
         await this.repository.setAgentFramework(candidate)
         return

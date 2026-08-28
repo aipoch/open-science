@@ -195,6 +195,7 @@ export type SessionCapabilityOwnershipFacts = Readonly<{
 export type SessionCapabilityProvision = Readonly<{
   mcpServers: McpServer[]
   descriptor: EffectiveSessionCapabilityDescriptor
+  includeFrameworkMcpServers: (servers: readonly McpServer[]) => BuiltSessionCapabilities
   commit: (appSessionId: string) => void
   release: (ownershipFacts: SessionCapabilityOwnershipFacts) => void
 }>
@@ -202,6 +203,7 @@ export type SessionCapabilityProvision = Readonly<{
 type CommitSessionCapabilitiesRequest = {
   appSessionId: string
   routingIds: SessionCapabilityRoutingIds
+  mcpServers: readonly McpServer[]
   descriptor: EffectiveSessionCapabilityDescriptor
   notebookRelease?: () => void
   skillImportRelease?: () => void
@@ -268,6 +270,7 @@ export class AcpSessionCapabilityOwner {
   private readonly planRoutingIds = new Map<string, string>()
   private readonly planCapabilityReleases = new Map<string, () => void>()
   private readonly sideChatRoutingIds = new Map<string, string>()
+  private readonly mcpServers = new Map<string, readonly McpServer[]>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
   private readonly committedSessionIds = new Set<string>()
   private readonly provisionalRoutingOwners = new Map<string, object>()
@@ -338,6 +341,50 @@ export class AcpSessionCapabilityOwner {
 
     return Object.freeze({
       ...built,
+      includeFrameworkMcpServers: (servers: readonly McpServer[]): BuiltSessionCapabilities => {
+        if (terminal) throw new Error('ACP session capability provision is already finalized.')
+        if (servers.length === 0) return built
+
+        const addedNames = servers.map((server) => server.name)
+        if (addedNames.some((name) => typeof name !== 'string' || name.length === 0)) {
+          throw new Error('Framework MCP servers must have a non-empty name.')
+        }
+
+        const modelFacingNames = [...built.descriptor.modelFacingMcpServerNames, ...addedNames]
+        if (new Set(modelFacingNames).size !== modelFacingNames.length) {
+          throw new Error('Framework MCP server names must be unique within the Session.')
+        }
+
+        const canonicalNames = modelFacingNames.map(canonicalAppMcpServerName)
+        if (new Set(canonicalNames).size !== canonicalNames.length) {
+          throw new Error('Framework MCP server names must have unique canonical identities.')
+        }
+        const addedTransports = new Set(
+          servers.map((server) => ('command' in server ? ('stdio' as const) : ('http' as const)))
+        )
+        if (
+          addedTransports.size !== 1 ||
+          (built.descriptor.transport !== 'none' &&
+            !addedTransports.has(built.descriptor.transport))
+        ) {
+          throw new Error('Framework MCP servers must use the Session capability transport.')
+        }
+        const [addedTransport] = addedTransports
+
+        built = Object.freeze({
+          mcpServers: [...built.mcpServers, ...servers],
+          descriptor: freezeDescriptor({
+            ...built.descriptor,
+            transport:
+              built.descriptor.transport === 'none' ? addedTransport : built.descriptor.transport,
+            capabilities: [...built.descriptor.capabilities],
+            canonicalMcpServerNames: canonicalNames,
+            modelFacingMcpServerNames: modelFacingNames,
+            controlRpcMethods: [...built.descriptor.controlRpcMethods]
+          })
+        })
+        return built
+      },
       commit: (appSessionId: string): void => {
         if (terminal) return
         terminal = true
@@ -379,6 +426,7 @@ export class AcpSessionCapabilityOwner {
         this.commit({
           appSessionId,
           routingIds,
+          mcpServers: built.mcpServers,
           descriptor: built.descriptor,
           notebookRelease,
           skillImportRelease,
@@ -596,6 +644,7 @@ export class AcpSessionCapabilityOwner {
       )
     }
     if (routingIds.sideChat) this.sideChatRoutingIds.set(appSessionId, routingIds.sideChat)
+    this.mcpServers.set(appSessionId, Object.freeze([...request.mcpServers]))
     this.descriptors.set(appSessionId, descriptor)
     this.committedSessionIds.add(appSessionId)
     this.commitNotebookRelease(appSessionId, request.notebookRelease)
@@ -681,6 +730,7 @@ export class AcpSessionCapabilityOwner {
     this.skillImportRoutingIds.delete(appSessionId)
     this.planRoutingIds.delete(appSessionId)
     this.sideChatRoutingIds.delete(appSessionId)
+    this.mcpServers.delete(appSessionId)
     this.descriptors.delete(appSessionId)
     this.committedSessionIds.delete(appSessionId)
     this.releaseCommittedNotebookCapability(appSessionId)
@@ -701,6 +751,7 @@ export class AcpSessionCapabilityOwner {
       ...this.notebookCapabilityReleases.keys(),
       ...this.skillImportCapabilityReleases.keys(),
       ...this.planCapabilityReleases.keys(),
+      ...this.mcpServers.keys(),
       ...this.descriptors.keys(),
       ...this.committedSessionIds
     ])
@@ -718,6 +769,7 @@ export class AcpSessionCapabilityOwner {
     this.notebookCapabilityReleases.clear()
     this.skillImportCapabilityReleases.clear()
     this.planCapabilityReleases.clear()
+    this.mcpServers.clear()
     this.descriptors.clear()
     this.committedSessionIds.clear()
     // In-flight provisions retain terminal cleanup ownership across teardown. A same-id successor
@@ -734,6 +786,10 @@ export class AcpSessionCapabilityOwner {
 
   mcpServerNamesFor(appSessionId: string): readonly string[] {
     return this.descriptors.get(appSessionId)?.canonicalMcpServerNames ?? []
+  }
+
+  mcpServersFor(appSessionId: string): readonly McpServer[] {
+    return this.mcpServers.get(appSessionId) ?? []
   }
 
   isSkillImportEnabled(): boolean {

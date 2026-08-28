@@ -97,4 +97,43 @@ describe('notebook RPC skillsCall route', () => {
       await server.close()
     }
   })
+
+  it('does not expose host.skills when the owning framework disables it', async () => {
+    const dispatch = vi.fn(async () => [])
+    const server = new NotebookLocalRpcServer(await makeService(), {
+      transport: 'tcp',
+      skillsService: { dispatch },
+      isHostSkillsAvailable: () => false
+    })
+    const connection = await server.issueControlConnection(
+      'codebuddy-session',
+      'project-a',
+      'root-frame-codebuddy-session'
+    )
+    try {
+      const capabilities = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'capabilitiesCall', params: {} })
+      })
+      await expect(capabilities.json()).resolves.toMatchObject({ result: { skills: false } })
+
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'skillsCall', params: { op: 'list' } })
+      })
+      expect(response.status).toBe(403)
+      expect(dispatch).not.toHaveBeenCalled()
+    } finally {
+      connection.release()
+      await server.close()
+    }
+  })
 })

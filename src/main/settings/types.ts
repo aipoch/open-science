@@ -200,6 +200,9 @@ export type StoredSettings = {
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string
+  // Detected CodeBuddy CLI path + version. The first integration uses the upstream npm CLI.
+  codebuddyPath?: string
+  codebuddyVersion?: string
   // codex-acp adapter plus the native Codex runtime it launches.
   codex?: StoredCodexInfo
   activeProviderId?: string

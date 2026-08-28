@@ -35,6 +35,8 @@ type ResolveOptions = {
   // owns the permission decision: the agent is configured to delegate every prompt to the client and
   // the broker auto-approves them. Set this so 'full' is offered and enforced app-side, not natively.
   brokerEnforcesFullAccess?: boolean
+  // Some adapters expose a native bypass under a different id (CodeBuddy: `fullAccess`).
+  fullAccessModeId?: string
 }
 
 const resolvePermissionProfileApplication = (
@@ -44,7 +46,8 @@ const resolvePermissionProfileApplication = (
 ): PermissionProfileApplication => {
   const modeIds = availableModeIds(modes)
   const hasMode = (modeId: string): boolean => modeIds.includes(modeId)
-  const nativeBypass = hasMode(FULL_ACCESS_MODE_ID)
+  const fullAccessModeId = options.fullAccessModeId ?? FULL_ACCESS_MODE_ID
+  const nativeBypass = hasMode(fullAccessModeId)
   const fullAccessAvailable = nativeBypass || options.brokerEnforcesFullAccess === true
 
   if (profile === 'full' && !fullAccessAvailable) {
@@ -78,7 +81,7 @@ const resolvePermissionProfileApplication = (
     }
   }
 
-  const modeId = profile === 'full' ? FULL_ACCESS_MODE_ID : DEFAULT_MODE_ID
+  const modeId = profile === 'full' ? fullAccessModeId : DEFAULT_MODE_ID
   const canSetMode = hasMode(modeId)
 
   return {
@@ -96,9 +99,10 @@ const resolvePermissionProfileApplication = (
 // Keeps effective state truthful if the Agent changes modes autonomously or clamps a model switch.
 const applyCurrentModeUpdate = (
   state: SessionPermissionProfileState,
-  currentModeId: string
+  currentModeId: string,
+  options: Pick<ResolveOptions, 'fullAccessModeId'> = {}
 ): SessionPermissionProfileState => {
-  if (currentModeId === FULL_ACCESS_MODE_ID) {
+  if (currentModeId === (options.fullAccessModeId ?? FULL_ACCESS_MODE_ID)) {
     return {
       ...state,
       selectedProfile: 'full',

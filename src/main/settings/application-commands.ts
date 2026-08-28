@@ -2,6 +2,7 @@ import type {
   AppIconPreview,
   ClaudeInstallEvent,
   InstallClaudeRequest,
+  InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
   PreviewAgentHomeSkillRequest,
@@ -52,6 +53,7 @@ type CoreSettingsCommandStore = Pick<
   | 'cancelClaudeIsolatedLogin'
   | 'checkEnvironment'
   | 'detectClaude'
+  | 'detectCodeBuddy'
   | 'detectCodex'
   | 'detectOpencode'
   | 'getConnectorDetail'
@@ -61,6 +63,7 @@ type CoreSettingsCommandStore = Pick<
   | 'getSettingsView'
   | 'getSkillDetail'
   | 'installClaude'
+  | 'installCodeBuddy'
   | 'installCodex'
   | 'installOpencode'
   | 'isEncryptionAvailable'
@@ -120,6 +123,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'detectClaude'>
   >('settings:detect-claude'),
+  detectCodeBuddy: defineApplicationCommand<
+    'settings:detect-codebuddy',
+    readonly [],
+    StoreResult<'detectCodeBuddy'>
+  >('settings:detect-codebuddy'),
   detectCodex: defineApplicationCommand<
     'settings:detect-codex',
     readonly [],
@@ -165,6 +173,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: InstallClaudeRequest],
     StoreResult<'installClaude'>
   >('settings:install-claude'),
+  installCodeBuddy: defineApplicationCommand<
+    'settings:install-codebuddy',
+    readonly [request: InstallCodeBuddyRequest],
+    StoreResult<'installCodeBuddy'>
+  >('settings:install-codebuddy'),
   installCodex: defineApplicationCommand<
     'settings:install-codex',
     readonly [request: InstallCodexRequest],
@@ -306,6 +319,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.cancelIsolatedClaudeLogin,
   settingsCoreApplicationCommands.checkEnvironment,
   settingsCoreApplicationCommands.detectClaude,
+  settingsCoreApplicationCommands.detectCodeBuddy,
   settingsCoreApplicationCommands.detectCodex,
   settingsCoreApplicationCommands.detectOpencode,
   settingsCoreApplicationCommands.getConnectorDetail,
@@ -315,6 +329,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getSettings,
   settingsCoreApplicationCommands.getSkillDetail,
   settingsCoreApplicationCommands.installClaude,
+  settingsCoreApplicationCommands.installCodeBuddy,
   settingsCoreApplicationCommands.installCodex,
   settingsCoreApplicationCommands.installOpencode,
   settingsCoreApplicationCommands.isEncryptionAvailable,
@@ -379,6 +394,7 @@ const registerCoreSettingsApplicationCommands = (
       },
       'settings:check-environment': () => dependencies.service.checkEnvironment(),
       'settings:detect-claude': () => dependencies.service.detectClaude(),
+      'settings:detect-codebuddy': () => dependencies.service.detectCodeBuddy(),
       'settings:detect-codex': () => dependencies.service.detectCodex(),
       'settings:detect-opencode': () => dependencies.service.detectOpencode(),
       'settings:get-connector-detail': ({ args }) =>
@@ -394,6 +410,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:install-claude': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-claude')
         return dependencies.service.installClaude(args[0], dependencies.emitInstallEvent)
+      },
+      'settings:install-codebuddy': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:install-codebuddy')
+        return dependencies.service.installCodeBuddy(args[0], dependencies.emitInstallEvent)
       },
       'settings:install-codex': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-codex')

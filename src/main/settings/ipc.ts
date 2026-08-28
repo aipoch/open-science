@@ -19,6 +19,7 @@ import {
   type PreviewSkillZipRequest,
   type ScanRepoRequest,
   type InstallClaudeRequest,
+  type InstallCodeBuddyRequest,
   type InstallCodexRequest,
   type InstallOpencodeRequest,
   type ClaudeInstallEvent,
@@ -121,10 +122,14 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:npm-available', () => service.isNpmAvailable())
   ipcMainHandle('settings:check-environment', () => service.checkEnvironment())
   ipcMainHandle('settings:detect-claude', () => service.detectClaude())
+  ipcMainHandle('settings:detect-codebuddy', () => service.detectCodeBuddy())
   ipcMainHandle('settings:detect-opencode', () => service.detectOpencode())
   ipcMainHandle('settings:detect-codex', () => service.detectCodex())
   ipcMainHandle('settings:install-opencode', (_event, request: InstallOpencodeRequest) =>
     service.installOpencode(request, broadcastInstallEvent)
+  )
+  ipcMainHandle('settings:install-codebuddy', (_event, request: InstallCodeBuddyRequest) =>
+    service.installCodeBuddy(request, broadcastInstallEvent)
   )
   ipcMainHandle('settings:install-codex', (_event, request: InstallCodexRequest) =>
     service.installCodex(request, broadcastInstallEvent)
@@ -140,6 +145,10 @@ const registerSettingsIpcHandlers = ({
 
   ipcMainHandle('settings:uninstall-opencode', () =>
     workflows.runtime.uninstallRuntime('uninstallOpencode', 'opencode')
+  )
+
+  ipcMainHandle('settings:uninstall-codebuddy', () =>
+    workflows.runtime.uninstallRuntime('uninstallCodeBuddy', 'codebuddy')
   )
 
   ipcMainHandle('settings:uninstall-codex', () =>

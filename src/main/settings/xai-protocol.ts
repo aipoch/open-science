@@ -188,6 +188,15 @@ export const chatToResponses = (body: Json, model: string): Json => {
       )
     : undefined
   const effort = typeof body.reasoning_effort === 'string' ? body.reasoning_effort : undefined
+  const toolChoice = body.tool_choice
+  const responsesToolChoice =
+    toolChoice === 'auto' || toolChoice === 'none' || toolChoice === 'required'
+      ? toolChoice
+      : object(toolChoice) &&
+          object(toolChoice.function) &&
+          typeof toolChoice.function.name === 'string'
+        ? { type: 'function', name: toolChoice.function.name }
+        : undefined
   return sanitizeXaiResponsesRequest({
     model,
     stream: false,
@@ -196,6 +205,7 @@ export const chatToResponses = (body: Json, model: string): Json => {
       : {}),
     input,
     ...(tools ? { tools } : {}),
+    ...(responsesToolChoice ? { tool_choice: responsesToolChoice } : {}),
     ...(typeof body.max_completion_tokens === 'number'
       ? { max_output_tokens: body.max_completion_tokens }
       : typeof body.max_tokens === 'number'
@@ -254,6 +264,8 @@ export const responsesToAnthropic = (response: Json, model: string): Json => {
 export const responsesToChat = (response: Json, model: string): Json => {
   const calls = responseCalls(response)
   const counts = usage(response)
+  const inputDetails = object(counts.input_tokens_details) ? counts.input_tokens_details : {}
+  const outputDetails = object(counts.output_tokens_details) ? counts.output_tokens_details : {}
   return {
     id: response.id ?? `chatcmpl_${Date.now()}`,
     object: 'chat.completion',
@@ -282,7 +294,13 @@ export const responsesToChat = (response: Json, model: string): Json => {
     usage: {
       prompt_tokens: counts.input_tokens ?? 0,
       completion_tokens: counts.output_tokens ?? 0,
-      total_tokens: Number(counts.input_tokens ?? 0) + Number(counts.output_tokens ?? 0)
+      total_tokens: Number(counts.input_tokens ?? 0) + Number(counts.output_tokens ?? 0),
+      ...(typeof inputDetails.cached_tokens === 'number'
+        ? { prompt_tokens_details: { cached_tokens: inputDetails.cached_tokens } }
+        : {}),
+      ...(typeof outputDetails.reasoning_tokens === 'number'
+        ? { completion_tokens_details: { reasoning_tokens: outputDetails.reasoning_tokens } }
+        : {})
     }
   }
 }

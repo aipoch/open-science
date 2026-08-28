@@ -173,6 +173,8 @@ const createService = (
     installManagedCodexImpl?: ManagedCodexInstallImpl
     // When set, opencode detection resolves this path/version; otherwise it finds nothing.
     opencodeDetected?: { path: string; version: string }
+    // When set, CodeBuddy detection resolves this path/version; otherwise it finds nothing.
+    codebuddyDetected?: { path: string; version: string }
     allocateOpenCodeUsagePort?: () => Promise<number>
     codexDetected?: { path: string; version: string; nativePath?: string; nativeVersion?: string }
     managedCodexAdapterPath?: string
@@ -231,6 +233,17 @@ const createService = (
       getVersion: (path) =>
         Promise.resolve(
           path === options.opencodeDetected?.path ? options.opencodeDetected.version : undefined
+        ),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    },
+    codebuddyDetectDeps: {
+      env: options.codebuddyDetected ? { PATH: dirname(options.codebuddyDetected.path) } : {},
+      homePath: '/home',
+      platform: 'linux',
+      isExecutable: (path) => Promise.resolve(path === options.codebuddyDetected?.path),
+      getVersion: (path) =>
+        Promise.resolve(
+          path === options.codebuddyDetected?.path ? options.codebuddyDetected.version : undefined
         ),
       resolveNpmBinDirs: () => Promise.resolve([])
     },
@@ -1892,6 +1905,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeReady: true,
       opencodeReady: false,
       codexReady: false,
+      codebuddyReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: true
@@ -4738,7 +4752,8 @@ describe('checkEnvironment', () => {
     // Claude is detectable (default detectDeps) and OpenCode is declared installed; both rows appear,
     // but the result's runtime + gating reflect the SELECTED framework (OpenCode).
     const service = createService(undefined, {
-      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' },
+      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: '2.138.0' }
     })
 
     const result = await service.checkEnvironment()
@@ -4748,9 +4763,16 @@ describe('checkEnvironment', () => {
       'Claude Code runtime',
       'OpenCode runtime',
       'Codex native CLI',
-      'Codex ACP adapter'
+      'Codex ACP adapter',
+      'CodeBuddy runtime'
     ])
-    expect(agentRows.map((row) => row.status)).toEqual(['passed', 'passed', 'warning', 'warning'])
+    expect(agentRows.map((row) => row.status)).toEqual([
+      'passed',
+      'passed',
+      'warning',
+      'warning',
+      'passed'
+    ])
     expect(result.agentFrameworkId).toBe('opencode')
     expect(result.runtime).toEqual({
       found: true,
@@ -4776,7 +4798,9 @@ describe('checkEnvironment', () => {
   it('gates on the selected framework: OpenCode selected but missing blocks while Claude passes', async () => {
     await repository.setAgentFramework('opencode')
     // Claude is detectable (default detectDeps); OpenCode is declared absent (no opencodeDetected).
-    const service = createService()
+    const service = createService(undefined, {
+      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: '2.138.0' }
+    })
 
     const result = await service.checkEnvironment()
 
@@ -4785,7 +4809,8 @@ describe('checkEnvironment', () => {
       'Claude Code runtime:passed',
       'OpenCode runtime:failed',
       'Codex native CLI:warning',
-      'Codex ACP adapter:warning'
+      'Codex ACP adapter:warning',
+      'CodeBuddy runtime:passed'
     ])
     // Selection drives readiness: the missing selected runtime blocks Continue even though Claude runs.
     expect(result.agentFrameworkId).toBe('opencode')
@@ -4806,7 +4831,8 @@ describe('SettingsService: managed-runtime flags', () => {
     ).toEqual([
       { id: 'claude-code', supportsDelegatedWork: true },
       { id: 'opencode', supportsDelegatedWork: true },
-      { id: 'codex', supportsDelegatedWork: true }
+      { id: 'codex', supportsDelegatedWork: true },
+      { id: 'codebuddy', supportsDelegatedWork: true }
     ])
   })
 

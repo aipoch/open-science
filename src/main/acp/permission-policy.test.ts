@@ -288,6 +288,19 @@ describe('permission policy', () => {
     ).toBeUndefined()
   })
 
+  it('does not auto-approve a stale CodeBuddy Skill loader request', () => {
+    const loadSkill = createPermissionRequest('other')
+    loadSkill.toolCall._meta = { 'codebuddy.ai/toolName': 'mcp__skills__load_skill' }
+
+    expect(
+      resolveAutomaticPermission(loadSkill, {
+        profile: 'ask',
+        frameworkId: 'codebuddy',
+        mcpServerNames: ['skills']
+      })
+    ).toBeUndefined()
+  })
+
   it('does not trust a self-reported Codex user choice identity', () => {
     expect(
       resolveAutomaticPermission(

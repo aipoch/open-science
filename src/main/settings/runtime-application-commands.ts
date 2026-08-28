@@ -51,6 +51,11 @@ const settingsRuntimeApplicationCommands = Object.freeze({
     readonly [],
     WorkflowResult<'uninstallRuntime'>
   >('settings:uninstall-codex'),
+  uninstallCodeBuddy: defineApplicationCommand<
+    'settings:uninstall-codebuddy',
+    readonly [],
+    WorkflowResult<'uninstallRuntime'>
+  >('settings:uninstall-codebuddy'),
   uninstallOpencode: defineApplicationCommand<
     'settings:uninstall-opencode',
     readonly [],
@@ -141,6 +146,7 @@ const settingsRuntimeApplicationCommands = Object.freeze({
 const settingsRuntimeApplicationCommandGroup = defineApplicationCommandGroup('settings-runtime', [
   settingsRuntimeApplicationCommands.uninstallClaude,
   settingsRuntimeApplicationCommands.uninstallCodex,
+  settingsRuntimeApplicationCommands.uninstallCodeBuddy,
   settingsRuntimeApplicationCommands.uninstallOpencode,
   settingsRuntimeApplicationCommands.upsertProvider,
   settingsRuntimeApplicationCommands.deleteProvider,
@@ -185,6 +191,10 @@ const registerRuntimeSettingsApplicationCommands = (
       'settings:uninstall-codex': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:uninstall-codex')
         return dependencies.workflows.uninstallRuntime('uninstallCodex', 'codex')
+      },
+      'settings:uninstall-codebuddy': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:uninstall-codebuddy')
+        return dependencies.workflows.uninstallRuntime('uninstallCodeBuddy', 'codebuddy')
       },
       'settings:uninstall-opencode': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:uninstall-opencode')

@@ -22,6 +22,7 @@ import type {
   ImportAgentHomeSkillsRequest,
   ImportAgentHomeSkillsResult,
   InstallClaudeRequest,
+  InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
   Preflight,
@@ -80,6 +81,7 @@ import type {
 } from '../agent-framework'
 import type { ClaudeDetectDeps } from './claude-detect'
 import type { OpencodeDetectDeps } from './opencode-detect'
+import type { CodeBuddyDetectDeps } from './codebuddy-detect'
 import type { CodexDetectDeps } from './codex-detect'
 import type { InstallManagedOpencodeOptions } from './managed-opencode'
 import type { InstallManagedCodexOptions, ManagedCodexInstallOutcome } from './managed-codex'
@@ -90,7 +92,7 @@ import { SettingsRepository } from './repository'
 import { SettingsPreferencesModule, type SetDataRootOptions } from './preferences'
 import { buildSettingsSnapshot } from './settings-view'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
-import { SkillCatalogModule } from './skill-catalog'
+import { SkillCatalogModule, type SkillCatalogEntry } from './skill-catalog'
 import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
 import type { CustomServerRuntimeProjectionProvider } from './connector-settings'
 import { ProviderAccountsModule } from './provider-accounts'
@@ -130,6 +132,7 @@ export type SettingsServiceOptions = {
   log?: Logger
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
+  codebuddyDetectDeps?: CodeBuddyDetectDeps
   // Reserves the authenticated loopback HTTP port exposed by `opencode acp`. Injectable so settings
   // tests do not bind real sockets.
   allocateOpenCodeUsagePort?: () => Promise<number>
@@ -230,6 +233,7 @@ class SettingsService {
       allocateSettingsIdSequence,
       detectDeps: options.detectDeps,
       opencodeDetectDeps: options.opencodeDetectDeps,
+      codebuddyDetectDeps: options.codebuddyDetectDeps,
       codexDetectDeps: options.codexDetectDeps,
       allocateOpenCodeUsagePort: options.allocateOpenCodeUsagePort,
       executeClaudeProbe: options.executeClaudeProbe,
@@ -496,6 +500,11 @@ class SettingsService {
     return this.getSettingsView()
   }
 
+  async detectCodeBuddy(): Promise<SettingsSnapshot> {
+    await this.runtimeManager.detectCodeBuddy()
+    return this.getSettingsView()
+  }
+
   async detectCodex(): Promise<SettingsSnapshot> {
     await this.runtimeManager.detectCodex()
     return this.getSettingsView()
@@ -577,10 +586,14 @@ class SettingsService {
     return this.skills.codexSkillDescriptorsForIds(ids, codexHome)
   }
 
-  async codexSkillCatalog(
-    codexHome: string | undefined
-  ): Promise<Array<{ name: string; description: string; path: string; source?: 'connector' }>> {
+  async codexSkillCatalog(codexHome: string | undefined): Promise<SkillCatalogEntry[]> {
     return this.skills.codexSkillCatalog(codexHome, (settings) =>
+      this.connectors.connectorSkillCatalogEntries(settings.connectors)
+    )
+  }
+
+  async codeBuddySkillCatalog(runtimeRoot: string | undefined): Promise<SkillCatalogEntry[]> {
+    return this.skills.codeBuddySkillCatalog(runtimeRoot, (settings) =>
       this.connectors.connectorSkillCatalogEntries(settings.connectors)
     )
   }
@@ -732,6 +745,13 @@ class SettingsService {
     return this.runtimeManager.installOpencode(request, onEvent)
   }
 
+  async installCodeBuddy(
+    request: InstallCodeBuddyRequest,
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<ClaudeInstallResult> {
+    return this.runtimeManager.installCodeBuddy(request, onEvent)
+  }
+
   async installCodex(
     request: InstallCodexRequest,
     onEvent: (event: ClaudeInstallEvent) => void
@@ -756,6 +776,11 @@ class SettingsService {
   // was active.
   async uninstallOpencode(): Promise<UninstallResult> {
     const { activeBackendAffected } = await this.runtimeManager.uninstallOpencode()
+    return { snapshot: await this.getSettingsView(), activeBackendAffected }
+  }
+
+  async uninstallCodeBuddy(): Promise<UninstallResult> {
+    const { activeBackendAffected } = await this.runtimeManager.uninstallCodeBuddy()
     return { snapshot: await this.getSettingsView(), activeBackendAffected }
   }
 

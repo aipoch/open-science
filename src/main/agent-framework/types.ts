@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import type { SessionModeState } from '@agentclientprotocol/sdk'
+import type { ClientConnection, McpServer, SessionModeState } from '@agentclientprotocol/sdk'
 
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
@@ -10,6 +10,7 @@ import type {
   ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
 import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { AcpModelStepTokenUsage } from '../../shared/acp'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type {
   ResponsesBridgeConnection,
@@ -76,6 +77,7 @@ export type AgentModelRoute =
   | 'claude-anthropic'
   | 'opencode-anthropic'
   | 'opencode-openai'
+  | 'codebuddy-openai'
   | 'codex-responses'
   | 'codex-responses-compatibility'
   | 'codex-bridge'
@@ -84,6 +86,11 @@ export type AgentModelCatalogEntry = Readonly<{
   provider: ResolvedProvider
   reasoningEffort?: ModelReasoningEffort
   reasoningEfforts?: readonly ModelReasoningEffort[]
+}>
+
+export type SkillSelectorUsageObservation = Readonly<{
+  usage: AcpModelStepTokenUsage
+  sourceInvocationId?: string
 }>
 
 // Secret-free, side-effect-free projection of one persisted model selection onto the live runtime.
@@ -167,6 +174,9 @@ export type SessionSetupContext = {
 // metadata so context accounting never has to inspect that opaque transport shape.
 export type SessionSetup = {
   meta?: Record<string, unknown>
+  // Standard ACP MCP servers contributed by the framework for this Session. CodeBuddy uses this
+  // seam for the app-owned Skill loader while keeping its native, project-scanning Skill tool off.
+  mcpServers?: McpServer[]
   promptPrefix?: string
   persistentSystemPrompt?: string
 }
@@ -218,6 +228,20 @@ export interface AgentFramework {
   // Launch the ACP agent subprocess (stdio JSON-RPC), wrapping the per-framework binary + args.
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams
 
+  // Some ACP servers keep process-global current-session state. When present, the prompt workflow
+  // calls this immediately before session.prompt() for the target provider session.
+  beforePromptDispatch?(input: {
+    connection: ClientConnection
+    providerSessionId: string
+    cwd: string
+    mcpServers: readonly McpServer[]
+    skillRuntimeAllowlist?: readonly string[]
+  }): Promise<void>
+
+  // Frameworks with process-global current-session state cannot safely accept concurrent prompt
+  // dispatches on one ACP process.
+  readonly serializesProviderPrompts?: boolean
+
   // Translate the app's provider into the framework's native model config (env / config files / args).
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig
 
@@ -247,6 +271,10 @@ export interface AgentFramework {
   // Claude Code, codex-acp). False where effort only rides the baked spawn config (opencode ignores
   // the protocol option), so a change must respawn to regenerate it.
   readonly supportsLiveEffortChange: boolean
+
+  // Translate model-native effort names only when the ACP option does not advertise the exact value.
+  // CodeBuddy, for example, spells `none`/`default` as `disabled`/`enabled`.
+  adaptSessionEffort?(effort: ResolvedReasoningEffort): string
 
   // Chat endpoints this framework can drive. A provider is only selectable when it shares one:
   // Claude Code speaks Anthropic /v1/messages; opencode speaks both.
@@ -281,8 +309,8 @@ export type ResolvedAgentBackend = {
   // Subscription backends must run the model selected in the UI. When true, a missing/rejected live
   // model option fails session creation instead of silently using the agent's account default.
   sessionModelRequired?: boolean
-  // Model-resolved reasoning effort to apply per session via ACP. The runtime uses exact matching;
-  // undefined leaves the agent default unchanged.
+  // Model-resolved reasoning effort to apply per session via ACP. The runtime prefers exact matching
+  // before an optional framework vocabulary adapter; undefined leaves the agent default unchanged.
   sessionEffort?: ModelReasoningEffort
   // Exact context-window limit for the selected upstream provider model. Framework adapters may
   // report a fallback or bridge transport model instead, so the runtime treats this as authoritative.
@@ -308,7 +336,8 @@ export type ResolvedAgentBackend = {
     selectSkills: (
       text: string,
       catalog: ResponsesBridgeSkillCandidate[],
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      observeUsage?: (observation: SkillSelectorUsageObservation) => void
     ) => Promise<ResponsesBridgeSkillInput[]>
     registerReviewerSession: (promptCacheKey: string) => void
     unregisterReviewerSession: (promptCacheKey: string) => boolean
@@ -335,6 +364,12 @@ export type ResolvedAgentBackend = {
   }
   providerTransportLease?: {
     setTarget: (targetId: string) => boolean
+    selectSkills?: (
+      text: string,
+      catalog: ResponsesBridgeSkillCandidate[],
+      signal?: AbortSignal,
+      observeUsage?: (observation: SkillSelectorUsageObservation) => void
+    ) => Promise<ResponsesBridgeSkillInput[]>
     release: () => Promise<void>
   }
 }

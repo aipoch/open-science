@@ -6,6 +6,7 @@ import type { AgentFramework } from '../agent-framework'
 import { createLogger, errorLogFields } from '../logger'
 import type { ContextUsageTracker, SessionEstimateInput } from './context-usage-tracker'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
+import type { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import type { RuntimeEventInput } from './runtime-snapshot-owner'
 import type {
   AcpCompactionSessionInteractionScope,
@@ -36,6 +37,8 @@ type AcpContextCompactionWorkflowOptions = Readonly<{
   emitState: () => void
   errorMessage: (error: unknown) => string
   cancelCompaction: (sessionId: string) => Promise<void>
+  beforePromptDispatch?: (input: { appSessionId: string; session: ActiveSession }) => Promise<void>
+  serialization: Pick<AcpProviderPromptSerializationOwner, 'run'>
 }>
 
 type AcpAutomaticCompactionRequest = Readonly<{
@@ -200,63 +203,69 @@ class AcpContextCompactionWorkflow {
     })
 
     try {
-      let failureText: string | undefined
-      const promptFailure = new Promise<never>((_, reject) => {
-        session.prompt([{ type: 'text', text: strategy.command }]).catch(reject)
-      })
-      for (;;) {
-        const message = await Promise.race([session.nextUpdate(), promptFailure])
-        if (message.kind === 'stop') {
-          if (message.response.stopReason === 'cancelled') {
-            restoreContext()
-            this.publishEvent({
-              kind: 'compaction',
-              compactionReason: reason,
-              level: 'info',
-              sessionId,
-              status: 'cancelled',
-              title: 'Context compaction cancelled',
-              toolCallId
-            })
-            return message.response
-          }
-          if (message.response.stopReason !== 'end_turn') {
-            throw new Error(
-              `Context compaction stopped before completion: ${message.response.stopReason}`
-            )
-          }
-          if (failureText) throw new Error(failureText)
-          this.options.context.resetAfterCompaction(
-            sessionId,
-            this.options.contextEstimateInput(sessionId),
-            checkpoint,
-            this.options.selectedContextWindow(sessionId)
-          )
-          this.options.promptContent.resetSession(sessionId)
-          this.publishEvent({
-            kind: 'compaction',
-            compactionReason: reason,
-            level: 'info',
-            sessionId,
-            status: 'completed',
-            title: 'Context compacted',
-            toolCallId
+      return await this.options.serialization.run(
+        this.options.sessions.currentFramework(),
+        async () => {
+          await this.options.beforePromptDispatch?.({ appSessionId: sessionId, session })
+          let failureText: string | undefined
+          const promptFailure = new Promise<never>((_, reject) => {
+            session.prompt([{ type: 'text', text: strategy.command }]).catch(reject)
           })
-          return message.response
-        }
+          for (;;) {
+            const message = await Promise.race([session.nextUpdate(), promptFailure])
+            if (message.kind === 'stop') {
+              if (message.response.stopReason === 'cancelled') {
+                restoreContext()
+                this.publishEvent({
+                  kind: 'compaction',
+                  compactionReason: reason,
+                  level: 'info',
+                  sessionId,
+                  status: 'cancelled',
+                  title: 'Context compaction cancelled',
+                  toolCallId
+                })
+                return message.response
+              }
+              if (message.response.stopReason !== 'end_turn') {
+                throw new Error(
+                  `Context compaction stopped before completion: ${message.response.stopReason}`
+                )
+              }
+              if (failureText) throw new Error(failureText)
+              this.options.context.resetAfterCompaction(
+                sessionId,
+                this.options.contextEstimateInput(sessionId),
+                checkpoint,
+                this.options.selectedContextWindow(sessionId)
+              )
+              this.options.promptContent.resetSession(sessionId)
+              this.publishEvent({
+                kind: 'compaction',
+                compactionReason: reason,
+                level: 'info',
+                sessionId,
+                status: 'completed',
+                title: 'Context compacted',
+                toolCallId
+              })
+              return message.response
+            }
 
-        const update = message.notification.update
-        if (
-          !failureText &&
-          strategy.failureTextPrefix &&
-          update.sessionUpdate === 'agent_message_chunk' &&
-          update.content.type === 'text' &&
-          update.content.text.trimStart().startsWith(strategy.failureTextPrefix)
-        ) {
-          failureText = update.content.text.trim()
+            const update = message.notification.update
+            if (
+              !failureText &&
+              strategy.failureTextPrefix &&
+              update.sessionUpdate === 'agent_message_chunk' &&
+              update.content.type === 'text' &&
+              update.content.text.trimStart().startsWith(strategy.failureTextPrefix)
+            ) {
+              failureText = update.content.text.trim()
+            }
+            this.options.routeHiddenNotification(message.notification, sessionId)
+          }
         }
-        this.options.routeHiddenNotification(message.notification, sessionId)
-      }
+      )
     } catch (error) {
       restoreContext()
       this.publishEvent({

@@ -1,5 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
-import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import type { ActiveSession, ClientConnection, McpServer } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -86,6 +86,7 @@ type HarnessOptions = {
     | null
   specialistSkills?: EffectiveSpecialistSkills
   supportsResume?: boolean
+  capabilityMcpServers?: McpServer[]
 }
 
 type ResumerHarness = {
@@ -245,17 +246,27 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   const clearLivePermissionProfile = vi.fn()
   const provision = vi.fn(async () => {
     order.push('capability provision')
+    const mcpServers = options.capabilityMcpServers ?? []
+    const descriptor = {
+      role: 'primary' as const,
+      delegation: 'denied' as const,
+      transport: 'none' as const,
+      capabilities: [],
+      canonicalMcpServerNames: [],
+      modelFacingMcpServerNames: [],
+      controlRpcMethods: []
+    }
     return {
-      mcpServers: [],
-      descriptor: {
-        role: 'primary' as const,
-        delegation: 'denied' as const,
-        transport: 'none' as const,
-        capabilities: [],
-        canonicalMcpServerNames: [],
-        modelFacingMcpServerNames: [],
-        controlRpcMethods: []
-      },
+      mcpServers,
+      descriptor,
+      includeFrameworkMcpServers: (servers: readonly McpServer[]) => ({
+        mcpServers: [...mcpServers, ...servers],
+        descriptor: {
+          ...descriptor,
+          canonicalMcpServerNames: servers.map((server) => server.name),
+          modelFacingMcpServerNames: servers.map((server) => server.name)
+        }
+      }),
       commit,
       release
     }
@@ -359,6 +370,38 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('merges framework-contributed MCP servers into session/resume', async () => {
+    const capabilityServer: McpServer = {
+      type: 'http',
+      name: 'open-science-notebook',
+      url: 'http://127.0.0.1:4321/mcp',
+      headers: []
+    }
+    const skillServer: McpServer = {
+      name: 'skills',
+      command: '/app/electron',
+      args: ['/app/main.js', '--open-science-skill-runtime-mcp'],
+      env: []
+    }
+    const harness = createHarness({
+      capabilityMcpServers: [capabilityServer],
+      initialBackend: {
+        ...backend,
+        framework: {
+          ...claudeCodeFramework,
+          buildSessionSetup: () => ({ mcpServers: [skillServer] })
+        }
+      }
+    })
+
+    await harness.resume()
+
+    expect(harness.request).toHaveBeenCalledWith(
+      acp.methods.agent.session.resume,
+      expect.objectContaining({ mcpServers: [capabilityServer, skillServer] })
+    )
+  })
+
   it('preserves the runtime capability policy on compatible provider resume', async () => {
     const harness = createHarness({ capabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
 

@@ -16,6 +16,7 @@ import {
 } from './runtime-events'
 import type { AcpSessionRegistry } from './session-registry'
 import { isRecord } from './value-guards'
+import { CodeBuddyOutputAdapter } from './codebuddy-output-adapter'
 
 const CODEX_COMPACTION_WARNING =
   'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
@@ -119,6 +120,7 @@ type AcpSessionUpdateEffect =
       kind: 'current-mode'
       sessionId: string
       currentModeId: string
+      framework: AgentFrameworkId
     }>
   | Readonly<{
       kind: 'tool-failure-diagnostic'
@@ -162,6 +164,7 @@ const toolObservation = (
 class AcpSessionUpdateProjector {
   private readonly codexSkillActivity = new CodexSkillActivityProjector()
   private readonly appOwnedUserChoiceToolCallIds = new Map<string, Set<string>>()
+  private readonly codeBuddyOutput = new CodeBuddyOutputAdapter()
 
   constructor(private readonly options: AcpSessionUpdateProjectorOptions) {}
 
@@ -172,11 +175,13 @@ class AcpSessionUpdateProjector {
   clearGeneration(): void {
     this.codexSkillActivity.setSkillsRoot(undefined)
     this.appOwnedUserChoiceToolCallIds.clear()
+    this.codeBuddyOutput.clear()
   }
 
   clearSession(sessionId: string): void {
     this.codexSkillActivity.clearSession(sessionId)
     this.appOwnedUserChoiceToolCallIds.delete(sessionId)
+    this.codeBuddyOutput.clearSession(sessionId)
   }
 
   dispose(): void {
@@ -216,7 +221,33 @@ class AcpSessionUpdateProjector {
         routing.framework === 'claude-code'
       )
     )
-    const projectedEvent = projection.event
+    const originalEvent = projection.event
+    let projectedEvent =
+      routing.framework === 'codebuddy' && originalEvent.kind === 'tool'
+        ? this.codeBuddyOutput.projectToolEvent(
+            routed.sessionId,
+            originalEvent,
+            routed.update.sessionUpdate === 'tool_call'
+          )
+        : originalEvent
+    let codeBuddyVisibleEvents: readonly AcpRuntimeEvent[] | undefined
+    if (
+      routing.framework === 'codebuddy' &&
+      routed.update.sessionUpdate === 'agent_message_chunk' &&
+      originalEvent.kind === 'message' &&
+      originalEvent.role === 'assistant' &&
+      typeof originalEvent.text === 'string'
+    ) {
+      codeBuddyVisibleEvents = this.codeBuddyOutput.projectAssistantChunk(
+        routed.sessionId,
+        originalEvent
+      )
+      projectedEvent = codeBuddyVisibleEvents.at(-1) ?? {
+        ...originalEvent,
+        text: '',
+        raw: undefined
+      }
+    }
     const unaliasedEvent =
       routing.framework === 'codex' &&
       projectedEvent.kind === 'message' &&
@@ -281,7 +312,8 @@ class AcpSessionUpdateProjector {
         deepFreeze({
           kind: 'current-mode' as const,
           sessionId: routed.sessionId,
-          currentModeId: routed.update.currentModeId
+          currentModeId: routed.update.currentModeId,
+          framework: routing.framework ?? this.options.currentFramework()
         })
       )
     }
@@ -353,10 +385,15 @@ class AcpSessionUpdateProjector {
           })
         )
       }
-      if ((event.kind === 'message' || event.kind === 'thought') && !event.text) {
-        return Object.freeze(effects)
+      for (const visibleEvent of codeBuddyVisibleEvents ?? [event]) {
+        if (
+          (visibleEvent.kind === 'message' || visibleEvent.kind === 'thought') &&
+          !visibleEvent.text
+        ) {
+          continue
+        }
+        effects.push(deepFreeze({ kind: 'visible-event' as const, event: visibleEvent }))
       }
-      effects.push(deepFreeze({ kind: 'visible-event' as const, event }))
     }
 
     return Object.freeze(effects)
@@ -383,7 +420,8 @@ class AcpSessionUpdateProjector {
         if (profileState) {
           const nextProfile = applyCurrentModeUpdate(
             profileState as SessionPermissionProfileState,
-            effect.currentModeId
+            effect.currentModeId,
+            effect.framework === 'codebuddy' ? { fullAccessModeId: 'fullAccess' } : undefined
           )
           if (!this.options.setProviderPermissionProfile(effect.sessionId, nextProfile)) break
           aggregate.setPermissionProfile(nextProfile)

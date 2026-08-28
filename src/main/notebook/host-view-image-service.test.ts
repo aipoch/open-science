@@ -137,7 +137,8 @@ describe('HostViewImageService', () => {
     ['opencode', 'opencode-openai'],
     ['opencode', 'opencode-anthropic'],
     ['codex', 'codex-responses'],
-    ['codex', 'codex-responses-compatibility']
+    ['codex', 'codex-responses-compatibility'],
+    ['codebuddy', 'codebuddy-openai']
   ] as const)('certifies the visual %s/%s route', (frameworkId, modelRoute) => {
     expect(
       isHostViewImageBackendCertified(
@@ -174,6 +175,18 @@ describe('HostViewImageService', () => {
     await expect(
       h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
     ).rejects.toThrow(/select a visual model/u)
+  })
+
+  it('stages images for a visual CodeBuddy backend', async () => {
+    const h = harness({
+      backend: visualBackend({ frameworkId: 'codebuddy', modelRoute: 'codebuddy-openai' }),
+      items: [catalogItem('artifact')]
+    })
+
+    await expect(h.service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(true)
+    await expect(
+      h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+    ).resolves.toMatchObject({ attached: true, sourceKind: 'artifactVersion' })
   })
 
   it('resolves Artifact and Upload versions across Sessions inside the trusted Project', async () => {

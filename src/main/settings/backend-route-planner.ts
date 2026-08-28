@@ -67,6 +67,10 @@ type PlannedProviderTarget = Readonly<{
 type BackendTransportPlan =
   | Readonly<{ kind: 'direct' }>
   | Readonly<{
+      kind: 'codebuddy-provider-compatibility'
+      wire: 'anthropic' | 'responses'
+    }>
+  | Readonly<{
       kind: 'claude-anthropic'
       targets: readonly AnthropicProviderBridgeTarget[]
       initialTargetId: string
@@ -100,6 +104,7 @@ const modelRouteFor = (
   if (frameworkId === 'opencode') {
     return target.apiEndpoints.includes('openai') ? 'opencode-openai' : 'opencode-anthropic'
   }
+  if (frameworkId === 'codebuddy') return 'codebuddy-openai'
   if (target.needsChatResponsesBridge) return 'codex-bridge'
   if (target.needsNativeResponsesCompatibility) return 'codex-responses-compatibility'
   return 'codex-responses'
@@ -337,6 +342,13 @@ class BackendRoutePlanner {
         targets: this.plannedTargets(candidates, frameworkId, effortIntent)
       })
     }
+    if (frameworkId === 'codebuddy') {
+      if (active.apiEndpoints.includes('openai')) return Object.freeze({ kind: 'direct' })
+      return Object.freeze({
+        kind: 'codebuddy-provider-compatibility',
+        wire: active.apiEndpoints.includes('responses') ? 'responses' : 'anthropic'
+      })
+    }
     if (route === 'codex-bridge' || route === 'codex-responses-compatibility') {
       return Object.freeze({
         kind: route === 'codex-bridge' ? 'codex-chat' : 'codex-responses-compatibility',
@@ -396,11 +408,13 @@ class BackendRoutePlanner {
             ? route === 'opencode-openai'
               ? openAiChatCompletionsUrl(candidate.provider)
               : normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
-            : route === 'codex-bridge'
-              ? openAiCompletionsBase(candidate.provider)
-              : normalizeResponsesBaseUrl(
-                  candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
-                )
+            : frameworkId === 'codebuddy'
+              ? openAiChatCompletionsUrl(candidate.provider)
+              : route === 'codex-bridge'
+                ? openAiCompletionsBase(candidate.provider)
+                : normalizeResponsesBaseUrl(
+                    candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
+                  )
       const id = model
         ? frameworkId === 'claude-code'
           ? claudeTargetId(candidate.providerId, model)

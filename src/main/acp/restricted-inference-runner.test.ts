@@ -8,6 +8,7 @@ import { CODEX_SHARED_PROVIDER_ID } from '../../shared/settings'
 import type { AcpRuntimeEvent, AcpTurnTokenUsage } from '../../shared/acp'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
+import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { codexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
@@ -281,6 +282,52 @@ describe('RestrictedInferenceRunner', () => {
     expect(JSON.stringify(claudeOptions)).not.toContain(LOAD_SKILL_TOOL_CALLABLE_NAME)
   })
 
+  it('isolates CodeBuddy configuration and removes native tools from restricted inference', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-codebuddy-'))
+    const sourceConfigDir = join(temporaryRoot, 'source-codebuddy')
+    await mkdir(sourceConfigDir, { recursive: true })
+    await writeFile(join(sourceConfigDir, 'models.json'), '{"models":[]}\n')
+    await writeFile(join(sourceConfigDir, 'system-prompt.md'), 'Do not preserve this prompt.\n')
+
+    const prepared = await prepareRestrictedBackend(
+      backend(codeBuddyFramework, {
+        env: { CODEBUDDY_CONFIG_DIR: sourceConfigDir },
+        args: [
+          '--strict-mcp-config',
+          '--tools',
+          'Read,Write,Edit,Glob,Grep,Bash',
+          '--system-prompt-file',
+          join(sourceConfigDir, 'system-prompt.md')
+        ],
+        sessionOptions: {
+          [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+            command: '/app/open-science',
+            entryPath: '/app/main.js',
+            root: '/runtime-support/agent-skills/codebuddy/revision'
+          }
+        },
+        persistentSystemPrompt: 'Do not preserve this prompt.'
+      }),
+      join(temporaryRoot, 'profile'),
+      {
+        agentName: 'restricted-fixture',
+        description: 'Synthetic restricted inference fixture.',
+        systemPrompt: 'Do not use tools.',
+        openCodePermissions: { '*': 'deny' }
+      }
+    )
+
+    expect(prepared.env.CODEBUDDY_CONFIG_DIR).toBe(join(temporaryRoot, 'profile', 'codebuddy'))
+    await expect(
+      readFile(join(prepared.env.CODEBUDDY_CONFIG_DIR!, 'models.json'), 'utf8')
+    ).resolves.toBe('{"models":[]}\n')
+    expect(prepared.args?.slice(-2)).toEqual(['--tools', ''])
+    expect(prepared.args).not.toContain('--system-prompt-file')
+    expect(prepared.sessionOptions).not.toHaveProperty(OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION)
+    expect(prepared.systemPromptAppends).toEqual(['Do not use tools.'])
+    expect(prepared.persistentSystemPrompt).toBeUndefined()
+  })
+
   it('runs a native Codex subscription target through its restricted profile', async () => {
     const { runner, resolveTarget } = await makeRunner(backend(codexFramework), {
       events: [event({ role: 'assistant', text: 'PONG' })]
@@ -299,6 +346,17 @@ describe('RestrictedInferenceRunner', () => {
       systemPromptAppends: [],
       includeSkillAndConnectorContext: false
     })
+  })
+
+  it('excludes normalized thought events from restricted inference output', async () => {
+    const { runner } = await makeRunner(backend(claudeCodeFramework), {
+      events: [
+        event({ kind: 'thought', role: 'assistant', text: 'private analysis' }),
+        event({ role: 'assistant', text: 'Visible result.' })
+      ]
+    })
+
+    await expect(runner.run(runInput())).resolves.toMatchObject({ text: 'Visible result.' })
   })
 
   it('keeps restricted instructions out of the shared OpenCode config used by the first conversation', async () => {

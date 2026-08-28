@@ -270,6 +270,32 @@ describe('release-gate Subagent surfaces', () => {
     expect(bar.getAttribute('aria-expanded')).toBe('false')
   })
 
+  it('uses the shared Subagent entry points for CodeBuddy', () => {
+    const session = createSession()
+    session.agentFrameworkId = 'codebuddy'
+
+    renderSurface(
+      <>
+        <SubagentAvailabilityNotice
+          frameworkId="codebuddy"
+          frameworks={[
+            {
+              id: 'codebuddy',
+              displayName: 'CodeBuddy',
+              supportsSkills: false,
+              supportsDelegatedWork: true
+            }
+          ]}
+          onOpenSettings={vi.fn()}
+        />
+        <SubagentsBar session={session} permissions={[]} />
+      </>
+    )
+
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByTestId('subagents-bar')).toBeTruthy()
+  })
+
   it('marks imported Subagent history when its origin Message is unavailable', () => {
     const session = createSession()
     const importedFrame = session.conversationGraph?.frames.find(({ id }) => id === 'child-a')

@@ -128,9 +128,14 @@ export class AcpProviderSessionAdopter {
         sessionOptions: startupBackend.session.options,
         specialistSkills
       })
+      const sessionCapabilities = capability.includeFrameworkMcpServers(setup.mcpServers ?? [])
       diagnostics.phase('start-provider-session')
       provisionalSession = await request.connection.agent
-        .buildSession({ cwd: request.cwd, mcpServers: capability.mcpServers, ...setup.metaArg })
+        .buildSession({
+          cwd: request.cwd,
+          mcpServers: sessionCapabilities.mcpServers,
+          ...setup.metaArg
+        })
         .start()
       adoptedProviderSessionId = provisionalSession.sessionId
 
