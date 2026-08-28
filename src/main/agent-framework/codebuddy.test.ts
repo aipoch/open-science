@@ -57,6 +57,8 @@ describe('codebuddy framework', () => {
       '--tools',
       expect.not.stringMatching(/Agent|Skill|Workflow|Task|WebFetch|WebSearch/),
       '--disallowedTools',
+      'Bash(python:*)',
+      'Bash(python3:*)',
       'Bash(curl:*)',
       'Bash(wget:*)',
       'Bash(aria2c:*)',
@@ -168,6 +170,20 @@ describe('codebuddy framework', () => {
     expect(tools).toBe('Read,Write,Edit,Glob,Grep')
     expect(config.args).toContain('Bash(curl:*)')
     expect(settings.sandbox.enabled).toBe(false)
+  })
+
+  it('keeps CodeBuddy from running Python through its native Bash tool', () => {
+    const config = createCodeBuddyFramework({ platform: 'linux' }).prepareModelConfig(provider, {
+      storageRoot: '/app-data',
+      executablePath: '/usr/bin/codebuddy',
+      systemPromptAppends: [],
+      reasoningEfforts: []
+    })
+    const tools = config.args?.[config.args.indexOf('--tools') + 1]
+
+    expect(tools).toContain('Bash')
+    expect(config.args).toContain('Bash(python:*)')
+    expect(config.args).toContain('Bash(python3:*)')
   })
 
   it('replays dynamic MCP servers when activating the target Session before a prompt', async () => {

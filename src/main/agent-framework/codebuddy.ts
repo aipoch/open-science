@@ -52,7 +52,9 @@ const recordValue = (value: unknown): Record<string, unknown> =>
 // lifecycle, Skill routing, Connector ownership, and permission owners.
 const CODEBUDDY_LOCAL_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep']
 const CODEBUDDY_CLEANUP_PERIOD_DAYS = 7
-const CODEBUDDY_NETWORK_DENY_RULES = [
+const CODEBUDDY_BASH_DENY_RULES = [
+  'Bash(python:*)',
+  'Bash(python3:*)',
   'Bash(curl:*)',
   'Bash(wget:*)',
   'Bash(aria2c:*)',
@@ -229,7 +231,7 @@ export const createCodeBuddyFramework = ({
         '--tools',
         codeBuddyTools(platform),
         '--disallowedTools',
-        ...CODEBUDDY_NETWORK_DENY_RULES,
+        ...CODEBUDDY_BASH_DENY_RULES,
         ...(persistentSystemPrompt ? ['--system-prompt-file', systemPromptPath] : [])
       ],
       sessionModel: provider.model,
