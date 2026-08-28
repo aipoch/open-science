@@ -243,6 +243,7 @@ class AcpPromptPreparationOwner {
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n')
 
+      const skillImportAttachmentPaths = new Set<string>()
       const prepared = await this.options.promptContent.prepare({
         appSessionId: input.request.sessionId,
         projectId: input.projectId,
@@ -259,20 +260,18 @@ class AcpPromptPreparationOwner {
           this.options.imageInputCompatibility !== undefined,
         fileTextBudget: resolveFileTextBudget(input.backend.context.window),
         skillImportTurnToken: input.skillImportTurnToken,
-        onSkillImportAttachmentEligible: input.onSkillImportAttachmentEligible
+        onSkillImportAttachmentEligible: (attachmentUri) => {
+          skillImportAttachmentPaths.add(attachmentUri)
+          input.onSkillImportAttachmentEligible?.(attachmentUri)
+        }
       })
       releasePromptContent = prepared.close
       if (await cancelled()) return cancelPrepared()
       if (input.skillImportEnabled && this.options.authorizeReferencedUploads) {
-        const paths = (prepared.turnInputs?.references ?? []).flatMap((reference) => {
-          if (reference.source !== 'upload') return []
-          const name = reference.name.toLowerCase()
-          return name.endsWith('.skill') || name.endsWith('.zip') ? [reference.path] : []
-        })
         releaseGrant = await this.options.authorizeReferencedUploads(
           input.projectId,
           input.request.sessionId,
-          paths
+          [...skillImportAttachmentPaths]
         )
         if (await cancelled()) return cancelPrepared()
       }

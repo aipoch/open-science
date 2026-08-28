@@ -31,7 +31,6 @@ type ToolDiffSection = {
   removedLines: number
 }
 
-// An artifact-save tool result that echoes an image file; rendered as an inline preview.
 type ToolDetailSection = ToolCodeSection | ToolDiffSection
 
 type ToolActivityDetails = {

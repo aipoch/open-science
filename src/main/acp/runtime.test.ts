@@ -9513,52 +9513,57 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('allows a cross-session Skill upload only while the user explicitly references it', async () => {
+  it('imports a managed current-turn Skill attachment through its advertised Version locator', async () => {
     const root = await realpath(await createTemporaryRoot())
     const legacyUploads = new UploadRepository(root)
+    const archive = buildStoredSkillArchive('Paper Finder')
     const [staged] = await stageUploadFixtures(legacyUploads, {
       files: [
         {
           name: 'paper-finder.skill',
           mimeType: 'application/zip',
-          content: buildStoredSkillArchive('Paper Finder').toString('base64')
+          content: archive.toString('base64')
         }
       ]
     })
-    const [attachment] = await legacyUploads.finalizePendingSessionUploads('owning-session', [
+    const [attachment] = await legacyUploads.finalizePendingSessionUploads('current-session', [
       staged
     ])
+    const managedContentPath = join(root, 'managed-paper-finder.skill')
+    await writeFile(managedContentPath, archive)
     const openLatest = vi.fn(({ projectId, fileId }: { projectId: string; fileId: string }) =>
       createManagedReadLease({
         source: 'upload',
         projectId,
-        sessionId: 'owning-session',
+        sessionId: 'current-session',
         fileId,
-        path: attachment.path,
+        path: managedContentPath,
         name: attachment.originalName,
         mimeType: attachment.mimeType
       })
     )
+    let importLease: Awaited<ReturnType<typeof createManagedReadLease>> | undefined
     const openVersion = vi.fn(
-      ({ projectId, fileId }: { projectId: string; fileId: string }, versionId: string) => {
+      async ({ projectId, fileId }: { projectId: string; fileId: string }, versionId: string) => {
         if (versionId !== `version-${fileId}`)
           throw new Error('Unexpected managed Version fixture.')
-        return createManagedReadLease({
+        importLease = await createManagedReadLease({
           source: 'upload',
           projectId,
-          sessionId: 'owning-session',
+          sessionId: 'current-session',
           fileId,
-          path: attachment.path,
+          path: managedContentPath,
           name: attachment.originalName,
           mimeType: attachment.mimeType
         })
+        return importLease
       }
     )
     const client = createProjectDbClient(root)
     temporaryDisconnections.push(() => client.$disconnect())
     await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
-      data: { projectId: 'project-1', sessionId: 'owning-session' }
+      data: { projectId: 'project-1', sessionId: 'current-session' }
     })
     const uploads = new UploadRepository(root, {
       getClient: () => Promise.resolve(client)
@@ -9656,23 +9661,11 @@ describe('ACP runtime session management', () => {
       }
     })
 
-    // Legacy uploads live under `default-project` even when the Session is now opened from a real
-    // Project. The explicit `@` selection grants cross-Session access only after the persisted
-    // Session-to-Project binding proves the source belongs to the same Project.
     const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
     await runtime.sendPrompt({
       sessionId: session.sessionId,
-      text: 'import @Paper Finder',
-      referencedArtifacts: [
-        {
-          id: 'upload-1',
-          name: attachment.originalName,
-          path: attachment.path,
-          source: 'upload',
-          sourceFileId: attachment.id,
-          mimeType: attachment.mimeType
-        }
-      ]
+      text: 'import the attached Paper Finder Skill',
+      attachments: [attachment]
     })
 
     expect(promptError).toBeUndefined()
@@ -9681,6 +9674,11 @@ describe('ACP runtime session management', () => {
       skills: [{ id: 'imported-paper-finder', name: 'Paper Finder', status: 'imported' }]
     })
     if (!advertisedAttachmentUri) throw new Error('Expected an advertised Skill attachment URI.')
+    expect(openVersion).toHaveBeenCalledWith(
+      { source: 'upload', projectId: 'project-1', fileId: attachment.id },
+      `version-${attachment.id}`
+    )
+    expect(importLease?.close).toHaveBeenCalledOnce()
     approvalBroker.beginSessionTurn(session.sessionId, 'retry-turn')
     approvalBroker.allowSessionTurnAttachment(
       session.sessionId,

@@ -50,12 +50,24 @@ const setup = (
   const turn = contextTurn()
   const promptClose = vi.fn()
   const promptContent = {
-    prepare: vi.fn(async (input: { references: readonly FileReference[] }) => ({
-      content: 'provider-content',
-      historyImageCount: 0,
-      turnInputs: { uploads: [], references: [...(input.references ?? [])] },
-      close: promptClose
-    }))
+    prepare: vi.fn(
+      async (input: {
+        references: readonly FileReference[]
+        onSkillImportAttachmentEligible?: (attachmentUri: string) => void
+      }) => {
+        for (const reference of input.references ?? []) {
+          if (reference.source === 'upload') {
+            input.onSkillImportAttachmentEligible?.(reference.path)
+          }
+        }
+        return {
+          content: 'provider-content',
+          historyImageCount: 0,
+          turnInputs: { uploads: [], references: [...(input.references ?? [])] },
+          close: promptClose
+        }
+      }
+    )
   }
   const contextUsage = {
     beginSession: vi.fn(),
