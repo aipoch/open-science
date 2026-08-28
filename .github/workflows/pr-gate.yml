@@ -676,7 +676,7 @@ jobs:
         id: e2e_functional_macos
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos') }}
         continue-on-error: true
-        run: npm run test:e2e:journey
+        run: npm run test:e2e:journey -- --fail-on-flaky-tests
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_macos.outcome == 'failure' }}
         continue-on-error: true
@@ -692,7 +692,7 @@ jobs:
         id: e2e_workspace_macos
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_macos') }}
         continue-on-error: true
-        run: npm run test:e2e:workspace
+        run: npm run test:e2e:workspace -- --fail-on-flaky-tests
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_macos.outcome == 'failure' }}
         continue-on-error: true
@@ -724,7 +724,7 @@ jobs:
         id: e2e_visual_macos
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
         continue-on-error: true
-        run: npm run test:e2e:visual
+        run: npm run test:e2e:visual -- --fail-on-flaky-tests
       - name: Upload visual failure artifacts
         if: ${{ steps.e2e_visual_macos.outcome == 'failure' }}
         continue-on-error: true
@@ -789,7 +789,7 @@ jobs:
         id: e2e_functional_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:journey -- --workers=2
+        run: npm run test:e2e:journey -- --workers=2 --fail-on-flaky-tests
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -805,7 +805,7 @@ jobs:
         id: e2e_workspace_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:workspace -- --workers=2
+        run: npm run test:e2e:workspace -- --workers=2 --fail-on-flaky-tests
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -823,7 +823,7 @@ jobs:
         id: e2e_accessibility_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:accessibility
+        run: npm run test:e2e:accessibility -- --fail-on-flaky-tests
       - name: Upload legacy accessibility failure artifacts
         if: ${{ steps.e2e_accessibility_windows.outcome == 'failure' }}
         continue-on-error: true
