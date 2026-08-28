@@ -155,7 +155,7 @@ const publicApplicationCommandError = (
 
 const sendWebSocketMessage = (socket: WebSocket, message: string): boolean => {
   if (socket.readyState !== WebSocket.OPEN) return false
-  if (socket.bufferedAmount >= MAX_WEBSOCKET_BUFFERED_BYTES) {
+  if (socket.bufferedAmount + Buffer.byteLength(message) > MAX_WEBSOCKET_BUFFERED_BYTES) {
     socket.terminate()
     return false
   }

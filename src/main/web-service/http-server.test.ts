@@ -703,7 +703,7 @@ describe('startWebHttpServer', () => {
     publicSocket.close()
   })
 
-  it('disconnects an event socket whose outgoing messages are already backlogged', async () => {
+  it('disconnects event sockets before their outgoing backlog exceeds the byte limit', async () => {
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
@@ -748,6 +748,31 @@ describe('startWebHttpServer', () => {
     bufferedAmount.mockRestore()
 
     expect(outcome).toBe('closed')
+
+    const oversizedSocket = new WebSocket(
+      `ws://127.0.0.1:${server.port}/api/v1/events?token=test-token`
+    )
+    await new Promise<void>((resolve) => oversizedSocket.once('open', resolve))
+    const oversizedClosed = new Promise<'closed'>((resolve) =>
+      oversizedSocket.once('close', () => resolve('closed'))
+    )
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'event-2',
+        timestamp: 2,
+        level: 'info',
+        sessionId: 'session-1',
+        kind: 'message',
+        text: 'x'.repeat(16 * 1024 * 1024)
+      }
+    ])
+
+    await expect(
+      Promise.race([
+        oversizedClosed,
+        new Promise<'still-open'>((resolve) => setTimeout(() => resolve('still-open'), 250))
+      ])
+    ).resolves.toBe('closed')
   })
 
   it('replays internal renderer events published while the Web client is disconnected', async () => {
