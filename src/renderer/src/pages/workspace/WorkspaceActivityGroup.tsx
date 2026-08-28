@@ -113,6 +113,14 @@ const WorkspaceActivityGroup = ({
   const renderableActivityEntries = getRenderableActivityEntries(group.activities)
   const visibleActivities = renderableActivityEntries.map(({ activity }) => activity)
 
+  // A row's detail panel changes this group's height. Leave bottom-follow mode first — exactly
+  // like the group header does — so the viewport stays put and the panel opens strictly downward
+  // instead of the transcript snapping to the bottom (an upward flash) once content overflows.
+  const handleToggleRow = (activityId: string, nextExpanded: boolean): void => {
+    scrollToMessage(group.id, { align: 'nearest', behavior: 'auto' })
+    onToggleRow(activityId, nextExpanded)
+  }
+
   return (
     <MessageScrollerItem key={group.id} messageId={group.id} className="min-w-0">
       <div className={cn('px-4 pb-0.5 pt-2.5 md:px-6', contentPaddingClassName)}>
@@ -191,7 +199,7 @@ const WorkspaceActivityGroup = ({
                           activity={activity}
                           phase={phase}
                           isExpanded={isRowExpanded}
-                          onToggle={onToggleRow}
+                          onToggle={handleToggleRow}
                           annotationPort={annotationPort}
                           revealRequest={
                             revealRequest?.itemId === activity.id ? revealRequest : undefined
@@ -203,7 +211,7 @@ const WorkspaceActivityGroup = ({
                           phase={phase}
                           details={searchDetails}
                           isExpanded={isRowExpanded}
-                          onToggleSearch={onToggleRow}
+                          onToggleSearch={handleToggleRow}
                           annotationPort={annotationPort}
                         />
                       ) : skillLoadDocument ? (
@@ -213,7 +221,7 @@ const WorkspaceActivityGroup = ({
                           skillName={getLoadedSkillName(activity)}
                           markdown={skillLoadDocument}
                           isExpanded={isRowExpanded}
-                          onToggle={onToggleRow}
+                          onToggle={handleToggleRow}
                         />
                       ) : toolDetails ? (
                         <WorkspaceToolDetailsRow
@@ -228,7 +236,7 @@ const WorkspaceActivityGroup = ({
                           }
                           isExpanded={isRowExpanded}
                           onNotebookRunNearViewport={onNotebookRunNearViewport}
-                          onToggle={onToggleRow}
+                          onToggle={handleToggleRow}
                           annotationPort={annotationPort}
                           revealRequest={
                             revealRequest?.itemId === activity.id ? revealRequest : undefined
@@ -241,7 +249,7 @@ const WorkspaceActivityGroup = ({
                           activity={activity}
                           phase={phase}
                           isExpanded={isRowExpanded}
-                          onToggle={onToggleRow}
+                          onToggle={handleToggleRow}
                         />
                       ) : (
                         <WorkspaceToolActivityRow activity={activity} phase={phase} />
