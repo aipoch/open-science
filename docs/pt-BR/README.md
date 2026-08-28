@@ -364,7 +364,7 @@ R: Crie ou abra um projeto, inicie uma sessão, anexe os arquivos de origem e de
 
 ### Como executo trabalhos em um cluster HPC remoto?
 
-R: Habilite a habilidade **Remote Compute (SSH)** em **Configurações → Habilidades**, cadastre o cluster em **Configurações → Calcular**, inicie uma sessão e selecione a habilidade com `/remote-compute-ssh`. Ela cuida do cadastro do host, de comandos curtos por SSH e do envio totalmente assíncrono de trabalhos. Quando o trabalho termina, o aplicativo inicia automaticamente uma interação de análise; você não precisa criar um loop de polling.
+R: Habilite a habilidade **Remote Compute (SSH)** em **Configurações → Habilidades**, cadastre o cluster em **Configurações → Computação**, inicie uma sessão e selecione a habilidade com `/remote-compute-ssh`. Ela cuida do cadastro do host, de comandos curtos por SSH e do envio totalmente assíncrono de trabalhos. Quando o trabalho termina, o aplicativo inicia automaticamente uma interação de análise; você não precisa criar um loop de polling.
 
 ### Existe uma interface de linha de comando?
 

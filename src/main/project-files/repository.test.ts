@@ -20,6 +20,10 @@ const SESSION_ID = 'session-a'
 
 const storageKey = (storageRoot: string, path: string): string =>
   relative(storageRoot, path).split(sep).join('/')
+// Hosted Windows runners rebuild the migration ledger in beforeEach. The
+// Windows full-test workflow's 60s CLI hook budget does not override the
+// Vitest project config, so schema-backed hooks still die at 30s.
+const WINDOWS_SQLITE_HOOK_TIMEOUT_MS = 120_000
 
 const createSession = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSession => ({
   id: SESSION_ID,
@@ -44,12 +48,12 @@ describe('ManagedFileIndexRepository', () => {
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     repository = new ManagedFileIndexRepository(() => Promise.resolve(client), storageRoot)
-  })
+  }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
 
   afterEach(async () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
-  })
+  }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
 
   it('indexes uploads and all finalized managed artifacts without requiring a message link', async () => {
     const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')

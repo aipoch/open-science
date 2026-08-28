@@ -1108,7 +1108,7 @@ describe('mandatory product glossary', () => {
       'zh-Hant': /主智能體/u,
       ja: /メインエージェント/u,
       ko: /메인 에이전트/u,
-      'pt-BR': /agente principal/iu,
+      'pt-BR': /[Aa]gente principal/u,
       ru: /главн\p{L}*\s+агент/iu
     },
     subagent: {
@@ -3184,12 +3184,34 @@ describe('Brazilian Portuguese safety copy', () => {
 
   it('does not contain known machine-translation artifacts', () => {
     const artifacts =
-      /Argóis|Respondedo|Aprovaçãos|execuçãos|Provença|esto aplicativo|jogada interrompida|painel de detalhes de close|não são sandboxed|carregar anfitriões|Designação das mercadorias|Exportar a Marcação|código Claude|Lista de conexões|Duplicar o nome|\bsondad\p{L}*|\bfacultativ\p{L}*|\bscoping\b|\bconversação\b|\bligação\b|\bapag(?:ar|ad[ao]s?)\b|\bdeletad[ao]s?\b|\bgerir\b|\brecolha\b|\b(?:uma|a|da|na|esta|nenhuma) host\b|\bpára\b|\bsonda\b/iu
+      /Argóis|Respondedo|Aprovaçãos|execuçãos|Provença|esto aplicativo|jogada interrompida|painel de detalhes de close|não são sandboxed|carregar anfitriões|Designação das mercadorias|Exportar a Marcação|código Claude|Lista de conexões|Duplicar o nome|não incluem segredos|se inscreve em você|tempos de execução do Notebook|mudar a hora de correr|apenas edita para arquivos|\bquiseres\b|\blinha de comandos\b|\ba reparar\b|\bpartilhad[ao]s?\b|\bcorreu mal\b|\bsondad\p{L}*|\bfacultativ\p{L}*|\bscoping\b|\bconversação\b|\bligação\b|\bapag(?:ar|ad[ao]s?)\b|\bdeletad[ao]s?\b|\bgerir\b|\brecolha\b|\b(?:uma|a|da|na|esta|nenhuma) host\b|\bpára\b|\bsonda\b/iu
     const offenders = Object.entries(catalog('pt-BR'))
       .filter(([, value]) => artifacts.test(value))
       .map(([key]) => key)
 
     expect(offenders).toEqual([])
+  })
+
+  it.each([
+    [
+      'Injected into the system prompt of every agent session in this project, including resumed ones. Sent to the model provider with every session — do not include secrets.',
+      'Injetado no prompt do sistema de cada sessão de agente deste projeto, inclusive nas sessões retomadas. Enviado ao provedor do modelo em todas as sessões — não inclua informações confidenciais.'
+    ],
+    [
+      'This Provider no longer exists. Your draft has not been saved.',
+      'Este provedor não existe mais. Seu rascunho não foi salvo.'
+    ],
+    [
+      'This agent has no native auto mode. Open Science auto-approves only edits to files inside the workspace — commands, network, and MCP tools still ask.',
+      'Este agente não tem um modo automático nativo. O Open Science aprova automaticamente apenas edições em arquivos dentro do espaço de trabalho — comandos, rede e ferramentas MCP continuam exigindo aprovação.'
+    ],
+    ['Main Agent', 'Agente principal'],
+    ['Runtimes', 'Ambientes de execução'],
+    ['Notebook runtimes', 'Ambientes de execução do Notebook'],
+    ['Compute', 'Computação'],
+    ['Test & continue', 'Testar e continuar']
+  ])('keeps reviewed high-risk Brazilian Portuguese copy exact in %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
   })
 
   it.each([

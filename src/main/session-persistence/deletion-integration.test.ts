@@ -22,6 +22,10 @@ import { SessionRepository } from './repository'
 
 const PROJECT_ID = 'project-a'
 const SESSION_ID = 'session-a'
+// Hosted Windows runners rebuild the migration ledger in beforeEach. The
+// Windows full-test workflow's 60s CLI hook budget does not override the
+// Vitest project config, so schema-backed hooks still die at 30s.
+const WINDOWS_SQLITE_HOOK_TIMEOUT_MS = 120_000
 
 describe('managed-file deletion integration', () => {
   let storageRoot: string
@@ -96,12 +100,12 @@ describe('managed-file deletion integration', () => {
     await sessions.saveSession(createSession(uploadPath, artifactPath))
     await coordinator.loadAll()
     await expect(files.getOverview(PROJECT_ID)).resolves.toMatchObject({ totalCount: 2 })
-  })
+  }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
 
   afterEach(async () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
-  })
+  }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
 
   it('soft-deletes indexed rows but retains upload and artifact bytes after session deletion', async () => {
     const legacyPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
