@@ -815,15 +815,15 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.enabledHostsSet': callable<
     (sessionId: string, providerIds: string[]) => Promise<PersistedChatSession>
   >()('compute', ['compute:enabled-hosts:set']),
-  'compute.get': callable<(providerId: string) => Promise<ComputeHost | null>>()('compute', [
-    'compute:get'
-  ]),
   'compute.hostEnabledSet': callable<
     (sessionId: string, providerId: string, enabled: boolean) => Promise<PersistedChatSession>
   >()('compute', ['compute:host-enabled:set']),
   'compute.hostSelectedSet': callable<
     (sessionId: string, providerId: string, selected: boolean) => Promise<PersistedChatSession>
   >()('compute', ['compute:host-selected:set']),
+  'compute.get': callable<(providerId: string) => Promise<ComputeHost | null>>()('compute', [
+    'compute:get'
+  ]),
   'compute.jobsList': callable<(filter: ComputeJobsListFilter) => Promise<JobSummary[]>>()(
     'compute',
     ['compute:jobs:list']
@@ -1861,8 +1861,8 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'storage.dismissLegacyMovePrompt': callable<() => Promise<void>>()('storage', [
     'storage:dismiss-legacy-move-prompt'
   ]),
-  'storage.getInfo': callable<() => Promise<StorageInfo>>()('storage', ['storage:get-info']),
   'storage.getStatus': callable<() => Promise<StorageStatus>>()('storage', ['storage:get-status']),
+  'storage.getInfo': callable<() => Promise<StorageInfo>>()('storage', ['storage:get-info']),
   'storage.inspectDataRoot': callable<(parent: string) => Promise<DataRootInspection>>()(
     'storage',
     ['storage:inspect-data-root', LOCAL, STORAGE_PARENT]
@@ -2051,16 +2051,20 @@ export type RendererApiContractValue<Path extends RendererApiContractPath> = Con
   (typeof RENDERER_API_CONTRACT)[Path]
 >
 
+const RENDERER_CONTRACTS_IN_REGISTRATION_ORDER = Object.freeze(
+  Object.entries(RENDERER_API_CONTRACT).flatMap(([publicPath, draft]) =>
+    draft.metadata === null ? [] : [Object.freeze(expandEntry(publicPath, draft))]
+  )
+)
+
 export const RENDERER_CONTRACT_CATALOG = Object.freeze(
-  Object.entries(RENDERER_API_CONTRACT)
-    .flatMap(([publicPath, draft]) =>
-      draft.metadata === null ? [] : [Object.freeze(expandEntry(publicPath, draft))]
-    )
-    .sort((left, right) => left.publicPath.localeCompare(right.publicPath))
+  [...RENDERER_CONTRACTS_IN_REGISTRATION_ORDER].sort((left, right) =>
+    left.publicPath.localeCompare(right.publicPath)
+  )
 )
 
 const contractsByCapability = new Map<string, (typeof RENDERER_CONTRACT_CATALOG)[number][]>()
-for (const contract of RENDERER_CONTRACT_CATALOG) {
+for (const contract of RENDERER_CONTRACTS_IN_REGISTRATION_ORDER) {
   const contracts = contractsByCapability.get(contract.capability) ?? []
   contracts.push(contract)
   contractsByCapability.set(contract.capability, contracts)
