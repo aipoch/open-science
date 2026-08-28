@@ -763,7 +763,7 @@ describe('startWebHttpServer', () => {
         level: 'info',
         sessionId: 'session-1',
         kind: 'message',
-        text: 'x'.repeat(16 * 1024 * 1024)
+        text: 'x'.repeat(17 * 1024 * 1024)
       }
     ])
 
@@ -850,10 +850,28 @@ describe('startWebHttpServer', () => {
     applicationEvents.publish('settings:connector-runtime-changed', undefined)
 
     const replayed: unknown[] = []
+    const bufferedAmount = vi
+      .spyOn(WebSocket.prototype, 'bufferedAmount', 'get')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValue(16 * 1024 * 1024)
     const secondSocket = new WebSocket(eventSocketUrl(0))
-    secondSocket.on('message', (data) => replayed.push(JSON.parse(data.toString())))
+    const replayCompleted = new Promise<'ready' | 'closed'>((resolve) => {
+      secondSocket.on('message', (data) => {
+        const message = JSON.parse(data.toString()) as { kind?: string }
+        replayed.push(message)
+        if (message.kind === 'ready') resolve('ready')
+      })
+      secondSocket.once('close', () => resolve('closed'))
+    })
     await new Promise<void>((resolve) => secondSocket.once('open', resolve))
-    await vi.waitFor(() => expect(replayed).toHaveLength(3))
+    const replayOutcome = await Promise.race([
+      replayCompleted,
+      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 500))
+    ])
+    bufferedAmount.mockRestore()
+
+    expect(replayOutcome).toBe('ready')
     expect(replayed).toEqual([
       expect.objectContaining({
         kind: 'event',

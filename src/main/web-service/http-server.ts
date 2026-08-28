@@ -54,8 +54,8 @@ const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
-// Match the renderer replay window so a reconnect can catch up while live-only queues stay bounded.
-const MAX_WEBSOCKET_BUFFERED_BYTES = 16 * 1024 * 1024
+// The replay stream retains 16 MiB. Keep 64 KiB for its mandatory ready frame and framing overhead.
+const MAX_WEBSOCKET_BUFFERED_BYTES = 16 * 1024 * 1024 + 64 * 1024
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
 const MAX_TASK_IDEMPOTENCY_BYTES = 64 * 1024 * 1024
