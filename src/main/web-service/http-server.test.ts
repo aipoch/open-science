@@ -1,5 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest, ServerResponse } from 'node:http'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -83,6 +84,44 @@ const accessOnlyExternalAccess = (): ExternalWebAccessAuthorization => ({
   kind: 'authorized' as const,
   isCurrent: () => true
 })
+const startBudgetTestServer = async (
+  requestBodyBudgets: NonNullable<Parameters<typeof startWebHttpServer>[0]['requestBodyBudgets']>,
+  onExternalAuthorization?: () => void,
+  invoke: TestWebServerOptions['rpc']['invoke'] = vi.fn().mockResolvedValue([])
+): ReturnType<typeof startWebHttpServer> => {
+  const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+  roots.push(staticRoot)
+  await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot,
+    requestBodyBudgets,
+    rpc: {
+      channels: () => ['projects:list'],
+      invoke,
+      releaseClient: vi.fn(),
+      dispose: vi.fn()
+    },
+    externalAccess: {
+      authorizeHttp: async () => {
+        onExternalAuthorization?.()
+        return accessOnlyExternalAccess()
+      },
+      authorizeWebSocket: async () => undefined
+    },
+    bootstrap: {
+      appName: 'Open Science',
+      appVersion: '0.0.0',
+      configRoot: '/fake/root',
+      platform: 'test',
+      versions: { electron: '1', chrome: '1', node: '1' }
+    }
+  })
+  servers.push(server)
+  return server
+}
 const runWithCallerContext = <Result>(_context: CallerContext, operation: () => Result): Result =>
   operation()
 
@@ -104,6 +143,211 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('retains a parsed body reservation when the client disconnects before its handler completes', async () => {
+    const body = JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    const bodyBytes = Buffer.byteLength(body)
+    let markHandlerStarted: () => void = () => undefined
+    const handlerStarted = new Promise<void>((resolve) => {
+      markHandlerStarted = resolve
+    })
+    let finishFirstHandler: (value: unknown) => void = () => undefined
+    const firstHandler = new Promise<unknown>((resolve) => {
+      finishFirstHandler = resolve
+    })
+    const invoke = vi
+      .fn<TestWebServerOptions['rpc']['invoke']>()
+      .mockImplementationOnce(async () => {
+        markHandlerStarted()
+        return firstHandler
+      })
+      .mockResolvedValue([])
+    const server = await startBudgetTestServer(
+      {
+        perRequestBytes: bodyBytes,
+        perClientInFlightBytes: bodyBytes,
+        serverInFlightBytes: bodyBytes
+      },
+      undefined,
+      invoke
+    )
+
+    const firstRequest = httpRequest({
+      host: '127.0.0.1',
+      port: server.port,
+      path: '/rpc/projects%3Alist',
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json',
+        'content-length': String(bodyBytes),
+        'x-open-science-client': 'first-client'
+      }
+    })
+    firstRequest.on('error', () => undefined)
+    firstRequest.end(body)
+    await handlerStarted
+    const firstClosed = new Promise<void>((resolve) => firstRequest.once('close', resolve))
+    firstRequest.destroy()
+    await firstClosed
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-open-science-client': 'second-client'
+        },
+        body
+      })
+
+      expect(response.status).toBe(503)
+      expect(await response.json()).toMatchObject({ error: { code: 'handler_error' } })
+      expect(invoke).toHaveBeenCalledOnce()
+    } finally {
+      finishFirstHandler([])
+    }
+  })
+
+  it.each([
+    {
+      dimension: 'server',
+      budgets: {
+        perRequestBytes: 64,
+        perClientInFlightBytes: 64,
+        serverInFlightBytes: 64
+      },
+      firstClientId: 'first-client',
+      secondClientId: 'second-client',
+      expectedStatus: 503
+    },
+    {
+      dimension: 'client',
+      budgets: {
+        perRequestBytes: 64,
+        perClientInFlightBytes: 64,
+        serverInFlightBytes: 128
+      },
+      firstClientId: 'shared-client',
+      secondClientId: 'shared-client',
+      expectedStatus: 429
+    }
+  ])(
+    'rejects a declared body before reading when concurrent requests exhaust the $dimension byte budget',
+    async ({ budgets, firstClientId, secondClientId, expectedStatus }) => {
+      let authorizeCount = 0
+      let markFirstAuthorized: () => void = () => undefined
+      const firstAuthorized = new Promise<void>((resolve) => {
+        markFirstAuthorized = resolve
+      })
+      const server = await startBudgetTestServer(budgets, () => {
+        authorizeCount += 1
+        if (authorizeCount === 1) markFirstAuthorized()
+      })
+
+      const firstRequest = httpRequest({
+        host: '127.0.0.1',
+        port: server.port,
+        path: '/rpc/projects%3Alist',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': '64',
+          'x-open-science-client': firstClientId
+        }
+      })
+      firstRequest.on('error', () => undefined)
+      firstRequest.write('{')
+      await firstAuthorized
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      try {
+        const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-open-science-client': secondClientId
+          },
+          body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+        })
+
+        expect(response.status).toBe(expectedStatus)
+        expect(await response.json()).toMatchObject({
+          error: { code: 'handler_error' }
+        })
+      } finally {
+        const firstClosed = new Promise<void>((resolve) => firstRequest.once('close', resolve))
+        firstRequest.destroy()
+        await firstClosed
+      }
+
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const retry = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-open-science-client': secondClientId
+        },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      })
+      expect(retry.status).toBe(200)
+    }
+  )
+
+  it.each([
+    {
+      transport: 'declared',
+      bodyHeaders: ['Content-Length: 65'],
+      body: ''
+    },
+    {
+      transport: 'chunked',
+      bodyHeaders: ['Transfer-Encoding: chunked'],
+      body: `41\r\n${'x'.repeat(65)}\r\n`
+    }
+  ])(
+    'rejects an oversized $transport body and closes the connection',
+    async ({ bodyHeaders, body }) => {
+      const server = await startBudgetTestServer({
+        perRequestBytes: 64,
+        perClientInFlightBytes: 128,
+        serverInFlightBytes: 128
+      })
+
+      const socket = connect({ host: '127.0.0.1', port: server.port })
+      const chunks: Buffer[] = []
+      socket.on('data', (chunk: Buffer) => chunks.push(chunk))
+      socket.on('error', () => undefined)
+      await new Promise<void>((resolve) => socket.once('connect', resolve))
+      const closed = new Promise<string>((resolve) =>
+        socket.once('close', () => resolve(Buffer.concat(chunks).toString()))
+      )
+
+      socket.write(
+        `${[
+          'POST /rpc/projects%3Alist HTTP/1.1',
+          `Host: 127.0.0.1:${server.port}`,
+          'Authorization: Bearer test-token',
+          'Content-Type: application/json',
+          ...bodyHeaders,
+          'Connection: keep-alive',
+          '',
+          ''
+        ].join('\r\n')}${body}`
+      )
+
+      const response = await Promise.race([
+        closed,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('oversized request connection stayed open')), 1_000)
+        )
+      ])
+      expect(response).toContain('HTTP/1.1 413')
+      expect(response.toLowerCase()).toContain('connection: close')
+      expect(response).toContain('Request body is too large.')
+    }
+  )
+
   it('preserves valid idempotency entries when replay capacity is full', async () => {
     const registry = new TaskIdempotencyRegistry(2, 8_192)
     const first = vi.fn().mockResolvedValue('first result')
@@ -703,6 +947,78 @@ describe('startWebHttpServer', () => {
     publicSocket.close()
   })
 
+  it('disconnects event sockets before their outgoing backlog exceeds the byte limit', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/events?token=test-token`)
+    await new Promise<void>((resolve) => socket.once('open', resolve))
+    const closed = new Promise<'closed'>((resolve) => socket.once('close', () => resolve('closed')))
+    const bufferedAmount = vi
+      .spyOn(WebSocket.prototype, 'bufferedAmount', 'get')
+      .mockReturnValue(Number.MAX_SAFE_INTEGER)
+
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'event-1',
+        timestamp: 1,
+        level: 'info',
+        sessionId: 'session-1',
+        kind: 'message',
+        text: 'Backlogged event'
+      }
+    ])
+    const outcome = await Promise.race([
+      closed,
+      new Promise<'still-open'>((resolve) => setTimeout(() => resolve('still-open'), 250))
+    ])
+    bufferedAmount.mockRestore()
+
+    expect(outcome).toBe('closed')
+
+    const oversizedSocket = new WebSocket(
+      `ws://127.0.0.1:${server.port}/api/v1/events?token=test-token`
+    )
+    await new Promise<void>((resolve) => oversizedSocket.once('open', resolve))
+    const oversizedClosed = new Promise<'closed'>((resolve) =>
+      oversizedSocket.once('close', () => resolve('closed'))
+    )
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'event-2',
+        timestamp: 2,
+        level: 'info',
+        sessionId: 'session-1',
+        kind: 'message',
+        text: 'x'.repeat(17 * 1024 * 1024)
+      }
+    ])
+
+    await expect(
+      Promise.race([
+        oversizedClosed,
+        new Promise<'still-open'>((resolve) => setTimeout(() => resolve('still-open'), 250))
+      ])
+    ).resolves.toBe('closed')
+  })
+
   it('replays internal renderer events published while the Web client is disconnected', async () => {
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
@@ -778,10 +1094,28 @@ describe('startWebHttpServer', () => {
     applicationEvents.publish('settings:connector-runtime-changed', undefined)
 
     const replayed: unknown[] = []
+    const bufferedAmount = vi
+      .spyOn(WebSocket.prototype, 'bufferedAmount', 'get')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValue(16 * 1024 * 1024)
     const secondSocket = new WebSocket(eventSocketUrl(0))
-    secondSocket.on('message', (data) => replayed.push(JSON.parse(data.toString())))
+    const replayCompleted = new Promise<'ready' | 'closed'>((resolve) => {
+      secondSocket.on('message', (data) => {
+        const message = JSON.parse(data.toString()) as { kind?: string }
+        replayed.push(message)
+        if (message.kind === 'ready') resolve('ready')
+      })
+      secondSocket.once('close', () => resolve('closed'))
+    })
     await new Promise<void>((resolve) => secondSocket.once('open', resolve))
-    await vi.waitFor(() => expect(replayed).toHaveLength(3))
+    const replayOutcome = await Promise.race([
+      replayCompleted,
+      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 500))
+    ])
+    bufferedAmount.mockRestore()
+
+    expect(replayOutcome).toBe('ready')
     expect(replayed).toEqual([
       expect.objectContaining({
         kind: 'event',
