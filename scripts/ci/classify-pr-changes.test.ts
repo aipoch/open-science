@@ -332,7 +332,10 @@ describe('pull request change classification', () => {
     ['notebook runtime settings', 'src/main/settings/notebook-runtime-settings.ts'],
     ['CodeBuddy managed install', 'src/main/settings/codebuddy-install.ts'],
     ['preferences', 'src/main/settings/preferences.ts'],
-    ['restricted runtime profile', 'src/main/acp/restricted-runtime-profile.ts']
+    ['restricted runtime profile', 'src/main/acp/restricted-runtime-profile.ts'],
+    ['CodeBuddy framework', 'src/main/agent-framework/codebuddy.ts'],
+    ['CodeBuddy detect', 'src/main/settings/codebuddy-detect.ts'],
+    ['managed CodeBuddy', 'src/main/settings/managed-codebuddy.ts']
   ])('adds native Windows lanes for %s changes', (_category, path) => {
     const plan = classifyChanges([{ path, status: 'modified' }])
 
