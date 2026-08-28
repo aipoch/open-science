@@ -1,5 +1,4 @@
-// Renderer-safe copies of storage types whose canonical definitions live in main-only modules
-// (src/main/storage/*), mirroring how ArtifactFile/NotebookRunSummary are shared with preload.
+// Cross-process storage contracts shared by main, preload, and renderer.
 
 export type UsageCategoryKey =
   'artifacts' | 'delegation' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
@@ -61,15 +60,12 @@ export type MigrationResult = { ok: true } | { ok: false; error: string; cancell
 export type MigrationOutcome =
   MigrationResult | { ok: false; error: string; switchoverFailed: true }
 
-// Result of validating (or applying) a candidate data root, mirroring main's ValidateResult
 export type DiscardMigratedCopyResult =
   { ok: true; cleanupWarning?: string } | { ok: false; error: string }
 
-// (src/main/storage/migration-service.ts) without importing main-only code into the renderer.
 export type DataRootValidationResult = { ok: true } | { ok: false; error: string }
 
-// Classification of a candidate data root, mirroring main's ClassifyResult
-// (src/main/storage/migration-service.ts). 'move' = empty writable target (copy-in migration).
+// Classification of a candidate data root. 'move' = empty writable target (copy-in migration).
 // 'adopt' = already contains our data (pointer switch only, no move). 'recover' = a durable marker
 // from an interrupted copy that Settings can explicitly finish or discard. 'invalid' carries a reason.
 // `dataRoot` is the derived `<parent>/OpenScience` path, always present so the caller can display

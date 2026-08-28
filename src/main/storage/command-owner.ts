@@ -8,6 +8,7 @@ import { app, dialog, shell } from 'electron'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
+  DataRootValidationResult,
   DiscardMigratedCopyResult,
   MigrationOutcome,
   MigrationProgress,
@@ -37,8 +38,7 @@ import {
   discardStagedCopy,
   pauseDataRootWriters,
   runDataRootMigration,
-  validateNewDataRoot,
-  type ValidateResult
+  validateNewDataRoot
 } from './migration-service'
 import { readMigrationMarker } from './migration-marker'
 import { availableBytes, computeStorageUsage } from './usage'
@@ -545,7 +545,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // Onboarding's first-run location step: check a candidate parent before letting the user commit
   // to it. Never throws: validateNewDataRoot already guards fs errors, this catch only covers
   // anything unexpected escaping that contract.
-  const validateDataRoot = async (request: StorageParentRequest): Promise<ValidateResult> => {
+  const validateDataRoot = async (
+    request: StorageParentRequest
+  ): Promise<DataRootValidationResult> => {
     try {
       return await validateNewDataRoot(request.parent, resolveDataRoot())
     } catch (err) {
@@ -588,7 +590,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // resolves would swap the wizard for Home (showing the OLD data root, and burying any failure
   // below). Settings-adopt omits it (onboarding has already completed). Order is load-bearing:
   // classify -> mkdir -> persist settings -> relaunch. On an invalid parent, none of these run.
-  const setDataRootAndRelaunch = async (request: StorageRootRequest): Promise<ValidateResult> => {
+  const setDataRootAndRelaunch = async (
+    request: StorageRootRequest
+  ): Promise<DataRootValidationResult> => {
     const operation = startDiagnosticOperation(logger, {
       operation: 'data-root-selection',
       fields: { onboarding: request.markOnboarding === true }

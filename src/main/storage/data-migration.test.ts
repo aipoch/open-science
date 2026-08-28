@@ -15,7 +15,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { copyAndVerify, deleteSources, type MigrationProgress } from './data-migration'
+import type { MigrationProgress } from '../../shared/storage'
+import { copyAndVerify, deleteSources } from './data-migration'
 
 let from: string
 let to: string
@@ -48,7 +49,7 @@ const exists = async (path: string): Promise<boolean> => {
 }
 
 describe('copyAndVerify', () => {
-  it('copies dirs on the same volume, verifies them, and leaves sources intact', async () => {
+  it('copies dirs, verifies them, and leaves sources intact', async () => {
     await seedFixture()
     const progress: MigrationProgress[] = []
     const result = await copyAndVerify({
@@ -145,29 +146,6 @@ describe('copyAndVerify', () => {
     }
   )
 
-  it('forces the byte-copy branch (simulated cross-device) and produces the same result', async () => {
-    await seedFixture()
-    const progress: MigrationProgress[] = []
-    const result = await copyAndVerify({
-      from,
-      to,
-      dirs: ['artifacts', 'uploads'],
-      signal: new AbortController().signal,
-      onProgress: (p) => progress.push(p),
-      forceCopy: true
-    })
-
-    expect(result).toEqual({ ok: true })
-    expect(await readFile(join(to, 'artifacts', 'a.txt'), 'utf8')).toBe('hello artifacts')
-    expect(await readFile(join(to, 'uploads', 'b.txt'), 'utf8')).toBe('hello uploads')
-    expect(progress.some((p) => p.phase === 'copy')).toBe(true)
-
-    const deleteResult = await deleteSources(from, ['artifacts', 'uploads'])
-    expect(deleteResult.failed).toEqual([])
-    expect(await exists(join(from, 'artifacts'))).toBe(false)
-    expect(await exists(join(from, 'uploads'))).toBe(false)
-  })
-
   it('cancels mid-copy, leaves sources intact, and cleans partial dest', async () => {
     await seedFixture()
     // Add more files so there's something to cancel between.
@@ -179,7 +157,6 @@ describe('copyAndVerify', () => {
       to,
       dirs: ['artifacts', 'uploads'],
       signal: controller.signal,
-      forceCopy: true,
       onProgress: () => {
         if (!seenFirstProgress) {
           seenFirstProgress = true
@@ -210,8 +187,7 @@ describe('copyAndVerify', () => {
       to,
       dirs: ['artifacts', 'uploads'],
       signal: new AbortController().signal,
-      onProgress: () => {},
-      forceCopy: true
+      onProgress: () => {}
     })
 
     expect(result.ok).toBe(false)

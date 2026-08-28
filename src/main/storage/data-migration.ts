@@ -4,14 +4,7 @@ import { chmod, lstat, mkdir, readdir, readlink, rm, rmdir, stat, symlink } from
 import { basename, dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
-export type MigrationPhase = 'scan' | 'copy' | 'verify' | 'delete'
-export type MigrationProgress = {
-  phase: MigrationPhase
-  copiedBytes: number
-  totalBytes: number
-  currentPath?: string
-}
-export type MigrationResult = { ok: true } | { ok: false; error: string; cancelled?: boolean }
+import type { MigrationProgress, MigrationResult } from '../../shared/storage'
 
 type MigrateOpts = {
   from: string
@@ -19,10 +12,6 @@ type MigrateOpts = {
   dirs: string[]
   signal: AbortSignal
   onProgress: (p: MigrationProgress) => void
-  // Accepted for interface compatibility (test hook to "force" the byte-copy branch);
-  // this implementation always byte-copies, so it is a no-op. See report for rationale:
-  // rename is skipped entirely to keep multi-dir rollback simple and safe.
-  forceCopy?: boolean
 }
 
 // Thrown internally to unwind to the single catch site; never escapes copyAndVerify.

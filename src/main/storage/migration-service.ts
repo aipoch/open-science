@@ -3,18 +3,21 @@ import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
+import type {
+  DataRootKind,
+  DataRootRecoveryStatus,
+  DataRootValidationResult,
+  MigrationOutcome,
+  MigrationProgress,
+  MigrationResult
+} from '../../shared/storage'
 import {
   dataRootForPicked,
   isPathInsideOrEqual,
   resolveConfigRoot,
   samePath
 } from '../storage-root'
-import {
-  copyAndVerify,
-  deleteSources,
-  type MigrationProgress,
-  type MigrationResult
-} from './data-migration'
+import { copyAndVerify, deleteSources } from './data-migration'
 import {
   MIGRATION_MARKER_FILENAME,
   newToken,
@@ -42,15 +45,11 @@ export { DATA_ROOT_DIRS } from './data-directories'
 // hardcoded absolute paths, so it is rebuilt on demand at the new root. See design §17.
 export const MIGRATED_DIRS = RELOCATABLE_DATA_DIRS
 
-export type ValidateResult = { ok: true } | { ok: false; error: string }
-
 // Classification of a candidate data root relative to the current one. 'move' = empty and
 // writable, safe for the copy-in migration engine. 'adopt' = already holds our data (a prior
 // migration, or the user's own pre-existing folder) - the pointer should switch to it as-is,
 // never be moved into. 'recover' is a marker-confirmed copy left by an interrupted migration;
 // 'invalid' carries a user-facing reason.
-export type DataRootKind = 'move' | 'adopt' | 'recover' | 'invalid'
-export type DataRootRecoveryStatus = 'copying' | 'verified'
 export type ClassifyResult =
   | { kind: 'recover'; recoveryStatus: DataRootRecoveryStatus; error?: string }
   | {
@@ -313,7 +312,7 @@ export const classifyDataRoot = async (
 export const validateNewDataRoot = async (
   parent: string,
   currentDataRoot: string
-): Promise<ValidateResult> => {
+): Promise<DataRootValidationResult> => {
   const result = await classifyDataRoot(parent, currentDataRoot)
 
   if (result.kind === 'move') return { ok: true }
@@ -334,12 +333,6 @@ export const validateNewDataRoot = async (
 
   return { ok: false, error: result.error ?? 'The selected folder is not usable.' }
 }
-
-// A post-move `setDataRoot` failure is distinguishable from an ordinary migration failure: the
-// data already lives at the target, so the caller needs a different recovery message and must not
-// treat this like a retryable pre-move failure.
-export type MigrationOutcome =
-  MigrationResult | { ok: false; error: string; switchoverFailed: true }
 
 // runtime/ is not copied wholesale (env prefixes and mutable inventory-cache keys bake absolute
 // paths), but its pkgs cache IS relocatable inert data — copied so envs can be rebuilt offline at the
@@ -405,7 +398,6 @@ type MigrationCopyDeps = DataRootWriterPauseDeps & {
     dirs: string[]
     signal: AbortSignal
     onProgress: (p: MigrationProgress) => void
-    forceCopy?: boolean
   }) => Promise<MigrationResult>
   validateProvenanceState?: (root: string) => Promise<void>
 }

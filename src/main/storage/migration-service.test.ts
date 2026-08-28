@@ -14,7 +14,7 @@ vi.mock('./remote-data-root', () => ({
 
 import { existsSync } from 'node:fs'
 
-import type { MigrationProgress, MigrationResult } from './data-migration'
+import type { MigrationProgress, MigrationResult } from '../../shared/storage'
 import {
   classifyDataRoot,
   commitDataRootSwitch,
