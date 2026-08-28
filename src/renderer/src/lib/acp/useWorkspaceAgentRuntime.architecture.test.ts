@@ -43,7 +43,18 @@ const facadePath = resolve(__dirname, 'useWorkspaceAgentRuntime.ts')
 const manifestPath = resolve(__dirname, '../../../../../scripts/ci/module-impact.json')
 const architectureTestPath =
   'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts'
-const readSource = (path: string): string => readFileSync(path, 'utf8')
+// Full-tree AST scans parse every renderer production file. Nightly coverage
+// on a loaded runner exceeds Vitest's 15s default when each case re-parses
+// the same tree; keep a 60s budget and reuse parsed imports within the file.
+const ARCHITECTURE_SCAN_TIMEOUT_MS = 60_000
+const sourceTextCache = new Map<string, string>()
+const readSource = (path: string): string => {
+  const cached = sourceTextCache.get(path)
+  if (cached !== undefined) return cached
+  const source = readFileSync(path, 'utf8')
+  sourceTextCache.set(path, source)
+  return source
+}
 const normalizePathSeparators = (path: string): string => path.replace(/\\/g, '/')
 const modulePath = (path: string): string =>
   normalizePathSeparators(path.replace(/\.[cm]?[jt]sx?$/, ''))
@@ -55,7 +66,9 @@ const sourceFileFor = (path: string, source = readSource(path)): SourceFile =>
     true,
     extname(path) === '.tsx' ? ScriptKind.TSX : ScriptKind.TS
   )
+let productionSourcePaths: readonly string[] | undefined
 const productionSources = (): readonly string[] => {
+  if (productionSourcePaths) return productionSourcePaths
   const paths: string[] = []
   const visit = (directory: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -67,7 +80,8 @@ const productionSources = (): readonly string[] => {
     }
   }
   visit(rendererRoot)
-  return paths.sort()
+  productionSourcePaths = paths.sort()
+  return productionSourcePaths
 }
 const ownerNames = [
   'workspace-runtime-event-owner',
@@ -303,9 +317,16 @@ const loaderBindingsIn = (scope: Node, inherited: LoaderBindings): LoaderBinding
   }
   return { requireAliases: aliases, specifiers, wrappers }
 }
-const importsFrom = (path: string, source = readSource(path)): readonly ImportReference[] => {
+const fileImportCache = new Map<string, readonly ImportReference[]>()
+const importsFrom = (path: string, source?: string): readonly ImportReference[] => {
+  const useFileCache = source === undefined
+  if (useFileCache) {
+    const cached = fileImportCache.get(path)
+    if (cached) return cached
+  }
+  const resolvedSource = source ?? readSource(path)
   const references: ImportReference[] = []
-  const sourceFile = sourceFileFor(path, source)
+  const sourceFile = sourceFileFor(path, resolvedSource)
   const visit = (node: Node, inherited: LoaderBindings): void => {
     const bindings = isLoaderScope(node) ? loaderBindingsIn(node, inherited) : inherited
     if (
@@ -357,6 +378,7 @@ const importsFrom = (path: string, source = readSource(path)): readonly ImportRe
     specifiers: new Map(),
     wrappers: new Map()
   })
+  if (useFileCache) fileImportCache.set(path, references)
   return references
 }
 const callCounts = (sourceFile: SourceFile): ReadonlyMap<string, number> => {
@@ -508,7 +530,7 @@ const workspaceRuntimeBoundaryTargets = new Set([
   workspaceEventsTarget,
   ...privateRuntimeTargets
 ])
-const privateOwnerBoundaryViolations = (path: string, source = readSource(path)): string[] => {
+const privateOwnerBoundaryViolations = (path: string, source?: string): string[] => {
   const consumer = normalizePathSeparators(relative(rendererRoot, path))
   const isWorkspaceRuntimeModule = workspaceRuntimeBoundaryTargets.has(modulePath(path))
   return importsFrom(path, source).flatMap((reference) => {
@@ -632,30 +654,38 @@ describe('workspace runtime architecture', () => {
       subagentPresentationTarget
     )
   })
-  it('keeps private owners behind the public facade', () => {
-    const violations = productionSources().flatMap((path) => privateOwnerBoundaryViolations(path))
-    expect(violations).toEqual([])
-  })
-  it('keeps the hook consumer on the named facade interface', () => {
-    const hookConsumers: string[] = []
-    const unsupportedFacadeImports: string[] = []
-    for (const path of productionSources()) {
-      for (const reference of importsFrom(path)) {
-        if (reference.target !== facadeTarget) continue
-        const consumer = normalizePathSeparators(relative(rendererRoot, path))
-        if (reference.kind !== 'import' || !reference.names) {
-          unsupportedFacadeImports.push(consumer)
+  it(
+    'keeps private owners behind the public facade',
+    () => {
+      const violations = productionSources().flatMap((path) => privateOwnerBoundaryViolations(path))
+      expect(violations).toEqual([])
+    },
+    ARCHITECTURE_SCAN_TIMEOUT_MS
+  )
+  it(
+    'keeps the hook consumer on the named facade interface',
+    () => {
+      const hookConsumers: string[] = []
+      const unsupportedFacadeImports: string[] = []
+      for (const path of productionSources()) {
+        for (const reference of importsFrom(path)) {
+          if (reference.target !== facadeTarget) continue
+          const consumer = normalizePathSeparators(relative(rendererRoot, path))
+          if (reference.kind !== 'import' || !reference.names) {
+            unsupportedFacadeImports.push(consumer)
+          }
+          if (reference.names?.includes('useWorkspaceAgentRuntime')) hookConsumers.push(consumer)
         }
-        if (reference.names?.includes('useWorkspaceAgentRuntime')) hookConsumers.push(consumer)
       }
-    }
-    expect(unsupportedFacadeImports).toEqual([])
-    expect(hookConsumers).toEqual([
-      'lib/compute/useJobAnalysisEffect.ts',
-      'pages/workspace/WorkspacePage.tsx',
-      'pages/workspace/workspace-message-queue-controller.ts'
-    ])
-  })
+      expect(unsupportedFacadeImports).toEqual([])
+      expect(hookConsumers).toEqual([
+        'lib/compute/useJobAnalysisEffect.ts',
+        'pages/workspace/WorkspacePage.tsx',
+        'pages/workspace/workspace-message-queue-controller.ts'
+      ])
+    },
+    ARCHITECTURE_SCAN_TIMEOUT_MS
+  )
   it('keeps the delegated runtime transport subscription in the App-level owner', () => {
     expect(
       productionSources()
