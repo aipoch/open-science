@@ -86,7 +86,8 @@ const accessOnlyExternalAccess = (): ExternalWebAccessAuthorization => ({
 })
 const startBudgetTestServer = async (
   requestBodyBudgets: NonNullable<Parameters<typeof startWebHttpServer>[0]['requestBodyBudgets']>,
-  onExternalAuthorization?: () => void
+  onExternalAuthorization?: () => void,
+  invoke: TestWebServerOptions['rpc']['invoke'] = vi.fn().mockResolvedValue([])
 ): ReturnType<typeof startWebHttpServer> => {
   const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
   roots.push(staticRoot)
@@ -99,7 +100,7 @@ const startBudgetTestServer = async (
     requestBodyBudgets,
     rpc: {
       channels: () => ['projects:list'],
-      invoke: vi.fn().mockResolvedValue([]),
+      invoke,
       releaseClient: vi.fn(),
       dispose: vi.fn()
     },
@@ -142,6 +143,72 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('retains a parsed body reservation when the client disconnects before its handler completes', async () => {
+    const body = JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    const bodyBytes = Buffer.byteLength(body)
+    let markHandlerStarted: () => void = () => undefined
+    const handlerStarted = new Promise<void>((resolve) => {
+      markHandlerStarted = resolve
+    })
+    let finishFirstHandler: (value: unknown) => void = () => undefined
+    const firstHandler = new Promise<unknown>((resolve) => {
+      finishFirstHandler = resolve
+    })
+    const invoke = vi
+      .fn<TestWebServerOptions['rpc']['invoke']>()
+      .mockImplementationOnce(async () => {
+        markHandlerStarted()
+        return firstHandler
+      })
+      .mockResolvedValue([])
+    const server = await startBudgetTestServer(
+      {
+        perRequestBytes: bodyBytes,
+        perClientInFlightBytes: bodyBytes,
+        serverInFlightBytes: bodyBytes
+      },
+      undefined,
+      invoke
+    )
+
+    const firstRequest = httpRequest({
+      host: '127.0.0.1',
+      port: server.port,
+      path: '/rpc/projects%3Alist',
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json',
+        'content-length': String(bodyBytes),
+        'x-open-science-client': 'first-client'
+      }
+    })
+    firstRequest.on('error', () => undefined)
+    firstRequest.end(body)
+    await handlerStarted
+    const firstClosed = new Promise<void>((resolve) => firstRequest.once('close', resolve))
+    firstRequest.destroy()
+    await firstClosed
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-open-science-client': 'second-client'
+        },
+        body
+      })
+
+      expect(response.status).toBe(503)
+      expect(await response.json()).toMatchObject({ error: { code: 'handler_error' } })
+      expect(invoke).toHaveBeenCalledOnce()
+    } finally {
+      finishFirstHandler([])
+    }
+  })
+
   it.each([
     {
       dimension: 'server',

@@ -167,6 +167,7 @@ class RequestBodyBudgetExceededError extends Error {
 class RequestBodyBudgetRegistry {
   private serverInFlightBytes = 0
   private readonly clientInFlightBytes = new Map<string, number>()
+  private readonly requestLeases = new WeakMap<IncomingMessage, RequestBodyBudgetLease>()
 
   constructor(private readonly budgets: RequestBodyBudgets) {
     for (const [name, value] of Object.entries(budgets)) {
@@ -176,9 +177,10 @@ class RequestBodyBudgetRegistry {
     }
   }
 
-  reserve(clientId: string, bytes: number): RequestBodyBudgetLease {
+  reserve(request: IncomingMessage, clientId: string, bytes: number): RequestBodyBudgetLease {
     const lease: RequestBodyBudgetLease = { clientId, reservedBytes: 0, released: false }
     this.increase(lease, bytes)
+    this.requestLeases.set(request, lease)
     return lease
   }
 
@@ -207,7 +209,10 @@ class RequestBodyBudgetRegistry {
     else this.clientInFlightBytes.set(lease.clientId, clientBytes)
   }
 
-  release(lease: RequestBodyBudgetLease): void {
+  release(request: IncomingMessage): void {
+    const lease = this.requestLeases.get(request)
+    if (!lease) return
+    this.requestLeases.delete(request)
     if (lease.released) return
     lease.released = true
     this.serverInFlightBytes -= lease.reservedBytes
@@ -327,17 +332,13 @@ const readJsonBody = async (
   const declared = declaredContentLength(request)
   let lease: RequestBodyBudgetLease
   try {
-    lease = registry.reserve(clientId, declared ?? 0)
+    lease = registry.reserve(request, clientId, declared ?? 0)
   } catch (error) {
     if (error instanceof RequestBodyBudgetExceededError) {
       closeRequestAfterResponse(request, response)
     }
     throw error
   }
-  const release = (): void => registry.release(lease)
-  response.once('finish', release)
-  response.once('close', release)
-
   const chunks: Buffer[] = []
   let size = 0
   try {
@@ -1122,6 +1123,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       json(response, 500, {
         error: INTERNAL_SERVER_ERROR_MESSAGE
       })
+    } finally {
+      requestBodyBudgetRegistry.release(request)
     }
   }
   const server = createServer((request, response) =>
