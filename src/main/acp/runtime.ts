@@ -405,6 +405,22 @@ const MAX_RAW_AGENT_STDERR_SAMPLE_BYTES = 4096
 // Support-only opt-in. Raw agent stderr can contain research data, local paths, and tool output.
 const RAW_AGENT_STDERR_ENV = 'OPEN_SCIENCE_AGENT_STDERR'
 
+// Preserve the renderer's existing suppression for the two exact informational diagnostics Codex
+// emits during successful turns. Evaluate each adapter-delivered stderr block independently, as the
+// pre-aggregation event path did; any additional content makes the whole window actionable.
+const isNonActionableCodexStderr = (text: string): boolean => {
+  const withoutSkillBudgetNotice = text.replace(
+    /Warning:\s*Skill descriptions were shortened to fit the 2% skills context budget\.\s*Codex can still see every skill, but some descriptions are shorter\.\s*Disable unused skills or plugins to leave more room for the rest\.\s*/gi,
+    ''
+  )
+  const withoutTransportFallback = withoutSkillBudgetNotice.replace(
+    /Warning:\s*Falling back from WebSockets to HTTPS transport\.\s*request timed out\s*/gi,
+    ''
+  )
+
+  return withoutTransportFallback.trim().length === 0
+}
+
 const utf8PrefixWithinBytes = (value: string, maxBytes: number): string => {
   if (maxBytes <= 0) return ''
   if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
@@ -434,7 +450,9 @@ type AgentStderrWindow = {
   rawSampleBytes: number
   rawSampleTruncated: boolean
   sessionId?: string
+  interactionSequence?: number
   sessionAttributionConsistent: boolean
+  nonActionableCodexOnly: boolean
   eventEligible: boolean
   timer: ReturnType<typeof setTimeout>
 }
@@ -2459,13 +2477,22 @@ class AcpRuntime {
     const disposition = this.processEventDisposition(context.process, context.epoch)
     const inFlight = disposition === 'current' ? this.getInFlightSessionIds() : []
     const sessionId = inFlight.length === 1 ? inFlight[0] : undefined
+    const interactionSequence = sessionId
+      ? this.sessionInteractions.current(sessionId)?.sequence
+      : undefined
     const existing = this.agentStderrWindows.get(context.process)
     if (existing) {
       existing.chunkCount += 1
       existing.byteCount += Buffer.byteLength(text, 'utf8')
       existing.eventEligible &&= disposition === 'current'
-      if (existing.sessionId !== sessionId) {
+      existing.nonActionableCodexOnly &&=
+        context.framework === 'codex' && isNonActionableCodexStderr(text)
+      if (
+        existing.sessionId !== sessionId ||
+        existing.interactionSequence !== interactionSequence
+      ) {
         existing.sessionId = undefined
+        existing.interactionSequence = undefined
         existing.sessionAttributionConsistent = false
       }
       this.appendAgentStderrSample(existing, text)
@@ -2488,7 +2515,9 @@ class AcpRuntime {
       rawSampleBytes: 0,
       rawSampleTruncated: false,
       sessionId,
+      interactionSequence,
       sessionAttributionConsistent: true,
+      nonActionableCodexOnly: context.framework === 'codex' && isNonActionableCodexStderr(text),
       eventEligible: disposition === 'current',
       timer
     }
@@ -2549,10 +2578,23 @@ class AcpRuntime {
     ) {
       return
     }
+    if (window.nonActionableCodexOnly) return
+
+    const inFlight = this.getInFlightSessionIds()
+    const currentSessionId = inFlight.length === 1 ? inFlight[0] : undefined
+    const currentInteractionSequence = currentSessionId
+      ? this.sessionInteractions.current(currentSessionId)?.sequence
+      : undefined
+    const sessionId =
+      window.sessionAttributionConsistent &&
+      window.sessionId === currentSessionId &&
+      window.interactionSequence === currentInteractionSequence
+        ? window.sessionId
+        : undefined
     this.pushEvent({
       kind: 'system',
       level: 'warning',
-      sessionId: window.sessionAttributionConsistent ? window.sessionId : undefined,
+      sessionId,
       title: 'agent',
       text: includeRaw ? `${summary}\n${window.rawSample}${rawSuffix}` : summary
     })

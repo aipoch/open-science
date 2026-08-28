@@ -22719,6 +22719,107 @@ describe('ACP runtime — agent process lifecycle logging', () => {
     }
   })
 
+  it('does not attribute delayed stderr to a later prompt in the same session', async () => {
+    warnLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const firstResponse = createDeferred<PromptResponse>()
+    const secondResponse = createDeferred<PromptResponse>()
+    const responses = [firstResponse, secondResponse]
+    const fakeAgent = startFakeAgent(process, ['stderr-session'], {
+      onPrompt: () => responses.shift()!.promise
+    })
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const firstPrompt = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'first analysis'
+    })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    events.length = 0
+    vi.useFakeTimers()
+    let secondPrompt: Promise<PromptResponse> | undefined
+    try {
+      process.stderr.emit('data', Buffer.from('first prompt diagnostic'))
+      firstResponse.resolve({ stopReason: 'end_turn' })
+      await firstPrompt
+
+      secondPrompt = runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'second analysis'
+      })
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const warning = events.find((event) => event.kind === 'system' && event.title === 'agent')
+      expect(warning).toBeDefined()
+      expect(warning?.sessionId).toBeUndefined()
+      expect(warning?.promptMessageId).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+      secondResponse.resolve({ stopReason: 'end_turn' })
+      await secondPrompt
+    }
+  })
+
+  it('keeps known non-actionable Codex stderr out of runtime warning events', async () => {
+    warnLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const promptResponse = createDeferred<PromptResponse>()
+    const fakeAgent = startFakeAgent(process, ['stderr-session'], {
+      onPrompt: () => promptResponse.promise,
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'codex:provider-a',
+        modelRoute: 'codex-responses',
+        executablePath: '/bin/codex',
+        env: {}
+      }),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run analysis' })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    events.length = 0
+    vi.useFakeTimers()
+    try {
+      process.stderr.emit(
+        'data',
+        Buffer.from(
+          [
+            'Warning: Skill descriptions were shortened to fit the 2% skills context budget.',
+            'Codex can still see every skill, but some descriptions are shorter.',
+            'Disable unused skills or plugins to leave more room for the rest.',
+            'Warning: Falling back from WebSockets to HTTPS transport. request timed out'
+          ].join('\n')
+        )
+      )
+      await vi.advanceTimersByTimeAsync(1000)
+
+      expect(warnLogSpy.mock.calls.some(([message]) => message === 'agent stderr summary')).toBe(
+        true
+      )
+      expect(events.some((event) => event.kind === 'system' && event.title === 'agent')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+      promptResponse.resolve({ stopReason: 'end_turn' })
+      await prompt
+    }
+  })
+
   it('labels a late stderr with the framework captured at bind time, not the current one', async () => {
     warnLogSpy.mockClear()
     const oldProcess = new FakeAgentProcess()
