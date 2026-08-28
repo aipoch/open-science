@@ -2783,8 +2783,6 @@
     "OAuth configuration only; tokens excluded": "OAuth 構成のみ。トークンは除外されます",
     "Names only: {{names}}": "名前のみ：{{names}}",
     "Save configuration": "設定の保存",
-    "GitHub token · {{mask}}": "GitHub トークン · {{mask}}",
-    "GitHub token": "GitHub トークン",
     "Setup incomplete": "セットアップ未完了",
     "No matching skills": "一致するスキルはありません",
     "No more skills to add": "追加できるスキルはもうありません",

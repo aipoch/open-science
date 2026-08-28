@@ -2854,8 +2854,6 @@
     "OAuth configuration only; tokens excluded": "仅包含 OAuth 配置；不包含令牌",
     "Names only: {{names}}": "仅名称：{{names}}",
     "Save configuration": "保存配置",
-    "GitHub token · {{mask}}": "GitHub 令牌 · {{mask}}",
-    "GitHub token": "GitHub 令牌",
     "Setup incomplete": "设置未完成",
     "No matching skills": "没有匹配的技能",
     "No more skills to add": "没有更多可添加的技能",

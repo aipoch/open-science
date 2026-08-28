@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { ProviderView } from '../../../../shared/settings'
 import type { OpenAlexCredentialValidation } from '../../../../shared/settings'
+import { GitHubMark } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { errorDetail } from '@/lib/error-detail'
@@ -162,14 +163,7 @@ export function CredentialsPanel({
     if (view.serviceId === 'github') {
       return (
         <div className="p-5">
-          <p className="mb-4 text-sm text-muted-foreground">
-            {t(
-              'Used for GitHub Skill discovery and imports. The credential is verified before saving.'
-            )}
-          </p>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
-            <GitHubTokenControl defaultExpanded />
-          </div>
+          <GitHubTokenControl onCancel={() => onNavigate({ kind: 'list' })} />
         </div>
       )
     }
@@ -295,7 +289,7 @@ export function CredentialsPanel({
       label: t('GitHub'),
       description: t('Personal access token for GitHub Skill discovery and imports.'),
       configured: githubConfigured,
-      Icon: KeyRound
+      Icon: GitHubMark
     },
     {
       id: 'literature' as const,
@@ -309,7 +303,7 @@ export function CredentialsPanel({
       label: t('OpenAlex'),
       description: t('API key required by OpenAlex tools in the Literature Connector.'),
       configured: openAlex.hasApiKey,
-      Icon: KeyRound
+      Icon: BookOpen
     }
   ]
 
@@ -354,55 +348,58 @@ export function CredentialsPanel({
             'Credentials managed by Custom MCP Connectors and model providers stay in their existing configuration.'
           )}
         </p>
-        <div className="mt-4 space-y-2">
-          {customServers.map((server) => {
-            const configured = Boolean(
-              server.hasEnv ||
-              server.hasHeaders ||
-              server.oauth?.hasClientSecret ||
-              server.oauth?.hasTokens
-            )
-            return (
-              <div
-                key={server.id}
-                className="flex items-center gap-3 rounded-lg border border-border px-4 py-3"
-              >
-                <Server className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        {customServers.length > 0 || providers.length > 0 ? (
+          <div className="mt-4 divide-y divide-border rounded-xl border border-border">
+            {customServers.map((server) => {
+              const configured = Boolean(
+                server.hasEnv ||
+                server.hasHeaders ||
+                server.oauth?.hasClientSecret ||
+                server.oauth?.hasTokens
+              )
+              return (
+                <div key={server.id} className="flex items-center gap-3 px-4 py-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
+                    <Server className="size-4 text-muted-foreground" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{server.displayName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {configured
+                        ? t('Credential fields configured')
+                        : t('No credential fields configured')}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => onOpenConnector(server.id)}
+                  >
+                    {t('Manage')}
+                  </Button>
+                </div>
+              )
+            })}
+            {providers.map((provider) => (
+              <div key={provider.id} className="flex items-center gap-3 px-4 py-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
+                  <KeyRound className="size-4 text-muted-foreground" aria-hidden="true" />
+                </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{server.displayName}</p>
+                  <p className="truncate text-sm font-medium">{provider.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {configured
-                      ? t('Credential fields configured')
-                      : t('No credential fields configured')}
+                    {provider.hasKey ? t('API key configured') : t('Provider authentication')}
                   </p>
                 </div>
-                <Button type="button" variant="outline" onClick={() => onOpenConnector(server.id)}>
+                <Button type="button" variant="outline" onClick={() => onOpenProvider(provider)}>
                   {t('Manage')}
                 </Button>
               </div>
-            )
-          })}
-          {providers.map((provider) => (
-            <div
-              key={provider.id}
-              className="flex items-center gap-3 rounded-lg border border-border px-4 py-3"
-            >
-              <KeyRound className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{provider.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {provider.hasKey ? t('API key configured') : t('Provider authentication')}
-                </p>
-              </div>
-              <Button type="button" variant="outline" onClick={() => onOpenProvider(provider)}>
-                {t('Manage')}
-              </Button>
-            </div>
-          ))}
-          {customServers.length === 0 && providers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('No custom credentials yet.')}</p>
-          ) : null}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-muted-foreground">{t('No custom credentials yet.')}</p>
+        )}
       </section>
     </div>
   )

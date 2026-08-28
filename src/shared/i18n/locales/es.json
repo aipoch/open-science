@@ -3039,8 +3039,6 @@
     "OAuth configuration only; tokens excluded": "Configuración OAuth únicamente; tokens excluidos",
     "Names only: {{names}}": "Solo nombres: {{names}}",
     "Save configuration": "Guardar configuración",
-    "GitHub token · {{mask}}": "GitHub token · {{mask}}",
-    "GitHub token": "GitHub token",
     "Setup incomplete": "Configuración incompleta",
     "No matching skills": "No hay habilidades coincidentes",
     "No more skills to add": "No más habilidades para agregar",

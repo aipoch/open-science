@@ -2854,8 +2854,6 @@
     "OAuth configuration only; tokens excluded": "僅包含 OAuth 設定；不包含權杖",
     "Names only: {{names}}": "僅名稱：{{names}}",
     "Save configuration": "儲存設定",
-    "GitHub token · {{mask}}": "GitHub 權杖 · {{mask}}",
-    "GitHub token": "GitHub 權杖",
     "Setup incomplete": "設定未完成",
     "No matching skills": "沒有符合的技能",
     "No more skills to add": "沒有更多可新增的技能",

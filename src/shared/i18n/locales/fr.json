@@ -3039,8 +3039,6 @@
     "OAuth configuration only; tokens excluded": "Configuration OAuth uniquement ; jetons exclus",
     "Names only: {{names}}": "Noms uniquement : {{names}}",
     "Save configuration": "Enregistrer la configuration",
-    "GitHub token · {{mask}}": "Jeton GitHub · {{mask}}",
-    "GitHub token": "Jeton GitHub",
     "Setup incomplete": "Configuration incomplète",
     "No matching skills": "Aucune compétence correspondante",
     "No more skills to add": "Plus aucune compétence à ajouter",

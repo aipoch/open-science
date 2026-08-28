@@ -3135,8 +3135,6 @@
     "OAuth configuration only; tokens excluded": "Только настройки OAuth; токены исключены",
     "Names only: {{names}}": "Только имена: {{names}}",
     "Save configuration": "Сохранить настройки",
-    "GitHub token · {{mask}}": "Токен GitHub · {{mask}}",
-    "GitHub token": "Токен GitHub",
     "Setup incomplete": "Настройка не завершена",
     "No matching skills": "Нет совпадающих навыков",
     "No more skills to add": "Нет дополнительных навыков для добавления",

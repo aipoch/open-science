@@ -2794,8 +2794,6 @@
     "OAuth configuration only; tokens excluded": "OAuth 구성에만 해당; 토큰 제외됨",
     "Names only: {{names}}": "이름만: {{names}}",
     "Save configuration": "구성 저장",
-    "GitHub token · {{mask}}": "GitHub 토큰 · {{mask}}",
-    "GitHub token": "GitHub 토큰",
     "Setup incomplete": "설정이 완료되지 않았습니다.",
     "No matching skills": "일치하는 스킬 없음",
     "No more skills to add": "더 이상 추가할 스킬이 없습니다.",
