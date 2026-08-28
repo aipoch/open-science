@@ -23,8 +23,11 @@ const mocks = vi.hoisted(() => {
       isSettingsOpen: false,
       isSettingsLoaded: true,
       pendingApprovals: [] as unknown[],
+      pendingCredentialRequests: [] as unknown[],
       enqueueApproval: vi.fn(),
       dismissApproval: vi.fn(),
+      enqueueCredentialRequest: vi.fn(),
+      dismissCredentialRequest: vi.fn(),
       load: vi.fn().mockResolvedValue(true),
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
       openSettings: vi.fn(),
@@ -395,6 +398,8 @@ describe('App startup routing', () => {
     mocks.settings.closeSettings.mockClear()
     mocks.settings.enqueueApproval.mockClear()
     mocks.settings.dismissApproval.mockClear()
+    mocks.settings.enqueueCredentialRequest.mockClear()
+    mocks.settings.dismissCredentialRequest.mockClear()
     mocks.skillImport.enqueue.mockClear()
     mocks.skillImport.dismiss.mockClear()
     mocks.compute.enqueueApproval.mockClear()
@@ -421,6 +426,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
     mocks.settings.pendingApprovals = []
+    mocks.settings.pendingCredentialRequests = []
     mocks.compute.pendingApprovals = []
     mocks.skillImport.pending = []
     mocks.preview.fileDialogItem = undefined
@@ -454,6 +460,9 @@ describe('App startup routing', () => {
         onConnectorApprovalRequest: vi.fn(() => vi.fn()),
         onConnectorApprovalSettled: vi.fn(() => vi.fn()),
         replayPendingConnectorApprovals: vi.fn().mockResolvedValue(undefined),
+        onConnectorCredentialRequest: vi.fn(() => vi.fn()),
+        onConnectorCredentialSettled: vi.fn(() => vi.fn()),
+        replayPendingConnectorCredentialRequests: vi.fn().mockResolvedValue(undefined),
         onSkillImportApprovalRequest: vi.fn(() => vi.fn()),
         onSkillImportApprovalSettled: vi.fn(() => vi.fn()),
         replayPendingSkillImportApprovals: vi.fn().mockResolvedValue(undefined)

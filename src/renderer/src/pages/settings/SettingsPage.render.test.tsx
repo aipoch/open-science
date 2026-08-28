@@ -915,7 +915,8 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Memory, Compute, Network)
-    // and Workspace (Model, Agent, Tags, Permissions, Runtimes, Storage, Remote, Usage, General).
+    // and Workspace (Model, Agent, Tags, Permissions, Credentials, Runtimes, Storage, Remote,
+    // Usage, General).
     // Feedback and Archived are anchored at the navigation bottom.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
@@ -929,7 +930,7 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Workspace')
     expect(nav?.textContent).not.toContain('Remote access')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(17)
+    expect(navItems).toHaveLength(18)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
@@ -940,13 +941,14 @@ describe('SettingsPage layout', () => {
     expect(navItems[7]?.textContent).toContain('Agent')
     expect(navItems[8]?.textContent).toContain('Tags')
     expect(navItems[9]?.textContent).toContain('Permissions')
-    expect(navItems[10]?.textContent).toContain('Runtimes')
-    expect(navItems[11]?.textContent).toContain('Storage')
-    expect(navItems[12]?.textContent?.trim()).toBe('Remote')
-    expect(navItems[13]?.textContent).toContain('Usage')
-    expect(navItems[14]?.textContent).toContain('General')
-    expect(navItems[15]?.textContent).toContain('Feedback')
-    expect(navItems[16]?.textContent).toContain('Archived')
+    expect(navItems[10]?.textContent).toContain('Credentials')
+    expect(navItems[11]?.textContent).toContain('Runtimes')
+    expect(navItems[12]?.textContent).toContain('Storage')
+    expect(navItems[13]?.textContent?.trim()).toBe('Remote')
+    expect(navItems[14]?.textContent).toContain('Usage')
+    expect(navItems[15]?.textContent).toContain('General')
+    expect(navItems[16]?.textContent).toContain('Feedback')
+    expect(navItems[17]?.textContent).toContain('Archived')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()
