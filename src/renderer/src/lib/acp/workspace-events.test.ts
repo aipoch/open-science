@@ -1083,6 +1083,54 @@ describe('workspace runtime events', () => {
     expect(session.errorReportable).toBe(false)
   })
 
+  it('projects a Claude Code mid-response connection closure as a resumable interrupted turn', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-partial-response',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        promptMessageId,
+        text: 'The first result is complete. Next I will'
+      })
+    )
+
+    const errorText =
+      'Internal error: API Error: Connection closed mid-response. The response above may be incomplete.'
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-mid-response-closed',
+        kind: 'error',
+        level: 'error',
+        providerError: true,
+        promptMessageId,
+        title: 'Prompt failed',
+        text: errorText,
+        turnUsage: { inputTokens: 21, cacheTokens: 8, outputTokens: 13, turnCount: 1 }
+      })
+    )
+
+    expect(applied).toBe(true)
+    const session = useSessionStore.getState().sessions[0]
+    expect(session).toMatchObject({
+      status: 'error',
+      interrupted: true,
+      error: errorText,
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'connection-lost',
+        promptMessageId
+      }
+    })
+    expect(session.errorReportable).toBeUndefined()
+    expect(session.messages[0]).toMatchObject({ id: promptMessageId, interrupted: true })
+    expect(session.messages[1]).toMatchObject({
+      content: 'The first result is complete. Next I will',
+      status: 'error',
+      turnUsage: { inputTokens: 21, cacheTokens: 8, outputTokens: 13, turnCount: 1 }
+    })
+  })
+
   it('surfaces a session-scoped agent warning as the waiting-indicator status, cleared on stop', async () => {
     const applied = await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'event-1', kind: 'system', level: 'warning', text: 'retrying request…' })

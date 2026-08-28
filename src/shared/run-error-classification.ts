@@ -10,10 +10,11 @@ import { isUnsupportedCodexAcpVersionError } from './codex-runtime'
 // This module owns only the SECONDARY, text-based tier: recognizing the app's OWN crafted reminder
 // strings (which we author, so an exact-match set is reliable) so their report button is hidden even
 // on the paths that don't carry the structural flag (a persisted pre-flag session, or a renderer-side
-// failRun call). One additional fixed Claude Code wrapper is recognized here (`API Error: Unable to
-// connect to API`) so historical sessions and createSession failRun hide Report without rewriting
-// stored records. Arbitrary provider text is still not guessed. It is a pure, dependency-light leaf
-// module (like media-overflow.ts) usable from both processes.
+// failRun call). Two fixed Claude Code transport wrappers are recognized here (`API Error: Unable to
+// connect to API` and `API Error: Connection closed mid-response`) so historical sessions and
+// createSession failRun hide Report without rewriting stored records. Arbitrary provider text is still
+// not guessed. It is a pure, dependency-light leaf module (like media-overflow.ts) usable from both
+// processes.
 
 // App-crafted resume-failure messages (useWorkspaceAgentRuntime.getResumeFailureMessage). Each is the
 // actionable text the app writes when it recognizes a specific resume cause. The generic
@@ -106,11 +107,22 @@ export const PROVIDER_CONNECTION_FAILED_PREFIX = 'Could not connect to the model
 // pre-flag sessions hide Report without a stored-schema migration. Match the distinctive
 // `API Error: Unable to connect to API` phrase only — not a generic "connection" or "connect" word.
 const CLAUDE_API_CONNECTION_FAILURE_PATTERN = /(?:^|:\s*)api error:\s*unable to connect to api\b/i
+const CLAUDE_API_RESPONSE_INTERRUPTION_PATTERN =
+  /(?:^|:\s*)api error:\s*connection closed mid-response\b/i
 
 export const isClaudeApiConnectionFailure = (error: string | null | undefined): boolean => {
   const message = error?.trim()
   if (!message) return false
   return CLAUDE_API_CONNECTION_FAILURE_PATTERN.test(message)
+}
+
+// Claude Code's fixed wrapper for a response stream that ended after partial output. Keep this
+// separate from connect-time failures: the latter gets base-URL/proxy guidance, while this one is
+// projected as an interrupted turn that can use the existing Resume flow.
+export const isClaudeApiResponseInterruption = (error: string | null | undefined): boolean => {
+  const message = error?.trim()
+  if (!message) return false
+  return CLAUDE_API_RESPONSE_INTERRUPTION_PATTERN.test(message)
 }
 
 // The exact app-crafted messages an equality check recognizes as expected.
@@ -152,8 +164,8 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
   // share this leading phrase, so one prefix covers the createSession path (which is not reworded) and
   // any framework name. It is app-authored setup guidance ("Open Settings → Model"), not a bug.
   if (message.startsWith(ACTIVE_MODEL_INCOMPATIBLE_PREFIX)) return true
-  // Claude Code's fixed unreachable-API wrapper (createSession / persisted pre-flag sessions).
-  if (isClaudeApiConnectionFailure(message)) return true
+  // Claude Code's fixed transport wrappers (createSession / persisted pre-flag sessions).
+  if (isClaudeApiConnectionFailure(message) || isClaudeApiResponseInterruption(message)) return true
   // A request-size overflow the app auto-recovers from — never a reportable bug.
   return isMediaOverflowError(message)
 }

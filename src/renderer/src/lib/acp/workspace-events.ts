@@ -26,6 +26,7 @@ import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { useNavigationStore } from '../../stores/navigation-store'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
+import { isClaudeApiResponseInterruption } from '../../../../shared/run-error-classification'
 import {
   getActivityGroupTitleFromToolEvent,
   isActivityGroupToolEvent
@@ -884,18 +885,36 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
 
-    // A model-provider failure (upstream LLM/HTTP error the agent relayed, tagged structurally in the
-    // runtime) keeps its message but is not a bug worth a GitHub issue — hide the report button. For
-    // everything else, defer to failRun's text tier (undefined) rather than forcing reportable=true: a
-    // non-recovered overflow reaches here (repeat inside cooldown, nothing to replay, detached session)
-    // with providerError=false but IS a client-side/size failure the text tier recognizes as expected —
-    // forcing true here would wrongly show and persist the report button over it. Opaque ACP-layer
-    // failures still fall through the text tier to reportable.
-    store.failRun(event.sessionId, getEventErrorText(event), {
-      reportable: event.providerError ? false : undefined,
-      promptMessageId: event.promptMessageId ?? activeSession?.activeRun?.promptMessageId,
-      contextWindowSample: getTerminalContextWindowSample(event)
-    })
+    const errorText = getEventErrorText(event)
+
+    // Claude Code can close its provider stream after partial output. That is not a completed turn or
+    // an app defect: settle the partial projection and reuse the durable, user-triggered Resume path.
+    // Require both the structural provider tag and the fixed wrapper so unrelated provider failures
+    // keep their existing terminal-error behavior.
+    if (event.providerError && isClaudeApiResponseInterruption(errorText)) {
+      store.interruptRun(
+        event.sessionId,
+        'connection-lost',
+        errorText,
+        event.promptMessageId ?? activeSession?.activeRun?.promptMessageId,
+        getTerminalContextWindowSample(event),
+        event.turnUsage,
+        event.modelCallUsage
+      )
+    } else {
+      // A model-provider failure (upstream LLM/HTTP error the agent relayed, tagged structurally in the
+      // runtime) keeps its message but is not a bug worth a GitHub issue — hide the report button. For
+      // everything else, defer to failRun's text tier (undefined) rather than forcing reportable=true: a
+      // non-recovered overflow reaches here (repeat inside cooldown, nothing to replay, detached session)
+      // with providerError=false but IS a client-side/size failure the text tier recognizes as expected —
+      // forcing true here would wrongly show and persist the report button over it. Opaque ACP-layer
+      // failures still fall through the text tier to reportable.
+      store.failRun(event.sessionId, errorText, {
+        reportable: event.providerError ? false : undefined,
+        promptMessageId: event.promptMessageId ?? activeSession?.activeRun?.promptMessageId,
+        contextWindowSample: getTerminalContextWindowSample(event)
+      })
+    }
     const failedSession = useSessionStore
       .getState()
       .sessions.find((session) => session.id === event.sessionId)

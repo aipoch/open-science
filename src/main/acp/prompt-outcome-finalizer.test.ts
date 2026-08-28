@@ -424,6 +424,21 @@ describe('AcpPromptOutcomeFinalizer', () => {
       providerError: true
     },
     {
+      name: 'Claude Code API connection closed mid-response',
+      error: Object.assign(
+        new Error(
+          'Internal error: API Error: Connection closed mid-response. The response above may be incomplete.'
+        ),
+        {
+          code: -32603,
+          data: { errorKind: 'server_error' },
+          name: 'RequestError'
+        }
+      ),
+      recoverable: undefined,
+      providerError: true
+    },
+    {
       name: 'ACP error',
       error: new Error('protocol failed'),
       recoverable: undefined,
