@@ -13010,6 +13010,7 @@ describe('ACP runtime session management', () => {
     })
     const { session } = built
     expect(built.role).toBe('reviewer')
+    expect(built.cwd).toMatch(/open-science-reviewer-/)
     expect(session.sessionId).toBe('reviewer-session-1')
     expect(reviewerOwnerProbe(runtime).contextFor('reviewer-session-1')).toEqual({
       frameworkId: 'claude-code',
@@ -22464,7 +22465,8 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(selectSkills).toHaveBeenCalledWith(
       '用 PubMed 搜索肿瘤免疫文章',
       catalog,
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Function)
     )
     expect(receivedPrompt).toEqual([
       {
@@ -25816,7 +25818,8 @@ describe('Specialist Skill scoping', () => {
     expect(selectSkills).toHaveBeenCalledWith(
       'use the new connector',
       [newConnector],
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Function)
     )
     expect(receivedPrompt).toEqual([
       {

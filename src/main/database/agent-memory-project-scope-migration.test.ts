@@ -10,6 +10,7 @@ import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase, verifyCurrentApplicationSchema } from './migration-service'
 
 const CURRENT_AGENT_MEMORY_MIGRATION_ID = '0017_agent_memory_project_scope'
+const CURRENT_MIGRATION_ID = '0018_session_auxiliary_turn_usage'
 const MEMORY_AUXILIARY_SCHEMA_NAMES = [
   'MemoryEntryFts',
   'MemoryEntry_fts_insert',
@@ -290,20 +291,21 @@ describe('agent memory project scope migration', () => {
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: CURRENT_AGENT_MEMORY_MIGRATION_ID
+      migrationId: CURRENT_MIGRATION_ID
     })
   })
 
   it('replays an unledgered partial memory migration and restores missing triggers', async () => {
     await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_update"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" = ?`,
-      CURRENT_AGENT_MEMORY_MIGRATION_ID
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN (?, ?)`,
+      CURRENT_AGENT_MEMORY_MIGRATION_ID,
+      CURRENT_MIGRATION_ID
     )
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: [CURRENT_AGENT_MEMORY_MIGRATION_ID],
-      to: CURRENT_AGENT_MEMORY_MIGRATION_ID
+      applied: [CURRENT_AGENT_MEMORY_MIGRATION_ID, CURRENT_MIGRATION_ID],
+      to: CURRENT_MIGRATION_ID
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })

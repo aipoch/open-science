@@ -62,15 +62,22 @@ describe('Compute Job sensitive data encryption migration', () => {
 
     await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope'],
+      applied: [
+        '0016_compute_job_sensitive_data_encryption',
+        '0017_agent_memory_project_scope',
+        '0018_session_auxiliary_turn_usage'
+      ],
       from: '0015_session_model_call_usage',
-      to: '0017_agent_memory_project_scope'
+      to: '0018_session_auxiliary_turn_usage'
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0017_agent_memory_project_scope.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0018_session_auxiliary_turn_usage.backup`)
     ).resolves.toBeUndefined()
     await expect(
       client.$queryRaw<

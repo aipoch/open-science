@@ -264,7 +264,7 @@ export const runReviewAssessment = async (
       try {
         probe = await acpRuntime.beginProviderTurnObservation?.({
           providerSessionId: reviewerSession!.sessionId,
-          cwd: reviewerCwd
+          cwd: built.cwd
         })
         const promptRequest = reviewerSession!.prompt([{ type: 'text', text: prompt }])
         void Promise.resolve(promptRequest).catch(() => undefined)

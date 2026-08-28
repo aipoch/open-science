@@ -104,6 +104,30 @@ describe('ImageInputCompatibilityOwner', () => {
     )
   })
 
+  it('records provider usage attached to an ordinary Vision error', async () => {
+    const usage = { inputTokens: 7, cacheTokens: 1, outputTokens: 2, turnCount: 1 }
+    const recordUsage = vi.fn(async () => undefined)
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: vi.fn(async () => target),
+      runner: {
+        run: vi.fn(async () => {
+          throw Object.assign(new Error('provider failed'), { usage })
+        })
+      },
+      recordUsage
+    })
+
+    await expect(
+      owner.prepare({
+        content: [image],
+        supportsImageInput: false,
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+    ).rejects.toThrow('provider failed')
+    expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({ source: 'vision', usage }))
+  })
+
   it('accepts a scalar uncertainty from the Vision model', async () => {
     const owner = new ImageInputCompatibilityOwner({
       captureTarget: vi.fn(async () => target),

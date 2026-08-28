@@ -12,6 +12,7 @@ import {
 } from '../../shared/settings'
 import {
   DEFAULT_OUTPUT_LIMIT_BYTES,
+  extractRestrictedInferenceUsage,
   RestrictedInferenceError,
   type RestrictedInferenceResult,
   type RestrictedInferenceRunner
@@ -407,7 +408,7 @@ class HostModelService {
         await this.recordUsage(context, eventId, result.frameworkId, result.model, result.usage)
         return result
       } catch (error) {
-        const usage = error instanceof RestrictedInferenceError ? error.usage : undefined
+        const usage = extractRestrictedInferenceUsage(error)
         await this.recordUsage(
           context,
           eventId,

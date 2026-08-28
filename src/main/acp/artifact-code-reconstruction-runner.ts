@@ -6,6 +6,7 @@ import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import { prepareRestrictedBackend } from './restricted-runtime-profile'
 import {
+  extractRestrictedInferenceUsage,
   RestrictedInferenceError,
   RestrictedInferenceRunner,
   resolveRestrictedInferenceModel
@@ -119,7 +120,7 @@ export class ArtifactCodeReconstructionRunner {
         eventId,
         target.frameworkId,
         target.model.kind === 'required' ? target.model.id : undefined,
-        error instanceof RestrictedInferenceError ? error.usage : undefined
+        extractRestrictedInferenceUsage(error)
       )
       if (error instanceof RestrictedInferenceError && error.code === 'tool-violation') {
         throw new Error('The selected agent attempted to use a tool during code reconstruction.')

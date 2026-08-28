@@ -177,6 +177,28 @@ describe('HostModelService', () => {
     )
   })
 
+  it('records provider usage attached to an ordinary inference error', async () => {
+    const recordUsage = vi.fn(async () => undefined)
+    const usage = { inputTokens: 7, cacheTokens: 1, outputTokens: 2, turnCount: 1 }
+    const { service } = makeService(
+      async () => {
+        throw Object.assign(new Error('provider failed'), { usage })
+      },
+      target,
+      undefined,
+      undefined,
+      recordUsage
+    )
+
+    await expect(
+      service.call({ request: 'question' }, undefined, {
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+    ).rejects.toThrow('host.llm inference failed.')
+    expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({ source: 'host-llm', usage }))
+  })
+
   it('returns the exact model projected by the calling Session backend', async () => {
     const { service } = makeService(async () => inferenceResult('unused'))
     await expect(service.currentModel('session-a')).resolves.toBe('claude-session-model')

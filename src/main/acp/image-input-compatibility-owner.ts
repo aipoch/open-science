@@ -18,7 +18,7 @@ import {
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import {
-  RestrictedInferenceError,
+  extractRestrictedInferenceUsage,
   type RestrictedInferenceResult,
   type RestrictedInferenceRunInput
 } from './restricted-inference-runner'
@@ -611,7 +611,7 @@ class ImageInputCompatibilityOwner {
       await this.recordUsage(context, eventId, result.frameworkId, result.model, result.usage)
       return parseEvidence(result.text)
     } catch (error) {
-      const usage = error instanceof RestrictedInferenceError ? error.usage : undefined
+      const usage = extractRestrictedInferenceUsage(error)
       await this.recordUsage(
         context,
         eventId,

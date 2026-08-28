@@ -75,6 +75,7 @@ export type ReviewerSessionRequest = {
 
 export type ReviewerSessionResult = {
   session: ActiveSession
+  cwd: string
   promptPrefix?: string
   role: ReviewerSessionRole
 }
@@ -208,7 +209,12 @@ export class ReviewerSessionOwner {
         identityActivated = true
         this.dependencies.registerBridgeSession(session.sessionId)
 
-        return { session, promptPrefix: setup.promptPrefix, role: REVIEWER_SESSION_ROLE }
+        return {
+          session,
+          cwd: reviewerCwd,
+          promptPrefix: setup.promptPrefix,
+          role: REVIEWER_SESSION_ROLE
+        }
       } catch (error) {
         let startupError = error
         if (!identityActivated) {

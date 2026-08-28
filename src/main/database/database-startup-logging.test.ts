@@ -114,7 +114,8 @@ describe('database startup logging', () => {
               '0014_review_query_indexes',
               '0015_session_model_call_usage',
               '0016_compute_job_sensitive_data_encryption',
-              '0017_agent_memory_project_scope'
+              '0017_agent_memory_project_scope',
+              '0018_session_auxiliary_turn_usage'
             ],
             adoptedLegacy: true
           })

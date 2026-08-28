@@ -156,10 +156,11 @@ describe('database JSON constraints migration', () => {
           '0014_review_query_indexes',
           '0015_session_model_call_usage',
           '0016_compute_job_sensitive_data_encryption',
-          '0017_agent_memory_project_scope'
+          '0017_agent_memory_project_scope',
+          '0018_session_auxiliary_turn_usage'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0017_agent_memory_project_scope'
+        to: '0018_session_auxiliary_turn_usage'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
         code: 'ENOENT'
@@ -183,9 +184,12 @@ describe('database JSON constraints migration', () => {
       ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
-      ).resolves.toBeUndefined()
+      ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         access(`${databasePath}.before-0017_agent_memory_project_scope.backup`)
+      ).resolves.toBeUndefined()
+      await expect(
+        access(`${databasePath}.before-0018_session_auxiliary_turn_usage.backup`)
       ).resolves.toBeUndefined()
 
       await expect(

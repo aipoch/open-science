@@ -224,6 +224,7 @@ const runtime = (contextModel?: string, sessionModel?: string): AcpRuntime =>
     buildReviewerSession: async () => {
       outsideMutation('acp:build')
       return {
+        cwd: '/tmp/reviewer-session',
         session: {
           sessionId: 'reviewer-session',
           prompt: () => {
@@ -352,6 +353,10 @@ describe('review assessment owner', () => {
         usage: { inputTokens: 13, cacheTokens: 2, outputTokens: 5, turnCount: 2 }
       })
     )
+    expect(acpRuntime.beginProviderTurnObservation).toHaveBeenCalledWith({
+      providerSessionId: 'reviewer-session',
+      cwd: '/tmp/reviewer-session'
+    })
   })
 
   it('completes an explicit empty initial assessment and classifies its completion log', async () => {

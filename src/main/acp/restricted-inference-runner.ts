@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { isCodexSubscriptionProviderId } from '../../shared/settings'
-import type { AcpMessageImage, AcpRuntimeEvent, AcpTurnTokenUsage } from '../../shared/acp'
+import {
+  sanitizeAcpTurnTokenUsage,
+  type AcpMessageImage,
+  type AcpRuntimeEvent,
+  type AcpTurnTokenUsage
+} from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
@@ -27,6 +32,12 @@ class RestrictedInferenceError extends Error {
   ) {
     super(message)
   }
+}
+
+const extractRestrictedInferenceUsage = (error: unknown): AcpTurnTokenUsage | undefined => {
+  if (error instanceof RestrictedInferenceError) return error.usage
+  if (!(error instanceof Error)) return undefined
+  return sanitizeAcpTurnTokenUsage(Object.getOwnPropertyDescriptor(error, 'usage')?.value)
 }
 
 type RestrictedInferenceResult = Readonly<{
@@ -354,6 +365,7 @@ class RestrictedInferenceRunner {
 
 export {
   DEFAULT_OUTPUT_LIMIT_BYTES,
+  extractRestrictedInferenceUsage,
   RestrictedInferenceError,
   RestrictedInferenceRunner,
   resolveRestrictedInferenceModel
