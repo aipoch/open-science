@@ -11,10 +11,15 @@ import { RemoteJobRow } from '@/components/RemoteJobRow'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { WorkspaceToolActivityRow } from './WorkspaceToolActivityRow'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
+import { WorkspaceSkillActivityRow } from './WorkspaceSkillActivityRow'
 import { WorkspaceSkillLoadRow } from './WorkspaceSkillLoadRow'
 import { WorkspaceManagePackagesActivityRow } from './WorkspaceManagePackagesActivityRow'
 import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
-import { buildToolActivityDetails, getSkillLoadDocument } from './workspace-tool-activity-details'
+import {
+  buildToolActivityDetails,
+  getSkillLoadDocument,
+  isSkillActivity
+} from './workspace-tool-activity-details'
 import { getLoadedSkillName, isSkillLoadActivity } from './workspace-skill-load'
 import {
   formatActivityGroupElapsed,
@@ -228,6 +233,15 @@ const WorkspaceActivityGroup = ({
                           revealRequest={
                             revealRequest?.itemId === activity.id ? revealRequest : undefined
                           }
+                        />
+                      ) : isSkillActivity(activity) ? (
+                        // Native Skill rows carry no payload; the row resolves the SKILL.md from
+                        // the skills catalog on expand (or stays compact when unlisted).
+                        <WorkspaceSkillActivityRow
+                          activity={activity}
+                          phase={phase}
+                          isExpanded={isRowExpanded}
+                          onToggle={onToggleRow}
                         />
                       ) : (
                         <WorkspaceToolActivityRow activity={activity} phase={phase} />

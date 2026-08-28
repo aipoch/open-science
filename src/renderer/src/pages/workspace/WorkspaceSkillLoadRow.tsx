@@ -15,9 +15,16 @@ type WorkspaceSkillLoadRowProps = {
   onToggle: (activityId: string, nextExpanded: boolean) => void
 }
 
+// The shared SKILL.md sheet: a full-width white surface with a fixed max height (scrolls beyond
+// it), no border, and the subtle card shadow. Shared by the load_skill and native Skill rows.
+const SkillDocumentSheet = ({ markdown }: { markdown: string }): React.JSX.Element => (
+  <div className="max-h-[320px] overflow-y-auto rounded-md bg-bg-000 px-4 py-3 shadow-card">
+    <PresentedAgentMarkdown content={markdown} allowMedia={false} />
+  </div>
+)
+
 // A completed load_skill call expands into the loaded SKILL.md itself, rendered with the shared
-// markdown renderer: a full-width white sheet with a fixed max height (scrolls beyond it), no
-// border, and the subtle card shadow — instead of the generic input/output JSON sections.
+// markdown renderer — instead of the generic input/output JSON sections.
 const WorkspaceSkillLoadRow = ({
   activity,
   phase,
@@ -39,11 +46,9 @@ const WorkspaceSkillLoadRow = ({
       panelTestId="skill-load-details"
       onToggle={onToggle}
     >
-      <div className="max-h-[320px] overflow-y-auto rounded-md bg-bg-000 px-4 py-3 shadow-card">
-        <PresentedAgentMarkdown content={markdown} allowMedia={false} />
-      </div>
+      <SkillDocumentSheet markdown={markdown} />
     </WorkspaceToolActivityRowButton>
   )
 }
 
-export { WorkspaceSkillLoadRow }
+export { SkillDocumentSheet, WorkspaceSkillLoadRow }
