@@ -1,5 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest, ServerResponse } from 'node:http'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -83,6 +84,43 @@ const accessOnlyExternalAccess = (): ExternalWebAccessAuthorization => ({
   kind: 'authorized' as const,
   isCurrent: () => true
 })
+const startBudgetTestServer = async (
+  requestBodyBudgets: NonNullable<Parameters<typeof startWebHttpServer>[0]['requestBodyBudgets']>,
+  onExternalAuthorization?: () => void
+): ReturnType<typeof startWebHttpServer> => {
+  const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+  roots.push(staticRoot)
+  await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot,
+    requestBodyBudgets,
+    rpc: {
+      channels: () => ['projects:list'],
+      invoke: vi.fn().mockResolvedValue([]),
+      releaseClient: vi.fn(),
+      dispose: vi.fn()
+    },
+    externalAccess: {
+      authorizeHttp: async () => {
+        onExternalAuthorization?.()
+        return accessOnlyExternalAccess()
+      },
+      authorizeWebSocket: async () => undefined
+    },
+    bootstrap: {
+      appName: 'Open Science',
+      appVersion: '0.0.0',
+      configRoot: '/fake/root',
+      platform: 'test',
+      versions: { electron: '1', chrome: '1', node: '1' }
+    }
+  })
+  servers.push(server)
+  return server
+}
 const runWithCallerContext = <Result>(_context: CallerContext, operation: () => Result): Result =>
   operation()
 
@@ -104,6 +142,145 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it.each([
+    {
+      dimension: 'server',
+      budgets: {
+        perRequestBytes: 64,
+        perClientInFlightBytes: 64,
+        serverInFlightBytes: 64
+      },
+      firstClientId: 'first-client',
+      secondClientId: 'second-client',
+      expectedStatus: 503
+    },
+    {
+      dimension: 'client',
+      budgets: {
+        perRequestBytes: 64,
+        perClientInFlightBytes: 64,
+        serverInFlightBytes: 128
+      },
+      firstClientId: 'shared-client',
+      secondClientId: 'shared-client',
+      expectedStatus: 429
+    }
+  ])(
+    'rejects a declared body before reading when concurrent requests exhaust the $dimension byte budget',
+    async ({ budgets, firstClientId, secondClientId, expectedStatus }) => {
+      let authorizeCount = 0
+      let markFirstAuthorized: () => void = () => undefined
+      const firstAuthorized = new Promise<void>((resolve) => {
+        markFirstAuthorized = resolve
+      })
+      const server = await startBudgetTestServer(budgets, () => {
+        authorizeCount += 1
+        if (authorizeCount === 1) markFirstAuthorized()
+      })
+
+      const firstRequest = httpRequest({
+        host: '127.0.0.1',
+        port: server.port,
+        path: '/rpc/projects%3Alist',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': '64',
+          'x-open-science-client': firstClientId
+        }
+      })
+      firstRequest.on('error', () => undefined)
+      firstRequest.write('{')
+      await firstAuthorized
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      try {
+        const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-open-science-client': secondClientId
+          },
+          body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+        })
+
+        expect(response.status).toBe(expectedStatus)
+        expect(await response.json()).toMatchObject({
+          error: { code: 'handler_error' }
+        })
+      } finally {
+        const firstClosed = new Promise<void>((resolve) => firstRequest.once('close', resolve))
+        firstRequest.destroy()
+        await firstClosed
+      }
+
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const retry = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-open-science-client': secondClientId
+        },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      })
+      expect(retry.status).toBe(200)
+    }
+  )
+
+  it.each([
+    {
+      transport: 'declared',
+      bodyHeaders: ['Content-Length: 65'],
+      body: ''
+    },
+    {
+      transport: 'chunked',
+      bodyHeaders: ['Transfer-Encoding: chunked'],
+      body: `41\r\n${'x'.repeat(65)}\r\n`
+    }
+  ])(
+    'rejects an oversized $transport body and closes the connection',
+    async ({ bodyHeaders, body }) => {
+      const server = await startBudgetTestServer({
+        perRequestBytes: 64,
+        perClientInFlightBytes: 128,
+        serverInFlightBytes: 128
+      })
+
+      const socket = connect({ host: '127.0.0.1', port: server.port })
+      const chunks: Buffer[] = []
+      socket.on('data', (chunk: Buffer) => chunks.push(chunk))
+      socket.on('error', () => undefined)
+      await new Promise<void>((resolve) => socket.once('connect', resolve))
+      const closed = new Promise<string>((resolve) =>
+        socket.once('close', () => resolve(Buffer.concat(chunks).toString()))
+      )
+
+      socket.write(
+        `${[
+          'POST /rpc/projects%3Alist HTTP/1.1',
+          `Host: 127.0.0.1:${server.port}`,
+          'Authorization: Bearer test-token',
+          'Content-Type: application/json',
+          ...bodyHeaders,
+          'Connection: keep-alive',
+          '',
+          ''
+        ].join('\r\n')}${body}`
+      )
+
+      const response = await Promise.race([
+        closed,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('oversized request connection stayed open')), 1_000)
+        )
+      ])
+      expect(response).toContain('HTTP/1.1 413')
+      expect(response.toLowerCase()).toContain('connection: close')
+      expect(response).toContain('Request body is too large.')
+    }
+  )
+
   it('preserves valid idempotency entries when replay capacity is full', async () => {
     const registry = new TaskIdempotencyRegistry(2, 8_192)
     const first = vi.fn().mockResolvedValue('first result')
