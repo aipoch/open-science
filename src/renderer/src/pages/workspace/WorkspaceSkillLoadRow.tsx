@@ -16,9 +16,9 @@ type WorkspaceSkillLoadRowProps = {
 }
 
 // The shared SKILL.md sheet: a full-width white surface with a fixed max height (scrolls beyond
-// it), no border, and the subtle card shadow. Shared by the load_skill and native Skill rows.
+// it), no border, and the subtle ringless sheet shadow. Shared by the load_skill and native rows.
 const SkillDocumentSheet = ({ markdown }: { markdown: string }): React.JSX.Element => (
-  <div className="max-h-[320px] overflow-y-auto rounded-md bg-bg-000 px-4 py-3 shadow-card">
+  <div className="max-h-[320px] overflow-y-auto rounded-md bg-bg-000 px-4 py-3 shadow-sheet">
     <PresentedAgentMarkdown content={markdown} allowMedia={false} />
   </div>
 )

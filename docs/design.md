@@ -259,6 +259,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 | `--shadow-card`                     | `shadow-card`                      | `0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04)` | Sidebar rail card and composer dock         |
 | `--shadow-card-opaque`              | `shadow-card-opaque`               | `0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1)`  | Composer form                               |
 | `--shadow-menu` / `--shadow-dialog` | `shadow-menu`, `shadow-dialog`     | `0 2px 8px rgb(0 0 0 / 0.08)`, `0 8px 32px rgb(10 10 10 / 12%)`   | Menus and modal dialogs                     |
+| `--shadow-sheet`                    | `shadow-sheet`                     | `0 4px 24px rgb(10 10 10 / 0.04)`                                 | Borderless document sheets (SKILL.md panel) |
 
 ### Settings Status and Category Tokens
 
@@ -352,7 +353,7 @@ colors communicate a successful or failed probe/migration result.
 - Dialog: `shadow-lg`; medium form dialog uses `0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)`.
 - Large settings dialog: `shadow-md` plus a 1px ring, `0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.08)`.
 - Composer / viewer: `shadow-sm` plus a 1px ring, `0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04)`.
-- Workspace card surfaces use `shadow-card`; composer forms use `shadow-card-opaque`; session menus use `shadow-menu`; rename and delete dialogs use `shadow-dialog`.
+- Workspace card surfaces use `shadow-card`; composer forms use `shadow-card-opaque`; session menus use `shadow-menu`; rename and delete dialogs use `shadow-dialog`. Borderless in-transcript document sheets use `shadow-sheet` (the ringless card elevation, since a 1px ring shadow reads as a border).
 - Do not stack more than two shadow layers. Prefer background, border opacity, and spacing for hierarchy.
 
 ### Focus / Disabled

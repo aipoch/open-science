@@ -79,7 +79,7 @@ describe('WorkspaceSkillActivityRow', () => {
     const panel = container.querySelector('[data-testid="skill-load-details"]')
 
     expect(panel?.querySelector('h1')?.textContent).toBe('mcp-pubmed')
-    expect(panel?.querySelector('.shadow-card')).not.toBeNull()
+    expect(panel?.querySelector('.shadow-sheet')).not.toBeNull()
     expect(container.querySelector('[data-testid="tool-chip"]')?.textContent).toContain('Skill')
     expect(container.querySelector('[data-testid="tool-chip"]')?.textContent).toContain(
       'mcp-pubmed'

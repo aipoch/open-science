@@ -68,7 +68,7 @@ describe('WorkspaceSkillLoadRow', () => {
     expect(sheet?.className).toContain('max-h-[320px]')
     expect(sheet?.className).toContain('overflow-y-auto')
     expect(sheet?.className).toContain('bg-bg-000')
-    expect(sheet?.className).toContain('shadow-card')
+    expect(sheet?.className).toContain('shadow-sheet')
     expect(sheet?.className).not.toContain('border')
 
     expect(panel?.querySelector('h1')?.textContent).toBe('mcp-pubmed')
