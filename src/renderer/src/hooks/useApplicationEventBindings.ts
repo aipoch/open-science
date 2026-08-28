@@ -293,9 +293,13 @@ const useApplicationEventBindings = ({
   }, [dismissConnectorApproval, enqueueConnectorApproval])
 
   useEffect(() => {
-    const removeRequest = window.api.settings.onConnectorCredentialRequest(enqueueCredentialRequest)
-    const removeSettled = window.api.settings.onConnectorCredentialSettled(dismissCredentialRequest)
-    void window.api.settings.replayPendingConnectorCredentialRequests().catch(() => undefined)
+    const removeRequest =
+      window.api.settings.onConnectorCredentialRequest?.(enqueueCredentialRequest) ??
+      (() => undefined)
+    const removeSettled =
+      window.api.settings.onConnectorCredentialSettled?.(dismissCredentialRequest) ??
+      (() => undefined)
+    void window.api.settings.replayPendingConnectorCredentialRequests?.().catch(() => undefined)
     return () => {
       removeSettled()
       removeRequest()

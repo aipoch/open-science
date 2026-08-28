@@ -1787,6 +1787,49 @@ describe('ConnectorService specialist capability gate', () => {
     ...overrides
   })
 
+  it('uses the fresh durable OpenAlex credential for Specialist calls', async () => {
+    const staleConnectors = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      openAlexApiKeyRef: 'stale-ref'
+    }
+    let currentConnectors = {
+      ...staleConnectors,
+      openAlexApiKeyRef: 'current-ref' as string | undefined
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ meta: { count: 0 }, results: [] }))
+    const current = specialist()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => staleConnectors,
+      getConnectorsFresh: async () => currentConnectors,
+      resolveApiKey: (ref) =>
+        ref === 'stale-ref' ? 'STALE_KEY' : ref === 'current-ref' ? 'CURRENT_KEY' : undefined,
+      resolveSpecialistProfile: async () => current
+    })
+    const context = {
+      origin: 'agent' as const,
+      sessionId: 'specialist-openalex',
+      specialistId: current.id
+    }
+
+    await svc.call(
+      'literature',
+      'openalex_search_works',
+      { query: 'CRISPR', max_records: 1 },
+      context
+    )
+    expect(new URL(String(fetchImpl.mock.calls[0][0])).searchParams.get('api_key')).toBe(
+      'CURRENT_KEY'
+    )
+
+    currentConnectors = { ...currentConnectors, openAlexApiKeyRef: undefined }
+    await expect(
+      svc.call('literature', 'openalex_search_works', { query: 'RNA', max_records: 1 }, context)
+    ).rejects.toThrow(/credential_required/)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
   it('keeps Main and Specialist connector scopes independent and enforces both modes before dispatch', async () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })
     let current = specialist()

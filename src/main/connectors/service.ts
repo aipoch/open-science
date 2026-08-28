@@ -378,12 +378,16 @@ export class ConnectorService {
       return signal ? localHandler(args, context, signal) : localHandler(args, context)
     }
 
+    const credentialConnectors = authorization
+      ? authorization.connectors
+      : await this.currentConnectors()
+    signal?.throwIfAborted()
     const credentialResult = await this.credentialsForDescriptor(
       descriptor,
       connector,
       method,
       context,
-      authorization?.connectors,
+      credentialConnectors,
       signal
     )
     let credentials = credentialResult.credentials
@@ -800,9 +804,7 @@ export class ConnectorService {
     }
   }
 
-  private credentials(
-    c: StoredConnectors | undefined = this.deps.getConnectors()
-  ): ConnectorCredentials {
+  private credentials(c: StoredConnectors | undefined): ConnectorCredentials {
     return {
       ncbiEmail: c?.contactEmail,
       ncbiApiKey: this.deps.resolveApiKey(c?.ncbiApiKeyRef),

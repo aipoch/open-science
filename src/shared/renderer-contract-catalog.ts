@@ -1614,10 +1614,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('settings', ['connectors:approval-settled', EVENT], { optionalMember: true }),
   'settings.onConnectorCredentialRequest': callable<
     (listener: AcpListener<ConnectorCredentialRequest>) => RemoveListener
-  >()('settings', ['connectors:credential-request', EVENT]),
+  >()('settings', ['connectors:credential-request', ELECTRON_EVENT], { optionalMember: true }),
   'settings.onConnectorCredentialSettled': callable<
     (listener: AcpListener<string>) => RemoveListener
-  >()('settings', ['connectors:credential-settled', EVENT]),
+  >()('settings', ['connectors:credential-settled', ELECTRON_EVENT], { optionalMember: true }),
   'settings.onConnectorRuntimeChanged': callable<
     (listener: AcpListener<undefined>) => RemoveListener
   >()('settings', ['settings:connector-runtime-changed', EVENT]),
@@ -1663,9 +1663,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     ['connectors:approval-replay-pending'],
     { optionalMember: true }
   ),
-  'settings.replayPendingConnectorCredentialRequests': callable<() => Promise<void>>()('settings', [
-    'connectors:credential-replay-pending'
-  ]),
+  'settings.replayPendingConnectorCredentialRequests': callable<() => Promise<void>>()(
+    'settings',
+    ['connectors:credential-replay-pending', ELECTRON],
+    { optionalMember: true }
+  ),
   'settings.replayPendingSkillImportApprovals': callable<() => Promise<void>>()('settings', [
     'skills:conversation-import-replay-pending'
   ]),
@@ -1674,7 +1676,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('settings', ['connectors:approval-respond']),
   'settings.respondConnectorCredentialRequest': callable<
     (request: RespondConnectorCredentialRequest) => Promise<void>
-  >()('settings', ['connectors:credential-respond']),
+  >()('settings', ['connectors:credential-respond', ELECTRON], { optionalMember: true }),
   'settings.respondSkillImportApproval': callable<
     (response: ConversationSkillImportApprovalResponse) => Promise<void>
   >()('settings', ['skills:conversation-import-respond']),
