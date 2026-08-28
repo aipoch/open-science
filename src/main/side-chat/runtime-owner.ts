@@ -1280,7 +1280,7 @@ class SideChatRuntimeOwner {
             this.options.recordUsage!({
               projectId: active.projectId,
               sessionId: active.parentSessionId,
-              eventId: event.id,
+              eventId: `${active.sideSessionId}:user-${active.entrySequence}`,
               source: 'side-chat',
               frameworkId: active.frameworkId,
               ...(active.model ? { model: active.model } : {}),

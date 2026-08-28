@@ -536,7 +536,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         expect.objectContaining({
           projectId: 'project-1',
           sessionId: 'main-coalesce',
-          eventId: 'stop-coalesced',
+          eventId: `${started.sideSessionId}:user-1`,
           source: 'side-chat',
           frameworkId: 'claude-code',
           model: 'model-a',

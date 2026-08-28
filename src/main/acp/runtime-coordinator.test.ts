@@ -82,6 +82,7 @@ const createFakeRuntime = (options: {
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
   applyModelChange: ReturnType<typeof vi.fn>
   captureBackend: ReturnType<typeof vi.fn>
+  beginProviderTurnObservation: ReturnType<typeof vi.fn>
   captureSessionModel: ReturnType<typeof vi.fn>
   setPermissionProfile: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
@@ -146,6 +147,10 @@ const createFakeRuntime = (options: {
   const applyReasoningEffortChange = vi.fn(async () => true)
   const applyModelChange = vi.fn(async () => true)
   const captureBackend = vi.fn(() => ({ backendId: `${options.frameworkId}:owned` }) as never)
+  const beginProviderTurnObservation = vi.fn(async () => ({
+    finalize: vi.fn(async () => ({})),
+    cancel: vi.fn()
+  }))
   const captureSessionModel = vi.fn((sessionId: string) => ({
     backend: { backendId: `${options.frameworkId}:owned` },
     appliedModel: `${sessionId}:applied`
@@ -280,6 +285,7 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
+    beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
     respondToPermission,
@@ -309,6 +315,7 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
+    beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
     respondToPermission,
@@ -4175,13 +4182,21 @@ describe('AcpRuntimeCoordinator', () => {
       oldActivityStarted.resolve()
       await releaseOldActivity.promise
       oldBackendId = runtime.captureBackend?.().backendId
+      await runtime.beginProviderTurnObservation?.({
+        providerSessionId: 'reviewer-old',
+        cwd: '/workspace'
+      })
       await runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
     })
     await oldActivityStarted.promise
 
     await coordinator.requestAgentFrameworkSwitch()
-    await coordinator.withActivity({}, (runtime) => {
+    await coordinator.withActivity({}, async (runtime) => {
       newBackendId = runtime.captureBackend?.().backendId
+      await runtime.beginProviderTurnObservation?.({
+        providerSessionId: 'reviewer-new',
+        cwd: '/workspace'
+      })
       return runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
     })
     releaseOldActivity.resolve()
@@ -4189,6 +4204,14 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(vi.mocked(created[0].runtime.buildReviewerSession)).toHaveBeenCalledOnce()
     expect(vi.mocked(created[1].runtime.buildReviewerSession)).toHaveBeenCalledOnce()
+    expect(created[0].beginProviderTurnObservation).toHaveBeenCalledWith({
+      providerSessionId: 'reviewer-old',
+      cwd: '/workspace'
+    })
+    expect(created[1].beginProviderTurnObservation).toHaveBeenCalledWith({
+      providerSessionId: 'reviewer-new',
+      cwd: '/workspace'
+    })
     expect(oldBackendId).toBe('claude-code:owned')
     expect(newBackendId).toBe('codex:owned')
   })
