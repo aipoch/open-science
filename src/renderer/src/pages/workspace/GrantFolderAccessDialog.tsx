@@ -140,10 +140,12 @@ const CurrentCrumb = ({
 // with the default access level and no leftover grant error.
 const GrantFolderAccessDialogContent = ({
   onOpenChange,
-  onGranted
+  onGranted,
+  onGrantingChange
 }: {
   onOpenChange: (open: boolean) => void
   onGranted?: (root: GrantedLocalRoot) => void
+  onGrantingChange: (granting: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const roots = useGrantedFoldersStore((state) => state.roots)
@@ -191,6 +193,17 @@ const GrantFolderAccessDialogContent = ({
   }
   const [access, setAccess] = useState<GrantedLocalRootAccess>('ro')
   const [grantFailed, setGrantFailed] = useState(false)
+  const [isGranting, setIsGranting] = useState(false)
+  const grantingRef = useRef(false)
+  const grantAttemptRef = useRef(0)
+  useEffect(
+    () => () => {
+      grantAttemptRef.current += 1
+      grantingRef.current = false
+      onGrantingChange(false)
+    },
+    [onGrantingChange]
+  )
 
   // On mount: resolve home (the initial location), enumerate the mounted drives for the drive
   // dropdown, and refresh the granted roots so handleGrant's fallback can tell which root the
@@ -286,17 +299,30 @@ const GrantFolderAccessDialogContent = ({
   const isHome = home !== undefined && sameLocalDirectory(cwd, home, platform)
 
   const handleGrant = async (): Promise<void> => {
+    if (grantingRef.current) return
+    grantingRef.current = true
+    const attempt = ++grantAttemptRef.current
+    setIsGranting(true)
+    onGrantingChange(true)
     try {
       const nextRoots = await grant(cwd, access)
+      if (attempt !== grantAttemptRef.current) return
       const granted =
         nextRoots.find((root) => sameLocalDirectory(root.path, cwd, platform)) ??
         nextRoots.find((root) => !roots.some((existing) => existing.id === root.id))
       onOpenChange(false)
       if (granted) onGranted?.(granted)
     } catch {
+      if (attempt !== grantAttemptRef.current) return
       // Main rejected the candidate (unreadable, home itself): state it quietly next to the
       // buttons; navigation clears the message.
       setGrantFailed(true)
+    } finally {
+      if (attempt === grantAttemptRef.current) {
+        grantingRef.current = false
+        setIsGranting(false)
+        onGrantingChange(false)
+      }
     }
   }
 
@@ -332,7 +358,24 @@ const GrantFolderAccessDialogContent = ({
       <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
       <Dialog.Content
         data-testid="grant-folder-access-dialog"
+        onClickCapture={(event) => {
+          if (!isGranting) return
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onKeyDownCapture={(event) => {
+          if (!isGranting) return
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onEscapeKeyDown={(event) => {
+          if (isGranting) event.preventDefault()
+        }}
         onInteractOutside={(event) => {
+          if (isGranting) {
+            event.preventDefault()
+            return
+          }
           // The drive dropdown portals its content to <body>, outside this dialog's DOM: while
           // it is open, an outside click (a menu item, or the overlay the click falls through to
           // while the modal menu disables pointer events elsewhere) reaches this layer as an
@@ -359,6 +402,7 @@ const GrantFolderAccessDialogContent = ({
               aria-label={t('Close')}
               data-testid="grant-access-close"
               className={dialogCloseButtonClassName}
+              disabled={isGranting}
             >
               <X className="size-4" aria-hidden="true" />
             </Button>
@@ -565,6 +609,7 @@ const GrantFolderAccessDialogContent = ({
             <RadioGroup.Root
               aria-label={t('Access level')}
               value={access}
+              disabled={isGranting}
               onValueChange={(value) => setAccess(value as GrantedLocalRootAccess)}
               orientation="horizontal"
               className="flex items-center gap-2.5"
@@ -578,6 +623,7 @@ const GrantFolderAccessDialogContent = ({
               variant="ghost"
               className={dialogCancelButtonClassName}
               data-testid="grant-access-cancel"
+              disabled={isGranting}
               onClick={() => onOpenChange(false)}
             >
               {t('Cancel')}
@@ -585,7 +631,7 @@ const GrantFolderAccessDialogContent = ({
             <Button
               type="button"
               data-testid="grant-access-grant"
-              disabled={isHome}
+              disabled={isHome || isGranting}
               onClick={() => void handleGrant()}
               className="bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-40"
             >
@@ -607,12 +653,29 @@ export const GrantFolderAccessDialog = ({
   onOpenChange: (open: boolean) => void
   // Called with the granted root after a successful grant (the dialog has already closed).
   onGranted?: (root: GrantedLocalRoot) => void
-}): React.JSX.Element => (
-  <Dialog.Root open={open} onOpenChange={onOpenChange}>
-    <Dialog.Portal>
-      {open ? (
-        <GrantFolderAccessDialogContent onOpenChange={onOpenChange} onGranted={onGranted} />
-      ) : null}
-    </Dialog.Portal>
-  </Dialog.Root>
-)
+}): React.JSX.Element => {
+  const grantingRef = useRef(false)
+  const handleGrantingChange = useCallback((granting: boolean): void => {
+    grantingRef.current = granting
+  }, [])
+
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && grantingRef.current) return
+        onOpenChange(nextOpen)
+      }}
+    >
+      <Dialog.Portal>
+        {open ? (
+          <GrantFolderAccessDialogContent
+            onOpenChange={onOpenChange}
+            onGranted={onGranted}
+            onGrantingChange={handleGrantingChange}
+          />
+        ) : null}
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
