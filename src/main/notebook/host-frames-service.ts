@@ -9,6 +9,7 @@ import {
 import { sanitizeExportMarkdown } from '../../shared/conversation-export'
 import { fuzzyScore } from '../../shared/fuzzy-match'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
+import { isRecord } from './value-guards'
 
 type HostFrameReadContext = Readonly<{ projectId: string; sessionId: string }>
 
@@ -105,9 +106,6 @@ const DEFAULT_LIST_LIMIT = 20
 const MAX_LIMIT = 100
 const DEFAULT_GET_LIMIT = 40
 const GET_OPTION_KEYS = new Set(['session_id', 'branch_id', 'before', 'limit'])
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const optionalString = (
   options: Record<string, unknown>,

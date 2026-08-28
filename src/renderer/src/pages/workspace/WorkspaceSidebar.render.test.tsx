@@ -249,8 +249,11 @@ describe('WorkspaceSidebar accessible render', () => {
 
   it('opens pointer previews immediately and switches directly to the next Session', async () => {
     vi.useFakeTimers()
-    const { SessionHoverPreview, SessionHoverPreviewProvider } =
-      await import('./SessionHoverPreview')
+    const {
+      SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX,
+      SessionHoverPreview,
+      SessionHoverPreviewProvider
+    } = await import('./SessionHoverPreview')
     const firstPreviewRequest = vi.fn().mockResolvedValue(undefined)
     const secondPreviewRequest = vi.fn().mockResolvedValue(undefined)
     const container = document.createElement('div')
@@ -288,6 +291,12 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')?.textContent).toBe(
         'First SessionFirst Description'
       )
+      const hoverRegion = document.body.querySelector<HTMLElement>(
+        '[data-slot="hovercard-content"]'
+      )
+      expect(SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX).toBe(0)
+      expect(hoverRegion?.classList).toContain('border-0')
+      expect(hoverRegion?.classList).toContain('p-0')
       expect(firstPreviewRequest).toHaveBeenCalledOnce()
 
       const leave = new MouseEvent('pointerout', { bubbles: true, relatedTarget: second })

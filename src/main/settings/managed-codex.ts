@@ -40,6 +40,7 @@ import {
 import { createLogger } from '../logger'
 import { stripCodexCredentialEnv } from './process-tree'
 import { terminateProcessTree } from '../process-tree'
+import { toErrorMessage } from '../error-message'
 
 export const CODEX_ACP_VERSION = MINIMUM_CODEX_ACP_VERSION
 export const CODEX_VERSION = '0.144.6'
@@ -1259,7 +1260,7 @@ const restoreBackupOrThrow = async (
     await rename(backup, destination)
   } catch (restoreError) {
     log.error(`Failed to restore backup. Backup retained at: ${backup}`, restoreError)
-    const msg = cause instanceof Error ? cause.message : String(cause)
+    const msg = toErrorMessage(cause)
     throw new Error(`${msg} (backup retained at ${backup})`)
   }
   throw cause
@@ -1293,7 +1294,7 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
           `Failed to back up existing install before replacement. Backup may be incomplete at: ${backup}`,
           fallbackError
         )
-        const msg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        const msg = toErrorMessage(fallbackError)
         throw new Error(`${msg} (backup may be incomplete at ${backup})`)
       }
     } else {
@@ -1324,9 +1325,6 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
 
   if (hasBackup) await rm(backup, { recursive: true, force: true }).catch(() => undefined)
 }
-
-const describeError = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
 
 export const installManagedCodex = async (
   options: InstallManagedCodexOptions
@@ -1470,7 +1468,7 @@ export const installManagedCodex = async (
         codexVersion
       }
     } catch (error) {
-      lastError = describeError(error)
+      lastError = toErrorMessage(error)
       if (reachedLocalInstall) {
         // Local install failure — do not attribute it to the registry or try the next one.
         onEvent({

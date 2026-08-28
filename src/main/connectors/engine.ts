@@ -1,5 +1,6 @@
 import type { ConnectorCredentials, ToolContext, ToolDescriptor } from './types'
 import { abortableDelay } from './abortable-delay'
+import { CONNECTOR_RETRYABLE_STATUS, connectorRetryDelay } from './request-policy'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_TOTAL_TIMEOUT_MS = 120_000
@@ -10,7 +11,6 @@ const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 // backed-off retries turn those blips into successes instead of surfacing them to the notebook.
 const DEFAULT_RETRIES = 2
 const DEFAULT_BACKOFF_MS = 400
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
 
 // Some public APIs (e.g. AlphaFold EBI) reject requests without a User-Agent; send a stable one.
 const USER_AGENT =
@@ -119,14 +119,6 @@ export class ParserEngine {
     totalTimeoutMs: number,
     maxResponseBytes: number
   ): ToolContext {
-    // Delay before the next attempt: honour a numeric Retry-After (seconds, capped), else exponential
-    // backoff with jitter off the configured base.
-    const nextDelay = (attempt: number, retryAfter: string | null): number => {
-      const ra = retryAfter ? Number(retryAfter) : NaN
-      if (Number.isFinite(ra) && ra >= 0) return Math.min(ra * 1000, 5_000)
-      return Math.min(this.backoffMs * 2 ** attempt, 4_000) + Math.random() * this.backoffMs
-    }
-
     const doFetch = async (
       url: string,
       accept: string,
@@ -205,7 +197,7 @@ export class ParserEngine {
           }
           // Immediate network failures may be transient, so retry them within the bounded budget.
           if (attempt < this.retries) {
-            await abortableDelay(nextDelay(attempt, null), signal)
+            await abortableDelay(connectorRetryDelay(attempt, null, this.backoffMs), signal)
             continue
           }
           throw failure
@@ -216,9 +208,9 @@ export class ParserEngine {
           return { response: res, ...(bodyText !== undefined ? { bodyText } : {}) }
         }
         // Retry only transient upstream statuses; client errors (4xx except 429) fail fast.
-        if (attempt < this.retries && RETRYABLE_STATUS.has(res.status)) {
+        if (attempt < this.retries && CONNECTOR_RETRYABLE_STATUS.has(res.status)) {
           await abortableDelay(
-            nextDelay(attempt, res.headers?.get?.('retry-after') ?? null),
+            connectorRetryDelay(attempt, res.headers?.get?.('retry-after') ?? null, this.backoffMs),
             signal
           )
           continue

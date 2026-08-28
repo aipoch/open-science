@@ -13,6 +13,7 @@ import {
   type RestrictedInferenceResult,
   type RestrictedInferenceRunner
 } from '../acp/restricted-inference-runner'
+import { isRecord } from './value-guards'
 
 const MAX_PROMPT_BYTES = 64 * 1024
 const MAX_BATCH_ITEMS = 32
@@ -71,9 +72,6 @@ type HostModelServiceOptions = Readonly<{
   captureModelCatalog: () => Promise<HostModelCatalogSnapshot>
   runner: HostLlmRunner
 }>
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const exactKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
   Object.keys(value).every((key) => allowed.includes(key))

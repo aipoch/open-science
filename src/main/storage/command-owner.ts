@@ -48,6 +48,7 @@ import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
 import type { SetDataRootOptions } from '../settings/capabilities'
+import { toErrorMessage } from '../error-message'
 
 type LegacySessionSource = { projectId: string; sessionId: string }
 type NotebookSessionSource = { projectId: string; sessionId: string }
@@ -300,7 +301,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       logger.error('data root copy boundary failed', diagnosticErrorFields(err))
       clearMigrationPending()
       activeStaged = undefined
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: toErrorMessage(err) }
     } finally {
       activeMigration = undefined
       // Relax the quit guard now the copy is done; `pending` (write-gate) persists on success.
@@ -363,7 +364,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         reason: 'invalid-request',
         ...diagnosticErrorFields(err)
       })
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: toErrorMessage(err) }
     }
     resolutionInProgress = true
     try {
@@ -445,7 +446,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         reason: 'invalid-request',
         ...diagnosticErrorFields(err)
       })
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: toErrorMessage(err) }
     }
     resolutionInProgress = true
     const staged = activeStaged
@@ -514,7 +515,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       clearMigrationPending()
       activeStaged = undefined
       resolutionInProgress = false
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: toErrorMessage(err) }
     }
 
     if (outcome.ok) {
@@ -549,7 +550,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       return await validateNewDataRoot(request.parent, resolveDataRoot())
     } catch (err) {
       logger.warn('data root validation boundary failed', diagnosticErrorFields(err))
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: toErrorMessage(err) }
     }
   }
 
@@ -567,7 +568,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       return {
         kind: 'invalid',
         dataRoot,
-        error: err instanceof Error ? err.message : String(err)
+        error: toErrorMessage(err)
       }
     }
   }
@@ -623,7 +624,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     } catch (err) {
       operation.fail(err)
       logger.error('data root selection boundary failed', diagnosticErrorFields(err))
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: toErrorMessage(err) }
     }
   }
 

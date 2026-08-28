@@ -14,6 +14,7 @@ import type {
   HostLineageVersion
 } from '../../shared/host-lineage'
 import type { HostArtifactCatalogItem } from '../../shared/project-files'
+import { isRecord } from './value-guards'
 
 type HostLineageReadContext = { projectId: string; sessionId: string }
 
@@ -53,9 +54,6 @@ const ENVIRONMENT_ATTEMPT_REASONS = new Set([
 ])
 const compareText = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const projectPackageSource = (value: unknown): ArtifactPackageSourceEvidence => {
   if (!isRecord(value) || (value.type !== 'github' && value.type !== 'bioconductor')) {
