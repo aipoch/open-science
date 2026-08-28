@@ -70,7 +70,18 @@ export class CredentialRequestBroker {
   }
 
   respond(id: string, configured: boolean): void {
-    this.settle(id, configured)
+    const entry = this.pending.get(id)
+    if (!entry || !configured) {
+      this.settle(id, configured)
+      return
+    }
+
+    // One successful save satisfies every call parked on the same credential. Settle the whole
+    // group before returning so queued renderer requests cannot surface redundant follow-up dialogs.
+    const matchingIds = [...this.pending.entries()]
+      .filter(([, candidate]) => candidate.request.credentialId === entry.request.credentialId)
+      .map(([pendingId]) => pendingId)
+    for (const pendingId of matchingIds) this.settle(pendingId, true)
   }
 
   cancelAll(): void {

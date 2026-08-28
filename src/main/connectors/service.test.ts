@@ -68,6 +68,121 @@ describe('ConnectorService', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
+  it('does not dispatch OpenAlex when the tool is blocked during credential recovery', async () => {
+    let connectors = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      blockedToolIds: [] as string[],
+      openAlexApiKeyRef: undefined as string | undefined
+    }
+    let settleCredential: ((configured: boolean) => void) | undefined
+    const fetchImpl = vi.fn()
+    const requestCredential = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settleCredential = resolve
+        })
+    )
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => connectors,
+      getConnectorsFresh: async () => connectors,
+      resolveApiKey: (ref) => (ref === 'encrypted-ref' ? 'OPENALEX_KEY' : undefined),
+      requestCredential
+    })
+
+    const call = svc.call(
+      'literature',
+      'openalex_search_works',
+      { query: 'CRISPR', max_records: 1 },
+      internal
+    )
+    await vi.waitFor(() => expect(requestCredential).toHaveBeenCalledOnce())
+    connectors = {
+      ...connectors,
+      blockedToolIds: ['literature/openalex_search_works'],
+      openAlexApiKeyRef: 'encrypted-ref'
+    }
+    settleCredential?.(true)
+
+    await expect(call).rejects.toThrow(/blocked by policy/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('does not dispatch OpenAlex when the connector is disabled during credential recovery', async () => {
+    let connectors = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      disabledConnectorIds: [] as string[],
+      openAlexApiKeyRef: undefined as string | undefined
+    }
+    let settleCredential: ((configured: boolean) => void) | undefined
+    const fetchImpl = vi.fn()
+    const requestCredential = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settleCredential = resolve
+        })
+    )
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => connectors,
+      getConnectorsFresh: async () => connectors,
+      resolveApiKey: (ref) => (ref === 'encrypted-ref' ? 'OPENALEX_KEY' : undefined),
+      requestCredential
+    })
+
+    const call = svc.call(
+      'literature',
+      'openalex_search_works',
+      { query: 'CRISPR', max_records: 1 },
+      internal
+    )
+    await vi.waitFor(() => expect(requestCredential).toHaveBeenCalledOnce())
+    connectors = {
+      ...connectors,
+      disabledConnectorIds: ['literature'],
+      openAlexApiKeyRef: 'encrypted-ref'
+    }
+    settleCredential?.(true)
+
+    await expect(call).rejects.toThrow(/disabled/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('preserves a satisfied Once approval across credential recovery', async () => {
+    let connectors = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      askToolIds: ['literature/openalex_search_works'],
+      openAlexApiKeyRef: undefined as string | undefined
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ meta: { count: 0 }, results: [] }))
+    const requestApproval = vi.fn().mockResolvedValue('once')
+    const requestCredential = vi.fn(async () => {
+      connectors = { ...connectors, openAlexApiKeyRef: 'encrypted-ref' }
+      return true
+    })
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => connectors,
+      getConnectorsFresh: async () => connectors,
+      resolveApiKey: (ref) => (ref === 'encrypted-ref' ? 'OPENALEX_KEY' : undefined),
+      requestApproval,
+      requestCredential
+    })
+
+    await svc.call(
+      'literature',
+      'openalex_search_works',
+      { query: 'CRISPR', max_records: 1 },
+      internal
+    )
+
+    expect(requestApproval).toHaveBeenCalledOnce()
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
   it('rejects calls to a disabled connector', async () => {
     const svc = new ConnectorService({
       getConnectors: () => ({

@@ -95,4 +95,31 @@ describe('CredentialRequestBroker', () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([false, false])
   })
+
+  it('resumes every call parked on the same credential after one successful save', async () => {
+    let sequence = 0
+    const onSettled = vi.fn()
+    const broker = new CredentialRequestBroker({
+      generateId: () => `credential-${++sequence}`,
+      broadcast: vi.fn(),
+      onSettled
+    })
+    const first = broker.request({
+      credentialId: 'openalex',
+      connector: 'literature',
+      method: 'openalex_search_works'
+    })
+    const second = broker.request({
+      credentialId: 'openalex',
+      connector: 'literature',
+      method: 'openalex_get_work'
+    })
+
+    broker.respond('credential-1', true)
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true])
+    expect(onSettled).toHaveBeenCalledTimes(2)
+    expect(broker.getPending('credential-1')).toBeNull()
+    expect(broker.getPending('credential-2')).toBeNull()
+  })
 })

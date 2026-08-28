@@ -143,6 +143,21 @@ export function CredentialsPanel({
     }
   }
 
+  const clearLiteratureApiKey = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setMessage(undefined)
+    try {
+      await setNcbiCredentials({ contactEmail: email, apiKey: '' })
+      setApiKeyDraft(undefined)
+      setMessage(t('Literature credentials saved.'))
+    } catch (error) {
+      setMessage(errorDetail(error) ?? t('Could not save literature credentials.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (view.kind === 'service') {
     if (view.serviceId === 'github') {
       return (
@@ -234,6 +249,16 @@ export function CredentialsPanel({
               variant="outline"
               disabled={busy}
               onClick={() => void clearOpenAlex()}
+            >
+              {t('Remove key')}
+            </Button>
+          ) : null}
+          {!isOpenAlex && ncbi.hasApiKey ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void clearLiteratureApiKey()}
             >
               {t('Remove key')}
             </Button>

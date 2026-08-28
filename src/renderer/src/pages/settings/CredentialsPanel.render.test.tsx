@@ -97,4 +97,34 @@ describe('CredentialsPanel', () => {
 
     expect(document.body.querySelector<HTMLInputElement>('#service-api-key')?.value).toBe('')
   })
+
+  it('removes a stored NCBI key without clearing the contact email', async () => {
+    const setNcbiCredentials = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      ncbi: { contactEmail: 'science@example.test', hasApiKey: true },
+      setNcbiCredentials
+    })
+
+    await act(async () => {
+      root.render(
+        <CredentialsPanel
+          view={{ kind: 'service', serviceId: 'literature' }}
+          onNavigate={vi.fn()}
+          onOpenConnector={vi.fn()}
+          onOpenProvider={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    const removeButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent === 'Remove key')
+    await act(async () => removeButton?.click())
+
+    expect(setNcbiCredentials).toHaveBeenCalledWith({
+      contactEmail: 'science@example.test',
+      apiKey: ''
+    })
+  })
 })

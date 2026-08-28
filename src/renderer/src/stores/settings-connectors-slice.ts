@@ -423,10 +423,15 @@ export const createSettingsConnectorsSlice = ({
       }))
     },
     respondCredentialRequest: async (id, configured) => {
+      const credentialId = getState().pendingCredentialRequests.find(
+        (request) => request.id === id
+      )?.credentialId
       await getCommands().respondConnectorCredentialRequest({ id, configured })
       setState((state) => ({
         pendingCredentialRequests: state.pendingCredentialRequests.filter(
-          (request) => request.id !== id
+          (request) =>
+            request.id !== id &&
+            !(configured && credentialId && request.credentialId === credentialId)
         )
       }))
     }

@@ -103,6 +103,11 @@ type ConnectorAccess = {
   specialistScoped: boolean
 }
 
+type BundledAuthorization = {
+  connectors: StoredConnectors | undefined
+  requireApprovalSatisfied: boolean
+}
+
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
   rollback(): void
@@ -353,7 +358,7 @@ export class ConnectorService {
 
     validateToolArguments(descriptor, args)
 
-    const authorizedConnectors = access.bypassMainPolicy
+    let authorization = access.bypassMainPolicy
       ? undefined
       : await this.ensureAuthorized(
           connector,
@@ -373,14 +378,38 @@ export class ConnectorService {
       return signal ? localHandler(args, context, signal) : localHandler(args, context)
     }
 
-    const credentials = await this.credentialsForDescriptor(
+    const credentialResult = await this.credentialsForDescriptor(
       descriptor,
       connector,
       method,
       context,
-      authorizedConnectors,
+      authorization?.connectors,
       signal
     )
+    let credentials = credentialResult.credentials
+
+    // Collecting a credential can leave the call parked for minutes. Re-read enablement and policy
+    // after that wait so a concurrent Block/Disable wins, while retaining a Once approval already
+    // granted to this exact call.
+    if (credentialResult.prompted && !access.bypassMainPolicy) {
+      authorization = await this.ensureAuthorized(
+        connector,
+        connector,
+        [connector],
+        method,
+        args,
+        context,
+        signal,
+        authorization
+      )
+      credentials = this.credentials(authorization.connectors)
+      if (
+        descriptor.requiredCredential &&
+        !this.hasCredential(credentials, descriptor.requiredCredential)
+      ) {
+        throw new ConnectorGateError('credential_required')
+      }
+    }
     return signal
       ? this.engine.call(descriptor, args, credentials, signal)
       : this.engine.call(descriptor, args, credentials)
@@ -602,9 +631,10 @@ export class ConnectorService {
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext,
-    signal?: AbortSignal
-  ): Promise<StoredConnectors | undefined> {
-    let requireApprovalSatisfied = false
+    signal?: AbortSignal,
+    prior?: BundledAuthorization
+  ): Promise<BundledAuthorization> {
+    let requireApprovalSatisfied = prior?.requireApprovalSatisfied ?? false
     for (;;) {
       signal?.throwIfAborted()
       const connectors = await this.currentConnectors()
@@ -622,7 +652,9 @@ export class ConnectorService {
         connectors
       )
       const policyDecision = this.permissionBroker.preflight(request)
-      if (policyDecision === 'allow' || requireApprovalSatisfied) return connectors
+      if (policyDecision === 'allow' || requireApprovalSatisfied) {
+        return { connectors, requireApprovalSatisfied }
+      }
 
       await this.permissionBroker.authorize(request, policyDecision, { signal })
       requireApprovalSatisfied = true
@@ -713,10 +745,12 @@ export class ConnectorService {
     context: ConnectorCallContext,
     connectors: StoredConnectors | undefined,
     signal?: AbortSignal
-  ): Promise<ConnectorCredentials> {
+  ): Promise<{ credentials: ConnectorCredentials; prompted: boolean }> {
     let credentials = this.credentials(connectors)
     const credentialId = descriptor.requiredCredential
-    if (!credentialId || this.hasCredential(credentials, credentialId)) return credentials
+    if (!credentialId || this.hasCredential(credentials, credentialId)) {
+      return { credentials, prompted: false }
+    }
     if (!this.deps.requestCredential) throw new ConnectorGateError('credential_required')
 
     const configured = await this.deps.requestCredential(
@@ -735,7 +769,7 @@ export class ConnectorService {
     if (!this.hasCredential(credentials, credentialId)) {
       throw new ConnectorGateError('credential_required')
     }
-    return credentials
+    return { credentials, prompted: true }
   }
 
   private hasCredential(credentials: ConnectorCredentials, id: ConnectorCredentialId): boolean {
