@@ -91,6 +91,16 @@ describe('isReportableRunFailure (text tier)', () => {
     expect(isReportableRunFailure('Run failed: connection reset')).toBe(true)
   })
 
+  it('recognizes the Claude Code mid-response connection interruption without broad text guessing', () => {
+    const live =
+      'Internal error: API Error: Connection closed mid-response. The response above may be incomplete.'
+    const wrapped = `Error invoking remote method 'acp:send-prompt': Error: ${live}`
+
+    expect(isReportableRunFailure(live)).toBe(false)
+    expect(isReportableRunFailure(wrapped)).toBe(false)
+    expect(isReportableRunFailure('Connection closed mid-response')).toBe(true)
+  })
+
   it('recognizes the actionable provider connection reminder without the structural flag', () => {
     expect(
       isReportableRunFailure(
