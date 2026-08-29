@@ -707,6 +707,34 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       // a new old-root writer enter. On success `pending` remains raised until the fresh process starts.
       beginMigration()
       writeGateHeld = true
+      operation.phase('pause-writers', { mode: classification.kind })
+      try {
+        await pauseDataRootWritersImpl({
+          logger,
+          runtime: deps.runtime,
+          notebook: deps.notebook
+        })
+      } catch (err) {
+        operation.fail(err, { mode: classification.kind })
+        return {
+          ok: false,
+          error: 'Could not pause running work to switch data locations safely. Please try again.'
+        }
+      }
+
+      // Work can appear while the non-latching preparation/drain awaits. Never persist a new root
+      // while delegated work still owns the old one; the finally block releases the gate on refusal.
+      if (deps.getActiveDelegatedSessions().length > 0) {
+        operation.fail(new Error('delegated work appeared during handoff'), {
+          mode: classification.kind
+        })
+        return {
+          ok: false,
+          error:
+            'Subagents are still running. Return to their tasks and stop them before moving data.'
+        }
+      }
+
       const target = dataRootForPicked(request.parent)
       // Create the data root now, before persisting the pointer. Unlike storage:migrate there is no
       // copy phase to mkdir it, so a fresh onboarding folder ('move') would be recorded in

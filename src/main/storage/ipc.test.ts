@@ -43,8 +43,13 @@ vi.mock('electron', () => ({
 const { initDataRoot } = await import('../storage-root')
 const { createStorageCommandOwner } = await import('./command-owner')
 const { registerStorageIpcHandlers } = await import('./ipc')
-const { clearMigrationPending, isMigrationInProgress, isMigrationPending } =
-  await import('./migration-state')
+const {
+  clearMigrationPending,
+  isMigrationInProgress,
+  isMigrationPending,
+  waitForDataRootWriters,
+  withDataRootWrite
+} = await import('./migration-state')
 const { clearApplicationShutdownTrigger, currentApplicationShutdownTrigger } =
   await import('../application-shutdown-trigger')
 const { readMigrationMarker, writeMigrationMarker } = await import('./migration-marker')
@@ -1412,6 +1417,62 @@ describe('storage IPC handlers', () => {
     expect(setDataRoot).toHaveBeenCalledOnce()
     expect(relaunch).toHaveBeenCalledOnce()
     expect(isMigrationPending()).toBe(true)
+  })
+
+  it('drains existing writer leases before a direct pointer switch', async () => {
+    initDataRoot(dataRoot)
+    let finishWriter: (() => void) | undefined
+    const activeWrite = withDataRootWrite(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWriter = resolve
+        })
+    )
+    const pauseDataRootWriters = vi.fn(() => waitForDataRootWriters())
+    const deps = fakeDeps({
+      pauseDataRootWriters,
+      classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+    })
+    registerStorageIpcHandlers(deps)
+
+    const handoff = invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    try {
+      await vi.waitFor(() => expect(isMigrationPending()).toBe(true))
+      await tick(25)
+      expect(pauseDataRootWriters).toHaveBeenCalledOnce()
+      expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    } finally {
+      finishWriter?.()
+      await activeWrite
+    }
+
+    await expect(handoff).resolves.toEqual({ ok: true })
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks delegated work after draining direct-switch writers', async () => {
+    initDataRoot(dataRoot)
+    const getActiveDelegatedSessions = vi
+      .fn()
+      .mockReturnValueOnce([])
+      .mockReturnValue([{ projectId: 'project-1', sessionId: 'delegated-race' }])
+    const deps = fakeDeps({
+      getActiveDelegatedSessions,
+      pauseDataRootWriters: vi.fn().mockResolvedValue(undefined),
+      classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Subagents are still running. Return to their tasks and stop them before moving data.'
+    })
+
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
   })
 
   it('forces the committed old process to exit when direct relaunch throws', async () => {
