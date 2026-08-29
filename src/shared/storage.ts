@@ -23,6 +23,9 @@ export type StorageStatus = {
   // the user hasn't yet answered the one-time "move it into the visible OpenScience folder" prompt.
   // Drives the first-run LegacyDataMoveDialog; once answered (moved/relocated/declined) it stays false.
   legacyDataMovePrompt: boolean
+  // True while a committed move still has verified old-root files to remove. Main retries the
+  // durable cleanup intent at startup; renderer uses this only to notify the user.
+  cleanupPending: boolean
 }
 
 export type StorageInfo = StorageStatus & {
@@ -58,7 +61,9 @@ export type MigrationProgress = {
 }
 export type MigrationResult = { ok: true } | { ok: false; error: string; cancelled?: boolean }
 export type MigrationOutcome =
-  MigrationResult | { ok: false; error: string; switchoverFailed: true }
+  | { ok: true; cleanupWarning?: string }
+  | { ok: false; error: string; cancelled?: boolean }
+  | { ok: false; error: string; switchoverFailed: true }
 
 export type DiscardMigratedCopyResult =
   { ok: true; cleanupWarning?: string } | { ok: false; error: string }

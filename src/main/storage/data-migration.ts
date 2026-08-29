@@ -7,6 +7,7 @@ import {
   mkdir,
   readdir,
   readlink,
+  realpath,
   rm,
   rmdir,
   stat,
@@ -15,7 +16,7 @@ import {
   utimes,
   writeFile
 } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 import type { MigrationProgress, MigrationResult } from '../../shared/storage'
@@ -40,6 +41,17 @@ class NonRegularEntryError extends Error {
   constructor(public readonly relPath: string) {
     super(`unsupported entry (special file): ${relPath}`)
   }
+}
+
+class AbsoluteInternalSymlinkError extends Error {
+  constructor(public readonly relPath: string) {
+    super(`absolute symbolic link into the current data folder: ${relPath}`)
+  }
+}
+
+const isPathInsideOrEqual = (parent: string, candidate: string): boolean => {
+  const rel = relative(parent, candidate)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
 const exists = async (path: string): Promise<boolean> => {
@@ -240,6 +252,40 @@ const copySymlink = async (src: string, dest: string): Promise<void> => {
   await symlink(target, dest)
 }
 
+const migrationSourceError = (error: unknown): string =>
+  error instanceof NonRegularEntryError
+    ? `Can't move your data: "${error.relPath}" is a special file (device, socket, or pipe) that can't be copied. Remove it, then try again.`
+    : error instanceof AbsoluteInternalSymlinkError
+      ? `Can't move your data: "${error.relPath}" is an absolute symbolic link into the current data folder. Replace it with a relative link or remove it, then try again.`
+      : error instanceof Error
+        ? error.message
+        : String(error)
+
+export const validateMigrationSourceLinks = async (
+  from: string,
+  dirs: readonly string[]
+): Promise<MigrationResult> => {
+  try {
+    const canonicalSourceRoot = resolve(await realpath(from))
+    for (const dir of dirs) {
+      const srcDir = join(from, dir)
+      const entries = await listEntries(srcDir)
+      for (const rel of entries.symlinks) {
+        const sourceLink = join(srcDir, rel)
+        const linkTarget = await readlink(sourceLink)
+        if (!isAbsolute(linkTarget)) continue
+        const canonicalTarget = await realpath(sourceLink).catch(() => resolve(linkTarget))
+        if (isPathInsideOrEqual(canonicalSourceRoot, resolve(canonicalTarget))) {
+          throw new AbsoluteInternalSymlinkError(join(dir, rel))
+        }
+      }
+    }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: migrationSourceError(error) }
+  }
+}
+
 // Scans, copies, and verifies `from/<dir>` into `to/<dir>` for every dir in `dirs`. `from` is
 // NEVER mutated by this function — the caller decides when (and whether) to delete sources, so
 // the commit point (persisting the new data root) can happen between verify and delete. On any
@@ -257,6 +303,8 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
 
   try {
     checkAbort()
+    const sourceValidation = await validateMigrationSourceLinks(from, dirs)
+    if (!sourceValidation.ok) return sourceValidation
     const entriesByDir = new Map<string, ScanResult>()
     const sourceHardLinks = new Set<string>()
     let hasRepeatedHardLink = false
@@ -410,12 +458,7 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
     // trace. rmdir only removes it if empty, so any unrelated pre-existing content is left intact.
     await rmdir(to).catch(() => undefined)
     const cancelled = err instanceof AbortedError || signal.aborted
-    const error =
-      err instanceof NonRegularEntryError
-        ? `Can't move your data: "${err.relPath}" is a special file (device, socket, or pipe) that can't be copied. Remove it, then try again.`
-        : err instanceof Error
-          ? err.message
-          : String(err)
+    const error = migrationSourceError(err)
     return {
       ok: false,
       error,

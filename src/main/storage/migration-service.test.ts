@@ -22,7 +22,7 @@ vi.mock('./remote-data-root', () => ({
   inspectWindowsStoragePath: () => ({ isRemote: false, supportsHardLinks: true })
 }))
 
-import { existsSync } from 'node:fs'
+import { existsSync, symlinkSync } from 'node:fs'
 
 import type { MigrationProgress, MigrationResult } from '../../shared/storage'
 import {
@@ -46,6 +46,7 @@ import {
 import { withDataRootWrite } from './migration-state'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import type { Logger } from '../logger'
+import { DataRootCleanupJournal } from './data-root-cleanup'
 
 // Writes a verified staging marker for `<parent>/OpenScience`, as a completed copy phase would have.
 const seedVerifiedMarker = async (
@@ -112,6 +113,20 @@ describe('classifyDataRoot', () => {
   it('classifies a non-OpenScience subfolder of the current data root as invalid (inside)', async () => {
     // A picked folder NOT named OpenScience gets the name appended, landing inside the current root.
     const result = await classifyDataRoot(join(currentDataRoot, 'sub'), currentDataRoot)
+
+    expect(result).toEqual({
+      kind: 'invalid',
+      error: 'Choose a location outside the current data folder.'
+    })
+  })
+
+  it('rejects a linked parent whose derived target resolves inside the current data root', async () => {
+    const nestedParent = join(currentDataRoot, 'nested-parent')
+    const linkedParent = join(emptyParent, 'linked-parent')
+    await mkdir(nestedParent, { recursive: true })
+    await symlink(nestedParent, linkedParent, process.platform === 'win32' ? 'junction' : 'dir')
+
+    const result = await classifyDataRoot(linkedParent, currentDataRoot)
 
     expect(result).toEqual({
       kind: 'invalid',
@@ -611,6 +626,36 @@ describe('runDataRootMigration (copy phase)', () => {
     expect(serializedDiagnostics).not.toContain(currentDataRoot)
     expect(serializedDiagnostics).not.toContain(currentParent)
     expect(serializedDiagnostics).not.toContain(validationError)
+  })
+
+  it('rechecks the canonical target after preparation before writing into it', async () => {
+    const deps = fakeDeps()
+    const target = dataRootFor(emptyParent)
+    const redirectedTarget = join(currentDataRoot, 'redirected-target')
+    await mkdir(redirectedTarget, { recursive: true })
+    deps.cleanupRuntimeCache.mockImplementation(() => {
+      symlinkSync(redirectedTarget, target, process.platform === 'win32' ? 'junction' : 'dir')
+      return true
+    })
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    const result = await runDataRootMigration(
+      {
+        ...deps,
+        currentDataRoot,
+        copyAndVerify,
+        validateProvenanceState: async () => undefined
+      },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Choose a location outside the current data folder.'
+    })
+    expect(copyAndVerify).not.toHaveBeenCalled()
+    expect(await readMigrationMarker(redirectedTarget)).toBeNull()
   })
 
   it('records the successful copy lifecycle through staging verification', async () => {
@@ -1366,6 +1411,60 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(Math.trunc(copiedFile.mtimeMs / 1000)).toBe(Math.trunc(originalMtime.getTime() / 1000))
   })
 
+  it('never completes a move that strands an absolute link into the old data root', async () => {
+    const sourceDirectory = join(currentDataRoot, 'artifacts', 'source-directory')
+    const sourceLink = join(currentDataRoot, 'artifacts', 'absolute-link')
+    await mkdir(sourceDirectory, { recursive: true })
+    await writeFile(join(sourceDirectory, 'result.txt'), 'preserved content')
+    await symlink(sourceDirectory, sourceLink, process.platform === 'win32' ? 'junction' : 'dir')
+    const copyAndVerify = vi.fn(async ({ to }: { to: string }): Promise<MigrationResult> => {
+      const copiedDirectory = join(to, 'artifacts', 'source-directory')
+      await mkdir(copiedDirectory, { recursive: true })
+      await writeFile(join(copiedDirectory, 'result.txt'), 'preserved content')
+      await symlink(
+        sourceDirectory,
+        join(to, 'artifacts', 'absolute-link'),
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+      return { ok: true }
+    })
+
+    const copyResult = await runDataRootMigration(
+      {
+        ...fakeDeps(),
+        currentDataRoot,
+        copyAndVerify,
+        validateProvenanceState: async () => undefined
+      },
+      emptyParent,
+      runOpts()
+    )
+    if (!copyResult.ok) {
+      expect(copyResult.error).toMatch(/absolute symbolic link.*current data folder/i)
+      await expect(readFile(join(sourceLink, 'result.txt'), 'utf8')).resolves.toBe(
+        'preserved content'
+      )
+      return
+    }
+
+    const target = dataRootFor(emptyParent)
+    const marker = await readMigrationMarker(target)
+    const commitResult = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        expectedToken: marker?.token ?? '',
+        validateProvenanceState: async () => undefined
+      },
+      emptyParent
+    )
+
+    expect(commitResult).toEqual({ ok: true })
+    await expect(
+      readFile(join(target, 'artifacts', 'absolute-link', 'result.txt'), 'utf8')
+    ).resolves.toBe('preserved content')
+  })
+
   it('correlates distinct copy and commit operations without reusing the marker token', async () => {
     const deps = fakeDeps()
     const logger = fakeDiagnosticLogger()
@@ -1645,7 +1744,8 @@ describe('commitDataRootSwitch (commit phase)', () => {
   })
 
   it('still succeeds when deleteSources reports per-dir failures (harmless leftovers)', async () => {
-    await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const cleanupJournal = new DataRootCleanupJournal(join(emptyParent, 'config'))
     const deps = fakeDeps()
     const logger = fakeDiagnosticLogger()
     const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({
@@ -1658,13 +1758,25 @@ describe('commitDataRootSwitch (commit phase)', () => {
         currentDataRoot,
         setDataRoot: deps.setDataRoot,
         deleteSources,
+        cleanupJournal,
         expectedToken: 'tok-test',
         logger
       },
       emptyParent
     )
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        cleanupWarning: expect.any(String)
+      })
+    )
+    expect(await readMigrationMarker(target)).toMatchObject({
+      status: 'verified',
+      source: currentDataRoot,
+      target
+    })
+    await expect(cleanupJournal.hasPending()).resolves.toBe(true)
     expect(diagnosticRecords(logger)).toContainEqual(
       expect.objectContaining({
         operation: 'data-root-commit',
@@ -1732,7 +1844,9 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual(
+      expect.objectContaining({ ok: true, cleanupWarning: expect.any(String) })
+    )
     expect(deps.setDataRoot).toHaveBeenCalledOnce()
     expect(diagnosticRecords(logger)).toContainEqual(
       expect.objectContaining({
@@ -1740,7 +1854,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
         phase: 'cleanup-source',
         outcome: 'completed',
         cleanupDegraded: true,
-        cleanupFailureCount: 0
+        cleanupFailureCount: 1
       })
     )
     expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('cleanup-secret')

@@ -13,6 +13,7 @@ import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
+import { StorageCleanupToast } from '@/components/StorageCleanupToast'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
@@ -198,6 +199,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           onView={events.lifecycle.viewNotice}
         />
         <ConnectorAuthToast />
+        <StorageCleanupToast />
         <NotificationLiveToast />
         <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
       </div>

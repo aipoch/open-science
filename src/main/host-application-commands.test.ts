@@ -115,7 +115,8 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
       defaultDataRoot: '/data',
       defaultParent: '/',
       dataRootMissing: false,
-      legacyDataMovePrompt: false
+      legacyDataMovePrompt: false,
+      cleanupPending: false
     })),
     getInfo: vi.fn(async () => ({
       dataRoot: '/data',
@@ -124,6 +125,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
       defaultParent: '/',
       dataRootMissing: false,
       legacyDataMovePrompt: false,
+      cleanupPending: false,
       usage: { categories: [], totalBytes: 0 },
       availableBytes: 100
     })),

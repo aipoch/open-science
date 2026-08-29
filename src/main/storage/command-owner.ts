@@ -58,6 +58,7 @@ import type { SetDataRootOptions } from '../settings/capabilities'
 import { toErrorMessage } from '../error-message'
 import type { RendererSessionPersistenceTarget } from '../session-persistence/renderer-flush'
 import type { SessionPersistenceFlushResponse } from '../../shared/session-persistence-flush'
+import { DataRootCleanupJournal } from './data-root-cleanup'
 
 type LegacySessionSource = { projectId: string; sessionId: string }
 type NotebookSessionSource = { projectId: string; sessionId: string }
@@ -114,6 +115,7 @@ type StorageCommandOwnerDeps = {
     lifecycleClientId: string
   ) => void
   notifyDataRootHandoffAborted?: () => void
+  cleanupJournal?: DataRootCleanupJournal
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -147,6 +149,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const pauseDataRootWritersImpl = deps.pauseDataRootWriters ?? pauseDataRootWriters
   const classifyDataRootImpl = deps.classifyDataRoot ?? classifyDataRoot
   const validateNewDataRootImpl = deps.validateNewDataRoot ?? validateNewDataRoot
+  const cleanupJournal = deps.cleanupJournal ?? new DataRootCleanupJournal(resolveConfigRoot())
   const unsafeLogger = deps.logger ?? createLogger('storage:ipc')
   const emitSafely = (level: keyof Logger, message: string, data?: unknown): void => {
     try {
@@ -195,6 +198,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     // unset (using the default), that default resolved to the config root itself, and real user data
     // lives there. Offer the one-time "move to the visible OpenScience folder" prompt until answered.
     let legacyDataMovePrompt = false
+    const cleanupPending = await cleanupJournal.hasPending().catch(() => true)
     try {
       const storedSettings = await deps.settingsService.getStoredSettings()
       // Only an explicitly-configured root that stat proves is gone (ENOENT/ENOTDIR) counts as
@@ -218,7 +222,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       defaultDataRoot: computeDefaultDataRoot(),
       defaultParent: defaultDataParent(),
       dataRootMissing,
-      legacyDataMovePrompt
+      legacyDataMovePrompt,
+      cleanupPending
     }
   }
 
@@ -723,6 +728,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
             setDataRoot: (path) => deps.settingsService.setDataRoot(path),
             // Prove the on-disk copy is the one this session staged (guards against a stale marker).
             expectedToken: staged.token,
+            cleanupJournal,
             logger,
             diagnosticCorrelationId: staged.correlationId
           },
@@ -826,6 +832,18 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     request: StorageRootRequest,
     handoffTarget: RendererSessionPersistenceTarget = { surface: 'electron-renderer' }
   ): Promise<DataRootValidationResult> => {
+    if (activeMigration) {
+      return { ok: false, error: 'A migration copy is still in progress.' }
+    }
+    if (resolutionInProgress) {
+      return { ok: false, error: 'A migration is already being resolved.' }
+    }
+    if (activeStaged) {
+      return {
+        ok: false,
+        error: 'A completed migration is waiting to be committed or discarded.'
+      }
+    }
     const operation = startDiagnosticOperation(logger, {
       operation: 'data-root-selection',
       fields: { onboarding: request.markOnboarding === true }
@@ -932,6 +950,20 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       if (signal.aborted) {
         operation.fail(new Error('data root change cancelled'), { mode: classification.kind })
         return { ok: false, error: 'Data-root change cancelled.' }
+      }
+      const preparedClassification = await classifyDataRootImpl(request.parent, resolveDataRoot())
+      if (signal.aborted) {
+        operation.fail(new Error('data root change cancelled'), { mode: classification.kind })
+        return { ok: false, error: 'Data-root change cancelled.' }
+      }
+      if (preparedClassification.kind !== 'move' && preparedClassification.kind !== 'adopt') {
+        operation.fail(new Error(preparedClassification.error ?? 'invalid target'), {
+          mode: preparedClassification.kind
+        })
+        return {
+          ok: false,
+          error: preparedClassification.error ?? 'The selected folder is not usable.'
+        }
       }
       operation.phase('persist-pointer', { mode: classification.kind })
       await deps.settingsService.setDataRoot(target, {

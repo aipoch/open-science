@@ -40,6 +40,10 @@ vi.mock('electron', () => ({
   }
 }))
 
+vi.mock('./remote-data-root', () => ({
+  inspectWindowsStoragePath: () => ({ isRemote: false, supportsHardLinks: true })
+}))
+
 const { initDataRoot } = await import('../storage-root')
 const { createStorageCommandOwner } = await import('./command-owner')
 const { registerStorageIpcHandlers } = await import('./ipc')
@@ -336,7 +340,8 @@ describe('storage IPC handlers', () => {
       defaultDataRoot: join('/home/user', 'OpenScience'),
       defaultParent: '/home/user',
       dataRootMissing: false,
-      legacyDataMovePrompt: false
+      legacyDataMovePrompt: false,
+      cleanupPending: false
     })
     expect(status).not.toHaveProperty('usage')
     expect(status).not.toHaveProperty('availableBytes')
@@ -1499,6 +1504,105 @@ describe('storage IPC handlers', () => {
 
     releaseDisconnect?.()
     await expect(first).resolves.toEqual({ ok: true })
+  })
+
+  it('rejects a pointer-only switch while a migration copy is in flight', async () => {
+    initDataRoot(dataRoot)
+    const alternateParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-alternate-'))
+    await mkdir(join(dataRootFor(alternateParent), 'artifacts'), { recursive: true })
+    let releaseDisconnect: (() => void) | undefined
+    const deps = fakeDeps({
+      runtime: {
+        disconnect: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseDisconnect = resolve
+            })
+        ),
+        shutdownForQuit: vi.fn().mockResolvedValue(undefined)
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    try {
+      const migratePromise = invoke('storage:migrate', { parent: targetParent })
+      await tick()
+
+      await expect(
+        invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
+      ).resolves.toEqual({ ok: false, error: 'A migration copy is still in progress.' })
+      expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+      expect(deps.relaunch).not.toHaveBeenCalled()
+
+      releaseDisconnect?.()
+      await migratePromise
+    } finally {
+      releaseDisconnect?.()
+      await rm(alternateParent, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a pointer-only switch while a verified copy awaits resolution', async () => {
+    initDataRoot(dataRoot)
+    const alternateParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-alternate-'))
+    await mkdir(join(dataRootFor(alternateParent), 'artifacts'), { recursive: true })
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    try {
+      await invoke('storage:migrate', { parent: targetParent })
+
+      await expect(
+        invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
+      ).resolves.toEqual({
+        ok: false,
+        error: 'A completed migration is waiting to be committed or discarded.'
+      })
+      expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+      expect(deps.relaunch).not.toHaveBeenCalled()
+    } finally {
+      await rm(alternateParent, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a pointer-only switch while a migration commit is in progress', async () => {
+    initDataRoot(dataRoot)
+    const alternateParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-alternate-'))
+    await mkdir(join(dataRootFor(alternateParent), 'artifacts'), { recursive: true })
+    let releaseCommit: (() => void) | undefined
+    let setDataRootCalls = 0
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn(async () => {
+          setDataRootCalls += 1
+          if (setDataRootCalls === 1) {
+            await new Promise<void>((resolve) => {
+              releaseCommit = resolve
+            })
+          }
+        }),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({})
+      }
+    })
+    registerStorageIpcHandlers(deps)
+
+    try {
+      await invoke('storage:migrate', { parent: targetParent })
+      const commitPromise = invoke('storage:commit-and-relaunch', { parent: targetParent })
+      await tick()
+
+      await expect(
+        invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
+      ).resolves.toEqual({ ok: false, error: 'A migration is already being resolved.' })
+      expect(deps.settingsService.setDataRoot).toHaveBeenCalledTimes(1)
+
+      releaseCommit?.()
+      await commitPromise
+    } finally {
+      releaseCommit?.()
+      await rm(alternateParent, { recursive: true, force: true })
+    }
   })
 
   it('rejects commit during copying without clearing the write gate', async () => {
