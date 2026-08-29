@@ -118,6 +118,7 @@ type ElectronApp = {
   >
   requestMainWindowClose: () => Promise<void>
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
+  showMainWindow: () => Promise<void>
   restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
@@ -559,6 +560,15 @@ class ElectronAppHarness implements ElectronApp {
 
       return { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() }
     })
+  }
+
+  async showMainWindow(): Promise<void> {
+    await this.runningApplication.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      mainWindow.show()
+    })
+    await expect.poll(() => this.mainWindowState()).toMatchObject({ visible: true })
   }
 
   async launchSecondInstance(): Promise<Page> {

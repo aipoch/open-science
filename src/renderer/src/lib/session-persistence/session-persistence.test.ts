@@ -1723,6 +1723,97 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[1][0].activeRun?.promptMessageId).toBe(appended.messageId)
   })
 
+  it('clears a finished run when overlapping authority only updates the same prompt timestamp', async () => {
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Summarize the deterministic fixture.',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const partial = {
+      id: 'agent-message-1',
+      role: 'agent' as const,
+      content: 'Deterministic reply',
+      status: 'streaming' as const,
+      streamId: 'run-1',
+      responseToMessageId: prompt.id,
+      eventIds: ['event-1'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        status: 'running',
+        activeRun: { promptMessageId: prompt.id, startedAt: 10 },
+        messages: [prompt, partial]
+      })
+    )
+    const overlappingRun = materializeSessionConversationGraph({
+      ...base,
+      revision: 9,
+      activeRun: { promptMessageId: prompt.id, startedAt: 20 },
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(overlappingRun),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().finishRun(base.id, undefined, prompt.id)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 9,
+      status: 'idle'
+    })
+    expect(saveSession.mock.calls[1][0].activeRun).toBeUndefined()
+  })
+
+  it('keeps renderer context usage when overlapping authority has a different snapshot', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 3,
+        contextUsage: { used: 10, size: 100 }
+      })
+    )
+    const overlappingUsage = materializeSessionConversationGraph({
+      ...base,
+      revision: 4,
+      contextUsage: { used: 20, size: 100 },
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(3, 4))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 5 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(overlappingUsage),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setContextUsage(base.id, { used: 40, size: 100 })
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 4,
+      contextUsage: { used: 40, size: 100 }
+    })
+  })
+
   it('stops rebasing when Main authority keeps advancing past the bounded retry window', async () => {
     const base = materializeSessionConversationGraph(
       createPersistedSession({ projectId: 'project-a', revision: 1 })

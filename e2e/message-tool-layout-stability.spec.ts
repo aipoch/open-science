@@ -11,9 +11,6 @@ const BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT =
   'Run the buffered text tool layout stability journey.'
 const AGENT_STDERR_SUMMARY = 'Agent process stderr: 1 chunk, 22 bytes; raw output omitted.'
 
-test.use({ windowMode: 'normal' })
-test.describe.configure({ mode: 'serial' })
-
 const cases = [
   { name: 'without agent status', prompt: TOOL_LAYOUT_SHIFT_PROMPT, agentStatus: undefined },
   {
@@ -27,13 +24,13 @@ const runLayoutStabilityJourney = async (
   app: {
     completeOnboarding: () => Promise<Page>
     configureFakeAgent: () => Promise<Page>
+    showMainWindow: () => Promise<void>
   },
   prompt: string,
   agentStatus?: string
 ): Promise<void> => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.emulateMedia({ reducedMotion: 'reduce' })
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -49,6 +46,10 @@ const runLayoutStabilityJourney = async (
   await sendButton.click()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
   await expect(page.getByTestId('session-persistence-alert')).toHaveCount(0)
+  // Hidden windows complete the first Agent turn reliably on Windows CI. Show the window only
+  // before layout sampling so requestAnimationFrame still runs.
+  await app.showMainWindow()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
 
   await textbox.fill(prompt)
   await sendButton.click()
@@ -103,7 +104,6 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
 }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.emulateMedia({ reducedMotion: 'reduce' })
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -118,6 +118,8 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
   await expect(page.getByTestId('session-persistence-alert')).toHaveCount(0)
+  await app.showMainWindow()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
 
   await textbox.fill(BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT)
   await page.getByRole('button', { name: 'Send message' }).click()

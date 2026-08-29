@@ -130,9 +130,7 @@ const MAIN_OWNED_SESSION_FIELDS = new Set<keyof PersistedChatSession>([
   'enabledComputeHosts',
   'selectedComputeHosts',
   'specialistId',
-  'specialistBindingPending',
-  // Live ACP updates this snapshot independently of the renderer transcript save.
-  'contextUsage'
+  'specialistBindingPending'
 ])
 
 const MAIN_OWNED_SESSION_DETAILS_FIELDS = new Set<keyof PersistedChatSession>([
@@ -471,7 +469,14 @@ const rebaseSessionAfterRevisionConflict = (
       } else if (key === 'activeRun') {
         const submittedRun = submittedValue as PersistedChatSession['activeRun']
         const latestRun = latestValue as PersistedChatSession['activeRun']
-        if (!submittedRun) continue
+        const baseRun = baseValue as PersistedChatSession['activeRun']
+        if (!submittedRun) {
+          if (!latestRun || latestRun.promptMessageId === baseRun?.promptMessageId) {
+            delete rebased.activeRun
+            continue
+          }
+          return undefined
+        }
         if (!latestRun) {
           rebased.activeRun = structuredClone(submittedRun)
           continue
@@ -480,6 +485,14 @@ const rebaseSessionAfterRevisionConflict = (
         rebased.activeRun = {
           promptMessageId: submittedRun.promptMessageId,
           startedAt: Math.min(submittedRun.startedAt, latestRun.startedAt)
+        }
+      } else if (key === 'contextUsage') {
+        // Main does not persist live context-window snapshots. Keep the renderer value unless it
+        // was cleared and the durable copy still has one from an earlier transcript save.
+        if (submittedValue !== undefined) {
+          rebased.contextUsage = structuredClone(
+            submittedValue as PersistedChatSession['contextUsage']
+          )
         }
       } else {
         return undefined
