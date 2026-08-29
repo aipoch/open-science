@@ -45,6 +45,7 @@ const { createStorageCommandOwner } = await import('./command-owner')
 const { registerStorageIpcHandlers } = await import('./ipc')
 const {
   clearMigrationPending,
+  installMigrationQuitGuard,
   isMigrationInProgress,
   isMigrationPending,
   waitForDataRootWriters,
@@ -79,6 +80,25 @@ const invoke = (channel: string, payload?: unknown): Promise<unknown> =>
 // Real fs calls inside validateNewDataRoot/classifyDataRoot need an actual event-loop turn, not
 // just a microtask flush, before the mocked runtime.disconnect() (the next await) is reached.
 const tick = (ms = 50): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+type MigrationQuitGuardApp = Parameters<typeof installMigrationQuitGuard>[0]
+const makeMigrationQuitGuardApp = (): MigrationQuitGuardApp & {
+  fireBeforeQuit: () => { prevented: boolean }
+} => {
+  let listener: ((event: { preventDefault: () => void }) => void) | undefined
+  const quit = vi.fn()
+  return {
+    on: ((event: string, fn: (event: { preventDefault: () => void }) => void) => {
+      if (event === 'before-quit') listener = fn
+    }) as MigrationQuitGuardApp['on'],
+    quit,
+    fireBeforeQuit: () => {
+      let prevented = false
+      listener?.({ preventDefault: () => (prevented = true) })
+      return { prevented }
+    }
+  }
+}
 
 type FakeDeps = Parameters<typeof registerStorageIpcHandlers>[0]
 
@@ -904,6 +924,35 @@ describe('storage IPC handlers', () => {
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
   })
 
+  it('cancels a recovered commit before quit-anyway reissues quit', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    let finishPreparation: ((ready: boolean) => void) | undefined
+    const prepareDataRootHandoff = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishPreparation = resolve
+        })
+    )
+    const deps = fakeDeps({ prepareDataRootHandoff })
+    const restartedOwner = createStorageCommandOwner(deps)
+    const guardApp = makeMigrationQuitGuardApp()
+    installMigrationQuitGuard(guardApp, () => true)
+
+    const commit = restartedOwner.commitAndRelaunch({ parent: targetParent })
+    await vi.waitFor(() => expect(prepareDataRootHandoff).toHaveBeenCalledOnce())
+    const { prevented } = guardApp.fireBeforeQuit()
+    const quitWasReissuedBeforePreparationSettled = vi.mocked(guardApp.quit).mock.calls.length > 0
+    finishPreparation?.(true)
+
+    await expect(commit).resolves.toMatchObject({ ok: false })
+    await vi.waitFor(() => expect(guardApp.quit).toHaveBeenCalledOnce())
+    expect(prevented).toBe(true)
+    expect(quitWasReissuedBeforePreparationSettled).toBe(false)
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
   it('rechecks delegated work after recovered commit preparation', async () => {
     initDataRoot(dataRoot)
     await seedVerifiedMarker(target, dataRoot)
@@ -1549,6 +1598,37 @@ describe('storage IPC handlers', () => {
 
     expect(isMigrationInProgress()).toBe(false)
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+  })
+
+  it('cancels a direct handoff before quit-anyway reissues quit', async () => {
+    initDataRoot(dataRoot)
+    let finishPreparation: ((ready: boolean) => void) | undefined
+    const prepareDataRootHandoff = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishPreparation = resolve
+        })
+    )
+    const deps = fakeDeps({
+      prepareDataRootHandoff,
+      classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+    })
+    const owner = createStorageCommandOwner(deps)
+    const guardApp = makeMigrationQuitGuardApp()
+    installMigrationQuitGuard(guardApp, () => true)
+
+    const handoff = owner.setDataRootAndRelaunch({ parent: targetParent })
+    await vi.waitFor(() => expect(prepareDataRootHandoff).toHaveBeenCalledOnce())
+    const { prevented } = guardApp.fireBeforeQuit()
+    const quitWasReissuedBeforePreparationSettled = vi.mocked(guardApp.quit).mock.calls.length > 0
+    finishPreparation?.(true)
+
+    await expect(handoff).resolves.toMatchObject({ ok: false })
+    await vi.waitFor(() => expect(guardApp.quit).toHaveBeenCalledOnce())
+    expect(prevented).toBe(true)
+    expect(quitWasReissuedBeforePreparationSettled).toBe(false)
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
   it('holds the write gate from direct handoff preparation through relaunch', async () => {

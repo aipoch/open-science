@@ -174,7 +174,7 @@ describe('migration-state', () => {
     expect(isMigrationInProgress()).toBe(true)
   })
 
-  it('quit guard clears the flag and re-issues quit when the user confirms', () => {
+  it('quit guard clears the flag before asynchronously re-issuing a confirmed quit', async () => {
     const app = makeApp()
     const confirmQuit = vi.fn().mockReturnValue(true)
     installMigrationQuitGuard(app, confirmQuit)
@@ -182,9 +182,15 @@ describe('migration-state', () => {
 
     const { prevented } = app.fireBeforeQuit()
 
-    // Prevented on this pass, but the flag is cleared and quit re-issued so the next pass falls through.
+    // Prevented on this pass; even without a registered command, cancellation completes at the next
+    // microtask before the flag is cleared and quit is re-issued.
     expect(prevented).toBe(true)
+    expect(isMigrationInProgress()).toBe(true)
+    expect(app.quit).not.toHaveBeenCalled()
+
+    await Promise.resolve()
+
     expect(isMigrationInProgress()).toBe(false)
-    expect(app.quit).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(app.quit).toHaveBeenCalledTimes(1))
   })
 })

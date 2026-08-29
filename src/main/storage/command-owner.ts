@@ -36,7 +36,8 @@ import {
   beginMigration,
   beginMigrationPreparation,
   clearMigrationPending,
-  endMigrationCopy
+  endMigrationCopy,
+  resumeMigrationPreparation
 } from './migration-state'
 import {
   classifyDataRoot,
@@ -291,7 +292,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     // overwrite this operation's controller or staging authority. Reserve the shared lifecycle guard
     // at the same boundary so an ordinary quit cannot start while validation/preparation is awaiting.
     activeMigration = controller
-    beginMigrationPreparation()
+    const quitOperation = beginMigrationPreparation(controller)
     try {
       // Reject stale/invalid requests before stopping any producer. The migration engine validates
       // again at its own filesystem boundary, but ordinary invalid targets must have no teardown side
@@ -368,6 +369,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       activeMigration = undefined
       // Relax the quit guard now the copy is done; `pending` (write-gate) persists on success.
       endMigrationCopy()
+      quitOperation.finish()
     }
   }
 
@@ -525,136 +527,161 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       return { ok: false, error: toErrorMessage(err) }
     }
     resolutionInProgress = true
-    beginMigrationPreparation()
-    const staged = activeStaged
-      ? samePath(activeStaged.target, target)
-        ? activeStaged
-        : undefined
-      : await recoverStagedFromMarker(target, new Set(['verified'])).catch((error) => {
-          resolutionInProgress = false
-          endMigrationCopy()
-          throw error
-        })
-    if (!staged) {
-      endMigrationCopy()
-      resolutionInProgress = false
-      return { ok: false, error: 'No completed migration copy was found.' }
-    }
-
-    // A recovered commit has no process-local migration gate, while a staged commit may have been
-    // waiting in its modal long enough for an unexpected delegated writer to appear. Refuse before
-    // either case can persist the new pointer.
-    if (deps.getActiveDelegatedSessions().length > 0) {
-      endMigrationCopy()
-      resolutionInProgress = false
-      return {
-        ok: false,
-        error:
-          'Subagents are still running. Return to their tasks and stop them before finishing the move.'
+    const quitOperation = beginMigrationPreparation()
+    const { signal } = quitOperation
+    try {
+      const staged = activeStaged
+        ? samePath(activeStaged.target, target)
+          ? activeStaged
+          : undefined
+        : await recoverStagedFromMarker(target, new Set(['verified'])).catch((error) => {
+            resolutionInProgress = false
+            endMigrationCopy()
+            throw error
+          })
+      if (signal.aborted) {
+        endMigrationCopy()
+        resolutionInProgress = false
+        return { ok: false, error: 'migration cancelled', cancelled: true }
       }
-    }
+      if (!staged) {
+        endMigrationCopy()
+        resolutionInProgress = false
+        return { ok: false, error: 'No completed migration copy was found.' }
+      }
 
-    const preparationFailure = await prepareDataRootHandoff()
-    if (preparationFailure) {
-      endMigrationCopy()
-      resolutionInProgress = false
-      return preparationFailure
-    }
-
-    if (staged.recovered) {
-      // Recovery happens in a fresh process: the original write gate and paused runtimes are gone.
-      // Re-establish those invariants before inventory verification and pointer persistence.
-      beginMigration()
-      try {
-        await pauseDataRootWritersImpl({
-          logger,
-          runtime: deps.runtime,
-          notebook: deps.notebook
-        })
-        activeStaged = staged
-      } catch (err) {
-        logger.error('recovered data root pause failed', diagnosticErrorFields(err))
-        clearMigrationPending()
-        activeStaged = undefined
+      // A recovered commit has no process-local migration gate, while a staged commit may have been
+      // waiting in its modal long enough for an unexpected delegated writer to appear. Refuse before
+      // either case can persist the new pointer.
+      if (deps.getActiveDelegatedSessions().length > 0) {
+        endMigrationCopy()
         resolutionInProgress = false
         return {
           ok: false,
-          error: 'Could not pause running work to finish moving your data safely. Please try again.'
+          error:
+            'Subagents are still running. Return to their tasks and stop them before finishing the move.'
         }
-      } finally {
-        endMigrationCopy()
       }
-      // Keep the write gate pending through commit, but transition the quit guard from active copy
-      // back to pre-commit handoff preparation until the pointer mutation resolves.
-      beginMigrationPreparation()
-    }
 
-    // Both the renderer/backend handoff and recovered-writer drain are non-latching awaits. Refuse a
-    // delegated task that appeared in either window immediately before the pointer/delete boundary.
-    if (deps.getActiveDelegatedSessions().length > 0) {
+      const preparationFailure = await prepareDataRootHandoff()
+      if (signal.aborted) {
+        endMigrationCopy()
+        resolutionInProgress = false
+        return { ok: false, error: 'migration cancelled', cancelled: true }
+      }
+      if (preparationFailure) {
+        endMigrationCopy()
+        resolutionInProgress = false
+        return preparationFailure
+      }
+
       if (staged.recovered) {
+        // Recovery happens in a fresh process: the original write gate and paused runtimes are gone.
+        // Re-establish those invariants before inventory verification and pointer persistence.
+        beginMigration()
+        try {
+          await pauseDataRootWritersImpl({
+            logger,
+            runtime: deps.runtime,
+            notebook: deps.notebook
+          })
+          activeStaged = staged
+        } catch (err) {
+          logger.error('recovered data root pause failed', diagnosticErrorFields(err))
+          clearMigrationPending()
+          activeStaged = undefined
+          resolutionInProgress = false
+          return {
+            ok: false,
+            error:
+              'Could not pause running work to finish moving your data safely. Please try again.'
+          }
+        } finally {
+          endMigrationCopy()
+        }
+        // Keep the write gate pending through commit, but transition the quit guard from active copy
+        // back to pre-commit handoff preparation until the pointer mutation resolves.
+        resumeMigrationPreparation()
+        if (signal.aborted) {
+          resolutionInProgress = false
+          return { ok: false, error: 'migration cancelled', cancelled: true }
+        }
+      }
+
+      // Both the renderer/backend handoff and recovered-writer drain are non-latching awaits. Refuse a
+      // delegated task that appeared in either window immediately before the pointer/delete boundary.
+      if (deps.getActiveDelegatedSessions().length > 0) {
+        if (staged.recovered) {
+          clearMigrationPending()
+          activeStaged = undefined
+        } else {
+          endMigrationCopy()
+        }
+        resolutionInProgress = false
+        return {
+          ok: false,
+          error:
+            'Subagents are still running. Return to their tasks and stop them before finishing the move.'
+        }
+      }
+      if (signal.aborted) {
+        endMigrationCopy()
+        resolutionInProgress = false
+        return { ok: false, error: 'migration cancelled', cancelled: true }
+      }
+
+      const previousDataRoot = resolveDataRoot()
+      let outcome: MigrationOutcome
+      try {
+        outcome = await commitDataRootSwitch(
+          {
+            currentDataRoot: resolveDataRoot(),
+            // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
+            setDataRoot: (path) => deps.settingsService.setDataRoot(path),
+            // Prove the on-disk copy is the one this session staged (guards against a stale marker).
+            expectedToken: staged.token,
+            logger,
+            diagnosticCorrelationId: staged.correlationId
+          },
+          request.parent
+        )
+      } catch (err) {
+        logger.error('data root commit boundary failed', diagnosticErrorFields(err))
+        // The commit didn't complete; keep the app usable on the old root by lifting the write-gate.
         clearMigrationPending()
         activeStaged = undefined
-      } else {
+        resolutionInProgress = false
+        return { ok: false, error: toErrorMessage(err) }
+      }
+
+      if (outcome.ok) {
+        // On success the write-gate stays set through relaunch: the fresh process starts with
+        // pending=false, so writes naturally resume against the now-live new root.
+        activeStaged = undefined
+        cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
+        // The pointer has committed. Let the migration-relaunch trigger own the non-cancellable quit;
+        // leaving the preparation guard raised would make app-lifecycle reject its own relaunch.
         endMigrationCopy()
+        if (!signal.aborted) await cleanRelaunch()
+      } else {
+        // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /
+        // mismatch). The UI's error stage offers no retry, so never leave the app soft-locked: on a
+        // switchover failure discard the now-orphan staged copy (best-effort), then lift the write-gate
+        // in every case. The old root is untouched and immediately usable.
+        if ('switchoverFailed' in outcome) {
+          await discardStagedCopy(
+            { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
+            request.parent
+          ).catch(() => undefined)
+        }
+        clearMigrationPending()
+        activeStaged = undefined
+        resolutionInProgress = false
       }
-      resolutionInProgress = false
-      return {
-        ok: false,
-        error:
-          'Subagents are still running. Return to their tasks and stop them before finishing the move.'
-      }
+      return outcome
+    } finally {
+      quitOperation.finish()
     }
-
-    const previousDataRoot = resolveDataRoot()
-    let outcome: MigrationOutcome
-    try {
-      outcome = await commitDataRootSwitch(
-        {
-          currentDataRoot: resolveDataRoot(),
-          // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
-          setDataRoot: (path) => deps.settingsService.setDataRoot(path),
-          // Prove the on-disk copy is the one this session staged (guards against a stale marker).
-          expectedToken: staged.token,
-          logger,
-          diagnosticCorrelationId: staged.correlationId
-        },
-        request.parent
-      )
-    } catch (err) {
-      logger.error('data root commit boundary failed', diagnosticErrorFields(err))
-      // The commit didn't complete; keep the app usable on the old root by lifting the write-gate.
-      clearMigrationPending()
-      activeStaged = undefined
-      resolutionInProgress = false
-      return { ok: false, error: toErrorMessage(err) }
-    }
-
-    if (outcome.ok) {
-      // On success the write-gate stays set through relaunch: the fresh process starts with
-      // pending=false, so writes naturally resume against the now-live new root.
-      activeStaged = undefined
-      cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
-      // The pointer has committed. Let the migration-relaunch trigger own the non-cancellable quit;
-      // leaving the preparation guard raised would make app-lifecycle reject its own relaunch.
-      endMigrationCopy()
-      await cleanRelaunch()
-    } else {
-      // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /
-      // mismatch). The UI's error stage offers no retry, so never leave the app soft-locked: on a
-      // switchover failure discard the now-orphan staged copy (best-effort), then lift the write-gate
-      // in every case. The old root is untouched and immediately usable.
-      if ('switchoverFailed' in outcome) {
-        await discardStagedCopy(
-          { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
-          request.parent
-        ).catch(() => undefined)
-      }
-      clearMigrationPending()
-      activeStaged = undefined
-      resolutionInProgress = false
-    }
-    return outcome
   }
 
   // Onboarding's first-run location step: check a candidate parent before letting the user commit
@@ -725,12 +752,17 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     // does not block ordinary data-root writes during classification or durable preparation. The
     // successful path intentionally keeps the process-local resolution slot until relaunch.
     resolutionInProgress = true
-    beginMigrationPreparation()
+    const quitOperation = beginMigrationPreparation()
+    const { signal } = quitOperation
     let pointerCommitted = false
     let writeGateHeld = false
     operation.phase('classify-target')
     try {
       const classification = await classifyDataRootImpl(request.parent, resolveDataRoot())
+      if (signal.aborted) {
+        operation.fail(new Error('data root change cancelled'))
+        return { ok: false, error: 'Data-root change cancelled.' }
+      }
       if (classification.kind !== 'move' && classification.kind !== 'adopt') {
         operation.fail(new Error(classification.error ?? 'invalid target'), {
           mode: classification.kind
@@ -750,6 +782,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         }
       }
       const preparationFailure = await prepareDataRootHandoff()
+      if (signal.aborted) {
+        operation.fail(new Error('data root change cancelled'), { mode: classification.kind })
+        return { ok: false, error: 'Data-root change cancelled.' }
+      }
       if (preparationFailure) {
         operation.fail(new Error('handoff durability was not confirmed'), {
           mode: classification.kind
@@ -776,6 +812,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           error: 'Could not pause running work to switch data locations safely. Please try again.'
         }
       }
+      if (signal.aborted) {
+        operation.fail(new Error('data root change cancelled'), { mode: classification.kind })
+        return { ok: false, error: 'Data-root change cancelled.' }
+      }
 
       // Work can appear while the non-latching preparation/drain awaits. Never persist a new root
       // while delegated work still owns the old one; the finally block releases the gate on refusal.
@@ -799,6 +839,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       // has already proven the parent writable, so failure here is genuinely unexpected.
       operation.phase('prepare-target', { mode: classification.kind })
       await mkdir(target, { recursive: true })
+      if (signal.aborted) {
+        operation.fail(new Error('data root change cancelled'), { mode: classification.kind })
+        return { ok: false, error: 'Data-root change cancelled.' }
+      }
       operation.phase('persist-pointer', { mode: classification.kind })
       await deps.settingsService.setDataRoot(target, {
         completeOnboarding: request.markOnboarding === true
@@ -807,6 +851,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       // The copy-phase quit warning is not appropriate after the pointer commits, but keep `pending`
       // raised so no writer can reopen against this process's cached old root before app.quit().
       endMigrationCopy()
+      if (signal.aborted) {
+        operation.complete({ mode: classification.kind })
+        return { ok: true }
+      }
       operation.phase('request-relaunch', { mode: classification.kind })
       await cleanRelaunch()
       operation.complete({ mode: classification.kind })
@@ -817,6 +865,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       logger.error('data root selection boundary failed', diagnosticErrorFields(err))
       return { ok: false, error: toErrorMessage(err) }
     } finally {
+      quitOperation.finish()
       if (!pointerCommitted) {
         if (writeGateHeld) clearMigrationPending()
         else endMigrationCopy()
