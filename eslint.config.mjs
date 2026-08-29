@@ -11,6 +11,9 @@ export default defineConfig(
       '**/node_modules',
       '**/dist',
       '**/out',
+      // Local package caches and generated scratch trees are not repository source.
+      '**/.pnpm-store/**',
+      '**/tmp/**',
       // Packaged e2e build output (electron-builder --dir into dist-e2e-*); bundled JS, not source.
       '**/dist-e2e-*',
       // Runtime kernel loop scripts shipped as raw resources (CommonJS, not part of the TS source tree).

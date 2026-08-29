@@ -4,8 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Official GitHub artifact URLs. Project .npmrc pins npmmirror.com for local installs; GitHub-hosted
-// runners cannot always resolve that host (`getaddrinfo ENOTFOUND npmmirror.com`).
+// Official GitHub artifact URLs used by the Electron installers on GitHub-hosted runners.
 export const GITHUB_ELECTRON_MIRROR = 'https://github.com/electron/electron/releases/download/'
 export const GITHUB_ELECTRON_BUILDER_BINARIES_MIRROR =
   'https://github.com/electron-userland/electron-builder-binaries/releases/download/'
@@ -17,8 +16,6 @@ export function shouldForceGitHubElectronMirrors(env = process.env) {
 export function githubElectronMirrorEnv(env = process.env) {
   return {
     ...env,
-    npm_config_electron_mirror: GITHUB_ELECTRON_MIRROR,
-    npm_config_electron_builder_binaries_mirror: GITHUB_ELECTRON_BUILDER_BINARIES_MIRROR,
     ELECTRON_MIRROR: GITHUB_ELECTRON_MIRROR,
     ELECTRON_BUILDER_BINARIES_MIRROR: GITHUB_ELECTRON_BUILDER_BINARIES_MIRROR
   }
