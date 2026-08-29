@@ -11,6 +11,10 @@ import type {
 type ProjectStoreData = {
   projects: Project[]
   pendingDeletionCleanupProjectIds: Set<string>
+  projectDeletionRequests: Map<
+    string,
+    { generation: number; lifecycleStatus?: ProjectDeletionOutcome['status'] }
+  >
   isLoaded: boolean
   loadError: string | undefined
 }
@@ -45,10 +49,12 @@ const upsertProjectList = (projects: Project[], project: Project): Project[] => 
 
 let projectLoadSequence = 0
 let projectMutationSequence = 0
+let projectDeletionRequestGeneration = 0
 
 export const createInitialProjectState = (): ProjectStoreData => ({
   projects: [],
   pendingDeletionCleanupProjectIds: new Set(),
+  projectDeletionRequests: new Map(),
   isLoaded: false,
   loadError: undefined
 })
@@ -114,17 +120,48 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // Drops committed Project deletion from the cache. Session cascade is handled by the session store.
   deleteProject: async (id) => {
-    const outcome = await window.api.projects.delete({ id })
+    const generation = ++projectDeletionRequestGeneration
+    set((state) => {
+      const projectDeletionRequests = new Map(state.projectDeletionRequests)
+      projectDeletionRequests.set(id, { generation })
+      return { projectDeletionRequests }
+    })
+
+    let outcome: ProjectDeletionOutcome
+    try {
+      outcome = await window.api.projects.delete({ id })
+    } catch (error) {
+      set((state) => {
+        const projectDeletionRequests = new Map(state.projectDeletionRequests)
+        if (projectDeletionRequests.get(id)?.generation === generation) {
+          projectDeletionRequests.delete(id)
+        }
+        return { projectDeletionRequests }
+      })
+      throw error
+    }
 
     projectMutationSequence += 1
     set((state) => {
+      const projectDeletionRequests = new Map(state.projectDeletionRequests)
+      const request = projectDeletionRequests.get(id)
+      const isCurrentRequest = request?.generation === generation
+      if (isCurrentRequest) projectDeletionRequests.delete(id)
+
+      // Lifecycle events are the authoritative cross-window ordering stream. If one arrived while
+      // this command was in flight, its newer pending/terminal projection must win over the RPC result.
+      if (!isCurrentRequest || request.lifecycleStatus !== undefined) {
+        return { projectDeletionRequests }
+      }
+
       const pendingDeletionCleanupProjectIds = new Set(state.pendingDeletionCleanupProjectIds)
       if (outcome.status === 'cleanup-pending') pendingDeletionCleanupProjectIds.add(id)
       else pendingDeletionCleanupProjectIds.delete(id)
 
       return {
         projects: state.projects.filter((project) => project.id !== id),
-        pendingDeletionCleanupProjectIds
+        pendingDeletionCleanupProjectIds,
+        projectDeletionRequests
       }
     })
     return outcome
@@ -139,12 +176,18 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     projectMutationSequence += 1
     set((state) => {
       const pendingDeletionCleanupProjectIds = new Set(state.pendingDeletionCleanupProjectIds)
-      if (outcome.status === 'cleanup-pending') pendingDeletionCleanupProjectIds.add(id)
+      const projectDeletionRequests = new Map(state.projectDeletionRequests)
+      const request = projectDeletionRequests.get(id)
+      const lifecycleStatus = request?.lifecycleStatus === 'deleted' ? 'deleted' : outcome.status
+      if (request) projectDeletionRequests.set(id, { ...request, lifecycleStatus })
+
+      if (lifecycleStatus === 'cleanup-pending') pendingDeletionCleanupProjectIds.add(id)
       else pendingDeletionCleanupProjectIds.delete(id)
 
       return {
         projects: state.projects.filter((project) => project.id !== id),
-        pendingDeletionCleanupProjectIds
+        pendingDeletionCleanupProjectIds,
+        projectDeletionRequests
       }
     })
   }

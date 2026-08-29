@@ -124,6 +124,23 @@ describe('project store', () => {
 
     expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(false)
   })
+
+  it('does not let a late pending command result supersede terminal lifecycle state', async () => {
+    const commandResult = createDeferred<{ status: 'cleanup-pending' }>()
+    useProjectStore.setState({
+      projects: [createProject({ id: 'drop' })],
+      isLoaded: true
+    })
+    setProjectsApi({ delete: vi.fn().mockReturnValue(commandResult.promise) })
+
+    const deletion = useProjectStore.getState().deleteProject('drop')
+    useProjectStore.getState().removeProject('drop', { status: 'deleted' })
+    commandResult.resolve({ status: 'cleanup-pending' })
+
+    await expect(deletion).resolves.toEqual({ status: 'cleanup-pending' })
+    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(false)
+    expect(useProjectStore.getState().projectDeletionRequests.size).toBe(0)
+  })
 })
 
 const createDeferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
