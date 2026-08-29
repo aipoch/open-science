@@ -117,9 +117,10 @@ const getRequiredEnvironmentFailures = (
 
 const getHomeSessionActivity = (
   session: ChatSession,
-  hasNonTerminalCompute: boolean
+  hasNonTerminalCompute: boolean,
+  credentialPending: boolean
 ): HomeSessionActivity | undefined => {
-  const actionability = projectPresentedSessionActionability(session)
+  const actionability = projectPresentedSessionActionability(session, { credentialPending })
   if (actionability.waitReason) return actionability.waitReason
   if (actionability.activity === 'running' || hasNonTerminalCompute) return 'running'
   return undefined
@@ -194,6 +195,7 @@ const HomePage = ({
   const openSettings = useSettingsStore((state) => state.openSettings)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
+  const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
   const requiredEnvironmentFailures = getRequiredEnvironmentFailures(environmentCheck)
   const environmentRepairPanel = getEnvironmentRepairPanel(requiredEnvironmentFailures)
 
@@ -270,10 +272,24 @@ const HomePage = ({
     return startedAtBySession
   }, [computeJobsById])
 
+  const credentialPendingSessionIds = useMemo(
+    () =>
+      new Set(
+        pendingCredentialRequests.flatMap((request) =>
+          request.sessionId ? [request.sessionId] : []
+        )
+      ),
+    [pendingCredentialRequests]
+  )
+
   const sessionUpdates = useMemo<HomeSessionUpdate[]>(() => {
     const updates = persistedSessions.flatMap<HomeSessionUpdate>((session) => {
       const computeStartedAt = activeComputeStartedAtBySession.get(session.id)
-      const activity = getHomeSessionActivity(session, computeStartedAt !== undefined)
+      const activity = getHomeSessionActivity(
+        session,
+        computeStartedAt !== undefined,
+        credentialPendingSessionIds.has(session.id)
+      )
 
       if (activity) {
         return [
@@ -305,7 +321,12 @@ const HomePage = ({
           (isSessionWaitReason(right.activity) ? 0 : right.activity === 'running' ? 1 : 2) ||
         right.activityTimestamp - left.activityTimestamp
     )
-  }, [activeComputeStartedAtBySession, persistedSessions, unreadCompletedBySession])
+  }, [
+    activeComputeStartedAtBySession,
+    credentialPendingSessionIds,
+    persistedSessions,
+    unreadCompletedBySession
+  ])
 
   const activeSessionCounts = useMemo(
     () => ({
@@ -335,13 +356,17 @@ const HomePage = ({
         sessionCount: projectSessions.length,
         runningCount: projectSessions.filter(
           (session) =>
-            getHomeSessionActivity(session, activeComputeStartedAtBySession.has(session.id)) ===
-            'running'
+            getHomeSessionActivity(
+              session,
+              activeComputeStartedAtBySession.has(session.id),
+              credentialPendingSessionIds.has(session.id)
+            ) === 'running'
         ).length,
         waitingCount: projectSessions.filter((session) => {
           const activity = getHomeSessionActivity(
             session,
-            activeComputeStartedAtBySession.has(session.id)
+            activeComputeStartedAtBySession.has(session.id),
+            credentialPendingSessionIds.has(session.id)
           )
           return activity !== undefined && isSessionWaitReason(activity)
         }).length,
@@ -354,7 +379,12 @@ const HomePage = ({
         Number(Boolean(right.project.pinned)) - Number(Boolean(left.project.pinned)) ||
         right.lastActivityAt - left.lastActivityAt
     )
-  }, [activeComputeStartedAtBySession, activeProjects, persistedSessions])
+  }, [
+    activeComputeStartedAtBySession,
+    activeProjects,
+    credentialPendingSessionIds,
+    persistedSessions
+  ])
 
   const recentSessions = useMemo(
     () =>
@@ -450,8 +480,11 @@ const HomePage = ({
     !sessions.some(
       (session) =>
         session.projectId === project.id &&
-        getHomeSessionActivity(session, activeComputeStartedAtBySession.has(session.id)) !==
-          undefined
+        getHomeSessionActivity(
+          session,
+          activeComputeStartedAtBySession.has(session.id),
+          credentialPendingSessionIds.has(session.id)
+        ) !== undefined
     )
 
   const archiveUnavailableReason = (project: Project): string | undefined => {
