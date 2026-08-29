@@ -832,25 +832,32 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to archived"]')).toBeNull()
   })
 
-  it('anchors Feedback above Archived at the bottom of Settings navigation', async () => {
+  it('keeps Feedback in a fixed footer and Archived in the scrollable Workspace group', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
 
     const archived = navButton('Archived')
     const feedback = document.body.querySelector<HTMLAnchorElement>(
       `nav[aria-label="Settings"] a[href="${APP.links.githubFeedback}"]`
     )
-    const remote = navButton('Remote')
-    const navItems = Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] li'))
+    const scroll = document.body.querySelector<HTMLElement>(
+      '[data-slot="settings-navigation-scroll"]'
+    )
+    const footer = document.body.querySelector<HTMLElement>(
+      '[data-slot="settings-navigation-footer"]'
+    )
+    const workspaceGroup = Array.from(
+      scroll?.querySelectorAll<HTMLElement>(':scope > div') ?? []
+    ).find((group) => group.firstElementChild?.textContent?.trim() === 'Workspace')
 
-    expect(archived?.parentElement?.parentElement?.parentElement?.className).toContain('mt-auto')
+    expect(scroll?.className).toContain('min-h-0')
+    expect(scroll?.className).toContain('overflow-y-auto')
+    expect(workspaceGroup?.contains(archived ?? null)).toBe(true)
     expect(feedback?.textContent?.trim()).toBe('Feedback')
     expect(feedback?.target).toBe('_blank')
-    expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeGreaterThan(
-      navItems.indexOf(remote?.parentElement as HTMLLIElement)
-    )
-    expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeLessThan(
-      navItems.indexOf(archived?.parentElement as HTMLLIElement)
-    )
+    expect(footer?.className).toContain('shrink-0')
+    expect(footer?.className).toContain('border-t')
+    expect(footer?.contains(feedback ?? null)).toBe(true)
+    expect(scroll?.nextElementSibling).toBe(footer)
   })
 
   it('shows and dismisses a settings write failure above the scrolling content', async () => {
@@ -916,21 +923,24 @@ describe('SettingsPage layout', () => {
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Memory, Compute, Network)
     // and Workspace (Model, Agent, Tags, Permissions, Credentials, Runtimes, Storage, Remote,
-    // Usage, General).
-    // Feedback and Archived are anchored at the navigation bottom.
+    // Usage, General, Archived). Feedback remains a separate fixed footer action.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
     expect(nav?.className).toContain('md:w-48')
     expect(nav?.className).toContain('w-[min(86vw,320px)]')
-    expect(nav?.className).toContain('overflow-y-auto')
-    expect(nav?.className).toContain('md:overflow-y-visible')
+    expect(nav?.className).toContain('min-h-0')
+    expect(nav?.className).toContain('overflow-hidden')
+    const navScroll = nav?.querySelector<HTMLElement>('[data-slot="settings-navigation-scroll"]')
+    const navFooter = nav?.querySelector<HTMLElement>('[data-slot="settings-navigation-footer"]')
+    expect(navScroll?.className).toContain('overflow-y-auto')
+    expect(navFooter?.className).toContain('border-t')
     expect(nav?.parentElement?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     expect(nav?.textContent).not.toContain('Remote access')
-    const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(18)
+    const navItems = navScroll?.querySelectorAll('li') ?? []
+    expect(navItems).toHaveLength(17)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
@@ -947,8 +957,8 @@ describe('SettingsPage layout', () => {
     expect(navItems[13]?.textContent?.trim()).toBe('Remote')
     expect(navItems[14]?.textContent).toContain('Usage')
     expect(navItems[15]?.textContent).toContain('General')
-    expect(navItems[16]?.textContent).toContain('Feedback')
-    expect(navItems[17]?.textContent).toContain('Archived')
+    expect(navItems[16]?.textContent).toContain('Archived')
+    expect(navFooter?.textContent).toContain('Feedback')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()

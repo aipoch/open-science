@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+/* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open Science tokens · slop: pass */
 import {
   AlertTriangle,
   Archive,
@@ -286,12 +288,10 @@ const PANEL_NAME_LOWER = {
 type DrillablePanelName = keyof typeof PANEL_NAME_LOWER
 
 type SettingsGroup = {
-  // Absent for the bottom-pinned group, which renders no heading at all. The union rather than `string`
-  // is deliberate: a group added later cannot compile until its heading is a known catalog key, so it
-  // can never reach the nav as a raw untranslated label.
-  labelKey?: 'Capabilities' | 'Workspace'
+  // The union rather than `string` is deliberate: a group added later cannot compile until its
+  // heading is a known catalog key, so it can never reach the nav as a raw untranslated label.
+  labelKey: 'Capabilities' | 'Workspace'
   panels: ReadonlyArray<SettingsPanel>
-  bottom?: boolean
 }
 
 const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
@@ -318,12 +318,9 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
       { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
-      { id: 'general', labelKey: 'General', Icon: Settings2 }
+      { id: 'general', labelKey: 'General', Icon: Settings2 },
+      { id: 'archived', labelKey: 'Archived', Icon: Archive }
     ]
-  },
-  {
-    panels: [{ id: 'archived', labelKey: 'Archived', Icon: Archive }],
-    bottom: true
   }
 ]
 
@@ -1055,66 +1052,67 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
                 inert={isMobile && !isMobileNavOpen ? true : undefined}
                 className={cn(
-                  'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 overflow-y-auto overscroll-contain border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0 md:overflow-y-visible',
+                  'fixed inset-y-0 left-0 z-[70] flex min-h-0 w-[min(86vw,320px)] shrink-0 flex-col overflow-hidden border-r border-border bg-background transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
                   isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
                 )}
               >
-                {SETTINGS_GROUPS.map((group) => (
-                  <div
-                    key={group.labelKey ?? group.panels[0]?.id}
-                    className={cn('flex flex-col gap-0.5', group.bottom && 'mt-auto')}
-                  >
-                    {group.labelKey ? (
+                <div
+                  data-slot="settings-navigation-scroll"
+                  className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-3"
+                >
+                  {SETTINGS_GROUPS.map((group) => (
+                    <div key={group.labelKey} className="flex flex-col gap-0.5">
                       <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
                         {t(group.labelKey)}
                       </div>
-                    ) : null}
-                    <ul className="flex flex-col gap-0.5">
-                      {group.bottom ? (
-                        <li>
-                          <a
-                            href={APP.links.githubFeedback}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground"
-                          >
-                            <MessageSquare
-                              className="size-4 shrink-0 text-muted-foreground"
-                              aria-hidden="true"
-                            />
-                            <span className="min-w-0 flex-1 truncate">{t('Feedback')}</span>
-                          </a>
-                        </li>
-                      ) : null}
-                      {group.panels.map(({ id, labelKey, Icon }) => {
-                        const isActive = activePanel === id
-                        return (
-                          <li key={id}>
-                            <button
-                              type="button"
-                              aria-current={isActive ? 'page' : undefined}
-                              onClick={() => {
-                                setIsMobileNavOpen(false)
-                                navigatePanel(id)
-                              }}
-                              className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
-                                isActive
-                                  ? 'bg-muted font-medium text-foreground'
-                                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                              }`}
-                            >
-                              <Icon
-                                className="size-4 shrink-0 text-muted-foreground"
-                                aria-hidden="true"
-                              />
-                              <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  </div>
-                ))}
+                      <ul className="flex flex-col gap-0.5">
+                        {group.panels.map(({ id, labelKey, Icon }) => {
+                          const isActive = activePanel === id
+                          return (
+                            <li key={id}>
+                              <button
+                                type="button"
+                                aria-current={isActive ? 'page' : undefined}
+                                onClick={() => {
+                                  setIsMobileNavOpen(false)
+                                  navigatePanel(id)
+                                }}
+                                className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
+                                  isActive
+                                    ? 'bg-muted font-medium text-foreground'
+                                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                                }`}
+                              >
+                                <Icon
+                                  className="size-4 shrink-0 text-muted-foreground"
+                                  aria-hidden="true"
+                                />
+                                <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+                <div
+                  data-slot="settings-navigation-footer"
+                  className="shrink-0 border-t border-border px-3 py-2"
+                >
+                  <a
+                    href={APP.links.githubFeedback}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground"
+                  >
+                    <MessageSquare
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{t('Feedback')}</span>
+                  </a>
+                </div>
               </nav>
             </div>
           </FocusScope>
