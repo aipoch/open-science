@@ -63,6 +63,23 @@ const exists = async (path: string): Promise<boolean> => {
   }
 }
 
+const canonicalizeExistingPathPrefix = async (input: string): Promise<string> => {
+  const resolvedInput = resolve(input)
+  let candidate = resolvedInput
+  while (true) {
+    try {
+      const canonicalCandidate = resolve(await realpath(candidate))
+      return resolve(canonicalCandidate, relative(candidate, resolvedInput))
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+      const parent = dirname(candidate)
+      if (parent === candidate) return resolvedInput
+      candidate = parent
+    }
+  }
+}
+
 type ScanResult = {
   files: { relPath: string; stats: Stats }[]
   directories: { relPath: string; stats: Stats }[]
@@ -288,7 +305,7 @@ export const validateMigrationSourceLinks = async (
         ) {
           throw new AbsoluteInternalSymlinkError(join(dir, rel))
         }
-        const canonicalTarget = await realpath(sourceLink).catch(() => resolve(linkTarget))
+        const canonicalTarget = await canonicalizeExistingPathPrefix(linkTarget)
         if (isPathInsideOrEqual(canonicalSourceRoot, resolve(canonicalTarget))) {
           throw new AbsoluteInternalSymlinkError(join(dir, rel))
         }

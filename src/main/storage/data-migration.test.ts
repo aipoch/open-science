@@ -111,6 +111,28 @@ describe('validateMigrationSourceLinks', () => {
       })
     )
   })
+
+  it('rejects a missing absolute target whose existing parent resolves inside the source', async () => {
+    const artifacts = join(from, 'artifacts')
+    const internalParent = join(from, 'internal-parent')
+    const outsideAlias = join(to, 'source-alias')
+    await mkdir(artifacts, { recursive: true })
+    await mkdir(internalParent)
+    await mkdir(to, { recursive: true })
+    await symlink(internalParent, outsideAlias, process.platform === 'win32' ? 'junction' : 'dir')
+    await symlink(
+      join(outsideAlias, 'missing-target'),
+      join(artifacts, 'absolute-link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(validateMigrationSourceLinks(from, ['artifacts'])).resolves.toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.stringMatching(/absolute symbolic link.*current data folder/i)
+      })
+    )
+  })
 })
 
 describe('copyAndVerify', () => {
