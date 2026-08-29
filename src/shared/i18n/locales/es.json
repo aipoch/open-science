@@ -47,6 +47,7 @@
     "{{count}} notebooks already exist in the chosen directory._other": "Ya existen {{count}} Notebooks en el directorio elegido.",
     "Overwrite": "Sobrescribir",
     "Save the update installer": "Guardar el instalador de actualización",
+    "Could not open the update installer: {{error}}": "No se pudo abrir el instalador de actualización: {{error}}",
     "Export Skill": "Exportar habilidad",
     "Skill ZIP": "ZIP de habilidad",
     "ZIP archive": "Archivo ZIP",

@@ -149,7 +149,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                 </div>
               ) : null}
 
-              {dialogStatus.state === 'error' ? (
+              {dialogStatus.error ? (
                 <div className="mt-3" role="alert">
                   <p className="text-xs text-destructive">
                     {dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR

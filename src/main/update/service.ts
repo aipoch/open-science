@@ -16,7 +16,7 @@ import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnosti
 import type { Logger } from '../logger'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'
-import type { UpdateStrategy } from './strategy'
+import { canStartUpdateDownload, type UpdateStrategy } from './strategy'
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
@@ -238,6 +238,7 @@ export class UpdateService implements UpdateStrategy {
     // requests that arrived after the UI/RPC already observed `available`. Wait, then start.
     if (this.checkLifecycle) await this.checkLifecycle
     if (this.downloadAbort) return this.status
+    if (!canStartUpdateDownload(this.status)) return this.status
 
     const { download } = this.status
     if (!download) return this.status
@@ -333,7 +334,10 @@ export class UpdateService implements UpdateStrategy {
           state: 'downloading',
           progress: 0,
           downloadedBytes: 0,
-          totalBytes: download.size
+          totalBytes: download.size,
+          downloadProgress: undefined,
+          error: undefined,
+          blockedBy: undefined
         })
         operation.phase('transfer')
         const localPath = await downloadInstaller(download, targetPath, {
@@ -400,9 +404,9 @@ export class UpdateService implements UpdateStrategy {
     return this.status
   }
 
-  // Opens the downloaded installer. If the file is gone (e.g. the user deleted it) or fails to open,
-  // drop back to 'available' so the user can re-download in place — the download metadata is still on
-  // the status. With no installer for this platform at all, send them to the public download page.
+  // Opens the downloaded installer. A missing file drops back to 'available' for re-download. When
+  // the file still exists but the OS cannot open it, keep the ready artifact and surface the reason so
+  // the user can retry without another transfer. With no artifact, open the public download page.
   async apply(): Promise<UpdateStatus> {
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-apply',
@@ -416,10 +420,17 @@ export class UpdateService implements UpdateStrategy {
           operation.phase('open-installer')
           const error = await this.openPath(localPath)
           if (!error) {
+            if (this.status.error) this.setStatus({ ...this.status, error: undefined })
             operation.complete({ result: 'installer-opened' })
             return this.status
           }
           operation.fail(new Error('Installer open failed'), { reason: 'open-failed' })
+          this.setStatus({
+            ...this.status,
+            state: 'ready',
+            error: this.translate('Could not open the update installer: {{error}}', { error })
+          })
+          return this.status
         } else {
           operation.fail(new Error('Installer unavailable'), { reason: 'installer-missing' })
         }
@@ -432,7 +443,8 @@ export class UpdateService implements UpdateStrategy {
           ...this.status,
           state: 'available',
           localPath: undefined,
-          progress: undefined
+          progress: undefined,
+          error: undefined
         })
       } else {
         operation.phase('open-download-page')

@@ -45,6 +45,7 @@
     "{{count}} notebooks already exist in the chosen directory._other": "선택한 디렉터리에 이미 Notebook {{count}}개가 있습니다.",
     "Overwrite": "덮어쓰기",
     "Save the update installer": "업데이트 설치 프로그램 저장",
+    "Could not open the update installer: {{error}}": "업데이트 설치 프로그램을 열 수 없습니다: {{error}}",
     "Export Skill": "스킬 내보내기",
     "Skill ZIP": "스킬 ZIP",
     "ZIP archive": "ZIP 아카이브",

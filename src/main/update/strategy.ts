@@ -39,6 +39,11 @@ export const createDurableInstallGate =
     return (await confirmRendererDurability()) ? readiness : { completed: false, reaped: false }
   }
 
+// Shared admission invariant for every update provider. A failed transfer with a known release may
+// retry; a completed ready artifact must remain authoritative until check() supersedes it.
+export const canStartUpdateDownload = (status: UpdateStatus): boolean =>
+  status.state === 'available' || (status.state === 'error' && Boolean(status.latest))
+
 // The platform-agnostic update contract the IPC layer and scheduler drive. Two implementations exist:
 // ElectronUpdaterStrategy (win/linux, and signed stable macOS — in-place download/restart) and
 // UpdateService (dev/nightly macOS + any other fallback — manifest download + manual reinstall). Both

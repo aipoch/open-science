@@ -48,6 +48,7 @@
     "{{count}} notebooks already exist in the chosen directory._other": "В выбранной папке уже существуют {{count}} Notebook.",
     "Overwrite": "Перезаписать",
     "Save the update installer": "Сохранить установщик обновления",
+    "Could not open the update installer: {{error}}": "Не удалось открыть установщик обновления: {{error}}",
     "Export Skill": "Экспортировать навык",
     "Skill ZIP": "ZIP-архив навыка",
     "ZIP archive": "ZIP-архив",

@@ -8,7 +8,7 @@ import { isNewer, type UpdateApplyOptions, type UpdateStatus } from '../../share
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
 import { fetchManifest } from './manifest'
-import type { InstallGate, UpdateStrategy } from './strategy'
+import { canStartUpdateDownload, type InstallGate, type UpdateStrategy } from './strategy'
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
@@ -425,13 +425,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // including the Windows upgrade-smoke harness talking to 0.18.0+. Wait for the check, then start.
     if (this.checkLifecycle) await this.checkLifecycle
     if (this.applying || this.downloadToken) return this.status
-    if (this.status.state === 'ready') return this.status
-    if (
-      this.status.state !== 'available' &&
-      !(this.status.state === 'error' && this.status.latest)
-    ) {
-      return this.status
-    }
+    if (!canStartUpdateDownload(this.status)) return this.status
 
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-download',

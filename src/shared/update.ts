@@ -38,6 +38,7 @@ export type UpdateStatus = {
   // the dialog can render the shared DownloadProgressLine.
   downloadProgress?: import('./download-progress').DownloadProgress
   localPath?: string // set when state === 'ready'
+  // Terminal lifecycle failure, or retryable action feedback while a ready installer remains usable.
   error?: string
   // Active research that prevented an in-place install. This is deliberately not a new UpdateState:
   // the operation still failed, while callers that need automation can distinguish a safe block.

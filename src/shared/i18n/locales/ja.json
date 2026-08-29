@@ -45,6 +45,7 @@
     "{{count}} notebooks already exist in the chosen directory._other": "選択したディレクトリには {{count}} 個の Notebook がすでに存在します。",
     "Overwrite": "上書き",
     "Save the update installer": "更新インストーラーを保存",
+    "Could not open the update installer: {{error}}": "更新インストーラーを開けませんでした：{{error}}",
     "Export Skill": "スキルをエクスポート",
     "Skill ZIP": "スキル ZIP",
     "ZIP archive": "ZIP アーカイブ",

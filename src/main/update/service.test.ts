@@ -254,6 +254,41 @@ describe('UpdateService.download', () => {
     expect(existsSync(target)).toBe(true)
   })
 
+  it('does not download an installer again after the lifecycle is ready', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-ready-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    let installerFetches = 0
+    const fetchImpl = ((input: unknown) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      installerFetches += 1
+      return Promise.resolve(installerResponse(body))
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const ready = await service.download()
+    const repeated = await service.download()
+
+    expect(ready.state).toBe('ready')
+    expect(repeated).toBe(ready)
+    expect(installerFetches).toBe(1)
+  })
+
   it('waits for an in-flight check before starting a download', async () => {
     dir = await mkdtemp(join(tmpdir(), 'svc-wait-check-'))
     const target = join(dir, 'installer.dmg')
@@ -635,6 +670,7 @@ describe('UpdateService.download', () => {
     // The path was NOT marked fresh after the failure, so the retry cleans both artifacts and succeeds.
     expect(removeFile).toHaveBeenCalledTimes(3)
     expect(retry.state).toBe('ready')
+    expect(retry.error).toBeUndefined()
   })
 
   it('resumes via a Range request on a same-session retry after a cancel', async () => {
@@ -1071,6 +1107,7 @@ describe('UpdateService.download', () => {
     const retry = await service.download()
     expect(retry.state).toBe('ready')
     expect(retry.localPath).toBe(target)
+    expect(retry.error).toBeUndefined()
     expect(existsSync(target)).toBe(true)
   })
 
@@ -1265,6 +1302,29 @@ describe('UpdateService.apply', () => {
       ])
     )
     expect(JSON.stringify(records)).not.toContain('private-installer.dmg')
+  })
+
+  it('keeps a ready installer actionable when the operating system cannot open it', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'open-failure-'))
+    const target = join(dir, 'installer.dmg')
+    const openPath = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce('No application is associated with this file')
+      .mockResolvedValueOnce('')
+    const service = await downloadedService(target, { openPath })
+
+    const failed = await service.apply()
+
+    expect(failed).toMatchObject({
+      state: 'ready',
+      localPath: target,
+      error: expect.stringContaining('No application is associated with this file')
+    })
+
+    const retried = await service.apply()
+    expect(openPath).toHaveBeenCalledTimes(2)
+    expect(retried).toMatchObject({ state: 'ready', localPath: target })
+    expect(retried.error).toBeUndefined()
   })
 
   it('returns to available when the downloaded file is missing (e.g. the user deleted it)', async () => {

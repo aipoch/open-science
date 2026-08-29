@@ -45,6 +45,7 @@
     "{{count}} notebooks already exist in the chosen directory._other": "所選目錄中已存在 {{count}} 個 Notebook。",
     "Overwrite": "覆寫",
     "Save the update installer": "儲存更新安裝程式",
+    "Could not open the update installer: {{error}}": "無法開啟更新安裝程式：{{error}}",
     "Export Skill": "匯出技能",
     "Skill ZIP": "技能 ZIP",
     "ZIP archive": "ZIP 壓縮檔",

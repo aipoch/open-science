@@ -514,6 +514,24 @@ describe('ElectronUpdaterStrategy', () => {
     expect(strategy.getStatus().state).toBe('ready')
   })
 
+  it('does not download an installer again after the lifecycle is ready', async () => {
+    const updater = new FakeUpdater()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+
+    const ready = await strategy.download()
+    const repeated = await strategy.download()
+
+    expect(ready.state).toBe('ready')
+    expect(repeated).toBe(ready)
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it('supports cancel followed by an immediate retry to completion', async () => {
     const updater = new FakeUpdater()
     let starts = 0
