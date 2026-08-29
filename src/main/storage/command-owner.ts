@@ -32,7 +32,12 @@ import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
 import { removeNotebookWorkloadCache } from '../notebook/notebook-workload-cache-paths'
 import { detectActiveSessions } from './detect-active'
 import { isDataRootMissing } from './path-presence'
-import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
+import {
+  beginMigration,
+  beginMigrationPreparation,
+  clearMigrationPending,
+  endMigrationCopy
+} from './migration-state'
 import {
   classifyDataRoot,
   commitDataRootSwitch,
@@ -283,8 +288,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     const controller = new AbortController()
     const correlationId = randomUUID()
     // Reserve before the first await: a second IPC call must not enter handoff preparation and later
-    // overwrite this operation's controller or staging authority.
+    // overwrite this operation's controller or staging authority. Reserve the shared lifecycle guard
+    // at the same boundary so an ordinary quit cannot start while validation/preparation is awaiting.
     activeMigration = controller
+    beginMigrationPreparation()
     try {
       // Reject stale/invalid requests before stopping any producer. The migration engine validates
       // again at its own filesystem boundary, but ordinary invalid targets must have no teardown side
@@ -518,12 +525,18 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       return { ok: false, error: toErrorMessage(err) }
     }
     resolutionInProgress = true
+    beginMigrationPreparation()
     const staged = activeStaged
       ? samePath(activeStaged.target, target)
         ? activeStaged
         : undefined
-      : await recoverStagedFromMarker(target, new Set(['verified']))
+      : await recoverStagedFromMarker(target, new Set(['verified'])).catch((error) => {
+          resolutionInProgress = false
+          endMigrationCopy()
+          throw error
+        })
     if (!staged) {
+      endMigrationCopy()
       resolutionInProgress = false
       return { ok: false, error: 'No completed migration copy was found.' }
     }
@@ -532,6 +545,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     // waiting in its modal long enough for an unexpected delegated writer to appear. Refuse before
     // either case can persist the new pointer.
     if (deps.getActiveDelegatedSessions().length > 0) {
+      endMigrationCopy()
       resolutionInProgress = false
       return {
         ok: false,
@@ -542,6 +556,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
 
     const preparationFailure = await prepareDataRootHandoff()
     if (preparationFailure) {
+      endMigrationCopy()
       resolutionInProgress = false
       return preparationFailure
     }
@@ -567,10 +582,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           error: 'Could not pause running work to finish moving your data safely. Please try again.'
         }
       } finally {
-        // Keep the write gate pending through commit, but avoid treating the subsequent clean
-        // relaunch as an in-progress copy in the quit guard.
         endMigrationCopy()
       }
+      // Keep the write gate pending through commit, but transition the quit guard from active copy
+      // back to pre-commit handoff preparation until the pointer mutation resolves.
+      beginMigrationPreparation()
     }
 
     // Both the renderer/backend handoff and recovered-writer drain are non-latching awaits. Refuse a
@@ -579,6 +595,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       if (staged.recovered) {
         clearMigrationPending()
         activeStaged = undefined
+      } else {
+        endMigrationCopy()
       }
       resolutionInProgress = false
       return {
@@ -617,6 +635,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       // pending=false, so writes naturally resume against the now-live new root.
       activeStaged = undefined
       cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
+      // The pointer has committed. Let the migration-relaunch trigger own the non-cancellable quit;
+      // leaving the preparation guard raised would make app-lifecycle reject its own relaunch.
+      endMigrationCopy()
       await cleanRelaunch()
     } else {
       // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /
@@ -700,8 +721,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       return { ok: false, error: 'A data-root change is already in progress.' }
     }
     // Serialize direct pointer switches with copy commit/discard and reserve before classification's
-    // first await. The successful path intentionally keeps this process-local slot until relaunch.
+    // first await. Reserve the shared lifecycle guard at the same boundary; unlike the write gate it
+    // does not block ordinary data-root writes during classification or durable preparation. The
+    // successful path intentionally keeps the process-local resolution slot until relaunch.
     resolutionInProgress = true
+    beginMigrationPreparation()
     let pointerCommitted = false
     let writeGateHeld = false
     operation.phase('classify-target')
@@ -795,6 +819,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     } finally {
       if (!pointerCommitted) {
         if (writeGateHeld) clearMigrationPending()
+        else endMigrationCopy()
         resolutionInProgress = false
       }
     }

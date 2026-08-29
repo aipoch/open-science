@@ -73,7 +73,7 @@ export type AppLifecycleDeps = {
   rendererFlushTimeoutMs?: number
   // Classifies an orderly shutdown without changing its cleanup sequence.
   shutdownTrigger?: () => ApplicationShutdownTrigger
-  // True while a data-root migration is copying; a quit during it is owned by the migration guard.
+  // True while a data-root handoff is validating, preparing, or copying; its quit guard owns exits.
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void

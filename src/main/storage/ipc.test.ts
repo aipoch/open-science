@@ -696,7 +696,7 @@ describe('storage IPC handlers', () => {
     expect(isMigrationPending()).toBe(false)
   })
 
-  it('reserves the migration slot while handoff preparation is pending', async () => {
+  it('reserves command and lifecycle migration guards while handoff preparation is pending', async () => {
     initDataRoot(dataRoot)
     let resolveFirstPreparation: ((ready: boolean) => void) | undefined
     const prepareDataRootHandoff = vi
@@ -714,6 +714,8 @@ describe('storage IPC handlers', () => {
 
     const first = invoke('storage:migrate', { parent: targetParent })
     await vi.waitFor(() => expect(prepareDataRootHandoff).toHaveBeenCalledOnce())
+    expect(isMigrationInProgress()).toBe(true)
+    expect(isMigrationPending()).toBe(false)
 
     await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
       ok: false,
@@ -724,6 +726,7 @@ describe('storage IPC handlers', () => {
     await first
     expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
     expect(runDataRootMigration).not.toHaveBeenCalled()
+    expect(isMigrationInProgress()).toBe(false)
   })
 
   it('honors cancellation while migration target validation is pending', async () => {
@@ -872,6 +875,33 @@ describe('storage IPC handlers', () => {
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
     expect(existsSync(target)).toBe(true)
+  })
+
+  it('reserves the lifecycle guard while a recovered commit prepares', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    let finishPreparation: ((ready: boolean) => void) | undefined
+    const prepareDataRootHandoff = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishPreparation = resolve
+        })
+    )
+    const deps = fakeDeps({ prepareDataRootHandoff })
+    const restartedOwner = createStorageCommandOwner(deps)
+
+    const commit = restartedOwner.commitAndRelaunch({ parent: targetParent })
+    await vi.waitFor(() => expect(prepareDataRootHandoff).toHaveBeenCalledOnce())
+    try {
+      expect(isMigrationInProgress()).toBe(true)
+      expect(isMigrationPending()).toBe(false)
+    } finally {
+      finishPreparation?.(false)
+    }
+
+    await expect(commit).resolves.toMatchObject({ ok: false })
+    expect(isMigrationInProgress()).toBe(false)
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
   })
 
   it('rechecks delegated work after recovered commit preparation', async () => {
@@ -1493,6 +1523,32 @@ describe('storage IPC handlers', () => {
     expect(prepareDataRootHandoff).not.toHaveBeenCalled()
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('reserves the lifecycle guard before direct handoff classification awaits', async () => {
+    initDataRoot(dataRoot)
+    let finishClassification: ((result: { kind: 'invalid'; error: string }) => void) | undefined
+    const classifyDataRoot = vi.fn(
+      () =>
+        new Promise<{ kind: 'invalid'; error: string }>((resolve) => {
+          finishClassification = resolve
+        })
+    )
+    const deps = fakeDeps({ classifyDataRoot })
+    registerStorageIpcHandlers(deps)
+
+    const handoff = invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    await vi.waitFor(() => expect(classifyDataRoot).toHaveBeenCalledOnce())
+    try {
+      expect(isMigrationInProgress()).toBe(true)
+      expect(isMigrationPending()).toBe(false)
+    } finally {
+      finishClassification?.({ kind: 'invalid', error: 'not usable' })
+      await handoff
+    }
+
+    expect(isMigrationInProgress()).toBe(false)
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
   })
 
   it('holds the write gate from direct handoff preparation through relaunch', async () => {

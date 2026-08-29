@@ -2,21 +2,33 @@ import { dialog, type App } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
-// Two module-level flags (not parameters) because the quit guard, the migrate IPC handler, and the
+// Three module-level flags (not parameters) because the quit guard, the migrate IPC handler, and the
 // ACP/notebook write paths live in different modules but must agree on a single truth.
+//   - `preparing` drives the before-quit guard while target validation and durable handoff preparation
+//     await, without closing the write gate before a copy is ready to start.
 //   - `copying`  drives the before-quit guard: true only while runDataRootMigration is actively copying.
 //   - `pending`  drives the write-gate: true from the moment the copy starts until the switch is
 //     committed (and the app relaunches) or the copy is cancelled/discarded. It stays true across the
 //     copy→commit window — the exact interval during which a prompt or notebook cell writing to the
 //     OLD root would be silently discarded by the commit's delete step.
+let preparing = false
 let copying = false
 let pending = false
 let activeDataRootWriters = 0
 const writerDrainWaiters = new Set<() => void>()
 const dataRootWriteContext = new AsyncLocalStorage<boolean>()
 
-// Marks the start of a migration copy. Sets both flags. Pair with endMigrationCopy() in a finally.
+// Reserves the lifecycle quit guard before the command's first asynchronous validation/preparation
+// boundary. This intentionally leaves `pending` false so ordinary writes remain available until the
+// copy is ready to start. Pair with beginMigration() or endMigrationCopy() in the command's finally.
+export const beginMigrationPreparation = (): void => {
+  preparing = true
+}
+
+// Marks the start of a migration copy. Transitions preparation into the copy + write gates. Pair
+// with endMigrationCopy() in a finally.
 export const beginMigration = (): void => {
+  preparing = false
   copying = true
   pending = true
 }
@@ -24,23 +36,26 @@ export const beginMigration = (): void => {
 // The copy finished (success, failure, or cancel): relax the quit guard, but leave `pending` untouched
 // so a successful-but-uncommitted copy keeps blocking writes until commit or discard resolves it.
 export const endMigrationCopy = (): void => {
+  preparing = false
   copying = false
 }
 
 // The migration is fully resolved without committing (copy failed/cancelled, discarded, or a
 // switchover failure left the app on the old root): clear both flags so normal writes resume.
 export const clearMigrationPending = (): void => {
+  preparing = false
   pending = false
   copying = false
 }
 
 // Clears both flags. Used by the quit-guard confirm path (the user is quitting anyway).
 export const endMigration = (): void => {
+  preparing = false
   copying = false
   pending = false
 }
 
-export const isMigrationInProgress = (): boolean => copying
+export const isMigrationInProgress = (): boolean => preparing || copying
 
 // True whenever a copy is staged-but-not-yet-committed; gates ACP prompts and notebook cell runs so
 // they can't write into the old root during the copy→commit window.
