@@ -520,6 +520,24 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
+  it('still cancels an update handoff when delegated work becomes active', async () => {
+    markApplicationShutdownTrigger('update')
+    const { app, confirmClose, shutdownBackends } = setup({
+      detectActiveSessions: () => [
+        { projectId: 'project-1', sessionId: 'session-1', kind: 'delegated' }
+      ]
+    })
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', [
+      { projectId: 'project-1', sessionId: 'session-1', kind: 'delegated' }
+    ])
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
   it.each(['conflict', 'renderer-failed'] as const)(
     'does not cancel a committed data-root handoff when renderer persistence returns %s',
     async (outcome) => {

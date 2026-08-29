@@ -251,17 +251,18 @@ export const installAppLifecycle = (
       return
     }
     const trigger = shutdownTrigger()
-    // Updates and data-root relaunches are committed handoffs by the time app.quit() runs. Ordinary
-    // quit may still be cancelled to preserve active work, but cancelling either handoff would leave
-    // the current process alive after its durable next-start state has already changed.
-    const shutdownCanBeCancelled = trigger === 'quit'
+    // Renderer persistence may cancel only an ordinary quit. Update and data-root relaunches have
+    // already committed their handoff state by the time app.quit() runs, so a renderer failure must
+    // not leave the current process alive. Delegated-work safety remains a separate policy below.
+    const ordinaryQuit = trigger === 'quit'
+    const delegatedWorkBlocksShutdown = trigger !== 'migration-relaunch'
 
-    // Final synchronous safety boundary for ordinary quits. A delegated Attempt may start after an
-    // earlier confirmation snapshot (or after a saved close preference was read), and requestQuit(true)
-    // can arrive directly from the Windows titlebar path. Committed handoffs must continue; otherwise
-    // clear confirmation/trigger state and show the hard-blocking prompt instead.
+    // Final synchronous delegated-work safety boundary. A delegated Attempt may start after an earlier
+    // confirmation snapshot (or after a saved close preference was read). A committed data-root
+    // handoff must continue because its pointer already changed; ordinary quits and updates clear
+    // confirmation/trigger state and show the hard-blocking prompt instead.
     const delegatedAtShutdownBoundary = detectDelegatedWork()
-    if (shutdownCanBeCancelled && delegatedAtShutdownBoundary.length > 0) {
+    if (delegatedWorkBlocksShutdown && delegatedAtShutdownBoundary.length > 0) {
       event.preventDefault()
       quitConfirmed = false
       clearApplicationShutdownTrigger()
@@ -275,7 +276,7 @@ export const installAppLifecycle = (
 
     // Confirmation gate: unless the user already confirmed (e.g. Windows X -> Quit), confirm the
     // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.
-    if (!quitConfirmed && shutdownCanBeCancelled) {
+    if (!quitConfirmed && ordinaryQuit) {
       event.preventDefault()
       if (confirmInFlight) return
       confirmInFlight = true
@@ -351,7 +352,7 @@ export const installAppLifecycle = (
         rendererPreflightOutcome = preflight.outcome
         rendererPreflightResult = preflight.result
         if (
-          shutdownCanBeCancelled &&
+          ordinaryQuit &&
           rendererSessionPersistenceFlushBlocksShutdown(rendererPreflightOutcome)
         ) {
           shutdownAbortedForRendererPersistence = true
@@ -387,10 +388,7 @@ export const installAppLifecycle = (
         )
         rendererFlushOutcome = finalFlush.outcome
         rendererFlushResult = finalFlush.result
-        if (
-          shutdownCanBeCancelled &&
-          rendererSessionPersistenceFlushBlocksShutdown(rendererFlushOutcome)
-        ) {
+        if (ordinaryQuit && rendererSessionPersistenceFlushBlocksShutdown(rendererFlushOutcome)) {
           shutdownAbortedForRendererPersistence = true
           diagnostics?.complete({
             degraded: true,
