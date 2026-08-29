@@ -214,6 +214,20 @@ const captureEntrySnapshot = async (source: string, dir: string): Promise<Cleanu
   }
 }
 
+const refreshEntryIdentity = async (
+  source: string,
+  entry: CleanupEntrySnapshot
+): Promise<CleanupEntrySnapshot> => {
+  if (!entry.present) return entry
+  const stats = await lstat(join(source, entry.dir), { bigint: true })
+  const dev = stats.dev.toString()
+  const ino = stats.ino.toString()
+  if (dev !== entry.dev || ino !== entry.ino) {
+    throw new Error('Data-root cleanup source changed while staging.')
+  }
+  return { ...entry, dev, ino, birthtimeNs: stats.birthtimeNs.toString() }
+}
+
 const markerAllowsCleanup = (marker: MigrationMarker, intent: DataRootCleanupIntent): boolean => {
   const markerDirs = new Set(marker.migratedDirs ?? RELOCATABLE_DATA_DIRS)
   const runtimeCleanupAllowed =
@@ -300,13 +314,20 @@ class DataRootCleanupJournal {
     let entries: CleanupEntrySnapshot[]
     if (source.present) {
       const sourceMetadata = await capturePortableMetadata(canonicalSource, input.dirs)
-      try {
-        entries = await Promise.all(
-          input.dirs.map((dir) => captureEntrySnapshot(canonicalSource, dir))
-        )
-      } finally {
-        await restorePortableMetadata(canonicalSource, sourceMetadata)
-      }
+      const entriesBeforeRestore = await (async () => {
+        try {
+          return await Promise.all(
+            input.dirs.map((dir) => captureEntrySnapshot(canonicalSource, dir))
+          )
+        } finally {
+          await restorePortableMetadata(canonicalSource, sourceMetadata)
+        }
+      })()
+      // Restoring source timestamps can update birthtime on macOS. Bind the durable cleanup
+      // receipt to the final on-disk identity, while refusing a source replacement during staging.
+      entries = await Promise.all(
+        entriesBeforeRestore.map((entry) => refreshEntryIdentity(canonicalSource, entry))
+      )
     } else {
       entries = input.dirs.map((dir) => ({ dir, present: false }))
     }
