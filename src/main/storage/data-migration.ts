@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream, type Stats } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   chmod,
   link,
@@ -12,7 +12,8 @@ import {
   stat,
   statfs,
   symlink,
-  utimes
+  utimes,
+  writeFile
 } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -120,6 +121,32 @@ const destinationAvailableBytes = async (path: string): Promise<number> => {
   return stats.bavail * stats.bsize
 }
 
+const HARD_LINK_UNSUPPORTED_CODES = new Set([
+  'EACCES',
+  'EINVAL',
+  'ENOTSUP',
+  'EOPNOTSUPP',
+  'EPERM',
+  'EXDEV'
+])
+
+const destinationSupportsHardLinks = async (path: string): Promise<boolean> => {
+  const probe = `.open-science-hard-link-test-${randomUUID()}`
+  const source = join(path, `${probe}.source`)
+  const target = join(path, `${probe}.target`)
+  try {
+    await writeFile(source, '', { flag: 'wx' })
+    await link(source, target)
+    return true
+  } catch (error) {
+    if (HARD_LINK_UNSUPPORTED_CODES.has((error as NodeJS.ErrnoException)?.code ?? '')) return false
+    throw error
+  } finally {
+    await rm(target, { force: true })
+    await rm(source, { force: true })
+  }
+}
+
 const hashFile = async (path: string): Promise<string> => {
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer)
@@ -154,13 +181,25 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
   try {
     checkAbort()
     const entriesByDir = new Map<string, ScanResult>()
-    const sizedHardLinks = new Set<string>()
+    const sourceHardLinks = new Set<string>()
+    let hasRepeatedHardLink = false
     for (const dir of dirs) {
       const srcDir = join(from, dir)
       const entries = await listEntries(srcDir)
       entriesByDir.set(dir, entries)
       for (const file of entries.files) {
         const identity = hardLinkIdentity(file.stats)
+        if (!identity) continue
+        if (sourceHardLinks.has(identity)) hasRepeatedHardLink = true
+        else sourceHardLinks.add(identity)
+      }
+    }
+    checkAbort()
+    const preserveHardLinks = !hasRepeatedHardLink || (await destinationSupportsHardLinks(to))
+    const sizedHardLinks = new Set<string>()
+    for (const entries of entriesByDir.values()) {
+      for (const file of entries.files) {
+        const identity = preserveHardLinks ? hardLinkIdentity(file.stats) : undefined
         if (identity && sizedHardLinks.has(identity)) continue
         if (identity) sizedHardLinks.add(identity)
         totalBytes += file.stats.size
@@ -198,7 +237,7 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
       for (const file of entries.files) {
         checkAbort()
         const destination = join(destDir, file.relPath)
-        const identity = hardLinkIdentity(file.stats)
+        const identity = preserveHardLinks ? hardLinkIdentity(file.stats) : undefined
         const existingDestination = identity ? copiedHardLinks.get(identity) : undefined
         if (existingDestination) {
           await mkdir(dirname(destination), { recursive: true })

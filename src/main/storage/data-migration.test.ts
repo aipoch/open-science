@@ -17,7 +17,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const diskSpace = vi.hoisted(() => ({ availableBytes: undefined as number | undefined }))
+const diskSpace = vi.hoisted(() => ({
+  availableBytes: undefined as number | undefined,
+  hardLinksSupported: true
+}))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -30,7 +33,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     return actual.statfs(path)
   }) as unknown as typeof actual.statfs
 
-  return { ...actual, statfs }
+  const link = vi.fn(async (...args: Parameters<typeof actual.link>) => {
+    if (!diskSpace.hardLinksSupported) {
+      throw Object.assign(new Error('hard links are not supported'), { code: 'EOPNOTSUPP' })
+    }
+    return actual.link(...args)
+  }) as typeof actual.link
+
+  return { ...actual, link, statfs }
 })
 
 import type { MigrationProgress } from '../../shared/storage'
@@ -46,6 +56,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   diskSpace.availableBytes = undefined
+  diskSpace.hardLinksSupported = true
   await rm(from, { recursive: true, force: true })
   await rm(to, { recursive: true, force: true })
 })
@@ -187,6 +198,63 @@ describe('copyAndVerify', () => {
     await writeFile(join(to, 'artifacts', 'dataset.bin'), 'updated')
     expect(await readFile(join(to, 'artifacts', 'dataset-alias.bin'), 'utf8')).toBe('updated')
     expect(await readFile(sourceAlias, 'utf8')).toBe('shared-data')
+  })
+
+  it('falls back to independent copies when the destination does not support hard links', async () => {
+    const sourceDir = join(from, 'artifacts')
+    const sourceOriginal = join(sourceDir, 'dataset.bin')
+    const sourceAlias = join(sourceDir, 'dataset-alias.bin')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(sourceOriginal, 'shared-data')
+    await link(sourceOriginal, sourceAlias)
+    diskSpace.hardLinksSupported = false
+    const progress: MigrationProgress[] = []
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts'],
+      signal: new AbortController().signal,
+      onProgress: (entry) => progress.push(entry)
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(progress.find((entry) => entry.phase === 'scan')?.totalBytes).toBe(
+      2 * Buffer.byteLength('shared-data')
+    )
+    await writeFile(join(to, 'artifacts', 'dataset.bin'), 'updated')
+    expect(await readFile(join(to, 'artifacts', 'dataset-alias.bin'), 'utf8')).toBe('shared-data')
+  })
+
+  it('accounts for fallback hard-link copies in the destination capacity preflight', async () => {
+    const sourceDir = join(from, 'artifacts')
+    const sourceOriginal = join(sourceDir, 'dataset.bin')
+    const sourceAlias = join(sourceDir, 'dataset-alias.bin')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(sourceOriginal, 'shared-data')
+    await link(sourceOriginal, sourceAlias)
+    diskSpace.hardLinksSupported = false
+    diskSpace.availableBytes = Buffer.byteLength('shared-data') + 1
+    const progress: MigrationProgress[] = []
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts'],
+      signal: new AbortController().signal,
+      onProgress: (entry) => progress.push(entry)
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/space/i)
+    expect(progress).toEqual([
+      {
+        phase: 'scan',
+        copiedBytes: 0,
+        totalBytes: 2 * Buffer.byteLength('shared-data')
+      }
+    ])
+    expect(await exists(join(to, 'artifacts'))).toBe(false)
   })
 
   it('rejects insufficient destination capacity after scanning and before copying', async () => {
