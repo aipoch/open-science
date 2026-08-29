@@ -10,7 +10,6 @@ import type {
   AppendUploadTransferRequest,
   BeginUploadTransferRequest,
   DeleteUploadRequest,
-  FinalizeUploadSessionRequest,
   StageLocalPathUploadRequest,
   StageLocalUploadRequest,
   UploadTransferRequest
@@ -114,9 +113,6 @@ const registerUploadIpcHandlers = (
   )
   ipcMainHandle('uploads:delete', (event, request: DeleteUploadRequest) =>
     owner.deleteUpload(invocationFor(event, [request]))
-  )
-  ipcMainHandle('uploads:finalize-session', (event, request: FinalizeUploadSessionRequest) =>
-    owner.finalizeSession(invocationFor(event, [request]))
   )
   ipcMainHandle('uploads:read-preview', (event, request: ReadArtifactPreviewRequest) =>
     owner.readPreview(invocationFor(event, [request]))

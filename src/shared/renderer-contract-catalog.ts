@@ -2060,7 +2060,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ]),
   'uploads.finalizeSession': callable<
     (request: FinalizeUploadSessionRequest) => Promise<UploadedAttachment[]>
-  >()('uploads', ['uploads:finalize-session']),
+  >()('uploads', ['uploads:finalize-session', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'uploads.finishTransfer': callable<
     (request: UploadTransferRequest) => Promise<UploadedAttachment>
   >()('uploads', ['uploads:finish-transfer']),

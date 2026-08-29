@@ -1,3 +1,6 @@
+import { z } from 'zod'
+
+import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from './artifacts'
 
 // Uploads share the default project bucket so they live beside the matching session data.
@@ -11,7 +14,7 @@ export const STANDALONE_UPLOAD_SESSION_ID = 'standalone-uploads'
 export const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024 * 1024
 // Keeps both Electron IPC and the Web JSON/base64 fallback comfortably below their body limits.
 export const MAX_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
-// Composer total attachment cap; enforced renderer-side since main is stateless about composer state.
+// Shared composer/finalization cap, enforced in both Renderer intake and the main command contract.
 export const MAX_COMPOSER_ATTACHMENTS = 10
 
 const GENERIC_UPLOAD_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-stream'])
@@ -105,6 +108,22 @@ export type UploadedAttachment = {
   checksum?: string
   createdAt?: string
 }
+
+export const uploadedAttachmentSchema = z
+  .object({
+    id: z.string(),
+    versionId: z.string().optional(),
+    versionNumber: z.number().finite().optional(),
+    sessionId: z.string(),
+    name: z.string(),
+    originalName: z.string(),
+    path: z.string(),
+    mimeType: z.string().optional(),
+    size: z.number().finite().nonnegative(),
+    checksum: z.string().optional(),
+    createdAt: z.string().optional()
+  })
+  .strict() satisfies z.ZodType<UploadedAttachment>
 
 // Path-free projection stored on a Message. Native finalization always supplies the immutable
 // Version fields; they remain optional in the reader type only so legacy Session JSON can be
@@ -217,6 +236,33 @@ export type FinalizeUploadSessionRequest = {
   sessionId: string
   attachments: UploadedAttachment[]
 }
+
+const finalizeUploadAttachmentsSchema = z
+  .array(uploadedAttachmentSchema)
+  .max(MAX_COMPOSER_ATTACHMENTS)
+  .refine(
+    (attachments) => new Set(attachments.map(({ id }) => id)).size === attachments.length,
+    'Upload attachment ids must be unique.'
+  )
+  .refine(
+    (attachments) => new Set(attachments.map(({ path }) => path)).size === attachments.length,
+    'Upload attachment paths must be unique.'
+  )
+
+export const finalizeUploadSessionRequestSchema = z
+  .object({
+    projectId: z.string().optional(),
+    sessionId: z.string(),
+    attachments: finalizeUploadAttachmentsSchema
+  })
+  .strict() satisfies z.ZodType<FinalizeUploadSessionRequest>
+
+export const uploadApplicationCommandContracts = Object.freeze({
+  finalizeSession: defineApplicationCommandContract(
+    validationCodec(z.tuple([finalizeUploadSessionRequestSchema])),
+    validationCodec(finalizeUploadAttachmentsSchema)
+  )
+})
 
 // Chooses the user-facing name while tolerating older records that only have the safe filename.
 export const getUploadedAttachmentName = (

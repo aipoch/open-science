@@ -60,13 +60,17 @@ type InvocationArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
 
 const invocationCommandFor =
   <Owner>() =>
-  <const Name extends string, Method extends keyof Owner>(name: Name, method: Method) => {
+  <const Name extends string, Method extends keyof Owner>(
+    name: Name,
+    method: Method,
+    contract?: ApplicationCommandContract<InvocationArgs<Owner, Method>, OwnerResult<Owner, Method>>
+  ) => {
     void method
     return defineApplicationCommand<
       Name,
       InvocationArgs<Owner, Method>,
       OwnerResult<Owner, Method>
-    >(name)
+    >(name, contract)
   }
 
 type PreviewApplicationCommandOwner = Readonly<{
@@ -292,7 +296,11 @@ const dataContentApplicationCommands = Object.freeze({
   uploadBeginTransfer: uploadCommand('uploads:begin-transfer', 'beginTransfer'),
   uploadClaimLocalFile: uploadCommand('uploads:claim-local-file', 'claimLocalFile'),
   uploadDelete: uploadCommand('uploads:delete', 'deleteUpload'),
-  uploadFinalizeSession: uploadCommand('uploads:finalize-session', 'finalizeSession'),
+  uploadFinalizeSession: uploadCommand(
+    'uploads:finalize-session',
+    'finalizeSession',
+    Uploads.uploadApplicationCommandContracts.finalizeSession
+  ),
   uploadFinishTransfer: uploadCommand('uploads:finish-transfer', 'finishTransfer'),
   uploadReadPreview: uploadCommand('uploads:read-preview', 'readPreview'),
   uploadStageLocalFile: electronCommand('uploads:stage-local-file', 'stageLocalFileWithProgress'),

@@ -212,7 +212,8 @@ describe('application command composition', () => {
       'tags:reorder',
       'tags:set-assignment',
       'tags:snapshot',
-      'tags:update'
+      'tags:update',
+      'uploads:finalize-session'
     ])
   })
 

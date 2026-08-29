@@ -307,7 +307,8 @@ describe('renderer contract catalog', () => {
       'tags.reorder',
       'tags.setAssignment',
       'tags.snapshot',
-      'tags.update'
+      'tags.update',
+      'uploads.finalizeSession'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
       'memory:clear-all',
@@ -331,7 +332,8 @@ describe('renderer contract catalog', () => {
       'tags:reorder',
       'tags:set-assignment',
       'tags:snapshot',
-      'tags:update'
+      'tags:update',
+      'uploads:finalize-session'
     ])
   })
 })

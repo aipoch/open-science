@@ -172,7 +172,7 @@ const createDependencies = () => {
     finishTransfer: vi.fn(),
     abortTransfer: vi.fn(),
     deleteUpload: vi.fn(),
-    finalizeSession: vi.fn(),
+    finalizeSession: vi.fn(async () => []),
     readPreview: vi.fn()
   }
   const electron = {
@@ -485,7 +485,7 @@ describe('Data and content application commands', () => {
       },
       {
         key: 'uploadFinalizeSession',
-        args: [request('upload-finalize')],
+        args: [{ projectId: 'project-1', sessionId: 'session-1', attachments: [] }],
         owner: deps.uploads.finalizeSession,
         passInvocation: true
       },
@@ -531,6 +531,107 @@ describe('Data and content application commands', () => {
         .sort()
     )
   })
+
+  it.each([
+    {
+      label: 'malformed attachment',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: '.pending',
+            name: 'report.txt',
+            path: 'upload-version:version-1',
+            size: 10
+          }
+        ]
+      }
+    },
+    {
+      label: 'more than ten attachments',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        attachments: Array.from({ length: 11 }, (_, index) => ({
+          id: `upload-${index}`,
+          sessionId: '.pending',
+          name: `report-${index}.txt`,
+          originalName: `report-${index}.txt`,
+          path: `upload-version:version-${index}`,
+          size: 10
+        }))
+      }
+    },
+    {
+      label: 'duplicate attachment ids',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: '.pending',
+            name: 'report-1.txt',
+            originalName: 'report-1.txt',
+            path: 'upload-version:version-1',
+            size: 10
+          },
+          {
+            id: 'upload-1',
+            sessionId: '.pending',
+            name: 'report-2.txt',
+            originalName: 'report-2.txt',
+            path: 'upload-version:version-2',
+            size: 10
+          }
+        ]
+      }
+    },
+    {
+      label: 'duplicate attachment paths',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: '.pending',
+            name: 'report-1.txt',
+            originalName: 'report-1.txt',
+            path: 'upload-version:version-1',
+            size: 10
+          },
+          {
+            id: 'upload-2',
+            sessionId: '.pending',
+            name: 'report-2.txt',
+            originalName: 'report-2.txt',
+            path: 'upload-version:version-1',
+            size: 10
+          }
+        ]
+      }
+    }
+  ])(
+    'rejects an invalid finalize upload request ($label) before reaching the owner',
+    async ({ request }) => {
+      const router = createApplicationCommandRouter()
+      const deps = createDependencies()
+      registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+      const { result: dispatched } = dispatchCommand(
+        router,
+        'uploadFinalizeSession',
+        [request],
+        remoteCaller
+      )
+
+      await expect(dispatched).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+      expect(deps.uploads.finalizeSession).not.toHaveBeenCalled()
+    }
+  )
 
   it('routes existing owner seams and passes the exact caller lease to owned resources', async () => {
     const router = createApplicationCommandRouter()

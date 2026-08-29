@@ -40,7 +40,8 @@ const validatedChannels = [
   'tags:reorder',
   'tags:set-assignment',
   'tags:snapshot',
-  'tags:update'
+  'tags:update',
+  'uploads:finalize-session'
 ] as const
 
 const eventWithLease = (): IpcMainInvokeEvent => {
