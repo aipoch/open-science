@@ -184,6 +184,7 @@ describe('storage IPC handlers', () => {
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
     expect(deps.runtime.disconnect).toHaveBeenCalledOnce()
     expect(deps.notebook.shutdownAll).toHaveBeenCalledOnce()
+    expect(deps.prepareDataRootHandoff).toHaveBeenCalledWith({ surface: 'electron-renderer' }, true)
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
   })
 
@@ -647,6 +648,22 @@ describe('storage IPC handlers', () => {
     // clicks "Restart now" (storage:commit-and-relaunch).
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('marks migration handoff preparation as user-confirmed', async () => {
+    initDataRoot(dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+    const runDataRootMigration = vi.fn().mockResolvedValue({ ok: true })
+    const deps = fakeDeps({
+      prepareDataRootHandoff,
+      runDataRootMigration,
+      validateNewDataRoot: vi.fn().mockResolvedValue({ ok: true })
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+
+    expect(prepareDataRootHandoff).toHaveBeenCalledWith({ surface: 'electron-renderer' }, true)
   })
 
   it('rejects a stale migration request while delegated work is running without interrupting it', async () => {
