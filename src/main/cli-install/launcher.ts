@@ -1,9 +1,22 @@
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
-import { lstat, mkdir, open, rm, type FileHandle } from 'node:fs/promises'
-import { join, posix } from 'node:path'
+import { lstat, mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises'
+import { basename, join, posix } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
+import { defaultFileDurability } from '../storage/file-durability'
+
+const MANAGED_LAUNCHER_HEADER_V1 =
+  'Open Science command-line launcher. Managed by the app. Format version: 1.'
+const LEGACY_POSIX_HEADER =
+  '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line'
+const LEGACY_POSIX_BODIES = new Set([
+  "# tool); edits will be overwritten on reinstall. Runs the app's Electron in Node mode.",
+  '# tool); edits will be overwritten on reinstall. Mounts the AppImage for this CLI process.'
+])
+const LEGACY_WINDOWS_HEADER =
+  'rem Open Science command-line launcher. Managed by the app; edits are overwritten on reinstall.'
 
 // Everything the launcher planner needs, injected so the pure path/shim logic is testable without
 // Electron or the real filesystem. The IPC wrapper fills these from `app`/`process` at call time.
@@ -73,8 +86,8 @@ const posixShim = (env: CliLauncherEnv): string => {
     const { executable, cliEntry } = appImagePayloadPaths(env)
     return [
       '#!/bin/sh',
-      '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line',
-      '# tool); edits will be overwritten on reinstall. Mounts the AppImage for this CLI process.',
+      `# ${MANAGED_LAUNCHER_HEADER_V1}`,
+      '# Edits are overwritten on reinstall. Mounts the AppImage for this CLI process.',
       `app_image=${quote(env.appImagePath!)}`,
       'mount_output=$(mktemp "${TMPDIR:-/tmp}/open-science-cli.XXXXXX") || {',
       "  echo 'Open Science could not create a temporary file for the AppImage mount.' >&2",
@@ -121,8 +134,8 @@ const posixShim = (env: CliLauncherEnv): string => {
   const appPathLine = env.packaged ? `OPEN_SCIENCE_APP_PATH=${quote(env.appExecPath)} ` : ''
   return [
     '#!/bin/sh',
-    '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line',
-    "# tool); edits will be overwritten on reinstall. Runs the app's Electron in Node mode.",
+    `# ${MANAGED_LAUNCHER_HEADER_V1}`,
+    "# Edits are overwritten on reinstall. Runs the app's Electron in Node mode.",
     `${appPathLine}ELECTRON_RUN_AS_NODE=1 exec ${quote(env.appExecPath)} ${quote(env.cliEntryPath)} "$@"`,
     ''
   ].join('\n')
@@ -132,7 +145,8 @@ const windowsShim = (env: CliLauncherEnv): string => {
   const appPathLine = env.packaged ? `set "OPEN_SCIENCE_APP_PATH=${env.appExecPath}"\r\n` : ''
   return [
     '@echo off',
-    'rem Open Science command-line launcher. Managed by the app; edits are overwritten on reinstall.',
+    `rem ${MANAGED_LAUNCHER_HEADER_V1}`,
+    'rem Edits are overwritten on reinstall.',
     'set ELECTRON_RUN_AS_NODE=1',
     `${appPathLine}"${env.appExecPath}" "${env.cliEntryPath}" %*`,
     ''
@@ -275,12 +289,22 @@ const readCliLauncher = async (target: string): Promise<string | undefined> => {
   }
 }
 
-const isManagedCliLauncher = (content: string): boolean =>
-  content.includes('Open Science command-line launcher. Managed by the app')
+const isManagedCliLauncher = (content: string): boolean => {
+  const lines = content.split(/\r?\n/)
+  if (lines[0] === '#!/bin/sh') {
+    return (
+      lines[1] === `# ${MANAGED_LAUNCHER_HEADER_V1}` ||
+      (lines[1] === LEGACY_POSIX_HEADER && LEGACY_POSIX_BODIES.has(lines[2] ?? ''))
+    )
+  }
+  return (
+    lines[0]?.toLowerCase() === '@echo off' &&
+    (lines[1] === `rem ${MANAGED_LAUNCHER_HEADER_V1}` || lines[1] === LEGACY_WINDOWS_HEADER)
+  )
+}
 
 const writeCliLauncher = async (handle: FileHandle, plan: CliLauncherPlan): Promise<void> => {
   const content = Buffer.from(plan.shim)
-  await handle.truncate(0)
   let offset = 0
   while (offset < content.length) {
     const { bytesWritten } = await handle.write(content, offset, content.length - offset, offset)
@@ -288,6 +312,38 @@ const writeCliLauncher = async (handle: FileHandle, plan: CliLauncherPlan): Prom
     offset += bytesWritten
   }
   if (plan.mode !== undefined) await handle.chmod(plan.mode)
+}
+
+// Publish an existing launcher through a same-directory temporary file. Until rename succeeds the
+// old command remains untouched; a write/flush failure therefore cannot truncate a working launcher.
+const replaceCliLauncher = async (plan: CliLauncherPlan, expected: Stats): Promise<void> => {
+  const temporaryPath = join(
+    plan.binDir,
+    `.${basename(plan.target)}.${process.pid}-${randomUUID()}.tmp`
+  )
+  let handle: FileHandle | undefined
+  let published = false
+  try {
+    handle = await open(
+      temporaryPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+      plan.mode ?? 0o666
+    )
+    await writeCliLauncher(handle, plan)
+    await handle.sync()
+    await handle.close()
+    handle = undefined
+
+    if (!(await isOpenCliLauncherCurrent(plan.target, expected))) {
+      refuseUnmanagedCliLauncher(plan.target)
+    }
+    await rename(temporaryPath, plan.target)
+    published = true
+    await defaultFileDurability.syncDirectory(plan.binDir)
+  } finally {
+    await handle?.close().catch(() => undefined)
+    if (!published) await rm(temporaryPath, { force: true }).catch(() => undefined)
+  }
 }
 
 const tryCreateCliLauncher = async (plan: CliLauncherPlan): Promise<boolean> => {
@@ -331,19 +387,16 @@ export const installCliLauncher = async (
       break
     }
 
-    const opened = await openStableCliLauncher(plan.target, constants.O_RDWR)
+    const opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
     if (opened === undefined) continue
     try {
       const existing = await opened.handle.readFile('utf8')
       if (!isManagedCliLauncher(existing)) refuseUnmanagedCliLauncher(plan.target)
-      await writeCliLauncher(opened.handle, plan)
-      if (!(await isOpenCliLauncherCurrent(plan.target, opened.stats))) {
-        refuseUnmanagedCliLauncher(plan.target)
-      }
-      written = true
     } finally {
       await opened.handle.close()
     }
+    await replaceCliLauncher(plan, opened.stats)
+    written = true
   }
   if (!written) throw new Error(`The CLI launcher path kept changing: ${plan.target}`)
 

@@ -4,7 +4,9 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
+  readdir,
   rm,
   stat,
   symlink,
@@ -13,7 +15,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const pdescribe = describe.skipIf(process.platform === 'win32')
 const symlinkDescribe = describe.skipIf(process.platform === 'win32')
@@ -58,6 +60,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await rm(home, { recursive: true, force: true })
 })
 
@@ -67,6 +70,7 @@ describe('planCliLauncher', () => {
     expect(plan.target).toBe(join(home, '.local', 'bin', 'open-science'))
     expect(plan.mode).toBe(0o755)
     expect(plan.shim).toContain('#!/bin/sh')
+    expect(plan.shim).toContain('Format version: 1')
     expect(plan.shim).toContain('ELECTRON_RUN_AS_NODE=1')
     // Packaged: pins the app path and single-quotes both paths (they contain a space).
     expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/Open Science/open-science'")
@@ -169,6 +173,32 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
     expect(removed.installed).toBe(false)
     expect((await getCliLauncherStatus(env)).installed).toBe(false)
   })
+
+  it('preserves an existing managed launcher when replacement writing fails', async () => {
+    const originalEnv = posixEnv()
+    const originalPlan = planCliLauncher(originalEnv)
+    await mkdir(originalPlan.binDir, { recursive: true })
+    await writeFile(originalPlan.target, originalPlan.shim, { mode: 0o755 })
+    const originalMode = (await stat(originalPlan.target)).mode & 0o777
+
+    const probe = await open(join(home, 'file-handle-probe'), 'w')
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as { write: typeof probe.write }
+    await probe.close()
+    vi.spyOn(fileHandlePrototype, 'write').mockRejectedValueOnce(
+      Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+    )
+
+    await expect(
+      installCliLauncher(
+        posixEnv({ appExecPath: '/opt/Open Science/open-science-next' }),
+        () => true
+      )
+    ).rejects.toMatchObject({ code: 'ENOSPC' })
+
+    await expect(readFile(originalPlan.target, 'utf8')).resolves.toBe(originalPlan.shim)
+    expect((await stat(originalPlan.target)).mode & 0o777).toBe(originalMode)
+    await expect(readdir(originalPlan.binDir)).resolves.toEqual(['open-science'])
+  })
 })
 
 describe.each([
@@ -213,14 +243,42 @@ describe.each([
     })
   })
 
+  it('does not treat marker text embedded in arbitrary content as app ownership', async () => {
+    const env = createEnv()
+    const plan = planCliLauncher(env)
+    const userContent = [
+      'user-managed launcher',
+      'Open Science command-line launcher. Managed by the app',
+      'still user-managed'
+    ].join('\n')
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(plan.target, userContent)
+
+    await expect(installCliLauncher(env, () => true)).rejects.toThrow(
+      'because it is not managed by Open Science'
+    )
+    await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
+  })
+
   it('continues to update and remove launchers carrying the historical ownership marker', async () => {
     const env = createEnv()
     const plan = planCliLauncher(env)
+    const legacyContent =
+      env.platform === 'win32'
+        ? [
+            '@echo off',
+            'rem Open Science command-line launcher. Managed by the app; edits are overwritten on reinstall.',
+            'set ELECTRON_RUN_AS_NODE=1',
+            'legacy launcher'
+          ].join('\r\n')
+        : [
+            '#!/bin/sh',
+            '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line',
+            "# tool); edits will be overwritten on reinstall. Runs the app's Electron in Node mode.",
+            'legacy launcher'
+          ].join('\n')
     await mkdir(plan.binDir, { recursive: true })
-    await writeFile(
-      plan.target,
-      'Open Science command-line launcher. Managed by the app\nlegacy launcher\n'
-    )
+    await writeFile(plan.target, legacyContent)
 
     await expect(getCliLauncherStatus(env)).resolves.toMatchObject({ installed: true })
     await installCliLauncher(env, () => true)
