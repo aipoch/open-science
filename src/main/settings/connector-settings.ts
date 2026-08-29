@@ -85,6 +85,14 @@ const validateOAuthRegistration = (
   }
 }
 
+const hasResolvedSecretRecord = (
+  refs: Record<string, string> | undefined,
+  values: Record<string, string> | undefined
+): boolean => {
+  const names = Object.keys(refs ?? values ?? {})
+  return names.length > 0 && names.every((name) => Object.hasOwn(values ?? {}, name))
+}
+
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
 // clients, approval decisions, Specialist bindings, and refresh workflows remain outside this module.
 class ConnectorSettingsModule {
@@ -622,11 +630,14 @@ class ConnectorSettingsModule {
   }
 
   private ncbiView(connectors: StoredConnectors | undefined): NcbiCredentialsView {
-    return { contactEmail: connectors?.contactEmail, hasApiKey: !!connectors?.ncbiApiKeyRef }
+    return {
+      contactEmail: connectors?.contactEmail,
+      hasApiKey: tryDecryptKey(connectors?.ncbiApiKeyRef) !== undefined
+    }
   }
 
   private openAlexView(connectors: StoredConnectors | undefined): OpenAlexCredentialView {
-    return { hasApiKey: Boolean(connectors?.openAlexApiKeyRef) }
+    return { hasApiKey: tryDecryptKey(connectors?.openAlexApiKeyRef) !== undefined }
   }
 
   private toCustomServerViews(connectors: StoredConnectors | undefined): CustomServerView[] {
@@ -666,11 +677,11 @@ class ConnectorSettingsModule {
           url: server.url,
           ...(server.transport !== 'stdio'
             ? {
-                hasHeaders: Boolean(Object.keys(server.headerRefs ?? server.headers ?? {}).length)
+                hasHeaders: hasResolvedSecretRecord(server.headerRefs, server.headers)
               }
             : {}),
           ...(server.transport === 'stdio'
-            ? { hasEnv: Boolean(Object.keys(server.envRefs ?? server.env ?? {}).length) }
+            ? { hasEnv: hasResolvedSecretRecord(server.envRefs, server.env) }
             : {}),
           ...(server.oauth
             ? {
@@ -685,7 +696,7 @@ class ConnectorSettingsModule {
                   ...(server.oauth.clientId ? { clientId: server.oauth.clientId } : {}),
                   ...(server.oauth.redirectUri ? { redirectUri: server.oauth.redirectUri } : {}),
                   hasTokens: Boolean(server.oauthState?.tokens?.access_token),
-                  hasClientSecret: Boolean(server.oauthClientSecretRef)
+                  hasClientSecret: server.oauthClientSecret !== undefined
                 }
               }
             : {}),

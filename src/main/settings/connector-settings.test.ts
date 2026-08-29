@@ -141,6 +141,64 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.ncbi).toEqual({ contactEmail: 'second@lab.org', hasApiKey: false })
   })
 
+  it('does not report undecryptable credentials as configured', async () => {
+    await service.setNcbiCredentials({ apiKey: 'ncbi-secret' })
+    await service.setOpenAlexCredential({ apiKey: 'openalex-secret' })
+    await addCustomServer({
+      name: 'local-secrets',
+      transport: 'stdio',
+      command: 'example-mcp',
+      env: { API_TOKEN: 'local-secret', DAMAGED_TOKEN: 'damaged-secret' }
+    })
+    await addCustomServer({
+      name: 'remote-secrets',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      headers: { Authorization: 'Bearer remote-secret' }
+    })
+    await addCustomServer({
+      name: 'oauth-secrets',
+      transport: 'streamable_http',
+      url: 'https://example.com/oauth-mcp',
+      oauth: {
+        authorizationServerUrl: 'https://example.com/oauth',
+        clientId: 'registered-client',
+        clientSecret: 'client-secret'
+      }
+    })
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.find(
+      ({ name }) => name === 'local-secrets'
+    )
+    await repository.updateCustomServer(stored!.id, {
+      ...stored!,
+      envRefs: { ...stored!.envRefs, DAMAGED_TOKEN: 'not-a-key-ref' }
+    })
+    expect(
+      (await service.listConnectors()).customServers.find(({ name }) => name === 'local-secrets')
+        ?.hasEnv
+    ).toBe(false)
+
+    keychain.available = false
+    const snapshot = await service.listConnectors()
+
+    expect({
+      ncbi: snapshot.ncbi.hasApiKey,
+      openAlex: snapshot.openAlex?.hasApiKey,
+      localEnv: snapshot.customServers.find(({ name }) => name === 'local-secrets')?.hasEnv,
+      remoteHeaders: snapshot.customServers.find(({ name }) => name === 'remote-secrets')
+        ?.hasHeaders,
+      oauthClientSecret: snapshot.customServers.find(({ name }) => name === 'oauth-secrets')?.oauth
+        ?.hasClientSecret
+    }).toEqual({
+      ncbi: false,
+      openAlex: false,
+      localEnv: false,
+      remoteHeaders: false,
+      oauthClientSecret: false
+    })
+  })
+
   it('encrypts OpenAlex at rest and exposes only configured state', async () => {
     let snapshot = await service.setOpenAlexCredential({ apiKey: 'openalex-secret' })
     expect(snapshot.openAlex).toEqual({ hasApiKey: true })
