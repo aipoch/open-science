@@ -928,9 +928,12 @@ describe('storage IPC handlers', () => {
     expect(cleanupRuntimeCache).toHaveBeenCalledWith(join(dataRoot, 'runtime'))
   })
 
-  it('set-data-root-and-relaunch delegates production cleanup to the orderly app quit lifecycle', async () => {
+  it('set-data-root-and-relaunch pauses writers and delegates final cleanup to app quit', async () => {
     initDataRoot(dataRoot)
-    const deps = fakeDeps({ relaunch: undefined })
+    const deps = fakeDeps({
+      relaunch: undefined,
+      classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+    })
     registerStorageIpcHandlers(deps)
 
     await expect(
@@ -939,7 +942,7 @@ describe('storage IPC handlers', () => {
 
     expect(deps.runtime.shutdownForQuit).not.toHaveBeenCalled()
     expect(deps.notebook.dispose).not.toHaveBeenCalled()
-    expect(deps.notebook.shutdownAll).not.toHaveBeenCalled()
+    expect(deps.notebook.shutdownAll).toHaveBeenCalledOnce()
     expect(appRelaunch).toHaveBeenCalledTimes(1)
     expect(appQuit).toHaveBeenCalledTimes(1)
     expect(appExit).not.toHaveBeenCalled()
