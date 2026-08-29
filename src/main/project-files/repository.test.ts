@@ -1229,6 +1229,23 @@ describe('ManagedFileIndexRepository', () => {
     expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(true)
   })
 
+  it('clears a pending Session marker after the same Session retries successfully', async () => {
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+    const session = createSession()
+
+    await expect(transientRepository.syncSession(session)).rejects.toThrow(
+      'database temporarily unavailable'
+    )
+    databaseAvailable = true
+
+    await expect(transientRepository.syncSession(session)).resolves.toEqual([])
+    expect((await transientRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(true)
+  })
+
   it('does not revive stale file rows when a session deletion is compensated', async () => {
     const oldPath = join(
       storageRoot,
