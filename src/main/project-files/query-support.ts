@@ -11,6 +11,7 @@ import type {
   ProjectFileSource
 } from '../../shared/project-files'
 import { createUploadVersionReference } from '../../shared/uploads'
+import { isSqliteTrue } from './index-state'
 import type { ProjectFilesClient } from './mutation-projection'
 
 const MAX_PAGE_LIMIT = 100
@@ -60,7 +61,7 @@ type SearchOverviewRow = {
   uploadCount: bigint
   artifactCount: bigint
   artifactGroupCount: bigint
-  isIndexComplete: boolean | bigint
+  isIndexComplete: boolean | bigint | number
 }
 
 const normalizeLimit = (limit: number): number => {
@@ -165,7 +166,7 @@ const getMatchingOverviewCounts = async (
     toSafeCount(counts?.uploadCount ?? 0n, 'upload search result count'),
     toSafeCount(counts?.artifactCount ?? 0n, 'artifact search result count'),
     toSafeCount(counts?.artifactGroupCount ?? 0n, 'artifact group count'),
-    counts?.isIndexComplete === true || counts?.isIndexComplete === 1n
+    isSqliteTrue(counts?.isIndexComplete)
   ]
 }
 

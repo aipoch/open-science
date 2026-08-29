@@ -13,6 +13,8 @@ import {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { readProjectFilesIndexComplete } from './index-state'
+import type { ProjectFilesClient } from './mutation-projection'
 import { createManagedFileIndexRepository, ManagedFileIndexRepository } from './repository'
 
 const PROJECT_ID = 'project-a'
@@ -54,6 +56,16 @@ describe('ManagedFileIndexRepository', () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
   }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
+
+  it('accepts numeric SQLite true values when reading completeness', async () => {
+    const numericBooleanClient = {
+      $queryRaw: vi.fn(async () => [{ isIndexComplete: 1 }])
+    } as unknown as ProjectFilesClient
+
+    await expect(readProjectFilesIndexComplete(numericBooleanClient, [PROJECT_ID])).resolves.toBe(
+      true
+    )
+  })
 
   it('indexes uploads and all finalized managed artifacts without requiring a message link', async () => {
     const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
@@ -1244,6 +1256,29 @@ describe('ManagedFileIndexRepository', () => {
 
     await expect(transientRepository.syncSession(session)).resolves.toEqual([])
     expect((await transientRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(true)
+  })
+
+  it('flushes a pending Session marker before listing Artifact groups', async () => {
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+
+    await expect(transientRepository.syncSession(createSession())).rejects.toThrow(
+      'database temporarily unavailable'
+    )
+    databaseAvailable = true
+
+    await expect(
+      transientRepository.listArtifactGroups({ projectId: PROJECT_ID, limit: 10 })
+    ).resolves.toEqual({ items: [], totalCount: 0 })
+
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+    expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
   })
 
   it('does not revive stale file rows when a session deletion is compensated', async () => {

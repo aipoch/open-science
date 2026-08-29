@@ -5,8 +5,11 @@ import type { ProjectFilesClient } from './mutation-projection'
 const PROJECT_FILES_INDEX_STATE_ID = 'project-files-index'
 
 type ManagedFileIndexStateRow = {
-  isIndexComplete: boolean | bigint
+  isIndexComplete: boolean | bigint | number
 }
+
+const isSqliteTrue = (value: boolean | bigint | number | undefined): boolean =>
+  value === true || value === 1n || value === 1
 
 const readProjectFilesIndexComplete = async (
   client: ProjectFilesClient,
@@ -28,7 +31,7 @@ const readProjectFilesIndexComplete = async (
     THEN true ELSE false END AS "isIndexComplete"
   `)
 
-  return rows[0]?.isIndexComplete === true || rows[0]?.isIndexComplete === 1n
+  return isSqliteTrue(rows[0]?.isIndexComplete)
 }
 
 const setProjectFilesReconciliationComplete = async (
@@ -43,4 +46,4 @@ const setProjectFilesReconciliationComplete = async (
   `
 }
 
-export { readProjectFilesIndexComplete, setProjectFilesReconciliationComplete }
+export { isSqliteTrue, readProjectFilesIndexComplete, setProjectFilesReconciliationComplete }

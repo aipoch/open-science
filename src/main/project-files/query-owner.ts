@@ -454,6 +454,7 @@ class ProjectFilesQueryOwner {
   async listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage> {
     requireIdentifier(request.projectId, 'projectId')
     const client = await this.getClient()
+    await this.beforeRead(client)
     const limit = normalizeLimit(request.limit)
     const search = normalizeSearch(request.search)
     const cursor = request.cursor ? decodeGroupCursor(request.cursor, request) : undefined
