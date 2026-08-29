@@ -1887,6 +1887,54 @@ describe('ConnectorService specialist capability gate', () => {
     }
   )
 
+  it('does not dispatch a credential revoked during the Specialist access recheck', async () => {
+    let connectors = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      openAlexApiKeyRef: undefined as string | undefined
+    }
+    const current = specialist()
+    let settleAccessRecheck: ((profile: SpecialistProfileView) => void) | undefined
+    const resolveSpecialistProfile = vi
+      .fn()
+      .mockResolvedValueOnce(current)
+      .mockImplementationOnce(
+        () =>
+          new Promise<SpecialistProfileView>((resolve) => {
+            settleAccessRecheck = resolve
+          })
+      )
+    const fetchImpl = vi.fn()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => connectors,
+      getConnectorsFresh: async () => connectors,
+      resolveApiKey: (ref) => (ref === 'encrypted-ref' ? 'OPENALEX_KEY' : undefined),
+      resolveSpecialistProfile,
+      requestCredential: vi.fn(async () => {
+        connectors = { ...connectors, openAlexApiKeyRef: 'encrypted-ref' }
+        return true
+      })
+    })
+    const call = svc.call(
+      'literature',
+      'openalex_search_works',
+      { query: 'CRISPR', max_records: 1 },
+      {
+        origin: 'agent',
+        sessionId: 'specialist-credential-revocation',
+        specialistId: current.id
+      }
+    )
+
+    await vi.waitFor(() => expect(resolveSpecialistProfile).toHaveBeenCalledTimes(2))
+    connectors = { ...connectors, openAlexApiKeyRef: undefined }
+    settleAccessRecheck?.(current)
+
+    await expect(call).rejects.toThrow(/credential_required/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('keeps Main and Specialist connector scopes independent and enforces both modes before dispatch', async () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })
     let current = specialist()

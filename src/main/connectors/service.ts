@@ -397,6 +397,14 @@ export class ConnectorService {
     // approval already granted to this exact Main call.
     if (credentialResult.prompted && access.specialistScoped) {
       await this.resolveAccess(connector, context, [connector], signal)
+      credentials = this.credentials(await this.currentConnectors())
+      signal?.throwIfAborted()
+      if (
+        descriptor.requiredCredential &&
+        !this.hasCredential(credentials, descriptor.requiredCredential)
+      ) {
+        throw new ConnectorGateError('credential_required')
+      }
     }
     if (credentialResult.prompted && !access.bypassMainPolicy) {
       authorization = await this.ensureAuthorized(
