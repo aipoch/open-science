@@ -1292,10 +1292,12 @@ describe('ManagedFileIndexRepository', () => {
       releasePendingMarker = resolve
     })
     const originalUpsert = client.managedFileSessionSync.upsert.bind(client.managedFileSessionSync)
-    vi.spyOn(client.managedFileSessionSync, 'upsert').mockImplementation(async (args) => {
+    vi.spyOn(client.managedFileSessionSync, 'upsert').mockImplementation((async (
+      args: Parameters<typeof originalUpsert>[0]
+    ) => {
       await pendingMarkerMayPersist
       return originalUpsert(args)
-    })
+    }) as unknown as typeof originalUpsert)
 
     const retry = transientRepository.syncSession(session)
     await transactionCommitted
