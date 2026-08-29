@@ -191,6 +191,25 @@ describe('renderer contract catalog', () => {
     ).toBe(true)
   })
 
+  it('keeps opening Session recovery folders on the Electron surface', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'sessions.openRecoveryFolder'
+      )
+    ).toMatchObject({
+      surfaceInstallation: {
+        electron: 'preload',
+        localWeb: 'unavailable',
+        remoteWeb: 'unavailable'
+      },
+      dispatchPolicy: {
+        electron: 'electron-ipc-request',
+        localWeb: 'none',
+        remoteWeb: 'none'
+      }
+    })
+  })
+
   it('records the paired window lifecycle channels and teardown ordering', () => {
     const lifecycleFor = (publicPath: string): unknown =>
       RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)

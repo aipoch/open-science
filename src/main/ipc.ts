@@ -3335,6 +3335,10 @@ const createApplicationModules = async (
             diagnosticErrorFields(error)
           )
         }
+      },
+      async (request) => {
+        const error = await shell.openPath(sessionRepository.recoveryFolderPath(request.projectId))
+        if (error) throw new Error('Session recovery folder could not be opened.')
       }
     )
   })

@@ -11,6 +11,8 @@ type SessionPersistenceAlertProps = {
   onDismiss?: () => void
   onRetry?: () => void
   retryLabel?: string
+  onAction?: () => void
+  actionLabel?: string
 }
 
 const SessionPersistenceAlert = ({
@@ -20,7 +22,9 @@ const SessionPersistenceAlert = ({
   inline = false,
   onDismiss,
   onRetry,
-  retryLabel
+  retryLabel,
+  onAction,
+  actionLabel
 }: SessionPersistenceAlertProps): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -46,6 +50,18 @@ const SessionPersistenceAlert = ({
           className="shrink-0"
         >
           {retryLabel ?? t('Retry')}
+        </Button>
+      ) : null}
+      {onAction && actionLabel ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="session-persistence-action"
+          onClick={onAction}
+          className="shrink-0"
+        >
+          {actionLabel}
         </Button>
       ) : null}
       {onDismiss ? (

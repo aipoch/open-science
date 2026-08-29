@@ -1364,6 +1364,62 @@ describe('ManagedFileIndexRepository', () => {
     })
   })
 
+  it('reconciles one Project without removing another Project files', async () => {
+    const otherProjectId = 'project-b'
+    const otherSessionId = 'session-b'
+    const projectArtifactPath = join(
+      storageRoot,
+      'artifacts',
+      PROJECT_ID,
+      SESSION_ID,
+      'message-1',
+      'project-a.txt'
+    )
+    const otherArtifactPath = join(
+      storageRoot,
+      'artifacts',
+      otherProjectId,
+      otherSessionId,
+      'message-1',
+      'project-b.txt'
+    )
+    await Promise.all([
+      writeManagedFile(projectArtifactPath, 'project a'),
+      writeManagedFile(otherArtifactPath, 'project b')
+    ])
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          {
+            id: 'project-a-artifact',
+            kind: 'managed-file',
+            path: projectArtifactPath,
+            name: 'project-a.txt'
+          }
+        ]
+      })
+    )
+    await repository.syncSession(
+      createSession({
+        id: otherSessionId,
+        projectId: otherProjectId,
+        artifacts: [
+          {
+            id: 'project-b-artifact',
+            kind: 'managed-file',
+            path: otherArtifactPath,
+            name: 'project-b.txt'
+          }
+        ]
+      })
+    )
+
+    await repository.reconcileProjectSessions(PROJECT_ID, [])
+
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({ totalCount: 0 })
+    await expect(repository.getOverview(otherProjectId)).resolves.toMatchObject({ totalCount: 1 })
+  })
+
   it('updates file ordering metadata when an indexed file changes revision', async () => {
     const artifactPath = join(
       storageRoot,

@@ -346,7 +346,7 @@ describe('ArchivedPanel', () => {
           hasCompleteSessionCatalog={false}
           catalogRecovery={{
             kind: 'damaged-authority',
-            affectedFileCount: 1
+            affectedFiles: [{ projectId: archivedProject.id, fileName: 'damaged.json' }]
           }}
         />
       )

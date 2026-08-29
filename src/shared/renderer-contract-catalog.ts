@@ -232,6 +232,7 @@ import type {
   LoadAllSessionsResult,
   ListSessionSummariesResult,
   LoadSessionRequest,
+  OpenSessionRecoveryFolderRequest,
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
@@ -1404,6 +1405,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.loadUsage': callable<() => Promise<SessionUsageProjection>>()('sessions', [
     'sessions:load-usage'
   ]),
+  'sessions.openRecoveryFolder': callable<
+    (request: OpenSessionRecoveryFolderRequest) => Promise<void>
+  >()('sessions', ['sessions:open-recovery-folder', MAPPED_ELECTRON], { optionalMember: true }),
   'sessions.onCreated': callable<(listener: AcpListener<SessionUpsertEvent>) => RemoveListener>()(
     'sessions',
     ['session:created', EVENT]

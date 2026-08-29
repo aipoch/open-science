@@ -893,7 +893,7 @@ type SessionCatalogRecovery =
     }
   | {
       kind: 'damaged-authority'
-      affectedFileCount: number
+      affectedFiles: Array<{ projectId: string; fileName: string }>
     }
   | {
       kind: 'unsupported-version'
@@ -937,7 +937,7 @@ const deriveSessionCatalogRecovery = (
   if (damagedWarnings.length > 0) {
     return {
       kind: 'damaged-authority',
-      affectedFileCount: damagedWarnings.length
+      affectedFiles: damagedWarnings.map(({ projectId, fileName }) => ({ projectId, fileName }))
     }
   }
 

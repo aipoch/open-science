@@ -260,8 +260,9 @@ const getSessionPersistenceDir = (
 
 // Rejects path segments that could escape the sessions tree. Real session/project ids are id-like, so
 // this only guards against corrupt or malicious values before they become file paths.
-const assertSafeSegment = (segment: string): string => {
+const assertSafeSegment = (segment: unknown): string => {
   if (
+    typeof segment !== 'string' ||
     !segment ||
     segment === '.' ||
     segment === '..' ||
@@ -326,6 +327,10 @@ class SessionRepository {
 
   private projectDir(projectId: string): string {
     return join(this.sessionsDir, assertSafeSegment(projectId))
+  }
+
+  recoveryFolderPath(projectId: string): string {
+    return this.projectDir(projectId)
   }
 
   private sessionFilePath(projectId: string, sessionId: string): string {

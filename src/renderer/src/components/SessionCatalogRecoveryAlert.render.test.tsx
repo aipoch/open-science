@@ -50,7 +50,7 @@ describe('SessionCatalogRecoveryAlert', () => {
         <SessionCatalogRecoveryAlert
           recovery={{
             kind: 'damaged-authority',
-            affectedFileCount: 1
+            affectedFiles: [{ projectId: 'project-a', fileName: 'session-1.json' }]
           }}
           onRetry={vi.fn()}
         />
@@ -69,6 +69,40 @@ describe('SessionCatalogRecoveryAlert', () => {
     expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
   })
 
+  it('shows the affected Session file identities on request', () => {
+    const openRecoveryFolder = vi.fn().mockResolvedValue(undefined)
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{
+            kind: 'damaged-authority',
+            affectedFiles: [
+              { projectId: 'project-a', fileName: 'session-1.json' },
+              { projectId: 'project-b', fileName: 'session-2.json' }
+            ]
+          }}
+          onOpenRecoveryFolder={openRecoveryFolder}
+        />
+      )
+    )
+
+    const details = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'View affected conversations'
+    )
+    expect(details?.textContent).toBe('View affected conversations')
+    act(() => details?.click())
+    expect(document.body.textContent).toContain('session-1.json')
+    expect(document.body.textContent).toContain('project-a')
+    expect(document.body.textContent).toContain('session-2.json')
+    expect(document.body.textContent).toContain('project-b')
+    const openFolder = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Open recovery folder'
+    )
+    expect(openFolder).toBeDefined()
+    act(() => openFolder?.click())
+    expect(openRecoveryFolder).toHaveBeenCalledWith({ projectId: 'project-a' })
+  })
+
   it('does not offer overlay dismissal on the Settings archive reminder', () => {
     act(() =>
       root.render(
@@ -76,7 +110,7 @@ describe('SessionCatalogRecoveryAlert', () => {
           inline
           recovery={{
             kind: 'damaged-authority',
-            affectedFileCount: 1
+            affectedFiles: [{ projectId: 'project-a', fileName: 'session-1.json' }]
           }}
         />
       )

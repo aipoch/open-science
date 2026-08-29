@@ -463,6 +463,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.onFlushAborted',
       'sessions.onFlushRequest',
       'sessions.onUpdated',
+      'sessions.openRecoveryFolder',
       'sessions.saveManifest',
       'sessions.saveSession',
       'sessions.sendFlushResponse',

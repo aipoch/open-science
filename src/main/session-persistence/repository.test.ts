@@ -86,6 +86,16 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it('resolves recovery folders inside the managed Session tree', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+
+    expect(repository.recoveryFolderPath('project-a')).toBe(join(root, 'sessions', 'project-a'))
+    expect(() => repository.recoveryFolderPath('../outside')).toThrow(
+      /unsafe session path segment/i
+    )
+  })
+
   it('preserves a running Session when its runtime is live before a prompt becomes active', async () => {
     const repository = new SessionRepository(await createStorageRoot(), {
       hasActiveRuntimePrompt: () => false,

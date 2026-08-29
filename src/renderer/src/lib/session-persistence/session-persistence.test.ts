@@ -25,6 +25,7 @@ import {
   MAX_SESSION_REVISION_REBASE_ATTEMPTS,
   createOrderedSessionPersistence,
   createStoreSaver,
+  deriveSessionCatalogRecovery,
   flushSessionPersistence,
   loadPersistedSession,
   loadPersistedSessions,
@@ -66,6 +67,36 @@ const createApi = (overrides: Partial<SessionPersistenceApi> = {}): SessionPersi
 
 beforeEach(() => {
   useSessionStore.setState(createInitialSessionState())
+})
+
+describe('deriveSessionCatalogRecovery', () => {
+  it('preserves the affected Session file identities after corrupt authority is quarantined', () => {
+    expect(
+      deriveSessionCatalogRecovery({
+        isComplete: true,
+        warnings: [
+          {
+            kind: 'corrupt',
+            projectId: 'project-a',
+            fileName: 'session-1.json',
+            recovered: true
+          },
+          {
+            kind: 'corrupt',
+            projectId: 'project-b',
+            fileName: 'session-2.json',
+            recovered: true
+          }
+        ]
+      })
+    ).toEqual({
+      kind: 'damaged-authority',
+      affectedFiles: [
+        { projectId: 'project-a', fileName: 'session-1.json' },
+        { projectId: 'project-b', fileName: 'session-2.json' }
+      ]
+    })
+  })
 })
 
 describe('reconcilePendingArtifacts', () => {

@@ -4205,6 +4205,10 @@ export type LoadSessionRequest = {
   sessionId: string
 }
 
+export type OpenSessionRecoveryFolderRequest = {
+  projectId: string
+}
+
 export const deleteSessionRequestSchema = z
   .object({ projectId: z.string(), sessionId: z.string() })
   .strict()

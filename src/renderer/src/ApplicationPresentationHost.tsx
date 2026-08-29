@@ -154,6 +154,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           <SessionCatalogRecoveryAlert
             recovery={sessions.catalogRecovery}
             onRetry={sessions.retryLoad}
+            onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
           />
         ) : sessions.loadError ? (
           <SessionPersistenceAlert

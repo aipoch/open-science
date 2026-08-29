@@ -2438,6 +2438,80 @@ describe('SessionPersistenceCoordinator', () => {
     expect(repository.saveSession).toHaveBeenCalledOnce()
   })
 
+  it('does not block an unrelated Project save while reconciling a deleted Session', async () => {
+    const deletedSession = createSession()
+    const unrelatedSession = createSession({ id: 'session-2', projectId: 'project-2' })
+    const reconciliationStarted = createDeferred<void>()
+    const releaseReconciliation = createDeferred<void>()
+    const holdReconciliation = async (): Promise<void> => {
+      reconciliationStarted.resolve()
+      await releaseReconciliation.promise
+    }
+    const loadAllWithDiagnostics = vi
+      .fn()
+      .mockResolvedValueOnce({
+        result: { sessions: [deletedSession], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+      .mockImplementationOnce(async () => {
+        await holdReconciliation()
+        return {
+          result: { sessions: [], manifest: { version: 1 as const } },
+          isComplete: true
+        }
+      })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics,
+      loadProjectWithDiagnostics: vi.fn(async () => {
+        await holdReconciliation()
+        return { sessions: [], isComplete: true }
+      }),
+      loadSessionWithDiagnostics: vi.fn(async (projectId, sessionId) =>
+        projectId === deletedSession.projectId && sessionId === deletedSession.id
+          ? { status: 'found' as const, session: deletedSession }
+          : { status: 'missing' as const }
+      )
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.loadAll()
+    const deletion = coordinator.deleteSession(deletedSession.projectId, deletedSession.id)
+    await reconciliationStarted.promise
+
+    const unrelatedSave = coordinator.saveSession(unrelatedSession)
+    for (let index = 0; index < 20; index += 1) await Promise.resolve()
+    const unrelatedSaveStartedBeforeReconciliationFinished = vi
+      .mocked(repository.saveSession)
+      .mock.calls.some(([session]) => session.id === unrelatedSession.id)
+
+    releaseReconciliation.resolve()
+    await Promise.all([deletion, unrelatedSave])
+
+    expect(unrelatedSaveStartedBeforeReconciliationFinished).toBe(true)
+    expect(loadAllWithDiagnostics).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to global deletion reconciliation when cached metadata is incomplete', async () => {
+    const loadAllWithDiagnostics = vi.fn().mockResolvedValue({
+      result: { sessions: [], manifest: { version: 1 as const } },
+      isComplete: true
+    })
+    const loadProjectWithDiagnostics = vi.fn().mockResolvedValue({ sessions: [], isComplete: true })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics,
+      loadProjectWithDiagnostics
+    })
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+
+    await coordinator.deleteSession('project-1', 'session-1')
+
+    expect(loadProjectWithDiagnostics).not.toHaveBeenCalled()
+    expect(loadAllWithDiagnostics).toHaveBeenCalledOnce()
+    expect(fileIndex.reconcileProjectSessions).not.toHaveBeenCalled()
+    expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([])
+  })
+
   it('returns the exact durable Session after publishing legacy Uploads in live-safe mode', async () => {
     const legacySession = createLegacyUploadSession('session-1')
     const durableSession = toVersionedUploadSession(legacySession)
@@ -4719,14 +4793,13 @@ describe('SessionPersistenceCoordinator', () => {
     const owner = createSession()
     const survivor = createSession({ id: 'session-2' })
     const result = { sessions: [owner, survivor], manifest: { version: 1 as const } }
+    const loadAllWithDiagnostics = vi.fn().mockResolvedValue({ result, isComplete: true })
     const repository = createSessionRepository({
-      loadAllWithDiagnostics: vi
-        .fn()
-        .mockResolvedValueOnce({ result, isComplete: true })
-        .mockResolvedValueOnce({
-          result: { sessions: [survivor], manifest: { version: 1 as const } },
-          isComplete: true
-        })
+      loadAllWithDiagnostics,
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [survivor],
+        isComplete: true
+      })
     })
     const fileIndex = createFileIndex()
     const onFilesChanged = vi.fn()
@@ -4739,6 +4812,8 @@ describe('SessionPersistenceCoordinator', () => {
 
     expect(fileIndex.syncSession).toHaveBeenCalledTimes(1)
     expect(fileIndex.syncSession).toHaveBeenCalledWith(survivor)
+    expect(fileIndex.reconcileProjectSessions).toHaveBeenCalledWith('project-1', [survivor])
+    expect(loadAllWithDiagnostics).toHaveBeenCalledOnce()
     expect(onFilesChanged).toHaveBeenCalledTimes(2)
     expect(onFilesChanged).toHaveBeenNthCalledWith(1, {
       projectId: 'project-1',
@@ -6069,6 +6144,7 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
   softDeleteSession: vi.fn().mockResolvedValue('delete-session-operation'),
   restoreSession: vi.fn().mockResolvedValue(undefined),
   softDeleteProject: vi.fn().mockResolvedValue('delete-project-operation'),
+  reconcileProjectSessions: vi.fn().mockResolvedValue(undefined),
   reconcileActiveSessions: vi.fn().mockResolvedValue(undefined),
   markReconciliationIncomplete: vi.fn(),
   ...overrides

@@ -103,6 +103,7 @@ const createHarness = (): Readonly<{
     restoreSession: vi.fn(async () => undefined),
     softDeleteProject: vi.fn(async () => 'project-delete'),
     reconcileActiveSessions: vi.fn(async () => undefined),
+    reconcileProjectSessions: vi.fn(async () => undefined),
     markReconciliationIncomplete: vi.fn()
   }
   const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)

@@ -166,6 +166,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessions.loadAll': 'sessions:load-all',
   'sessions.loadOne': 'sessions:load-one',
   'sessions.loadUsage': 'sessions:load-usage',
+  'sessions.openRecoveryFolder': 'sessions:open-recovery-folder',
   'sessions.saveManifest': 'sessions:save-manifest',
   'sessions.saveSession': 'sessions:save-session',
   'sessions.updateArchive': 'sessions:update-archive',

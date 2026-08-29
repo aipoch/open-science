@@ -221,6 +221,7 @@ const ArchivedPanel = ({
         recovery={catalogRecovery}
         inline
         onRetry={onRetryCatalogRecovery}
+        onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
       />
       {panelError ? (
         <p role="alert" className="text-sm text-danger-000">
