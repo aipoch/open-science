@@ -278,16 +278,18 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       }
     }
 
-    const preparationFailure = await prepareDataRootHandoff()
-    if (preparationFailure) return preparationFailure
-
     const controller = new AbortController()
     const correlationId = randomUUID()
+    // Reserve before the first await: a second IPC call must not enter handoff preparation and later
+    // overwrite this operation's controller or staging authority.
     activeMigration = controller
-    // Flag the copy: sets both the quit guard (Cmd+Q warning) and the write-gate (blocks ACP/notebook
-    // writes to the old root for the whole copy→commit window).
-    beginMigration()
     try {
+      const preparationFailure = await prepareDataRootHandoff()
+      if (preparationFailure) return preparationFailure
+
+      // Flag the copy: sets both the quit guard (Cmd+Q warning) and the write-gate (blocks ACP/notebook
+      // writes to the old root for the whole copy→commit window).
+      beginMigration()
       // Phase 1 only: copy+verify into the new root. Nothing is committed (no setDataRoot, no
       // delete) — the old root and settings.dataRoot stay intact, so this is fully reversible.
       // Commit happens later, on the user's "Restart now" (storage:commit-and-relaunch).
@@ -620,9 +622,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // - used both for onboarding's first-run apply (no data exists yet to move) and for adopting an
   // existing data folder from Settings (data already lives at the derived target; only the
   // pointer changes).
-  // Unlike storage:migrate there is no copy phase and no session-interrupt step. Accepts only
-  // 'move' and 'adopt' targets; a 'recover' target must use the marker-gated resolution flow. The
-  // migration engine's own
+  // Unlike storage:migrate there is no copy phase. It still shares the pre-commit producer teardown,
+  // renderer durability check, and write gate because the current process retains the old root until
+  // relaunch. Accepts only 'move' and 'adopt' targets; a 'recover' target must use the marker-gated
+  // resolution flow. The migration engine's own
   // validateNewDataRoot is stricter (move-only) and is never called here.
   //
   // `markOnboarding` is stamped here (not by a separate renderer completeOnboarding() call) so it
@@ -630,7 +633,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // startup gate reads onboardingCompletedAt, and flipping it from the renderer before this IPC
   // resolves would swap the wizard for Home (showing the OLD data root, and burying any failure
   // below). Settings-adopt omits it (onboarding has already completed). Order is load-bearing:
-  // classify -> mkdir -> persist settings -> relaunch. On an invalid parent, none of these run.
+  // classify -> durable preparation -> write gate -> mkdir -> persist settings -> relaunch. On an
+  // invalid parent, none of the mutating steps run.
   const setDataRootAndRelaunch = async (
     request: StorageRootRequest
   ): Promise<DataRootValidationResult> => {
@@ -638,6 +642,15 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       operation: 'data-root-selection',
       fields: { onboarding: request.markOnboarding === true }
     })
+    if (activeMigration || activeStaged || resolutionInProgress) {
+      operation.fail(new Error('data root change is already in progress'))
+      return { ok: false, error: 'A data-root change is already in progress.' }
+    }
+    // Serialize direct pointer switches with copy commit/discard and reserve before classification's
+    // first await. The successful path intentionally keeps this process-local slot until relaunch.
+    resolutionInProgress = true
+    let pointerCommitted = false
+    let writeGateHeld = false
     operation.phase('classify-target')
     try {
       const classification = await classifyDataRootImpl(request.parent, resolveDataRoot())
@@ -667,6 +680,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         return preparationFailure
       }
 
+      // Preparation stops current producers and flushes renderer state. Raise the shared write gate
+      // synchronously when that await resolves, before mkdir or settings persistence can yield and let
+      // a new old-root writer enter. On success `pending` remains raised until the fresh process starts.
+      beginMigration()
+      writeGateHeld = true
       const target = dataRootForPicked(request.parent)
       // Create the data root now, before persisting the pointer. Unlike storage:migrate there is no
       // copy phase to mkdir it, so a fresh onboarding folder ('move') would be recorded in
@@ -680,6 +698,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       await deps.settingsService.setDataRoot(target, {
         completeOnboarding: request.markOnboarding === true
       })
+      pointerCommitted = true
+      // The copy-phase quit warning is not appropriate after the pointer commits, but keep `pending`
+      // raised so no writer can reopen against this process's cached old root before app.quit().
+      endMigrationCopy()
       operation.phase('request-relaunch', { mode: classification.kind })
       await cleanRelaunch()
       operation.complete({ mode: classification.kind })
@@ -689,6 +711,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       operation.fail(err)
       logger.error('data root selection boundary failed', diagnosticErrorFields(err))
       return { ok: false, error: toErrorMessage(err) }
+    } finally {
+      if (!pointerCommitted) {
+        if (writeGateHeld) clearMigrationPending()
+        resolutionInProgress = false
+      }
     }
   }
 

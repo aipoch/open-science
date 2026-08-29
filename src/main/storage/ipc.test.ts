@@ -43,7 +43,8 @@ vi.mock('electron', () => ({
 const { initDataRoot } = await import('../storage-root')
 const { createStorageCommandOwner } = await import('./command-owner')
 const { registerStorageIpcHandlers } = await import('./ipc')
-const { clearMigrationPending, isMigrationPending } = await import('./migration-state')
+const { clearMigrationPending, isMigrationInProgress, isMigrationPending } =
+  await import('./migration-state')
 const { clearApplicationShutdownTrigger, currentApplicationShutdownTrigger } =
   await import('../application-shutdown-trigger')
 const { readMigrationMarker, writeMigrationMarker } = await import('./migration-marker')
@@ -652,6 +653,36 @@ describe('storage IPC handlers', () => {
     expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
     expect(runDataRootMigration).not.toHaveBeenCalled()
     expect(isMigrationPending()).toBe(false)
+  })
+
+  it('reserves the migration slot while handoff preparation is pending', async () => {
+    initDataRoot(dataRoot)
+    let resolveFirstPreparation: ((ready: boolean) => void) | undefined
+    const prepareDataRootHandoff = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveFirstPreparation = resolve
+          })
+      )
+      .mockResolvedValue(false)
+    const runDataRootMigration = vi.fn()
+    const deps = fakeDeps({ prepareDataRootHandoff, runDataRootMigration })
+    registerStorageIpcHandlers(deps)
+
+    const first = invoke('storage:migrate', { parent: targetParent })
+    await vi.waitFor(() => expect(prepareDataRootHandoff).toHaveBeenCalledOnce())
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'A migration is already in progress.'
+    })
+
+    resolveFirstPreparation?.(false)
+    await first
+    expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
+    expect(runDataRootMigration).not.toHaveBeenCalled()
   })
 
   it('uses the shared prepared runner when exporting runtime locks for migration', async () => {
@@ -1335,6 +1366,35 @@ describe('storage IPC handlers', () => {
     expect(prepareDataRootHandoff).not.toHaveBeenCalled()
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('holds the write gate from direct handoff preparation through relaunch', async () => {
+    initDataRoot(dataRoot)
+    const setDataRoot = vi.fn(async () => {
+      expect(isMigrationPending()).toBe(true)
+    })
+    const relaunch = vi.fn(() => {
+      expect(isMigrationPending()).toBe(true)
+      expect(isMigrationInProgress()).toBe(false)
+    })
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot,
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({})
+      },
+      relaunch,
+      classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+
+    expect(setDataRoot).toHaveBeenCalledOnce()
+    expect(relaunch).toHaveBeenCalledOnce()
+    expect(isMigrationPending()).toBe(true)
   })
 
   it('diagnoses an adopted data root without retaining its path', async () => {
