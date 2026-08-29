@@ -941,11 +941,13 @@ export const updateCommand = async (options, dependencies = {}) => {
 
   if (result.outcome === 'manual-action-required' && result.installerPath) {
     const attachedToDesktopApp = serviceStart?.state?.attached === true
-    const ownsService = serviceStart?.started === true && !attachedToDesktopApp
+    const ownedConfigRoot = serviceStart?.state?.configRoot
+    const ownsService =
+      serviceStart?.started === true && !attachedToDesktopApp && typeof ownedConfigRoot === 'string'
     let requiresManualStop = !ownsService
     if (ownsService) {
       try {
-        await deps.stopService(options)
+        await deps.stopService({ ...options, configRoot: ownedConfigRoot })
       } catch {
         // Keep the verified installer handoff actionable even if graceful shutdown fails. The user
         // can retry the existing stop command without downloading the installer again.

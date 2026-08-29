@@ -1465,7 +1465,10 @@ describe('task CLI', () => {
     const result = await updateCommand(
       { open: true, json: true },
       {
-        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        ensureService: vi.fn().mockResolvedValue({
+          started: true,
+          state: { configRoot: '/data/open-science-owned' }
+        }),
         connect: vi.fn().mockResolvedValue({}),
         getBootstrap: vi.fn().mockResolvedValue({
           appVersion: '1.0.0',
@@ -1484,7 +1487,13 @@ describe('task CLI', () => {
       outcome: 'manual-action-required',
       installerPath: 'C:\\Users\\test\\Downloads\\Open-Science.exe'
     })
-    expect(stopService).toHaveBeenCalledWith(expect.objectContaining({ open: true, json: true }))
+    expect(stopService).toHaveBeenCalledWith(
+      expect.objectContaining({
+        open: true,
+        json: true,
+        configRoot: '/data/open-science-owned'
+      })
+    )
     expect(setExitCode).toHaveBeenCalledWith(6)
   })
 
@@ -1563,7 +1572,10 @@ describe('task CLI', () => {
     const result = await updateCommand(
       { open: true, json: true },
       {
-        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        ensureService: vi.fn().mockResolvedValue({
+          started: true,
+          state: { configRoot: '/data/open-science-owned' }
+        }),
         stopService,
         connect: vi.fn().mockResolvedValue({}),
         getBootstrap: vi.fn().mockResolvedValue({
