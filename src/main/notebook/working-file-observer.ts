@@ -279,7 +279,6 @@ export const runEvidenceWorker = async (
       child.kill('SIGKILL')
       rejectOnce(signal?.reason ?? new Error('File-evidence worker aborted.'))
     }
-    signal?.addEventListener('abort', abort, { once: true })
     const timeout = setTimeout(() => {
       child.kill('SIGKILL')
       rejectOnce(new Error('File-evidence worker timed out.'))
@@ -309,6 +308,11 @@ export const runEvidenceWorker = async (
       }
       resolveOnce(result)
     })
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) {
+      abort()
+      return
+    }
     child.stdin.end(JSON.stringify(request))
   })
 
@@ -812,7 +816,7 @@ const persistEvidence = async (
     await runEvidenceWorker(evidenceRoot.path, {
       operation: 'cleanup',
       expectedRootIdentity: evidenceRoot.identity,
-      names: [stagingName, finalName]
+      names: [stagingName]
     }).catch(() => undefined)
     return {
       workingFiles: stripUnpublishedGenerations(workingFiles),

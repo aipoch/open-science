@@ -291,6 +291,29 @@ describe('working-file evidence', () => {
     await expect(readdir(join(sessionRoot, 'file-evidence'))).resolves.toEqual([])
   })
 
+  it('preserves existing evidence when a reused run ID collides during publication', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const existingRunRoot = join(sessionRoot, 'file-evidence', 'run-run-collision')
+    await mkdir(existingRunRoot, { recursive: true })
+    await writeFile(join(existingRunRoot, 'sha256-existing'), 'prior immutable result')
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-collision' },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'result.csv'), 'new result')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+    expect(result.workingFiles[0]).not.toHaveProperty('generationId')
+    await expect(readFile(join(existingRunRoot, 'sha256-existing'), 'utf8')).resolves.toBe(
+      'prior immutable result'
+    )
+  })
+
   it('rejects a user-created file-evidence symlink without writing through it', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const outsideRoot = join(storageRoot as string, 'outside')
