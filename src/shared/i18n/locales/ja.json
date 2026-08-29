@@ -1427,7 +1427,7 @@
     "Open Science could not finish checking its database.": "Open Science はデータベースの確認を完了できませんでした。",
     "Open Science could not open its database.": "Open Science はデータベースを開けませんでした。",
     "Open Science could not update its database. Existing data was not reset.": "Open Science はデータベースを更新できませんでした。既存のデータはリセットされていません。",
-    "Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.": "GitHub で事前入力済みの Issue が開きます。エラーコード、アプリのバージョン、エラースタックが含まれます。個人のパスは秘匿されています (ホームフォルダーは ~ と表示されます)。送信前に内容を確認してください。必要に応じてスタックセクションを削除できます。",
+    "Review and edit the redacted report in Open Science before opening GitHub.": "GitHub を開く前に、Open Science で秘匿処理済みのレポートを確認して編集します。",
     "Open Science couldn't start": "Open Science を開始できませんでした",
     "Open Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically.": "Open Science はバックグラウンドタスクを停止しているため、インストールを完了するために終了します。更新には少し時間がかかる場合があります。このステップ中にアプリを再度開かないでください。更新されたアプリは自動的に再度開きます。",
     "Open Science needs write access to its private configuration directory.": "Open Science には、プライベート構成ディレクトリへの書き込みアクセスが必要です。",

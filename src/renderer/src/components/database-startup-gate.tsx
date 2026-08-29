@@ -13,7 +13,7 @@ import {
 
 import { ErrorNotice, type ErrorNoticeTone } from '@/components/error-notice'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
-import { openStartupIssueDraft } from '@/lib/startup-issue'
+import { StartupIssueDialog } from '@/components/startup-issue-dialog'
 import type {
   DatabaseStartupErrorCode,
   DatabaseStartupState
@@ -99,6 +99,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
     databaseStartup ? { phase: 'checking' } : { phase: 'ready' }
   )
   const [retrying, setRetrying] = useState(false)
+  const [issueDraftOpen, setIssueDraftOpen] = useState(false)
 
   useEffect(() => {
     if (!databaseStartup) return
@@ -138,7 +139,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
 
   const openIssueDraft = (): void => {
     if (state.phase !== 'blocked') return
-    openStartupIssueDraft(state.error)
+    setIssueDraftOpen(true)
   }
 
   if (state.phase !== 'blocked') {
@@ -196,9 +197,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
         }
         issueLink={{
           label: t('Still stuck? Create an issue for help'),
-          tooltip: t(
-            'Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.'
-          ),
+          tooltip: t('Review and edit the redacted report in Open Science before opening GitHub.'),
           onClick: openIssueDraft
         }}
         secondaryButton={{
@@ -215,6 +214,9 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
             : undefined
         }
       />
+      {issueDraftOpen ? (
+        <StartupIssueDialog error={error} onClose={() => setIssueDraftOpen(false)} />
+      ) : null}
     </main>
   )
 }

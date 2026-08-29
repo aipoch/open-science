@@ -2044,8 +2044,8 @@ describe('Russian catalog quality', () => {
     ['How to fix', 'Как исправить'],
     ['Still stuck? Create an issue for help', 'Проблема не решена? Создать обращение'],
     [
-      'Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.',
-      'На GitHub откроется заранее заполненное обращение с кодом ошибки, версией приложения и стеком вызовов. Личные пути в файловой системе будут скрыты (домашняя папка заменена на ~). Проверьте содержимое перед отправкой. При желании раздел со стеком вызовов можно удалить.'
+      'Review and edit the redacted report in Open Science before opening GitHub.',
+      'Просмотрите и отредактируйте обезличенный отчёт в Open Science перед открытием GitHub.'
     ],
     ['Skill import menu — 8 states', 'Меню импорта навыков — 8 состояний'],
     ['Import', 'Импортировать'],

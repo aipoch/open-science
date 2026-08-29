@@ -327,7 +327,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
       const databaseStartupOwner = createDatabaseStartupOwner({
         reportBlocked: databaseStartupLogging.reportBlocked,
-        buildDiagnostics: (error) => buildStartupDiagnostics(error),
+        buildDiagnostics: (error) =>
+          buildStartupDiagnostics(error, {
+            configRoot: resolveStorageRoot(),
+            dataRoot: startupSettings.dataRoot
+          }),
         environment: {
           appVersion: app.getVersion(),
           platform: process.platform,

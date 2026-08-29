@@ -1496,7 +1496,7 @@
     "Open Science could not finish checking its database.": "Open Science 無法完成資料庫檢查。",
     "Open Science could not open its database.": "Open Science 無法開啟資料庫。",
     "Open Science could not update its database. Existing data was not reset.": "Open Science 無法更新資料庫。現有資料未被重置。",
-    "Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.": "將開啟 GitHub 並預填一則 Issue：包含錯誤代碼、應用程式版本與錯誤堆疊。個人路徑已脫敏（你的主目錄會顯示為 ~）。提交前請檢查內容，如有顧慮可以刪除堆疊段落。",
+    "Review and edit the redacted report in Open Science before opening GitHub.": "在開啟 GitHub 前，先在 Open Science 中檢視並編輯已脫敏的報告。",
     "Open Science couldn't start": "Open Science 無法啟動",
     "Open Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically.": "Open Science 正在停止背景工作，並將關閉以完成安裝。更新可能需要一些時間，請勿在此期間重新開啟應用程式。更新完成後應用程式會自動重新開啟。",
     "Open Science needs write access to its private configuration directory.": "Open Science 需要對其私有設定目錄的寫入權限。",

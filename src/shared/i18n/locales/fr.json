@@ -641,7 +641,7 @@
     "Notes": "Remarques",
     "Open Science could not open its database.": "Open Science n'a pas pu ouvrir sa base de données.",
     "Open Science could not update its database. Existing data was not reset.": "Open Science n'a pas pu mettre à jour sa base de données. Les données existantes n'ont pas été réinitialisées.",
-    "Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.": "Ouvre GitHub avec un ticket pré-rempli : code d'erreur, version de l'application et pile d'erreurs. Les chemins personnels sont masqués (votre dossier personnel devient ~). Vérifiez le contenu avant de l'envoyer — vous pouvez supprimer la section de la pile si vous préférez.",
+    "Review and edit the redacted report in Open Science before opening GitHub.": "Examinez et modifiez le rapport expurgé dans Open Science avant d’ouvrir GitHub.",
     "Part of the stored data doesn't match the structure this version requires — usually left behind by an interrupted update.": "Une partie des données enregistrées ne correspond pas à la structure requise par cette version — il s'agit généralement d'un reliquat d'une mise à jour interrompue.",
     "Petri dish": "Boîte de Pétri",
     "Quill": "Plume",

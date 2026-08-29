@@ -12,7 +12,7 @@ describe('buildStartupDiagnostics', () => {
     const result = buildStartupDiagnostics(error)
 
     expect(result).toContain('Error: database is locked')
-    expect(result).toContain('at open (/app/dist/main.js:10:5)')
+    expect(result).toContain('at open (<absolute-path>/main.js:10:5)')
   })
 
   it('redacts the home directory from messages and stack frames', () => {
@@ -26,6 +26,58 @@ describe('buildStartupDiagnostics', () => {
     expect(result).not.toContain(home)
   })
 
+  it('redacts configured roots and remaining cross-platform absolute paths', () => {
+    const error = new Error(
+      [
+        'config=/Volumes/Config Space/.open-science/open-science.db',
+        'data=/mnt/research/OpenScience/notebook/run.json',
+        'other=/srv/customer/private.db',
+        'file=file:///Volumes/External/private.db',
+        String.raw`windows=D:\Clients\Acme\private.db`,
+        String.raw`network=\\fileserver\research-share\private.db`
+      ].join(' ')
+    )
+
+    const result = buildStartupDiagnostics(error, {
+      home: '/Users/alice',
+      configRoot: '/Volumes/Config Space/.open-science',
+      dataRoot: '/mnt/research/OpenScience'
+    })
+
+    expect(result).toContain('<config-root>/open-science.db')
+    expect(result).toContain('<data-root>/notebook/run.json')
+    expect(result).toContain('<absolute-path>/private.db')
+    expect(result).not.toContain('/Volumes/Config Space')
+    expect(result).not.toContain('/mnt/research')
+    expect(result).not.toContain('/srv/customer')
+    expect(result).not.toContain('/Volumes/External')
+    expect(result).not.toContain('D:\\Clients')
+    expect(result).not.toContain('fileserver')
+    expect(result).not.toContain('research-share')
+  })
+
+  it('reuses the diagnostic credential policy before diagnostics cross IPC', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzdGFydHVwIn0.signaturevalue123'
+    const error = new Error(
+      `request failed: Bearer bearer-opaque-7319; apiKey=key-opaque-7319; jwt=${jwt}; ` +
+        'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&ok=1'
+    )
+
+    const result = buildStartupDiagnostics(error, { home: '/Users/alice' })
+
+    for (const secret of [
+      'bearer-opaque-7319',
+      'key-opaque-7319',
+      jwt,
+      'alice',
+      'password-opaque-7319',
+      'query-opaque-7319'
+    ]) {
+      expect(result).not.toContain(secret)
+    }
+    expect(result).toContain('[redacted]')
+  })
+
   it('walks the cause chain with Caused by separators', () => {
     const root = new Error('disk I/O error')
     root.stack = 'Error: disk I/O error\n    at write (/x.js:1:1)'
@@ -36,7 +88,7 @@ describe('buildStartupDiagnostics', () => {
 
     expect(result).toContain('Error: migration failed')
     expect(result).toContain('Caused by: Error: disk I/O error')
-    expect(result).toContain('at write (/x.js:1:1)')
+    expect(result).toContain('at write (<absolute-path>/x.js:1:1)')
   })
 
   it('returns undefined when nothing describable was thrown', () => {
@@ -63,7 +115,7 @@ describe('buildStartupDiagnostics', () => {
     const result = buildStartupDiagnostics(outer)
 
     expect(result).toContain('Caused by: Error: root cause')
-    expect(result).toContain('at f19 (/f.js:19:1)')
+    expect(result).toContain('at f19 (<absolute-path>/f.js:19:1)')
   })
 
   it('marks frames dropped by the frame budget instead of hiding them', () => {
@@ -73,8 +125,8 @@ describe('buildStartupDiagnostics', () => {
 
     const result = buildStartupDiagnostics(error)
 
-    expect(result).toContain('at f31 (/f.js:31:1)')
-    expect(result).not.toContain('at f32 (/f.js:32:1)')
+    expect(result).toContain('at f31 (<absolute-path>/f.js:31:1)')
+    expect(result).not.toContain('at f32 (<absolute-path>/f.js:32:1)')
     expect(result).toContain('… 8 more frames')
   })
 

@@ -1,14 +1,13 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { DatabaseStartupError } from '../../../shared/database-startup'
 import {
   ISSUE_BASE_URL,
   buildStartupIssueBody,
   buildStartupIssueTitle,
-  buildStartupIssueUrl,
-  openStartupIssueDraft
+  buildStartupIssueUrl
 } from './startup-issue'
 
 const baseError: DatabaseStartupError = {
@@ -110,19 +109,11 @@ describe('buildStartupIssueUrl', () => {
     expect(decodeURIComponent(url)).toContain('at f (/f.js:1:1)')
     expect(decodeURIComponent(url)).not.toContain('stack truncated')
   })
-})
 
-describe('openStartupIssueDraft', () => {
-  it('opens the pre-filled issue URL in a new window', () => {
-    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+  it('uses edited diagnostics in the bounded public draft', () => {
+    const url = buildStartupIssueUrl(baseError, 'Error: edited by the user')
 
-    openStartupIssueDraft({ ...baseError, diagnostics: 'Error: boom' })
-
-    expect(open).toHaveBeenCalledOnce()
-    const [url, target, features] = open.mock.calls[0] as unknown as [string, string, string]
-    expect(url).toContain(`${ISSUE_BASE_URL}?title=`)
-    expect(decodeURIComponent(url)).toContain('Error: boom')
-    expect(target).toBe('_blank')
-    expect(features).toBe('noreferrer')
+    expect(decodeURIComponent(url)).toContain('Error: edited by the user')
+    expect(decodeURIComponent(url)).not.toContain('Error: boom')
   })
 })

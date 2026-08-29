@@ -621,7 +621,7 @@
     "Notes": "메모",
     "Open Science could not open its database.": "Open Science가 데이터베이스를 열지 못했습니다.",
     "Open Science could not update its database. Existing data was not reset.": "Open Science가 데이터베이스를 업데이트하지 못했습니다. 기존 데이터는 초기화되지 않았습니다.",
-    "Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.": "오류 코드, 앱 버전, 오류 스택이 미리 채워진 이슈로 GitHub를 엽니다. 개인 경로는 가려집니다(홈 폴더는 ~로 표시). 제출 전에 내용을 확인하세요. 원하면 스택 섹션은 삭제할 수 있습니다.",
+    "Review and edit the redacted report in Open Science before opening GitHub.": "GitHub를 열기 전에 Open Science에서 민감 정보가 가려진 보고서를 검토하고 편집하세요.",
     "Part of the stored data doesn't match the structure this version requires — usually left behind by an interrupted update.": "저장된 데이터 일부가 이 버전에서 요구하는 구조와 일치하지 않습니다. 보통 중단된 업데이트가 남긴 것입니다.",
     "Petri dish": "페트리 접시",
     "Quill": "퀼",

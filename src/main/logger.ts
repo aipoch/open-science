@@ -5,6 +5,12 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { extname, join } from 'node:path'
 
 import type { LogFileStatus, LogWriteFailureCategory } from '../shared/logs'
+import {
+  REDACTED_MARKER,
+  diagnosticKeyWords,
+  isSensitiveDiagnosticKey,
+  redactSensitiveText
+} from './diagnostic-redaction'
 
 // Lightweight structured file logger for the main process. Kept free of Electron imports so it stays
 // unit-testable and usable from the MCP-server entry modes; the caller resolves the log directory
@@ -97,7 +103,6 @@ const MAX_TOTAL_NODES = 10000
 const MAX_TOTAL_CHARS = 256 * 1024
 
 // One mandatory policy for every logger sink. Callers may still pre-sanitize, but cannot opt out here.
-const REDACTED_MARKER = '[redacted]'
 const OVERSIZED_TEXT_MARKER = '[redacted: oversized text]'
 const CONTENT_BEARING_KEYS = new Set([
   'body',
@@ -107,42 +112,6 @@ const CONTENT_BEARING_KEYS = new Set([
   'requestpayload',
   'responsebody',
   'responsepayload'
-])
-const SENSITIVE_KEY_WORDS = new Set([
-  'auth',
-  'authentication',
-  'authorization',
-  'authorizations',
-  'bearer',
-  'cookie',
-  'cookies',
-  'credential',
-  'credentials',
-  'password',
-  'passwords',
-  'passphrase',
-  'passphrases',
-  'passwd',
-  'pat',
-  'pats',
-  'secret',
-  'secrets',
-  'token',
-  'tokens'
-])
-const TOKEN_METRIC_WORDS = new Set([
-  'budget',
-  'cached',
-  'count',
-  'counts',
-  'input',
-  'limit',
-  'max',
-  'output',
-  'reasoning',
-  'remaining',
-  'total',
-  'usage'
 ])
 
 // Mutable budget shared across one errorLogFields call: `nodes` bounds how many values are emitted,
@@ -156,107 +125,21 @@ const truncate = (value: string): string =>
     ? value
     : `${value.slice(0, MAX_STRING_LENGTH)}…[+${value.length - MAX_STRING_LENGTH} chars]`
 
-const logKeyWords = (key: string): string[] =>
-  key
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean)
-
-const isTokenMetricKey = (words: string[]): boolean =>
-  words.some((word) => word === 'token' || word === 'tokens') &&
-  words.some((word) => TOKEN_METRIC_WORDS.has(word)) &&
-  words.every((word) => word === 'token' || word === 'tokens' || TOKEN_METRIC_WORDS.has(word))
-
-const isSensitiveLogKey = (key: string): boolean => {
-  const words = logKeyWords(key)
-  const normalized = words.join('')
-
-  if (isTokenMetricKey(words)) return false
-  if (words.some((word) => SENSITIVE_KEY_WORDS.has(word))) return true
-
-  return [
-    'accesstoken',
-    'apikey',
-    'apikeys',
-    'authtoken',
-    'bearertoken',
-    'clientsecret',
-    'clientsecrets',
-    'privatekey',
-    'privatekeys',
-    'refreshtoken',
-    'secretaccesskey',
-    'securitytoken',
-    'sessiontoken',
-    'xapikey'
-  ].some((suffix) => normalized.endsWith(suffix))
-}
-
 const isContentBearingLogKey = (key: string): boolean =>
-  CONTENT_BEARING_KEYS.has(logKeyWords(key).join(''))
-
-const redactUrlCredentials = (rawUrl: string): string => {
-  try {
-    const url = new URL(rawUrl)
-    let changed = false
-
-    if (url.username || url.password) {
-      url.username = REDACTED_MARKER
-      url.password = ''
-      changed = true
-    }
-    for (const key of [...url.searchParams.keys()]) {
-      if (!isSensitiveLogKey(key) && key.toLowerCase() !== 'key') continue
-      url.searchParams.set(key, REDACTED_MARKER)
-      changed = true
-    }
-    if (url.hash) {
-      url.hash = ''
-      changed = true
-    }
-
-    return changed ? url.toString().replaceAll('%5Bredacted%5D', REDACTED_MARKER) : rawUrl
-  } catch {
-    return REDACTED_MARKER
-  }
-}
+  CONTENT_BEARING_KEYS.has(diagnosticKeyWords(key).join(''))
 
 const redactLogText = (value: string): string => {
   if (value.length > MAX_STRING_LENGTH) return OVERSIZED_TEXT_MARKER
-
-  return value
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, redactUrlCredentials)
-    .replace(
-      /\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b(\s*["']?\s*:\s*["']?)[^"'\r\n}]*/gi,
-      `$1$2${REDACTED_MARKER}`
-    )
-    .replace(
-      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
-      `$1$2${REDACTED_MARKER}`
-    )
-    .replace(
-      /\b([a-z][a-z0-9_-]*)(\s*=\s*)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
-      (match, key: string, separator: string) =>
-        isSensitiveLogKey(key) ? `${key}${separator}${REDACTED_MARKER}` : match
-    )
-    .replace(
-      /(--?(?:access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+/gi,
-      `$1$2${REDACTED_MARKER}`
-    )
-    .replace(/\bBearer\s+[^\s"']+/gi, `Bearer ${REDACTED_MARKER}`)
-    .replace(/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g, REDACTED_MARKER)
-    .replace(
-      /\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|sk-[A-Za-z0-9_-]{8,})\b/g,
-      REDACTED_MARKER
-    )
+  return redactSensitiveText(value)
 }
 
 const stringifyLogRecord = (record: Record<string, unknown>): string =>
   // JSON's replacer recursively covers every serializable descendant and prunes sensitive subtrees
   // before they can reach the file or the console mirror.
   JSON.stringify(record, (key, value: unknown) => {
-    if (key && (isSensitiveLogKey(key) || isContentBearingLogKey(key))) return REDACTED_MARKER
+    if (key && (isSensitiveDiagnosticKey(key) || isContentBearingLogKey(key))) {
+      return REDACTED_MARKER
+    }
     const serializable = toSerializable(value)
     return typeof serializable === 'string' ? redactLogText(serializable) : serializable
   })
