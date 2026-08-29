@@ -1814,6 +1814,37 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it('clears renderer context usage when overlapping authority still has a snapshot', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 3,
+        contextUsage: { used: 10, size: 100 }
+      })
+    )
+    const overlappingUsage = materializeSessionConversationGraph({
+      ...base,
+      revision: 4,
+      contextUsage: { used: 20, size: 100 },
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(3, 4))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 5 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(overlappingUsage),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setContextUsage(base.id, undefined)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+    expect(saveSession.mock.calls[1][0].contextUsage).toBeUndefined()
+  })
+
   it('stops rebasing when Main authority keeps advancing past the bounded retry window', async () => {
     const base = materializeSessionConversationGraph(
       createPersistedSession({ projectId: 'project-a', revision: 1 })

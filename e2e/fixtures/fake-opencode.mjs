@@ -510,12 +510,7 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes('Generate Session metadata only from the following JSON data:')) {
-          reply = JSON.stringify({
-            title: 'Summarize the deterministic fixture.',
-            description: 'The user wants a concise summary of the deterministic fixture.'
-          })
-        } else if (prompt.includes(MEMORY_RECALL_PROMPT)) {
+        if (prompt.includes(MEMORY_RECALL_PROMPT)) {
           if (!prompt.includes('<memory_records>') || !prompt.includes(MEMORY_RECALL_ENTRY)) {
             throw new Error('Automatic memory recall did not reach the provider prompt.')
           }

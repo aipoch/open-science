@@ -487,9 +487,10 @@ const rebaseSessionAfterRevisionConflict = (
           startedAt: Math.min(submittedRun.startedAt, latestRun.startedAt)
         }
       } else if (key === 'contextUsage') {
-        // Main does not persist live context-window snapshots. Keep the renderer value unless it
-        // was cleared and the durable copy still has one from an earlier transcript save.
-        if (submittedValue !== undefined) {
+        // Main does not persist live context-window snapshots. Keep the renderer value, including
+        // an explicit clear, instead of resurrecting a stale durable copy.
+        if (submittedValue === undefined) delete rebased.contextUsage
+        else {
           rebased.contextUsage = structuredClone(
             submittedValue as PersistedChatSession['contextUsage']
           )

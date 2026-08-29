@@ -266,11 +266,17 @@ const openMainWindow = async (
     )
     .toBe('ready')
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
-  // The workspace GitHub star nudge opens after 5s in a visible window and is not part of these
-  // journeys. Record the cooldown in this profile so it cannot cover Send or shift layout.
-  await page.evaluate(() => {
-    window.localStorage.setItem('open-science:github-star-nudge-last-shown-at', String(Date.now()))
-  })
+  if (process.platform === 'win32') {
+    // The workspace GitHub star nudge opens after 5s in a visible Windows window and is not part
+    // of these journeys. Leave other platforms on the default cooldown so their layout timing
+    // matches the previously passing CI.
+    await page.evaluate(() => {
+      window.localStorage.setItem(
+        'open-science:github-star-nudge-last-shown-at',
+        String(Date.now())
+      )
+    })
+  }
   return page
 }
 
@@ -520,10 +526,12 @@ class ElectronAppHarness implements ElectronApp {
     // Specs assert English copy. Pin the locale so the host language can't leak in — Main
     // resolves a 'system' preference from the OS language list, ignoring Chromium's --lang.
     settings.localePreference = 'en'
-    // Inherit would spawn a second fake Agent just to generate the Session title. That extra
-    // process and its queued/running/terminal Session writes overlap the first user turn on
-    // Windows CI and leave the conversation stuck on Thinking.
-    settings.sessionDetailsModel = { mode: 'disabled' }
+    if (process.platform === 'win32') {
+      // Inherit would spawn a second fake Agent just to generate the Session title. That extra
+      // process and its queued/running/terminal Session writes overlap the first user turn on
+      // Windows CI and leave the conversation stuck on Thinking.
+      settings.sessionDetailsModel = { mode: 'disabled' }
+    }
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
     await this.launch()
     return this.page
