@@ -3294,7 +3294,7 @@
     "View affected conversations": "Afficher les conversations affectées",
     "Affected saved conversations": "Conversations enregistrées affectées",
     "These files were moved aside so you can inspect or recover them manually.": "Ces fichiers ont été mis de côté afin que vous puissiez les inspecter ou les récupérer manuellement.",
-    "Project: {{projectId}}": "Projet: {{projectId}}",
+    "Project: {{projectId}}": "Projet : {{projectId}}",
     "Open recovery folder": "Ouvrir le dossier de récupération",
     "{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project._one": "{{count}} conversation sauvegardée endommagée a été mise de côté. Les archives du projet restent indisponibles car leur état ne peut pas être vérifié. Vous pouvez toujours supprimer définitivement le projet.",
     "{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project._other": "{{count}} conversations sauvegardées endommagées ont été mises de côté. Les archives du projet restent indisponibles car leur état ne peut pas être vérifié. Vous pouvez toujours supprimer définitivement le projet.",
