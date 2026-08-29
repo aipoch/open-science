@@ -28,4 +28,20 @@ describe('createActiveResearchSafeInstallGate', () => {
     expect(result).toEqual({ completed: false, reaped: false, blockedBy: ['reviewer'] })
     expect(teardown).not.toHaveBeenCalled()
   })
+
+  it('refuses installation when delegated work starts while teardown is awaiting', async () => {
+    let blockers: ReturnType<Parameters<typeof createActiveResearchSafeInstallGate>[0]> = []
+    const teardown = vi.fn<InstallGate>().mockImplementation(async () => {
+      blockers = ['delegated']
+      return { completed: true, reaped: true }
+    })
+    const gate = createActiveResearchSafeInstallGate(() => blockers, teardown)
+
+    await expect(gate()).resolves.toEqual({
+      completed: false,
+      reaped: false,
+      blockedBy: ['delegated']
+    })
+    expect(teardown).toHaveBeenCalledOnce()
+  })
 })

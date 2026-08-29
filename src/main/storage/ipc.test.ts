@@ -1706,9 +1706,10 @@ describe('storage IPC handlers', () => {
       })
     )
 
-    await owner.setDataRootAndRelaunch({ parent: targetParent }, 'web-renderer')
+    const target = { surface: 'web-renderer', lifecycleClientId: 'web:client-a' } as const
+    await owner.setDataRootAndRelaunch({ parent: targetParent }, target)
 
-    expect(prepareDataRootHandoff).toHaveBeenCalledWith('web-renderer')
+    expect(prepareDataRootHandoff).toHaveBeenCalledWith(target)
   })
 
   it('set-data-root-and-relaunch refuses delegated work before preparing the handoff', async () => {

@@ -19,8 +19,8 @@ export type InstallReadiness = {
 // never starts while a background process still holds app files open.
 export type InstallGate = () => Promise<InstallReadiness>
 
-// Performs the active-research check before invoking the destructive backend teardown gate. Kept
-// independent of Electron/runtime types so composition tests can prove blocked work remains untouched.
+// Checks active research before teardown and once more at the final install boundary. Kept
+// independent of Electron/runtime types so composition tests can prove both admission races close.
 export const createActiveResearchSafeInstallGate =
   (
     detectBlockers: () => UpdateBlocker[],
@@ -30,7 +30,15 @@ export const createActiveResearchSafeInstallGate =
   async () => {
     if (isExclusiveHandoffActive()) return { completed: false, reaped: false }
     const blockedBy = [...new Set(detectBlockers())]
-    return blockedBy.length > 0 ? { completed: false, reaped: false, blockedBy } : runTeardownGate()
+    if (blockedBy.length > 0) return { completed: false, reaped: false, blockedBy }
+
+    const readiness = await runTeardownGate()
+    if (!readiness.completed || !readiness.reaped) return readiness
+    if (isExclusiveHandoffActive()) return { completed: false, reaped: false }
+    const finalBlockedBy = [...new Set(detectBlockers())]
+    return finalBlockedBy.length > 0
+      ? { completed: false, reaped: false, blockedBy: finalBlockedBy }
+      : readiness
   }
 
 // Confirms renderer-owned state is durable only after backend teardown has stopped producing runtime

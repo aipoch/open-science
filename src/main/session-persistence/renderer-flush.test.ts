@@ -293,13 +293,51 @@ describe('createWebSessionPersistenceFlush', () => {
   it('publishes a post-teardown request and waits for its Web acknowledgement', async () => {
     const publish = vi.fn()
     const coordinator = createWebSessionPersistenceFlush({ publish }, 1_000)
-    const request = coordinator.flush()
-    const flushRequest = publish.mock.calls[0][1] as { requestId: string }
+    const request = coordinator.flush('web:client-1')
+    const flushRequest = publish.mock.calls[0][1] as {
+      requestId: string
+      targetLifecycleClientId: string
+    }
 
     expect(publish).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, flushRequest)
-    coordinator.acknowledge({ requestId: 'stale', status: 'completed' })
-    coordinator.acknowledge({ requestId: flushRequest.requestId, status: 'completed' })
+    expect(flushRequest.targetLifecycleClientId).toBe('web:client-1')
+    coordinator.acknowledge({ requestId: 'stale', status: 'completed' }, 'web:client-1')
+    coordinator.acknowledge(
+      { requestId: flushRequest.requestId, status: 'completed' },
+      'web:client-1'
+    )
 
+    await expect(request).resolves.toBe('completed')
+  })
+
+  it('accepts an acknowledgement only from the Web client that requested the handoff', async () => {
+    const publish = vi.fn()
+    const coordinator = createWebSessionPersistenceFlush({ publish }, 1_000) as unknown as {
+      flush: (targetClientId: string) => Promise<RendererSessionPersistenceFlushOutcome>
+      acknowledge: (response: SessionPersistenceFlushResponse, clientId: string) => void
+    }
+    const request = coordinator.flush('web:client-a')
+    const flushRequest = publish.mock.calls[0][1] as { requestId: string }
+    let settled = false
+    void request.then(() => {
+      settled = true
+    })
+
+    coordinator.acknowledge(
+      { requestId: flushRequest.requestId, status: 'completed' },
+      'web:client-b'
+    )
+    const prematureOutcome = await Promise.race([
+      request,
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 0))
+    ])
+    expect(prematureOutcome).toBe('pending')
+    expect(settled).toBe(false)
+
+    coordinator.acknowledge(
+      { requestId: flushRequest.requestId, status: 'completed' },
+      'web:client-a'
+    )
     await expect(request).resolves.toBe('completed')
   })
 

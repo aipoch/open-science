@@ -31,7 +31,7 @@ import type {
   ReviewSessionRequest,
   ReviewWithChecks
 } from '../shared/reviewer'
-import type { RendererSessionPersistenceSurface } from './session-persistence/renderer-flush'
+import type { RendererSessionPersistenceTarget } from './session-persistence/renderer-flush'
 import type { SessionPersistenceFlushResponse } from '../shared/session-persistence-flush'
 import type {
   ActiveSessionInfo,
@@ -380,7 +380,10 @@ type HostApplicationCommandDependencies = Readonly<{
   >
   reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
-    acknowledgeDataRootHandoffFlush: (response: SessionPersistenceFlushResponse) => void
+    acknowledgeDataRootHandoffFlush: (
+      response: SessionPersistenceFlushResponse,
+      lifecycleClientId: string
+    ) => void
     getStatus: () => Promise<StorageStatus>
     getInfo: () => Promise<StorageInfo>
     revealAppStorage: () => Promise<RevealAppStorageResult>
@@ -390,16 +393,16 @@ type HostApplicationCommandDependencies = Readonly<{
     inspectDataRoot: (request: StorageParentRequest) => Promise<DataRootInspection>
     migrate: (
       request: StorageParentRequest,
-      surface?: RendererSessionPersistenceSurface
+      target?: RendererSessionPersistenceTarget
     ) => Promise<MigrationOutcome>
     setDataRootAndRelaunch: (
       request: StorageRootRequest,
-      surface?: RendererSessionPersistenceSurface
+      target?: RendererSessionPersistenceTarget
     ) => Promise<DataRootValidationResult>
     cancelMigrate: () => void
     commitAndRelaunch: (
       request: StorageParentRequest,
-      surface?: RendererSessionPersistenceSurface
+      target?: RendererSessionPersistenceTarget
     ) => Promise<MigrationOutcome>
     discardMigratedCopy: (request: StorageParentRequest) => Promise<DiscardMigratedCopyResult>
     dismissLegacyMovePrompt: () => Promise<void>
@@ -418,8 +421,10 @@ const localCommand = <Result>(
   return invoke()
 }
 
-const dataRootHandoffSurface = (context: CallerContext): RendererSessionPersistenceSurface =>
-  context.surface === 'web' ? 'web-renderer' : 'electron-renderer'
+const dataRootHandoffTarget = (context: CallerContext): RendererSessionPersistenceTarget =>
+  context.surface === 'web'
+    ? { surface: 'web-renderer', lifecycleClientId: context.lifecycleClientId }
+    : { surface: 'electron-renderer' }
 
 // Production composition registers all bounded command groups atomically; this group must not be
 // exposed through a live transport in isolation.
@@ -562,7 +567,10 @@ const registerHostApplicationCommands = (
           ) {
             throw new Error('Invalid data-root handoff flush acknowledgement.')
           }
-          dependencies.storage.acknowledgeDataRootHandoffFlush(response)
+          dependencies.storage.acknowledgeDataRootHandoffFlush(
+            response,
+            callerContext.lifecycleClientId
+          )
         }),
       'storage:cancel-migrate': ({ callerContext }) =>
         localCommand(callerContext, 'storage:cancel-migrate', () =>
@@ -570,7 +578,7 @@ const registerHostApplicationCommands = (
         ),
       'storage:commit-and-relaunch': ({ args, callerContext }) =>
         localCommand(callerContext, 'storage:commit-and-relaunch', () =>
-          dependencies.storage.commitAndRelaunch(args[0], dataRootHandoffSurface(callerContext))
+          dependencies.storage.commitAndRelaunch(args[0], dataRootHandoffTarget(callerContext))
         ),
       'storage:detect-active': () => dependencies.storage.detectActive(),
       'storage:discard-migrated-copy': ({ args, callerContext }) =>
@@ -586,7 +594,7 @@ const registerHostApplicationCommands = (
         ),
       'storage:migrate': ({ args, callerContext }) =>
         localCommand(callerContext, 'storage:migrate', () =>
-          dependencies.storage.migrate(args[0], dataRootHandoffSurface(callerContext))
+          dependencies.storage.migrate(args[0], dataRootHandoffTarget(callerContext))
         ),
       'storage:pick-directory': ({ callerContext }) =>
         localCommand(callerContext, 'storage:pick-directory', () =>
@@ -598,10 +606,7 @@ const registerHostApplicationCommands = (
         ),
       'storage:set-data-root-and-relaunch': ({ args, callerContext }) =>
         localCommand(callerContext, 'storage:set-data-root-and-relaunch', () =>
-          dependencies.storage.setDataRootAndRelaunch(
-            args[0],
-            dataRootHandoffSurface(callerContext)
-          )
+          dependencies.storage.setDataRootAndRelaunch(args[0], dataRootHandoffTarget(callerContext))
         ),
       'storage:validate-data-root': ({ args, callerContext }) =>
         localCommand(callerContext, 'storage:validate-data-root', () =>

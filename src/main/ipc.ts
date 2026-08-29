@@ -99,7 +99,8 @@ import {
   createWebSessionPersistenceFlush,
   rendererSessionPersistenceFlushBlocksShutdown,
   type RendererSessionPersistenceFlushPolicy,
-  type RendererSessionPersistenceSurface
+  type RendererSessionPersistenceSurface,
+  type RendererSessionPersistenceTarget
 } from './session-persistence/renderer-flush'
 import { createLogsCommandOwner, registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
@@ -2696,13 +2697,13 @@ const createApplicationModules = async (
     () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
   )
   const durableDataRootHandoffGate = (
-    surface: RendererSessionPersistenceSurface
+    target: RendererSessionPersistenceTarget
   ): Promise<InstallReadiness> =>
     createDurableInstallGate(reviewerSafeDataRootTeardownGate, async () => {
-      if (surface !== 'web-renderer') {
-        return confirmRendererDurability('data-root-handoff', surface)
+      if (target.surface !== 'web-renderer') {
+        return confirmRendererDurability('data-root-handoff', target.surface)
       }
-      const outcome = await webSessionPersistenceFlush.flush()
+      const outcome = await webSessionPersistenceFlush.flush(target.lifecycleClientId)
       const blocked = rendererSessionPersistenceFlushBlocksShutdown(outcome, 'data-root-handoff')
       if (blocked) webSessionPersistenceFlush.notifyAborted()
       return !blocked
@@ -3211,8 +3212,8 @@ const createApplicationModules = async (
     settingsService,
     micromambaRunner,
     acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
-    prepareDataRootHandoff: async (surface) => {
-      const readiness = await durableDataRootHandoffGate(surface)
+    prepareDataRootHandoff: async (target) => {
+      const readiness = await durableDataRootHandoffGate(target)
       return readiness.completed && readiness.reaped
     }
   })

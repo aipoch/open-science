@@ -51,13 +51,19 @@ export const useQuitPersistenceFlush = (): void => {
 
     const removeFlushAborted = onFlushAborted?.(resumeAutoReviewsAfterQuitAbort)
     const removeFlushRequest = onFlushRequest((request) => {
-      void completeQuitPersistenceFlush(request, {
-        suppressAutoReviews: suppressAutoReviewsForQuit,
-        drainRuntimeEvents: drainWorkspaceRuntimeEventsForPersistence,
-        flushPersistence: flushSessionPersistence,
-        flushPreviewPersistence,
-        acknowledge: sendFlushResponse
-      }).catch(() => undefined)
+      void (async () => {
+        if (request.targetLifecycleClientId) {
+          const lifecycleClientId = await window.api.lifecycle.getClientId()
+          if (lifecycleClientId !== request.targetLifecycleClientId) return
+        }
+        await completeQuitPersistenceFlush(request, {
+          suppressAutoReviews: suppressAutoReviewsForQuit,
+          drainRuntimeEvents: drainWorkspaceRuntimeEventsForPersistence,
+          flushPersistence: flushSessionPersistence,
+          flushPreviewPersistence,
+          acknowledge: sendFlushResponse
+        })
+      })().catch(() => undefined)
     })
     return () => {
       removeFlushAborted?.()

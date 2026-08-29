@@ -389,12 +389,16 @@ describe('Host application commands', () => {
     expect(dependencies.reviewer.run).toHaveBeenCalledWith(reviewRun)
     expect(dependencies.reviewer.getForSession).toHaveBeenCalledWith(reviewSession)
     expect(dependencies.reviewer.abort).toHaveBeenCalledWith(reviewSession)
-    expect(dependencies.storage.acknowledgeDataRootHandoffFlush).toHaveBeenCalledWith(flushResponse)
-    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent, 'electron-renderer')
-    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(
-      root,
-      'electron-renderer'
+    expect(dependencies.storage.acknowledgeDataRootHandoffFlush).toHaveBeenCalledWith(
+      flushResponse,
+      'electron:7'
     )
+    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent, {
+      surface: 'electron-renderer'
+    })
+    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root, {
+      surface: 'electron-renderer'
+    })
     expect(dependencies.update.apply).toHaveBeenCalledWith({ relaunch: false })
     expect(dependencies.update.download).toHaveBeenCalledWith({ nonInteractive: true })
 
@@ -424,10 +428,20 @@ describe('Host application commands', () => {
       hostApplicationCommands.storage.setDataRootAndRelaunch,
       invocation([root], caller)
     )
+    const flushResponse = { requestId: 'web-flush-1', status: 'completed' as const }
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.acknowledgeDataRootHandoffFlush,
+      invocation([flushResponse], caller)
+    )
 
-    expect(dependencies.storage.migrate).toHaveBeenCalledWith(parent, 'web-renderer')
-    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent, 'web-renderer')
-    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root, 'web-renderer')
+    const target = { surface: 'web-renderer', lifecycleClientId: 'web:local-web' }
+    expect(dependencies.storage.migrate).toHaveBeenCalledWith(parent, target)
+    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent, target)
+    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root, target)
+    expect(dependencies.storage.acknowledgeDataRootHandoffFlush).toHaveBeenCalledWith(
+      flushResponse,
+      'web:local-web'
+    )
   })
 
   it('rejects the exact local-only host inventory before entering an owner', async () => {

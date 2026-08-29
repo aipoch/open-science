@@ -32,6 +32,9 @@ export type RendererSessionPersistenceFlushOutcome =
 
 export type RendererSessionPersistenceFlushPolicy = 'ordinary-shutdown' | 'data-root-handoff'
 export type RendererSessionPersistenceSurface = 'electron-renderer' | 'web-renderer'
+export type RendererSessionPersistenceTarget =
+  | Readonly<{ surface: 'electron-renderer' }>
+  | Readonly<{ surface: 'web-renderer'; lifecycleClientId: string }>
 
 export const rendererSessionPersistenceFlushBlocksShutdown = (
   outcome: RendererSessionPersistenceFlushOutcome,
@@ -47,30 +50,41 @@ export const createWebSessionPersistenceFlush = (
   events: ApplicationEventPublisher,
   timeoutMs = DEFAULT_RENDERER_FLUSH_TIMEOUT_MS
 ): Readonly<{
-  flush: () => Promise<RendererSessionPersistenceFlushOutcome>
-  acknowledge: (response: SessionPersistenceFlushResponse) => void
+  flush: (targetLifecycleClientId: string) => Promise<RendererSessionPersistenceFlushOutcome>
+  acknowledge: (response: SessionPersistenceFlushResponse, lifecycleClientId: string) => void
   notifyAborted: () => void
 }> => {
-  const responseListeners = new Set<(response: SessionPersistenceFlushResponse) => void>()
+  const responseListeners = new Set<
+    (response: SessionPersistenceFlushResponse, lifecycleClientId: string) => void
+  >()
 
   return Object.freeze({
-    flush: () =>
+    flush: (targetLifecycleClientId) =>
       requestRendererSessionPersistenceFlush({
         // A local Web command can only reach this gate from a live renderer. If its event stream is
         // unavailable, the bounded acknowledgement wait fails closed instead of switching roots.
         isRendererAvailable: () => true,
         sendRequest: (requestId) =>
-          events.publish(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, { requestId }),
+          events.publish(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, {
+            requestId,
+            targetLifecycleClientId
+          }),
         onResponse: (listener) => {
-          responseListeners.add(listener)
-          return () => responseListeners.delete(listener)
+          const scopedListener = (
+            response: SessionPersistenceFlushResponse,
+            lifecycleClientId: string
+          ): void => {
+            if (lifecycleClientId === targetLifecycleClientId) listener(response)
+          }
+          responseListeners.add(scopedListener)
+          return () => responseListeners.delete(scopedListener)
         },
         onRendererGone: () => () => undefined,
         createRequestId: randomUUID,
         timeoutMs
       }),
-    acknowledge: (response) => {
-      for (const listener of responseListeners) listener(response)
+    acknowledge: (response, lifecycleClientId) => {
+      for (const listener of responseListeners) listener(response, lifecycleClientId)
     },
     notifyAborted: () => events.publish(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, undefined)
   })
