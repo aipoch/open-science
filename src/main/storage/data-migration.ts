@@ -59,6 +59,18 @@ type ScanResult = {
   rootFile: boolean
 }
 
+type PortableMetadataEntry = {
+  relativePath: string
+  mode: number
+  atime: Date
+  mtime: Date
+}
+
+export type PortableMetadataSnapshot = {
+  files: PortableMetadataEntry[]
+  directories: PortableMetadataEntry[]
+}
+
 // Recursively lists regular files, nested directories, and symbolic links under `root` (empty lists
 // if `root` doesn't exist). Directories are tracked separately so empty nested folders survive the
 // move; symlinks are recreated as links (never followed) so a conda cache's internal links survive.
@@ -103,6 +115,71 @@ const listEntries = async (root: string): Promise<ScanResult> => {
   directories.push({ relPath: '', stats: info })
   await walk('.')
   return { files, directories, symlinks, present: true, rootFile: false }
+}
+
+const metadataSnapshotFromEntries = (
+  dirs: string[],
+  entriesByDir: ReadonlyMap<string, ScanResult>
+): PortableMetadataSnapshot => {
+  const snapshot: PortableMetadataSnapshot = { files: [], directories: [] }
+  for (const dir of dirs) {
+    const entries = entriesByDir.get(dir)
+    if (!entries?.present) continue
+    for (const file of entries.files) {
+      snapshot.files.push({
+        relativePath: join(dir, file.relPath),
+        mode: file.stats.mode,
+        atime: file.stats.atime,
+        mtime: file.stats.mtime
+      })
+    }
+    for (const directory of entries.directories) {
+      snapshot.directories.push({
+        relativePath: join(dir, directory.relPath),
+        mode: directory.stats.mode,
+        atime: directory.stats.atime,
+        mtime: directory.stats.mtime
+      })
+    }
+  }
+  return snapshot
+}
+
+export const capturePortableMetadata = async (
+  root: string,
+  dirs: string[]
+): Promise<PortableMetadataSnapshot> => {
+  const entriesByDir = new Map<string, ScanResult>()
+  for (const dir of dirs) entriesByDir.set(dir, await listEntries(join(root, dir)))
+  return metadataSnapshotFromEntries(dirs, entriesByDir)
+}
+
+const restoreTimestamps = async (
+  root: string,
+  snapshot: PortableMetadataSnapshot
+): Promise<void> => {
+  for (const file of snapshot.files) {
+    await utimes(join(root, file.relativePath), file.atime, file.mtime)
+  }
+  for (const directory of [...snapshot.directories].reverse()) {
+    await utimes(join(root, directory.relativePath), directory.atime, directory.mtime)
+  }
+}
+
+export const restorePortableMetadata = async (
+  root: string,
+  snapshot: PortableMetadataSnapshot
+): Promise<void> => {
+  for (const file of snapshot.files) {
+    const destination = join(root, file.relativePath)
+    await chmod(destination, file.mode)
+    await utimes(destination, file.atime, file.mtime)
+  }
+  for (const directory of [...snapshot.directories].reverse()) {
+    const destination = join(root, directory.relativePath)
+    await chmod(destination, directory.mode)
+    await utimes(destination, directory.atime, directory.mtime)
+  }
 }
 
 // Copies a single file, streaming, creating parent dirs as needed.
@@ -194,6 +271,7 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
         else sourceHardLinks.add(identity)
       }
     }
+    const sourceMetadata = metadataSnapshotFromEntries(dirs, entriesByDir)
     checkAbort()
     const preserveHardLinks = !hasRepeatedHardLink || (await destinationSupportsHardLinks(to))
     const sizedHardLinks = new Set<string>()
@@ -314,26 +392,12 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
       }
     }
 
-    // Hash verification reads both sides and can update access times, so restore portable metadata
-    // only after verification. Directories are restored deepest-first because creating children
-    // updates their parents and a restrictive source mode could otherwise block the remaining copy.
-    for (const dir of dirs) {
-      const entries = entriesByDir.get(dir)
-      if (!entries?.present) continue
-      const destDir = join(to, dir)
-      for (const file of entries.files) {
-        checkAbort()
-        const destination = join(destDir, file.relPath)
-        await chmod(destination, file.stats.mode)
-        await utimes(destination, file.stats.atime, file.stats.mtime)
-      }
-      for (const directory of [...entries.directories].reverse()) {
-        checkAbort()
-        const destination = join(destDir, directory.relPath)
-        await chmod(destination, directory.stats.mode)
-        await utimes(destination, directory.stats.atime, directory.stats.mtime)
-      }
-    }
+    // Copying and hash verification read the source and destination. Restore the source timestamps so
+    // the commit phase can take a faithful in-memory snapshot, then restore the staged copy. The
+    // service reapplies that snapshot after its own downstream verification reads.
+    checkAbort()
+    await restoreTimestamps(from, sourceMetadata)
+    await restorePortableMetadata(to, sourceMetadata)
     checkAbort()
   } catch (err) {
     // Rollback: remove whatever was written under `to`; `from` was never touched.

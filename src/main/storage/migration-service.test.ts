@@ -1,4 +1,14 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
@@ -1309,6 +1319,53 @@ describe('runDataRootMigration (copy phase)', () => {
 })
 
 describe('commitDataRootSwitch (commit phase)', () => {
+  it('preserves timestamps after target verification and the commit-time recheck', async () => {
+    const sourceFile = join(currentDataRoot, 'artifacts', 'observations.csv')
+    await mkdir(join(currentDataRoot, 'artifacts'), { recursive: true })
+    await writeFile(sourceFile, 'time,value\n1,42\n')
+    const originalAtime = new Date('2001-02-03T04:05:06.000Z')
+    const originalMtime = new Date('2002-03-04T05:06:07.000Z')
+    await utimes(sourceFile, originalAtime, originalMtime)
+
+    const readMigratedFile = async (root: string): Promise<void> => {
+      const file = join(root, 'artifacts', 'observations.csv')
+      if (existsSync(file)) await readFile(file)
+    }
+    let markerToken = ''
+    const copyResult = await runDataRootMigration(
+      {
+        ...fakeDeps(),
+        currentDataRoot,
+        validateProvenanceState: readMigratedFile
+      },
+      emptyParent,
+      {
+        ...runOpts(),
+        onVerified: ({ token }) => {
+          markerToken = token
+        }
+      }
+    )
+    expect(copyResult).toEqual({ ok: true })
+
+    const target = dataRootFor(emptyParent)
+    const commitResult = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        deleteSources: async () => ({ deleted: [], failed: [] }),
+        expectedToken: markerToken,
+        validateProvenanceState: readMigratedFile
+      },
+      emptyParent
+    )
+
+    expect(commitResult).toEqual({ ok: true })
+    const copiedFile = await stat(join(target, 'artifacts', 'observations.csv'))
+    expect(Math.trunc(copiedFile.atimeMs / 1000)).toBe(Math.trunc(originalAtime.getTime() / 1000))
+    expect(Math.trunc(copiedFile.mtimeMs / 1000)).toBe(Math.trunc(originalMtime.getTime() / 1000))
+  })
+
   it('correlates distinct copy and commit operations without reusing the marker token', async () => {
     const deps = fakeDeps()
     const logger = fakeDiagnosticLogger()

@@ -17,7 +17,12 @@ import {
   resolveConfigRoot,
   samePath
 } from '../storage-root'
-import { copyAndVerify, deleteSources } from './data-migration'
+import {
+  capturePortableMetadata,
+  copyAndVerify,
+  deleteSources,
+  restorePortableMetadata
+} from './data-migration'
 import {
   MIGRATION_MARKER_FILENAME,
   newToken,
@@ -577,12 +582,26 @@ export const runDataRootMigration = async (
     }
   }
 
+  const migrateDirs = [...BASE_MIGRATION_DIRS, RUNTIME_PKGS_DIR]
+  let sourceMetadata
+  try {
+    sourceMetadata = await capturePortableMetadata(deps.currentDataRoot, migrateDirs)
+  } catch (error) {
+    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    operation.fail(error)
+    return { ok: false, error: 'Could not inspect your data before copying it. Please try again.' }
+  }
+  const restoreSourceMetadata = async (): Promise<void> => {
+    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata)
+  }
+
   const validateProvenanceState = deps.validateProvenanceState ?? defaultValidateProvenanceState
   operation.phase('validate-source')
   try {
     await validateProvenanceState(deps.currentDataRoot)
   } catch (error) {
     await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await restoreSourceMetadata().catch(() => undefined)
     operation.fail(error)
     return {
       ok: false,
@@ -604,8 +623,6 @@ export const runDataRootMigration = async (
       runtimePreservationDegraded = true
     }
   }
-  const migrateDirs = [...BASE_MIGRATION_DIRS, RUNTIME_PKGS_DIR]
-
   const doCopyAndVerify = deps.copyAndVerify ?? copyAndVerify
   let result: MigrationResult
   operation.phase('copy')
@@ -638,6 +655,7 @@ export const runDataRootMigration = async (
     })
   } catch (err) {
     await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await restoreSourceMetadata().catch(() => undefined)
     operation.fail(err)
     return { ok: false, error: 'Could not copy your data. Please try again.' }
   }
@@ -650,6 +668,7 @@ export const runDataRootMigration = async (
     await rm(target, { recursive: true, force: true }).catch(() => {
       stagingCleanupDegraded = true
     })
+    await restoreSourceMetadata().catch(() => undefined)
     if (result.cancelled) {
       operation.cancel({ cancelRequested: true, stagingCleanupDegraded })
     } else {
@@ -660,6 +679,7 @@ export const runDataRootMigration = async (
 
   if (runOpts.signal.aborted) {
     await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await restoreSourceMetadata().catch(() => undefined)
     operation.cancel({ cancelRequested: true })
     return { ok: false, error: 'migration cancelled', cancelled: true }
   }
@@ -669,6 +689,7 @@ export const runDataRootMigration = async (
     await validateProvenanceState(target)
   } catch (error) {
     await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await restoreSourceMetadata().catch(() => undefined)
     operation.fail(error)
     return {
       ok: false,
@@ -682,13 +703,27 @@ export const runDataRootMigration = async (
     inventory = await scanInventory(target, migrateDirs)
   } catch (err) {
     await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await restoreSourceMetadata().catch(() => undefined)
     operation.fail(err)
     return { ok: false, error: 'Could not verify the copied data. Please run the move again.' }
   }
   if (runOpts.signal.aborted) {
     await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await restoreSourceMetadata().catch(() => undefined)
     operation.cancel({ cancelRequested: true })
     return { ok: false, error: 'migration cancelled', cancelled: true }
+  }
+  try {
+    await restoreSourceMetadata()
+    await restorePortableMetadata(target, sourceMetadata)
+  } catch (err) {
+    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await restoreSourceMetadata().catch(() => undefined)
+    operation.fail(err)
+    return {
+      ok: false,
+      error: 'Could not restore copied data metadata. Please run the move again.'
+    }
   }
   try {
     await writeMigrationMarker(target, {
@@ -771,6 +806,13 @@ export const commitDataRootSwitch = async (
       error: 'The staged copy does not include all required provenance data. Run the move again.'
     })
   }
+  let sourceMetadata
+  try {
+    sourceMetadata = await capturePortableMetadata(deps.currentDataRoot, migratedDirs)
+  } catch (err) {
+    operation.fail(err)
+    return { ok: false, error: 'Could not recheck the copied data. Run the move again.' }
+  }
   let inventories: [MigrationInventory, MigrationInventory]
   try {
     inventories = await Promise.all([
@@ -806,6 +848,14 @@ export const commitDataRootSwitch = async (
       ok: false,
       error: `Could not verify provenance data: ${toErrorMessage(error)}`
     }
+  }
+
+  try {
+    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata)
+    await restorePortableMetadata(target, sourceMetadata)
+  } catch (error) {
+    operation.fail(error)
+    return { ok: false, error: 'Could not restore copied data metadata. Run the move again.' }
   }
 
   operation.phase('persist-pointer')
