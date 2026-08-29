@@ -1864,6 +1864,61 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('EACCES')
   })
 
+  it('defers deleting a root that still proves an earlier cleanup intent', async () => {
+    const olderRoot = join(currentParent, 'older-root')
+    await mkdir(join(olderRoot, 'artifacts'), { recursive: true })
+    await mkdir(join(currentDataRoot, 'artifacts'), { recursive: true })
+    await writeFile(join(olderRoot, 'artifacts', 'result.txt'), 'preserved')
+    await writeFile(join(currentDataRoot, 'artifacts', 'result.txt'), 'preserved')
+    await writeMigrationMarker(currentDataRoot, {
+      version: 1,
+      token: 'older-token',
+      source: olderRoot,
+      target: currentDataRoot,
+      createdAt: 1,
+      status: 'verified',
+      migratedDirs: ['artifacts'],
+      inventory: await scanInventory(currentDataRoot, ['artifacts'])
+    })
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+    await mkdir(join(target, 'artifacts'), { recursive: true })
+    await writeFile(join(target, 'artifacts', 'result.txt'), 'preserved')
+    await writeMigrationMarker(target, {
+      ...(await readMigrationMarker(target))!,
+      inventory: await scanInventory(target, [...MIGRATED_DIRS])
+    })
+
+    const cleanupJournal = new DataRootCleanupJournal(join(emptyParent, 'config'))
+    await cleanupJournal.stage({
+      token: 'older-token',
+      source: olderRoot,
+      target: currentDataRoot,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    await cleanupJournal.markCommitted('older-token')
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    const result = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot: vi.fn(async () => {}),
+        deleteSources,
+        cleanupJournal,
+        expectedToken: 'tok-test'
+      },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(deleteSources).not.toHaveBeenCalled()
+    await expect(cleanupJournal.hasPending()).resolves.toBe(true)
+    await expect(readMigrationMarker(target)).resolves.toMatchObject({ token: 'tok-test' })
+    await expect(readFile(join(currentDataRoot, 'artifacts', 'result.txt'), 'utf8')).resolves.toBe(
+      'preserved'
+    )
+  })
+
   it.skipIf(process.platform === 'win32')(
     'reports marker cleanup failure as degraded success after pointer persistence',
     async () => {

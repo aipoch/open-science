@@ -982,11 +982,12 @@ export const commitDataRootSwitch = async (
   // they are the durable startup-retry authority and must not disappear on a partial cleanup.
   operation.phase('cleanup-source')
   let cleanupDegraded = false
+  let cleanupDeferred = false
   const doDeleteSources = deps.deleteSources ?? deleteSources
   let cleanupFailureCount = 0
   if (deps.cleanupJournal) {
     try {
-      await deps.cleanupJournal.markCommitted(marker.token)
+      cleanupDeferred = await deps.cleanupJournal.markCommitted(marker.token)
     } catch {
       // The pointer already committed. Leave the prepared intent in place so startup can prove the
       // live target and promote it before retrying; do not delete without the durable receipt.
@@ -994,7 +995,7 @@ export const commitDataRootSwitch = async (
       cleanupFailureCount = 1
     }
   }
-  if (!cleanupDegraded) {
+  if (!cleanupDegraded && !cleanupDeferred) {
     try {
       const deleteResult = await doDeleteSources(deps.currentDataRoot, stagedDirsToDelete)
       cleanupFailureCount = deleteResult.failed.length
@@ -1005,7 +1006,7 @@ export const commitDataRootSwitch = async (
     }
   }
 
-  if (!cleanupDegraded) {
+  if (!cleanupDegraded && !cleanupDeferred) {
     try {
       await removeMigrationMarker(target)
       await deps.cleanupJournal?.clear(marker.token)
@@ -1017,7 +1018,7 @@ export const commitDataRootSwitch = async (
   }
 
   operation.complete({
-    cleanupDegraded,
+    cleanupDegraded: cleanupDegraded || cleanupDeferred,
     cleanupFailureCount
   })
   return cleanupFailureCount > 0

@@ -303,6 +303,9 @@ class DataRootCleanupJournal {
     if (existing.some(({ token }) => token === input.token)) {
       throw new Error('Duplicate data-root cleanup token.')
     }
+    if (existing.some((intent) => !intent.committed && samePath(intent.target, canonicalSource))) {
+      throw new Error('An earlier data-root cleanup must be recovered before moving again.')
+    }
     await this.write([
       ...existing,
       {
@@ -317,17 +320,21 @@ class DataRootCleanupJournal {
     return entries.filter(({ present }) => present).map(({ dir }) => dir)
   }
 
-  async markCommitted(expectedToken: string): Promise<void> {
+  async markCommitted(expectedToken: string): Promise<boolean> {
     const journal = await this.read()
     if (!journal) throw new Error('Data-root cleanup intent is missing.')
-    let found = false
+    let committedIntent: DataRootCleanupIntent | undefined
     const intents = journal.intents.map((intent) => {
       if (intent.token !== expectedToken) return intent
-      found = true
-      return { ...intent, committed: true }
+      committedIntent = { ...intent, committed: true }
+      return committedIntent
     })
-    if (!found) throw new Error('Data-root cleanup intent is missing.')
+    if (!committedIntent) throw new Error('Data-root cleanup intent is missing.')
     await this.write(intents)
+    const committedSource = committedIntent.source
+    return intents.some(
+      (intent) => intent.token !== expectedToken && samePath(intent.target, committedSource)
+    )
   }
 
   async clear(expectedToken?: string): Promise<void> {
@@ -512,7 +519,24 @@ class DataRootCleanupJournal {
 
     let failureCount = 0
     for (const intent of journal.intents) {
-      failureCount += await this.recoverIntent(intent, currentDataRoot, deleteSources)
+      let currentIntent: DataRootCleanupIntent | undefined
+      let dependsOnPendingTarget = false
+      try {
+        const currentJournal = await this.read()
+        currentIntent = currentJournal?.intents.find(({ token }) => token === intent.token)
+        if (currentIntent) {
+          const { source, token } = currentIntent
+          dependsOnPendingTarget = Boolean(
+            currentJournal?.intents.some(
+              (candidate) => candidate.token !== token && samePath(candidate.target, source)
+            )
+          )
+        }
+      } catch {
+        return { pending: true, failureCount }
+      }
+      if (!currentIntent || dependsOnPendingTarget) continue
+      failureCount += await this.recoverIntent(currentIntent, currentDataRoot, deleteSources)
     }
     return { pending: await this.hasPending(), failureCount }
   }
