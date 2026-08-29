@@ -136,7 +136,7 @@ type SessionFileIndex = {
   softDeleteProject(projectId: string): Promise<ManagedFileSoftDeleteToken>
   reconcileProjectSessions(projectId: string, sessions: PersistedChatSession[]): Promise<void>
   reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void>
-  markReconciliationIncomplete(): void
+  markReconciliationIncomplete(): Promise<void>
 }
 
 type SessionProvenancePersistence = {
@@ -294,7 +294,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       // Once any renderer has observed a degraded snapshot, later loads are no longer allowed to
       // treat the process as an untouched startup boundary for destructive cleanup.
       this.destructiveStartupWindowOpen = false
-      this.fileIndex.markReconciliationIncomplete()
+      await this.fileIndex.markReconciliationIncomplete()
       const operation = startDiagnosticOperation(this.log, {
         operation: 'session-hydration',
         cpuUsage: SESSION_CPU_TRACE_ENABLED ? process.cpuUsage : undefined,
@@ -377,7 +377,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       if (!hasAuthoritativeSessionCatalog) {
         // Without the full active-session set, absent rows may still be owned by unreadable or
         // quarantined JSON, so every derived owner must remain incomplete and untouched.
-        this.fileIndex.markReconciliationIncomplete()
+        await this.fileIndex.markReconciliationIncomplete()
         operation.complete({
           status: 'partial',
           sessionCount: sessions.length,
@@ -415,7 +415,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         }
         if (recoveryFailureCount > 0) {
           this.stateOwner.replaceMetadata(sessions, false)
-          this.fileIndex.markReconciliationIncomplete()
+          await this.fileIndex.markReconciliationIncomplete()
           result = {
             ...result,
             sessions,
@@ -476,7 +476,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 
       if (reconciliation.status === 'degraded') {
         this.stateOwner.markMetadataIncomplete()
-        this.fileIndex.markReconciliationIncomplete()
+        await this.fileIndex.markReconciliationIncomplete()
         operation.fail(reconciliation.failure, {
           status: 'degraded',
           hydrationAvailable: true,
@@ -850,7 +850,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           }
         } catch {
           // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
-          this.fileIndex.markReconciliationIncomplete()
+          await this.fileIndex.markReconciliationIncomplete()
         }
         throw error
       }
@@ -892,7 +892,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     return this.operationScheduler.runGlobal(async () => {
       const scan = await this.repository.loadAllWithDiagnostics()
       if (!scan.isComplete) {
-        this.fileIndex.markReconciliationIncomplete()
+        await this.fileIndex.markReconciliationIncomplete()
         this.notifyFilesChanged({
           projectId,
           sources: ['artifact', 'upload'],

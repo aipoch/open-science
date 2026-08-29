@@ -84,7 +84,7 @@ const fileIndex: SessionFileIndex = {
   softDeleteProject: async () => 'delete-project',
   reconcileActiveSessions: async () => undefined,
   reconcileProjectSessions: async () => undefined,
-  markReconciliationIncomplete: () => undefined
+  markReconciliationIncomplete: async () => undefined
 }
 
 type CompositionHarness = Readonly<{

@@ -26,6 +26,7 @@ type ProjectFilesClient = Pick<
   | 'uploadFile'
   | 'artifactVersion'
   | 'uploadVersion'
+  | '$executeRaw'
   | '$queryRaw'
   | '$transaction'
 >

@@ -357,6 +357,13 @@ model ManagedFileSessionSync {
   @@index([projectId, deletedAt, groupSortAtMs, sessionId])
 }
 
+// Singleton completeness marker for catalog-wide Project Files reconciliation. Per-Session retry
+// state remains represented by ManagedFileSessionSync.filesRevision < 0.
+model ManagedFileIndexState {
+  id                       String  @id
+  isReconciliationComplete Boolean @default(true)
+}
+
 // Narrow origin lifecycle retained after a live Session JSON is deleted. This is not a second
 // editable Session model; it exists only to preserve managed-file ownership and deletion state.
 model FileOriginSession {

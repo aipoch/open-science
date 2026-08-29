@@ -5,7 +5,6 @@ import type { ProjectFileSource } from '../../shared/project-files'
 import { createLogger } from '../logger'
 import {
   buildProjectCollisionFilters,
-  describeError,
   extractSessionFiles,
   fileIdentity,
   getChangedSources,
@@ -16,6 +15,7 @@ import {
   type ProjectFilesClient,
   type ProjectFilesClientProvider
 } from './mutation-projection'
+import { setProjectFilesReconciliationComplete } from './index-state'
 
 const log = createLogger('project-files')
 
@@ -29,8 +29,7 @@ type ManagedFileSyncOptions = { force?: boolean }
 // Owns every Project Files projection mutation and its completeness state. The public repository
 // delegates here while retaining the stable caller interface and the query orchestration for FI2.
 class ProjectFilesMutationOwner {
-  private readonly incompleteSessions = new Map<string, string>()
-  private isReconciliationIncomplete = false
+  private hasPendingIncompleteState = false
 
   constructor(
     private readonly getClient: ProjectFilesClientProvider,
@@ -54,7 +53,6 @@ class ProjectFilesMutationOwner {
         currentSync.deletedAt === null &&
         (await isFileProjectionCurrent(client, session.projectId, session.id))
       ) {
-        this.incompleteSessions.delete(sessionKey(session.projectId, session.id))
         return []
       }
 
@@ -214,15 +212,34 @@ class ProjectFilesMutationOwner {
         return transactionChangedSources
       })
 
-      const key = sessionKey(session.projectId, session.id)
-      if (hasIncompleteFiles) {
-        this.incompleteSessions.set(key, extraction.errors.join('; '))
-      } else {
-        this.incompleteSessions.delete(key)
-      }
       return changedSources
     } catch (error) {
-      this.incompleteSessions.set(sessionKey(session.projectId, session.id), describeError(error))
+      // Preserve the retry marker when a failure occurs before the normal transaction can write it.
+      // If SQLite itself is unavailable, retain the original sync error instead of masking it.
+      try {
+        const client = await this.getClient()
+        await client.managedFileSessionSync.upsert({
+          where: { projectId_sessionId: { projectId: session.projectId, sessionId: session.id } },
+          create: {
+            projectId: session.projectId,
+            sessionId: session.id,
+            filesRevision: RETRYABLE_COLLISION_REVISION,
+            groupSortAtMs: BigInt(session.updatedAt),
+            artifactCount: 0,
+            uploadCount: 0
+          },
+          update: {
+            filesRevision: RETRYABLE_COLLISION_REVISION,
+            syncedAt: new Date(),
+            deletedAt: null,
+            deleteOperationId: null
+          }
+        })
+      } catch {
+        // Fall back to the global durable marker before the next observable read. Do not clear this
+        // flag when a different concurrent Session persists its own retry marker successfully.
+        this.hasPendingIncompleteState = true
+      }
       throw error
     }
   }
@@ -318,8 +335,13 @@ class ProjectFilesMutationOwner {
     sessions: PersistedChatSession[],
     projectId?: string
   ): Promise<void> {
+    const reconcilesEntireCatalog = projectId === undefined
     try {
       const client = await this.getClient()
+      if (reconcilesEntireCatalog) {
+        await setProjectFilesReconciliationComplete(client, false)
+        this.hasPendingIncompleteState = false
+      }
       const activeKeys = new Set(
         sessions.map((session) => sessionKey(session.projectId, session.id))
       )
@@ -368,14 +390,12 @@ class ProjectFilesMutationOwner {
       for (const origin of retainedOrigins) {
         await this.rebuildRetainedOriginProjection(client, origin.projectId, origin.sessionId)
       }
-      for (const key of this.incompleteSessions.keys()) {
-        if ((!projectId || key.startsWith(`${projectId}:`)) && !activeKeys.has(key)) {
-          this.incompleteSessions.delete(key)
-        }
+      if (reconcilesEntireCatalog) {
+        await setProjectFilesReconciliationComplete(client, true)
+        this.hasPendingIncompleteState = false
       }
-      if (!projectId) this.isReconciliationIncomplete = false
     } catch (error) {
-      this.isReconciliationIncomplete = true
+      this.hasPendingIncompleteState = true
       throw error
     }
   }
@@ -506,15 +526,22 @@ class ProjectFilesMutationOwner {
     })
   }
 
-  markReconciliationIncomplete(): void {
-    this.isReconciliationIncomplete = true
+  async markReconciliationIncomplete(): Promise<void> {
+    this.hasPendingIncompleteState = true
+    try {
+      const client = await this.getClient()
+      await setProjectFilesReconciliationComplete(client, false)
+      this.hasPendingIncompleteState = false
+    } catch {
+      // This marker is diagnostic state: preserve the caller's primary failure and retry before
+      // the next observable Project Files read.
+    }
   }
 
-  isIndexComplete(projectId: string): boolean {
-    return (
-      !this.isReconciliationIncomplete &&
-      ![...this.incompleteSessions.keys()].some((key) => key.startsWith(`${projectId}:`))
-    )
+  async flushPendingIncompleteState(client: ProjectFilesClient): Promise<void> {
+    if (!this.hasPendingIncompleteState) return
+    await setProjectFilesReconciliationComplete(client, false)
+    this.hasPendingIncompleteState = false
   }
 }
 

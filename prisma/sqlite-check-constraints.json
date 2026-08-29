@@ -196,6 +196,11 @@
       "expression": "\"source\" IN ('artifact', 'upload')"
     },
     {
+      "tableName": "ManagedFileIndexState",
+      "name": "ManagedFileIndexState_identity_check",
+      "expression": "\"id\" = 'project-files-index' AND \"isReconciliationComplete\" IN (false, true)"
+    },
+    {
       "tableName": "UploadVersion",
       "name": "UploadVersion_state_check",
       "expression": "\"state\" IN ('staging', 'ready')"

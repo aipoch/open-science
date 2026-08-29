@@ -850,7 +850,7 @@ describe('ManagedFileIndexRepository', () => {
       totalCount: 1,
       artifactCount: 1,
       artifactGroupCount: 1,
-      isIndexComplete: true
+      isIndexComplete: false
     })
     await expect(
       repository.listFiles({
@@ -1181,6 +1181,52 @@ describe('ManagedFileIndexRepository', () => {
     const projectToken = await repository.softDeleteProject(PROJECT_ID)
     await repository.restoreProject(PROJECT_ID, projectToken)
     expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+  })
+
+  it('preserves incomplete state after the repository is recreated', async () => {
+    const missingPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'missing-after-restart.txt'
+    )
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          {
+            id: 'missing-after-restart',
+            kind: 'managed-file',
+            path: missingPath,
+            name: 'missing-after-restart.txt'
+          }
+        ]
+      })
+    )
+    expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+
+    expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+  })
+
+  it('preserves reconciliation incomplete state after the repository is recreated', async () => {
+    await repository.markReconciliationIncomplete()
+    expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+
+    expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+
+    await restartedRepository.reconcileActiveSessions([])
+    expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(true)
   })
 
   it('does not revive stale file rows when a session deletion is compensated', async () => {

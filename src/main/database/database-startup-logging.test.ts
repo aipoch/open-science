@@ -116,7 +116,8 @@ describe('database startup logging', () => {
               '0016_compute_job_sensitive_data_encryption',
               '0017_agent_memory_project_scope',
               '0018_session_auxiliary_turn_usage',
-              '0019_session_usage_attribution'
+              '0019_session_usage_attribution',
+              '0020_project_files_index_state'
             ],
             adoptedLegacy: true
           })

@@ -60,6 +60,7 @@ type SearchOverviewRow = {
   uploadCount: bigint
   artifactCount: bigint
   artifactGroupCount: bigint
+  isIndexComplete: boolean | bigint
 }
 
 const normalizeLimit = (limit: number): number => {
@@ -125,7 +126,7 @@ const getMatchingOverviewCounts = async (
   client: ProjectFilesClient,
   projectId: string,
   search: NormalizedSearch
-): Promise<[number, number, number, number]> => {
+): Promise<[number, number, number, number, boolean]> => {
   const rows = await client.$queryRaw<SearchOverviewRow[]>(Prisma.sql`
     SELECT
       COUNT(file."seq") AS "totalCount",
@@ -133,7 +134,20 @@ const getMatchingOverviewCounts = async (
       COALESCE(SUM(CASE WHEN file."source" = 'artifact' THEN 1 ELSE 0 END), 0) AS "artifactCount",
       COUNT(DISTINCT CASE
         WHEN file."source" = 'artifact' AND sync."sessionId" IS NOT NULL THEN file."sessionId"
-      END) AS "artifactGroupCount"
+      END) AS "artifactGroupCount",
+      CASE WHEN
+        EXISTS (
+          SELECT 1 FROM "ManagedFileIndexState"
+          WHERE "id" = 'project-files-index'
+            AND "isReconciliationComplete" = true
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "ManagedFileSessionSync" AS incomplete
+          WHERE incomplete."projectId" = ${projectId}
+            AND incomplete."filesRevision" < 0
+            AND incomplete."deletedAt" IS NULL
+        )
+      THEN true ELSE false END AS "isIndexComplete"
     FROM "ManagedFile" AS file
     LEFT JOIN "ManagedFileSessionSync" AS sync
       ON sync."projectId" = file."projectId"
@@ -150,7 +164,8 @@ const getMatchingOverviewCounts = async (
     toSafeCount(counts?.totalCount ?? 0n, 'search result count'),
     toSafeCount(counts?.uploadCount ?? 0n, 'upload search result count'),
     toSafeCount(counts?.artifactCount ?? 0n, 'artifact search result count'),
-    toSafeCount(counts?.artifactGroupCount ?? 0n, 'artifact group count')
+    toSafeCount(counts?.artifactGroupCount ?? 0n, 'artifact group count'),
+    counts?.isIndexComplete === true || counts?.isIndexComplete === 1n
   ]
 }
 

@@ -31,8 +31,8 @@ class ManagedFileIndexRepository {
 
   constructor(getClient: ProjectFilesClientProvider, dataRoot: string) {
     this.mutationOwner = new ProjectFilesMutationOwner(getClient, dataRoot)
-    this.queryOwner = new ProjectFilesQueryOwner(getClient, dataRoot, (projectId) =>
-      this.mutationOwner.isIndexComplete(projectId)
+    this.queryOwner = new ProjectFilesQueryOwner(getClient, dataRoot, (client) =>
+      this.mutationOwner.flushPendingIncompleteState(client)
     )
   }
 
@@ -71,8 +71,8 @@ class ManagedFileIndexRepository {
     return this.mutationOwner.reconcileProjectSessions(projectId, sessions)
   }
 
-  markReconciliationIncomplete(): void {
-    this.mutationOwner.markReconciliationIncomplete()
+  markReconciliationIncomplete(): Promise<void> {
+    return this.mutationOwner.markReconciliationIncomplete()
   }
 
   async getOverview(
