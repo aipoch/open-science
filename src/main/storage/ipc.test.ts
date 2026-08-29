@@ -58,6 +58,7 @@ const {
 const { clearApplicationShutdownTrigger, currentApplicationShutdownTrigger } =
   await import('../application-shutdown-trigger')
 const { readMigrationMarker, writeMigrationMarker } = await import('./migration-marker')
+const { DataRootCleanupJournal } = await import('./data-root-cleanup')
 
 // Writes the verified staging marker a completed copy phase would leave, so commit/discard gates pass.
 const seedVerifiedMarker = async (targetDir: string, source: string): Promise<void> => {
@@ -1386,6 +1387,28 @@ describe('storage IPC handlers', () => {
     expect(existsSync(target)).toBe(false)
   })
 
+  it('rejects a new migration while cleanup from an earlier move is pending', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(target)
+    const cleanupJournal = new DataRootCleanupJournal(join(currentParent, 'config'))
+    await cleanupJournal.stage({
+      token: 'pending-cleanup',
+      source: dataRoot,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    const deps = fakeDeps({ cleanupJournal })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'Old data cleanup is still pending. Restart the app before moving data again.'
+    })
+    expect(deps.runtime.disconnect).not.toHaveBeenCalled()
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+  })
+
   it('discard lifts the write-gate after a staged copy is thrown away', async () => {
     initDataRoot(dataRoot)
     registerStorageIpcHandlers(fakeDeps())
@@ -1557,6 +1580,36 @@ describe('storage IPC handlers', () => {
       ).resolves.toEqual({
         ok: false,
         error: 'A completed migration is waiting to be committed or discarded.'
+      })
+      expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+      expect(deps.relaunch).not.toHaveBeenCalled()
+    } finally {
+      await rm(alternateParent, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a pointer-only switch while cleanup from an earlier move is pending', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(target)
+    const alternateParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-alternate-'))
+    await mkdir(join(dataRootFor(alternateParent), 'artifacts'), { recursive: true })
+    const cleanupJournal = new DataRootCleanupJournal(join(currentParent, 'config'))
+    await cleanupJournal.stage({
+      token: 'pending-cleanup',
+      source: dataRoot,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    const deps = fakeDeps({ cleanupJournal })
+    registerStorageIpcHandlers(deps)
+
+    try {
+      await expect(
+        invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
+      ).resolves.toEqual({
+        ok: false,
+        error: 'Old data cleanup is still pending. Restart the app before moving data again.'
       })
       expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
       expect(deps.relaunch).not.toHaveBeenCalled()

@@ -91,6 +91,9 @@ class DataRootCleanupJournal {
   }
 
   async stage(input: StageDataRootCleanupIntent): Promise<void> {
+    if (await this.hasPending()) {
+      throw new Error('Old data-root cleanup is still pending.')
+    }
     if (input.dirs.length === 0 || !input.dirs.every((dir) => ALLOWED_CLEANUP_DIRS.has(dir))) {
       throw new Error('Refused unsafe data-root cleanup paths.')
     }

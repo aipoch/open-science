@@ -37,6 +37,37 @@ afterEach(async () => {
 })
 
 describe('DataRootCleanupJournal', () => {
+  it('refuses to overwrite cleanup authority that is still pending', async () => {
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    const otherSource = join(root, 'other-old-root')
+    const otherTarget = join(root, 'other-new-root')
+    await mkdir(otherSource)
+    await mkdir(otherTarget)
+
+    await expect(
+      journal.stage({
+        token: 'other-token',
+        source: otherSource,
+        target: otherTarget,
+        dirs: ['artifacts'],
+        createdAt: 2
+      })
+    ).rejects.toThrow('cleanup is still pending')
+
+    const deleteSources = vi.fn().mockResolvedValue({ deleted: ['artifacts'], failed: [] })
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: false,
+      failureCount: 0
+    })
+  })
+
   it('keeps a failed cleanup durable and clears it after a later startup retry succeeds', async () => {
     const journal = new DataRootCleanupJournal(configRoot)
     await journal.stage({
