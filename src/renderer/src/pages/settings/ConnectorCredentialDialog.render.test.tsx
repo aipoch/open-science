@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
-import { ConnectorCredentialDialog } from './ConnectorCredentialDialog'
+import { ConnectorCredentialControls, ConnectorCredentialDialog } from './ConnectorCredentialDialog'
 
 let container: HTMLDivElement
 let root: Root
@@ -15,7 +15,7 @@ const button = (label: string): HTMLButtonElement | undefined =>
   )
 
 const enterKey = (value: string): void => {
-  const field = document.body.querySelector<HTMLInputElement>('#runtime-openalex-api-key')
+  const field = document.body.querySelector<HTMLInputElement>('[role="dialog"] input')
   const event = new Event('paste', { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'clipboardData', {
     value: { getData: vi.fn(() => value), setData: vi.fn() }
@@ -60,6 +60,33 @@ afterEach(() => {
 })
 
 describe('ConnectorCredentialDialog', () => {
+  it('keeps concurrent embedded and fallback fields uniquely labelled', () => {
+    act(() =>
+      root.render(
+        <>
+          <ConnectorCredentialControls
+            embedded
+            request={{
+              id: 'credential-session',
+              credentialId: 'openalex',
+              connector: 'literature',
+              method: 'openalex_search_works',
+              sessionId: 'session-1'
+            }}
+          />
+          <ConnectorCredentialDialog />
+        </>
+      )
+    )
+
+    const fields = Array.from(document.body.querySelectorAll<HTMLInputElement>('input'))
+    const labels = Array.from(document.body.querySelectorAll<HTMLLabelElement>('label'))
+
+    expect(fields).toHaveLength(2)
+    expect(new Set(fields.map((field) => field.id))).toHaveProperty('size', 2)
+    expect(fields.every((field) => labels.some((label) => label.htmlFor === field.id))).toBe(true)
+  })
+
   it('leaves Session requests for the Composer lane', () => {
     useSettingsStore.setState({
       pendingCredentialRequests: [

@@ -1,6 +1,6 @@
 import { AlertTriangle, KeyRound } from 'lucide-react'
 import { Dialog } from 'radix-ui'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -39,6 +39,7 @@ export function ConnectorCredentialControls({
   const validateOpenAlexCredential = useSettingsStore((state) => state.validateOpenAlexCredential)
   const respond = useSettingsStore((state) => state.respondCredentialRequest)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
+  const inputId = useId()
   const [draft, setDraft] = useState<{ requestId: string; value: string }>()
   const [busy, setBusy] = useState(false)
   const [failedRequestId, setFailedRequestId] = useState<string>()
@@ -128,11 +129,11 @@ export function ConnectorCredentialControls({
       </div>
 
       <div className={cn(dialogBodyClassName, 'space-y-2')}>
-        <label htmlFor="runtime-openalex-api-key" className="text-sm font-medium">
+        <label htmlFor={inputId} className="text-sm font-medium">
           {t('API key')}
         </label>
         <MaskedPasswordField
-          id="runtime-openalex-api-key"
+          id={inputId}
           value={apiKey}
           onChange={(value) => setDraft({ requestId: request.id, value })}
           placeholder={t('Paste your OpenAlex API key')}
