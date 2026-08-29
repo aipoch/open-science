@@ -83,4 +83,30 @@ describe('createDataRootResearchSafeInstallGate', () => {
       expect(teardown).not.toHaveBeenCalled()
     }
   )
+
+  it.each(['agent', 'notebook'] as const)(
+    'allows confirmed %s interruption for migration',
+    async (blocker) => {
+      const teardown = vi.fn<InstallGate>().mockResolvedValue({ completed: true, reaped: true })
+      const gate = createDataRootResearchSafeInstallGate(() => [blocker], teardown, true)
+
+      await expect(gate()).resolves.toEqual({ completed: true, reaped: true })
+      expect(teardown).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['delegated', 'reviewer'] as const)(
+    'still refuses confirmed migration while %s work is active',
+    async (blocker) => {
+      const teardown = vi.fn<InstallGate>().mockResolvedValue({ completed: true, reaped: true })
+      const gate = createDataRootResearchSafeInstallGate(() => [blocker], teardown, true)
+
+      await expect(gate()).resolves.toEqual({
+        completed: false,
+        reaped: false,
+        blockedBy: [blocker]
+      })
+      expect(teardown).not.toHaveBeenCalled()
+    }
+  )
 })

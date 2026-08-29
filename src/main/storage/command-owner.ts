@@ -105,7 +105,10 @@ type StorageCommandOwnerDeps = {
   validateNewDataRoot?: typeof validateNewDataRoot
   // Stops data producers and proves renderer-owned Session state is durable before any data-root
   // pointer can be persisted. Optional only for isolated storage tests and non-desktop adapters.
-  prepareDataRootHandoff?: (target: RendererSessionPersistenceTarget) => Promise<boolean>
+  prepareDataRootHandoff?: (
+    target: RendererSessionPersistenceTarget,
+    confirmedInterruption: boolean
+  ) => Promise<boolean>
   acknowledgeWebRendererFlush?: (
     response: SessionPersistenceFlushResponse,
     lifecycleClientId: string
@@ -159,10 +162,13 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     error: (message, data) => emitSafely('error', message, data)
   }
   const prepareDataRootHandoff = async (
-    target: RendererSessionPersistenceTarget
+    target: RendererSessionPersistenceTarget,
+    confirmedInterruption: boolean
   ): Promise<MigrationOutcome | undefined> => {
     try {
-      if ((await deps.prepareDataRootHandoff?.(target)) !== false) return undefined
+      if ((await deps.prepareDataRootHandoff?.(target, confirmedInterruption)) !== false) {
+        return undefined
+      }
     } catch (error) {
       logger.error('data root handoff preparation failed', diagnosticErrorFields(error))
     }
@@ -343,7 +349,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         return { ok: false, error: 'A review is still running. Stop it before moving data.' }
       }
 
-      const preparationFailure = await prepareDataRootHandoff(handoffTarget)
+      const preparationFailure = await prepareDataRootHandoff(handoffTarget, true)
       rendererPrepared = preparationFailure === undefined
       if (controller.signal.aborted) {
         return { ok: false, error: 'migration cancelled', cancelled: true }
@@ -624,7 +630,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         return { ok: false, error: 'A review is still running. Stop it before finishing the move.' }
       }
 
-      const preparationFailure = await prepareDataRootHandoff(handoffTarget)
+      const preparationFailure = await prepareDataRootHandoff(handoffTarget, true)
       rendererPrepared = preparationFailure === undefined
       if (signal.aborted) {
         endMigrationCopy()
@@ -864,7 +870,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           error: activeWorkError
         }
       }
-      const preparationFailure = await prepareDataRootHandoff(handoffTarget)
+      const preparationFailure = await prepareDataRootHandoff(handoffTarget, false)
       if (signal.aborted) {
         operation.fail(new Error('data root change cancelled'), { mode: classification.kind })
         return { ok: false, error: 'Data-root change cancelled.' }

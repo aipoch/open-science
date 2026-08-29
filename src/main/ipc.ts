@@ -2701,24 +2701,26 @@ const createApplicationModules = async (
     if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
     return blockers
   }
-  // Keep the data-root admission policy at a pure seam: Promise.all starts every shutdown step
-  // before yielding, so the synchronous check immediately before it owns the teardown boundary.
-  const researchSafeDataRootTeardownGate = createDataRootResearchSafeInstallGate(
-    detectResearchBlockers,
-    () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
-  )
   const durableDataRootHandoffGate = (
-    target: RendererSessionPersistenceTarget
+    target: RendererSessionPersistenceTarget,
+    confirmedInterruption: boolean
   ): Promise<InstallReadiness> =>
-    createDurableInstallGate(researchSafeDataRootTeardownGate, async () => {
-      if (target.surface !== 'web-renderer') {
-        return confirmRendererDurability('data-root-handoff', target.surface)
+    createDurableInstallGate(
+      createDataRootResearchSafeInstallGate(
+        detectResearchBlockers,
+        () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
+        confirmedInterruption
+      ),
+      async () => {
+        if (target.surface !== 'web-renderer') {
+          return confirmRendererDurability('data-root-handoff', target.surface)
+        }
+        const outcome = await webSessionPersistenceFlush.flush(target.lifecycleClientId)
+        const blocked = rendererSessionPersistenceFlushBlocksShutdown(outcome, 'data-root-handoff')
+        if (blocked) webSessionPersistenceFlush.notifyAborted()
+        return !blocked
       }
-      const outcome = await webSessionPersistenceFlush.flush(target.lifecycleClientId)
-      const blocked = rendererSessionPersistenceFlushBlocksShutdown(outcome, 'data-root-handoff')
-      if (blocked) webSessionPersistenceFlush.notifyAborted()
-      return !blocked
-    })()
+    )()
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
@@ -3223,8 +3225,8 @@ const createApplicationModules = async (
         webSessionPersistenceFlush.notifyAborted()
       }
     },
-    prepareDataRootHandoff: async (target) => {
-      const readiness = await durableDataRootHandoffGate(target)
+    prepareDataRootHandoff: async (target, confirmedInterruption) => {
+      const readiness = await durableDataRootHandoffGate(target, confirmedInterruption)
       return readiness.completed && readiness.reaped
     }
   })

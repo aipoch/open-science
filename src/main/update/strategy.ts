@@ -57,8 +57,15 @@ export const createActiveResearchSafeInstallGate =
 // root switches have no confirmation step, so every producer must be absent before teardown starts.
 export const createDataRootResearchSafeInstallGate = (
   detectBlockers: () => UpdateBlocker[],
-  runTeardownGate: InstallGate
-): InstallGate => createActiveResearchSafeInstallGate(detectBlockers, runTeardownGate)
+  runTeardownGate: InstallGate,
+  confirmedInterruption = false
+): InstallGate =>
+  createActiveResearchSafeInstallGate(() => {
+    const blockers = detectBlockers()
+    return confirmedInterruption
+      ? blockers.filter((blocker) => blocker === 'delegated' || blocker === 'reviewer')
+      : blockers
+  }, runTeardownGate)
 
 // Confirms renderer-owned state is durable only after backend teardown has stopped producing runtime
 // events. A refused durability check leaves the installer untouched, while the non-latching teardown

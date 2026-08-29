@@ -1065,6 +1065,38 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
+  it('clears recovered writer gates before quit-anyway reissues quit', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    let finishPause: (() => void) | undefined
+    const pauseDataRootWriters = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPause = resolve
+        })
+    )
+    const deps = fakeDeps({ pauseDataRootWriters })
+    const restartedOwner = createStorageCommandOwner(deps)
+    const guardApp = makeMigrationQuitGuardApp()
+    installMigrationQuitGuard(guardApp, () => true)
+
+    const commit = restartedOwner.commitAndRelaunch({ parent: targetParent })
+    await vi.waitFor(() => expect(pauseDataRootWriters).toHaveBeenCalledOnce())
+    expect(isMigrationInProgress()).toBe(true)
+    expect(isMigrationPending()).toBe(true)
+
+    const { prevented } = guardApp.fireBeforeQuit()
+    expect(prevented).toBe(true)
+    expect(guardApp.quit).not.toHaveBeenCalled()
+    finishPause?.()
+
+    await expect(commit).resolves.toMatchObject({ ok: false, cancelled: true })
+    await vi.waitFor(() => expect(guardApp.quit).toHaveBeenCalledOnce())
+    expect(isMigrationInProgress()).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+    expect(await readMigrationMarker(target)).toMatchObject({ status: 'verified' })
+  })
+
   it('keeps a committed recovered handoff non-cancellable after quit-anyway', async () => {
     initDataRoot(dataRoot)
     await seedVerifiedMarker(target, dataRoot)
@@ -1711,7 +1743,7 @@ describe('storage IPC handlers', () => {
     const target = { surface: 'web-renderer', lifecycleClientId: 'web:client-a' } as const
     await owner.setDataRootAndRelaunch({ parent: targetParent }, target)
 
-    expect(prepareDataRootHandoff).toHaveBeenCalledWith(target)
+    expect(prepareDataRootHandoff).toHaveBeenCalledWith(target, false)
   })
 
   it('set-data-root-and-relaunch refuses delegated work before preparing the handoff', async () => {
