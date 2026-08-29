@@ -393,6 +393,22 @@ describe('copyAndVerify', () => {
     expect(await readFile(join(to, 'artifacts', 'a.txt'), 'utf8')).toBe('hello artifacts')
   })
 
+  it('treats a missing source root as an empty migration', async () => {
+    await rm(from, { recursive: true })
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts', 'uploads'],
+      signal: new AbortController().signal,
+      onProgress: () => {}
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(await exists(join(to, 'artifacts'))).toBe(false)
+    expect(await exists(join(to, 'uploads'))).toBe(false)
+  })
+
   // Symlink creation needs privilege on Windows, so skip there.
   it.skipIf(process.platform === 'win32')(
     'preserves an inner symlink by recreating it as a link at the destination (conda cache support)',

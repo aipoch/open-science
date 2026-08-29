@@ -266,7 +266,13 @@ export const validateMigrationSourceLinks = async (
   dirs: readonly string[]
 ): Promise<MigrationResult> => {
   try {
-    const canonicalSourceRoot = resolve(await realpath(from))
+    let canonicalSourceRoot: string
+    try {
+      canonicalSourceRoot = resolve(await realpath(from))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true }
+      throw error
+    }
     for (const dir of dirs) {
       const srcDir = join(from, dir)
       const entries = await listEntries(srcDir)
