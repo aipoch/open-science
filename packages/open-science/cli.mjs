@@ -940,8 +940,10 @@ export const updateCommand = async (options, dependencies = {}) => {
   }
 
   if (result.outcome === 'manual-action-required' && result.installerPath) {
-    let requiresManualStop = serviceStart?.started !== true
-    if (serviceStart?.started === true) {
+    const attachedToDesktopApp = serviceStart?.state?.attached === true
+    const ownsService = serviceStart?.started === true && !attachedToDesktopApp
+    let requiresManualStop = !ownsService
+    if (ownsService) {
       try {
         await deps.stopService(options)
       } catch {
@@ -950,7 +952,12 @@ export const updateCommand = async (options, dependencies = {}) => {
         requiresManualStop = true
       }
     }
-    if (requiresManualStop) {
+    if (attachedToDesktopApp) {
+      result = {
+        ...result,
+        nextAction: `Quit the running Open Science app, then run the installer at ${result.installerPath} and start Open Science again.`
+      }
+    } else if (requiresManualStop) {
       result = {
         ...result,
         nextAction: `Run "open-science stop", then run the installer at ${result.installerPath} and start Open Science again.`

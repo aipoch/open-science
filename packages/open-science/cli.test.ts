@@ -1521,6 +1521,42 @@ describe('task CLI', () => {
     })
   })
 
+  it('requires quitting an attached desktop app before running a manual installer', async () => {
+    const installerPath = '/data/update/Open-Science.dmg'
+    const stopService = vi.fn()
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({
+          started: true,
+          state: { attached: true }
+        }),
+        stopService,
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand: vi.fn().mockResolvedValue({
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          localPath: installerPath
+        }),
+        log: vi.fn(),
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(stopService).not.toHaveBeenCalled()
+    expect(result).toMatchObject({
+      installerPath,
+      nextAction: expect.stringContaining('Quit the running Open Science app')
+    })
+  })
+
   it('keeps the installer handoff when stopping a service started by update fails', async () => {
     const installerPath = '/data/update/Open-Science.dmg'
     const stopService = vi.fn().mockRejectedValue(new Error('service still running'))
