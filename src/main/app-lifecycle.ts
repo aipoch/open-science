@@ -251,13 +251,17 @@ export const installAppLifecycle = (
       return
     }
     const trigger = shutdownTrigger()
+    // Updates and data-root relaunches are committed handoffs by the time app.quit() runs. Ordinary
+    // quit may still be cancelled to preserve active work, but cancelling either handoff would leave
+    // the current process alive after its durable next-start state has already changed.
+    const shutdownCanBeCancelled = trigger === 'quit'
 
-    // Final synchronous resource-safety boundary. A delegated Attempt may start after an earlier
-    // confirmation snapshot (or after a saved close preference was read), and requestQuit(true) can
-    // arrive directly from the Windows titlebar path. Never enter preparation/flush/teardown while
-    // such work exists; clear confirmation/trigger state and show the hard-blocking prompt instead.
+    // Final synchronous safety boundary for ordinary quits. A delegated Attempt may start after an
+    // earlier confirmation snapshot (or after a saved close preference was read), and requestQuit(true)
+    // can arrive directly from the Windows titlebar path. Committed handoffs must continue; otherwise
+    // clear confirmation/trigger state and show the hard-blocking prompt instead.
     const delegatedAtShutdownBoundary = detectDelegatedWork()
-    if (delegatedAtShutdownBoundary.length > 0) {
+    if (shutdownCanBeCancelled && delegatedAtShutdownBoundary.length > 0) {
       event.preventDefault()
       quitConfirmed = false
       clearApplicationShutdownTrigger()
@@ -271,7 +275,7 @@ export const installAppLifecycle = (
 
     // Confirmation gate: unless the user already confirmed (e.g. Windows X -> Quit), confirm the
     // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.
-    if (!quitConfirmed && trigger === 'quit') {
+    if (!quitConfirmed && shutdownCanBeCancelled) {
       event.preventDefault()
       if (confirmInFlight) return
       confirmInFlight = true
@@ -347,7 +351,7 @@ export const installAppLifecycle = (
         rendererPreflightOutcome = preflight.outcome
         rendererPreflightResult = preflight.result
         if (
-          trigger !== 'update' &&
+          shutdownCanBeCancelled &&
           rendererSessionPersistenceFlushBlocksShutdown(rendererPreflightOutcome)
         ) {
           shutdownAbortedForRendererPersistence = true
@@ -384,7 +388,7 @@ export const installAppLifecycle = (
         rendererFlushOutcome = finalFlush.outcome
         rendererFlushResult = finalFlush.result
         if (
-          trigger !== 'update' &&
+          shutdownCanBeCancelled &&
           rendererSessionPersistenceFlushBlocksShutdown(rendererFlushOutcome)
         ) {
           shutdownAbortedForRendererPersistence = true

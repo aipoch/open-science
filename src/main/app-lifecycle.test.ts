@@ -504,6 +504,41 @@ describe('installAppLifecycle', () => {
     }
   )
 
+  it('does not cancel a committed data-root handoff when delegated work is still active', async () => {
+    markApplicationShutdownTrigger('migration-relaunch')
+    const { app, confirmClose, shutdownBackends } = setup({
+      detectActiveSessions: () => [
+        { projectId: 'project-1', sessionId: 'session-1', kind: 'delegated' }
+      ]
+    })
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it.each(['conflict', 'renderer-failed'] as const)(
+    'does not cancel a committed data-root handoff when renderer persistence returns %s',
+    async (outcome) => {
+      markApplicationShutdownTrigger('migration-relaunch')
+      const flushSessionPersistence = vi.fn(async () => outcome)
+      const { app, abortQuitPreparation, shutdownBackends } = setup({
+        flushSessionPersistence
+      })
+
+      app.emit('before-quit')
+      await flush()
+
+      expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+      expect(abortQuitPreparation).not.toHaveBeenCalled()
+      expect(shutdownBackends).toHaveBeenCalledOnce()
+      expect(app.exit).toHaveBeenCalledWith(0)
+    }
+  )
+
   it('completes an update handoff after quitAndInstall has already closed the renderer', async () => {
     markApplicationShutdownTrigger('update')
     const flushSessionPersistence = vi.fn(async () => 'send-failed' as const)
