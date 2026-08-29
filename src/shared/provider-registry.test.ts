@@ -424,19 +424,19 @@ describe('provider registry', () => {
     expect(usesVendorAnthropicApiKeyHeader('tencent')).toBe(true)
     expect(usesVendorAnthropicApiKeyHeader('deepseek')).toBe(false)
     expect(vendorHasRegions('tencent')).toBe(true)
-    expect(resolveVendorBaseUrl('tencent')).toBe('https://tokenhub.tencentmaas.com')
-    expect(resolveVendorOpenAiBaseUrl('tencent')).toBe('https://tokenhub.tencentmaas.com/v1')
-    expect(resolveVendorApiKeyUrl('tencent')).toBe(
-      'https://console.cloud.tencent.com/tokenhub/apikey'
-    )
-    expect(resolveVendorBaseUrl('tencent', 'international')).toBe(
-      'https://tokenhub-intl.tencentcloudmaas.com'
-    )
-    expect(resolveVendorOpenAiBaseUrl('tencent', 'international')).toBe(
+    expect(resolveVendorBaseUrl('tencent')).toBe('https://tokenhub-intl.tencentcloudmaas.com')
+    expect(resolveVendorOpenAiBaseUrl('tencent')).toBe(
       'https://tokenhub-intl.tencentcloudmaas.com/v1'
     )
-    expect(resolveVendorApiKeyUrl('tencent', 'international')).toBe(
+    expect(resolveVendorApiKeyUrl('tencent')).toBe(
       'https://console.tencentcloud.com/tokenhub/apikey'
+    )
+    expect(resolveVendorBaseUrl('tencent', 'china')).toBe('https://tokenhub.tencentmaas.com')
+    expect(resolveVendorOpenAiBaseUrl('tencent', 'china')).toBe(
+      'https://tokenhub.tencentmaas.com/v1'
+    )
+    expect(resolveVendorApiKeyUrl('tencent', 'china')).toBe(
+      'https://console.cloud.tencent.com/tokenhub/apikey'
     )
     expect(resolveVendorModelsUrl('tencent')).toBeUndefined()
     expect(defaultVendorModel('tencent')).toBe('hy4-preview')

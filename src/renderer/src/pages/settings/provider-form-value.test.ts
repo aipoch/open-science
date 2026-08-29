@@ -214,7 +214,7 @@ describe('provider-kind helpers', () => {
       type: 'official',
       name: 'Tencent TokenHub',
       vendorId: 'tencent',
-      region: 'china',
+      region: 'international',
       model: '',
       contextWindow: '',
       maxInputTokens: '',

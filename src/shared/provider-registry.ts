@@ -634,18 +634,18 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     anthropicApiKeyHeader: true,
     regions: [
       {
-        id: 'china',
-        label: 'China (Guangzhou)',
-        baseUrl: 'https://tokenhub.tencentmaas.com',
-        openaiBaseUrl: 'https://tokenhub.tencentmaas.com/v1',
-        apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/apikey'
-      },
-      {
         id: 'international',
         label: 'International (Singapore)',
         baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
         openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
         apiKeyUrl: 'https://console.tencentcloud.com/tokenhub/apikey'
+      },
+      {
+        id: 'china',
+        label: 'China (Guangzhou)',
+        baseUrl: 'https://tokenhub.tencentmaas.com',
+        openaiBaseUrl: 'https://tokenhub.tencentmaas.com/v1',
+        apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/apikey'
       }
     ],
     models: [{ id: 'hy4-preview', contextWindow: 1_000_000 }]
