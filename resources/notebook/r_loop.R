@@ -1470,9 +1470,9 @@ rm(namespace_state)
 base::local({
   state <- new.env(parent = emptyenv())
   state$during_read <- FALSE
-  # Retain the fully read frame's identity until its response is emitted. A SIGINT can otherwise
-  # escape between the local read/eval handlers and terminate Rscript without acknowledging it.
-  state$current_req_id <- NULL
+  # Retain the fully read frame until its response is emitted. A SIGINT can otherwise unwind
+  # read_request after consuming the body and discard the request before it is acknowledged.
+  state$current_req <- NULL
 
   read_request <- function() {
     empty_streak <- 0L
@@ -1518,9 +1518,25 @@ base::local({
         body_empty <- 0L
         acc <- c(acc, chunk)
       }
-      code <- if (n > 0L) rawToChar(acc, multiple = FALSE) else ""
-      state$current_req_id <- req_id
-      return(list(req_id = req_id, code = code, operation = operation))
+      req <- tryCatch(
+        {
+          code <- if (n > 0L) rawToChar(acc, multiple = FALSE) else ""
+          req <- list(req_id = req_id, code = code, operation = operation)
+          state$current_req <- req
+          req
+        },
+        interrupt = function(cnd) {
+          state$during_read <- TRUE
+          req <- list(
+            req_id = req_id,
+            code = if (n > 0L) rawToChar(acc, multiple = FALSE) else "",
+            operation = operation
+          )
+          state$current_req <- req
+          req
+        }
+      )
+      return(req)
     }
   }
 
@@ -1564,8 +1580,9 @@ base::local({
           req <- tryCatch(
             read_request(),
             interrupt = function(cnd) {
+              req <- state$current_req
               state$during_read <- TRUE
-              "retry"
+              if (is.null(req)) "retry" else req
             }
           )
           if (is.null(req)) break
@@ -1587,19 +1604,23 @@ base::local({
             },
             interrupt = function(cnd) interrupted_response(req$req_id)
           )
-          suspendInterrupts(emit(resp))
-          state$current_req_id <- NULL
+          suspendInterrupts({
+            emit(resp)
+            state$current_req <- NULL
+          })
         }
         FALSE
       },
       interrupt = function(cnd) {
-        req_id <- state$current_req_id
-        if (is.null(req_id)) {
+        req <- state$current_req
+        if (is.null(req)) {
           state$during_read <- TRUE
         } else {
           state$during_read <- FALSE
-          suspendInterrupts(emit(interrupted_response(req_id)))
-          state$current_req_id <- NULL
+          suspendInterrupts({
+            emit(interrupted_response(req$req_id))
+            state$current_req <- NULL
+          })
         }
         TRUE
       }
