@@ -35,6 +35,8 @@ type PendingSessionIncompleteState = {
 // delegates here while retaining the stable caller interface and the query orchestration for FI2.
 class ProjectFilesMutationOwner {
   private readonly pendingIncompleteSessions = new Map<string, PendingSessionIncompleteState>()
+  // Keep a deferred -1 marker from committing after a successful retry for the same Session.
+  private readonly sessionSyncTails = new Map<string, Promise<void>>()
   private hasPendingReconciliationIncompleteState = false
 
   constructor(
@@ -46,8 +48,16 @@ class ProjectFilesMutationOwner {
     session: PersistedChatSession,
     options: ManagedFileSyncOptions = {}
   ): Promise<ProjectFileSource[]> {
-    const revision = normalizeRevision(session.filesRevision)
     const key = sessionKey(session.projectId, session.id)
+    return this.withSessionSyncLock(key, () => this.syncSessionLocked(session, options, key))
+  }
+
+  private async syncSessionLocked(
+    session: PersistedChatSession,
+    options: ManagedFileSyncOptions,
+    key: string
+  ): Promise<ProjectFileSource[]> {
+    const revision = normalizeRevision(session.filesRevision)
     try {
       const client = await this.getClient()
       const currentSync = await client.managedFileSessionSync.findUnique({
@@ -550,9 +560,32 @@ class ProjectFilesMutationOwner {
       await setProjectFilesReconciliationComplete(client, false)
       this.hasPendingReconciliationIncompleteState = false
     }
-    for (const [key, state] of this.pendingIncompleteSessions) {
-      await this.persistSessionIncompleteState(client, state)
-      this.pendingIncompleteSessions.delete(key)
+    for (const key of [...this.pendingIncompleteSessions.keys()]) {
+      await this.withSessionSyncLock(key, async () => {
+        const state = this.pendingIncompleteSessions.get(key)
+        if (!state) return
+        await this.persistSessionIncompleteState(client, state)
+        if (this.pendingIncompleteSessions.get(key) === state) {
+          this.pendingIncompleteSessions.delete(key)
+        }
+      })
+    }
+  }
+
+  private async withSessionSyncLock<T>(key: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.sessionSyncTails.get(key) ?? Promise.resolve()
+    let release: () => void = () => undefined
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const tail = previous.then(() => current)
+    this.sessionSyncTails.set(key, tail)
+    await previous
+    try {
+      return await action()
+    } finally {
+      release()
+      if (this.sessionSyncTails.get(key) === tail) this.sessionSyncTails.delete(key)
     }
   }
 

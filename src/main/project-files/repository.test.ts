@@ -1258,6 +1258,64 @@ describe('ManagedFileIndexRepository', () => {
     expect((await transientRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(true)
   })
 
+  it('does not let a concurrent pending-marker flush overwrite a successful Session retry', async () => {
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+    const session = createSession()
+
+    await expect(transientRepository.syncSession(session)).rejects.toThrow(
+      'database temporarily unavailable'
+    )
+    databaseAvailable = true
+
+    let releaseTransactionReturn: () => void = () => undefined
+    const transactionMayReturn = new Promise<void>((resolve) => {
+      releaseTransactionReturn = resolve
+    })
+    let reportTransactionCommitted: () => void = () => undefined
+    const transactionCommitted = new Promise<void>((resolve) => {
+      reportTransactionCommitted = resolve
+    })
+    const originalTransaction = client.$transaction.bind(client)
+    vi.spyOn(client, '$transaction').mockImplementation((async (...args: unknown[]) => {
+      const result = await Reflect.apply(originalTransaction, client, args)
+      reportTransactionCommitted()
+      await transactionMayReturn
+      return result
+    }) as typeof client.$transaction)
+
+    let releasePendingMarker: () => void = () => undefined
+    const pendingMarkerMayPersist = new Promise<void>((resolve) => {
+      releasePendingMarker = resolve
+    })
+    const originalUpsert = client.managedFileSessionSync.upsert.bind(client.managedFileSessionSync)
+    vi.spyOn(client.managedFileSessionSync, 'upsert').mockImplementation(async (args) => {
+      await pendingMarkerMayPersist
+      return originalUpsert(args)
+    })
+
+    const retry = transientRepository.syncSession(session)
+    await transactionCommitted
+    const overview = transientRepository.getOverview(PROJECT_ID)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    releaseTransactionReturn()
+    await expect(retry).resolves.toEqual([])
+    releasePendingMarker()
+
+    await expect(overview).resolves.toMatchObject({ isIndexComplete: true })
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+    await expect(restartedRepository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      isIndexComplete: true
+    })
+  })
+
   it('flushes a pending Session marker before listing Artifact groups', async () => {
     let databaseAvailable = false
     const transientRepository = new ManagedFileIndexRepository(() => {

@@ -86,6 +86,26 @@ describe('Project Files index state migration', () => {
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
+  it('seeds the singleton marker when adopting an existing generated table', async () => {
+    const databasePath = join(storageRoot, 'open-science.db')
+    await createDatabaseAtPreviousMigration(client)
+    await client.$executeRawUnsafe(`CREATE TABLE "ManagedFileIndexState" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "isReconciliationComplete" BOOLEAN NOT NULL DEFAULT true,
+      CONSTRAINT "ManagedFileIndexState_identity_check" CHECK ("id" = 'project-files-index' AND "isReconciliationComplete" IN (false, true))
+    )`)
+
+    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toMatchObject({
+      adoptedLegacy: false,
+      applied: [MIGRATION_ID]
+    })
+    await expect(
+      client.$queryRaw<Array<{ id: string; isReconciliationComplete: boolean }>>`
+        SELECT "id", "isReconciliationComplete" FROM "ManagedFileIndexState"
+      `
+    ).resolves.toEqual([{ id: 'project-files-index', isReconciliationComplete: true }])
+  })
+
   it('enforces the singleton identity at the database boundary', async () => {
     await migrateApplicationDatabase(client)
 

@@ -1,12 +1,12 @@
 const projectFilesIndexStateMigration = {
   id: '0020_project_files_index_state',
   statements: [
-    `CREATE TABLE "ManagedFileIndexState" (
+    `CREATE TABLE IF NOT EXISTS "ManagedFileIndexState" (
       "id" TEXT NOT NULL PRIMARY KEY,
       "isReconciliationComplete" BOOLEAN NOT NULL DEFAULT true,
       CONSTRAINT "ManagedFileIndexState_identity_check" CHECK ("id" = 'project-files-index' AND "isReconciliationComplete" IN (false, true))
     )`,
-    `INSERT INTO "ManagedFileIndexState" ("id", "isReconciliationComplete")
+    `INSERT OR IGNORE INTO "ManagedFileIndexState" ("id", "isReconciliationComplete")
       VALUES ('project-files-index', true)`
   ] as const,
   operations: [] as const,
@@ -27,6 +27,15 @@ const projectFilesIndexStateMigration = {
           ]
         }
       ]
+    },
+    {
+      kind: 'table-value-equals',
+      version: 1,
+      table: 'ManagedFileIndexState',
+      keyColumn: 'id',
+      keyValue: 'project-files-index',
+      valueColumn: 'id',
+      expectedValue: 'project-files-index'
     }
   ] as const
 }
