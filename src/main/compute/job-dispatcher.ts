@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 
 import type { ComputeJob } from '../../shared/compute'
-import { createLogger, errorLogFields } from '../logger'
 import {
   classifyConnectionFailure,
   ComputeConnectionError,
@@ -14,6 +13,7 @@ import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
+import { classifyComputeJobExit, probeRemoteLaunch } from './remote-launch-recovery'
 
 // Maximum number of bytes for the per-job dispatch SSH command (enough for base64 of large scripts).
 const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
@@ -21,7 +21,6 @@ const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
 // Timeout for the dispatch SSH connection (mkdir + write files + launch). Generous to accommodate
 // slow cluster file systems; the job itself runs detached so the connection can close after.
 const DISPATCH_TIMEOUT_MS = 120_000
-const log = createLogger('compute')
 
 // Remote handle stored in the DB once the job is launched.
 export type RemoteHandle = {
@@ -132,7 +131,8 @@ export type DispatcherDeps = {
 }
 
 // Dispatches one job to its remote host asynchronously (not awaited by submit_job RPC).
-// Transitions: submitted → running (success) or error (any failure).
+// Transitions: submitted → running/terminal when remote launch state is proven, or error when a
+// failure is definitive. Ambiguous launch responses remain submitted for non-destructive recovery.
 export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<void> {
   const tracker = deps.dispatchTracker ?? sharedDispatchTracker
   // Mark in-flight synchronously (before the first await) so the poller can never observe this job
@@ -142,22 +142,12 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
     try {
       await dispatchJobInner(jobId, deps)
     } catch (error) {
+      // Unknown failures may occur after the remote launcher has started but before its handle is
+      // durable. Leave that row submitted so deterministic restart recovery can adopt it; only a
+      // transport failure already proven to be pre-launch is safe to terminalize here.
+      if (!(error instanceof ComputeConnectionError)) return
       const lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
-      if (error instanceof ComputeConnectionError) {
-        await lifecycle.dispatchError(jobId, {
-          errorCode: error.code,
-          stderrTail: error.message
-        })
-      } else {
-        log.warn('remote Compute Job dispatch failed unexpectedly', {
-          jobId,
-          ...errorLogFields(error)
-        })
-        await lifecycle.dispatchError(jobId, {
-          errorCode: 'dispatch_failed',
-          stderrTail: 'The remote Compute Job dispatch failed unexpectedly.'
-        })
-      }
+      await lifecycle.dispatchError(jobId, { errorCode: error.code, stderrTail: error.message })
     }
   } finally {
     tracker.end(jobId)
@@ -264,14 +254,25 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     `echo $LAUNCHED_PID`
   ].join('\n')
 
-  const runResult = await connection.run(dispatchCmd, {
-    timeoutMs: DISPATCH_TIMEOUT_MS,
-    loginShell: false,
-    maxOutputBytes: DISPATCH_MAX_OUTPUT_BYTES
-  })
+  let runResult
+  try {
+    runResult = await connection.run(dispatchCmd, {
+      timeoutMs: DISPATCH_TIMEOUT_MS,
+      loginShell: false,
+      maxOutputBytes: DISPATCH_MAX_OUTPUT_BYTES
+    })
+  } catch (error) {
+    if (isDefinitivePreLaunchConnectionError(error)) throw error
+    await recoverAmbiguousRemoteLaunch(job, connection, workdir, lifecycle)
+    return
+  }
 
   const connectionFailure = classifyConnectionFailure(runResult, false)
-  if (connectionFailure) throw connectionFailure
+  if (connectionFailure) {
+    if (isDefinitivePreLaunchResult(runResult, connectionFailure)) throw connectionFailure
+    await recoverAmbiguousRemoteLaunch(job, connection, workdir, lifecycle)
+    return
+  }
 
   // Non-connection failure (mkdir, base64, etc.)
   if (runResult.exitCode !== 0) {
@@ -282,14 +283,12 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     return
   }
 
-  // Parse pid from stdout (last non-empty line).
-  const pid = Number.parseInt(runResult.stdout.trim().split('\n').pop() ?? '', 10)
-  if (!Number.isFinite(pid) || pid <= 0) {
-    const [safeStdout = ''] = await redactConnectionOutputs(connection, [runResult.stdout])
-    await lifecycle.dispatchError(jobId, {
-      errorCode: 'dispatch_failed',
-      stderrTail: `Could not read pid from dispatch output: ${JSON.stringify(safeStdout)}`
-    })
+  // The dispatch protocol is exactly one positive integer line. Partial output and permissive
+  // parseInt prefixes are ambiguous because adopting the wrong PID can later target another job.
+  const pidOutput = runResult.stdout.trim()
+  const pid = /^[1-9]\d*$/.test(pidOutput) ? Number(pidOutput) : Number.NaN
+  if (runResult.truncated || !Number.isSafeInteger(pid) || pid <= 1) {
+    await recoverAmbiguousRemoteLaunch(job, connection, workdir, lifecycle, runResult.stdout)
     return
   }
 
@@ -303,4 +302,87 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
   }
 
   await lifecycle.dispatchRunning(jobId, JSON.stringify(handle))
+}
+
+const isDefinitivePreLaunchConnectionError = (error: unknown): boolean =>
+  error instanceof ComputeConnectionError &&
+  error.code !== 'host_unreachable' &&
+  error.code !== 'timeout'
+
+const isDefinitivePreLaunchResult = (
+  result: { stderr: string },
+  failure: ComputeConnectionError
+): boolean => {
+  if (failure.code !== 'host_unreachable' && failure.code !== 'timeout') return true
+  if (failure.code === 'timeout') return false
+  const stderr = result.stderr.toLowerCase()
+  return (
+    stderr.includes('connection refused') ||
+    stderr.includes('network is unreachable') ||
+    stderr.includes('no route to host') ||
+    stderr.includes('could not resolve hostname')
+  )
+}
+
+const recoverAmbiguousRemoteLaunch = async (
+  job: ComputeJob,
+  connection: ComputeConnectionLease,
+  workdir: string,
+  lifecycle: ComputeJobLifecycle,
+  invalidProtocolOutput?: string
+): Promise<void> => {
+  let observation
+  try {
+    observation = await probeRemoteLaunch(connection, workdir)
+  } catch (error) {
+    // A failed recovery probe cannot distinguish "not launched" from "launched but unreachable".
+    // Keep the durable submitted row for the poller to retry instead of inventing a terminal error.
+    await lifecycle.recordPollError(
+      job.job_id,
+      'submitted',
+      error instanceof ComputeConnectionError ? error.code : 'dispatch_recovery_probe_failed'
+    )
+    return
+  }
+
+  if (observation.kind === 'running') {
+    await lifecycle.dispatchRunning(job.job_id, JSON.stringify(observation.handle))
+    return
+  }
+  if (observation.kind === 'exited') {
+    const exitCode = observation.exitCode
+    const { status, errorCode } = classifyComputeJobExit(job, exitCode)
+    await lifecycle.finishPolled(job.job_id, {
+      status,
+      exitCode,
+      errorCode,
+      stdoutTail: null,
+      stderrTail: null
+    })
+    return
+  }
+  if (observation.kind === 'vanished') {
+    await lifecycle.finishPolled(job.job_id, {
+      status: 'failed',
+      errorCode: 'process_vanished',
+      stdoutTail: null,
+      stderrTail: null
+    })
+    return
+  }
+  if (observation.kind === 'not_started' && invalidProtocolOutput !== undefined) {
+    const [safeStdout = ''] = await redactConnectionOutputs(connection, [invalidProtocolOutput])
+    const stderrTail = `Could not read pid from dispatch output: ${JSON.stringify(safeStdout)}`
+    await lifecycle.dispatchError(job.job_id, { errorCode: 'dispatch_failed', stderrTail })
+    return
+  }
+  if (observation.kind === 'pending' || observation.kind === 'not_started') {
+    await lifecycle.recordPollError(job.job_id, 'submitted', 'dispatch_recovery_pending')
+    return
+  }
+  if (observation.kind === 'ambiguous') {
+    await lifecycle.recordPollError(job.job_id, 'submitted', 'dispatch_recovery_ambiguous')
+  }
+  // An inconclusive workdir — including one not created yet immediately after response loss — is
+  // genuinely ambiguous. The poller retries the same non-destructive probe on its next tick.
 }

@@ -49,6 +49,7 @@ const createHarness = (
     })),
     getJobStatus: vi.fn(async () => ({})),
     getJobResult: vi.fn(async () => ({})),
+    cancelJob: vi.fn(async () => ({})),
     setSessionConcurrencyLimit: vi.fn(async () => undefined),
     getSessionConcurrencyStatus: vi.fn(async () => ({
       session_limit: null,
@@ -192,5 +193,21 @@ describe('AgentComputeService', () => {
     })
     expect(raw.getJobStatus).toHaveBeenCalledTimes(1)
     expect(raw.getJobResult).toHaveBeenCalledTimes(1)
+  })
+
+  it('scopes cancellation to the trusted owner tuple without revealing disabled jobs', async () => {
+    const { raw, service } = createHarness()
+    const context = { sessionId: 'session-1', projectId: 'project-1' }
+
+    await service.cancelJob(context, 'ssh:available', 'job-1')
+    await expect(service.cancelJob(context, 'ssh:hidden', 'job-2')).rejects.toMatchObject({
+      code: 'host_unavailable'
+    })
+
+    expect(raw.cancelJob).toHaveBeenCalledTimes(1)
+    expect(raw.cancelJob).toHaveBeenCalledWith('job-1', {
+      ...context,
+      providerId: 'ssh:available'
+    })
   })
 })

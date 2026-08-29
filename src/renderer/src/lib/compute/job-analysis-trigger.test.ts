@@ -40,6 +40,7 @@ const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
 const createDeps = (overrides: Partial<JobAnalysisTriggerDeps> = {}): JobAnalysisTriggerDeps => ({
   isSessionInFlight: vi.fn().mockReturnValue(false),
   sendPrompt: vi.fn(async (sessionId, _text, messageId) => ({ sessionId, messageId })),
+  flushPersistence: vi.fn().mockResolvedValue(undefined),
   createMessageId: vi.fn().mockReturnValue('msg-1'),
   transitionAnalysis: vi.fn().mockResolvedValue(undefined),
   getJobsForSession: vi.fn().mockResolvedValue([]),
@@ -385,7 +386,8 @@ describe('createJobAnalysisTrigger — idempotency', () => {
     expect(deps.sendPrompt).toHaveBeenCalledWith(
       'sess-1',
       expect.stringContaining('job-1'),
-      'winner-message'
+      'winner-message',
+      ['job-1']
     )
 
     await vi.advanceTimersByTimeAsync(1_000)
@@ -466,7 +468,8 @@ describe('createJobAnalysisTrigger — queuing', () => {
     expect(deps.sendPrompt).toHaveBeenCalledWith(
       'sess-1',
       expect.stringContaining('job-1'),
-      'msg-1'
+      'msg-1',
+      ['job-1']
     )
 
     turnEndCallbacks[0]?.('succeeded')
@@ -476,7 +479,8 @@ describe('createJobAnalysisTrigger — queuing', () => {
     expect(deps.sendPrompt).toHaveBeenLastCalledWith(
       'sess-1',
       expect.stringContaining('job-2'),
-      'msg-2'
+      'msg-2',
+      ['job-2']
     )
   })
 
@@ -503,7 +507,8 @@ describe('createJobAnalysisTrigger — queuing', () => {
     expect(deps.sendPrompt).toHaveBeenCalledWith(
       'sess-1',
       expect.stringContaining('job-recovered'),
-      'message-recovered'
+      'message-recovered',
+      ['job-recovered']
     )
 
     turnEndCallbacks[0]?.('succeeded')
@@ -513,7 +518,8 @@ describe('createJobAnalysisTrigger — queuing', () => {
     expect(deps.sendPrompt).toHaveBeenLastCalledWith(
       'sess-1',
       expect.stringContaining('job-pending'),
-      'msg-1'
+      'msg-1',
+      ['job-pending']
     )
   })
 

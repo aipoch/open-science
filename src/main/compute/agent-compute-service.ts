@@ -30,6 +30,7 @@ type RawComputeService = Pick<
   | 'submitJob'
   | 'getJobStatus'
   | 'getJobResult'
+  | 'cancelJob'
   | 'setSessionConcurrencyLimit'
   | 'getSessionConcurrencyStatus'
 >
@@ -169,6 +170,15 @@ export class AgentComputeService {
   ): Promise<JobResult> {
     await this.requireEnabled(context.sessionId, providerId)
     return this.compute.getJobResult(jobId, { ...context, providerId })
+  }
+
+  async cancelJob(
+    context: AgentComputeContext,
+    providerId: string,
+    jobId: string
+  ): Promise<JobStatusResult> {
+    await this.requireEnabled(context.sessionId, providerId)
+    return this.compute.cancelJob(jobId, { ...context, providerId })
   }
 
   setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {

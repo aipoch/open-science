@@ -148,6 +148,7 @@ type WorkspaceConversationController = {
     delete: () => void
   }
   queue: Omit<WorkspaceMessageQueueController, 'lifecycle'>
+  admitApplicationMessage: WorkspaceMessageQueueController['lifecycle']['enqueueApplication']
 }
 
 const errorMessage = (error: unknown): string =>
@@ -655,6 +656,7 @@ const useWorkspaceConversationController = (
   const queueDraft = canQueueDraft(options)
 
   return {
+    admitApplicationMessage: messageQueue.lifecycle.enqueueApplication,
     optimisticMessage: options.activeSession
       ? optimisticMessages[options.activeSession.id]
       : undefined,
@@ -664,11 +666,12 @@ const useWorkspaceConversationController = (
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,
       revise: canRevise(options) || canQueueRevision(options),
       resume: options.isPersistenceReady && !options.sideChatOpen,
-      branch: canBranch(options)
+      branch: !queueBlocksActiveSession && canBranch(options)
     },
     actions,
     queue: {
       items: messageQueue.items,
+      hasPendingWork: messageQueue.hasPendingWork,
       announcement: messageQueue.announcement,
       actions: messageQueue.actions
     }

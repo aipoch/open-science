@@ -312,7 +312,7 @@ export class ComputeJobWorkflowOwner {
         sharedDispatchTracker.begin(jobId)
         dispatchHandoffHeld = true
       }
-      await jobRepository.create({
+      const created = await jobRepository.create({
         id: jobId,
         providerId: host.providerId,
         shape: host.shape,
@@ -331,6 +331,7 @@ export class ComputeJobWorkflowOwner {
         initialStatus,
         allowUnencryptedPersistence
       })
+      this.handleJobUpdated(created)
     }
 
     let initialStatus: 'submitted' | 'queued' = 'submitted'
@@ -384,6 +385,20 @@ export class ComputeJobWorkflowOwner {
   }
 
   async getJobStatus(jobId: string, scope?: ComputeJobReadScope): Promise<JobStatusResult> {
+    const job = await this.getJob(jobId, scope)
+    return {
+      job_id: job.job_id,
+      status: job.status,
+      cancellation_status: job.cancellation_status,
+      exit_code: job.exit_code,
+      stdout_tail: job.stdout_tail,
+      stderr_tail: job.stderr_tail,
+      remote_workdir: job.remote_workdir,
+      harvest_error: job.harvest_error
+    }
+  }
+
+  async getJob(jobId: string, scope?: ComputeJobReadScope): Promise<ComputeJob> {
     if (!this.jobRepository) {
       throw new Error('ComputeJobRepository is required to call getJobStatus.')
     }
@@ -400,14 +415,7 @@ export class ComputeJobWorkflowOwner {
     ) {
       throw new ComputeHostUnavailableError()
     }
-    return {
-      job_id: job.job_id,
-      status: job.status,
-      exit_code: job.exit_code,
-      stdout_tail: job.stdout_tail,
-      stderr_tail: job.stderr_tail,
-      remote_workdir: job.remote_workdir
-    }
+    return job
   }
 
   async getJobResult(jobId: string, scope?: ComputeJobReadScope): Promise<JobResult> {
@@ -441,6 +449,9 @@ export class ComputeJobWorkflowOwner {
       return jobResultWithFiles(job, [], [], [])
     }
     if (!this.storageRoot) {
+      return jobResultWithFiles(job, [], [], leftOnRemote)
+    }
+    if (job.harvest_error) {
       return jobResultWithFiles(job, [], [], leftOnRemote)
     }
 
@@ -495,6 +506,7 @@ const jobResultWithFiles = (
 ): JobResult => ({
   job_id: job.job_id,
   status: job.status,
+  cancellation_status: job.cancellation_status,
   exit_code: job.exit_code,
   featured_files: featuredFiles,
   hidden_files: hiddenFiles,
@@ -502,7 +514,8 @@ const jobResultWithFiles = (
   left_on_remote: leftOnRemote,
   remote_workdir: job.remote_workdir,
   stdout_tail: job.stdout_tail,
-  stderr_tail: job.stderr_tail
+  stderr_tail: job.stderr_tail,
+  harvest_error: job.harvest_error
 })
 
 async function scanDirRelative(dir: string, workspaceCwd: string): Promise<string[]> {

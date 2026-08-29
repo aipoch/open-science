@@ -187,6 +187,11 @@ type NotebookLocalRpcServerOptions = {
       providerId: string,
       jobId: string
     ): Promise<unknown>
+    cancelJob(
+      context: { sessionId: string; projectId: string },
+      providerId: string,
+      jobId: string
+    ): Promise<unknown>
     getJobResult(
       context: { sessionId: string; projectId: string },
       providerId: string,
@@ -2482,6 +2487,12 @@ class NotebookLocalRpcServer {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const jobId = typeof params.job_id === 'string' ? params.job_id : ''
         return this.computeService.getJobStatus(context, providerId, jobId)
+      }
+
+      if (op === 'job_cancel') {
+        const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
+        const jobId = typeof params.job_id === 'string' ? params.job_id : ''
+        return this.computeService.cancelJob(context, providerId, jobId)
       }
 
       // op='job_result' — full JobResult (spec §11.4, design §9). Non-blocking query: reads DB

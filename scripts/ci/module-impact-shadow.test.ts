@@ -43,11 +43,17 @@ describe('module impact shadow', () => {
     expect(report.shadow).toMatchObject({
       mode: 'selective',
       graphStatus: 'unavailable-manifest-only',
-      modules: ['project_files_view', 'session_renderer', 'workspace_page', 'workspace_runtime']
+      modules: [
+        'compute_service',
+        'project_files_view',
+        'session_renderer',
+        'workspace_page',
+        'workspace_runtime'
+      ]
     })
     expect(report.shadow.testFiles).toEqual([...report.shadow.testFiles].sort())
-    expect(report.shadow.capabilityOverlays).toEqual(['renderer_state'])
-    expect(report.shadow.fallbackCapabilities).toEqual(['renderer_view'])
+    expect(report.shadow.capabilityOverlays).toEqual(['renderer_state', 'windows_sensitive'])
+    expect(report.shadow.fallbackCapabilities).toEqual(['main_runtime', 'renderer_view'])
     expect(report.comparison.requiredLanes).toContain('typecheck_web')
     expect(report.comparison.selectedLanes).toEqual(report.authoritative.lanes)
     expect(report.comparison.missingLanes).toEqual([])

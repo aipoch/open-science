@@ -5,6 +5,7 @@ import { withPdfContext as withPdf } from '../../../../shared/session-pdf-contex
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   collectSessionReferences,
+  type MessageAttribution,
   type MessagePdfContextSnapshot,
   type MessagePart,
   type PersistedMessageAgentTarget,
@@ -53,6 +54,8 @@ type SendWorkspaceMessageIntent = {
   branchSourceSessionId?: string
   branchSourceMessageId?: string
   text: string
+  attribution?: MessageAttribution
+  requireExistingSession?: boolean
   turnIntent?: 'plan-first'
   planContinuation?: Pick<ActivePlanProjection, 'artifactVersionId' | 'revision'> & {
     pendingAction?: 'review' | 'approve' | 'reject'
@@ -86,7 +89,6 @@ type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   supportsImageRelay?: boolean
   truncateFromMessageId?: string
   allowCompactionRecovery?: boolean
-  requireExistingSession?: boolean
 }
 type SendWorkspaceMessageResult = { sessionId: string; messageId: string }
 type WorkspaceCommandLifecycle = {
@@ -788,6 +790,7 @@ const sendWorkspaceMessage = async (
         parts: input.parts,
         pdfContext,
         turnIntent: input.turnIntent,
+        attribution: input.attribution,
         cwd,
         projectId: input.projectId ?? session.projectId,
         agentFrameworkId: input.agentFrameworkId,
@@ -899,6 +902,7 @@ const sendWorkspaceMessage = async (
       parts: input.parts,
       pdfContext,
       turnIntent: input.turnIntent,
+      attribution: input.attribution,
       cwd: input.cwd,
       projectId: input.projectId ?? prepared.appendOwnership.projectId,
       agentFrameworkId: prepared.appendOwnership.agentFrameworkId,

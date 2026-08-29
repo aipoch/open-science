@@ -46,6 +46,7 @@ import type { AcpTurnTokenUsage } from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import {
+  isComputeJobCompletionAttribution,
   isHumanUserMessage,
   isReviewerCorrectionAttribution
 } from '../../../../shared/session-persistence'
@@ -1249,6 +1250,7 @@ const WorkspaceMessageItemImpl = ({
   const isUserMessage = message.role === 'user'
   const isHumanUser = isHumanUserMessage(message)
   const isReviewerCorrection = isReviewerCorrectionAttribution(message.attribution)
+  const isComputeJobCompletion = isComputeJobCompletionAttribution(message.attribution)
   const isSideChatAdvisory =
     message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
   const presentsAssistantMessage = !isUserMessage && !isSideChatAdvisory
@@ -1437,7 +1439,19 @@ const WorkspaceMessageItemImpl = ({
     >
       <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
         {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
-        {isReviewerCorrection ? (
+        {isComputeJobCompletion ? (
+          <div
+            data-testid="compute-job-completion-event"
+            className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
+            role="status"
+          >
+            <Bot className="mt-0.5 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
+            <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <span className="font-medium text-text-200">{t('Remote job completed')}</span>
+              <span className="text-text-300">{t('Analysis started automatically')}</span>
+            </div>
+          </div>
+        ) : isReviewerCorrection ? (
           <div
             data-testid="reviewer-correction-message"
             data-active={reviewerCorrectionActive || undefined}

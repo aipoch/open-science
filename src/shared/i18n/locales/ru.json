@@ -4158,6 +4158,19 @@
     "Provider authentication": "Аутентификация поставщика",
     "No custom credentials yet.": "Пользовательских учётных данных пока нет.",
     "credentials": "учётные данные",
-    "Manage GitHub credential": "Управление учётными данными GitHub"
+    "Manage GitHub credential": "Управление учётными данными GitHub",
+    "Unable to cancel remote job.": "Не удалось отменить удалённую задачу.",
+    "Cancelling": "Отмена",
+    "Saved remote job data needs attention": "Сохранённые данные удалённой задачи требуют внимания",
+    "This job remains visible, but automatic result analysis is paused because its saved state is incompatible.": "Эта задача остаётся видимой, но автоматический анализ результатов приостановлен из-за несовместимого сохранённого состояния.",
+    "Unable to load remote jobs.": "Не удалось загрузить удалённые задачи.",
+    "Harvest pending. Open Science will retry automatically.": "Сбор результатов ожидается. Open Science повторит попытку автоматически.",
+    "Harvest failed. Remote files were left untouched.": "Не удалось собрать результаты. Удалённые файлы не были изменены.",
+    "Waiting in queue": "Ожидание в очереди",
+    "Submitting": "Отправка",
+    "Remote job recovery needs attention": "Восстановление удалённых задач требует внимания",
+    "Open Science could not check saved remote jobs. Retry to restore pending result analysis.": "Open Science не удалось проверить сохранённые удалённые задачи. Повторите попытку, чтобы восстановить ожидающий анализ результатов.",
+    "Remote job completed": "Удалённая задача завершена",
+    "Analysis started automatically": "Анализ запущен автоматически"
   }
 }

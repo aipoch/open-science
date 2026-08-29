@@ -3,6 +3,7 @@ import type { ComputeHostRepository } from './repository'
 import type { ComputeJob } from '../../shared/compute'
 import { createLogger, errorLogFields } from '../logger'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
+import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 
 export type SessionStatus = {
   session_limit: number | null
@@ -33,9 +34,9 @@ export class ConcurrencyManager {
   // In-memory storage of session limits: sessionId -> limit
   private sessionLimits: Map<string, number> = new Map()
 
-  // Flag to prevent concurrent execution of tryDispatchNext
-  private dispatching: boolean = false
   private reconciliationRequested: boolean = false
+  private reconciliationTask: Promise<void> | undefined
+  private queueStopped = false
 
   // In-process serialization lock for admit(). The decision (read counts → pick status) and the
   // job-row commit must be atomic: without this, two concurrent submitJob calls could both read the
@@ -46,14 +47,15 @@ export class ConcurrencyManager {
   private readonly lifecycle: ComputeJobLifecycle
   private readonly pausedProjects = new Set<string>()
   private readonly pausedSessions = new Set<string>()
-  private readonly ownerOperations = new Map<Promise<void>, ComputeJobOwner>()
+  private readonly ownerOperations = new Map<Promise<unknown>, ComputeJobOwner>()
 
   constructor(
     private readonly jobRepository: ComputeJobRepository,
     private readonly hostRepository: ComputeHostRepository,
     private readonly dispatchJob: DispatchQueuedJob,
     private readonly publishJobUpdated: (job: ComputeJob) => void = () => undefined,
-    lifecycle?: ComputeJobLifecycle
+    lifecycle?: ComputeJobLifecycle,
+    private readonly dispatchTracker: Pick<DispatchTracker, 'begin' | 'end'> = sharedDispatchTracker
   ) {
     this.lifecycle = lifecycle ?? new ComputeJobLifecycle(jobRepository, this.handleJobUpdated)
   }
@@ -161,18 +163,16 @@ export class ConcurrencyManager {
     commit: (status: 'submitted' | 'queued') => Promise<void>
   ): Promise<'submitted' | 'queued' | 'queue_full'> {
     return this.runExclusive(async () => {
+      const shouldQueue = await this.overActiveLimits(params.sessionId, params.providerId)
+      if (!shouldQueue) {
+        await commit('submitted')
+        return 'submitted'
+      }
+
       const globalQueuedCount = await this.jobRepository.countQueuedJobs()
       if (globalQueuedCount >= GLOBAL_QUEUE_LIMIT) return 'queue_full'
-
-      const status: 'submitted' | 'queued' = (await this.overActiveLimits(
-        params.sessionId,
-        params.providerId
-      ))
-        ? 'queued'
-        : 'submitted'
-
-      await commit(status)
-      return status
+      await commit('queued')
+      return 'queued'
     })
   }
 
@@ -194,28 +194,41 @@ export class ConcurrencyManager {
   }): Promise<'can_dispatch' | 'should_queue' | 'queue_full'> {
     const { sessionId, providerId } = params
 
-    // 1. Check global queue limit
+    if (!(await this.overActiveLimits(sessionId, providerId))) return 'can_dispatch'
     const globalQueuedCount = await this.jobRepository.countQueuedJobs()
-    if (globalQueuedCount >= GLOBAL_QUEUE_LIMIT) {
-      return 'queue_full'
-    }
-
-    // 2. Check session limit + provider ceiling (only active jobs count, not queued).
-    if (await this.overActiveLimits(sessionId, providerId)) {
-      return 'should_queue'
-    }
-
-    return 'can_dispatch'
+    return globalQueuedCount >= GLOBAL_QUEUE_LIMIT ? 'queue_full' : 'should_queue'
   }
 
   // Called when a job reaches a terminal state. Attempts to dispatch the next eligible queued job.
   async onJobCompleted(): Promise<void> {
+    await this.reconcileQueuedJobs()
+  }
+
+  startQueueReconciliation(): void {
+    this.queueStopped = false
+    this.requestQueueReconciliation()
+  }
+
+  async stopQueueReconciliation(): Promise<void> {
+    this.queueStopped = true
+    this.reconciliationRequested = false
+    await this.reconciliationTask
+  }
+
+  reconcileQueuedJobs(): Promise<void> {
+    if (this.queueStopped) return Promise.resolve()
     this.reconciliationRequested = true
-    await this.tryDispatchNext()
+    if (this.reconciliationTask) return this.reconciliationTask
+
+    const task = this.tryDispatchNext().finally(() => {
+      if (this.reconciliationTask === task) this.reconciliationTask = undefined
+    })
+    this.reconciliationTask = task
+    return task
   }
 
   private requestQueueReconciliation(): void {
-    void this.onJobCompleted().catch((error) => {
+    void this.reconcileQueuedJobs().catch((error) => {
       log.warn('compute queue reconciliation failed', errorLogFields(error))
     })
   }
@@ -250,59 +263,60 @@ export class ConcurrencyManager {
   // Internal: attempt to dispatch the next eligible queued job(s).
   // Processes queued jobs in FIFO order (createdAt ASC) and dispatches any that satisfy both limits.
   private async tryDispatchNext(): Promise<void> {
-    // Prevent concurrent execution - if already dispatching, return immediately
-    if (this.dispatching) {
-      return
-    }
+    do {
+      this.reconciliationRequested = false
+      const queuedJobs = await this.jobRepository.findQueuedJobs()
+      if (this.queueStopped) return
+      const dispatchOperations: Promise<void>[] = []
 
-    this.dispatching = true
-    try {
-      do {
-        this.reconciliationRequested = false
-        const queuedJobs = await this.jobRepository.findQueuedJobs()
-        const operations: Promise<void>[] = []
-
-        for (const job of queuedJobs) {
-          const owner = { projectId: job.project_id, sessionId: job.session_id }
-          if (this.isOwnerPaused(owner)) continue
-          const operation = (async (): Promise<void> => {
-            // Reserve the slot atomically against admit() and other promotions: the re-check of both
-            // limits and the status flip to 'submitted' run inside the SAME admitLock as admit(), so a
-            // concurrent new submission cannot also claim this slot and overrun a provider ceiling /
-            // session limit. Without this shared lock the promotion and an admission each read the same
-            // active count and both become 'submitted' (the race admit() was added to close).
-            //
-            // The slow dispatchJob (SSH staging/launch) runs OUTSIDE the lock: once the row is
-            // 'submitted' it counts as active, so any later admit()/promotion sees it. Holding the lock
-            // across SSH work would serialize every submission behind network latency.
-            const reserved = await this.runExclusive(async () => {
-              if (this.isOwnerPaused(owner)) return false
-              if (await this.overActiveLimits(job.session_id, job.provider_id)) return false
-              if (this.isOwnerPaused(owner)) return false
-              const promotion = await this.lifecycle.promoteQueued(job.job_id)
-              return promotion.kind === 'applied'
-            })
-            if (!reserved) return
-
-            try {
-              await this.dispatchJob(job.job_id, this.handleJobUpdated)
-            } catch {
-              // If dispatch fails, mark job as error and continue to next queued job.
-              await this.lifecycle.dispatchError(job.job_id, { errorCode: 'dispatch_failed' })
-            }
-          })()
-          this.ownerOperations.set(operation, owner)
-          operations.push(
-            operation.finally(() => {
-              this.ownerOperations.delete(operation)
-            })
-          )
+      for (const job of queuedJobs) {
+        if (this.queueStopped) break
+        const owner = { projectId: job.project_id, sessionId: job.session_id }
+        if (this.isOwnerPaused(owner)) continue
+        const reservation = this.runExclusive(async () => {
+          if (this.queueStopped || this.isOwnerPaused(owner)) return false
+          if (await this.overActiveLimits(job.session_id, job.provider_id)) return false
+          if (this.queueStopped || this.isOwnerPaused(owner)) return false
+          this.dispatchTracker.begin(job.job_id)
+          try {
+            const promotion = await this.lifecycle.promoteQueued(job.job_id)
+            if (promotion.kind === 'applied') return true
+          } catch (error) {
+            this.dispatchTracker.end(job.job_id)
+            throw error
+          }
+          this.dispatchTracker.end(job.job_id)
+          return false
+        })
+        this.ownerOperations.set(reservation, owner)
+        let reserved: boolean
+        try {
+          reserved = await reservation
+        } finally {
+          this.ownerOperations.delete(reservation)
         }
-        await Promise.all(operations)
-      } while (this.reconciliationRequested)
-    } finally {
-      this.dispatching = false
-    }
+        if (!reserved) continue
+
+        const operation = (async (): Promise<void> => {
+          try {
+            const dispatch = this.dispatchJob(job.job_id, this.handleJobUpdated)
+            this.dispatchTracker.end(job.job_id)
+            await dispatch
+          } catch {
+            this.dispatchTracker.end(job.job_id)
+            // If dispatch fails, mark job as error and continue to next queued job.
+            await this.lifecycle.dispatchError(job.job_id, { errorCode: 'dispatch_failed' })
+          }
+        })()
+        this.ownerOperations.set(operation, owner)
+        dispatchOperations.push(operation)
+        void operation.then(
+          () => this.ownerOperations.delete(operation),
+          () => this.ownerOperations.delete(operation)
+        )
+      }
+      await Promise.allSettled(dispatchOperations)
+    } while (!this.queueStopped && this.reconciliationRequested)
   }
 
   private isOwnerPaused(owner: ComputeJobOwner): boolean {

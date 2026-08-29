@@ -72,6 +72,7 @@ import {
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useSessionJobStore } from '@/stores/session-job-store'
+import { useSessionJobHydration } from '@/lib/compute/useSessionJobHydration'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
 import type { SendEditedMessage } from './workspace-edited-message'
 import type {
@@ -483,15 +484,7 @@ const WorkspaceMessageScrollerImpl = ({
 
   // Job store for binding and CompletedJobCard rendering
   const jobsById = useSessionJobStore((s) => s.jobsById)
-  const hydrateJobs = useSessionJobStore((s) => s.hydrate)
-
-  // Hydrate the job store when the active session changes
-  useEffect(() => {
-    // Guard against test environments where window.api.compute may not be available
-    if (currentSessionId && typeof window.api?.compute?.jobsList === 'function') {
-      void hydrateJobs(currentSessionId)
-    }
-  }, [currentSessionId, hydrateJobs])
+  const jobHydration = useSessionJobHydration(currentSessionId)
 
   // Job detail modal state
   const [modalOpen, setModalOpen] = useState(false)
@@ -1316,6 +1309,22 @@ const WorkspaceMessageScrollerImpl = ({
                         }
                       }}
                     >
+                      {t('Retry')}
+                    </Button>
+                  </div>
+                </MessageScrollerItem>
+              ) : null}
+              {jobHydration.error ? (
+                <MessageScrollerItem
+                  messageId={`job-load-error-${currentSessionId ?? 'unknown'}`}
+                  className="min-w-0"
+                >
+                  <div
+                    role="alert"
+                    className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg bg-danger-900 px-3 py-2 text-xs text-danger-000 ring-1 ring-inset ring-danger-000/25 md:mx-6"
+                  >
+                    <span>{t('Unable to load remote jobs.')}</span>
+                    <Button type="button" variant="ghost" size="xs" onClick={jobHydration.retry}>
                       {t('Retry')}
                     </Button>
                   </div>

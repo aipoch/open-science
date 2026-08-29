@@ -18,8 +18,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, rename, statfs, unlink } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { access, mkdir, realpath, rename, rm, statfs, unlink } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 
 import type { ComputeJob, JobSummary } from '../../shared/compute'
 import type { ComputeHostRepository } from './repository'
@@ -44,7 +44,7 @@ import {
   type HarvestConfig
 } from './harvest-classifier'
 import { getNotebookSessionRoot } from '../notebook/repository'
-import { buildComputeDonePayload } from './job-notifier'
+import { emitJobNotification } from './job-notifier'
 import { withDataRootWrite } from '../storage/migration-state'
 import { toErrorMessage } from '../error-message'
 
@@ -56,7 +56,7 @@ const getFreeDiskBytes = async (path: string): Promise<number> => {
   return Number(stats.bavail) * Number(stats.bsize)
 }
 
-// Serialize harvests so concurrent jobs cannot spend the same free-space reservation.
+// Serialize only reservation bookkeeping so concurrent harvests cannot spend the same free space.
 let harvestBudgetTail: Promise<void> = Promise.resolve()
 const withHarvestBudgetLock = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
   const previous = harvestBudgetTail
@@ -71,6 +71,48 @@ const withHarvestBudgetLock = async <Result>(operation: () => Promise<Result>): 
     release()
   }
 }
+
+const reservedHarvestBytesByRoot = new Map<string, number>()
+
+const canonicalStorageRoot = async (storageRoot: string): Promise<string> =>
+  realpath(storageRoot).catch(() => resolve(storageRoot))
+
+const reserveHarvestBudget = async (
+  storageRoot: string,
+  freeDiskBytes: number,
+  requestedBytes: number
+): Promise<{ bytes: number; release: () => Promise<void> }> => {
+  const rootKey = await canonicalStorageRoot(storageRoot)
+  return withHarvestBudgetLock(async () => {
+    const reserved = reservedHarvestBytesByRoot.get(rootKey) ?? 0
+    const available = Math.max(
+      0,
+      Math.floor(freeDiskBytes - HARVEST_FREE_DISK_RESERVE_BYTES - reserved)
+    )
+    const bytes = Math.max(0, Math.min(Math.floor(requestedBytes), available))
+    reservedHarvestBytesByRoot.set(rootKey, reserved + bytes)
+    let released = false
+    return {
+      bytes,
+      release: async () => {
+        if (released) return
+        released = true
+        await withHarvestBudgetLock(async () => {
+          const current = reservedHarvestBytesByRoot.get(rootKey) ?? 0
+          const next = Math.max(0, current - bytes)
+          if (next === 0) reservedHarvestBytesByRoot.delete(rootKey)
+          else reservedHarvestBytesByRoot.set(rootKey, next)
+        })
+      }
+    }
+  })
+}
+
+const pathExists = async (path: string): Promise<boolean> =>
+  access(path).then(
+    () => true,
+    () => false
+  )
 // ---------------------------------------------------------------------------
 // Public path helper
 // ---------------------------------------------------------------------------
@@ -217,17 +259,21 @@ const downloadFile = async (
 export type HarvestDeps = {
   connectionBroker: ComputeConnectionBrokerAcquirer
   hostRepository: Pick<ComputeHostRepository, 'get'>
-  jobRepository: Pick<ComputeJobRepository, 'update'>
+  jobRepository: Pick<ComputeJobRepository, 'update' | 'claimNotification'>
   storageRoot: string
   signal?: AbortSignal
   /** Override free-space discovery for deterministic tests. */
   getFreeDiskBytesFn?: (path: string) => Promise<number>
+  /** Injectable filesystem publication seam for crash/interruption tests. */
+  renameFn?: typeof rename
   /**
    * Broadcast hook for the compute_done notification (issue 06).
    * Called after harvestedAt is written. Defaults to the production broadcastJobUpdated.
    * Injected as undefined in tests that don't need notification assertions.
    */
   broadcast?: (summary: JobSummary) => void
+  /** Publishes non-final harvest state, such as a retryable connection failure. */
+  publishJobUpdated?: (job: ComputeJob) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -270,37 +316,68 @@ const buildLeftOnRemoteUri = (
  */
 export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<void> => {
   deps.signal?.throwIfAborted()
-  // Serialize before acquiring the data-root writer lease so queued harvests do not unnecessarily
-  // delay a storage migration. The active harvest keeps its lease through every download.
-  return await withHarvestBudgetLock(async () =>
-    withDataRootWrite(async () => {
-      deps.signal?.throwIfAborted()
-      try {
-        await harvestJobUnchecked(job, deps)
-      } catch (error) {
-        if (!(error instanceof ComputeConnectionError)) throw error
-        // Connection failures are recoverable. Keep harvestedAt unset so the restart/tick scan can
-        // retry after credentials, host keys, or network reachability are repaired.
+  return withDataRootWrite(async () => {
+    deps.signal?.throwIfAborted()
+    const harvestDir = getJobHarvestDir(
+      deps.storageRoot,
+      job.project_id,
+      job.session_id,
+      job.job_id
+    )
+    const attemptDir = `${harvestDir}.harvest-attempt`
+    const backupDir = `${harvestDir}.harvest-backup`
+    const renamePath = deps.renameFn ?? rename
+
+    // Repair the only interrupted publication states before touching a new attempt. A whole harvest
+    // is published by directory rename, so readers see one complete generation or none, never a
+    // per-file mixture. Only exact app-owned sibling paths are cleaned.
+    if (await pathExists(backupDir)) {
+      if (await pathExists(harvestDir)) await rm(backupDir, { recursive: true, force: true })
+      else await renamePath(backupDir, harvestDir)
+    }
+    await rm(attemptDir, { recursive: true, force: true })
+
+    try {
+      await harvestJobUnchecked(job, deps, { harvestDir, attemptDir, backupDir, renamePath })
+    } catch (error) {
+      if (error instanceof ComputeConnectionError) {
+        // Keep harvestedAt unset so restart/tick recovery retries. Persist only a safe error class;
+        // never persist connection output or credentials.
+        const pendingJob = await deps.jobRepository.update(job.job_id, {
+          harvestError: `harvest pending: ${error.code}`
+        })
+        deps.publishJobUpdated?.(pendingJob)
       }
-    })
-  )
+      throw error
+    } finally {
+      await rm(attemptDir, { recursive: true, force: true })
+    }
+  })
 }
 
-const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<void> => {
+const harvestJobUnchecked = async (
+  job: ComputeJob,
+  deps: HarvestDeps,
+  publication: {
+    harvestDir: string
+    attemptDir: string
+    backupDir: string
+    renamePath: typeof rename
+  }
+): Promise<void> => {
   const { connectionBroker, hostRepository, jobRepository, storageRoot } = deps
 
-  const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
-  const featuredDir = join(harvestDir, 'featured')
-  const hiddenDir = join(harvestDir, 'hidden')
+  const { harvestDir, attemptDir, backupDir, renamePath } = publication
+  const featuredDir = join(attemptDir, 'featured')
+  const hiddenDir = join(attemptDir, 'hidden')
 
   // Ensure harvest directory structure exists (idempotent).
   await mkdir(featuredDir, { recursive: true })
   await mkdir(hiddenDir, { recursive: true })
   deps.signal?.throwIfAborted()
 
-  // finalize writes harvestedAt + harvestError + leftOnRemote + notifiedAt in a single atomic
-  // update (fix: was two separate writes causing notification loss on restart between them).
-  // Returns the updated job so the caller can broadcast if needed.
+  // Finalize the harvest result first. Notification ownership is claimed separately through the
+  // notifier's database CAS, and restart recovery can claim any completed-but-unnotified row.
   const finalize = async (
     harvestError: string | null,
     leftOnRemoteJson: string
@@ -308,8 +385,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     return await jobRepository.update(job.job_id, {
       harvestedAt: new Date(),
       harvestError,
-      leftOnRemote: leftOnRemoteJson,
-      notifiedAt: new Date() // Atomic with harvest result — notification inbox write (design §2/§11)
+      leftOnRemote: leftOnRemoteJson
     })
   }
 
@@ -319,57 +395,20 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     leftOnRemoteJson: string
   ): Promise<void> => {
     const updatedJob = await finalize(harvestError, leftOnRemoteJson)
-    // Broadcast the compute_done notification. We already have host lookup result here for
-    // displayName, but early-exit paths don't — so we delegate displayName lookup to the
-    // notification builder (emitJobNotification now does host.get internally).
-    if (deps.broadcast) {
-      await buildAndBroadcastNotification(updatedJob)
-    }
+    if (deps.broadcast) await notify(updatedJob)
   }
 
-  // Builds the notification payload and broadcasts it (idempotent guard inside buildComputeDonePayload).
-  const buildAndBroadcastNotification = async (updatedJob: ComputeJob): Promise<void> => {
+  const notify = async (updatedJob: ComputeJob): Promise<void> => {
     try {
-      const payload = await buildComputeDonePayload(updatedJob, storageRoot)
-      // Look up displayName (same logic as emitJobNotification — we inline it here to avoid
-      // calling emitJobNotification which has its own idempotency guard and notifiedAt write).
-      let displayName = updatedJob.provider_id
-      try {
-        const host = await hostRepository.get(updatedJob.provider_id)
-        if (host) displayName = host.displayName
-      } catch {
-        // Fall back to provider_id.
-      }
-
-      const summary: JobSummary = {
-        job_id: updatedJob.job_id,
-        provider_id: updatedJob.provider_id,
-        display_name: displayName,
-        shape: updatedJob.shape,
-        session_id: updatedJob.session_id,
-        status: updatedJob.status,
-        intent: updatedJob.intent,
-        created_at: updatedJob.created_at,
-        started_at: updatedJob.started_at,
-        finished_at: updatedJob.finished_at,
-        exit_code: updatedJob.exit_code,
-        error_code: updatedJob.error_code,
-        last_poll_error: updatedJob.last_poll_error,
-        remote_workdir: updatedJob.remote_workdir,
-        stdout_tail: updatedJob.stdout_tail,
-        stderr_tail: updatedJob.stderr_tail,
-        notified_at: updatedJob.notified_at,
-        notification_consumed_at: updatedJob.notification_consumed_at,
-        featured_files: payload.featured_files,
-        featured_file_count: payload.featured_file_count,
-        left_on_remote_count: payload.left_on_remote_count,
-        left_on_remote: payload.left_on_remote,
-        harvest_error: updatedJob.harvest_error
-      }
-
-      deps.broadcast?.(summary)
+      await emitJobNotification(updatedJob, {
+        jobRepository,
+        hostRepository,
+        storageRoot,
+        broadcast: deps.broadcast!
+      })
     } catch {
-      // Notification build/broadcast failure is non-fatal: harvest result is already persisted.
+      // Notification failure is non-fatal: harvest result is already persisted and restart recovery
+      // can retry rows whose CAS claim was never committed.
     }
   }
 
@@ -435,9 +474,13 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
   const stagedInputs = new Set<string>()
   if (job.input_manifest) {
     try {
-      const manifest = JSON.parse(job.input_manifest) as Array<{ dest?: string }>
+      const manifest = JSON.parse(job.input_manifest) as Array<{
+        dstFilename?: string
+        dest?: string
+      }>
       for (const entry of manifest) {
-        if (entry.dest) stagedInputs.add(entry.dest)
+        const destination = entry.dstFilename ?? entry.dest
+        if (destination) stagedInputs.add(destination)
       }
     } catch {
       // Ignore parse errors.
@@ -445,9 +488,25 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
   }
 
   const normalizedHarvestConfig = normalizeHarvestConfig(harvestConfig)
+  const plannedClassification = classifyFiles(
+    remoteFiles,
+    outputs,
+    normalizedHarvestConfig,
+    stagedInputs
+  )
+  const remoteSizeByPath = new Map(remoteFiles.map((entry) => [entry.path, entry.size_bytes]))
+  const plannedPaths = new Set([
+    ...plannedClassification.featured,
+    ...plannedClassification.hidden,
+    ...plannedClassification.logs
+  ])
+  const plannedTransferBytes = [...plannedPaths].reduce(
+    (total, path) => total + Math.max(0, remoteSizeByPath.get(path) ?? 0),
+    0
+  )
   let freeDiskBytes: number
   try {
-    freeDiskBytes = await (deps.getFreeDiskBytesFn ?? getFreeDiskBytes)(harvestDir)
+    freeDiskBytes = await (deps.getFreeDiskBytesFn ?? getFreeDiskBytes)(attemptDir)
     if (!Number.isFinite(freeDiskBytes) || freeDiskBytes < 0) {
       throw new Error('free-space query returned an invalid value')
     }
@@ -457,14 +516,17 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     await finalizeAndReturn(`free-space check failed: ${msg}`, '[]')
     return
   }
-  const diskBudgetMb = Math.max(0, (freeDiskBytes - HARVEST_FREE_DISK_RESERVE_BYTES) / MIB_BYTES)
+  const requestedBudgetBytes = Math.min(
+    Math.floor((normalizedHarvestConfig.max_total_mb ?? 0) * MIB_BYTES),
+    plannedTransferBytes
+  )
+  const reservation = await reserveHarvestBudget(storageRoot, freeDiskBytes, requestedBudgetBytes)
   const effectiveHarvestConfig: HarvestConfig = {
     ...normalizedHarvestConfig,
-    max_total_mb: Math.min(normalizedHarvestConfig.max_total_mb ?? 0, diskBudgetMb)
+    max_total_mb: reservation.bytes / MIB_BYTES
   }
   const classification = classifyFiles(remoteFiles, outputs, effectiveHarvestConfig, stagedInputs)
-  const remoteSizeByPath = new Map(remoteFiles.map((entry) => [entry.path, entry.size_bytes]))
-  let remainingBudgetBytes = Math.floor((effectiveHarvestConfig.max_total_mb ?? 0) * MIB_BYTES)
+  let remainingBudgetBytes = reservation.bytes
 
   // ── 5. Download files ───────────────────────────────────────────────────────
   const errors: string[] = []
@@ -488,7 +550,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     const expectedBytes = remoteSizeByPath.get(relativePath) ?? 0
     let currentFreeBytes: number
     try {
-      currentFreeBytes = await (deps.getFreeDiskBytesFn ?? getFreeDiskBytes)(harvestDir)
+      currentFreeBytes = await (deps.getFreeDiskBytesFn ?? getFreeDiskBytes)(attemptDir)
       if (!Number.isFinite(currentFreeBytes) || currentFreeBytes < 0) {
         throw new Error('free-space query returned an invalid value')
       }
@@ -540,27 +602,31 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     }
   }
 
-  // Download featured files.
-  for (const relativePath of classification.featured) {
-    deps.signal?.throwIfAborted()
-    const localPath = join(featuredDir, relativePath)
-    await mkdir(dirname(localPath), { recursive: true })
-    await safeDownload(relativePath, localPath)
-  }
+  try {
+    // Download featured files.
+    for (const relativePath of classification.featured) {
+      deps.signal?.throwIfAborted()
+      const localPath = join(featuredDir, relativePath)
+      await mkdir(dirname(localPath), { recursive: true })
+      await safeDownload(relativePath, localPath)
+    }
 
-  // Download hidden files.
-  for (const relativePath of classification.hidden) {
-    deps.signal?.throwIfAborted()
-    const localPath = join(hiddenDir, relativePath)
-    await mkdir(dirname(localPath), { recursive: true })
-    await safeDownload(relativePath, localPath)
-  }
+    // Download hidden files.
+    for (const relativePath of classification.hidden) {
+      deps.signal?.throwIfAborted()
+      const localPath = join(hiddenDir, relativePath)
+      await mkdir(dirname(localPath), { recursive: true })
+      await safeDownload(relativePath, localPath)
+    }
 
-  // ── 6. Build left_on_remote JSON and finalize ────────────────────────────────
-  // Download full logs last; bounded tails remain available when the budget excludes them.
-  for (const relativePath of classification.logs) {
-    deps.signal?.throwIfAborted()
-    await safeDownload(relativePath, join(harvestDir, relativePath))
+    // ── 6. Build left_on_remote JSON and finalize ────────────────────────────────
+    // Download full logs last; bounded tails remain available when the budget excludes them.
+    for (const relativePath of classification.logs) {
+      deps.signal?.throwIfAborted()
+      await safeDownload(relativePath, join(attemptDir, relativePath))
+    }
+  } finally {
+    await reservation.release()
   }
 
   const leftOnRemote = classification.left_on_remote.map((entry) => ({
@@ -575,9 +641,25 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
       : null
 
   deps.signal?.throwIfAborted()
-  const updatedJob = await finalize(harvestError, JSON.stringify(leftOnRemote))
-  // Broadcast notification for the successful harvest path (early-exit paths use finalizeAndReturn).
-  if (deps.broadcast) {
-    await buildAndBroadcastNotification(updatedJob)
+  if (!harvestError) {
+    let backedUp = false
+    try {
+      if (await pathExists(harvestDir)) {
+        await rm(backupDir, { recursive: true, force: true })
+        await renamePath(harvestDir, backupDir)
+        backedUp = true
+      }
+      await renamePath(attemptDir, harvestDir)
+      if (backedUp) await rm(backupDir, { recursive: true, force: true })
+    } catch (error) {
+      if (backedUp && !(await pathExists(harvestDir)) && (await pathExists(backupDir))) {
+        await renamePath(backupDir, harvestDir)
+      }
+      throw error
+    }
   }
+
+  deps.signal?.throwIfAborted()
+  const updatedJob = await finalize(harvestError, JSON.stringify(leftOnRemote))
+  if (deps.broadcast) await notify(updatedJob)
 }

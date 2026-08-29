@@ -293,7 +293,10 @@ const findTypeScriptFiles = (directory: string): string[] =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = resolve(directory, entry.name)
     if (entry.isDirectory()) return findTypeScriptFiles(path)
-    return entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')
+    return entry.isFile() &&
+      entry.name.endsWith('.ts') &&
+      !entry.name.endsWith('.test.ts') &&
+      !entry.name.endsWith('.test-support.ts')
       ? [path]
       : []
   })

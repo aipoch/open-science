@@ -164,7 +164,7 @@ afterEach(() => {
 
 describe('JobStatusBadge', () => {
   it.each([
-    ['submitted', 'Queued'],
+    ['submitted', 'Submitting'],
     ['running', 'Running'],
     ['success', 'Done'],
     ['failed', 'Failed'],
@@ -178,28 +178,43 @@ describe('JobStatusBadge', () => {
     expect(badge?.textContent).toBe(label)
   })
 
-  it('applies amber styling for running', () => {
+  it('applies semantic warning styling for running', () => {
     act(() => {
       root.render(<JobStatusBadge status="running" />)
     })
     const badge = container.querySelector('[data-testid="job-status-badge"]')
-    expect(badge?.className).toContain('amber')
+    expect(badge?.className).toContain('status-warning')
+    expect(badge?.className).not.toMatch(/\b(?:amber|slate|green|red)-/)
   })
 
-  it('applies green styling for success', () => {
+  it('applies semantic success styling for success', () => {
     act(() => {
       root.render(<JobStatusBadge status="success" />)
     })
     const badge = container.querySelector('[data-testid="job-status-badge"]')
-    expect(badge?.className).toContain('green')
+    expect(badge?.className).toContain('status-success')
+    expect(badge?.className).not.toMatch(/\b(?:amber|slate|green|red)-/)
   })
 
-  it('applies red styling for failed', () => {
+  it('applies semantic failure styling for failed', () => {
     act(() => {
       root.render(<JobStatusBadge status="failed" />)
     })
     const badge = container.querySelector('[data-testid="job-status-badge"]')
-    expect(badge?.className).toContain('red')
+    expect(badge?.className).toContain('status-failure')
+    expect(badge?.className).not.toMatch(/\b(?:amber|slate|green|red)-/)
+  })
+
+  it.each([
+    ['cancelling', 'status-warning'],
+    ['cancelled', 'bg-muted']
+  ] as const)('uses semantic styling for %s cancellation', (cancellationStatus, token) => {
+    act(() => {
+      root.render(<JobStatusBadge status="running" cancellationStatus={cancellationStatus} />)
+    })
+    const badge = container.querySelector('[data-testid="job-status-badge"]')
+    expect(badge?.className).toContain(token)
+    expect(badge?.className).not.toMatch(/\b(?:amber|slate|green|red)-/)
   })
 })
 
@@ -260,15 +275,33 @@ describe('RemoteJobRow', () => {
     act(() => {
       root.render(<RemoteJobRow job={job} onOpen={vi.fn()} />)
     })
-    expect(container.textContent).toContain('running')
+    expect(container.textContent).toContain('Running')
   })
 
-  it('shows "queued" status text for submitted jobs', () => {
+  it('distinguishes waiting, submitting, and running states', () => {
+    const queued = makeJob({ status: 'queued' })
+    act(() => {
+      root.render(<RemoteJobRow job={queued} onOpen={vi.fn()} />)
+    })
+    expect(container.textContent).toContain('Waiting in queue')
+
     const job = makeJob({ status: 'submitted' })
     act(() => {
       root.render(<RemoteJobRow job={job} onOpen={vi.fn()} />)
     })
-    expect(container.textContent).toContain('queued')
+    expect(container.textContent).toContain('Submitting')
+
+    act(() => {
+      root.render(<RemoteJobRow job={makeJob({ status: 'running' })} onOpen={vi.fn()} />)
+    })
+    expect(container.textContent).toContain('Running')
+  })
+
+  it('keeps a terminal job readable in its bound row', () => {
+    act(() => {
+      root.render(<RemoteJobRow job={makeJob({ status: 'success' })} onOpen={vi.fn()} />)
+    })
+    expect(container.textContent).toContain('finished')
   })
 
   it('calls onOpen when clicked', () => {

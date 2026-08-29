@@ -36,7 +36,7 @@ import { workspaceRelativePath } from './workspace-path'
 // ---------------------------------------------------------------------------
 
 export type JobNotifierDeps = {
-  jobRepository: Pick<ComputeJobRepository, 'update'>
+  jobRepository: Pick<ComputeJobRepository, 'claimNotification'>
   hostRepository: Pick<ComputeHostRepository, 'get'>
   storageRoot: string
   // Injectable broadcast function; defaults to the production broadcastJobUpdated.
@@ -77,12 +77,13 @@ export const buildComputeDonePayload = async (
 
   // Scan featured dir — may not exist for error jobs or if harvest failed before creating it.
   let featuredFiles: string[] = []
-  try {
-    const entries = await readdirRecursive(featuredDir)
-    featuredFiles = entries.map((abs) => workspaceRelativePath(workspaceCwd, abs))
-  } catch {
-    // Directory does not exist or is unreadable — emit empty list (execution-error / harvest_failed
-    // before any files were pulled). This is correct per design §8 and the acceptance criteria.
+  if (!job.harvest_error) {
+    try {
+      const entries = await readdirRecursive(featuredDir)
+      featuredFiles = entries.map((abs) => workspaceRelativePath(workspaceCwd, abs))
+    } catch {
+      // Directory does not exist or is unreadable — emit an empty list.
+    }
   }
 
   // Parse left_on_remote from the job DB column (JSON array).
@@ -131,8 +132,8 @@ const readdirRecursive = async (dir: string): Promise<string[]> => {
  *
  * Steps:
  *  1. Check idempotency guard.
- *  2. Build payload (scan harvest dir + parse leftOnRemote column).
- *  3. Write notifiedAt to DB.
+ *  2. Claim notification delivery and read the current row.
+ *  3. Build payload from that claimed row (scan harvest dir + parse leftOnRemote column).
  *  4. Broadcast updated job summary (carrying payload fields + notified_at).
  *
  * This is EMIT-ONLY — does not touch notificationConsumedAt (issue 05).
@@ -146,31 +147,36 @@ export const emitJobNotification = async (
   // Idempotency: do not re-emit if already notified.
   if (job.notified_at != null) return
 
+  // Persist notifiedAt as a compare-and-set claim. Every notification entrance uses this seam, so
+  // overlapping stale projections cannot both broadcast. The returned row is also the freshness
+  // fence for every field used below: a caller may have entered with a pre-harvest projection.
+  const notifiedAt = new Date()
+  const updatedJob = await jobRepository.claimNotification(job.job_id, notifiedAt)
+  if (!updatedJob) return
+
   // Look up the host to get its displayName (fix: was using raw provider_id causing card flip).
-  let displayName = job.provider_id
+  let displayName = updatedJob.provider_id
   try {
-    const host = await hostRepository.get(job.provider_id)
+    const host = await hostRepository.get(updatedJob.provider_id)
     if (host) displayName = host.displayName
   } catch {
     // Transient lookup failure — fall back to provider_id so the broadcast always happens.
   }
 
   // Build the payload (scan harvest dir + parse leftOnRemote column).
-  const payload = await buildComputeDonePayload(job, storageRoot)
-
-  // Persist notifiedAt (inbox semantics: survives restart, design §2/§11).
-  const notifiedAt = new Date()
-  const updatedJob = await jobRepository.update(job.job_id, { notifiedAt })
+  const payload = await buildComputeDonePayload(updatedJob, storageRoot)
 
   // Broadcast the summary with notification payload fields embedded.
   // Reuses COMPUTE_JOB_UPDATED_CHANNEL via the injected broadcast fn (no new IPC channel).
   const summary: JobSummary = {
     job_id: updatedJob.job_id,
     provider_id: updatedJob.provider_id,
+    project_id: updatedJob.project_id,
     display_name: displayName,
     shape: updatedJob.shape,
     session_id: updatedJob.session_id,
     status: updatedJob.status,
+    cancellation_status: updatedJob.cancellation_status,
     intent: updatedJob.intent,
     created_at: updatedJob.created_at,
     started_at: updatedJob.started_at,

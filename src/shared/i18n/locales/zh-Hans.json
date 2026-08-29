@@ -3730,6 +3730,19 @@
     "Provider authentication": "提供商身份验证",
     "No custom credentials yet.": "尚无自定义凭据。",
     "credentials": "凭据",
-    "Manage GitHub credential": "管理 GitHub 凭据"
+    "Manage GitHub credential": "管理 GitHub 凭据",
+    "Unable to cancel remote job.": "无法取消远程作业。",
+    "Cancelling": "正在取消",
+    "Saved remote job data needs attention": "保存的远程作业数据需要处理",
+    "This job remains visible, but automatic result analysis is paused because its saved state is incompatible.": "此作业仍然可见，但由于保存的状态不兼容，自动结果分析已暂停。",
+    "Unable to load remote jobs.": "无法加载远程作业。",
+    "Harvest pending. Open Science will retry automatically.": "结果收集尚未完成。Open Science 将自动重试。",
+    "Harvest failed. Remote files were left untouched.": "结果收集失败。远程文件未被修改。",
+    "Waiting in queue": "正在队列中等待",
+    "Submitting": "正在提交",
+    "Remote job recovery needs attention": "远程作业恢复需要处理",
+    "Open Science could not check saved remote jobs. Retry to restore pending result analysis.": "Open Science 无法检查保存的远程作业。请重试以恢复待处理的结果分析。",
+    "Remote job completed": "远程作业已完成",
+    "Analysis started automatically": "分析已自动开始"
   }
 }

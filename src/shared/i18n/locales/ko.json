@@ -3728,6 +3728,19 @@
     "Provider authentication": "모델 제공업체 인증",
     "No custom credentials yet.": "사용자 지정 자격 증명이 아직 없습니다.",
     "credentials": "자격 증명",
-    "Manage GitHub credential": "GitHub 자격 증명 관리"
+    "Manage GitHub credential": "GitHub 자격 증명 관리",
+    "Unable to cancel remote job.": "원격 작업을 취소할 수 없습니다.",
+    "Cancelling": "취소 중",
+    "Saved remote job data needs attention": "저장된 원격 작업 데이터를 확인해야 합니다",
+    "This job remains visible, but automatic result analysis is paused because its saved state is incompatible.": "이 작업은 계속 표시되지만 저장된 상태가 호환되지 않아 자동 결과 분석이 일시 중지되었습니다.",
+    "Unable to load remote jobs.": "원격 작업을 불러올 수 없습니다.",
+    "Harvest pending. Open Science will retry automatically.": "결과 수집이 대기 중입니다. Open Science가 자동으로 다시 시도합니다.",
+    "Harvest failed. Remote files were left untouched.": "결과 수집에 실패했습니다. 원격 파일은 변경되지 않았습니다.",
+    "Waiting in queue": "대기열에서 기다리는 중",
+    "Submitting": "제출 중",
+    "Remote job recovery needs attention": "원격 작업 복구를 확인해야 합니다",
+    "Open Science could not check saved remote jobs. Retry to restore pending result analysis.": "Open Science가 저장된 원격 작업을 확인하지 못했습니다. 다시 시도하여 대기 중인 결과 분석을 복구하세요.",
+    "Remote job completed": "원격 작업 완료",
+    "Analysis started automatically": "분석이 자동으로 시작되었습니다"
   }
 }

@@ -100,6 +100,38 @@ const approvalBrokerFrom = (service: ComputeService): ComputeApprovalBroker =>
   ).remoteOperations.approvalBroker
 
 describe('compute handlers', () => {
+  it('passes the complete renderer owner tuple to cancellation', async () => {
+    const cancelJob = vi.fn(async () => ({
+      job_id: 'job-1',
+      status: 'running' as const,
+      cancellation_status: 'cancelling' as const,
+      exit_code: undefined,
+      stdout_tail: undefined,
+      stderr_tail: undefined,
+      remote_workdir: undefined,
+      harvest_error: undefined
+    }))
+    const computeHandlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ cancelJob })
+    )
+    const request = {
+      jobId: 'job-1',
+      providerId: 'ssh:test',
+      sessionId: 'session-1',
+      projectId: 'project-1'
+    }
+
+    await computeHandlers.jobsCancel(request)
+
+    expect(cancelJob).toHaveBeenCalledWith('job-1', {
+      providerId: 'ssh:test',
+      sessionId: 'session-1',
+      projectId: 'project-1'
+    })
+  })
+
   it('list delegates to the repository', async () => {
     const list = vi.fn(() => Promise.resolve([sampleHost()]))
     const handlers = createComputeHandlers(mockRepository({ list }))
@@ -830,6 +862,55 @@ describe('compute handlers — jobsList', () => {
     expect(findBySession).toHaveBeenCalledWith('sess-1', undefined)
   })
 
+  it('retains a safe needs-attention projection in the renderer jobs list', async () => {
+    const findBySession = vi.fn().mockResolvedValue([
+      makeJob({
+        job_id: 'unreadable-job',
+        session_id: 'sess-1',
+        intent: '',
+        remote_workdir: undefined,
+        remote_handle: undefined,
+        cancellation_status: 'cancelling',
+        needs_attention: true,
+        integrity_issues: [
+          {
+            jobId: 'unreadable-job',
+            sessionId: 'sess-1',
+            projectId: 'proj-1',
+            code: 'sensitive-fields-unavailable',
+            disposition: 'needs-attention',
+            rawStatus: 'running'
+          }
+        ]
+      })
+    ])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockResolvedValue([]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findBySession }),
+      undefined,
+      undefined,
+      '/tmp/test-storage'
+    )
+
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        job_id: 'unreadable-job',
+        intent: '',
+        remote_workdir: undefined,
+        cancellation_status: 'cancelling',
+        needs_attention: true,
+        integrity_issues: [expect.objectContaining({ code: 'sensitive-fields-unavailable' })]
+      })
+    ])
+    expect(JSON.stringify(result)).not.toContain('ciphertext')
+  })
+
   it('returns all persisted non-terminal jobs for the renderer activity projection', async () => {
     const host = sampleHost({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' })
     const list = vi.fn().mockResolvedValue([host])
@@ -1521,6 +1602,20 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
     expect(summary.featured_file_count).toBe(2)
   })
 
+  it('does not project stale featured files for a failed replacement harvest', async () => {
+    const featuredDir = featuredDirFor('proj-1', 'sess-1', 'job-harvest')
+    await mkdir(featuredDir, { recursive: true })
+    await writeFile(join(featuredDir, 'old.csv'), 'older successful generation')
+
+    const summary = await toJobSummary(
+      sampleJob({ harvest_error: 'harvest_failed: connection reset', harvested_at: 10 }),
+      'Biowulf HPC',
+      storageRoot
+    )
+
+    expect(summary.featured_files).toEqual([])
+  })
+
   it('scans the relocated data-root workspace rather than a separate config root', async () => {
     const configRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-config-root-'))
     const dataRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-data-root-'))
@@ -1742,7 +1837,24 @@ describe('createJobUpdatedBroadcaster', () => {
     remove()
   })
 
-  it('broadcasts a persisted update when the Job existence lookup fails transiently', async () => {
+  it('re-reads the current row and never broadcasts an older status snapshot', async () => {
+    const current = sampleJob({ status: 'success', finished_at: 2, exit_code: 0 })
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get: vi.fn(async () => sampleHost()) }),
+      storageRoot,
+      { get: vi.fn(async () => current) }
+    )
+
+    const captured = captureNextBroadcast()
+    broadcaster(sampleJob({ status: 'running' }))
+
+    await expect(captured).resolves.toMatchObject({
+      channel: COMPUTE_JOB_UPDATED_CHANNEL,
+      payload: expect.objectContaining({ status: 'success', finished_at: 2, exit_code: 0 })
+    })
+  })
+
+  it('does not broadcast an unverified snapshot when the current-row lookup fails', async () => {
     const sink = vi.fn()
     const remove = addRendererBroadcastSink(sink)
     const jobRepository = {
@@ -1757,13 +1869,8 @@ describe('createJobUpdatedBroadcaster', () => {
     )
 
     broadcaster(sampleJob({ status: 'success' }))
-
-    await vi.waitFor(() =>
-      expect(sink).toHaveBeenCalledWith(
-        COMPUTE_JOB_UPDATED_CHANNEL,
-        expect.objectContaining({ job_id: 'job-bcast', status: 'success' })
-      )
-    )
+    await vi.waitFor(() => expect(jobRepository.get).toHaveBeenCalled())
+    expect(sink).not.toHaveBeenCalled()
     remove()
   })
 
@@ -2276,6 +2383,7 @@ describe('installComputeIpcHandlers', () => {
       'compute:approval-respond',
       'compute:approval-replay',
       'compute:approval-replay-pending',
+      'compute:jobs:cancel',
       COMPUTE_JOBS_LIST_CHANNEL,
       'compute:jobs:pending-notification',
       'compute:jobs:mark-consumed',

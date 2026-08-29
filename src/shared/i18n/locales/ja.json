@@ -3730,6 +3730,19 @@
     "Provider authentication": "プロバイダー認証",
     "No custom credentials yet.": "カスタム資格情報はまだありません。",
     "credentials": "資格情報",
-    "Manage GitHub credential": "GitHub 資格情報を管理"
+    "Manage GitHub credential": "GitHub 資格情報を管理",
+    "Unable to cancel remote job.": "リモートジョブをキャンセルできませんでした。",
+    "Cancelling": "キャンセル中",
+    "Saved remote job data needs attention": "保存済みのリモートジョブデータを確認してください",
+    "This job remains visible, but automatic result analysis is paused because its saved state is incompatible.": "このジョブは引き続き表示されますが、保存された状態に互換性がないため、結果の自動分析は一時停止されています。",
+    "Unable to load remote jobs.": "リモートジョブを読み込めませんでした。",
+    "Harvest pending. Open Science will retry automatically.": "結果の収集は保留中です。Open Science が自動的に再試行します。",
+    "Harvest failed. Remote files were left untouched.": "結果の収集に失敗しました。リモートファイルは変更されていません。",
+    "Waiting in queue": "キューで待機中",
+    "Submitting": "送信中",
+    "Remote job recovery needs attention": "リモートジョブの復旧を確認してください",
+    "Open Science could not check saved remote jobs. Retry to restore pending result analysis.": "Open Science は保存済みのリモートジョブを確認できませんでした。再試行して保留中の結果分析を復旧してください。",
+    "Remote job completed": "リモートジョブが完了しました",
+    "Analysis started automatically": "分析が自動的に開始されました"
   }
 }

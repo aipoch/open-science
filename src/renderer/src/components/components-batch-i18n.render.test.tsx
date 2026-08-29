@@ -87,11 +87,11 @@ describe('components batch i18n — en strings', () => {
     expect(btn?.getAttribute('aria-label')).toContain('Run tests')
   })
 
-  it('RemoteJobRow renders translated "queued" label', () => {
+  it('RemoteJobRow renders the submitting label', () => {
     act(() => {
       root.render(<RemoteJobRow job={submittedJob} onOpen={vi.fn()} />)
     })
-    expect(container.textContent).toContain('queued')
+    expect(container.textContent).toContain('Submitting')
   })
 
   it('RemoteJobRow aria-label uses catalog key', () => {

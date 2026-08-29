@@ -67,8 +67,11 @@ export type JobAnalysisTriggerDeps = {
   sendPrompt: (
     sessionId: string,
     text: string,
-    messageId: string
+    messageId: string,
+    jobIds: readonly string[]
   ) => Promise<{ sessionId: string; messageId: string } | undefined>
+  // The Session Message and terminal response must be durable before settling the Compute claim.
+  flushPersistence: () => Promise<void>
   createMessageId: () => string
   transitionAnalysis: (request: ComputeJobAnalysisTransition) => Promise<void>
   getJobsForSession: (sessionId: string) => Promise<JobSummary[]>
@@ -229,6 +232,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     state: Exclude<ComputeJobAnalysisState, 'dispatched'>
   ): Promise<void> => {
     try {
+      await deps.flushPersistence()
       await deps.transitionAnalysis({ sessionId, jobIds, messageId, state })
       if (disposed) return
       deps.log('analysis-turn:settled', `session=${sessionId} state=${state}`)
@@ -399,7 +403,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     let result: Awaited<ReturnType<typeof deps.sendPrompt>>
 
     try {
-      result = await deps.sendPrompt(sessionId, prompt, messageId)
+      result = await deps.sendPrompt(sessionId, prompt, messageId, jobIds)
       if (disposed) return
     } catch (err) {
       if (disposed) return

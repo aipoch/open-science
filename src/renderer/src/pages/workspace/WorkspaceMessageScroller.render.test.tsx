@@ -142,10 +142,15 @@ let mockJobsById: Map<string, JobSummary> = new Map()
 
 vi.mock('@/stores/session-job-store', () => ({
   useSessionJobStore: (
-    selector: (s: { jobsById: Map<string, JobSummary>; hydrate: () => Promise<void> }) => unknown
+    selector: (s: {
+      jobsById: Map<string, JobSummary>
+      loadErrorBySession: Map<string, string>
+      hydrate: () => Promise<void>
+    }) => unknown
   ) =>
     selector({
       jobsById: mockJobsById,
+      loadErrorBySession: new Map(),
       hydrate: () => Promise.resolve()
     })
 }))
