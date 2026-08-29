@@ -1403,7 +1403,7 @@ describe('ManagedFileIndexRepository', () => {
     vi.spyOn(client.managedFileSessionSync, 'upsert').mockImplementation((async (
       args: Parameters<typeof originalUpsert>[0]
     ) => {
-      if (args.where.projectId_sessionId.projectId === unrelatedProjectId) {
+      if (args.where.projectId_sessionId?.projectId === unrelatedProjectId) {
         throw new Error('unrelated project is locked')
       }
       return originalUpsert(args)
