@@ -150,6 +150,7 @@ const WEB_UNAVAILABLE_CHANNELS = [
   'file:save-project-artifacts',
   'file:save-session-artifacts',
   'sessions:export-conversation',
+  'sessions:open-recovery-folder',
   'settings:import-agent-home-skills',
   'settings:list-agent-home-skills',
   'uploads:stage-local-file',
@@ -249,6 +250,7 @@ const ELECTRON_ONLY_CALLABLE_PATHS = [
   ...GENERATED_SOURCE_OMISSIONS.filter((path) => path !== 'getRuntimeVersions'),
   'saveSessionArtifacts',
   'sessions.exportConversation',
+  'sessions.openRecoveryFolder',
   'settings.importAgentHomeSkills',
   'settings.listAgentHomeSkills',
   'uploads.stageLocalFile'
