@@ -96,6 +96,27 @@ describe('DataRootCleanupJournal', () => {
     await expect(journal.hasPending()).resolves.toBe(true)
   })
 
+  it('never deletes a committed source that is selected as the live data root again', async () => {
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    await journal.markCommitted('cleanup-token')
+
+    await expect(journal.recover(source, deleteSources)).resolves.toEqual({
+      pending: true,
+      failureCount: 0
+    })
+    await expect(readFile(join(source, 'artifacts', 'result.txt'), 'utf8')).resolves.toBe(
+      'preserved'
+    )
+    await expect(journal.hasPending()).resolves.toBe(true)
+  })
+
   it('keeps a failed cleanup durable and clears it after a later startup retry succeeds', async () => {
     const journal = new DataRootCleanupJournal(configRoot)
     await journal.stage({

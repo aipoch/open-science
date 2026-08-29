@@ -377,13 +377,17 @@ class DataRootCleanupJournal {
     const committedIntent = await this.prepareCommittedIntent(intent, currentDataRoot)
     if (!committedIntent) return 0
 
+    let current: string
     let source: string
     try {
-      source = resolve(await realpath(committedIntent.source))
+      ;[current, source] = await Promise.all([
+        realpath(currentDataRoot).then(resolve),
+        realpath(committedIntent.source).then(resolve)
+      ])
     } catch {
       return 0
     }
-    if (!samePath(source, committedIntent.source)) return 0
+    if (samePath(current, source) || !samePath(source, committedIntent.source)) return 0
 
     const dirsToDelete: string[] = []
     for (const expected of committedIntent.entries) {
