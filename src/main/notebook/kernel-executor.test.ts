@@ -293,7 +293,8 @@ const abortOnNextStdinWrite = (
   child: ChildProcessWithoutNullStreams,
   cancellation: AbortController
 ): void => {
-  const originalWrite = child.stdin.write.bind(child.stdin)
+  const originalWrite = child.stdin.write
+  const write = originalWrite.bind(child.stdin)
   let abortOnWrite = true
   child.stdin.write = ((
     chunk: string | Uint8Array,
@@ -302,10 +303,10 @@ const abortOnNextStdinWrite = (
   ) => {
     const result =
       typeof encoding === 'function'
-        ? originalWrite(chunk, encoding)
+        ? write(chunk, encoding)
         : encoding === undefined
-          ? originalWrite(chunk, cb)
-          : originalWrite(chunk, encoding, cb)
+          ? write(chunk, cb)
+          : write(chunk, encoding, cb)
     if (abortOnWrite) {
       abortOnWrite = false
       child.stdin.write = originalWrite
@@ -2164,14 +2165,16 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
         for (let i = 0; i < 50; i++) {
           const cancellation = new AbortController()
           abortOnNextStdinWrite(child, cancellation)
-          await expect(
-            executor.execute({
-              ...request,
-              code: 'Sys.sleep(30)',
-              language: 'r',
-              signal: cancellation.signal
-            })
-          ).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+          const result = await executor.execute({
+            ...request,
+            code: 'Sys.sleep(1)',
+            language: 'r',
+            signal: cancellation.signal
+          })
+          expect(result, `dispatch cancellation ${i + 1}`).toMatchObject({
+            status: 'cancelled',
+            traceback: ''
+          })
         }
 
         const next = await executor.execute({

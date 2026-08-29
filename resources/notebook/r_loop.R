@@ -1470,6 +1470,9 @@ rm(namespace_state)
 base::local({
   state <- new.env(parent = emptyenv())
   state$during_read <- FALSE
+  # Retain the fully read frame's identity until its response is emitted. A SIGINT can otherwise
+  # escape between the local read/eval handlers and terminate Rscript without acknowledging it.
+  state$current_req_id <- NULL
 
   read_request <- function() {
     empty_streak <- 0L
@@ -1516,6 +1519,7 @@ base::local({
         acc <- c(acc, chunk)
       }
       code <- if (n > 0L) rawToChar(acc, multiple = FALSE) else ""
+      state$current_req_id <- req_id
       return(list(req_id = req_id, code = code, operation = operation))
     }
   }
@@ -1551,34 +1555,56 @@ base::local({
     )
   }
 
+  # Keep one interrupt handler active across request-boundary transitions as well as response emit.
+  # The inner loop normally runs until EOF; a late interrupt unwinds only to this recovery point.
   repeat {
-    req <- tryCatch(
-      read_request(),
+    keep_running <- tryCatch(
+      {
+        repeat {
+          req <- tryCatch(
+            read_request(),
+            interrupt = function(cnd) {
+              state$during_read <- TRUE
+              "retry"
+            }
+          )
+          if (is.null(req)) break
+          if (identical(req, "retry")) next
+          resp <- tryCatch(
+            {
+              if (isTRUE(state$during_read)) {
+                state$during_read <- FALSE
+                interrupted_response(req$req_id)
+              } else {
+                result <- if (identical(req$operation, "inspect_namespace")) {
+                  list(namespace = inspect_namespace(identical(req$code, "private")))
+                } else {
+                  run(req)
+                }
+                result$req_id <- req$req_id
+                result
+              }
+            },
+            interrupt = function(cnd) interrupted_response(req$req_id)
+          )
+          suspendInterrupts(emit(resp))
+          state$current_req_id <- NULL
+        }
+        FALSE
+      },
       interrupt = function(cnd) {
-        state$during_read <- TRUE
-        "retry"
+        req_id <- state$current_req_id
+        if (is.null(req_id)) {
+          state$during_read <- TRUE
+        } else {
+          state$during_read <- FALSE
+          suspendInterrupts(emit(interrupted_response(req_id)))
+          state$current_req_id <- NULL
+        }
+        TRUE
       }
     )
-    if (is.null(req)) break
-    if (identical(req, "retry")) next
-    resp <- tryCatch(
-      {
-        if (isTRUE(state$during_read)) {
-          state$during_read <- FALSE
-          interrupted_response(req$req_id)
-        } else {
-          result <- if (identical(req$operation, "inspect_namespace")) {
-            list(namespace = inspect_namespace(identical(req$code, "private")))
-          } else {
-            run(req)
-          }
-          result$req_id <- req$req_id
-          result
-        }
-      },
-      interrupt = function(cnd) interrupted_response(req$req_id)
-    )
-    emit(resp)
+    if (!isTRUE(keep_running)) break
   }
 }, envir = base::list2env(
   base::list(
