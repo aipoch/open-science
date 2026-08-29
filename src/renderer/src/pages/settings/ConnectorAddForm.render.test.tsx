@@ -21,6 +21,7 @@ let root: Root
 beforeEach(() => {
   useSettingsStore.setState({
     ...createInitialSettingsState(),
+    encryptionAvailable: true,
     addCustomServer: vi.fn().mockResolvedValue(undefined)
   })
   container = document.createElement('div')
