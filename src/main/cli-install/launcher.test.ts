@@ -514,6 +514,24 @@ describe('installCliLauncher on Windows PATH edit', () => {
     expect(status.onPath).toBe(true)
     expect(status.pathHint).toBeUndefined()
   })
+
+  it.each([
+    ['unmanaged', 'because it is not managed by Open Science'],
+    ['ambiguous', 'The Windows PATH ownership journal is ambiguous.']
+  ] as const)('rejects an %s PATH journal before creating the shim', async (scenario, message) => {
+    const env = winEnv()
+    const plan = planCliLauncher(env)
+    await mkdir(plan.binDir, { recursive: true })
+    if (scenario === 'unmanaged') {
+      await writeFile(windowsPathReceiptPath(env), 'user-owned content')
+    } else {
+      await writeWindowsPathJournal(env, 'pending')
+      await writeWindowsPathJournal(env, 'owned')
+    }
+
+    await expect(installCliLauncher(env, () => true)).rejects.toThrow(message)
+    await expect(readFile(plan.target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
 })
 
 describe('uninstallCliLauncher on Windows PATH edit', () => {

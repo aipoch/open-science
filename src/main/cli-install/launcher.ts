@@ -586,6 +586,21 @@ export const installCliLauncher = async (
   const plan = planCliLauncher(env)
   await mkdir(plan.binDir, { recursive: true })
 
+  if (env.platform === 'win32') {
+    const journalPaths = [windowsPathPendingPath(plan.binDir), windowsPathReceiptPath(plan.binDir)]
+    const existingJournalPaths: string[] = []
+    for (const journalPath of journalPaths) {
+      if ((await statCliLauncher(journalPath)) === undefined) continue
+      existingJournalPaths.push(journalPath)
+      if (parseWindowsPathJournal(await readCliLauncher(journalPath), plan.binDir) === undefined) {
+        refuseUnmanagedCliLauncher(journalPath)
+      }
+    }
+    if (existingJournalPaths.length > 1) {
+      throw new Error('The Windows PATH ownership journal is ambiguous.')
+    }
+  }
+
   let written = false
   for (let attempt = 0; attempt < 3 && !written; attempt += 1) {
     if (await tryCreateCliLauncher(plan)) {
@@ -610,17 +625,6 @@ export const installCliLauncher = async (
   let pathHint: string | undefined
   if (!onPath) {
     if (env.platform === 'win32') {
-      for (const journalPath of [
-        windowsPathPendingPath(plan.binDir),
-        windowsPathReceiptPath(plan.binDir)
-      ]) {
-        if (
-          (await statCliLauncher(journalPath)) !== undefined &&
-          parseWindowsPathJournal(await readCliLauncher(journalPath), plan.binDir) === undefined
-        ) {
-          refuseUnmanagedCliLauncher(journalPath)
-        }
-      }
       const { command, args } = buildWindowsPathCommand(plan.binDir)
       onPath = runCommand(command, args)
       pathHint = onPath
