@@ -1177,6 +1177,17 @@ describe('storage IPC handlers', () => {
     })
   })
 
+  it('inspect-data-root resolves an invalid result for a malformed request', async () => {
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:inspect-data-root', {})).resolves.toMatchObject({
+      kind: 'invalid',
+      dataRoot: '',
+      error: expect.any(String)
+    })
+  })
+
   it('set-data-root-and-relaunch persists the derived target and relaunches on a move parent', async () => {
     initDataRoot(dataRoot)
     const deps = fakeDeps()

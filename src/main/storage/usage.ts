@@ -18,6 +18,11 @@ const CATEGORY_KEYS: UsageCategoryKey[] = [
   'workspaces'
 ]
 
+const isMissingPathError = (error: unknown): boolean => {
+  const code = (error as NodeJS.ErrnoException)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
 // Recursively sums UNIQUE file sizes under `dir`, deduping hard links by (dev, ino) through `seen`
 // (like `du`): a file whose inode was already counted contributes 0. This is essential for the runtime
 // dir — conda envs are hard-linked from the shared pkgs cache, so without dedup the same bytes get
@@ -29,8 +34,9 @@ const dirSize = async (dir: string, seen: Set<string>): Promise<number> => {
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return 0
+  } catch (error) {
+    if (isMissingPathError(error)) return 0
+    throw error
   }
   let total = 0
   for (const entry of entries) {
@@ -47,8 +53,13 @@ const dirSize = async (dir: string, seen: Set<string>): Promise<number> => {
 
 // Size of one file, or 0 if its inode was already counted via `seen` (hard-link dedup).
 const fileSize = async (path: string, seen: Set<string>): Promise<number> => {
-  const info = await stat(path).catch(() => undefined)
-  if (!info) return 0
+  let info
+  try {
+    info = await stat(path)
+  } catch (error) {
+    if (isMissingPathError(error)) return 0
+    throw error
+  }
   const key = `${info.dev}:${info.ino}`
   if (seen.has(key)) return 0
   seen.add(key)
@@ -83,7 +94,8 @@ const runtimeUsage = async (dir: string): Promise<{ bytes: number; children: Usa
   let envEntries
   try {
     envEntries = await readdir(join(dir, 'envs'), { withFileTypes: true })
-  } catch {
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error
     envEntries = []
   }
   const envBytes = new Map<string, number>()
@@ -100,8 +112,9 @@ const runtimeUsage = async (dir: string): Promise<{ bytes: number; children: Usa
   let topEntries
   try {
     topEntries = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return { bytes: 0, children: [] }
+  } catch (error) {
+    if (isMissingPathError(error)) return { bytes: 0, children: [] }
+    throw error
   }
   for (const entry of topEntries) {
     if (entry.isSymbolicLink()) continue

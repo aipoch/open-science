@@ -1,6 +1,19 @@
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createReadStream, createWriteStream, type Stats } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { chmod, lstat, mkdir, readdir, readlink, rm, rmdir, stat, symlink } from 'node:fs/promises'
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  readdir,
+  readlink,
+  rm,
+  rmdir,
+  stat,
+  statfs,
+  symlink,
+  utimes
+} from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
@@ -38,8 +51,8 @@ const exists = async (path: string): Promise<boolean> => {
 }
 
 type ScanResult = {
-  files: string[]
-  directories: string[]
+  files: { relPath: string; stats: Stats }[]
+  directories: { relPath: string; stats: Stats }[]
   symlinks: string[]
   present: boolean
   rootFile: boolean
@@ -49,8 +62,8 @@ type ScanResult = {
 // if `root` doesn't exist). Directories are tracked separately so empty nested folders survive the
 // move; symlinks are recreated as links (never followed) so a conda cache's internal links survive.
 const listEntries = async (root: string): Promise<ScanResult> => {
-  const files: string[] = []
-  const directories: string[] = []
+  const files: ScanResult['files'] = []
+  const directories: ScanResult['directories'] = []
   const symlinks: string[] = []
   const walk = async (dir: string): Promise<void> => {
     const entries = await readdir(join(root, dir), { withFileTypes: true })
@@ -61,10 +74,11 @@ const listEntries = async (root: string): Promise<ScanResult> => {
       // escape out of the tree and no symlink-cycle risk.
       if (entry.isSymbolicLink()) symlinks.push(rel)
       else if (entry.isDirectory()) {
-        directories.push(rel)
+        directories.push({ relPath: rel, stats: await stat(join(root, rel)) })
         await walk(rel)
-      } else if (entry.isFile()) files.push(rel)
-      else throw new NonRegularEntryError(rel)
+      } else if (entry.isFile()) {
+        files.push({ relPath: rel, stats: await stat(join(root, rel)) })
+      } else throw new NonRegularEntryError(rel)
     }
   }
   // A top-level source dir that is itself a symlink/special node must be rejected up front: exists()
@@ -81,10 +95,11 @@ const listEntries = async (root: string): Promise<ScanResult> => {
     throw err
   }
   if (info.isFile()) {
-    files.push('')
+    files.push({ relPath: '', stats: info })
     return { files, directories, symlinks, present: true, rootFile: true }
   }
   if (!info.isDirectory()) throw new NonRegularEntryError(basename(root))
+  directories.push({ relPath: '', stats: info })
   await walk('.')
   return { files, directories, symlinks, present: true, rootFile: false }
 }
@@ -93,9 +108,16 @@ const listEntries = async (root: string): Promise<ScanResult> => {
 const copyFile = async (src: string, dest: string): Promise<void> => {
   await mkdir(dirname(dest), { recursive: true })
   await pipeline(createReadStream(src), createWriteStream(dest))
-  // A stream copy creates dest at the default 0o644; re-apply the source mode so an executable
-  // runtime/pkgs binary (Rscript, a .dylib) micromamba hard-links into a rebuilt env keeps +x.
-  await chmod(dest, (await stat(src)).mode)
+}
+
+// Only files with more than one link participate in hard-link grouping. Some filesystems report an
+// unusable zero inode; treating those as independent avoids accidentally linking unrelated files.
+const hardLinkIdentity = (stats: Stats): string | undefined =>
+  stats.nlink > 1 && stats.ino !== 0 ? `${stats.dev}:${stats.ino}` : undefined
+
+const destinationAvailableBytes = async (path: string): Promise<number> => {
+  const stats = await statfs(path)
+  return stats.bavail * stats.bsize
 }
 
 const hashFile = async (path: string): Promise<string> => {
@@ -132,19 +154,27 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
   try {
     checkAbort()
     const entriesByDir = new Map<string, ScanResult>()
+    const sizedHardLinks = new Set<string>()
     for (const dir of dirs) {
       const srcDir = join(from, dir)
       const entries = await listEntries(srcDir)
       entriesByDir.set(dir, entries)
-      for (const rel of entries.files) {
-        totalBytes += (await stat(join(srcDir, rel))).size
+      for (const file of entries.files) {
+        const identity = hardLinkIdentity(file.stats)
+        if (identity && sizedHardLinks.has(identity)) continue
+        if (identity) sizedHardLinks.add(identity)
+        totalBytes += file.stats.size
       }
     }
     onProgress({ phase: 'scan', copiedBytes, totalBytes })
     checkAbort()
+    if ((await destinationAvailableBytes(to)) < totalBytes) {
+      throw new Error("Can't move your data: the new location does not have enough free space.")
+    }
 
     // Copy every existing from/<dir> into `to`, even if empty — an existing source
     // dir must be mirrored at `to`, not silently dropped.
+    const copiedHardLinks = new Map<string, string>()
     for (const dir of dirs) {
       const srcDir = join(from, dir)
       const entries =
@@ -161,13 +191,29 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
       copiedInto.push(destDir)
       if (!entries.rootFile) {
         await mkdir(destDir, { recursive: true })
-        for (const rel of entries.directories) await mkdir(join(destDir, rel), { recursive: true })
+        for (const directory of entries.directories) {
+          await mkdir(join(destDir, directory.relPath), { recursive: true })
+        }
       }
-      for (const rel of entries.files) {
+      for (const file of entries.files) {
         checkAbort()
-        await copyFile(join(srcDir, rel), join(destDir, rel))
-        copiedBytes += (await stat(join(destDir, rel))).size
-        onProgress({ phase: 'copy', copiedBytes, totalBytes, currentPath: join(dir, rel) })
+        const destination = join(destDir, file.relPath)
+        const identity = hardLinkIdentity(file.stats)
+        const existingDestination = identity ? copiedHardLinks.get(identity) : undefined
+        if (existingDestination) {
+          await mkdir(dirname(destination), { recursive: true })
+          await link(existingDestination, destination)
+        } else {
+          await copyFile(join(srcDir, file.relPath), destination)
+          copiedBytes += file.stats.size
+          if (identity) copiedHardLinks.set(identity, destination)
+        }
+        onProgress({
+          phase: 'copy',
+          copiedBytes,
+          totalBytes,
+          currentPath: join(dir, file.relPath)
+        })
         checkAbort()
       }
       // Symlinks after files so their parent dirs already exist; recreated as links (see copySymlink).
@@ -191,26 +237,32 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
           present: false,
           rootFile: false
         } as ScanResult)
-      for (const rel of entries.directories) {
+      for (const directory of entries.directories) {
         checkAbort()
-        const destStat = await stat(join(to, dir, rel)).catch(() => undefined)
-        if (!destStat?.isDirectory()) throw new Error(`verification failed for ${join(dir, rel)}`)
+        const destStat = await stat(join(to, dir, directory.relPath)).catch(() => undefined)
+        if (!destStat?.isDirectory()) {
+          throw new Error(`verification failed for ${join(dir, directory.relPath)}`)
+        }
       }
-      for (const rel of entries.files) {
+      for (const file of entries.files) {
         checkAbort()
-        const srcSize = (await stat(join(from, dir, rel))).size
-        const destStat = await stat(join(to, dir, rel)).catch(() => undefined)
-        if (!destStat || destStat.size !== srcSize) {
-          throw new Error(`verification failed for ${join(dir, rel)}`)
+        const destStat = await stat(join(to, dir, file.relPath)).catch(() => undefined)
+        if (!destStat || destStat.size !== file.stats.size) {
+          throw new Error(`verification failed for ${join(dir, file.relPath)}`)
         }
         const [sourceChecksum, destinationChecksum] = await Promise.all([
-          hashFile(join(from, dir, rel)),
-          hashFile(join(to, dir, rel))
+          hashFile(join(from, dir, file.relPath)),
+          hashFile(join(to, dir, file.relPath))
         ])
         if (sourceChecksum !== destinationChecksum) {
-          throw new Error(`verification failed for ${join(dir, rel)}: checksum mismatch`)
+          throw new Error(`verification failed for ${join(dir, file.relPath)}: checksum mismatch`)
         }
-        onProgress({ phase: 'verify', copiedBytes, totalBytes, currentPath: join(dir, rel) })
+        onProgress({
+          phase: 'verify',
+          copiedBytes,
+          totalBytes,
+          currentPath: join(dir, file.relPath)
+        })
       }
       // A symlink is verified by its presence AS a link (lstat, not stat, so a dangling target — e.g.
       // a relative conda link resolved before its sibling files land — is not a false failure).
@@ -220,6 +272,27 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
         if (!destStat?.isSymbolicLink())
           throw new Error(`verification failed for ${join(dir, rel)}`)
         onProgress({ phase: 'verify', copiedBytes, totalBytes, currentPath: join(dir, rel) })
+      }
+    }
+
+    // Hash verification reads both sides and can update access times, so restore portable metadata
+    // only after verification. Directories are restored deepest-first because creating children
+    // updates their parents and a restrictive source mode could otherwise block the remaining copy.
+    for (const dir of dirs) {
+      const entries = entriesByDir.get(dir)
+      if (!entries?.present) continue
+      const destDir = join(to, dir)
+      for (const file of entries.files) {
+        checkAbort()
+        const destination = join(destDir, file.relPath)
+        await chmod(destination, file.stats.mode)
+        await utimes(destination, file.stats.atime, file.stats.mtime)
+      }
+      for (const directory of [...entries.directories].reverse()) {
+        checkAbort()
+        const destination = join(destDir, directory.relPath)
+        await chmod(destination, directory.stats.mode)
+        await utimes(destination, directory.stats.atime, directory.stats.mtime)
       }
     }
     checkAbort()

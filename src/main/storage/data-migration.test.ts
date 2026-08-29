@@ -1,5 +1,6 @@
 import {
   chmod,
+  link,
   lstat,
   mkdtemp,
   mkdir,
@@ -8,12 +9,29 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const diskSpace = vi.hoisted(() => ({ availableBytes: undefined as number | undefined }))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  const statfs = vi.fn(async (path: Parameters<typeof actual.statfs>[0]) => {
+    if (diskSpace.availableBytes !== undefined) {
+      return { bavail: diskSpace.availableBytes, bsize: 1 } as Awaited<
+        ReturnType<typeof actual.statfs>
+      >
+    }
+    return actual.statfs(path)
+  }) as unknown as typeof actual.statfs
+
+  return { ...actual, statfs }
+})
 
 import type { MigrationProgress } from '../../shared/storage'
 import { copyAndVerify, deleteSources } from './data-migration'
@@ -27,6 +45,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  diskSpace.availableBytes = undefined
   await rm(from, { recursive: true, force: true })
   await rm(to, { recursive: true, force: true })
 })
@@ -93,6 +112,101 @@ describe('copyAndVerify', () => {
     expect(result).toEqual({ ok: true })
     expect(await readFile(join(to, 'open-science.db'), 'utf8')).toBe('sqlite bytes')
     expect(await readFile(join(from, 'open-science.db'), 'utf8')).toBe('sqlite bytes')
+  })
+
+  it('preserves file and directory access and modification times', async () => {
+    const sourceDir = join(from, 'artifacts')
+    const sourceFile = join(sourceDir, 'observations.csv')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(sourceFile, 'time,value\n1,42\n')
+    const fileAtime = new Date('2001-02-03T04:05:06.000Z')
+    const fileMtime = new Date('2002-03-04T05:06:07.000Z')
+    const dirAtime = new Date('2003-04-05T06:07:08.000Z')
+    const dirMtime = new Date('2004-05-06T07:08:09.000Z')
+    await utimes(sourceFile, fileAtime, fileMtime)
+    await utimes(sourceDir, dirAtime, dirMtime)
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts'],
+      signal: new AbortController().signal,
+      onProgress: () => {}
+    })
+
+    expect(result).toEqual({ ok: true })
+    const copiedFile = await stat(join(to, 'artifacts', 'observations.csv'))
+    const copiedDir = await stat(join(to, 'artifacts'))
+    expect(Math.trunc(copiedFile.atimeMs / 1000)).toBe(Math.trunc(fileAtime.getTime() / 1000))
+    expect(Math.trunc(copiedFile.mtimeMs / 1000)).toBe(Math.trunc(fileMtime.getTime() / 1000))
+    expect(Math.trunc(copiedDir.atimeMs / 1000)).toBe(Math.trunc(dirAtime.getTime() / 1000))
+    expect(Math.trunc(copiedDir.mtimeMs / 1000)).toBe(Math.trunc(dirMtime.getTime() / 1000))
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'preserves source directory modes after populating nested content',
+    async () => {
+      const sourceDir = join(from, 'artifacts')
+      const nestedDir = join(sourceDir, 'private')
+      await mkdir(nestedDir, { recursive: true })
+      await writeFile(join(nestedDir, 'results.txt'), 'classified')
+      await chmod(nestedDir, 0o700)
+      await chmod(sourceDir, 0o750)
+
+      const result = await copyAndVerify({
+        from,
+        to,
+        dirs: ['artifacts'],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+
+      expect(result).toEqual({ ok: true })
+      expect((await stat(join(to, 'artifacts'))).mode & 0o777).toBe(0o750)
+      expect((await stat(join(to, 'artifacts', 'private'))).mode & 0o777).toBe(0o700)
+    }
+  )
+
+  it('preserves hard-link relationships instead of duplicating linked file data', async () => {
+    const sourceDir = join(from, 'artifacts')
+    const sourceOriginal = join(sourceDir, 'dataset.bin')
+    const sourceAlias = join(sourceDir, 'dataset-alias.bin')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(sourceOriginal, 'shared-data')
+    await link(sourceOriginal, sourceAlias)
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts'],
+      signal: new AbortController().signal,
+      onProgress: () => {}
+    })
+
+    expect(result).toEqual({ ok: true })
+    await writeFile(join(to, 'artifacts', 'dataset.bin'), 'updated')
+    expect(await readFile(join(to, 'artifacts', 'dataset-alias.bin'), 'utf8')).toBe('updated')
+    expect(await readFile(sourceAlias, 'utf8')).toBe('shared-data')
+  })
+
+  it('rejects insufficient destination capacity after scanning and before copying', async () => {
+    await seedFixture()
+    diskSpace.availableBytes = 1
+    const progress: MigrationProgress[] = []
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts', 'uploads'],
+      signal: new AbortController().signal,
+      onProgress: (entry) => progress.push(entry)
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/space/i)
+    expect(progress.map((entry) => entry.phase)).toEqual(['scan'])
+    expect(await exists(join(to, 'artifacts'))).toBe(false)
+    expect(await exists(join(to, 'uploads'))).toBe(false)
   })
 
   it('rejects a same-size destination corruption during content verification', async () => {

@@ -569,8 +569,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // staged-copy resolution for 'recover', inline error for 'invalid') and display the derived
   // `<parent>/OpenScience` path regardless of kind. Never throws.
   const inspectDataRoot = async (request: StorageParentRequest): Promise<DataRootInspection> => {
-    const dataRoot = dataRootForPicked(request.parent)
+    let dataRoot = ''
     try {
+      if (typeof request?.parent !== 'string') throw new Error('The selected folder is not usable.')
+      dataRoot = dataRootForPicked(request.parent)
       const result = await classifyDataRoot(request.parent, resolveDataRoot())
       return { ...result, dataRoot }
     } catch (err) {

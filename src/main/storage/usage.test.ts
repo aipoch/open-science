@@ -1,7 +1,28 @@
 import { link, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const directoryReadFailure = vi.hoisted(() => ({ path: undefined as string | undefined }))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  const readdir = vi.fn(
+    async (
+      path: Parameters<typeof actual.readdir>[0],
+      options?: Parameters<typeof actual.readdir>[1]
+    ) => {
+      if (String(path) === directoryReadFailure.path) {
+        throw Object.assign(new Error('permission denied while scanning storage'), {
+          code: 'EACCES'
+        })
+      }
+      return actual.readdir(path, options as never)
+    }
+  ) as unknown as typeof actual.readdir
+
+  return { ...actual, readdir }
+})
 
 import { availableBytes, computeStorageUsage } from './usage'
 
@@ -12,6 +33,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  directoryReadFailure.path = undefined
   await rm(dataRoot, { recursive: true, force: true })
 })
 
@@ -163,6 +185,13 @@ describe('computeStorageUsage', () => {
       { key: 'workspaces', bytes: 0 }
     ])
     expect(usage.totalBytes).toBe(0)
+  })
+
+  it('rejects an incomplete scan instead of reporting an unreadable category as zero bytes', async () => {
+    await writeSized(join(dataRoot, 'artifacts', 'result.bin'), 100)
+    directoryReadFailure.path = join(dataRoot, 'artifacts')
+
+    await expect(computeStorageUsage(dataRoot)).rejects.toMatchObject({ code: 'EACCES' })
   })
 })
 
