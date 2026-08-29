@@ -783,6 +783,10 @@ class SessionRepository {
     projectId: string
   ): Promise<ProjectSessionLoadDiagnostics> {
     const safeProjectId = assertSafeSegment(projectId)
+    const deletedSessionsBoundary = await this.inspectDirectoryBoundary(this.deletedSessionsDir)
+    if (deletedSessionsBoundary !== 'valid') {
+      return { sessions: [], isComplete: deletedSessionsBoundary === 'missing' }
+    }
     return this.readProjectSessionsAtDirectory(
       safeProjectId,
       this.deletedProjectDir(safeProjectId),
@@ -854,6 +858,7 @@ class SessionRepository {
       if ((await this.getProjectSessionDeletionState(session.projectId)) !== 'legacy-committed') {
         throw new Error('Cannot save a Session outside committed Project deletion authority.')
       }
+      await this.ensureDirectoryBoundary(this.deletedSessionsDir, 'Deleted Session root')
       const key = `${session.projectId}:${session.id}`
       const durableSession: PersistedChatSession = {
         ...session,
@@ -942,10 +947,10 @@ class SessionRepository {
       const safeProjectId = assertSafeSegment(projectId)
       const state = await this.getProjectSessionDeletionState(safeProjectId)
       if (state === 'legacy-committed' || state === 'prepared') return
+      await this.ensureDirectoryBoundary(this.deletedSessionsDir, 'Deleted Session root')
 
       const liveProjectDir = this.projectDir(safeProjectId)
       const deletedProjectDir = this.deletedProjectDir(safeProjectId)
-      await mkdir(this.deletedSessionsDir, { recursive: true })
       await this.dependencies.remove(deletedProjectDir, { recursive: true, force: true })
       await mkdir(liveProjectDir, { recursive: true })
       await writeFile(join(liveProjectDir, PROJECT_DELETION_COMMIT_MARKER), '', 'utf8')
@@ -956,6 +961,9 @@ class SessionRepository {
 
   async getProjectSessionDeletionState(projectId: string): Promise<ProjectSessionDeletionState> {
     const safeProjectId = assertSafeSegment(projectId)
+    if ((await this.inspectDirectoryBoundary(this.deletedSessionsDir)) === 'invalid') {
+      throw new Error('Deleted Session root is not a regular directory.')
+    }
     const deletedProjectDir = this.deletedProjectDir(safeProjectId)
     const liveProjectDir = this.projectDir(safeProjectId)
     const markerPath = join(deletedProjectDir, PROJECT_DELETION_COMMIT_MARKER)
@@ -1017,7 +1025,13 @@ class SessionRepository {
 
   async completeProjectSessionDeletion(projectId: string): Promise<void> {
     await this.operationScheduler.runProject(projectId, async () => {
-      await this.dependencies.remove(this.deletedProjectDir(assertSafeSegment(projectId)), {
+      const safeProjectId = assertSafeSegment(projectId)
+      const deletedSessionsBoundary = await this.inspectDirectoryBoundary(this.deletedSessionsDir)
+      if (deletedSessionsBoundary === 'missing') return
+      if (deletedSessionsBoundary === 'invalid') {
+        throw new Error('Deleted Session root is not a regular directory.')
+      }
+      await this.dependencies.remove(this.deletedProjectDir(safeProjectId), {
         recursive: true,
         force: true
       })
@@ -1026,6 +1040,11 @@ class SessionRepository {
   }
 
   async listLegacyProjectSessionTombstones(): Promise<string[]> {
+    const deletedSessionsBoundary = await this.inspectDirectoryBoundary(this.deletedSessionsDir)
+    if (deletedSessionsBoundary === 'missing') return []
+    if (deletedSessionsBoundary === 'invalid') {
+      throw new Error('Deleted Session root is not a regular directory.')
+    }
     let entries
     try {
       entries = await readdir(this.deletedSessionsDir, { withFileTypes: true })
