@@ -65,10 +65,18 @@ const copyGeneration = (change, generation, request, bytesUsed) => {
   if (request.captureCancelled) {
     return { state: 'unavailable', reason: 'generation-freeze-failed' }
   }
-  const source = openSync(change.after.physicalPath, constants.O_RDONLY)
   const temporaryName = `.incoming-${randomUUID()}`
+  let source
   let target
   try {
+    try {
+      source = openSync(
+        change.after.physicalPath,
+        constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW
+      )
+    } catch {
+      return { state: 'unavailable', reason: 'generation-freeze-failed' }
+    }
     const before = fstatSync(source)
     if (!before.isFile() || fingerprint(before) !== fingerprint(change.after)) {
       return { state: 'unavailable', reason: 'generation-freeze-failed' }
@@ -144,7 +152,7 @@ const copyGeneration = (change, generation, request, bytesUsed) => {
       }
     }
   } finally {
-    closeSync(source)
+    if (source !== undefined) closeSync(source)
     if (target !== undefined) closeSync(target)
     rmSync(temporaryName, { force: true })
   }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { execFile as execFileCallback } from 'node:child_process'
 import {
   mkdir,
   mkdtemp,
@@ -6,19 +7,24 @@ import {
   readdir,
   rename,
   rm,
+  stat,
   symlink,
   unlink,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, win32 } from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   reconcileWorkingFileEvidence,
+  runEvidenceWorker,
   startWorkingFileObservation,
   toPortableNotebookRelativePath
 } from './working-file-observer'
+
+const execFile = promisify(execFileCallback)
 
 const watcherUnavailable = (): never => {
   throw Object.assign(new Error('watch unavailable'), { code: 'ENOSPC' })
@@ -349,6 +355,80 @@ describe('working-file evidence', () => {
     })
     await expect(readdir(outsideRoot)).resolves.toEqual([])
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'does not block when a captured source is replaced by a FIFO',
+    async () => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      const source = join(dataRoot, 'replaced.csv')
+      await writeFile(source, 'captured bytes')
+      const captured = await stat(source)
+      await unlink(source)
+      await execFile('mkfifo', [source])
+      const evidenceRoot = join(sessionRoot, 'file-evidence')
+      await mkdir(evidenceRoot)
+      const root = await stat(evidenceRoot)
+      const controller = new AbortController()
+      const abort = setTimeout(() => controller.abort(), 2_000)
+
+      try {
+        await expect(
+          runEvidenceWorker(
+            evidenceRoot,
+            {
+              operation: 'persist',
+              expectedRootIdentity: { dev: root.dev, ino: root.ino },
+              stagingName: 'staging-run-special-source-test',
+              finalName: 'run-special-source-test',
+              runId: 'special-source-test',
+              evidenceId: 'notebook-file-evidence-special-source-test',
+              rootKinds: ['data'],
+              rootsAvailable: true,
+              reasonCodes: [],
+              changes: [
+                {
+                  change: {
+                    relation: 'created',
+                    relativePath: 'data/replaced.csv',
+                    after: {
+                      physicalPath: source,
+                      path: source,
+                      relativePath: 'data/replaced.csv',
+                      kind: 'other',
+                      size: captured.size,
+                      mtimeMs: captured.mtimeMs,
+                      ctimeMs: captured.ctimeMs,
+                      dev: captured.dev,
+                      ino: captured.ino
+                    }
+                  },
+                  generation: {
+                    generationId: 'generation-special-source-test',
+                    capturedAt: '1970-01-01T00:00:01.000Z'
+                  }
+                }
+              ],
+              maxGenerationBytes: 1024,
+              maxRunBytes: 64 * 1024,
+              diskReserveBytes: 0,
+              availableBytes: 1024 * 1024,
+              publicationAvailableBytes: 1024 * 1024,
+              captureCancelled: false
+            },
+            controller.signal
+          )
+        ).resolves.toMatchObject({
+          generations: [],
+          fileEvidence: {
+            generationCount: 0,
+            reasonCodes: expect.arrayContaining(['generation-freeze-failed'])
+          }
+        })
+      } finally {
+        clearTimeout(abort)
+      }
+    }
+  )
 
   it('reconciles crash-orphaned staging and unpublished run directories', async () => {
     const { sessionRoot } = await createRoots()

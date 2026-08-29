@@ -106,6 +106,7 @@ const MAX_FALLBACK_SNAPSHOT_ENTRIES = 50_000
 const EVENT_SETTLE_MS = 20
 const WATCHER_READY_MS = 5
 const MAX_WORKER_OUTPUT_BYTES = 16 * 1024 * 1024
+const EVIDENCE_WORKER_TIMEOUT_MS = 10 * 60 * 1000
 const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const BASELINE_REASON_CODES: NotebookFileEvidenceReason[] = [
   'file-reads-not-observed',
@@ -228,7 +229,7 @@ const resolveEvidenceWorkerPath = (): string => {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[candidates.length - 1]!
 }
 
-const runEvidenceWorker = async (
+export const runEvidenceWorker = async (
   evidenceRoot: string,
   request: EvidenceWorkerPersistRequest | EvidenceWorkerReconcileRequest,
   signal?: AbortSignal
@@ -243,11 +244,28 @@ const runEvidenceWorker = async (
     let stdout = ''
     let stderr = ''
     let outputExceeded = false
+    let settled = false
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+    }
+    const rejectOnce = (error: unknown): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      rejectResult(error)
+    }
+    const resolveOnce = (result: EvidenceWorkerResult): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolveResult(result)
+    }
     const append = (current: string, chunk: Buffer): string => {
       const next = current + chunk.toString('utf8')
       if (Buffer.byteLength(next) > MAX_WORKER_OUTPUT_BYTES) {
         outputExceeded = true
-        child.kill()
+        child.kill('SIGKILL')
       }
       return next
     }
@@ -258,32 +276,38 @@ const runEvidenceWorker = async (
       stderr = append(stderr, chunk)
     })
     const abort = (): void => {
-      child.kill()
+      child.kill('SIGKILL')
+      rejectOnce(signal?.reason ?? new Error('File-evidence worker aborted.'))
     }
     signal?.addEventListener('abort', abort, { once: true })
-    child.once('error', rejectResult)
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL')
+      rejectOnce(new Error('File-evidence worker timed out.'))
+    }, EVIDENCE_WORKER_TIMEOUT_MS)
+    timeout.unref()
+    child.once('error', rejectOnce)
     child.once('close', (code) => {
-      signal?.removeEventListener('abort', abort)
+      if (settled) return
       if (signal?.aborted) {
-        rejectResult(signal.reason)
+        rejectOnce(signal.reason)
         return
       }
       if (outputExceeded) {
-        rejectResult(new Error('File-evidence worker output exceeded its limit.'))
+        rejectOnce(new Error('File-evidence worker output exceeded its limit.'))
         return
       }
       let result: EvidenceWorkerResult | { ok: false; error?: string }
       try {
         result = JSON.parse(stdout.trim()) as EvidenceWorkerResult | { ok: false; error?: string }
       } catch {
-        rejectResult(new Error(`File-evidence worker returned invalid output: ${stderr.trim()}`))
+        rejectOnce(new Error(`File-evidence worker returned invalid output: ${stderr.trim()}`))
         return
       }
       if (code !== 0 || !result.ok) {
-        rejectResult(new Error(!result.ok ? result.error : stderr.trim()))
+        rejectOnce(new Error(!result.ok ? result.error : stderr.trim()))
         return
       }
-      resolveResult(result)
+      resolveOnce(result)
     })
     child.stdin.end(JSON.stringify(request))
   })
