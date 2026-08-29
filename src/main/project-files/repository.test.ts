@@ -1386,6 +1386,34 @@ describe('ManagedFileIndexRepository', () => {
     expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
   })
 
+  it('does not flush another project pending Session marker before a read', async () => {
+    const unrelatedProjectId = 'unrelated-project'
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+
+    await expect(
+      transientRepository.syncSession(createSession({ projectId: unrelatedProjectId }))
+    ).rejects.toThrow('database temporarily unavailable')
+    databaseAvailable = true
+
+    const originalUpsert = client.managedFileSessionSync.upsert.bind(client.managedFileSessionSync)
+    vi.spyOn(client.managedFileSessionSync, 'upsert').mockImplementation((async (
+      args: Parameters<typeof originalUpsert>[0]
+    ) => {
+      if (args.where.projectId_sessionId.projectId === unrelatedProjectId) {
+        throw new Error('unrelated project is locked')
+      }
+      return originalUpsert(args)
+    }) as unknown as typeof originalUpsert)
+
+    await expect(transientRepository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      isIndexComplete: true
+    })
+  })
+
   it('does not revive stale file rows when a session deletion is compensated', async () => {
     const oldPath = join(
       storageRoot,

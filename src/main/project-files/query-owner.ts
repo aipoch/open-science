@@ -38,7 +38,10 @@ class ProjectFilesQueryOwner {
   constructor(
     private readonly getClient: ProjectFilesClientProvider,
     private readonly dataRoot: string,
-    private readonly beforeRead: (client: ProjectFilesClient) => Promise<void>
+    private readonly beforeRead: (
+      client: ProjectFilesClient,
+      projectIds: readonly string[]
+    ) => Promise<void>
   ) {}
 
   async getOverview(
@@ -49,7 +52,7 @@ class ProjectFilesQueryOwner {
     requireIdentifier(projectId, 'projectId')
     const search = normalizeSearch(rawSearch)
     const client = await this.getClient()
-    await this.beforeRead(client)
+    await this.beforeRead(client, [projectId])
     const [totalCount, uploadCount, artifactCount, artifactGroupCount, isIndexComplete] = search
       ? await getMatchingOverviewCounts(client, projectId, search)
       : await Promise.all([
@@ -87,7 +90,7 @@ class ProjectFilesQueryOwner {
     }
     const normalizedRequest = { ...request, collection: normalizedCollection }
     const client = await this.getClient()
-    await this.beforeRead(client)
+    await this.beforeRead(client, [request.projectId])
     const limit = normalizeLimit(request.limit)
     const search = normalizeSearch(request.search)
     const source =
@@ -193,7 +196,7 @@ class ProjectFilesQueryOwner {
       ? decodeSearchArtifactCursor(request.primaryCursor, request.primaryProjectId, search)
       : undefined
     const client = await this.getClient()
-    await this.beforeRead(client)
+    await this.beforeRead(client, [request.primaryProjectId, ...otherProjectIds])
     const excludedSessionIds = search?.excludedSessionIds ?? []
     const [primaryRows, primaryTotalCount, otherRows, isIndexComplete] = await Promise.all([
       listMatchingArtifacts(
@@ -454,7 +457,7 @@ class ProjectFilesQueryOwner {
   async listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage> {
     requireIdentifier(request.projectId, 'projectId')
     const client = await this.getClient()
-    await this.beforeRead(client)
+    await this.beforeRead(client, [request.projectId])
     const limit = normalizeLimit(request.limit)
     const search = normalizeSearch(request.search)
     const cursor = request.cursor ? decodeGroupCursor(request.cursor, request) : undefined

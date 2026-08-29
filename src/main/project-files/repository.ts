@@ -31,8 +31,8 @@ class ManagedFileIndexRepository {
 
   constructor(getClient: ProjectFilesClientProvider, dataRoot: string) {
     this.mutationOwner = new ProjectFilesMutationOwner(getClient, dataRoot)
-    this.queryOwner = new ProjectFilesQueryOwner(getClient, dataRoot, (client) =>
-      this.mutationOwner.flushPendingIncompleteState(client)
+    this.queryOwner = new ProjectFilesQueryOwner(getClient, dataRoot, (client, projectIds) =>
+      this.mutationOwner.flushPendingIncompleteState(client, projectIds)
     )
   }
 

@@ -555,12 +555,17 @@ class ProjectFilesMutationOwner {
     }
   }
 
-  async flushPendingIncompleteState(client: ProjectFilesClient): Promise<void> {
+  async flushPendingIncompleteState(
+    client: ProjectFilesClient,
+    projectIds: readonly string[]
+  ): Promise<void> {
     if (this.hasPendingReconciliationIncompleteState) {
       await setProjectFilesReconciliationComplete(client, false)
       this.hasPendingReconciliationIncompleteState = false
     }
-    for (const key of [...this.pendingIncompleteSessions.keys()]) {
+    const requestedProjectIds = new Set(projectIds)
+    for (const [key, pendingState] of [...this.pendingIncompleteSessions.entries()]) {
+      if (!requestedProjectIds.has(pendingState.projectId)) continue
       await this.withSessionSyncLock(key, async () => {
         const state = this.pendingIncompleteSessions.get(key)
         if (!state) return
