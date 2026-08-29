@@ -49,7 +49,8 @@ export const AgentFrameworkIcon = ({
 
 // Official vendor brand marks, bundled as assets. Providers from the same vendor share one mark:
 // Bailian and Bailian for Plan, Kimi and Kimi For Coding, Zhipu and GLM Coding Plan, and StepFun and
-// Step Plan. Any vendor without an entry falls back to a neutral glyph rather than a made-up logo.
+// Step Plan. Tencent providers use the bundled icon component below. Any vendor without an entry
+// falls back to a neutral glyph rather than a made-up logo.
 // Custom uses a plus-in-circle.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
@@ -118,7 +119,11 @@ export const ProviderKindIcon = ({
     )
   }
 
-  if (kindKey === 'official:tencent') {
+  if (
+    kindKey === 'official:tencent' ||
+    kindKey === 'official:tencentcodingplan' ||
+    kindKey === 'official:tencenttokenplan'
+  ) {
     return (
       <TencentCloudColor
         size={20}
