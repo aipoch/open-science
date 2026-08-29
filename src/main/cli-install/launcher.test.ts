@@ -550,11 +550,12 @@ describe('uninstallCliLauncher on Windows PATH edit', () => {
     expect(calls).toHaveLength(1)
     const script = calls[0].args.at(-1) ?? ''
     expect(script).toContain("$state = 'owned'")
-    expect(script).toContain('$matches = @(for ($i = 0; $i -lt $parts.Count; $i++)')
+    expect(script).toContain('$matches = @($parts | Where-Object')
     expect(script).toContain("TrimEnd([char[]]'\\/') -ieq $normalizedBinDir")
-    expect(script).toContain('if ($i -ne $removeIndex) { $parts[$i] }')
-    expect(script).toContain("throw 'Multiple equivalent PATH entries make ownership ambiguous.'")
-    expect(script).toContain("SetEnvironmentVariable('Path', $next, 'User')")
+    expect(script).toContain(
+      "throw 'The owned PATH entry no longer matches its recorded snapshot.'"
+    )
+    expect(script).toContain("SetEnvironmentVariable('Path', $beforePath, 'User')")
     expect(status).toMatchObject({ installed: false, onPath: false })
     await expect(readFile(planCliLauncher(env).target, 'utf8')).rejects.toMatchObject({
       code: 'ENOENT'
@@ -564,7 +565,7 @@ describe('uninstallCliLauncher on Windows PATH edit', () => {
     })
   })
 
-  it('fails closed for ambiguous duplicates and keeps cleanup retryable', async () => {
+  it('fails closed when ownership continuity no longer matches the recorded snapshot', async () => {
     const env = winEnv()
     await installCliLauncher(env, () => true)
     await writeWindowsPathJournal(env)
@@ -572,7 +573,7 @@ describe('uninstallCliLauncher on Windows PATH edit', () => {
     await expect(
       uninstallCliLauncher(env, (_command, args) => {
         expect(args.at(-1)).toContain(
-          "throw 'Multiple equivalent PATH entries make ownership ambiguous.'"
+          "throw 'The owned PATH entry no longer matches its recorded snapshot.'"
         )
         return false
       })

@@ -220,7 +220,8 @@ const parseWindowsPathJournal = (
       typeof value.binDir !== 'string' ||
       normalizeWindowsPathEntry(value.binDir) !== normalizeWindowsPathEntry(binDir) ||
       (beforePath !== null && typeof beforePath !== 'string') ||
-      typeof value.afterPath !== 'string'
+      typeof value.afterPath !== 'string' ||
+      isOnPath(binDir, beforePath ?? '', 'win32')
     ) {
       return undefined
     }
@@ -260,7 +261,8 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
     "  $expectedAfter = (@(Get-PathParts $journal.beforePath) + $binDir) -join ';'",
     '  if ($journal.version -ne 1 -or $journal.owner -cne $receiptOwner -or',
     "      $journal.binDir.TrimEnd([char[]]'\\/') -ine $binDir.TrimEnd([char[]]'\\/') -or",
-    '      -not $beforeIsValid -or $journal.afterPath -isnot [string] -or',
+    '      -not $beforeIsValid -or (Get-MatchCount $journal.beforePath) -ne 0 -or',
+    '      $journal.afterPath -isnot [string] -or',
     '      $journal.afterPath -cne $expectedAfter) {',
     "    throw 'The PATH ownership journal is not managed by Open Science.'",
     '  }',
@@ -330,10 +332,15 @@ const buildWindowsPathRemovalCommand = (
     "catch { throw 'The PATH ownership journal is not managed by Open Science.' }",
     '  $beforeIsValid = $null -eq $journal.beforePath -or $journal.beforePath -is [string]',
     "$beforeParts = @($journal.beforePath -split ';' | Where-Object { $_ -ne '' })",
+    "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
+    '  $beforeMatchCount = @($beforeParts | Where-Object {',
+    "    $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir",
+    '  }).Count',
     "  $expectedAfter = (@($beforeParts) + $binDir) -join ';'",
     'if ($journal.version -ne 1 -or $journal.owner -cne $receiptOwner -or',
     "    $journal.binDir.TrimEnd([char[]]'\\/') -ine $binDir.TrimEnd([char[]]'\\/') -or",
-    '    -not $beforeIsValid -or $journal.afterPath -isnot [string] -or',
+    '    -not $beforeIsValid -or $beforeMatchCount -ne 0 -or',
+    '    $journal.afterPath -isnot [string] -or',
     '    $journal.afterPath -cne $expectedAfter) {',
     "  throw 'The PATH ownership journal is not managed by Open Science.'",
     '}',
@@ -341,9 +348,8 @@ const buildWindowsPathRemovalCommand = (
     '$afterPath = $journal.afterPath',
     "$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
     "$parts = @($current -split ';' | Where-Object { $_ -ne '' })",
-    "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
-    '$matches = @(for ($i = 0; $i -lt $parts.Count; $i++) {',
-    "  if ($parts[$i].TrimEnd([char[]]'\\/') -ieq $normalizedBinDir) { $i }",
+    '$matches = @($parts | Where-Object {',
+    "  $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir",
     '})',
     "if ($state -ceq 'pending') {",
     '  if ($current -ceq $beforePath) { return }',
@@ -351,17 +357,11 @@ const buildWindowsPathRemovalCommand = (
     "    throw 'The pending PATH ownership journal cannot be reconciled.'",
     '  }',
     '}',
-    'if ($matches.Count -gt 1) {',
-    "  throw 'Multiple equivalent PATH entries make ownership ambiguous.'",
+    'if ($matches.Count -eq 0) { return }',
+    'if ($current -cne $afterPath) {',
+    "  throw 'The owned PATH entry no longer matches its recorded snapshot.'",
     '}',
-    'if ($matches.Count -eq 1) {',
-    '  $removeIndex = $matches[0]',
-    '  $nextParts = @(for ($i = 0; $i -lt $parts.Count; $i++) {',
-    '    if ($i -ne $removeIndex) { $parts[$i] }',
-    '  })',
-    "  $next = $nextParts -join ';'",
-    "  [Environment]::SetEnvironmentVariable('Path', $next, 'User')",
-    '}'
+    "[Environment]::SetEnvironmentVariable('Path', $beforePath, 'User')"
   ].join('\n')
   return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
 }
