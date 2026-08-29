@@ -167,6 +167,16 @@ describe('rendererSessionPersistenceFlushBlocksShutdown', () => {
       false
     )
   })
+
+  it('allows an absent Electron renderer after a headless Web handoff flushed locally', () => {
+    expect(
+      rendererSessionPersistenceFlushBlocksShutdown(
+        'unavailable',
+        'data-root-handoff',
+        'headless-web'
+      )
+    ).toBe(false)
+  })
 })
 
 describe('createElectronSessionPersistenceFlush', () => {

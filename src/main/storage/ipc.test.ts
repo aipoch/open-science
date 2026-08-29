@@ -953,6 +953,39 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
+  it('keeps a committed recovered handoff non-cancellable after quit-anyway', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    let finishPointerWrite: (() => void) | undefined
+    const setDataRoot = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPointerWrite = resolve
+        })
+    )
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot,
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({})
+      }
+    })
+    const restartedOwner = createStorageCommandOwner(deps)
+    const guardApp = makeMigrationQuitGuardApp()
+    installMigrationQuitGuard(guardApp, () => true)
+
+    const commit = restartedOwner.commitAndRelaunch({ parent: targetParent })
+    await vi.waitFor(() => expect(setDataRoot).toHaveBeenCalledOnce())
+    guardApp.fireBeforeQuit()
+    expect(guardApp.quit).not.toHaveBeenCalled()
+    finishPointerWrite?.()
+
+    await expect(commit).resolves.toEqual({ ok: true })
+    await vi.waitFor(() => expect(guardApp.quit).toHaveBeenCalledOnce())
+    expect(deps.relaunch).toHaveBeenCalledOnce()
+    expect(isMigrationPending()).toBe(true)
+  })
+
   it('rechecks delegated work after recovered commit preparation', async () => {
     initDataRoot(dataRoot)
     await seedVerifiedMarker(target, dataRoot)
@@ -1629,6 +1662,39 @@ describe('storage IPC handlers', () => {
     expect(quitWasReissuedBeforePreparationSettled).toBe(false)
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('keeps a committed direct handoff non-cancellable after quit-anyway', async () => {
+    initDataRoot(dataRoot)
+    let finishPointerWrite: (() => void) | undefined
+    const setDataRoot = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPointerWrite = resolve
+        })
+    )
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot,
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({})
+      },
+      classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+    })
+    const owner = createStorageCommandOwner(deps)
+    const guardApp = makeMigrationQuitGuardApp()
+    installMigrationQuitGuard(guardApp, () => true)
+
+    const handoff = owner.setDataRootAndRelaunch({ parent: targetParent })
+    await vi.waitFor(() => expect(setDataRoot).toHaveBeenCalledOnce())
+    guardApp.fireBeforeQuit()
+    expect(guardApp.quit).not.toHaveBeenCalled()
+    finishPointerWrite?.()
+
+    await expect(handoff).resolves.toEqual({ ok: true })
+    await vi.waitFor(() => expect(guardApp.quit).toHaveBeenCalledOnce())
+    expect(deps.relaunch).toHaveBeenCalledOnce()
+    expect(isMigrationPending()).toBe(true)
   })
 
   it('holds the write gate from direct handoff preparation through relaunch', async () => {

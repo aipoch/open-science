@@ -658,11 +658,12 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         // On success the write-gate stays set through relaunch: the fresh process starts with
         // pending=false, so writes naturally resume against the now-live new root.
         activeStaged = undefined
+        quitOperation.markCommitted()
         cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
         // The pointer has committed. Let the migration-relaunch trigger own the non-cancellable quit;
         // leaving the preparation guard raised would make app-lifecycle reject its own relaunch.
         endMigrationCopy()
-        if (!signal.aborted) await cleanRelaunch()
+        await cleanRelaunch()
       } else {
         // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /
         // mismatch). The UI's error stage offers no retry, so never leave the app soft-locked: on a
@@ -848,13 +849,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         completeOnboarding: request.markOnboarding === true
       })
       pointerCommitted = true
+      quitOperation.markCommitted()
       // The copy-phase quit warning is not appropriate after the pointer commits, but keep `pending`
       // raised so no writer can reopen against this process's cached old root before app.quit().
       endMigrationCopy()
-      if (signal.aborted) {
-        operation.complete({ mode: classification.kind })
-        return { ok: true }
-      }
       operation.phase('request-relaunch', { mode: classification.kind })
       await cleanRelaunch()
       operation.complete({ mode: classification.kind })

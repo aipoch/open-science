@@ -425,6 +425,11 @@ const installWebApi = async (): Promise<EventCursor> => {
     restrictedRpcChannels,
     invoke,
     subscribe,
+    flushDataRootHandoffPersistence: async () => {
+      const { flushDataRootHandoffPersistence } =
+        await import('@/lib/data-root-handoff-persistence')
+      await flushDataRootHandoffPersistence()
+    },
     nativeAdapters: {
       getRuntimeVersions: () => bootstrap.versions,
       saveBlobFile: (request: { suggestedName: string; mimeType: string; data: ArrayBuffer }) => {

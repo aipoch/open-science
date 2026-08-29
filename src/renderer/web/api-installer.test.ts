@@ -45,6 +45,30 @@ describe('installWebRendererContracts', () => {
     expect(invoke).toHaveBeenCalledWith('projects:list', [{ includeArchived: false }])
   })
 
+  it('flushes local Web persistence before a data-root handoff RPC', async () => {
+    const api: Record<string, unknown> = {}
+    const order: string[] = []
+    const invoke = vi.fn(async () => {
+      order.push('invoke')
+      return { ok: true }
+    })
+
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['storage:set-data-root-and-relaunch']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {},
+      flushDataRootHandoffPersistence: async () => {
+        order.push('flush')
+      }
+    } as never)
+
+    await methodAt(api, 'storage.setDataRootAndRelaunch')?.('/data', true)
+
+    expect(order).toEqual(['flush', 'invoke'])
+  })
+
   it('preserves the Web optional-argument codecs when dispatching RPC', async () => {
     const api: Record<string, unknown> = {}
     const invoke = vi.fn().mockResolvedValue(undefined)

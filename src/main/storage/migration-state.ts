@@ -19,6 +19,8 @@ let pending = false
 type MigrationQuitOperation = {
   controller: AbortController
   settled: Promise<void>
+  committed: boolean
+  markCommitted: () => void
   finish: () => void
 }
 let activeQuitOperation: MigrationQuitOperation | undefined
@@ -31,6 +33,7 @@ const dataRootWriteContext = new AsyncLocalStorage<boolean>()
 // copy is ready to start. The returned handle must be finished when the owning command settles.
 export type MigrationPreparationOperation = {
   signal: AbortSignal
+  markCommitted: () => void
   finish: () => void
 }
 
@@ -41,9 +44,13 @@ export const beginMigrationPreparation = (
   let resolveSettled: (() => void) | undefined
   const operation: MigrationQuitOperation = {
     controller,
+    committed: false,
     settled: new Promise<void>((resolve) => {
       resolveSettled = resolve
     }),
+    markCommitted: () => {
+      operation.committed = true
+    },
     finish: () => {
       if (activeQuitOperation !== operation) return
       activeQuitOperation = undefined
@@ -51,7 +58,11 @@ export const beginMigrationPreparation = (
     }
   }
   activeQuitOperation = operation
-  return { signal: controller.signal, finish: operation.finish }
+  return {
+    signal: controller.signal,
+    markCommitted: operation.markCommitted,
+    finish: operation.finish
+  }
 }
 
 // A recovered commit temporarily enters the copy/write gate while it drains writers, then returns
@@ -92,12 +103,13 @@ export const endMigration = (): void => {
 
 // Quit-anyway must cancel and join the command that owns the preparation flag before the lifecycle
 // reissues app.quit(). Clearing flags alone would let that command resume and persist a new pointer
-// concurrently with ordinary shutdown.
+// concurrently with ordinary shutdown. Once the command marks its pointer committed, retain the
+// write gate: that path owns a mandatory relaunch/terminal handoff even though cancellation arrived.
 export const cancelMigrationForQuit = async (): Promise<void> => {
   const operation = activeQuitOperation
   operation?.controller.abort()
   await operation?.settled
-  endMigration()
+  if (!operation?.committed) endMigration()
 }
 
 export const isMigrationInProgress = (): boolean => preparing || copying
@@ -175,8 +187,9 @@ const defaultConfirmQuit = (translate: NativeTranslator): boolean =>
 // window close button. The move itself is crash-safe (copy → verify → commit → delete leaves either
 // the old or the new root fully intact), so this is about not making the user redo a move by
 // accident, not about preventing data loss. On confirmation the active command is aborted and
-// awaited before the flags are cleared and quit is re-issued, so the second pass falls straight
-// through without racing a later pointer commit. `confirmQuit` is injectable for tests.
+// awaited before quit is re-issued. Pre-commit cancellation clears the flags; a command that commits
+// while being joined keeps the write gate and performs its mandatory relaunch. `confirmQuit` is
+// injectable for tests.
 export const installMigrationQuitGuard = (
   app: Pick<App, 'on' | 'quit'>,
   confirmQuit?: () => boolean,

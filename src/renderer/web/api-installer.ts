@@ -9,7 +9,14 @@ type WebRendererAdapters = Readonly<{
   invoke: (channel: string, args: unknown[]) => Promise<unknown>
   subscribe: (channel: string, listener: Listener) => () => void
   nativeAdapters: Readonly<Record<string, unknown>>
+  flushDataRootHandoffPersistence?: () => Promise<void>
 }>
+
+const DATA_ROOT_HANDOFF_CHANNELS = new Set([
+  'storage:migrate',
+  'storage:commit-and-relaunch',
+  'storage:set-data-root-and-relaunch'
+])
 
 const assignApiPath = (root: Record<string, unknown>, path: string, value: unknown): void => {
   const parts = path.split('.')
@@ -60,9 +67,12 @@ export const installWebRendererContracts = (
       contract.surfaceInstallation.localWeb === 'web-rpc' &&
       adapters.availableRpcChannels.has(channel)
     ) {
-      assignApiPath(api, publicPath, (...args: unknown[]) =>
-        adapters.invoke(channel, transformArguments(contract, args))
-      )
+      assignApiPath(api, publicPath, async (...args: unknown[]) => {
+        if (DATA_ROOT_HANDOFF_CHANNELS.has(channel)) {
+          await adapters.flushDataRootHandoffPersistence?.()
+        }
+        return adapters.invoke(channel, transformArguments(contract, args))
+      })
     } else if (
       channel !== null &&
       contract.surfaceInstallation.remoteWeb === 'rejecting-stub' &&

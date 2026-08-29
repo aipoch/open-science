@@ -496,7 +496,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
                 const getWindow = (): InstanceType<typeof BrowserWindow> | undefined =>
                   mainWindowGetterBox.current?.()
                 const outcome = await createElectronSessionPersistenceFlush(getWindow)()
-                if (!rendererSessionPersistenceFlushBlocksShutdown(outcome, policy)) return true
+                const surface = webMode.headless ? 'headless-web' : 'electron-renderer'
+                if (!rendererSessionPersistenceFlushBlocksShutdown(outcome, policy, surface)) {
+                  return true
+                }
                 notifyRendererSessionPersistenceFlushAborted(getWindow)
                 return false
               },
