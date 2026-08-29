@@ -96,6 +96,7 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
   },
   cleanupRuntimeCache: vi.fn(() => true),
   prepareDataRootHandoff: vi.fn().mockResolvedValue(true),
+  validateNewDataRoot: vi.fn().mockResolvedValue({ ok: true }),
   relaunch: vi.fn(),
   ...overrides
 })
@@ -652,6 +653,22 @@ describe('storage IPC handlers', () => {
 
     expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
     expect(runDataRootMigration).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('rejects an invalid migration target before preparing the handoff', async () => {
+    initDataRoot(dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+    const deps = fakeDeps({ prepareDataRootHandoff, validateNewDataRoot: undefined })
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:migrate', { parent: join(currentParent, 'missing-parent') })
+    ).resolves.toMatchObject({ ok: false })
+
+    expect(prepareDataRootHandoff).not.toHaveBeenCalled()
+    expect(deps.runtime.disconnect).not.toHaveBeenCalled()
+    expect(deps.notebook.shutdownAll).not.toHaveBeenCalled()
     expect(isMigrationPending()).toBe(false)
   })
 
@@ -1394,6 +1411,25 @@ describe('storage IPC handlers', () => {
 
     expect(setDataRoot).toHaveBeenCalledOnce()
     expect(relaunch).toHaveBeenCalledOnce()
+    expect(isMigrationPending()).toBe(true)
+  })
+
+  it('forces the committed old process to exit when direct relaunch throws', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps({
+      relaunch: vi.fn(() => {
+        throw new Error('restart scheduling failed')
+      }),
+      classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toEqual({ ok: false, error: 'restart scheduling failed' })
+
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledOnce()
+    expect(appExit).toHaveBeenCalledWith(1)
     expect(isMigrationPending()).toBe(true)
   })
 

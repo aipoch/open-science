@@ -93,6 +93,7 @@ type StorageCommandOwnerDeps = {
   // Windows classification probes volume capabilities; inject only when a host-independent command
   // boundary test needs to reach the pointer mutation without depending on its temporary drive.
   classifyDataRoot?: typeof classifyDataRoot
+  validateNewDataRoot?: typeof validateNewDataRoot
   // Stops data producers and proves renderer-owned Session state is durable before any data-root
   // pointer can be persisted. Optional only for isolated storage tests and non-desktop adapters.
   prepareDataRootHandoff?: () => Promise<boolean>
@@ -128,6 +129,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const runDataRootMigrationImpl = deps.runDataRootMigration ?? runDataRootMigration
   const pauseDataRootWritersImpl = deps.pauseDataRootWriters ?? pauseDataRootWriters
   const classifyDataRootImpl = deps.classifyDataRoot ?? classifyDataRoot
+  const validateNewDataRootImpl = deps.validateNewDataRoot ?? validateNewDataRoot
   const unsafeLogger = deps.logger ?? createLogger('storage:ipc')
   const emitSafely = (level: keyof Logger, message: string, data?: unknown): void => {
     try {
@@ -284,6 +286,12 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     // overwrite this operation's controller or staging authority.
     activeMigration = controller
     try {
+      // Reject stale/invalid requests before stopping any producer. The migration engine validates
+      // again at its own filesystem boundary, but ordinary invalid targets must have no teardown side
+      // effects at the command boundary.
+      const validation = await validateNewDataRootImpl(request.parent, resolveDataRoot())
+      if (!validation.ok) return validation
+
       const preparationFailure = await prepareDataRootHandoff()
       if (preparationFailure) return preparationFailure
 
@@ -441,18 +449,32 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
 
   // Production relaunches through app.quit(), allowing the single application lifecycle owner to
   // drain usage, flush renderer persistence, stop backends, write a terminal diagnostic, and flush
-  // main.log before exit. The injected callback remains a narrow test seam.
+  // main.log before exit. The injected callback remains a narrow test seam. This runs only after the
+  // pointer commits; if relaunch scheduling or quit itself throws, the durable handoff cannot safely
+  // return to the cached old-root process, so app.exit is the terminal fallback.
   const cleanRelaunch = async (): Promise<void> => {
     if (deps.relaunch) {
-      deps.relaunch()
+      try {
+        deps.relaunch()
+      } catch (error) {
+        app.exit(1)
+        throw error
+      }
       return
     }
-    app.relaunch()
-    const rollbackTrigger = markApplicationShutdownTrigger('migration-relaunch')
+    try {
+      app.relaunch()
+    } catch (error) {
+      app.exit(1)
+      throw error
+    }
+    markApplicationShutdownTrigger('migration-relaunch')
     try {
       app.quit()
     } catch (error) {
-      rollbackTrigger()
+      // Producer teardown and renderer durability were already confirmed before the pointer commit.
+      // Bypass the failed graceful path rather than leaving this process alive on its cached old root.
+      app.exit(1)
       throw error
     }
   }
