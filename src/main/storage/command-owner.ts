@@ -290,10 +290,26 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       // again at its own filesystem boundary, but ordinary invalid targets must have no teardown side
       // effects at the command boundary.
       const validation = await validateNewDataRootImpl(request.parent, resolveDataRoot())
+      if (controller.signal.aborted) {
+        return { ok: false, error: 'migration cancelled', cancelled: true }
+      }
       if (!validation.ok) return validation
 
       const preparationFailure = await prepareDataRootHandoff()
+      if (controller.signal.aborted) {
+        return { ok: false, error: 'migration cancelled', cancelled: true }
+      }
       if (preparationFailure) return preparationFailure
+
+      // The preparation gate is intentionally non-latching. A delegated task can appear during its
+      // await, so recheck before synchronously raising the write gate and entering the copy engine.
+      if (deps.getActiveDelegatedSessions().length > 0) {
+        return {
+          ok: false,
+          error:
+            'Subagents are still running. Return to their tasks and stop them before moving data.'
+        }
+      }
 
       // Flag the copy: sets both the quit guard (Cmd+Q warning) and the write-gate (blocks ACP/notebook
       // writes to the old root for the whole copy→commit window).
@@ -554,6 +570,21 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         // Keep the write gate pending through commit, but avoid treating the subsequent clean
         // relaunch as an in-progress copy in the quit guard.
         endMigrationCopy()
+      }
+    }
+
+    // Both the renderer/backend handoff and recovered-writer drain are non-latching awaits. Refuse a
+    // delegated task that appeared in either window immediately before the pointer/delete boundary.
+    if (deps.getActiveDelegatedSessions().length > 0) {
+      if (staged.recovered) {
+        clearMigrationPending()
+        activeStaged = undefined
+      }
+      resolutionInProgress = false
+      return {
+        ok: false,
+        error:
+          'Subagents are still running. Return to their tasks and stop them before finishing the move.'
       }
     }
 

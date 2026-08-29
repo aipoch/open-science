@@ -644,6 +644,25 @@ describe('storage IPC handlers', () => {
     expect(isMigrationPending()).toBe(false)
   })
 
+  it('rechecks delegated work after migration handoff preparation', async () => {
+    initDataRoot(dataRoot)
+    const getActiveDelegatedSessions = vi
+      .fn()
+      .mockReturnValueOnce([])
+      .mockReturnValue([{ projectId: 'project-1', sessionId: 'delegated-race' }])
+    const runDataRootMigration = vi.fn().mockResolvedValue({ ok: true })
+    const deps = fakeDeps({ getActiveDelegatedSessions, runDataRootMigration })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'Subagents are still running. Return to their tasks and stop them before moving data.'
+    })
+
+    expect(runDataRootMigration).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
+  })
+
   it('does not start a migration copy when handoff durability cannot be confirmed', async () => {
     initDataRoot(dataRoot)
     const runDataRootMigration = vi.fn()
@@ -705,6 +724,65 @@ describe('storage IPC handlers', () => {
     await first
     expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
     expect(runDataRootMigration).not.toHaveBeenCalled()
+  })
+
+  it('honors cancellation while migration target validation is pending', async () => {
+    initDataRoot(dataRoot)
+    let finishValidation: ((result: { ok: true }) => void) | undefined
+    const validateNewDataRoot = vi.fn(
+      () =>
+        new Promise<{ ok: true }>((resolve) => {
+          finishValidation = resolve
+        })
+    )
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+    const runDataRootMigration = vi.fn().mockResolvedValue({ ok: true })
+    const deps = fakeDeps({
+      validateNewDataRoot,
+      prepareDataRootHandoff,
+      runDataRootMigration
+    })
+    registerStorageIpcHandlers(deps)
+
+    const migration = invoke('storage:migrate', { parent: targetParent })
+    await vi.waitFor(() => expect(validateNewDataRoot).toHaveBeenCalledOnce())
+    await invoke('storage:cancel-migrate')
+    finishValidation?.({ ok: true })
+
+    await expect(migration).resolves.toEqual({
+      ok: false,
+      error: 'migration cancelled',
+      cancelled: true
+    })
+    expect(prepareDataRootHandoff).not.toHaveBeenCalled()
+    expect(runDataRootMigration).not.toHaveBeenCalled()
+  })
+
+  it('honors cancellation while migration handoff preparation is pending', async () => {
+    initDataRoot(dataRoot)
+    let finishPreparation: ((ready: boolean) => void) | undefined
+    const prepareDataRootHandoff = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishPreparation = resolve
+        })
+    )
+    const runDataRootMigration = vi.fn().mockResolvedValue({ ok: true })
+    const deps = fakeDeps({ prepareDataRootHandoff, runDataRootMigration })
+    registerStorageIpcHandlers(deps)
+
+    const migration = invoke('storage:migrate', { parent: targetParent })
+    await vi.waitFor(() => expect(prepareDataRootHandoff).toHaveBeenCalledOnce())
+    await invoke('storage:cancel-migrate')
+    finishPreparation?.(true)
+
+    await expect(migration).resolves.toEqual({
+      ok: false,
+      error: 'migration cancelled',
+      cancelled: true
+    })
+    expect(runDataRootMigration).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
   })
 
   it('uses the shared prepared runner when exporting runtime locks for migration', async () => {
@@ -794,6 +872,30 @@ describe('storage IPC handlers', () => {
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
     expect(existsSync(target)).toBe(true)
+  })
+
+  it('rechecks delegated work after recovered commit preparation', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    const getActiveDelegatedSessions = vi
+      .fn()
+      .mockReturnValueOnce([])
+      .mockReturnValue([{ projectId: 'project-1', sessionId: 'delegated-race' }])
+    const deps = fakeDeps({
+      getActiveDelegatedSessions,
+      pauseDataRootWriters: vi.fn().mockResolvedValue(undefined)
+    })
+    const restartedOwner = createStorageCommandOwner(deps)
+
+    await expect(restartedOwner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error:
+        'Subagents are still running. Return to their tasks and stop them before finishing the move.'
+    })
+
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
   })
 
   it('commit-and-relaunch delegates production cleanup to the orderly app quit lifecycle', async () => {
