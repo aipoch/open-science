@@ -150,6 +150,23 @@ describe('rendererSessionPersistenceFlushBlocksShutdown', () => {
       expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(false)
     }
   )
+
+  it.each([
+    'conflict',
+    'renderer-failed',
+    'unavailable',
+    'renderer-gone',
+    'send-failed',
+    'timeout'
+  ] as const)('blocks a data-root handoff for %s', (outcome) => {
+    expect(rendererSessionPersistenceFlushBlocksShutdown(outcome, 'data-root-handoff')).toBe(true)
+  })
+
+  it('allows a data-root handoff after a completed flush', () => {
+    expect(rendererSessionPersistenceFlushBlocksShutdown('completed', 'data-root-handoff')).toBe(
+      false
+    )
+  })
 })
 
 describe('createElectronSessionPersistenceFlush', () => {

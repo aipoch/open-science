@@ -29,9 +29,15 @@ export type RendererSessionPersistenceFlushOutcome =
   | 'send-failed'
   | 'timeout'
 
+export type RendererSessionPersistenceFlushPolicy = 'ordinary-shutdown' | 'data-root-handoff'
+
 export const rendererSessionPersistenceFlushBlocksShutdown = (
-  outcome: RendererSessionPersistenceFlushOutcome
-): boolean => outcome === 'conflict' || outcome === 'renderer-failed'
+  outcome: RendererSessionPersistenceFlushOutcome,
+  policy: RendererSessionPersistenceFlushPolicy = 'ordinary-shutdown'
+): boolean => {
+  if (policy === 'data-root-handoff') return outcome !== 'completed'
+  return outcome === 'conflict' || outcome === 'renderer-failed'
+}
 
 export const requestRendererSessionPersistenceFlush = async (
   deps: RendererSessionPersistenceFlushDeps
