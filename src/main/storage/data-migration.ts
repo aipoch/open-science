@@ -309,8 +309,6 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
 
   try {
     checkAbort()
-    const sourceValidation = await validateMigrationSourceLinks(from, dirs)
-    if (!sourceValidation.ok) return sourceValidation
     const entriesByDir = new Map<string, ScanResult>()
     const sourceHardLinks = new Set<string>()
     let hasRepeatedHardLink = false
@@ -326,6 +324,11 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
       }
     }
     const sourceMetadata = metadataSnapshotFromEntries(dirs, entriesByDir)
+    const sourceValidation = await validateMigrationSourceLinks(from, dirs)
+    if (!sourceValidation.ok) {
+      await restorePortableMetadata(from, sourceMetadata).catch(() => undefined)
+      return sourceValidation
+    }
     checkAbort()
     const preserveHardLinks = !hasRepeatedHardLink || (await destinationSupportsHardLinks(to))
     const sizedHardLinks = new Set<string>()
