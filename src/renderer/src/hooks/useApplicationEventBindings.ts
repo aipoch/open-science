@@ -87,8 +87,8 @@ const useApplicationEventBindings = ({
   )
   const enqueueConnectorApproval = useSettingsStore((state) => state.enqueueApproval)
   const dismissConnectorApproval = useSettingsStore((state) => state.dismissApproval)
-  const hasCredentialRequest = useSettingsStore(
-    (state) => state.pendingCredentialRequests.length > 0
+  const hasSessionlessCredentialRequest = useSettingsStore((state) =>
+    state.pendingCredentialRequests.some((request) => !request.sessionId)
   )
   const enqueueCredentialRequest = useSettingsStore((state) => state.enqueueCredentialRequest)
   const dismissCredentialRequest = useSettingsStore((state) => state.dismissCredentialRequest)
@@ -146,7 +146,7 @@ const useApplicationEventBindings = ({
           update: isUpdateDialogOpen,
           computeApproval: hasComputeApproval,
           connectorApproval: hasConnectorApproval,
-          credentialRequest: hasCredentialRequest,
+          credentialRequest: hasSessionlessCredentialRequest,
           skillImportApproval: hasSkillImportApproval,
           globalSearch: isGlobalSearchOpen,
           settings: isSettingsOpen,
@@ -156,7 +156,7 @@ const useApplicationEventBindings = ({
     [
       hasComputeApproval,
       hasConnectorApproval,
-      hasCredentialRequest,
+      hasSessionlessCredentialRequest,
       hasDataRootRecovery,
       hasLegacyDataMove,
       hasSkillImportApproval,

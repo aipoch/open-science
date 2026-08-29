@@ -128,6 +128,7 @@ const mocks = vi.hoisted(() => {
       update: undefined as { active?: boolean } | undefined,
       computeApproval: undefined as { active?: boolean } | undefined,
       connectorApproval: undefined as { active?: boolean } | undefined,
+      credentialRequest: undefined as { active?: boolean } | undefined,
       skillImportApproval: undefined as { active?: boolean } | undefined,
       workspace: undefined as { isPreviewPresentationActive?: boolean } | undefined
     }
@@ -301,6 +302,12 @@ vi.mock('@/pages/settings/ConnectorApprovalDialog', () => ({
   ConnectorApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.connectorApproval = props
     return <div data-testid="approval-dialog" />
+  }
+}))
+vi.mock('@/pages/settings/ConnectorCredentialDialog', () => ({
+  ConnectorCredentialDialog: (props: { active?: boolean }): React.JSX.Element => {
+    mocks.presentationProps.credentialRequest = props
+    return <div data-testid="credential-dialog" />
   }
 }))
 vi.mock('@/pages/settings/SkillImportApprovalDialog', () => ({
@@ -749,6 +756,24 @@ describe('App startup routing', () => {
     expect(mocks.presentationProps.computeApproval?.active).toBe(false)
     expect(mocks.presentationProps.connectorApproval?.active).toBe(true)
     expect(mocks.presentationProps.skillImportApproval?.active).toBe(false)
+  })
+
+  it('keeps Session credential recovery in the workspace and reserves the dialog for sessionless calls', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.settings.pendingCredentialRequests = [
+      { id: 'credential', connectorId: 'openalex', sessionId: 'session-1' }
+    ]
+    await render()
+
+    expect(mocks.presentationProps.credentialRequest?.active).toBe(false)
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(true)
+
+    mocks.settings.pendingCredentialRequests = [{ id: 'credential', connectorId: 'openalex' }]
+    await act(async () => root.render(<App />))
+
+    expect(mocks.presentationProps.credentialRequest?.active).toBe(true)
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
   })
 
   it('does not let Side Chat-owned approvals block workspace visibility or global search', async () => {

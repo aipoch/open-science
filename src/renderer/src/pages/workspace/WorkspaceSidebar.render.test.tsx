@@ -131,13 +131,18 @@ const createMessage = (): ChatSession['messages'][number] => ({
   updatedAt: 1
 })
 
-const renderSidebar = async (sessions: ChatSession[], mobileMode = false): Promise<string> => {
+const renderSidebar = async (
+  sessions: ChatSession[],
+  mobileMode = false,
+  credentialPendingSessionIds?: ReadonlySet<string>
+): Promise<string> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
 
   return renderToStaticMarkup(
     <WorkspaceSidebar
       projectName="Example project"
       sessions={sessions}
+      credentialPendingSessionIds={credentialPendingSessionIds}
       activeSessionId={sessions[0]?.id}
       canCreateConversation
       canMutateConversations
@@ -1636,6 +1641,24 @@ describe('WorkspaceSidebar accessible render', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('presents an in-memory credential request as an active Session needing input', async () => {
+    const html = await renderSidebar(
+      [
+        createSession({
+          id: 'credential-session',
+          title: 'OpenAlex lookup',
+          status: 'running',
+          updatedAt: 1
+        })
+      ],
+      false,
+      new Set(['credential-session'])
+    )
+
+    expect(html).toContain('>Active<')
+    expect(html).toContain('Session status: Waiting for your answer')
   })
 
   it('moves a recently completed idle session to Today when its Active grace period expires', async () => {

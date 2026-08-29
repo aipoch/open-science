@@ -60,6 +60,25 @@ afterEach(() => {
 })
 
 describe('ConnectorCredentialDialog', () => {
+  it('leaves Session requests for the Composer lane', () => {
+    useSettingsStore.setState({
+      pendingCredentialRequests: [
+        {
+          id: 'credential-1',
+          credentialId: 'openalex',
+          connector: 'literature',
+          method: 'openalex_search_works',
+          sessionId: 'session-1'
+        }
+      ]
+    })
+
+    act(() => root.render(<ConnectorCredentialDialog />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="connector-credential-controls"]')).toBeNull()
+  })
+
   it('validates, persists, and resumes the exact parked call', async () => {
     act(() => root.render(<ConnectorCredentialDialog />))
     enterKey('openalex-valid-key')

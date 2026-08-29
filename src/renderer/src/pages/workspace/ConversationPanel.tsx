@@ -1,7 +1,10 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import type { SessionAgentConfiguration } from '../../../../shared/settings'
+import type {
+  ConnectorCredentialRequest,
+  SessionAgentConfiguration
+} from '../../../../shared/settings'
 
 import type {
   AcpPermissionGrant,
@@ -79,6 +82,7 @@ import {
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { ConnectorCredentialControls } from '@/pages/settings/ConnectorCredentialDialog'
 
 import { ComposerEditor } from './composer/ComposerEditor'
 import {
@@ -230,6 +234,20 @@ const ResizablePermissionComposer = ({ children }: React.PropsWithChildren): Rea
   )
 }
 
+const ResizableCredentialComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <ResizableBottomPanel
+      ariaLabel={t('Resize credential panel')}
+      testId="credential-composer"
+      scrollTestId="credential-composer-scroll"
+      constrainGrowthToOverflow
+    >
+      {children}
+    </ResizableBottomPanel>
+  )
+}
+
 const ResizablePlanComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
   const { t } = useTranslation()
   return (
@@ -284,6 +302,7 @@ type ConversationPanelLayout = {
 
 type ConversationPanelPermissions = {
   requests: AcpPermissionRequest[]
+  credentialRequests: ConnectorCredentialRequest[]
   permissionProfile: PermissionProfileId
   permissionProfileState: SessionPermissionProfileState | undefined
   permissionGrants: AcpPermissionGrant[]
@@ -713,6 +732,7 @@ const ConversationPanel = ({
   const sessionPendingElicitations = activeSession
     ? pendingElicitations.filter((request) => request.sessionId === activeSession.id)
     : []
+  const pendingCredentialRequest = permissions.credentialRequests[0]
   // Runtime requests and activity events can reach the renderer in either order. Whichever arrives
   // first must reserve the single bottom interaction lane so the ordinary composer never competes
   // with a question that is waiting for an answer. A projection without a live request is
@@ -761,6 +781,8 @@ const ConversationPanel = ({
   const actionability = activeSession
     ? projectSessionActionability(activeSession, {
         rootPermissionPending,
+        credentialPending: pendingCredentialRequest ? true : undefined,
+        presentedWaitReason: pendingCredentialRequest ? 'waiting-for-user' : undefined,
         elicitationPending: pendingElicitation ? true : undefined,
         planPending:
           pendingPlan !== undefined
@@ -774,12 +796,15 @@ const ConversationPanel = ({
     actionability?.blockingInteraction ??
     (rootPermissionRequests.length > 0
       ? 'permission'
-      : pendingElicitation
-        ? 'elicitation'
-        : pendingPlan
-          ? 'plan'
-          : undefined)
+      : pendingCredentialRequest
+        ? 'credential'
+        : pendingElicitation
+          ? 'elicitation'
+          : pendingPlan
+            ? 'plan'
+            : undefined)
   const hasPendingPermission = blockingInteraction === 'permission'
+  const hasPendingCredential = blockingInteraction === 'credential'
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
   const ordinaryComposerBlocked = Boolean(sideChat || blockingInteraction)
   const rootTurnBusy = Boolean(
@@ -1376,6 +1401,13 @@ const ConversationPanel = ({
                             }
                           />
                         </ResizablePermissionComposer>
+                      ) : hasPendingCredential && pendingCredentialRequest ? (
+                        <ResizableCredentialComposer key={pendingCredentialRequest.id}>
+                          <ConnectorCredentialControls
+                            request={pendingCredentialRequest}
+                            embedded
+                          />
+                        </ResizableCredentialComposer>
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
                           key={

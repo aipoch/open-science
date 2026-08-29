@@ -164,6 +164,37 @@ describe('session store', () => {
     })
   })
 
+  it('projects runtime credential recovery as a non-persisted user interaction', () => {
+    const actionability = projectSessionActionability(
+      {
+        id: 'session-credential',
+        projectId: 'project-1',
+        title: 'Credential recovery',
+        cwd: '/workspace',
+        status: 'running',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      } as ChatSession,
+      {
+        credentialPending: true,
+        presentedWaitReason: 'waiting-for-user'
+      }
+    )
+
+    expect(actionability).toMatchObject({
+      presentedStatus: 'waiting-for-user',
+      activity: 'waiting',
+      attentionOwner: 'user',
+      blockingInteraction: 'credential',
+      actions: {
+        startTurn: { allowed: false, disabledReason: 'credential-pending' },
+        revise: { allowed: false, disabledReason: 'credential-pending' },
+        startSideChat: { allowed: false, disabledReason: 'credential-pending' }
+      }
+    })
+  })
+
   it('projects a pending Session as unavailable for a new Turn or Message branch', () => {
     const actionability = projectSessionActionability({
       id: 'session-pending',

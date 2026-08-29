@@ -122,6 +122,7 @@ const WorkspacePage = ({
   const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
   const catalogSkills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
+  const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
   const scopedProjectId = activeProjectId ?? ''
   const activeProject = useProjectStore((state) =>
     state.projects.find((project) => project.id === scopedProjectId)
@@ -415,9 +416,18 @@ const WorkspacePage = ({
     () => pendingWorkspaceElicitations(activeSession),
     [activeSession]
   )
+  const visibleCredentialRequests = useMemo(
+    () =>
+      activeSession
+        ? pendingCredentialRequests.filter((request) => request.sessionId === activeSession.id)
+        : [],
+    [activeSession, pendingCredentialRequests]
+  )
   const activeSessionActionability = activeSession
     ? projectSessionActionability(activeSession, {
-        rootPermissionPending: resolveRootPermissionPending(pendingPermissions, activeSession.id)
+        rootPermissionPending: resolveRootPermissionPending(pendingPermissions, activeSession.id),
+        credentialPending: visibleCredentialRequests.length > 0,
+        presentedWaitReason: visibleCredentialRequests.length > 0 ? 'waiting-for-user' : undefined
       })
     : undefined
   const activeNotebookReference = activeSession ? notebookReferences[activeSession.id] : undefined
@@ -1099,6 +1109,7 @@ const WorkspacePage = ({
             }}
             permissions={{
               requests: visiblePermissionRequests,
+              credentialRequests: visibleCredentialRequests,
               permissionProfile: activePermissionProfile,
               permissionProfileState: activePermissionProfileState,
               permissionGrants: activePermissionGrants,
