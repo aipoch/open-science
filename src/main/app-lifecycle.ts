@@ -255,12 +255,13 @@ export const installAppLifecycle = (
     // producer-teardown + renderer-durability gate before committing their handoff; once app.quit()
     // runs, cancellation would leave the old process alive after the external pointer changed.
     const ordinaryQuit = trigger === 'quit'
-    const delegatedWorkBlocksShutdown = trigger !== 'migration-relaunch'
+    const delegatedWorkBlocksShutdown = ordinaryQuit
 
     // Final synchronous delegated-work safety boundary. A delegated Attempt may start after an earlier
     // confirmation snapshot (or after a saved close preference was read). Storage commands quiesce and
-    // await all producers before marking migration-relaunch, so that committed handoff must continue;
-    // ordinary quits and updates still clear state and show the hard-blocking prompt instead.
+    // await all producers before marking migration-relaunch, and the updater does the same before
+    // quitAndInstall. Once either committed handoff invokes app.quit(), it must continue; cancelling
+    // there would strand the already-started installer or a process cached on the old data root.
     const delegatedAtShutdownBoundary = detectDelegatedWork()
     if (delegatedWorkBlocksShutdown && delegatedAtShutdownBoundary.length > 0) {
       event.preventDefault()
