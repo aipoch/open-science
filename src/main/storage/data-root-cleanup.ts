@@ -453,6 +453,7 @@ class DataRootCleanupJournal {
 
     let current: string
     let source: string
+    let sourcePresent = false
     try {
       const [canonicalCurrent, canonicalSource] = await Promise.all([
         canonicalizeCleanupSource(currentDataRoot),
@@ -460,10 +461,12 @@ class DataRootCleanupJournal {
       ])
       current = canonicalCurrent.path
       source = canonicalSource.path
+      sourcePresent = canonicalSource.present
     } catch {
       return 0
     }
     if (samePath(current, source) || !samePath(source, committedIntent.source)) return 0
+    if (!sourcePresent && committedIntent.entries.some(({ present }) => present)) return 0
 
     const dirsToDelete: string[] = []
     for (const expected of committedIntent.entries) {

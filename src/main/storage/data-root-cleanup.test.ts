@@ -252,6 +252,28 @@ describe('DataRootCleanupJournal', () => {
     )
   })
 
+  it('keeps cleanup pending while a source with expected data is temporarily unavailable', async () => {
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    await journal.markCommitted('cleanup-token')
+    await rm(source, { recursive: true, force: true })
+    const deleteSources = vi.fn()
+
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: true,
+      failureCount: 0
+    })
+    expect(deleteSources).not.toHaveBeenCalled()
+    await expect(journal.hasPending()).resolves.toBe(true)
+    await expect(readMigrationMarker(target)).resolves.toMatchObject({ token: 'cleanup-token' })
+  })
+
   it('removes the migration marker before clearing the durable cleanup intent', async () => {
     class MarkerOrderJournal extends DataRootCleanupJournal {
       override async clear(expectedToken?: string): Promise<void> {
