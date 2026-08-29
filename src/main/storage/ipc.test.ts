@@ -701,6 +701,46 @@ describe('storage IPC handlers', () => {
     expect(isMigrationPending()).toBe(false)
   })
 
+  it('does not enter handoff teardown while reviewer work is active', async () => {
+    initDataRoot(dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+    const runDataRootMigration = vi.fn().mockResolvedValue({ ok: true })
+    const deps = fakeDeps({
+      hasActiveReviewerWork: vi.fn().mockReturnValue(true),
+      prepareDataRootHandoff,
+      runDataRootMigration
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'A review is still running. Stop it before moving data.'
+    })
+
+    expect(prepareDataRootHandoff).not.toHaveBeenCalled()
+    expect(runDataRootMigration).not.toHaveBeenCalled()
+  })
+
+  it('rechecks reviewer work after migration target validation', async () => {
+    initDataRoot(dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+    const runDataRootMigration = vi.fn().mockResolvedValue({ ok: true })
+    const deps = fakeDeps({
+      hasActiveReviewerWork: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+      prepareDataRootHandoff,
+      runDataRootMigration
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'A review is still running. Stop it before moving data.'
+    })
+
+    expect(prepareDataRootHandoff).not.toHaveBeenCalled()
+    expect(runDataRootMigration).not.toHaveBeenCalled()
+  })
+
   it('rejects an invalid migration target before preparing the handoff', async () => {
     initDataRoot(dataRoot)
     const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
@@ -896,6 +936,26 @@ describe('storage IPC handlers', () => {
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
     expect(existsSync(target)).toBe(true)
+  })
+
+  it('does not enter recovered-commit teardown while reviewer work is active', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+    const deps = fakeDeps({
+      hasActiveReviewerWork: vi.fn().mockReturnValue(true),
+      prepareDataRootHandoff
+    })
+    const restartedOwner = createStorageCommandOwner(deps)
+
+    await expect(restartedOwner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'A review is still running. Stop it before finishing the move.'
+    })
+
+    expect(prepareDataRootHandoff).not.toHaveBeenCalled()
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
   it('reserves the lifecycle guard while a recovered commit prepares', async () => {

@@ -301,6 +301,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           'Subagents are still running. Return to their tasks and stop them before moving data.'
       }
     }
+    if (deps.hasActiveReviewerWork()) {
+      return { ok: false, error: 'A review is still running. Stop it before moving data.' }
+    }
 
     const controller = new AbortController()
     const correlationId = randomUUID()
@@ -318,6 +321,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         return { ok: false, error: 'migration cancelled', cancelled: true }
       }
       if (!validation.ok) return validation
+      // Reviewer activity is not represented in the migration confirmation modal. Recheck after
+      // validation's await so a newly-started review cannot be silently stopped by preparation.
+      if (deps.hasActiveReviewerWork()) {
+        return { ok: false, error: 'A review is still running. Stop it before moving data.' }
+      }
 
       const preparationFailure = await prepareDataRootHandoff(surface)
       if (controller.signal.aborted) {
@@ -580,6 +588,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           error:
             'Subagents are still running. Return to their tasks and stop them before finishing the move.'
         }
+      }
+      if (deps.hasActiveReviewerWork()) {
+        endMigrationCopy()
+        resolutionInProgress = false
+        return { ok: false, error: 'A review is still running. Stop it before finishing the move.' }
       }
 
       const preparationFailure = await prepareDataRootHandoff(surface)

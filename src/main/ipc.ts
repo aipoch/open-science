@@ -2681,12 +2681,18 @@ const createApplicationModules = async (
     () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
     () => confirmRendererDurability()
   )
+  // Migration confirmation has no reviewer row, so reviewer teardown is never implicitly
+  // authorized. Check at the teardown boundary as well as in the storage owner: Promise.all starts
+  // every shutdown step before yielding, closing the command-to-teardown race.
+  const reviewerSafeDataRootTeardownGate = createActiveResearchSafeInstallGate(
+    () => (reviewerModelRuntimeShutdown?.hasActiveWork() ? ['reviewer'] : []),
+    () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+  )
   const durableDataRootHandoffGate = (
     surface: RendererSessionPersistenceSurface
   ): Promise<InstallReadiness> =>
-    createDurableInstallGate(
-      () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
-      () => confirmRendererDurability('data-root-handoff', surface)
+    createDurableInstallGate(reviewerSafeDataRootTeardownGate, () =>
+      confirmRendererDurability('data-root-handoff', surface)
     )()
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
