@@ -324,7 +324,7 @@ describe.each([
     await expect(getCliLauncherStatus(env)).resolves.toMatchObject({ installed: true })
     await installCliLauncher(env, () => true)
     await expect(readFile(plan.target, 'utf8')).resolves.toBe(plan.shim)
-    await uninstallCliLauncher(env)
+    await uninstallCliLauncher(env, () => true)
     await expect(readFile(plan.target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
@@ -420,6 +420,7 @@ describe('buildWindowsPathCommand', () => {
     expect(args).not.toContain('-args')
     const script = args[args.length - 1]
     expect(script).toContain("$binDir = 'C:\\Users\\me\\AppData\\Roaming\\Open Science\\bin'")
+    expect(script).toContain("TrimEnd([char[]]'\\/') -ieq $normalizedBinDir")
     expect(script).toContain("[Environment]::SetEnvironmentVariable('Path'")
   })
 
@@ -457,13 +458,50 @@ describe('installCliLauncher on Windows PATH edit', () => {
   it('skips the PATH edit entirely when the bin dir is already on PATH', async () => {
     const binDir = join(home, 'AppData', 'Roaming', 'Open Science', 'bin')
     let called = false
-    const status = await installCliLauncher(winEnv({ pathVar: `C:\\Windows;${binDir}` }), () => {
-      called = true
-      return true
-    })
+    const status = await installCliLauncher(
+      winEnv({ pathVar: `C:\\Windows;${binDir.toUpperCase()}\\` }),
+      () => {
+        called = true
+        return true
+      }
+    )
     expect(called).toBe(false)
     expect(status.onPath).toBe(true)
     expect(status.pathHint).toBeUndefined()
+  })
+})
+
+describe('uninstallCliLauncher on Windows PATH edit', () => {
+  it('removes the owned PATH entry before deleting the managed shim', async () => {
+    const env = winEnv()
+    await installCliLauncher(env, () => true)
+    const calls: Array<{ command: string; args: string[] }> = []
+
+    const status = await uninstallCliLauncher(env, (command, args) => {
+      calls.push({ command, args })
+      return true
+    })
+
+    expect(calls).toHaveLength(1)
+    const script = calls[0].args.at(-1) ?? ''
+    expect(script).toContain("TrimEnd([char[]]'\\/') -ine $normalizedBinDir")
+    expect(script).toContain('if ($nextParts.Count -ne $parts.Count)')
+    expect(script).toContain("SetEnvironmentVariable('Path', $next, 'User')")
+    expect(script).toContain('if ($remaining.Count -gt 0) { exit 1 }')
+    expect(status).toMatchObject({ installed: false, onPath: false })
+    await expect(readFile(planCliLauncher(env).target, 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
+  it('keeps the managed shim so a failed PATH cleanup can be retried', async () => {
+    const env = winEnv()
+    await installCliLauncher(env, () => true)
+
+    await expect(uninstallCliLauncher(env, () => false)).rejects.toThrow('Could not remove')
+    await expect(readFile(planCliLauncher(env).target, 'utf8')).resolves.toContain(
+      'Managed by the app'
+    )
   })
 })
 

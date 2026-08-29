@@ -50,10 +50,13 @@ export type CliLauncherPlan = {
 // target platform (not the host's path.delimiter) so the check is correct regardless of where it runs.
 const isOnPath = (binDir: string, pathVar: string, platform: NodeJS.Platform): boolean => {
   const separator = platform === 'win32' ? ';' : ':'
+  const normalize = (entry: string): string =>
+    platform === 'win32' ? entry.replace(/[\\/]+$/, '').toLowerCase() : entry
+  const normalizedBinDir = normalize(binDir)
   return pathVar
     .split(separator)
     .filter(Boolean)
-    .some((entry) => entry === binDir)
+    .some((entry) => normalize(entry) === normalizedBinDir)
 }
 
 const isLinuxAppImage = (env: CliLauncherEnv): boolean =>
@@ -193,10 +196,30 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
     `$binDir = ${literal}`,
     "$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
     "$parts = @($current -split ';' | Where-Object { $_ -ne '' })",
-    'if ($parts -notcontains $binDir) {',
+    "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
+    "if (-not ($parts | Where-Object { $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir })) {",
     "  $next = (@($parts) + $binDir) -join ';'",
     "  [Environment]::SetEnvironmentVariable('Path', $next, 'User')",
     '}'
+  ].join('\n')
+  return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
+}
+
+const buildWindowsPathRemovalCommand = (binDir: string): { command: string; args: string[] } => {
+  const literal = `'${binDir.replace(/'/g, "''")}'`
+  const script = [
+    `$binDir = ${literal}`,
+    "$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
+    "$parts = @($current -split ';' | Where-Object { $_ -ne '' })",
+    "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
+    "$nextParts = @($parts | Where-Object { $_.TrimEnd([char[]]'\\/') -ine $normalizedBinDir })",
+    'if ($nextParts.Count -ne $parts.Count) {',
+    "  $next = $nextParts -join ';'",
+    "  [Environment]::SetEnvironmentVariable('Path', $next, 'User')",
+    '}',
+    "$remaining = @([Environment]::GetEnvironmentVariable('Path', 'User') -split ';' |",
+    "  Where-Object { $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir })",
+    'if ($remaining.Count -gt 0) { exit 1 }'
   ].join('\n')
   return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
 }
@@ -425,7 +448,10 @@ export const installCliLauncher = async (
   return { installed: true, target: plan.target, onPath, pathHint }
 }
 
-export const uninstallCliLauncher = async (env: CliLauncherEnv): Promise<CliLauncherStatus> => {
+export const uninstallCliLauncher = async (
+  env: CliLauncherEnv,
+  runCommand: CommandRunner = defaultRunCommand
+): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
   const opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
   if (opened !== undefined) {
@@ -434,6 +460,12 @@ export const uninstallCliLauncher = async (env: CliLauncherEnv): Promise<CliLaun
       if (!isManagedCliLauncher(existing)) refuseUnmanagedCliLauncher(plan.target)
       if (!(await isOpenCliLauncherCurrent(plan.target, opened.stats))) {
         refuseUnmanagedCliLauncher(plan.target)
+      }
+      if (env.platform === 'win32') {
+        const { command, args } = buildWindowsPathRemovalCommand(plan.binDir)
+        if (!runCommand(command, args)) {
+          throw new Error(`Could not remove ${plan.binDir} from the user PATH.`)
+        }
       }
     } finally {
       await opened.handle.close()

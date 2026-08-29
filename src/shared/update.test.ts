@@ -44,6 +44,8 @@ describe('platformDownloadKey', () => {
     expect(platformDownloadKey('darwin', 'x64')).toBe('mac-x64')
     expect(platformDownloadKey('win32', 'x64')).toBe('win-x64')
     expect(platformDownloadKey('linux', 'x64')).toBe('linux-x64-deb')
+    expect(platformDownloadKey('win32', 'arm64')).toBeNull()
+    expect(platformDownloadKey('linux', 'arm64')).toBeNull()
     expect(platformDownloadKey('freebsd' as NodeJS.Platform, 'x64')).toBeNull()
   })
 })
@@ -57,6 +59,8 @@ describe('selectDownload', () => {
   })
   it('returns null when no entry matches', () => {
     expect(selectDownload(manifest, 'darwin', 'x64')).toBeNull()
+    expect(selectDownload(manifest, 'win32', 'arm64')).toBeNull()
+    expect(selectDownload(manifest, 'linux', 'arm64')).toBeNull()
   })
 })
 
