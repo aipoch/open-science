@@ -47,6 +47,25 @@ describe('validate: request construction', () => {
     expect(request.url).toBe('https://api.anthropic.com/v1/messages')
   })
 
+  it('uses x-api-key for Tencent TokenHub Messages validation', () => {
+    const request = buildValidationRequest(
+      {
+        type: 'official',
+        vendorId: 'tencent',
+        baseUrl: 'https://tokenhub.tencentmaas.com',
+        model: 'hy4-preview',
+        key: 'tokenhub-key',
+        apiEndpoints: ['anthropic', 'openai', 'responses']
+      },
+      false,
+      ['anthropic']
+    )
+
+    expect(request.url).toBe('https://tokenhub.tencentmaas.com/v1/messages')
+    expect(request.headers['x-api-key']).toBe('tokenhub-key')
+    expect(request.headers.authorization).toBeUndefined()
+  })
+
   it('throws for a missing or unparseable base URL', () => {
     expect(() => buildValidationRequest({ type: 'custom' })).toThrow(/missing base url/i)
     expect(() => buildValidationRequest({ type: 'custom', baseUrl: 'not a url' })).toThrow(

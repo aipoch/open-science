@@ -54,6 +54,7 @@ export type AnthropicProviderBridgeTarget = Readonly<{
   baseUrl: string
   key?: string
   model: string
+  useApiKeyHeader?: boolean
 }>
 
 export type AnthropicProviderBridgeConnection = Readonly<{
@@ -61,7 +62,11 @@ export type AnthropicProviderBridgeConnection = Readonly<{
   token: string
 }>
 
-const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Headers => {
+const requestHeaders = (
+  request: ProviderLoopbackHttpRequest,
+  key?: string,
+  useApiKeyHeader = false
+): Headers => {
   const headers = new Headers()
   for (const [name, value] of Object.entries(request.headers)) {
     const normalized = name.toLowerCase()
@@ -80,7 +85,10 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
       headers.set(name, value)
     }
   }
-  if (key) headers.set('authorization', `Bearer ${key}`)
+  if (key) {
+    if (useApiKeyHeader) headers.set('x-api-key', key)
+    else headers.set('authorization', `Bearer ${key}`)
+  }
   headers.set('content-type', 'application/json')
   return headers
 }
@@ -181,7 +189,7 @@ export class AnthropicProviderBridge {
 
     const target = this.target
     const body = JSON.stringify({ ...parsed, model: target.model })
-    const headersToForward = requestHeaders(request, target.key)
+    const headersToForward = requestHeaders(request, target.key, target.useApiKeyHeader)
     const replayKey = providerRequestFingerprint(
       target.id,
       `${requestUrl.pathname}${requestUrl.search}`,

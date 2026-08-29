@@ -127,6 +127,50 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
   })
 
+  it('projects regional Tencent Hy4 across every supported framework', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'tencent-tokenhub',
+      type: 'official',
+      vendorId: 'tencent',
+      region: 'singapore',
+      name: 'Tencent TokenHub'
+    }
+
+    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model: 'hy4-preview' },
+          getAgentFramework(frameworkId)
+        )
+      ).toMatchObject({
+        effectiveModel: 'hy4-preview',
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        frameworkCompatible: true,
+        provider: {
+          vendorId: 'tencent',
+          baseUrl: 'https://tokenhub-intl.tencentmaas.com',
+          openaiBaseUrl: 'https://tokenhub-intl.tencentmaas.com/v1',
+          model: 'hy4-preview',
+          contextWindow: 1_000_000,
+          supportsImageInput: false
+        }
+      })
+    }
+
+    expect(
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'hy4-preview' },
+        getAgentFramework('codex')
+      )
+    ).toMatchObject({
+      needsChatResponsesBridge: false,
+      needsNativeResponsesCompatibility: true
+    })
+  })
+
   it('routes mixed OpenCode Zen models only through their documented protocol', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

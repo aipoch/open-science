@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
 import { netFetchStandard } from '../skills/net-fetch'
 import {
   CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
@@ -428,7 +429,11 @@ class ProviderTransportOwner {
                       id: targetId,
                       baseUrl: normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? ''),
                       ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                      model
+                      model,
+                      ...(candidate.provider.vendorId &&
+                      usesVendorAnthropicApiKeyHeader(candidate.provider.vendorId)
+                        ? { useApiKeyHeader: true }
+                        : {})
                     }
                   ],
                   targetId

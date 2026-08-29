@@ -16,6 +16,7 @@ import {
   resolveVendorModelsUrl,
   resolveVendorModelReasoningEffort,
   resolveVendorOpenAiBaseUrl,
+  usesVendorAnthropicApiKeyHeader,
   vendorHasRegions,
   type OfficialVendorId
 } from './provider-registry'
@@ -36,6 +37,7 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('deepseek')).toBe(true)
     expect(isOfficialVendorId('openai')).toBe(true)
     expect(isOfficialVendorId('xai')).toBe(true)
+    expect(isOfficialVendorId('tencent')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
   })
@@ -415,6 +417,32 @@ describe('provider registry', () => {
     // so refresh-from-vendor is hidden and the Doubao Seed chat catalog stays curated.
     expect(resolveVendorModelsUrl('volcengine')).toBeUndefined()
     expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260628')
+  })
+
+  it('routes Tencent TokenHub through all three APIs with regional keys and Hy4 preview', () => {
+    expect(resolveVendorApiEndpoints('tencent')).toEqual(['anthropic', 'openai', 'responses'])
+    expect(usesVendorAnthropicApiKeyHeader('tencent')).toBe(true)
+    expect(usesVendorAnthropicApiKeyHeader('deepseek')).toBe(false)
+    expect(vendorHasRegions('tencent')).toBe(true)
+    expect(resolveVendorBaseUrl('tencent')).toBe('https://tokenhub.tencentmaas.com')
+    expect(resolveVendorOpenAiBaseUrl('tencent')).toBe('https://tokenhub.tencentmaas.com/v1')
+    expect(resolveVendorBaseUrl('tencent', 'singapore')).toBe(
+      'https://tokenhub-intl.tencentmaas.com'
+    )
+    expect(resolveVendorOpenAiBaseUrl('tencent', 'singapore')).toBe(
+      'https://tokenhub-intl.tencentmaas.com/v1'
+    )
+    expect(resolveVendorApiKeyUrl('tencent')).toBe(
+      'https://console.cloud.tencent.com/tokenhub/apikey'
+    )
+    expect(resolveVendorModelsUrl('tencent')).toBeUndefined()
+    expect(defaultVendorModel('tencent')).toBe('hy4-preview')
+    expect(resolveModelContextWindow('tencent', 'hy4-preview')).toBe(1_000_000)
+    expect(isVendorModelResponsesSupported('tencent', 'hy4-preview')).toBe(true)
+    expect(isVendorModelMultimodal('tencent', 'hy4-preview')).toBe(false)
+    expect(resolveVendorModelReasoningEffort('tencent', 'hy4-preview')).toEqual({
+      supported: false
+    })
   })
 
   it('routes Grok through xAI Chat Completions and Responses with a curated model catalog', () => {

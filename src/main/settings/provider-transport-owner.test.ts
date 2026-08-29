@@ -7,6 +7,7 @@ import {
   type ProviderTransportOwnerOptions
 } from './provider-transport-owner'
 import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
+import type { AnthropicProviderBridgeTarget } from './anthropic-provider-bridge'
 import type { ChatProviderCompatibilityTarget } from './chat-provider-compatibility'
 
 type ResponsesBridgeStub = ReturnType<
@@ -495,6 +496,49 @@ describe('ProviderTransportOwner generations', () => {
 
     expect(bridges[0]?.close).toHaveBeenCalledTimes(1)
     expect(bridges[1]?.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses TokenHub x-api-key authentication for OpenCode Anthropic traffic', async () => {
+    const bridge = makeAnthropicBridge()
+    let targets: readonly AnthropicProviderBridgeTarget[] = []
+    const owner = new ProviderTransportOwner({
+      createAnthropicProviderBridge: (registered) => {
+        targets = registered
+        return bridge
+      }
+    })
+    const target: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      apiEndpoints: ['anthropic'],
+      needsChatResponsesBridge: false,
+      provider: {
+        ...makeTarget().provider,
+        vendorId: 'tencent',
+        apiEndpoints: ['anthropic']
+      }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget: target,
+      plan: {
+        ...makePlan({ kind: 'direct' }),
+        modelRoute: 'opencode-anthropic',
+        transport: {
+          kind: 'opencode-anthropic',
+          targets: [{ id: 'opencode/provider-a/model-a', target }]
+        }
+      }
+    })
+
+    expect(targets).toEqual([
+      expect.objectContaining({
+        baseUrl: 'https://provider.example',
+        key: 'plain-provider-key',
+        model: 'model-a',
+        useApiKeyHeader: true
+      })
+    ])
+    await generation.release()
   })
 
   it('invalidates OpenCode replay caches across A to B to A target changes', async () => {

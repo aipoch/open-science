@@ -67,6 +67,28 @@ describe('settings record codec', () => {
     ).toBeUndefined()
   })
 
+  it('preserves Tencent TokenHub provider identity and region', () => {
+    expect(
+      sanitizeProvider({
+        id: 'tencent-tokenhub',
+        type: 'official',
+        name: 'Tencent TokenHub',
+        vendorId: 'tencent',
+        region: 'singapore',
+        keyRef: 'encrypted:key',
+        keyMask: 'sk-…abcd'
+      })
+    ).toEqual({
+      id: 'tencent-tokenhub',
+      type: 'official',
+      name: 'Tencent TokenHub',
+      vendorId: 'tencent',
+      region: 'singapore',
+      keyRef: 'encrypted:key',
+      keyMask: 'sk-…abcd'
+    })
+  })
+
   it('keeps only recognized Claude and Codex metadata fields', () => {
     expect(
       sanitizeClaudeInfo({ resolvedPath: 'claude-bin', version: '1.0.0', ignored: true })
