@@ -20,7 +20,7 @@ import { PrismaClient } from '@prisma/client'
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
     expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
-      'c505fe7e55e8428d29e8506ad305c04fd46d8def53385a1f7839fba21047ab9d'
+      '3db4a30baa2b4614e29205ed56b2682c0579f1a91f5a2d293d21925253ed7fd1'
     )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
@@ -93,7 +93,7 @@ describe('packaged database migration ledger smoke', () => {
         'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
       )
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" = '0019_session_usage_attribution'`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_project_files_index_state')`
       )
 
       await migrateApplicationDatabase(client)
@@ -154,7 +154,7 @@ describe('packaged database migration ledger smoke', () => {
       await client.$executeRawUnsafe('DROP INDEX "Review_sessionId_idx"')
       await client.$executeRawUnsafe('DROP INDEX "Finding_reviewId_idx"')
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_project_files_index_state')`
       )
       await client.$executeRawUnsafe(
         'ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"'

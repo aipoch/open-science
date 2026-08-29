@@ -607,9 +607,7 @@ class ProjectFilesMutationOwner {
       },
       update: {
         filesRevision: RETRYABLE_COLLISION_REVISION,
-        syncedAt: new Date(),
-        deletedAt: null,
-        deleteOperationId: null
+        syncedAt: new Date()
       }
     })
   }

@@ -1318,6 +1318,51 @@ describe('ManagedFileIndexRepository', () => {
     })
   })
 
+  it('does not revive a deleted Session when flushing its pending incomplete marker', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      PROJECT_ID,
+      SESSION_ID,
+      'message-1',
+      'deleted-pending.txt'
+    )
+    await writeManagedFile(artifactPath, 'indexed')
+    const session = createSession({
+      artifacts: [
+        {
+          id: 'deleted-pending',
+          kind: 'managed-file',
+          path: artifactPath,
+          name: 'deleted-pending.txt'
+        }
+      ]
+    })
+    await repository.syncSession(session)
+
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+    await expect(transientRepository.syncSession(session)).rejects.toThrow(
+      'database temporarily unavailable'
+    )
+    databaseAvailable = true
+    await transientRepository.softDeleteSession(PROJECT_ID, SESSION_ID)
+
+    await expect(
+      transientRepository.listArtifactGroups({ projectId: PROJECT_ID, limit: 10 })
+    ).resolves.toEqual({ items: [], totalCount: 0 })
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+    await expect(
+      restartedRepository.listArtifactGroups({ projectId: PROJECT_ID, limit: 10 })
+    ).resolves.toEqual({ items: [], totalCount: 0 })
+  })
+
   it('flushes a pending Session marker before listing Artifact groups', async () => {
     let databaseAvailable = false
     const transientRepository = new ManagedFileIndexRepository(() => {
