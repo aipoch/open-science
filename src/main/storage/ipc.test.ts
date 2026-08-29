@@ -128,6 +128,7 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
   cleanupRuntimeCache: vi.fn(() => true),
   prepareDataRootHandoff: vi.fn().mockResolvedValue(true),
   validateNewDataRoot: vi.fn().mockResolvedValue({ ok: true }),
+  cleanupJournal: new DataRootCleanupJournal(join(currentParent, 'config')),
   relaunch: vi.fn(),
   ...overrides
 })
