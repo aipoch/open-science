@@ -853,6 +853,7 @@ export const updateCommand = async (options, dependencies = {}) => {
   const quietLog = options.json ? () => {} : (...args) => console.log(...args)
   const deps = {
     ensureService: (startOptions) => startCommand(startOptions, { ...DEFAULT_DEPS, log: quietLog }),
+    stopService: (stopOptions) => stopCommand(stopOptions, { ...DEFAULT_DEPS, log: quietLog }),
     connect: (connectOptions) => connectToOpenScience(connectOptions),
     sleep,
     getBootstrap: updateBootstrap,
@@ -864,7 +865,7 @@ export const updateCommand = async (options, dependencies = {}) => {
     },
     ...dependencies
   }
-  await deps.ensureService({ ...options, open: false })
+  const serviceStart = await deps.ensureService({ ...options, open: false })
   const client = await deps.connect({ configRoot: options.configRoot })
   let result
 
@@ -934,6 +935,25 @@ export const updateCommand = async (options, dependencies = {}) => {
             throw new Error(`Update apply ended in an unexpected state: ${status.state}`)
           }
         }
+      }
+    }
+  }
+
+  if (result.outcome === 'manual-action-required' && result.installerPath) {
+    let requiresManualStop = serviceStart?.started !== true
+    if (serviceStart?.started === true) {
+      try {
+        await deps.stopService(options)
+      } catch {
+        // Keep the verified installer handoff actionable even if graceful shutdown fails. The user
+        // can retry the existing stop command without downloading the installer again.
+        requiresManualStop = true
+      }
+    }
+    if (requiresManualStop) {
+      result = {
+        ...result,
+        nextAction: `Run "open-science stop", then run the installer at ${result.installerPath} and start Open Science again.`
       }
     }
   }

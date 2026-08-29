@@ -73,8 +73,10 @@ open-science update --json
 
 The command updates the installed Open Science application, not the npm package. It reuses the
 application's release feed, artifact selection, checksum verification, and platform installer. If
-Open Science is not running, it starts the local headless service and leaves it available for later
-CLI commands. Use `open-science stop` when it is no longer needed.
+Open Science is not running, it starts the local headless service. It normally leaves that service
+available for later CLI commands. When the update requires a visible installer, the command stops a
+service it started after the installer is safely downloaded; a service that was already running is
+left alone, and the printed next step tells you to run `open-science stop` before the installer.
 
 In-place installation never interrupts active root-agent, subagent, Notebook, or Reviewer work. Stop
 the reported work and run the command again. Platforms that require a visible installer download it
