@@ -2288,6 +2288,7 @@
     "This is how the agent decides when to use the skill — be specific.": "Это то, как агент определяет, когда использовать навык — будьте конкретны.",
     "This machine is offline.": "Эта машина выключена.",
     "This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.": "Эта модель не поддерживается мостом Codex Chat Completions. Выберите другую модель для сессии Codex.",
+    "{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.": "{{model}} использует {{modelRoutes}}, но {{framework}} поддерживает {{frameworkRoutes}}.",
     "This permanently deletes the Specialist. Conversations using it will no longer be able to use it.": "Это полностью удалит специалиста. Диалоги, использующие его, больше не смогут его использовать.",
     "This project": "Этот проект",
     "This project has no saved sessions.": "В этом проекте нет сохранённых сессий.",

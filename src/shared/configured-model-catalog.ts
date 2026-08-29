@@ -9,6 +9,7 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
+  providerEndpoints,
   providerValidationFailed,
   selectClaudeSubscriptionProvider,
   type AgentFrameworkId,
@@ -52,6 +53,14 @@ export const parseConfiguredModelKey = (
     return undefined
   }
 }
+
+export const configuredModelApiEndpoints = (
+  provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints'>,
+  model: string
+): readonly ChatApiEndpoint[] =>
+  provider.type === 'official' && provider.vendorId
+    ? resolveVendorModelApiEndpoints(provider.vendorId, model)
+    : providerEndpoints(provider)
 
 export const buildConfiguredModelInventory = (
   input: Readonly<{
@@ -114,10 +123,7 @@ export const buildConfiguredModelCatalog = (
   return buildConfiguredModelInventory(input).map((entry) => {
     const provider = input.providers.find((candidate) => candidate.id === entry.providerId)!
     const model = entry.model
-    const apiEndpoints =
-      provider.type === 'official' && provider.vendorId
-        ? resolveVendorModelApiEndpoints(provider.vendorId, model)
-        : provider.apiEndpoints
+    const apiEndpoints = configuredModelApiEndpoints(provider, model)
     const frameworkCompatible = isProviderUsableByFramework(
       { apiEndpoints, type: provider.type },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }

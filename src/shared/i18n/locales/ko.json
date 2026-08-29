@@ -2188,6 +2188,7 @@
     "This is how the agent decides when to use the skill — be specific.": "에이전트가 언제 이 스킬을 사용할지 판단하는 기준입니다. 구체적으로 작성하세요.",
     "This machine is offline.": "이 컴퓨터는 오프라인 상태입니다.",
     "This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.": "이 모델은 Codex Chat Completions 브리지에서 지원되지 않습니다. Codex 세션에 사용할 다른 모델을 선택하세요.",
+    "{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.": "{{model}} 사용 형식은 {{modelRoutes}}이지만, {{framework}} 지원 형식은 {{frameworkRoutes}}입니다.",
     "This permanently deletes the Specialist. Conversations using it will no longer be able to use it.": "스페셜리스트가 영구 삭제됩니다. 이 스페셜리스트를 사용하는 대화에서는 더 이상 해당 기능을 사용할 수 없습니다.",
     "This project": "이 프로젝트",
     "This project has no saved sessions.": "이 프로젝트에는 저장된 세션이 없습니다.",

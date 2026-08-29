@@ -360,6 +360,59 @@ describe('ComposerModelPicker', () => {
     expect(document.body.textContent).not.toContain('not supported over the Codex')
   })
 
+  it('explains a model-specific endpoint mismatch on hover or focus', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ],
+      providers: [
+        provider({
+          id: 'mixed',
+          type: 'official',
+          vendorId: 'opencode',
+          name: 'Mixed catalog',
+          apiEndpoints: ['openai'],
+          models: ['kimi-k2.7-code', 'gpt-5.6-sol']
+        })
+      ],
+      activeProviderId: 'mixed',
+      activeModel: 'kimi-k2.7-code'
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    await openMenu(trigger!)
+    const modelRow = modelRowTrigger()
+    expect(modelRow).toBeDefined()
+    await openSubmenu(modelRow!)
+
+    const unavailableItem = menuItems().find((item) =>
+      item.getAttribute('aria-label')?.includes('gpt-5.6-sol')
+    )
+    const reason = unavailableItem?.getAttribute('aria-label')
+    expect(reason).toContain('/v1/responses')
+    expect(reason).toContain('OpenCode')
+    expect(reason).toContain('/v1/chat/completions')
+    expect(reason).not.toContain('Codex Chat Completions bridge')
+    expect(unavailableItem?.getAttribute('aria-disabled')).toBe('true')
+
+    await act(async () => unavailableItem?.focus())
+    await flush()
+
+    expect(document.body.querySelector('[data-slot="tooltip-content"]')?.textContent).toContain(
+      reason
+    )
+    act(() => unavailableItem?.click())
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('exposes each incompatible provider reason as a focusable, non-actionable menu item', async () => {
     // Claude Code (anthropic-only) + only OpenAI-speaking providers: the menu must state why each
     // provider is unavailable in an item roving focus can reach (not a label or a disabled item, both

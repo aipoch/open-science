@@ -2275,6 +2275,7 @@
     "This is how the agent decides when to use the skill — be specific.": "C’est ainsi que l’agent décide quand utiliser la compétence – soyez précis.",
     "This machine is offline.": "Cette machine est hors ligne.",
     "This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.": "Ce modèle n'est pas pris en charge sur le pont Codex Chat Completions. Choisissez un autre modèle pour une session Codex.",
+    "{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.": "{{model}} utilise {{modelRoutes}}, mais {{framework}} prend en charge {{frameworkRoutes}}.",
     "This permanently deletes the Specialist. Conversations using it will no longer be able to use it.": "Cela supprime définitivement le spécialiste. Les conversations l’utilisant ne pourront plus l’utiliser.",
     "This project": "Ce projet",
     "This project has no saved sessions.": "Ce projet n'a aucune session enregistrée.",

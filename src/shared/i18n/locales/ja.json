@@ -2178,6 +2178,7 @@
     "This is how the agent decides when to use the skill — be specific.": "これは、エージェントがスキルをいつ使用するかを決定する方法です。具体的に指定してください。",
     "This machine is offline.": "このマシンはオフラインです。",
     "This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.": "このモデルは、Codex Chat Completions ブリッジではサポートされていません。Codex セッション用に別のモデルを選択してください。",
+    "{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.": "{{model}} は {{modelRoutes}} を使用しますが、{{framework}} は {{frameworkRoutes}} をサポートしています。",
     "This permanently deletes the Specialist. Conversations using it will no longer be able to use it.": "これにより、スペシャリストが完全に削除されます。このスペシャリストを使用している会話では、今後使用できなくなります。",
     "This project": "このプロジェクト",
     "This project has no saved sessions.": "このプロジェクトには保存されたセッションがありません。",

@@ -2249,6 +2249,7 @@
     "This is how the agent decides when to use the skill — be specific.": "智能体依据这句话判断何时使用该技能 —— 写具体些。",
     "This machine is offline.": "此设备已离线。",
     "This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.": "该模型不支持通过 Codex 的 Chat Completions 桥接使用。为 Codex 会话另选一个模型。",
+    "{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.": "{{model}} 使用 {{modelRoutes}}，但 {{framework}} 支持 {{frameworkRoutes}}。",
     "This permanently deletes the Specialist. Conversations using it will no longer be able to use it.": "这将永久删除该专家。正在使用它的对话将无法再使用它。",
     "This project": "此项目",
     "This project has no saved sessions.": "此项目没有已保存的会话。",
