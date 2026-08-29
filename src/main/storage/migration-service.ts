@@ -1014,7 +1014,7 @@ export const commitDataRootSwitch = async (
     cleanupDegraded,
     cleanupFailureCount
   })
-  return cleanupDegraded
+  return cleanupFailureCount > 0
     ? {
         ok: true,
         cleanupWarning:
