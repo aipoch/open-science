@@ -237,7 +237,7 @@ const dataContentApplicationCommands = Object.freeze({
   projectDelete: defineApplicationCommand<
     'projects:delete',
     readonly [request: Projects.DeleteProjectRequest],
-    void
+    Projects.ProjectDeletionOutcome
   >('projects:delete', Projects.projectApplicationCommandContracts.delete),
   projectGet: projectCommand(
     'projects:get',
@@ -500,12 +500,7 @@ const registerDataContentApplicationCommands = (
         publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectCreated, project)
         return project
       },
-      'projects:delete': async ({ args }) => {
-        await dependencies.projects.delete(args[0].id)
-        publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectDeleted, {
-          projectId: args[0].id
-        })
-      },
+      'projects:delete': ({ args }) => dependencies.projects.delete(args[0].id),
       'projects:get': ({ args }) => dependencies.projects.get(args[0]),
       'projects:list': () => dependencies.projects.list(),
       'projects:update-archive': async ({ args }) => {

@@ -662,6 +662,7 @@
     "Could not delete project.": "Не удалось удалить проект.",
     "Could not delete session.": "Не удалось удалить сессию.",
     "Could not delete the project. Please try again.": "Не удалось удалить проект. Попробуйте снова.",
+    "Project deleted. Cleanup will continue in the background.": "Проект удалён. Очистка продолжится в фоновом режиме.",
     "Could not disconnect Claude from Open Science.": "Не удалось отключить Claude от Open Science.",
     "Could not export this Skill.": "Не удалось экспортировать этот навык.",
     "Could not import the selected skills.": "Не удалось импортировать выбранные навыки.",

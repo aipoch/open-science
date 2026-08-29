@@ -45,7 +45,7 @@ describe('ArchivedPanel', () => {
     document.body.appendChild(container)
     root = createRoot(container)
     updateArchive.mockReset().mockResolvedValue({ ...session, archivedAt: undefined })
-    deleteProject.mockReset().mockResolvedValue(undefined)
+    deleteProject.mockReset().mockResolvedValue({ status: 'deleted' })
     deleteSession.mockReset().mockResolvedValue({ status: 'deleted', runtimeDetached: true })
     window.api = {
       sessions: { updateArchive, deleteSession },
@@ -243,6 +243,43 @@ describe('ArchivedPanel', () => {
     expect(deleteProject).toHaveBeenCalledWith(project.id)
     expect(window.api.acp.getState).not.toHaveBeenCalled()
     expect(window.api.acp.deleteSession).not.toHaveBeenCalled()
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
+  })
+
+  it('removes committed archived Project state and explains pending background cleanup', async () => {
+    const archivedProject = { ...project, archivedAt: 2 }
+    deleteProject.mockResolvedValueOnce({ status: 'cleanup-pending' })
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [archivedProject],
+      isLoaded: true,
+      deleteProject
+    })
+    const onNavigate = vi.fn()
+    await act(async () =>
+      root.render(
+        <ArchivedPanel
+          view={{ kind: 'project', projectId: archivedProject.id }}
+          onNavigate={onNavigate}
+        />
+      )
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete project')
+    )
+    await act(async () => openDelete?.click())
+    const dialog = document.body.querySelector<HTMLElement>('[role=alertdialog]')
+    const confirmDelete = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent === 'Delete')
+    await act(async () => confirmDelete?.click())
+
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      'Project deleted. Cleanup will continue in the background.'
+    )
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
   })
 

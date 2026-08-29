@@ -81,6 +81,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(completeProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(abortProjectDeletion).not.toHaveBeenCalled()
     expect(events.publish).toHaveBeenCalledWith('memory:changed', { revision: 7 })
+    expect(events.publish).toHaveBeenCalledWith('project:deleted', { projectId: 'project-1' })
     expect(vi.mocked(permissionGrants.prune).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(projects.delete).mock.invocationCallOrder[0]
     )
@@ -233,7 +234,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.delete).not.toHaveBeenCalled()
     expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
 
-    await expect(coordinator.deleteProject('project-1')).resolves.toBeUndefined()
+    await expect(coordinator.deleteProject('project-1')).resolves.toEqual({ status: 'deleted' })
 
     expect(permissionGrants.prune).toHaveBeenCalledTimes(2)
     expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(2)
@@ -258,7 +259,7 @@ describe('ProjectDeletionCoordinator', () => {
       permissionGrants
     )
 
-    await expect(coordinator.deleteProject('project-1')).resolves.toBeUndefined()
+    await expect(coordinator.deleteProject('project-1')).resolves.toEqual({ status: 'deleted' })
 
     expect(projects.delete).toHaveBeenCalledWith('project-1')
     expect(sessions.completeProjectSessionDeletion).toHaveBeenCalledWith('project-1')
@@ -309,9 +310,9 @@ describe('ProjectDeletionCoordinator', () => {
       }
     )
 
-    await expect(coordinator.deleteProject('project-1')).rejects.toThrow(
-      'Project derived cleanup failed: project-1'
-    )
+    await expect(coordinator.deleteProject('project-1')).resolves.toEqual({
+      status: 'cleanup-pending'
+    })
 
     expect(projectExists).toBe(false)
     expect(intentExists).toBe(true)
@@ -684,7 +685,7 @@ describe('ProjectDeletionCoordinator', () => {
     })
     const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
-    await expect(coordinator.deleteProject('project-2')).resolves.toBeUndefined()
+    await expect(coordinator.deleteProject('project-2')).resolves.toEqual({ status: 'deleted' })
 
     await expect(coordinator.waitForProjectOperations(['project-1'])).rejects.toThrow(
       'tail cleanup unavailable'
@@ -746,7 +747,9 @@ describe('ProjectDeletionCoordinator', () => {
     })
     const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
-    await expect(coordinator.deleteProject('project-1')).rejects.toThrow('tombstone busy')
+    await expect(coordinator.deleteProject('project-1')).resolves.toEqual({
+      status: 'cleanup-pending'
+    })
 
     expect(projects.delete).toHaveBeenCalledWith('project-1')
     expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
@@ -775,6 +778,7 @@ describe('ProjectDeletionCoordinator', () => {
       .mockRejectedValueOnce(cleanupFailure)
       .mockResolvedValueOnce(undefined)
     const completeProjectDeletion = vi.fn()
+    const events = { publish: vi.fn() }
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
@@ -785,16 +789,22 @@ describe('ProjectDeletionCoordinator', () => {
         beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
         finalizeProjectDeletion,
         completeProjectDeletion
-      }
+      },
+      events
     )
 
-    await expect(coordinator.deleteProject('project-1')).rejects.toBe(cleanupFailure)
+    await expect(coordinator.deleteProject('project-1')).resolves.toEqual({
+      status: 'cleanup-pending'
+    })
 
     expect(projectExists).toBe(false)
     expect(intentExists).toBe(true)
     expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
     expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
     expect(completeProjectDeletion).not.toHaveBeenCalled()
+    expect(events.publish).not.toHaveBeenCalledWith('project:deleted', {
+      projectId: 'project-1'
+    })
 
     await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
 
@@ -802,6 +812,29 @@ describe('ProjectDeletionCoordinator', () => {
     expect(sessions.completeProjectSessionDeletion).toHaveBeenCalledWith('project-1')
     expect(intentExists).toBe(false)
     expect(completeProjectDeletion).toHaveBeenCalledWith('project-1')
+  })
+
+  it('publishes Project deletion when background recovery reaches the terminal state', async () => {
+    const projects = createProjects()
+    projects.get = vi.fn().mockResolvedValue(null)
+    projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1'])
+    const events = { publish: vi.fn() }
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      createSessions(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      events
+    )
+
+    await coordinator.recoverPendingDeletions()
+
+    expect(events.publish).toHaveBeenCalledWith('project:deleted', {
+      projectId: 'project-1'
+    })
+    expect(events.publish).toHaveBeenCalledOnce()
   })
 
   it('keeps the recovery intent until derived project cleanup has finished', async () => {

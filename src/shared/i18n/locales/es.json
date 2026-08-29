@@ -671,6 +671,7 @@
     "Could not delete project.": "No se pudo eliminar el proyecto.",
     "Could not delete session.": "No se pudo eliminar la sesión.",
     "Could not delete the project. Please try again.": "No se pudo eliminar el proyecto. Inténtelo de nuevo.",
+    "Project deleted. Cleanup will continue in the background.": "Proyecto eliminado. La limpieza continuará en segundo plano.",
     "Could not disconnect Claude from Open Science.": "No se pudo desconectar Claude de Open Science.",
     "Could not export this Skill.": "No se pudo exportar esta habilidad.",
     "Could not import the selected skills.": "No se pudieron importar las habilidades seleccionadas.",

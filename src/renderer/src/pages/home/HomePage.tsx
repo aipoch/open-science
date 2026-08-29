@@ -208,6 +208,7 @@ const HomePage = ({
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined)
   const [isDeletingProject, setIsDeletingProject] = useState(false)
   const [deleteProjectError, setDeleteProjectError] = useState<string | undefined>(undefined)
+  const [projectCleanupNotice, setProjectCleanupNotice] = useState<string | undefined>(undefined)
   const [archivingProjectIds, setArchivingProjectIds] = useState<Set<string>>(() => new Set())
   const [pinningProjectIds, setPinningProjectIds] = useState<Set<string>>(() => new Set())
   const [projectActionError, setProjectActionError] = useState<string | undefined>(undefined)
@@ -463,6 +464,7 @@ const HomePage = ({
     if (!canDeleteProjects) return
 
     setDeleteProjectError(undefined)
+    setProjectCleanupNotice(undefined)
     setProjectToDelete(project)
   }
 
@@ -591,9 +593,12 @@ const HomePage = ({
     setDeleteProjectError(undefined)
 
     void deleteProject(projectId)
-      .then(() => {
+      .then((outcome) => {
         useSessionStore.getState().removeSessionsForProject(projectId)
         setProjectToDelete(undefined)
+        if (outcome.status === 'cleanup-pending') {
+          setProjectCleanupNotice(t('Project deleted. Cleanup will continue in the background.'))
+        }
       })
       .catch((error: unknown) => {
         // Durable deletion failed; keep the target and in-memory sessions visible so the user can
@@ -874,6 +879,14 @@ const HomePage = ({
                 role="alert"
               >
                 {projectActionError}
+              </div>
+            ) : null}
+            {projectCleanupNotice ? (
+              <div
+                className="mb-3 rounded-2xl border border-status-warning-foreground/30 bg-status-warning-surface/40 px-4 py-3 text-sm text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
+                role="status"
+              >
+                {projectCleanupNotice}
               </div>
             ) : null}
             {loadError ? (

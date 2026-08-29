@@ -51,6 +51,11 @@ export const updateProjectRequestSchema = z
 
 export const deleteProjectRequestSchema = z.object({ id: z.string() }).strict()
 
+export const projectDeletionOutcomeSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('deleted') }).strict(),
+  z.object({ status: z.literal('cleanup-pending') }).strict()
+])
+
 export const updateProjectArchiveRequestSchema = z
   .object({
     id: z.string(),
@@ -65,6 +70,7 @@ export type Project = z.infer<typeof projectSchema>
 export type CreateProjectRequest = z.infer<typeof createProjectRequestSchema>
 export type UpdateProjectRequest = z.infer<typeof updateProjectRequestSchema>
 export type DeleteProjectRequest = z.infer<typeof deleteProjectRequestSchema>
+export type ProjectDeletionOutcome = z.infer<typeof projectDeletionOutcomeSchema>
 export type UpdateProjectArchiveRequest = z.infer<typeof updateProjectArchiveRequestSchema>
 
 export const projectApplicationCommandContracts = Object.freeze({
@@ -90,6 +96,6 @@ export const projectApplicationCommandContracts = Object.freeze({
   ),
   delete: defineApplicationCommandContract(
     validationCodec(z.tuple([deleteProjectRequestSchema])),
-    validationCodec(z.undefined())
+    validationCodec(projectDeletionOutcomeSchema)
   )
 })

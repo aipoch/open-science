@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import type {
   CreateProjectRequest,
   Project,
+  ProjectDeletionOutcome,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../../shared/projects'
@@ -18,7 +19,7 @@ type ProjectStore = ProjectStoreData & {
   createProject: (request: CreateProjectRequest) => Promise<Project | undefined>
   updateProject: (request: UpdateProjectRequest) => Promise<Project | undefined>
   updateProjectArchive: (request: UpdateProjectArchiveRequest) => Promise<Project>
-  deleteProject: (id: string) => Promise<void>
+  deleteProject: (id: string) => Promise<ProjectDeletionOutcome>
   upsertProject: (project: Project) => void
   removeProject: (id: string) => void
 }
@@ -109,12 +110,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return project
   },
 
-  // Deletes a project row and drops it from the cache. Session cascade is handled by the session store.
+  // Drops committed Project deletion from the cache. Session cascade is handled by the session store.
   deleteProject: async (id) => {
-    await window.api.projects.delete({ id })
+    const outcome = await window.api.projects.delete({ id })
 
     projectMutationSequence += 1
     set((state) => ({ projects: state.projects.filter((project) => project.id !== id) }))
+    return outcome
   },
 
   upsertProject: (project) => {

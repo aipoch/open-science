@@ -124,7 +124,7 @@ const createDependencies = () => {
   }
   const projects = {
     create: vi.fn(async () => project),
-    delete: vi.fn(async () => undefined),
+    delete: vi.fn(async () => ({ status: 'cleanup-pending' as const })),
     get: vi.fn(async () => project),
     list: vi.fn(async () => [project]),
     updateArchive: vi.fn(async () => project),
@@ -751,10 +751,12 @@ describe('Data and content application commands', () => {
         invocation([updateRequest] as const)
       )
     ).resolves.toBe(deps.project)
-    await router.dispatcher.invoke(
-      dataContentApplicationCommands.projectDelete,
-      invocation([deleteProjectRequest] as const)
-    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectDelete,
+        invocation([deleteProjectRequest] as const)
+      )
+    ).resolves.toEqual({ status: 'cleanup-pending' })
     await expect(
       router.dispatcher.invoke(dataContentApplicationCommands.sessionLoadAll, invocation([]))
     ).resolves.toBe(loadResult)
@@ -798,7 +800,7 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.editDetails).toHaveBeenCalledWith(editDetailsRequest)
     expect(deps.withDataRootWrite).toHaveBeenCalledTimes(6)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
-    expect(deps.events.publish).toHaveBeenCalledWith('project:deleted', {
+    expect(deps.events.publish).not.toHaveBeenCalledWith('project:deleted', {
       projectId: 'project-1'
     })
     expect(deps.events.publish).toHaveBeenCalledWith('session:deleted', deleteSessionRequest)

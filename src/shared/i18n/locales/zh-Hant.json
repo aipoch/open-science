@@ -702,6 +702,7 @@
     "Could not delete project.": "無法刪除專案。",
     "Could not delete session.": "無法刪除會話。",
     "Could not delete the project. Please try again.": "無法刪除專案。請重試。",
+    "Project deleted. Cleanup will continue in the background.": "專案已刪除。清理將在背景繼續。",
     "Could not disconnect Claude from Open Science.": "無法中斷 Claude 與 Open Science 的連線。",
     "Could not export this Skill.": "無法匯出此技能。",
     "Could not import the selected skills.": "無法匯入所選技能。",

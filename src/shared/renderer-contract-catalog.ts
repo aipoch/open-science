@@ -190,6 +190,7 @@ import type {
   CreateProjectRequest,
   DeleteProjectRequest,
   Project,
+  ProjectDeletionOutcome,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from './projects'
@@ -1238,13 +1239,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     undefined,
     RUNTIME_VALIDATED
   ]),
-  'projects.delete': callable<(request: DeleteProjectRequest) => Promise<void>>()('projects', [
-    'projects:delete',
-    WEB,
-    undefined,
-    undefined,
-    RUNTIME_VALIDATED
-  ]),
+  'projects.delete': callable<(request: DeleteProjectRequest) => Promise<ProjectDeletionOutcome>>()(
+    'projects',
+    ['projects:delete', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'projects.get': callable<(id: string) => Promise<Project | null>>()('projects', [
     'projects:get',
     WEB,

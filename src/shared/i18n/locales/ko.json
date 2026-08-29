@@ -651,6 +651,7 @@
     "Could not delete project.": "프로젝트를 삭제할 수 없습니다.",
     "Could not delete session.": "세션을 삭제할 수 없습니다.",
     "Could not delete the project. Please try again.": "프로젝트를 삭제할 수 없습니다. 다시 시도해 주세요.",
+    "Project deleted. Cleanup will continue in the background.": "프로젝트가 삭제되었습니다. 정리는 백그라운드에서 계속됩니다.",
     "Could not disconnect Claude from Open Science.": "Open Science에서 Claude 연결을 해제하지 못했습니다.",
     "Could not export this Skill.": "스킬을 내보낼 수 없습니다.",
     "Could not import the selected skills.": "선택한 스킬을 가져올 수 없습니다.",

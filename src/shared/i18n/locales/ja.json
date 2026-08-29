@@ -632,6 +632,7 @@
     "Could not delete project.": "プロジェクトを削除できませんでした。",
     "Could not delete session.": "セッションを削除できませんでした。",
     "Could not delete the project. Please try again.": "プロジェクトを削除できませんでした。もう一度試してください。",
+    "Project deleted. Cleanup will continue in the background.": "プロジェクトを削除しました。クリーンアップはバックグラウンドで続行されます。",
     "Could not disconnect Claude from Open Science.": "Claude を Open Science から切断できませんでした。",
     "Could not export this Skill.": "このスキルをエクスポートできませんでした。",
     "Could not import the selected skills.": "選択したスキルをインポートできませんでした。",
