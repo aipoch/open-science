@@ -800,9 +800,7 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.editDetails).toHaveBeenCalledWith(editDetailsRequest)
     expect(deps.withDataRootWrite).toHaveBeenCalledTimes(6)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
-    expect(deps.events.publish).not.toHaveBeenCalledWith('project:deleted', {
-      projectId: 'project-1'
-    })
+    expect(deps.events.publish).not.toHaveBeenCalledWith('project:deleted', expect.anything())
     expect(deps.events.publish).toHaveBeenCalledWith('session:deleted', deleteSessionRequest)
   })
 

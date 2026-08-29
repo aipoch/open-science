@@ -22,7 +22,7 @@ type ProjectStore = ProjectStoreData & {
   updateProjectArchive: (request: UpdateProjectArchiveRequest) => Promise<Project>
   deleteProject: (id: string) => Promise<ProjectDeletionOutcome>
   upsertProject: (project: Project) => void
-  removeProject: (id: string) => void
+  removeProject: (id: string, outcome?: ProjectDeletionOutcome) => void
 }
 
 // Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
@@ -135,11 +135,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((state) => ({ projects: upsertProjectList(state.projects, project) }))
   },
 
-  removeProject: (id) => {
+  removeProject: (id, outcome = { status: 'deleted' }) => {
     projectMutationSequence += 1
     set((state) => {
       const pendingDeletionCleanupProjectIds = new Set(state.pendingDeletionCleanupProjectIds)
-      pendingDeletionCleanupProjectIds.delete(id)
+      if (outcome.status === 'cleanup-pending') pendingDeletionCleanupProjectIds.add(id)
+      else pendingDeletionCleanupProjectIds.delete(id)
 
       return {
         projects: state.projects.filter((project) => project.id !== id),

@@ -85,6 +85,7 @@ class ProjectDeletionRecoveryLoop {
   private timer: ReturnType<typeof setTimeout> | undefined
   private started = false
   private running = false
+  private rerunRequested = false
   private activeRun: Promise<void> | undefined
 
   constructor(
@@ -101,8 +102,22 @@ class ProjectDeletionRecoveryLoop {
     this.run()
   }
 
+  // Foreground deletion can create durable retry work after the one-shot startup scan has already
+  // completed. Wake immediately, while coalescing requests that arrive during an active run.
+  wake(): void {
+    if (!this.started) return
+    if (this.running) {
+      this.rerunRequested = true
+      return
+    }
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = undefined
+    this.run()
+  }
+
   async stop(): Promise<void> {
     this.started = false
+    this.rerunRequested = false
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
     await this.activeRun
@@ -116,9 +131,13 @@ class ProjectDeletionRecoveryLoop {
       .then(
         () => {
           this.running = false
+          if (!this.started || !this.rerunRequested) return
+          this.rerunRequested = false
+          this.run()
         },
         (error: unknown) => {
           this.running = false
+          this.rerunRequested = false
           try {
             this.onError(error)
           } catch {
@@ -364,11 +383,16 @@ class ProjectDeletionCoordinator {
     // Prune is transactional and idempotent. Run it before the soft delete so a Registry/database
     // failure retains the visible Project plus its durable intent for an explicit or startup retry.
     await this.permissionGrants?.prune({ kind: 'project', projectId })
-    const projectDeletion = (await this.projects.get(projectId))
-      ? await this.projects.delete(projectId)
-      : undefined
+    const projectExists = Boolean(await this.projects.get(projectId))
+    const projectDeletion = projectExists ? await this.projects.delete(projectId) : undefined
     if (projectDeletion) {
       this.events?.publish('memory:changed', { revision: projectDeletion.memoryRevision })
+    }
+    if (projectExists) {
+      // Metadata deletion is the user-visible commit point. Other renderer windows must evict their
+      // stale Project/Session projections immediately, while retaining an explicit pending marker
+      // until the terminal event below confirms that replayable cleanup has finished.
+      this.events?.publish('project:deleted', { projectId, status: 'cleanup-pending' })
     }
     // The metadata tombstone commits outside the Registry mutation queue. A remember/restore already
     // in flight may have updated its cache around that commit, so enqueue one non-failing barrier.
@@ -409,7 +433,7 @@ class ProjectDeletionCoordinator {
       return { status: 'cleanup-pending', error }
     }
     this.lifecycle?.completeProjectDeletion?.(projectId)
-    this.events?.publish('project:deleted', { projectId })
+    this.events?.publish('project:deleted', { projectId, status: 'deleted' })
     return { status: 'deleted' }
   }
 }

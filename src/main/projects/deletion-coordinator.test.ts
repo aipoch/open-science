@@ -81,7 +81,28 @@ describe('ProjectDeletionCoordinator', () => {
     expect(completeProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(abortProjectDeletion).not.toHaveBeenCalled()
     expect(events.publish).toHaveBeenCalledWith('memory:changed', { revision: 7 })
-    expect(events.publish).toHaveBeenCalledWith('project:deleted', { projectId: 'project-1' })
+    expect(events.publish).toHaveBeenCalledWith('project:deleted', {
+      projectId: 'project-1',
+      status: 'cleanup-pending'
+    })
+    expect(events.publish).toHaveBeenCalledWith('project:deleted', {
+      projectId: 'project-1',
+      status: 'deleted'
+    })
+    const pendingEventIndex = events.publish.mock.calls.findIndex(
+      ([channel, payload]) =>
+        channel === 'project:deleted' &&
+        (payload as { status?: string }).status === 'cleanup-pending'
+    )
+    expect(pendingEventIndex).toBeGreaterThan(-1)
+    const pendingEventOrder = events.publish.mock.invocationCallOrder[pendingEventIndex]
+    expect(pendingEventOrder).toBeDefined()
+    expect(vi.mocked(projects.delete).mock.invocationCallOrder[0]).toBeLessThan(
+      pendingEventOrder as number
+    )
+    expect(pendingEventOrder).toBeLessThan(
+      reviews.deleteReviewsForProject.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    )
     expect(vi.mocked(permissionGrants.prune).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(projects.delete).mock.invocationCallOrder[0]
     )
@@ -297,6 +318,7 @@ describe('ProjectDeletionCoordinator', () => {
     const provenance = { deleteProjectProvenance: vi.fn().mockResolvedValue(undefined) }
     const completeProjectDeletion = vi.fn()
     const abortProjectDeletion = vi.fn()
+    const events = { publish: vi.fn() }
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
@@ -307,7 +329,8 @@ describe('ProjectDeletionCoordinator', () => {
         beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
         completeProjectDeletion,
         abortProjectDeletion
-      }
+      },
+      events
     )
 
     await expect(coordinator.deleteProject('project-1')).resolves.toEqual({
@@ -321,6 +344,10 @@ describe('ProjectDeletionCoordinator', () => {
     expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
     expect(completeProjectDeletion).not.toHaveBeenCalled()
     expect(abortProjectDeletion).not.toHaveBeenCalled()
+    expect(events.publish).toHaveBeenCalledWith('project:deleted', {
+      projectId: 'project-1',
+      status: 'cleanup-pending'
+    })
 
     await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
 
@@ -456,6 +483,19 @@ describe('ProjectDeletionCoordinator', () => {
     expect(recover).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(1)
     expect(recover).toHaveBeenCalledTimes(2)
+
+    await recovery.stop()
+  })
+
+  it('wakes background recovery after its successful startup run has completed', async () => {
+    const recover = vi.fn().mockResolvedValue(undefined)
+    const recovery = new ProjectDeletionRecoveryLoop(recover)
+
+    recovery.start()
+    await vi.waitFor(() => expect(recover).toHaveBeenCalledOnce())
+
+    recovery.wake()
+    await vi.waitFor(() => expect(recover).toHaveBeenCalledTimes(2))
 
     await recovery.stop()
   })
@@ -803,7 +843,8 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
     expect(completeProjectDeletion).not.toHaveBeenCalled()
     expect(events.publish).not.toHaveBeenCalledWith('project:deleted', {
-      projectId: 'project-1'
+      projectId: 'project-1',
+      status: 'deleted'
     })
 
     await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
@@ -832,7 +873,8 @@ describe('ProjectDeletionCoordinator', () => {
     await coordinator.recoverPendingDeletions()
 
     expect(events.publish).toHaveBeenCalledWith('project:deleted', {
-      projectId: 'project-1'
+      projectId: 'project-1',
+      status: 'deleted'
     })
     expect(events.publish).toHaveBeenCalledOnce()
   })

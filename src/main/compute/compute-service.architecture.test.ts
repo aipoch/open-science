@@ -259,6 +259,11 @@ describe('Compute service architecture', () => {
       'await projectDeletionCoordinator.recoverPendingDeletions()',
       backgroundSessionRecovery
     )
+    const committedDeletionWake = source.indexOf(
+      "event.payload.status === 'cleanup-pending'",
+      backgroundProjectRecovery
+    )
+    const wakeCall = source.indexOf('projectDeletionRecovery.wake()', committedDeletionWake)
 
     expect(projectBarriers).toBeGreaterThan(-1)
     expect(jobBarriers).toBeGreaterThan(projectBarriers)
@@ -268,6 +273,8 @@ describe('Compute service architecture', () => {
     expect(backgroundOrphanRecovery).toBeGreaterThan(backgroundRecovery)
     expect(backgroundSessionRecovery).toBeGreaterThan(backgroundOrphanRecovery)
     expect(backgroundProjectRecovery).toBeGreaterThan(backgroundSessionRecovery)
+    expect(committedDeletionWake).toBeGreaterThan(backgroundProjectRecovery)
+    expect(wakeCall).toBeGreaterThan(committedDeletionWake)
   })
 
   it('gives Compute Job shutdown the transport cancellation budget', () => {

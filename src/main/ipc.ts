@@ -2445,11 +2445,19 @@ const createApplicationModules = async (
         )
     }
   )
+  const removeProjectDeletionRecoveryWake = applicationEvents.subscribe((event) => {
+    if (event.channel === 'project:deleted' && event.payload.status === 'cleanup-pending') {
+      projectDeletionRecovery.wake()
+    }
+  })
   await modules.add(projectDeletionRecovery, (recovery) => ({
     name: 'project-deletion-recovery',
     capability: undefined,
     start: () => recovery.start(),
-    dispose: () => recovery.stop()
+    dispose: async () => {
+      removeProjectDeletionRecoveryWake()
+      await recovery.stop()
+    }
   }))
   declareElectronAdapter('side-chat', () =>
     registerSideChatIpcHandlers(sideChatRuntime, {
