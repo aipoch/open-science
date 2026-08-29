@@ -2464,6 +2464,35 @@ describe('ManagedFileIndexRepository', () => {
     })
   })
 
+  it('clears an incomplete session after a Project-scoped scan confirms its JSON is gone', async () => {
+    const missingPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'missing.txt'
+    )
+    await expect(
+      repository.syncSession(
+        createSession({
+          artifacts: [
+            { id: 'artifact-missing', kind: 'managed-file', path: missingPath, name: 'missing.txt' }
+          ]
+        })
+      )
+    ).resolves.toEqual([])
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      isIndexComplete: false
+    })
+
+    await repository.reconcileProjectSessions(PROJECT_ID, [])
+
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      isIndexComplete: true
+    })
+  })
+
   it('canonicalizes duplicate legacy ids that point at the same storage path', async () => {
     const artifactPath = join(
       storageRoot,

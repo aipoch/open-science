@@ -369,7 +369,7 @@ class ProjectFilesMutationOwner {
         await this.rebuildRetainedOriginProjection(client, origin.projectId, origin.sessionId)
       }
       for (const key of this.incompleteSessions.keys()) {
-        if ((!projectId || key.startsWith(`${projectId}\0`)) && !activeKeys.has(key)) {
+        if ((!projectId || key.startsWith(`${projectId}:`)) && !activeKeys.has(key)) {
           this.incompleteSessions.delete(key)
         }
       }
