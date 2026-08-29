@@ -421,8 +421,8 @@ class DataRootCleanupJournal {
     }
 
     try {
+      await removeMigrationMarker(committedIntent.target)
       await this.clear(committedIntent.token)
-      await removeMigrationMarker(committedIntent.target).catch(() => undefined)
       return 0
     } catch {
       return 1

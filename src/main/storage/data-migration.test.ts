@@ -19,7 +19,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const diskSpace = vi.hoisted(() => ({
   availableBytes: undefined as number | undefined,
-  hardLinksSupported: true
+  hardLinksSupported: true,
+  statErrorPath: undefined as string | undefined
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -40,7 +41,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     return actual.link(...args)
   }) as typeof actual.link
 
-  return { ...actual, link, statfs }
+  const stat = vi.fn(async (...args: Parameters<typeof actual.stat>) => {
+    if (String(args[0]) === diskSpace.statErrorPath) {
+      throw Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    }
+    return actual.stat(...args)
+  }) as typeof actual.stat
+
+  return { ...actual, link, stat, statfs }
 })
 
 import type { MigrationProgress } from '../../shared/storage'
@@ -57,6 +65,7 @@ beforeEach(async () => {
 afterEach(async () => {
   diskSpace.availableBytes = undefined
   diskSpace.hardLinksSupported = true
+  diskSpace.statErrorPath = undefined
   await rm(from, { recursive: true, force: true })
   await rm(to, { recursive: true, force: true })
 })
@@ -547,6 +556,19 @@ describe('deleteSources', () => {
     expect(await exists(join(from, 'artifacts'))).toBe(false)
     expect(await exists(join(from, 'uploads'))).toBe(false)
     expect(progress.every((p) => p.phase === 'delete')).toBe(true)
+  })
+
+  it('reports a source probe error instead of treating the directory as absent', async () => {
+    await seedFixture()
+    const uploadsDir = join(from, 'uploads')
+    diskSpace.statErrorPath = uploadsDir
+
+    const result = await deleteSources(from, ['artifacts', 'uploads'])
+
+    expect(result.deleted).toEqual(['artifacts'])
+    expect(result.failed).toEqual([{ dir: 'uploads', error: 'permission denied' }])
+    diskSpace.statErrorPath = undefined
+    await expect(readFile(join(uploadsDir, 'b.txt'), 'utf8')).resolves.toBe('hello uploads')
   })
 
   it('records a per-dir failure in `failed` without throwing, and still deletes the rest', async () => {

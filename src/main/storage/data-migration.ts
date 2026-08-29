@@ -492,8 +492,14 @@ export const deleteSources = async (
 
   for (const dir of dirs) {
     const srcDir = join(from, dir)
-    if (!(await exists(srcDir))) continue
     try {
+      try {
+        await stat(srcDir)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'ENOTDIR') continue
+        throw err
+      }
       await rm(srcDir, { recursive: true, force: true })
       deleted.push(dir)
       onProgress?.({ phase: 'delete', copiedBytes: 0, totalBytes: 0, currentPath: dir })

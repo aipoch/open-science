@@ -152,6 +152,30 @@ describe('DataRootCleanupJournal', () => {
     )
   })
 
+  it('removes the migration marker before clearing the durable cleanup intent', async () => {
+    class MarkerOrderJournal extends DataRootCleanupJournal {
+      override async clear(expectedToken?: string): Promise<void> {
+        await expect(readMigrationMarker(target)).resolves.toBeNull()
+        await super.clear(expectedToken)
+      }
+    }
+    const journal = new MarkerOrderJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    await journal.markCommitted('cleanup-token')
+
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: false,
+      failureCount: 0
+    })
+    await expect(journal.hasPending()).resolves.toBe(false)
+  })
+
   it('never deletes from an intent whose target is not the live data root', async () => {
     const journal = new DataRootCleanupJournal(configRoot)
     await journal.stage({

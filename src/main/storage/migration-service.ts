@@ -884,6 +884,11 @@ export const commitDataRootSwitch = async (
     operation.fail(err)
     return { ok: false, error: 'Could not recheck the copied data. Run the move again.' }
   }
+  const sourceLinks = await validateMigrationSourceLinks(deps.currentDataRoot, migratedDirs)
+  if (!sourceLinks.ok) {
+    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata).catch(() => undefined)
+    return failResult(sourceLinks)
+  }
   let inventories: [MigrationInventory, MigrationInventory]
   try {
     inventories = await Promise.all([
@@ -1001,8 +1006,8 @@ export const commitDataRootSwitch = async (
 
   if (!cleanupDegraded) {
     try {
-      await deps.cleanupJournal?.clear(marker.token)
       await removeMigrationMarker(target)
+      await deps.cleanupJournal?.clear(marker.token)
     } catch {
       // The old data is gone. A leftover marker or cleanup intent is safe and may be retried, so the
       // already-committed pointer still wins and the app relaunches normally.

@@ -1465,6 +1465,57 @@ describe('commitDataRootSwitch (commit phase)', () => {
     ).resolves.toBe('preserved content')
   })
 
+  it('refuses a recovered verified copy whose absolute link still targets the old data root', async () => {
+    const sourceDirectory = join(currentDataRoot, 'artifacts', 'source-directory')
+    await mkdir(sourceDirectory, { recursive: true })
+    await writeFile(join(sourceDirectory, 'result.txt'), 'preserved content')
+    await symlink(
+      sourceDirectory,
+      join(currentDataRoot, 'artifacts', 'absolute-link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const target = dataRootFor(emptyParent)
+    const copiedDirectory = join(target, 'artifacts', 'source-directory')
+    await mkdir(copiedDirectory, { recursive: true })
+    await writeFile(join(copiedDirectory, 'result.txt'), 'preserved content')
+    await symlink(
+      sourceDirectory,
+      join(target, 'artifacts', 'absolute-link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await seedVerifiedMarker(emptyParent, currentDataRoot, {
+      inventory: await scanInventory(target, [...MIGRATED_DIRS])
+    })
+    const setDataRoot = vi.fn().mockResolvedValue(undefined)
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({
+      deleted: [],
+      failed: []
+    }))
+
+    const result = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot,
+        deleteSources,
+        expectedToken: 'tok-test',
+        validateProvenanceState: async () => undefined
+      },
+      emptyParent
+    )
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.stringMatching(/absolute symbolic link/i)
+      })
+    )
+    expect(setDataRoot).not.toHaveBeenCalled()
+    expect(deleteSources).not.toHaveBeenCalled()
+    await expect(readFile(join(sourceDirectory, 'result.txt'), 'utf8')).resolves.toBe(
+      'preserved content'
+    )
+  })
+
   it('correlates distinct copy and commit operations without reusing the marker token', async () => {
     const deps = fakeDeps()
     const logger = fakeDiagnosticLogger()
