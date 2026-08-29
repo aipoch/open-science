@@ -362,21 +362,24 @@ class DataRootCleanupJournal {
   ): Promise<DataRootCleanupIntent | undefined> {
     let current: string
     let source: string
-    let target: string
     try {
-      const [canonicalCurrent, canonicalSource, canonicalTarget] = await Promise.all([
+      const [canonicalCurrent, canonicalSource] = await Promise.all([
         canonicalizeCleanupSource(currentDataRoot),
-        canonicalizeCleanupSource(intent.source),
-        realpath(intent.target).then(resolve)
+        canonicalizeCleanupSource(intent.source)
       ])
       current = canonicalCurrent.path
       source = canonicalSource.path
-      target = canonicalTarget
     } catch {
       return undefined
     }
     if (samePath(current, source)) {
       if (!intent.committed) await this.clear(intent.token)
+      return undefined
+    }
+    let target: string
+    try {
+      target = resolve(await realpath(intent.target))
+    } catch {
       return undefined
     }
     if (

@@ -404,4 +404,24 @@ describe('DataRootCleanupJournal', () => {
     await expect(journal.hasPending()).resolves.toBe(false)
     await expect(readMigrationMarker(target)).resolves.toMatchObject({ token: 'cleanup-token' })
   })
+
+  it('clears an uncommitted intent after its failed-switchover target was discarded', async () => {
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    await rm(target, { recursive: true, force: true })
+    const deleteSources = vi.fn()
+
+    await expect(journal.recover(source, deleteSources)).resolves.toEqual({
+      pending: false,
+      failureCount: 0
+    })
+    expect(deleteSources).not.toHaveBeenCalled()
+    await expect(journal.hasPending()).resolves.toBe(false)
+  })
 })
