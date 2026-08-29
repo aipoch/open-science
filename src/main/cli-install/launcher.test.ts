@@ -444,7 +444,7 @@ describe('buildWindowsPathCommand', () => {
     expect(script).toContain(`$binDir = '${binDir}'`)
     expect(script).toContain(`$pendingPath = '${join(binDir, '.open-science-path-pending')}'`)
     expect(script).toContain(
-      `$pendingTempPath = '${join(binDir, '.open-science-path-pending.tmp')}'`
+      "$pendingTempPath = [IO.Path]::Combine([IO.Path]::GetDirectoryName($pendingPath), '.open-science-path-pending.' + [Guid]::NewGuid().ToString('N') + '.tmp')"
     )
     expect(script).toContain(`$receiptPath = '${join(binDir, '.open-science-path-receipt')}'`)
     expect(script).toContain(`$receiptOwner = '${WINDOWS_PATH_RECEIPT_OWNER}'`)
@@ -453,8 +453,9 @@ describe('buildWindowsPathCommand', () => {
     expect(script).toContain(
       '$stream = [IO.File]::Open($pendingTempPath, [IO.FileMode]::CreateNew,'
     )
-    expect(script).toContain(
-      'if ([IO.File]::Exists($pendingTempPath)) { [IO.File]::Delete($pendingTempPath) }'
+    expect(script).toContain('if ($pendingTempCreated -and [IO.File]::Exists($pendingTempPath)) {')
+    expect(script.indexOf('$pendingTempCreated = $true')).toBeGreaterThan(
+      script.indexOf('$stream = [IO.File]::Open($pendingTempPath')
     )
     expect(script.indexOf('$stream.Flush($true)')).toBeLessThan(
       script.indexOf('[IO.File]::Move($pendingTempPath, $pendingPath)')

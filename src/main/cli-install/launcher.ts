@@ -190,14 +190,11 @@ const defaultRunCommand: CommandRunner = (command, args) => {
 }
 
 const WINDOWS_PATH_PENDING_NAME = '.open-science-path-pending'
-const WINDOWS_PATH_PENDING_TEMP_NAME = '.open-science-path-pending.tmp'
 const WINDOWS_PATH_RECEIPT_NAME = '.open-science-path-receipt'
 const WINDOWS_PATH_RECEIPT_OWNER = 'Open Science Windows PATH entry. Managed by the app.'
 // The file name is the journal state: pending is flushed before the registry mutation, then renamed
 // to the owned receipt as the commit step. The snapshots let a later run reconcile a crash safely.
 const windowsPathPendingPath = (binDir: string): string => join(binDir, WINDOWS_PATH_PENDING_NAME)
-const windowsPathPendingTempPath = (binDir: string): string =>
-  join(binDir, WINDOWS_PATH_PENDING_TEMP_NAME)
 const windowsPathReceiptPath = (binDir: string): string => join(binDir, WINDOWS_PATH_RECEIPT_NAME)
 const powershellLiteral = (value: string): string => `'${value.replace(/'/g, "''")}'`
 
@@ -241,15 +238,14 @@ const parseWindowsPathJournal = (
 // like `-args <dir>` are unreliable and can leave $args empty, writing the wrong value into PATH.
 export const buildWindowsPathCommand = (binDir: string): { command: string; args: string[] } => {
   const pendingPath = windowsPathPendingPath(binDir)
-  const pendingTempPath = windowsPathPendingTempPath(binDir)
   const receiptPath = windowsPathReceiptPath(binDir)
   const script = [
     "$ErrorActionPreference = 'Stop'",
     `$binDir = ${powershellLiteral(binDir)}`,
     `$pendingPath = ${powershellLiteral(pendingPath)}`,
-    `$pendingTempPath = ${powershellLiteral(pendingTempPath)}`,
     `$receiptPath = ${powershellLiteral(receiptPath)}`,
     `$receiptOwner = ${powershellLiteral(WINDOWS_PATH_RECEIPT_OWNER)}`,
+    "$pendingTempPath = [IO.Path]::Combine([IO.Path]::GetDirectoryName($pendingPath), '.open-science-path-pending.' + [Guid]::NewGuid().ToString('N') + '.tmp')",
     'function Get-PathParts($value) {',
     "  return @($value -split ';' | Where-Object { $_ -ne '' })",
     '}',
@@ -282,10 +278,11 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
     '    afterPath = $afterPath',
     '  } | ConvertTo-Json -Compress',
     '  $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($content)',
+    '  $pendingTempCreated = $false',
     '  try {',
-    '    if ([IO.File]::Exists($pendingTempPath)) { [IO.File]::Delete($pendingTempPath) }',
     '    $stream = [IO.File]::Open($pendingTempPath, [IO.FileMode]::CreateNew,',
     '      [IO.FileAccess]::Write, [IO.FileShare]::None)',
+    '    $pendingTempCreated = $true',
     '    try {',
     '      $stream.Write($bytes, 0, $bytes.Length)',
     '      $stream.Flush($true)',
@@ -294,7 +291,9 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
     '    }',
     '    [IO.File]::Move($pendingTempPath, $pendingPath)',
     '  } catch {',
-    '    if ([IO.File]::Exists($pendingTempPath)) { [IO.File]::Delete($pendingTempPath) }',
+    '    if ($pendingTempCreated -and [IO.File]::Exists($pendingTempPath)) {',
+    '      [IO.File]::Delete($pendingTempPath)',
+    '    }',
     '    throw',
     '  }',
     '}',
