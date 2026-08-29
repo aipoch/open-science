@@ -3171,6 +3171,7 @@ const createApplicationModules = async (
     notebook: notebookService,
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
     getActiveDelegatedSessions,
+    hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
     settingsService,
     micromambaRunner,
     prepareDataRootHandoff: async () => {
@@ -3185,6 +3186,7 @@ const createApplicationModules = async (
         notebook: notebookService,
         getActivePromptSessions: () => runtime.getActivePromptSessions(),
         getActiveDelegatedSessions,
+        hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
         settingsService
       },
       storageCommandOwner

@@ -114,6 +114,7 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
   },
   getActivePromptSessions: vi.fn().mockReturnValue([]),
   getActiveDelegatedSessions: vi.fn().mockReturnValue([]),
+  hasActiveReviewerWork: vi.fn().mockReturnValue(false),
   settingsService: {
     setDataRoot: vi.fn().mockResolvedValue(undefined),
     dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
@@ -1607,6 +1608,55 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
+  it.each([
+    {
+      label: 'root-agent prompt',
+      overrides: {
+        getActivePromptSessions: vi
+          .fn()
+          .mockReturnValue([{ projectId: 'project-1', sessionId: 'agent-1' }])
+      }
+    },
+    {
+      label: 'notebook execution',
+      overrides: {
+        notebook: {
+          shutdownAll: vi.fn().mockResolvedValue({ reaped: true }),
+          dispose: vi.fn().mockResolvedValue({ reaped: true }),
+          getActiveNotebookSessions: vi
+            .fn()
+            .mockReturnValue([{ projectId: 'project-1', sessionId: 'notebook-1' }])
+        }
+      }
+    },
+    {
+      label: 'review',
+      overrides: {
+        hasActiveReviewerWork: vi.fn().mockReturnValue(true)
+      }
+    }
+  ])(
+    'set-data-root-and-relaunch preserves active $label before handoff teardown',
+    async ({ overrides }) => {
+      initDataRoot(dataRoot)
+      const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+      const deps = fakeDeps({
+        ...overrides,
+        prepareDataRootHandoff,
+        classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+      })
+      registerStorageIpcHandlers(deps)
+
+      await expect(
+        invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+      ).resolves.toMatchObject({ ok: false })
+
+      expect(prepareDataRootHandoff).not.toHaveBeenCalled()
+      expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+      expect(deps.relaunch).not.toHaveBeenCalled()
+    }
+  )
+
   it('reserves the lifecycle guard before direct handoff classification awaits', async () => {
     initDataRoot(dataRoot)
     let finishClassification: ((result: { kind: 'invalid'; error: string }) => void) | undefined
@@ -1757,14 +1807,48 @@ describe('storage IPC handlers', () => {
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledOnce()
   })
 
-  it('rechecks delegated work after draining direct-switch writers', async () => {
+  it.each([
+    {
+      label: 'delegated work',
+      overrides: {
+        getActiveDelegatedSessions: vi
+          .fn()
+          .mockReturnValueOnce([])
+          .mockReturnValue([{ projectId: 'project-1', sessionId: 'delegated-race' }])
+      }
+    },
+    {
+      label: 'root-agent work',
+      overrides: {
+        getActivePromptSessions: vi
+          .fn()
+          .mockReturnValueOnce([])
+          .mockReturnValue([{ projectId: 'project-1', sessionId: 'agent-race' }])
+      }
+    },
+    {
+      label: 'notebook work',
+      overrides: {
+        notebook: {
+          shutdownAll: vi.fn().mockResolvedValue({ reaped: true }),
+          dispose: vi.fn().mockResolvedValue({ reaped: true }),
+          getActiveNotebookSessions: vi
+            .fn()
+            .mockReturnValueOnce([])
+            .mockReturnValue([{ projectId: 'project-1', sessionId: 'notebook-race' }])
+        }
+      }
+    },
+    {
+      label: 'reviewer work',
+      overrides: {
+        hasActiveReviewerWork: vi.fn().mockReturnValueOnce(false).mockReturnValue(true)
+      }
+    }
+  ])('rechecks $label after draining direct-switch writers', async ({ overrides }) => {
     initDataRoot(dataRoot)
-    const getActiveDelegatedSessions = vi
-      .fn()
-      .mockReturnValueOnce([])
-      .mockReturnValue([{ projectId: 'project-1', sessionId: 'delegated-race' }])
     const deps = fakeDeps({
-      getActiveDelegatedSessions,
+      ...overrides,
       pauseDataRootWriters: vi.fn().mockResolvedValue(undefined),
       classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
     })
@@ -1772,10 +1856,7 @@ describe('storage IPC handlers', () => {
 
     await expect(
       invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
-    ).resolves.toEqual({
-      ok: false,
-      error: 'Subagents are still running. Return to their tasks and stop them before moving data.'
-    })
+    ).resolves.toMatchObject({ ok: false })
 
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()

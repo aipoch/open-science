@@ -74,6 +74,7 @@ type StorageCommandOwnerDeps = {
   }
   getActivePromptSessions: () => LegacySessionSource[]
   getActiveDelegatedSessions: () => LegacySessionSource[]
+  hasActiveReviewerWork: () => boolean
   settingsService: {
     setDataRoot: (path: string, options?: SetDataRootOptions) => Promise<void>
     // Marks the one-time legacy-data-move prompt as answered so it is never shown again.
@@ -250,6 +251,15 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       // drop `this` and throw "Cannot read properties of undefined (reading 'values')".
       notebook: { getActiveNotebookSessions: () => deps.notebook.getActiveNotebookSessions() }
     })
+
+  const directHandoffBlocker = (): string | undefined => {
+    const activeSessions = detectActive()
+    const reviewerActive = deps.hasActiveReviewerWork()
+    if (activeSessions.length === 0 && !reviewerActive) return undefined
+    return !reviewerActive && activeSessions.every((session) => session.kind === 'delegated')
+      ? 'Subagents are still running. Return to their tasks and stop them before moving data.'
+      : 'Research work is still running. Stop active agents, notebooks, subagents, or reviews before moving data.'
+  }
 
   const pickDirectory = async (): Promise<string | null> => {
     try {
@@ -771,15 +781,16 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         return { ok: false, error: classification.error ?? 'The selected folder is not usable.' }
       }
 
-      // This command has no separate copy phase to establish a write gate. Refuse active delegated
-      // work at the mutating boundary, then stop all remaining data producers and flush renderer state
-      // before the durable pointer changes.
-      if (deps.getActiveDelegatedSessions().length > 0) {
-        operation.fail(new Error('delegated work is active'), { mode: classification.kind })
+      // Unlike migration, this direct switch has no confirmation stage. Refuse every active data
+      // producer before the teardown gate so adopting a root never silently terminates current work.
+      const activeWorkError = directHandoffBlocker()
+      if (activeWorkError) {
+        operation.fail(new Error('active work blocks direct data-root handoff'), {
+          mode: classification.kind
+        })
         return {
           ok: false,
-          error:
-            'Subagents are still running. Return to their tasks and stop them before moving data.'
+          error: activeWorkError
         }
       }
       const preparationFailure = await prepareDataRootHandoff()
@@ -818,16 +829,16 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         return { ok: false, error: 'Data-root change cancelled.' }
       }
 
-      // Work can appear while the non-latching preparation/drain awaits. Never persist a new root
-      // while delegated work still owns the old one; the finally block releases the gate on refusal.
-      if (deps.getActiveDelegatedSessions().length > 0) {
-        operation.fail(new Error('delegated work appeared during handoff'), {
+      // Work can appear while the non-latching preparation/drain awaits. Recheck every producer
+      // immediately before persistence; the finally block releases the write gate on refusal.
+      const racedActiveWorkError = directHandoffBlocker()
+      if (racedActiveWorkError) {
+        operation.fail(new Error('active work appeared during direct data-root handoff'), {
           mode: classification.kind
         })
         return {
           ok: false,
-          error:
-            'Subagents are still running. Return to their tasks and stop them before moving data.'
+          error: racedActiveWorkError
         }
       }
 

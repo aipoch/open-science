@@ -96,6 +96,7 @@ describe('storage command owner onboarding persistence', () => {
       },
       getActivePromptSessions: vi.fn().mockReturnValue([]),
       getActiveDelegatedSessions: vi.fn().mockReturnValue([]),
+      hasActiveReviewerWork: vi.fn().mockReturnValue(false),
       settingsService: {
         setDataRoot: async (path, options) => {
           await preferences.setDataRoot(path, options)
