@@ -602,7 +602,8 @@ class NotebookExecutionOwner {
         const workingFileObservation = await startWorkingFileObservation({
           dataRoot: session.dataRoot,
           notebookSessionRoot: session.notebookSessionRoot,
-          runId
+          runId,
+          signal
         })
         let workingFiles: NotebookWorkingFile[] = []
         let fileEvidence: NotebookRunFileEvidence | undefined
@@ -612,8 +613,9 @@ class NotebookExecutionOwner {
           runtimeRoot: session.runtimeRoot,
           cwd: session.cwd
         })
-        const shellResult = await (
-          blockedMutation
+        let shellResult: NotebookShellResult | undefined
+        try {
+          shellResult = await (blockedMutation
             ? Promise.resolve<NotebookShellResult>({
                 stdout: '',
                 stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
@@ -626,12 +628,20 @@ class NotebookExecutionOwner {
                 runtimeRoot: session.runtimeRoot,
                 timeoutMs: request.timeoutMs,
                 signal
-              })
-        ).finally(async () => {
-          const observation = await workingFileObservation.finish()
+              }))
+        } finally {
+          const observation = await workingFileObservation.finish(
+            shellResult === undefined ||
+              signal?.aborted ||
+              shellResult.cancelled ||
+              shellResult.exitCode === null
+              ? AbortSignal.abort()
+              : signal
+          )
           workingFiles = observation.workingFiles
           fileEvidence = observation.fileEvidence
-        })
+        }
+        if (!shellResult) throw new Error('Notebook shell execution completed without a result.')
         const status: NotebookRunStatus = shellResult.cancelled
           ? 'cancelled'
           : shellResult.exitCode === 0

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -274,6 +274,57 @@ describe('working-file evidence', () => {
         throw error
       })
     ).resolves.toEqual([])
+  })
+
+  it('passes cancellation into generation freezing and cleans the incomplete copy', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const controller = new AbortController()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        runId: 'run-cancelled-freeze'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'result.csv'), Buffer.alloc(1024 * 1024, 1))
+    controller.abort()
+
+    const result = await observation.finish(controller.signal)
+
+    expect(result.workingFiles[0]).not.toHaveProperty('generationId')
+    expect(result.fileEvidence).toMatchObject({
+      state: 'partial',
+      generationCount: 0,
+      reasonCodes: expect.arrayContaining(['generation-freeze-failed'])
+    })
+    await expect(
+      readdir(join(sessionRoot, 'file-evidence', 'runs', 'run-cancelled-freeze', 'blobs'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('flushes staged generation bytes before publishing the run-owned directory', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    let flushedContent: string | undefined
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-flushed' },
+      {
+        watchDirectory: watcherUnavailable,
+        syncFile: async (path) => {
+          flushedContent = await readFile(path, 'utf8')
+        },
+        publishDirectory: async (source, destination) => {
+          expect(flushedContent).toBe('durable bytes')
+          await rename(source, destination)
+        }
+      }
+    )
+    await writeFile(join(dataRoot, 'result.csv'), 'durable bytes')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({ state: 'partial', generationCount: 1 })
+    expect(flushedContent).toBe('durable bytes')
   })
 
   it('does not turn unobserved reads, transient files, or external writes into false evidence', async () => {

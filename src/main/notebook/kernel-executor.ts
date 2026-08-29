@@ -479,7 +479,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request, () => {
         kernelDispatched = true
       })
-      const fileObservation = await workingFileObservation.finish()
+      const fileObservation = await workingFileObservation.finish(
+        timedOut || cancelled ? AbortSignal.abort() : request.signal
+      )
       workingFileObservation = undefined
 
       const figureResult = await this.readFigures(response.figures)
@@ -519,7 +521,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         environmentOverlay: response.environmentOverlay
       }
     } catch (error) {
-      const fileObservation = await workingFileObservation?.finish()
+      const fileObservation = await workingFileObservation?.finish(AbortSignal.abort())
       return {
         ...errorToExecutionResult(error, request, kernelDispatched, helperModulesInitialized),
         ...(fileObservation

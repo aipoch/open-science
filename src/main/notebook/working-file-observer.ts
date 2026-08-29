@@ -22,6 +22,7 @@ type WorkingFileObservationRequest = {
   dataRoot: string
   notebookSessionRoot: string
   runId?: string
+  signal?: AbortSignal
 }
 
 type WorkingFileObservationResult = {
@@ -30,7 +31,7 @@ type WorkingFileObservationResult = {
 }
 
 type WorkingFileObservation = {
-  finish: () => Promise<WorkingFileObservationResult>
+  finish: (signal?: AbortSignal) => Promise<WorkingFileObservationResult>
 }
 
 type WorkingFileObservationDependencies = {
@@ -43,6 +44,8 @@ type WorkingFileObservationDependencies = {
   getAvailableBytes?: typeof availableBytes
   writeEvidenceFile?: typeof writeDurableJsonFile
   publishDirectory?: typeof rename
+  syncFile?: typeof defaultFileDurability.syncFile
+  syncDirectory?: typeof defaultFileDurability.syncDirectory
 }
 
 type ActiveObservation = { conflicted: boolean }
@@ -488,7 +491,8 @@ const fingerprint = (
 ): string => [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs].join(':')
 
 const freezeGeneration = async (
-  request: Required<Pick<WorkingFileObservationRequest, 'notebookSessionRoot' | 'runId'>>,
+  request: Required<Pick<WorkingFileObservationRequest, 'notebookSessionRoot' | 'runId'>> &
+    Pick<WorkingFileObservationRequest, 'signal'>,
   file: SnapshotEntry,
   dependencies: WorkingFileObservationDependencies,
   reservedBytes: number,
@@ -511,6 +515,7 @@ const freezeGeneration = async (
 
   const temporaryPath = join(stagingRunRoot, 'incoming', `${randomUUID()}.tmp`)
   let releaseDiskReservation: (() => void) | undefined
+  let ownedStagedContentPath: string | undefined
   try {
     await mkdir(dirname(temporaryPath), { recursive: true })
     const sourceHandle = await open(file.physicalPath, 'r')
@@ -537,12 +542,14 @@ const freezeGeneration = async (
       copied = await copyOpenFileWithinBudget(
         sourceHandle,
         temporaryPath,
-        Math.min(maxGenerationBytes, fileSize)
+        Math.min(maxGenerationBytes, fileSize),
+        request.signal
       )
       const afterCopy = await sourceHandle.stat()
       if (fingerprint(beforeCopy) !== fingerprint(afterCopy) || copied.sizeBytes !== fileSize) {
         return { state: 'unavailable', reason: 'generation-freeze-failed' }
       }
+      request.signal?.throwIfAborted()
     } finally {
       await sourceHandle.close()
     }
@@ -567,11 +574,23 @@ const freezeGeneration = async (
       checksum
     )
     await mkdir(dirname(stagedContentPath), { recursive: true })
-    await rename(temporaryPath, stagedContentPath).catch(async (error: unknown) => {
+    try {
+      await rename(temporaryPath, stagedContentPath)
+      ownedStagedContentPath = stagedContentPath
+    } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      const existing = await digestFileWithinBudget(stagedContentPath, maxGenerationBytes)
+      const existing = await digestFileWithinBudget(
+        stagedContentPath,
+        maxGenerationBytes,
+        request.signal
+      )
       if (existing.sizeBytes !== copied.sizeBytes || existing.checksum !== checksum) throw error
-    })
+    }
+    request.signal?.throwIfAborted()
+    await (dependencies.syncFile ?? defaultFileDurability.syncFile)(stagedContentPath)
+    await (dependencies.syncDirectory ?? defaultFileDurability.syncDirectory)(
+      dirname(stagedContentPath)
+    )
 
     return {
       state: 'available',
@@ -585,6 +604,9 @@ const freezeGeneration = async (
       }
     }
   } catch (error) {
+    if (ownedStagedContentPath) {
+      await rm(ownedStagedContentPath, { force: true }).catch(() => undefined)
+    }
     return {
       state: 'unavailable',
       reason:
@@ -652,7 +674,11 @@ const persistEvidence = async (
         workingFile.change = change.relation === 'created' ? 'created' : 'modified'
       }
       const frozen = await freezeGeneration(
-        { notebookSessionRoot: request.notebookSessionRoot, runId: request.runId },
+        {
+          notebookSessionRoot: request.notebookSessionRoot,
+          runId: request.runId,
+          signal: request.signal
+        },
         change.after,
         dependencies,
         reservedBytes,
@@ -707,7 +733,7 @@ const persistEvidence = async (
     await mkdir(dirname(finalRunRoot), { recursive: true })
     await (dependencies.publishDirectory ?? rename)(stagingRunRoot, finalRunRoot)
     published = true
-    await defaultFileDurability.syncDirectory(dirname(finalRunRoot))
+    await (dependencies.syncDirectory ?? defaultFileDurability.syncDirectory)(dirname(finalRunRoot))
     return {
       workingFiles,
       fileEvidence: {
@@ -756,14 +782,14 @@ const startWorkingFileObservation = async (
   )
   let finished = false
   return {
-    finish: async () => {
+    finish: async (signal) => {
       if (finished) {
         return { workingFiles: [], fileEvidence: unavailableEvidence(['observer-failed']) }
       }
       finished = true
       const results = await Promise.all(observations.map((observation) => observation.finish()))
       return persistEvidence(
-        request,
+        { ...request, signal: signal ?? request.signal },
         roots.map((root) => root.kind),
         results,
         dependencies
