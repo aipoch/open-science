@@ -52,7 +52,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 import type { MigrationProgress } from '../../shared/storage'
-import { copyAndVerify, deleteSources } from './data-migration'
+import { copyAndVerify, deleteSources, validateMigrationSourceLinks } from './data-migration'
 
 let from: string
 let to: string
@@ -86,6 +86,32 @@ const exists = async (path: string): Promise<boolean> => {
     return false
   }
 }
+
+describe('validateMigrationSourceLinks', () => {
+  it('rejects an absolute target text inside the source even when an intermediate link escapes', async () => {
+    const artifacts = join(from, 'artifacts')
+    const outside = join(to, 'outside')
+    await mkdir(artifacts, { recursive: true })
+    await mkdir(outside, { recursive: true })
+    await symlink(
+      outside,
+      join(artifacts, 'alias'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await symlink(
+      join(artifacts, 'alias'),
+      join(artifacts, 'absolute-link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(validateMigrationSourceLinks(from, ['artifacts'])).resolves.toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.stringMatching(/absolute symbolic link.*current data folder/i)
+      })
+    )
+  })
+})
 
 describe('copyAndVerify', () => {
   it('copies dirs, verifies them, and leaves sources intact', async () => {

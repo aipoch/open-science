@@ -198,6 +198,40 @@ describe('DataRootCleanupJournal', () => {
     await expect(journal.hasPending()).resolves.toBe(false)
   })
 
+  it('finishes a committed intent after marker removal when every source entry is gone', async () => {
+    class FailOnceJournal extends DataRootCleanupJournal {
+      private failClear = true
+
+      override async clear(expectedToken?: string): Promise<void> {
+        if (this.failClear) {
+          this.failClear = false
+          throw new Error('simulated journal clear failure')
+        }
+        await super.clear(expectedToken)
+      }
+    }
+    const journal = new FailOnceJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    await journal.markCommitted('cleanup-token')
+
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: true,
+      failureCount: 1
+    })
+    await expect(readMigrationMarker(target)).resolves.toBeNull()
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: false,
+      failureCount: 0
+    })
+    await expect(journal.hasPending()).resolves.toBe(false)
+  })
+
   it('never deletes from an intent whose target is not the live data root', async () => {
     const journal = new DataRootCleanupJournal(configRoot)
     await journal.stage({

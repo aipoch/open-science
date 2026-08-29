@@ -426,7 +426,23 @@ class DataRootCleanupJournal {
     deleteSources: DeleteSources
   ): Promise<number> {
     const committedIntent = await this.prepareCommittedIntent(intent, currentDataRoot)
-    if (!committedIntent) return 0
+    if (!committedIntent) {
+      if (!intent.committed) return 0
+      for (const { dir } of intent.entries) {
+        try {
+          await lstat(join(intent.source, dir))
+          return 0
+        } catch (error) {
+          if (!missingPathError(error)) return 0
+        }
+      }
+      try {
+        await this.clear(intent.token)
+        return 0
+      } catch {
+        return 1
+      }
+    }
 
     let current: string
     let source: string

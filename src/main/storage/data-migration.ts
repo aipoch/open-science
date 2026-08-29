@@ -266,6 +266,7 @@ export const validateMigrationSourceLinks = async (
   dirs: readonly string[]
 ): Promise<MigrationResult> => {
   try {
+    const normalizedSourceRoot = resolve(from)
     let canonicalSourceRoot: string
     try {
       canonicalSourceRoot = resolve(await realpath(from))
@@ -280,6 +281,13 @@ export const validateMigrationSourceLinks = async (
         const sourceLink = join(srcDir, rel)
         const linkTarget = await readlink(sourceLink)
         if (!isAbsolute(linkTarget)) continue
+        const normalizedTarget = resolve(linkTarget)
+        if (
+          isPathInsideOrEqual(normalizedSourceRoot, normalizedTarget) ||
+          isPathInsideOrEqual(canonicalSourceRoot, normalizedTarget)
+        ) {
+          throw new AbsoluteInternalSymlinkError(join(dir, rel))
+        }
         const canonicalTarget = await realpath(sourceLink).catch(() => resolve(linkTarget))
         if (isPathInsideOrEqual(canonicalSourceRoot, resolve(canonicalTarget))) {
           throw new AbsoluteInternalSymlinkError(join(dir, rel))
