@@ -458,13 +458,7 @@ const openManagedWindowsPathJournal = async (
   target: string,
   binDir: string
 ): Promise<OpenCliLauncher | undefined> => {
-  let opened: OpenCliLauncher | undefined
-  try {
-    opened = await openStableCliLauncher(target, constants.O_RDONLY)
-  } catch (error) {
-    if (error instanceof UnmanagedCliLauncherError) return undefined
-    throw error
-  }
+  const opened = await openStableCliLauncher(target, constants.O_RDONLY)
   if (opened === undefined) return undefined
 
   try {
@@ -634,59 +628,62 @@ export const uninstallCliLauncher = async (
 ): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
   const opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
-  if (opened !== undefined) {
-    let pathJournal: OpenCliLauncher | undefined
-    try {
+  let pathJournal: OpenCliLauncher | undefined
+  try {
+    if (opened !== undefined) {
       const existing = await opened.handle.readFile('utf8')
       if (!isManagedCliLauncher(existing)) refuseUnmanagedCliLauncher(plan.target)
       if (!(await isOpenCliLauncherCurrent(plan.target, opened.stats))) {
         refuseUnmanagedCliLauncher(plan.target)
       }
-      if (env.platform === 'win32') {
-        const journalPaths = [
-          windowsPathPendingPath(plan.binDir),
-          windowsPathReceiptPath(plan.binDir)
-        ]
-        const existingJournalPaths: string[] = []
-        for (const journalPath of journalPaths) {
-          if ((await statCliLauncher(journalPath)) !== undefined) {
-            existingJournalPaths.push(journalPath)
-          }
-        }
-        if (existingJournalPaths.length > 1) {
-          throw new Error('The Windows PATH ownership journal is ambiguous.')
-        }
-        const journalPath = existingJournalPaths[0]
-        if (journalPath !== undefined) {
-          pathJournal = await openManagedWindowsPathJournal(journalPath, plan.binDir)
-        }
-        if (pathJournal !== undefined && journalPath !== undefined) {
-          const journalStats = pathJournal.stats
-          const state = journalPath === journalPaths[0] ? 'pending' : 'owned'
-          const { command, args } = buildWindowsPathRemovalCommand(plan.binDir, journalPath, state)
-          if (!runCommand(command, args)) {
-            throw new Error(`Could not remove ${plan.binDir} from the user PATH.`)
-          }
-          if (!(await isOpenCliLauncherCurrent(journalPath, pathJournal.stats))) {
-            refuseUnmanagedCliLauncher(journalPath)
-          }
-          await pathJournal.handle.close()
-          pathJournal = undefined
-
-          const finalJournal = await statCliLauncher(journalPath)
-          if (finalJournal !== undefined) {
-            if (!isDirectRegularFile(finalJournal) || !isSameFile(finalJournal, journalStats)) {
-              refuseUnmanagedCliLauncher(journalPath)
-            }
-            await rm(journalPath)
-          }
-        }
-      }
-    } finally {
-      await pathJournal?.handle.close()
-      await opened.handle.close()
     }
 
+    if (env.platform === 'win32') {
+      const journalPaths = [
+        windowsPathPendingPath(plan.binDir),
+        windowsPathReceiptPath(plan.binDir)
+      ]
+      const existingJournalPaths: string[] = []
+      for (const journalPath of journalPaths) {
+        if ((await statCliLauncher(journalPath)) !== undefined) {
+          existingJournalPaths.push(journalPath)
+        }
+      }
+      if (existingJournalPaths.length > 1) {
+        throw new Error('The Windows PATH ownership journal is ambiguous.')
+      }
+      const journalPath = existingJournalPaths[0]
+      if (journalPath !== undefined) {
+        const openedJournal =
+          (await openManagedWindowsPathJournal(journalPath, plan.binDir)) ??
+          refuseUnmanagedCliLauncher(journalPath)
+        pathJournal = openedJournal
+
+        const journalStats = openedJournal.stats
+        const state = journalPath === journalPaths[0] ? 'pending' : 'owned'
+        const { command, args } = buildWindowsPathRemovalCommand(plan.binDir, journalPath, state)
+        if (!runCommand(command, args)) {
+          throw new Error(`Could not remove ${plan.binDir} from the user PATH.`)
+        }
+        if (!(await isOpenCliLauncherCurrent(journalPath, openedJournal.stats))) {
+          refuseUnmanagedCliLauncher(journalPath)
+        }
+        await openedJournal.handle.close()
+        pathJournal = undefined
+
+        const finalJournal = await statCliLauncher(journalPath)
+        if (finalJournal !== undefined) {
+          if (!isDirectRegularFile(finalJournal) || !isSameFile(finalJournal, journalStats)) {
+            refuseUnmanagedCliLauncher(journalPath)
+          }
+          await rm(journalPath)
+        }
+      }
+    }
+
+    if (opened === undefined) {
+      return { installed: false, target: plan.target, onPath: false }
+    }
     const final = await statCliLauncher(plan.target)
     if (final !== undefined) {
       if (!isDirectRegularFile(final) || !isSameFile(opened.stats, final)) {
@@ -694,6 +691,9 @@ export const uninstallCliLauncher = async (
       }
       await rm(plan.target)
     }
+  } finally {
+    await pathJournal?.handle.close()
+    await opened?.handle.close()
   }
   return { installed: false, target: plan.target, onPath: false }
 }

@@ -504,6 +504,38 @@ describe('installCliLauncher on Windows PATH edit', () => {
 })
 
 describe('uninstallCliLauncher on Windows PATH edit', () => {
+  it('cleans up an owned PATH entry even when the managed shim is already missing', async () => {
+    const env = winEnv()
+    await mkdir(planCliLauncher(env).binDir, { recursive: true })
+    await writeWindowsPathJournal(env)
+    const runCommand = vi.fn(() => true)
+
+    const status = await uninstallCliLauncher(env, runCommand)
+
+    expect(runCommand).toHaveBeenCalledOnce()
+    expect(status).toMatchObject({ installed: false, onPath: false })
+    await expect(readFile(windowsPathReceiptPath(env), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
+  it('preserves the shim and aborts when an existing PATH journal is unmanaged', async () => {
+    const env = winEnv()
+    await installCliLauncher(env, () => true)
+    await writeFile(windowsPathReceiptPath(env), 'user-owned content')
+    const runCommand = vi.fn(() => true)
+
+    await expect(uninstallCliLauncher(env, runCommand)).rejects.toThrow(
+      'because it is not managed by Open Science'
+    )
+
+    expect(runCommand).not.toHaveBeenCalled()
+    await expect(readFile(planCliLauncher(env).target, 'utf8')).resolves.toContain(
+      'Managed by the app'
+    )
+    await expect(readFile(windowsPathReceiptPath(env), 'utf8')).resolves.toBe('user-owned content')
+  })
+
   it('removes the owned PATH entry before deleting the managed shim', async () => {
     const env = winEnv()
     await installCliLauncher(env, () => true)
