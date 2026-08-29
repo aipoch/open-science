@@ -241,6 +241,26 @@ describe('upload repository', () => {
     await expect(readFile(attachment.path, 'utf8')).resolves.toBe('png-bytes')
   })
 
+  it('removes unindexed pending drafts during restart recovery without touching finalized uploads', async () => {
+    const root = await createStorageRoot()
+    const beforeRestart = new UploadRepository(root)
+    const [finalizedDraft, orphanedDraft] = await stageUploadFixtures(beforeRestart, {
+      files: [
+        { name: 'keep.txt', content: Buffer.from('keep').toString('base64') },
+        { name: 'discard.txt', content: Buffer.from('discard').toString('base64') }
+      ]
+    })
+    const [finalized] = await beforeRestart.finalizePendingSessionUploads('session-1', [
+      finalizedDraft
+    ])
+
+    const afterRestart = new UploadRepository(root)
+    await afterRestart.recoverStagingUploads()
+
+    await expect(stat(orphanedDraft.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(finalized.path, 'utf8')).resolves.toBe('keep')
+  })
+
   it('stages pathless files in bounded, offset-checked chunks', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)
@@ -490,7 +510,7 @@ describe('upload repository', () => {
     ).rejects.toThrow(/different (?:project or )?session/i)
   })
 
-  it('recovers a staging Upload Version from the original pending bytes', async () => {
+  it('recovers a staging Upload Version from pending bytes before startup draft cleanup', async () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
@@ -543,13 +563,8 @@ describe('upload repository', () => {
       }
     })
 
-    const [recovered] = await repository.finalizePendingSessionUploads(
-      'session-1',
-      [pending],
-      'project-1'
-    )
+    await repository.recoverStagingUploads()
 
-    expect(recovered).toMatchObject({ versionId, versionNumber: 1, checksum })
     await expect(
       client.uploadVersion.findUniqueOrThrow({ where: { id: versionId } })
     ).resolves.toMatchObject({ state: 'ready' })
@@ -564,7 +579,10 @@ describe('upload repository', () => {
         }
       })
     ).resolves.toMatchObject({ sourceVersionId: versionId, storageKey })
-    await expect(readFile(recovered.path, 'utf8')).resolves.toBe('sample,value\na,1\n')
+    await expect(readFile(join(root, ...storageKey.split('/')), 'utf8')).resolves.toBe(
+      'sample,value\na,1\n'
+    )
+    await expect(stat(pending.path)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('recovers a post-rename staging Upload Version during startup reconciliation', async () => {
