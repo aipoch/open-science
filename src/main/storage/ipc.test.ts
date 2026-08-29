@@ -1587,6 +1587,21 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
+  it('passes the requesting Web renderer through to the data-root durability gate', async () => {
+    initDataRoot(dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(false)
+    const owner = createStorageCommandOwner(
+      fakeDeps({
+        prepareDataRootHandoff,
+        classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+      })
+    )
+
+    await owner.setDataRootAndRelaunch({ parent: targetParent }, 'web-renderer')
+
+    expect(prepareDataRootHandoff).toHaveBeenCalledWith('web-renderer')
+  })
+
   it('set-data-root-and-relaunch refuses delegated work before preparing the handoff', async () => {
     initDataRoot(dataRoot)
     const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)

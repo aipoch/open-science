@@ -95,7 +95,10 @@ import {
   type ShutdownStepOutcome
 } from './lifecycle-shutdown'
 import { registerLifecycleIpcHandlers } from './lifecycle-broadcast'
-import type { RendererSessionPersistenceFlushPolicy } from './session-persistence/renderer-flush'
+import type {
+  RendererSessionPersistenceFlushPolicy,
+  RendererSessionPersistenceSurface
+} from './session-persistence/renderer-flush'
 import { createLogsCommandOwner, registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
 import { registerWindowFindIpcHandlers } from './window-find-ipc'
@@ -323,7 +326,11 @@ import {
 } from './storage-root'
 import { createUpdateCommandOwner, registerUpdateIpcHandlers } from './update/ipc'
 import { createUpdateStrategy } from './update/create-strategy'
-import { createActiveResearchSafeInstallGate, createDurableInstallGate } from './update/strategy'
+import {
+  createActiveResearchSafeInstallGate,
+  createDurableInstallGate,
+  type InstallReadiness
+} from './update/strategy'
 import type { UpdateBlocker } from '../shared/update'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
@@ -360,7 +367,10 @@ type IpcRegistrationOptions = {
   listAppIconPreviews?: () => AppIconPreview[]
   // Flushes renderer-owned Session/Preview state after backend teardown and before an in-place
   // handoff (update install or data-root switch). Desktop startup supplies the late-bound window.
-  confirmRendererDurability?: (policy?: RendererSessionPersistenceFlushPolicy) => Promise<boolean>
+  confirmRendererDurability?: (
+    policy?: RendererSessionPersistenceFlushPolicy,
+    surface?: RendererSessionPersistenceSurface
+  ) => Promise<boolean>
   // Retained as an explicit startup marker while the app owns the only handoff composition.
   handoffRuntime?: 'production'
 }
@@ -2671,10 +2681,13 @@ const createApplicationModules = async (
     () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
     () => confirmRendererDurability()
   )
-  const durableDataRootHandoffGate = createDurableInstallGate(
-    () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
-    () => confirmRendererDurability('data-root-handoff')
-  )
+  const durableDataRootHandoffGate = (
+    surface: RendererSessionPersistenceSurface
+  ): Promise<InstallReadiness> =>
+    createDurableInstallGate(
+      () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
+      () => confirmRendererDurability('data-root-handoff', surface)
+    )()
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
@@ -3174,8 +3187,8 @@ const createApplicationModules = async (
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
     settingsService,
     micromambaRunner,
-    prepareDataRootHandoff: async () => {
-      const readiness = await durableDataRootHandoffGate()
+    prepareDataRootHandoff: async (surface) => {
+      const readiness = await durableDataRootHandoffGate(surface)
       return readiness.completed && readiness.reaped
     }
   })

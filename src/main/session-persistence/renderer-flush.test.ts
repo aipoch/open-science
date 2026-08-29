@@ -173,7 +173,7 @@ describe('rendererSessionPersistenceFlushBlocksShutdown', () => {
       rendererSessionPersistenceFlushBlocksShutdown(
         'unavailable',
         'data-root-handoff',
-        'headless-web'
+        'web-renderer'
       )
     ).toBe(false)
   })

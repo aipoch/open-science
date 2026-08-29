@@ -383,8 +383,11 @@ describe('Host application commands', () => {
     expect(dependencies.reviewer.run).toHaveBeenCalledWith(reviewRun)
     expect(dependencies.reviewer.getForSession).toHaveBeenCalledWith(reviewSession)
     expect(dependencies.reviewer.abort).toHaveBeenCalledWith(reviewSession)
-    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent)
-    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root)
+    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent, 'electron-renderer')
+    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      root,
+      'electron-renderer'
+    )
     expect(dependencies.update.apply).toHaveBeenCalledWith({ relaunch: false })
     expect(dependencies.update.download).toHaveBeenCalledWith({ nonInteractive: true })
 
@@ -392,6 +395,32 @@ describe('Host application commands', () => {
     expect(
       ownerMethods.filter(vi.isMockFunction).every((method) => method.mock.calls.length === 1)
     ).toBe(true)
+  })
+
+  it('marks local Web data-root handoffs as already flushed by their requesting renderer', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerHostApplicationCommands(router.registrar, dependencies)
+    const caller = createWebCallerContext('local-web')
+    const parent = { parent: '/target' }
+    const root = { ...parent, markOnboarding: true }
+
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.migrate,
+      invocation([parent], caller)
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.commitAndRelaunch,
+      invocation([parent], caller)
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.setDataRootAndRelaunch,
+      invocation([root], caller)
+    )
+
+    expect(dependencies.storage.migrate).toHaveBeenCalledWith(parent, 'web-renderer')
+    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent, 'web-renderer')
+    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root, 'web-renderer')
   })
 
   it('rejects the exact local-only host inventory before entering an owner', async () => {

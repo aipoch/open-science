@@ -30,7 +30,7 @@ export type RendererSessionPersistenceFlushOutcome =
   | 'timeout'
 
 export type RendererSessionPersistenceFlushPolicy = 'ordinary-shutdown' | 'data-root-handoff'
-export type RendererSessionPersistenceSurface = 'electron-renderer' | 'headless-web'
+export type RendererSessionPersistenceSurface = 'electron-renderer' | 'web-renderer'
 
 export const rendererSessionPersistenceFlushBlocksShutdown = (
   outcome: RendererSessionPersistenceFlushOutcome,
@@ -38,7 +38,7 @@ export const rendererSessionPersistenceFlushBlocksShutdown = (
   surface: RendererSessionPersistenceSurface = 'electron-renderer'
 ): boolean => {
   if (policy === 'data-root-handoff') {
-    if (surface === 'headless-web' && outcome === 'unavailable') return false
+    if (surface === 'web-renderer' && outcome === 'unavailable') return false
     return outcome !== 'completed'
   }
   return outcome === 'conflict' || outcome === 'renderer-failed'

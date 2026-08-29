@@ -56,6 +56,7 @@ import { startDiagnosticOperation } from '../diagnostics/operation'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
 import type { SetDataRootOptions } from '../settings/capabilities'
 import { toErrorMessage } from '../error-message'
+import type { RendererSessionPersistenceSurface } from '../session-persistence/renderer-flush'
 
 type LegacySessionSource = { projectId: string; sessionId: string }
 type NotebookSessionSource = { projectId: string; sessionId: string }
@@ -103,7 +104,7 @@ type StorageCommandOwnerDeps = {
   validateNewDataRoot?: typeof validateNewDataRoot
   // Stops data producers and proves renderer-owned Session state is durable before any data-root
   // pointer can be persisted. Optional only for isolated storage tests and non-desktop adapters.
-  prepareDataRootHandoff?: () => Promise<boolean>
+  prepareDataRootHandoff?: (surface: RendererSessionPersistenceSurface) => Promise<boolean>
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -151,9 +152,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     warn: (message, data) => emitSafely('warn', message, data),
     error: (message, data) => emitSafely('error', message, data)
   }
-  const prepareDataRootHandoff = async (): Promise<MigrationOutcome | undefined> => {
+  const prepareDataRootHandoff = async (
+    surface: RendererSessionPersistenceSurface
+  ): Promise<MigrationOutcome | undefined> => {
     try {
-      if ((await deps.prepareDataRootHandoff?.()) !== false) return undefined
+      if ((await deps.prepareDataRootHandoff?.(surface)) !== false) return undefined
     } catch (error) {
       logger.error('data root handoff preparation failed', diagnosticErrorFields(error))
     }
@@ -276,7 +279,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     }
   }
 
-  const migrate = async (request: StorageParentRequest): Promise<MigrationOutcome> => {
+  const migrate = async (
+    request: StorageParentRequest,
+    surface: RendererSessionPersistenceSurface = 'electron-renderer'
+  ): Promise<MigrationOutcome> => {
     if (activeStaged || resolutionInProgress) {
       return {
         ok: false,
@@ -313,7 +319,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       }
       if (!validation.ok) return validation
 
-      const preparationFailure = await prepareDataRootHandoff()
+      const preparationFailure = await prepareDataRootHandoff(surface)
       if (controller.signal.aborted) {
         return { ok: false, error: 'migration cancelled', cancelled: true }
       }
@@ -519,7 +525,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // interruption during the delete only orphans the old root (never data loss); see
   // commitDataRootSwitch. On switchoverFailed it returns without relaunching so the modal can show
   // the error (copy intact, old root untouched).
-  const commitAndRelaunch = async (request: StorageParentRequest): Promise<MigrationOutcome> => {
+  const commitAndRelaunch = async (
+    request: StorageParentRequest,
+    surface: RendererSessionPersistenceSurface = 'electron-renderer'
+  ): Promise<MigrationOutcome> => {
     if (activeMigration) {
       return { ok: false, error: 'A migration copy is still in progress.' }
     }
@@ -573,7 +582,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         }
       }
 
-      const preparationFailure = await prepareDataRootHandoff()
+      const preparationFailure = await prepareDataRootHandoff(surface)
       if (signal.aborted) {
         endMigrationCopy()
         resolutionInProgress = false
@@ -748,7 +757,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // classify -> durable preparation -> write gate -> mkdir -> persist settings -> relaunch. On an
   // invalid parent, none of the mutating steps run.
   const setDataRootAndRelaunch = async (
-    request: StorageRootRequest
+    request: StorageRootRequest,
+    surface: RendererSessionPersistenceSurface = 'electron-renderer'
   ): Promise<DataRootValidationResult> => {
     const operation = startDiagnosticOperation(logger, {
       operation: 'data-root-selection',
@@ -793,7 +803,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           error: activeWorkError
         }
       }
-      const preparationFailure = await prepareDataRootHandoff()
+      const preparationFailure = await prepareDataRootHandoff(surface)
       if (signal.aborted) {
         operation.fail(new Error('data root change cancelled'), { mode: classification.kind })
         return { ok: false, error: 'Data-root change cancelled.' }
