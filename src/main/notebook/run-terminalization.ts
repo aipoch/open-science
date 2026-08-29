@@ -3,6 +3,7 @@ import type {
   NotebookHelperModuleEvidence,
   NotebookHelperEvidenceStatus,
   NotebookOutput,
+  NotebookRunFileEvidence,
   NotebookRunEnvironmentCapture,
   NotebookRunRecord,
   NotebookRunStatus,
@@ -32,6 +33,7 @@ type NotebookRunTerminalResult = {
   outputs: NotebookOutput[]
   truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
+  fileEvidence?: NotebookRunFileEvidence
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
   environmentCapture?: NotebookRunEnvironmentCapture
@@ -58,6 +60,23 @@ const outputPlainText = (stdout: string, stderr: string): string[] =>
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+const unavailableFileEvidence = (): NotebookRunFileEvidence => ({
+  schemaVersion: 1,
+  state: 'unavailable',
+  managedRootsFinalState: 'unavailable',
+  fileReads: 'unavailable',
+  externalPaths: 'unavailable',
+  writerAttribution: 'unavailable',
+  reasonCodes: [
+    'external-paths-not-observed',
+    'file-reads-not-observed',
+    'initial-file-generations-not-captured',
+    'observation-not-started',
+    'transient-files-not-captured',
+    'writer-not-isolated'
+  ]
+})
 
 class NotebookRunTerminalizationOwner {
   private sequence = 0
@@ -196,6 +215,7 @@ class NotebookRunTerminalizationOwner {
       // make the preview render it twice.
       outputs: limitedResult.outputs,
       workingFiles: limitedResult.workingFiles ?? [],
+      fileEvidence: limitedResult.fileEvidence ?? unavailableFileEvidence(),
       ...(limitedResult.truncated ? { truncated: true } : {}),
       environmentCapture,
       ...(limitedResult.kernelDispatched !== undefined

@@ -363,6 +363,43 @@ export type NotebookWorkingFile = {
   size?: number
   mtimeMs?: number
   createdByRunId?: string
+  // Optional immutable generation evidence. Historical working-file entries predate this capture.
+  generationId?: string
+  checksum?: string
+  change?: 'created' | 'modified'
+}
+
+export type NotebookFileEvidenceCoverage = 'complete' | 'partial' | 'unavailable'
+
+export type NotebookFileEvidenceReason =
+  | 'file-reads-not-observed'
+  | 'initial-file-generations-not-captured'
+  | 'external-paths-not-observed'
+  | 'transient-files-not-captured'
+  | 'writer-not-isolated'
+  | 'watcher-unavailable'
+  | 'observation-not-started'
+  | 'observer-conflict'
+  | 'observer-limit-exceeded'
+  | 'observer-failed'
+  | 'generation-budget-exceeded'
+  | 'generation-freeze-failed'
+  | 'evidence-persistence-failed'
+  | 'run-identity-missing'
+
+export type NotebookRunFileEvidence = {
+  schemaVersion: 1
+  state: 'complete' | 'partial' | 'unavailable'
+  evidenceId?: string
+  checksum?: string
+  storageKey?: string
+  relationCount?: number
+  generationCount?: number
+  managedRootsFinalState: NotebookFileEvidenceCoverage
+  fileReads: NotebookFileEvidenceCoverage
+  externalPaths: NotebookFileEvidenceCoverage
+  writerAttribution: NotebookFileEvidenceCoverage
+  reasonCodes: NotebookFileEvidenceReason[]
 }
 
 // Captures the interpreter metadata persisted alongside run history.
@@ -446,6 +483,9 @@ export type NotebookRunRecord = {
   outputs: NotebookOutput[]
   artifacts: ArtifactFile[]
   workingFiles: NotebookWorkingFile[]
+  // Immutable file-generation evidence is stored in a checksummed per-run sidecar. Optional keeps
+  // historical run.json documents readable without fabricating capture coverage.
+  fileEvidence?: NotebookRunFileEvidence
   // New native runs persist the exact registered input Versions. Optional keeps legacy run.json
   // documents readable; repository normalization supplies an empty array for old records.
   inputFiles?: NotebookRunInputFile[]

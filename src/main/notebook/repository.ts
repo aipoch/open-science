@@ -8,6 +8,7 @@ import type {
   NotebookRunHistorySummary,
   NotebookRunCursor,
   NotebookRunRecord,
+  NotebookRunFileEvidence,
   NotebookWorkingFile
 } from '../../shared/notebook'
 import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
@@ -104,6 +105,54 @@ const isMissingFileError = (error: unknown): boolean =>
 const persistedScopeValue = (value: unknown): string =>
   value === undefined || value === null ? '<missing>' : (JSON.stringify(value) ?? String(value))
 
+const FILE_EVIDENCE_STATES = new Set(['complete', 'partial', 'unavailable'])
+const FILE_EVIDENCE_COVERAGE = new Set(['complete', 'partial', 'unavailable'])
+const FILE_EVIDENCE_REASONS = new Set([
+  'file-reads-not-observed',
+  'initial-file-generations-not-captured',
+  'external-paths-not-observed',
+  'transient-files-not-captured',
+  'writer-not-isolated',
+  'watcher-unavailable',
+  'observation-not-started',
+  'observer-conflict',
+  'observer-limit-exceeded',
+  'observer-failed',
+  'generation-budget-exceeded',
+  'generation-freeze-failed',
+  'evidence-persistence-failed',
+  'run-identity-missing'
+])
+
+const isOptionalNonNegativeInteger = (value: unknown): boolean =>
+  value === undefined || (Number.isSafeInteger(value) && Number(value) >= 0)
+const isOptionalSha256 = (value: unknown): boolean =>
+  value === undefined || (typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value))
+const isOptionalPortableStorageKey = (value: unknown): boolean =>
+  value === undefined ||
+  (typeof value === 'string' &&
+    value.length > 0 &&
+    !isAbsolute(value) &&
+    !value.includes('\\') &&
+    value.split('/').every((segment) => segment.length > 0 && segment !== '.' && segment !== '..'))
+
+const notebookFileEvidenceCandidate = (value: unknown): value is NotebookRunFileEvidence =>
+  isRecord(value) &&
+  value.schemaVersion === 1 &&
+  FILE_EVIDENCE_STATES.has(String(value.state)) &&
+  FILE_EVIDENCE_COVERAGE.has(String(value.managedRootsFinalState)) &&
+  FILE_EVIDENCE_COVERAGE.has(String(value.fileReads)) &&
+  FILE_EVIDENCE_COVERAGE.has(String(value.externalPaths)) &&
+  FILE_EVIDENCE_COVERAGE.has(String(value.writerAttribution)) &&
+  Array.isArray(value.reasonCodes) &&
+  value.reasonCodes.every((reason) => FILE_EVIDENCE_REASONS.has(String(reason))) &&
+  (value.evidenceId === undefined ||
+    (typeof value.evidenceId === 'string' && value.evidenceId.length > 0)) &&
+  isOptionalSha256(value.checksum) &&
+  isOptionalPortableStorageKey(value.storageKey) &&
+  isOptionalNonNegativeInteger(value.relationCount) &&
+  isOptionalNonNegativeInteger(value.generationCount)
+
 class UnsupportedNotebookDocumentVersionError extends DurableJsonRecoveryBarrierError {
   constructor() {
     super('Notebook document version is not supported.')
@@ -143,8 +192,19 @@ const notebookRunCandidate = (value: unknown): boolean => {
   if (
     value.workingFiles !== undefined &&
     (!Array.isArray(value.workingFiles) ||
-      value.workingFiles.some((file) => !isRecord(file) || typeof file.path !== 'string'))
+      value.workingFiles.some(
+        (file) =>
+          !isRecord(file) ||
+          typeof file.path !== 'string' ||
+          (file.generationId !== undefined &&
+            (typeof file.generationId !== 'string' || file.generationId.length === 0)) ||
+          !isOptionalSha256(file.checksum) ||
+          (file.change !== undefined && file.change !== 'created' && file.change !== 'modified')
+      ))
   ) {
+    return false
+  }
+  if (value.fileEvidence !== undefined && !notebookFileEvidenceCandidate(value.fileEvidence)) {
     return false
   }
   if (
@@ -309,6 +369,9 @@ const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunR
   outputs: run.outputs ?? [],
   artifacts: run.artifacts ?? [],
   workingFiles: normalizeWorkingFiles(sessionRoot, run.runId, run.workingFiles),
+  ...(run.fileEvidence
+    ? { fileEvidence: { ...run.fileEvidence, reasonCodes: [...run.fileEvidence.reasonCodes] } }
+    : {}),
   inputFiles: (run.inputFiles ?? []).map((input) => ({ ...input }))
 })
 

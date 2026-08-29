@@ -7,6 +7,7 @@ import type {
   NotebookCell,
   NotebookLanguage,
   NotebookOutput,
+  NotebookRunFileEvidence,
   NotebookRunRecord,
   NotebookRunProvenanceContext,
   NotebookRunSource,
@@ -284,6 +285,7 @@ class NotebookExecutionOwner {
           reachedExecutor = true
           const executionResult = await session
             .execute({
+              runId,
               code: cell.code,
               ...(helperPlan.injections.length ? { helperModules: helperPlan.injections } : {}),
               cwd: cwdBefore,
@@ -518,6 +520,7 @@ class NotebookExecutionOwner {
               })
               return session
                 .execute({
+                  runId,
                   code: request.code,
                   kind: 'repl',
                   cwd: session.cwd,
@@ -596,8 +599,13 @@ class NotebookExecutionOwner {
       session,
       runningRun,
       invoke: async () => {
-        const workingFileObservation = await startWorkingFileObservation(session)
+        const workingFileObservation = await startWorkingFileObservation({
+          dataRoot: session.dataRoot,
+          notebookSessionRoot: session.notebookSessionRoot,
+          runId
+        })
         let workingFiles: NotebookWorkingFile[] = []
+        let fileEvidence: NotebookRunFileEvidence | undefined
         const blockedMutation = detectManagedRuntimeMutation({
           source: request.command,
           surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
@@ -620,7 +628,9 @@ class NotebookExecutionOwner {
                 signal
               })
         ).finally(async () => {
-          workingFiles = await workingFileObservation.finish()
+          const observation = await workingFileObservation.finish()
+          workingFiles = observation.workingFiles
+          fileEvidence = observation.fileEvidence
         })
         const status: NotebookRunStatus = shellResult.cancelled
           ? 'cancelled'
@@ -647,6 +657,7 @@ class NotebookExecutionOwner {
           outputs,
           truncated: shellResult.truncated,
           workingFiles,
+          fileEvidence,
           exitCode: shellResult.exitCode
         }
       }

@@ -1,24 +1,90 @@
-import { watch, type FSWatcher } from 'node:fs'
-import { lstat, readdir, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { constants, createReadStream, watch, type FSWatcher } from 'node:fs'
+import { copyFile, lstat, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import type { NotebookWorkingFile } from '../../shared/notebook'
+import type {
+  NotebookFileEvidenceReason,
+  NotebookRunFileEvidence,
+  NotebookWorkingFile
+} from '../../shared/notebook'
+import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
+import { writeDurableJsonFile } from '../storage/durable-json-file'
 
 type WorkingFileObservationRequest = {
   dataRoot: string
   notebookSessionRoot: string
+  runId?: string
+}
+
+type WorkingFileObservationResult = {
+  workingFiles: NotebookWorkingFile[]
+  fileEvidence: NotebookRunFileEvidence
 }
 
 type WorkingFileObservation = {
-  finish: () => Promise<NotebookWorkingFile[]>
+  finish: () => Promise<WorkingFileObservationResult>
 }
 
 type WorkingFileObservationDependencies = {
   watchDirectory?: typeof watch
+  createId?: () => string
+  now?: () => number
+  maxGenerationBytes?: number
+  maxRunBytes?: number
 }
 
-type ActiveObservation = {
-  conflicted: boolean
+type ActiveObservation = { conflicted: boolean }
+type SnapshotEntry = NotebookWorkingFile & {
+  physicalPath: string
+  dev: number
+  ino: number
+  ctimeMs: number
+}
+type SnapshotCapture =
+  | { state: 'available'; files: Map<string, SnapshotEntry> }
+  | { state: 'unavailable'; reason: NotebookFileEvidenceReason }
+type ObservedFileChange = {
+  relation: 'created' | 'modified' | 'deleted'
+  relativePath: string
+  before?: SnapshotEntry
+  after?: SnapshotEntry
+}
+type RootObservationResult = {
+  changes: ObservedFileChange[]
+  reasonCodes: NotebookFileEvidenceReason[]
+  available: boolean
+}
+type RootObservation = { finish: () => Promise<RootObservationResult> }
+type PersistedFileGeneration = {
+  generationId: string
+  relativePath: string
+  checksum: string
+  sizeBytes: number
+  contentStorageKey: string
+  capturedAt: string
+}
+type PersistedFileRelation = {
+  relation: ObservedFileChange['relation']
+  relativePath: string
+  pathPortability: 'relative'
+  authority: 'advisory'
+  before?: Pick<SnapshotEntry, 'size' | 'mtimeMs' | 'ctimeMs'>
+  generation?: PersistedFileGeneration
+  reasonCode?: NotebookFileEvidenceReason
+}
+type PersistedNotebookFileEvidence = {
+  schemaVersion: 1
+  evidenceId: string
+  runId: string
+  state: 'partial' | 'unavailable'
+  observedRoots: Array<'data' | 'handoff'>
+  managedRootsFinalState: 'partial' | 'unavailable'
+  fileReads: 'unavailable'
+  externalPaths: 'unavailable'
+  writerAttribution: 'unavailable'
+  reasonCodes: NotebookFileEvidenceReason[]
+  relations: PersistedFileRelation[]
 }
 
 const activeByObservedRoot = new Map<string, Set<ActiveObservation>>()
@@ -26,18 +92,39 @@ const MAX_CHANGED_PATHS = 10_000
 const MAX_FALLBACK_SNAPSHOT_ENTRIES = 50_000
 const EVENT_SETTLE_MS = 20
 const WATCHER_READY_MS = 5
+const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
+const BASELINE_REASON_CODES: NotebookFileEvidenceReason[] = [
+  'file-reads-not-observed',
+  'initial-file-generations-not-captured',
+  'external-paths-not-observed',
+  'transient-files-not-captured',
+  'writer-not-isolated'
+]
+
+class SnapshotEntryLimitError extends Error {}
 
 const isPathInside = (root: string, candidate: string): boolean => {
   const nested = relative(root, candidate)
   return nested === '' || (!isAbsolute(nested) && nested !== '..' && !nested.startsWith(`..${sep}`))
 }
 
-// Notebook metadata is persisted and exchanged as a portable path, independent of the host OS.
 const toPortableNotebookRelativePath = (path: string, hostSeparator = sep): string =>
   hostSeparator === '/' ? path : path.split(hostSeparator).join('/')
 
-const unavailableObservation = (): WorkingFileObservation => ({
-  finish: async () => []
+const uniqueReasons = (
+  reasons: readonly NotebookFileEvidenceReason[]
+): NotebookFileEvidenceReason[] => [...new Set(reasons)].sort()
+
+const unavailableEvidence = (
+  reasons: readonly NotebookFileEvidenceReason[]
+): NotebookRunFileEvidence => ({
+  schemaVersion: 1,
+  state: 'unavailable',
+  managedRootsFinalState: 'unavailable',
+  fileReads: 'unavailable',
+  externalPaths: 'unavailable',
+  writerAttribution: 'unavailable',
+  reasonCodes: uniqueReasons([...BASELINE_REASON_CODES, ...reasons])
 })
 
 const registerObservation = (
@@ -51,7 +138,6 @@ const registerObservation = (
   }
   active.add(observation)
   activeByObservedRoot.set(observedRoot, active)
-
   return () => {
     active.delete(observation)
     if (active.size === 0) activeByObservedRoot.delete(observedRoot)
@@ -60,82 +146,49 @@ const registerObservation = (
 
 const settleWatcherEvents = (): Promise<void> =>
   new Promise((resolveSettled) => setTimeout(resolveSettled, EVENT_SETTLE_MS))
-
 const waitForWatcherReady = (): Promise<void> =>
   new Promise((resolveReady) => setTimeout(resolveReady, WATCHER_READY_MS))
 
-type SnapshotEntry = NotebookWorkingFile & { ctimeMs: number }
-
-const resolveChangedFile = async (
+const snapshotEntry = async (
   observedRoot: string,
   logicalObservedRoot: string,
   logicalSessionRoot: string,
   candidatePath: string
 ): Promise<SnapshotEntry | undefined> => {
-  try {
-    const linkMetadata = await lstat(candidatePath)
-    if (linkMetadata.isSymbolicLink()) return undefined
-
-    const canonicalPath = await realpath(candidatePath)
-    if (!isPathInside(observedRoot, canonicalPath)) return undefined
-    const metadata = await stat(canonicalPath)
-    if (!metadata.isFile()) return undefined
-    const logicalPath = resolve(logicalObservedRoot, relative(observedRoot, canonicalPath))
-
-    return {
-      path: logicalPath,
-      relativePath: toPortableNotebookRelativePath(relative(logicalSessionRoot, logicalPath)),
-      kind: 'other',
-      size: metadata.size,
-      mtimeMs: metadata.mtimeMs,
-      ctimeMs: metadata.ctimeMs
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
+  const linkMetadata = await lstat(candidatePath)
+  if (linkMetadata.isSymbolicLink()) return undefined
+  const canonicalPath = await realpath(candidatePath)
+  if (!isPathInside(observedRoot, canonicalPath)) return undefined
+  const metadata = await stat(canonicalPath)
+  if (!metadata.isFile()) return undefined
+  const logicalPath = resolve(logicalObservedRoot, relative(observedRoot, canonicalPath))
+  return {
+    physicalPath: canonicalPath,
+    path: logicalPath,
+    relativePath: toPortableNotebookRelativePath(relative(logicalSessionRoot, logicalPath)),
+    kind: 'other',
+    size: metadata.size,
+    mtimeMs: metadata.mtimeMs,
+    ctimeMs: metadata.ctimeMs,
+    dev: metadata.dev,
+    ino: metadata.ino
   }
 }
 
-const diffSnapshots = (
-  before: ReadonlyMap<string, SnapshotEntry>,
-  after: ReadonlyMap<string, SnapshotEntry>
-): NotebookWorkingFile[] =>
-  Array.from(after.values())
-    .filter((file) => {
-      const previous = before.get(file.path)
-      return (
-        !previous ||
-        previous.size !== file.size ||
-        previous.mtimeMs !== file.mtimeMs ||
-        previous.ctimeMs !== file.ctimeMs
-      )
-    })
-    .map((file) => ({
-      path: file.path,
-      relativePath: file.relativePath,
-      kind: file.kind,
-      size: file.size,
-      mtimeMs: file.mtimeMs
-    }))
-
-const captureFallbackSnapshot = async (
+const captureSnapshot = async (
   observedRoot: string,
   logicalObservedRoot: string,
   logicalSessionRoot: string
-): Promise<Map<string, SnapshotEntry> | undefined> => {
+): Promise<SnapshotCapture> => {
   try {
     const files = new Map<string, SnapshotEntry>()
     let entriesSeen = 0
-
     const visit = async (directory: string): Promise<void> => {
       const entries = await readdir(directory, { withFileTypes: true })
       entries.sort((left, right) => left.name.localeCompare(right.name))
       for (const entry of entries) {
         entriesSeen += 1
-        if (entriesSeen > MAX_FALLBACK_SNAPSHOT_ENTRIES) {
-          throw new Error('Notebook working-file fallback exceeded its entry limit.')
-        }
-
+        if (entriesSeen > MAX_FALLBACK_SNAPSHOT_ENTRIES) throw new SnapshotEntryLimitError()
         const candidatePath = join(directory, entry.name)
         if (entry.isSymbolicLink()) continue
         if (entry.isDirectory()) {
@@ -143,57 +196,96 @@ const captureFallbackSnapshot = async (
           continue
         }
         if (!entry.isFile()) continue
-
-        const canonicalPath = await realpath(candidatePath)
-        if (!isPathInside(observedRoot, canonicalPath))
-          throw new Error('Working file escaped observed root.')
-        const metadata = await stat(canonicalPath)
-        const logicalPath = resolve(logicalObservedRoot, relative(observedRoot, canonicalPath))
-        files.set(logicalPath, {
-          path: logicalPath,
-          relativePath: toPortableNotebookRelativePath(relative(logicalSessionRoot, logicalPath)),
-          kind: 'other',
-          size: metadata.size,
-          mtimeMs: metadata.mtimeMs,
-          ctimeMs: metadata.ctimeMs
-        })
+        const file = await snapshotEntry(
+          observedRoot,
+          logicalObservedRoot,
+          logicalSessionRoot,
+          candidatePath
+        )
+        if (file) files.set(file.path, file)
       }
     }
-
     await visit(observedRoot)
-    return files
-  } catch {
-    return undefined
+    return { state: 'available', files }
+  } catch (error) {
+    return {
+      state: 'unavailable',
+      reason:
+        error instanceof SnapshotEntryLimitError ? 'observer-limit-exceeded' : 'observer-failed'
+    }
   }
 }
 
-const startFallbackObservation = async (
+const sameSnapshotEntry = (left: SnapshotEntry, right: SnapshotEntry): boolean =>
+  left.dev === right.dev &&
+  left.ino === right.ino &&
+  left.size === right.size &&
+  left.mtimeMs === right.mtimeMs &&
+  left.ctimeMs === right.ctimeMs
+
+const diffSnapshots = (
+  before: ReadonlyMap<string, SnapshotEntry>,
+  after: ReadonlyMap<string, SnapshotEntry>
+): ObservedFileChange[] => {
+  const changes: ObservedFileChange[] = []
+  for (const [path, current] of after) {
+    const previous = before.get(path)
+    if (!previous) {
+      changes.push({ relation: 'created', relativePath: current.relativePath, after: current })
+    } else if (!sameSnapshotEntry(previous, current)) {
+      changes.push({
+        relation: 'modified',
+        relativePath: current.relativePath,
+        before: previous,
+        after: current
+      })
+    }
+  }
+  for (const [path, previous] of before) {
+    if (!after.has(path)) {
+      changes.push({ relation: 'deleted', relativePath: previous.relativePath, before: previous })
+    }
+  }
+  return changes.sort((left, right) => left.relativePath.localeCompare(right.relativePath))
+}
+
+const fallbackObservation = (
   observedRoot: string,
   logicalObservedRoot: string,
-  logicalSessionRoot: string
-): Promise<WorkingFileObservation> => {
-  const active: ActiveObservation = { conflicted: false }
-  const unregister = registerObservation(observedRoot, active)
-  const before = await captureFallbackSnapshot(
-    observedRoot,
-    logicalObservedRoot,
-    logicalSessionRoot
-  )
+  logicalSessionRoot: string,
+  before: ReadonlyMap<string, SnapshotEntry>,
+  reasonCodes: readonly NotebookFileEvidenceReason[],
+  lifecycle?: { active: ActiveObservation; unregister: () => void }
+): RootObservation => {
   let finished = false
-
   return {
     finish: async () => {
-      if (finished) return []
+      if (finished) {
+        return { changes: [], reasonCodes: ['observer-failed'], available: false }
+      }
       finished = true
-      const after = await captureFallbackSnapshot(
-        observedRoot,
-        logicalObservedRoot,
-        logicalSessionRoot
-      )
-      unregister()
-      if (active.conflicted || !before || !after) return []
-
-      return diffSnapshots(before, after)
+      if (lifecycle?.active.conflicted) {
+        lifecycle.unregister()
+        return { changes: [], reasonCodes: ['observer-conflict'], available: false }
+      }
+      const after = await captureSnapshot(observedRoot, logicalObservedRoot, logicalSessionRoot)
+      const conflicted = lifecycle?.active.conflicted ?? false
+      lifecycle?.unregister()
+      if (conflicted) {
+        return { changes: [], reasonCodes: ['observer-conflict'], available: false }
+      }
+      if (after.state === 'unavailable') {
+        return {
+          changes: [],
+          reasonCodes: uniqueReasons([...reasonCodes, after.reason]),
+          available: false
+        }
+      }
+      return {
+        changes: diffSnapshots(before, after.files),
+        reasonCodes: uniqueReasons(reasonCodes),
+        available: true
+      }
     }
   }
 }
@@ -203,7 +295,7 @@ const startRootObservation = async (
   logicalRootPath: string,
   logicalSessionRootPath: string,
   dependencies: WorkingFileObservationDependencies = {}
-): Promise<WorkingFileObservation> => {
+): Promise<RootObservation> => {
   let watcher: FSWatcher | undefined
   try {
     const logicalObservedRoot = resolve(logicalRootPath)
@@ -212,126 +304,368 @@ const startRootObservation = async (
       realpath(rootPath),
       realpath(logicalSessionRootPath)
     ])
-    if (!isPathInside(sessionRoot, observedRoot)) return unavailableObservation()
+    if (!isPathInside(sessionRoot, observedRoot)) {
+      return {
+        finish: async () => ({ changes: [], reasonCodes: ['observer-failed'], available: false })
+      }
+    }
 
     const active: ActiveObservation = { conflicted: false }
     const changedPaths = new Set<string>()
-    let invalid = false
+    let watcherUnavailable = false
+    let watcherLimitExceeded = false
     let finished = false
-
     try {
       watcher = (dependencies.watchDirectory ?? watch)(
         observedRoot,
         { recursive: true },
         (_eventType, filename) => {
-          if (invalid) return
+          if (watcherUnavailable || watcherLimitExceeded) return
           if (!filename) {
-            invalid = true
+            watcherUnavailable = true
             return
           }
-
           const eventPath = filename.toString()
           if (isAbsolute(eventPath)) {
-            invalid = true
+            watcherUnavailable = true
             return
           }
           const candidatePath = resolve(observedRoot, eventPath)
           if (!isPathInside(observedRoot, candidatePath)) {
-            invalid = true
+            watcherUnavailable = true
             return
           }
           if (changedPaths.size >= MAX_CHANGED_PATHS) {
-            invalid = true
+            watcherLimitExceeded = true
             return
           }
-
           changedPaths.add(candidatePath)
         }
       )
+      watcher.on('error', () => {
+        watcherUnavailable = true
+      })
+      await waitForWatcherReady()
     } catch {
-      return startFallbackObservation(observedRoot, logicalObservedRoot, logicalSessionRoot)
+      watcherUnavailable = true
     }
-    watcher.on('error', () => {
-      invalid = true
-    })
-    await waitForWatcherReady()
-    if (invalid) {
-      watcher.close()
-      return startFallbackObservation(observedRoot, logicalObservedRoot, logicalSessionRoot)
-    }
-    // Recursive watchers can replay pre-existing paths while their initial scan settles. Execution
-    // has not started yet, so those events cannot prove this run created or changed the files.
-    changedPaths.clear()
-    const before = await captureFallbackSnapshot(
-      observedRoot,
-      logicalObservedRoot,
-      logicalSessionRoot
-    )
-    if (!before) {
-      watcher.close()
-      return unavailableObservation()
-    }
-    const unregister = registerObservation(observedRoot, active)
 
+    changedPaths.clear()
+    const before = await captureSnapshot(observedRoot, logicalObservedRoot, logicalSessionRoot)
+    if (before.state === 'unavailable') {
+      watcher?.close()
+      return {
+        finish: async () => ({ changes: [], reasonCodes: [before.reason], available: false })
+      }
+    }
+    if (watcherUnavailable || watcherLimitExceeded || !watcher) {
+      watcher?.close()
+      const unregister = registerObservation(observedRoot, active)
+      return fallbackObservation(
+        observedRoot,
+        logicalObservedRoot,
+        logicalSessionRoot,
+        before.files,
+        [
+          ...(watcherUnavailable || !watcher ? (['watcher-unavailable'] as const) : []),
+          ...(watcherLimitExceeded ? (['observer-limit-exceeded'] as const) : [])
+        ],
+        { active, unregister }
+      )
+    }
+
+    const unregister = registerObservation(observedRoot, active)
     return {
       finish: async () => {
-        if (finished) return []
+        if (finished) {
+          return { changes: [], reasonCodes: ['observer-failed'], available: false }
+        }
         finished = true
         if (!active.conflicted) await settleWatcherEvents()
         watcher?.close()
-        unregister()
-
-        if (active.conflicted || invalid) return []
-        try {
-          const candidates = await Promise.all(
-            Array.from(changedPaths)
-              .sort((left, right) => left.localeCompare(right))
-              .map((candidatePath) =>
-                resolveChangedFile(
-                  observedRoot,
-                  logicalObservedRoot,
-                  logicalSessionRoot,
-                  candidatePath
-                )
-              )
-          )
-          const changedFiles = candidates
-            .filter((file): file is SnapshotEntry => file !== undefined)
-            .filter((file) => {
-              const previous = before.get(file.path)
-              return (
-                !previous ||
-                previous.size !== file.size ||
-                previous.mtimeMs !== file.mtimeMs ||
-                previous.ctimeMs !== file.ctimeMs
-              )
-            })
-            .map((file) => ({
-              path: file.path,
-              relativePath: file.relativePath,
-              kind: file.kind,
-              size: file.size,
-              mtimeMs: file.mtimeMs
-            }))
-          if (changedFiles.length > 0) return changedFiles
-
-          // macOS can deliver recursive watcher events after the bounded settle window. A full diff
-          // is reserved for the empty/no-op event path so correctness does not impose two tree scans
-          // on normal runs.
-          const after = await captureFallbackSnapshot(
+        if (active.conflicted) {
+          unregister()
+          return { changes: [], reasonCodes: ['observer-conflict'], available: false }
+        }
+        if (watcherUnavailable || watcherLimitExceeded) {
+          return fallbackObservation(
             observedRoot,
             logicalObservedRoot,
-            logicalSessionRoot
-          )
-          return after ? diffSnapshots(before, after) : []
+            logicalSessionRoot,
+            before.files,
+            [
+              ...(watcherUnavailable ? (['watcher-unavailable'] as const) : []),
+              ...(watcherLimitExceeded ? (['observer-limit-exceeded'] as const) : [])
+            ],
+            { active, unregister }
+          ).finish()
+        }
+
+        try {
+          const changes: ObservedFileChange[] = []
+          for (const candidatePath of [...changedPaths].sort()) {
+            const logicalPath = resolve(logicalObservedRoot, relative(observedRoot, candidatePath))
+            const previous = before.files.get(logicalPath)
+            const current = await snapshotEntry(
+              observedRoot,
+              logicalObservedRoot,
+              logicalSessionRoot,
+              candidatePath
+            ).catch((error: unknown) => {
+              if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+              throw error
+            })
+            if (!current && previous) {
+              changes.push({
+                relation: 'deleted',
+                relativePath: previous.relativePath,
+                before: previous
+              })
+            } else if (current && !previous) {
+              changes.push({
+                relation: 'created',
+                relativePath: current.relativePath,
+                after: current
+              })
+            } else if (current && previous && !sameSnapshotEntry(previous, current)) {
+              changes.push({
+                relation: 'modified',
+                relativePath: current.relativePath,
+                before: previous,
+                after: current
+              })
+            }
+          }
+          if (changes.length > 0) {
+            if (active.conflicted) {
+              return { changes: [], reasonCodes: ['observer-conflict'], available: false }
+            }
+            return {
+              changes: changes.sort((left, right) =>
+                left.relativePath.localeCompare(right.relativePath)
+              ),
+              reasonCodes: [],
+              available: true
+            }
+          }
+          return fallbackObservation(
+            observedRoot,
+            logicalObservedRoot,
+            logicalSessionRoot,
+            before.files,
+            [],
+            { active, unregister }
+          ).finish()
         } catch {
-          return []
+          return { changes: [], reasonCodes: ['observer-failed'], available: false }
+        } finally {
+          unregister()
         }
       }
     }
   } catch {
     watcher?.close()
-    return unavailableObservation()
+    return {
+      finish: async () => ({ changes: [], reasonCodes: ['observer-failed'], available: false })
+    }
+  }
+}
+
+const sha256File = async (path: string): Promise<string> => {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path)) hash.update(chunk)
+  return hash.digest('hex')
+}
+
+const fingerprint = (
+  value: Pick<SnapshotEntry, 'dev' | 'ino' | 'size' | 'mtimeMs' | 'ctimeMs'>
+): string => [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs].join(':')
+
+const freezeGeneration = async (
+  request: Required<Pick<WorkingFileObservationRequest, 'notebookSessionRoot' | 'runId'>>,
+  file: SnapshotEntry,
+  dependencies: WorkingFileObservationDependencies,
+  reservedBytes: number
+): Promise<
+  | { state: 'available'; generation: PersistedFileGeneration }
+  | { state: 'unavailable'; reason: NotebookFileEvidenceReason }
+> => {
+  const maxGenerationBytes =
+    dependencies.maxGenerationBytes ?? LOCAL_RESOURCE_BUDGETS.artifactFileBytes
+  const maxRunBytes = dependencies.maxRunBytes ?? LOCAL_RESOURCE_BUDGETS.artifactTurnBytes
+  if (
+    file.size === undefined ||
+    file.size > maxGenerationBytes ||
+    reservedBytes + file.size > maxRunBytes
+  ) {
+    return { state: 'unavailable', reason: 'generation-budget-exceeded' }
+  }
+
+  const evidenceRoot = join(request.notebookSessionRoot, 'file-evidence')
+  const stagingRoot = join(evidenceRoot, 'staging')
+  const temporaryPath = join(stagingRoot, `${request.runId}-${randomUUID()}.tmp`)
+  try {
+    await mkdir(stagingRoot, { recursive: true })
+    const beforeCopy = await stat(file.physicalPath)
+    if (fingerprint(file) !== fingerprint(beforeCopy)) {
+      return { state: 'unavailable', reason: 'generation-freeze-failed' }
+    }
+    await copyFile(file.physicalPath, temporaryPath, constants.COPYFILE_EXCL)
+    const [afterCopy, copied] = await Promise.all([stat(file.physicalPath), stat(temporaryPath)])
+    if (fingerprint(beforeCopy) !== fingerprint(afterCopy) || copied.size !== file.size) {
+      return { state: 'unavailable', reason: 'generation-freeze-failed' }
+    }
+
+    const checksum = await sha256File(temporaryPath)
+    const contentStorageKey = toPortableNotebookRelativePath(
+      join('file-evidence', 'blobs', 'sha256', checksum.slice(0, 2), checksum)
+    )
+    const contentPath = join(request.notebookSessionRoot, ...contentStorageKey.split('/'))
+    await mkdir(dirname(contentPath), { recursive: true })
+    await copyFile(temporaryPath, contentPath, constants.COPYFILE_EXCL).catch(
+      async (error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        const existing = await stat(contentPath)
+        if (existing.size !== copied.size || (await sha256File(contentPath)) !== checksum)
+          throw error
+      }
+    )
+
+    return {
+      state: 'available',
+      generation: {
+        generationId: (dependencies.createId ?? randomUUID)(),
+        relativePath: file.relativePath,
+        checksum,
+        sizeBytes: file.size,
+        contentStorageKey,
+        capturedAt: new Date((dependencies.now ?? Date.now)()).toISOString()
+      }
+    }
+  } catch {
+    return { state: 'unavailable', reason: 'generation-freeze-failed' }
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined)
+  }
+}
+
+const persistEvidence = async (
+  request: WorkingFileObservationRequest,
+  rootKinds: Array<'data' | 'handoff'>,
+  rootResults: RootObservationResult[],
+  dependencies: WorkingFileObservationDependencies
+): Promise<WorkingFileObservationResult> => {
+  const changes = rootResults.flatMap((result) => result.changes)
+  const workingFiles = changes.flatMap((change): NotebookWorkingFile[] =>
+    change.after
+      ? [
+          {
+            path: change.after.path,
+            relativePath: change.after.relativePath,
+            kind: change.after.kind,
+            size: change.after.size,
+            mtimeMs: change.after.mtimeMs
+          }
+        ]
+      : []
+  )
+  const workingFilesByPath = new Map(workingFiles.map((file) => [file.path, file]))
+  if (!request.runId || !SAFE_RUN_ID.test(request.runId)) {
+    return { workingFiles, fileEvidence: unavailableEvidence(['run-identity-missing']) }
+  }
+
+  const evidenceId = `notebook-file-evidence-${request.runId}`
+  const relationResults: PersistedFileRelation[] = []
+  const dynamicReasons = rootResults.flatMap((result) => result.reasonCodes)
+  let reservedBytes = 0
+  for (const change of changes) {
+    const relation: PersistedFileRelation = {
+      relation: change.relation,
+      relativePath: change.relativePath,
+      pathPortability: 'relative',
+      authority: 'advisory',
+      ...(change.before
+        ? {
+            before: {
+              size: change.before.size,
+              mtimeMs: change.before.mtimeMs,
+              ctimeMs: change.before.ctimeMs
+            }
+          }
+        : {})
+    }
+    if (change.after) {
+      const workingFile = workingFilesByPath.get(change.after.path)
+      if (workingFile) {
+        workingFile.change = change.relation === 'created' ? 'created' : 'modified'
+      }
+      const frozen = await freezeGeneration(
+        { notebookSessionRoot: request.notebookSessionRoot, runId: request.runId },
+        change.after,
+        dependencies,
+        reservedBytes
+      )
+      if (frozen.state === 'available') {
+        relation.generation = frozen.generation
+        reservedBytes += frozen.generation.sizeBytes
+        if (workingFile) {
+          workingFile.generationId = frozen.generation.generationId
+          workingFile.checksum = frozen.generation.checksum
+        }
+      } else {
+        relation.reasonCode = frozen.reason
+        dynamicReasons.push(frozen.reason)
+      }
+    }
+    relationResults.push(relation)
+  }
+
+  const rootsAvailable = rootResults.every((result) => result.available)
+  const reasonCodes = uniqueReasons([...BASELINE_REASON_CODES, ...dynamicReasons])
+  const sidecar: PersistedNotebookFileEvidence = {
+    schemaVersion: 1,
+    evidenceId,
+    runId: request.runId,
+    state: rootsAvailable ? 'partial' : 'unavailable',
+    observedRoots: rootKinds,
+    managedRootsFinalState: rootsAvailable ? 'partial' : 'unavailable',
+    fileReads: 'unavailable',
+    externalPaths: 'unavailable',
+    writerAttribution: 'unavailable',
+    reasonCodes,
+    relations: relationResults
+  }
+  const serialized = `${JSON.stringify(sidecar, null, 2)}\n`
+  const checksum = createHash('sha256').update(serialized).digest('hex')
+  const evidenceStorageKey = toPortableNotebookRelativePath(
+    join('file-evidence', 'runs', `${request.runId}.json`)
+  )
+  const evidencePath = join(request.notebookSessionRoot, ...evidenceStorageKey.split('/'))
+  try {
+    await mkdir(dirname(evidencePath), { recursive: true })
+    await writeDurableJsonFile(evidencePath, serialized)
+    return {
+      workingFiles,
+      fileEvidence: {
+        schemaVersion: 1,
+        evidenceId,
+        state: sidecar.state,
+        checksum,
+        storageKey: evidenceStorageKey,
+        relationCount: relationResults.length,
+        generationCount: relationResults.filter((relation) => relation.generation).length,
+        managedRootsFinalState: sidecar.managedRootsFinalState,
+        fileReads: sidecar.fileReads,
+        externalPaths: sidecar.externalPaths,
+        writerAttribution: sidecar.writerAttribution,
+        reasonCodes
+      }
+    }
+  } catch {
+    return {
+      workingFiles,
+      fileEvidence: unavailableEvidence([...reasonCodes, 'evidence-persistence-failed'])
+    }
   }
 }
 
@@ -341,10 +675,10 @@ const startWorkingFileObservation = async (
 ): Promise<WorkingFileObservation> => {
   const logicalSessionRoot = resolve(request.notebookSessionRoot)
   const handoffRoot = join(logicalSessionRoot, 'handoff')
-  const roots = [
-    { path: request.dataRoot, logicalPath: request.dataRoot },
+  const roots: Array<{ kind: 'data' | 'handoff'; path: string; logicalPath: string }> = [
+    { kind: 'data', path: request.dataRoot, logicalPath: request.dataRoot },
     ...(await realpath(handoffRoot).then(
-      () => [{ path: handoffRoot, logicalPath: handoffRoot }],
+      () => [{ kind: 'handoff' as const, path: handoffRoot, logicalPath: handoffRoot }],
       () => []
     ))
   ]
@@ -354,17 +688,22 @@ const startWorkingFileObservation = async (
     )
   )
   let finished = false
-
   return {
     finish: async () => {
-      if (finished) return []
+      if (finished) {
+        return { workingFiles: [], fileEvidence: unavailableEvidence(['observer-failed']) }
+      }
       finished = true
-      return (await Promise.all(observations.map((observation) => observation.finish())))
-        .flat()
-        .sort((left, right) => left.path.localeCompare(right.path))
+      const results = await Promise.all(observations.map((observation) => observation.finish()))
+      return persistEvidence(
+        request,
+        roots.map((root) => root.kind),
+        results,
+        dependencies
+      )
     }
   }
 }
 
 export { startWorkingFileObservation, toPortableNotebookRelativePath }
-export type { WorkingFileObservation }
+export type { WorkingFileObservation, WorkingFileObservationResult }

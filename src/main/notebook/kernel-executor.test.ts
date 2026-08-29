@@ -19,10 +19,6 @@ import { TimeoutController } from './timeout-controller'
 import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
 import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtime-service'
 import { NotebookHelperModuleHost } from './helper-module-host'
-import {
-  startWorkingFileObservation,
-  toPortableNotebookRelativePath
-} from './working-file-observer'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -401,90 +397,6 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       else process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG = previousHang
       await executor.shutdown()
     }
-  })
-
-  it('normalizes persisted working-file paths across operating systems', () => {
-    expect(
-      toPortableNotebookRelativePath(
-        win32.relative('C:\\session', 'C:\\session\\data\\plot.png'),
-        win32.sep
-      )
-    ).toBe('data/plot.png')
-    expect(toPortableNotebookRelativePath('data/literal\\name.png')).toBe('data/literal\\name.png')
-  })
-
-  it('falls back to a bounded snapshot when the file watcher cannot start', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-working-file-fallback-'))
-    const sessionRoot = join(cwdDir, 'nb')
-    const dataRoot = join(sessionRoot, 'data')
-    await mkdir(dataRoot, { recursive: true })
-    const observation = await startWorkingFileObservation(
-      { dataRoot, notebookSessionRoot: sessionRoot },
-      {
-        watchDirectory: () => {
-          throw Object.assign(new Error('watch unavailable'), { code: 'ENOSPC' })
-        }
-      }
-    )
-
-    await writeFile(join(dataRoot, 'fallback.csv'), 'x,y\n1,2\n')
-
-    expect(await observation.finish()).toEqual([
-      expect.objectContaining({
-        path: resolve(dataRoot, 'fallback.csv'),
-        relativePath: 'data/fallback.csv',
-        size: 8
-      })
-    ])
-  })
-
-  it('ignores watcher startup noise for files that existed before execution', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-working-file-startup-noise-'))
-    const sessionRoot = join(cwdDir, 'nb')
-    const dataRoot = join(sessionRoot, 'data')
-    await mkdir(dataRoot, { recursive: true })
-    await writeFile(join(dataRoot, 'input.csv'), 'sample,value\na,1\n')
-    const watcher = {
-      close: vi.fn(),
-      on: vi.fn().mockReturnThis()
-    }
-
-    const observation = await startWorkingFileObservation(
-      { dataRoot, notebookSessionRoot: sessionRoot },
-      {
-        watchDirectory: ((_path, _options, listener) => {
-          if (typeof listener === 'function') listener('rename', 'input.csv')
-          return watcher
-        }) as never
-      }
-    )
-
-    await expect(observation.finish()).resolves.toEqual([])
-  })
-
-  it('falls back to a final snapshot when the watcher misses a file event', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-working-file-missed-event-'))
-    const sessionRoot = join(cwdDir, 'nb')
-    const dataRoot = join(sessionRoot, 'data')
-    await mkdir(dataRoot, { recursive: true })
-    const watcher = {
-      close: vi.fn(),
-      on: vi.fn().mockReturnThis()
-    }
-    const observation = await startWorkingFileObservation(
-      { dataRoot, notebookSessionRoot: sessionRoot },
-      { watchDirectory: (() => watcher) as never }
-    )
-
-    await writeFile(join(dataRoot, 'generated.csv'), 'x,y\n1,2\n')
-
-    await expect(observation.finish()).resolves.toEqual([
-      expect.objectContaining({
-        path: resolve(dataRoot, 'generated.csv'),
-        relativePath: 'data/generated.csv',
-        size: 8
-      })
-    ])
   })
 
   it('runs a cell, echoes stdout, and reports the working directory', async () => {

@@ -190,10 +190,41 @@ describe('NotebookRunTerminalizationOwner', () => {
       status: 'completed',
       endedAt: 200,
       text: { stdout: 'hello\n', plain: ['hello\n'] },
-      environmentCapture: { state: 'unavailable', reason: 'environment-capture-failed' }
+      environmentCapture: { state: 'unavailable', reason: 'environment-capture-failed' },
+      fileEvidence: {
+        state: 'unavailable',
+        managedRootsFinalState: 'unavailable',
+        reasonCodes: expect.arrayContaining(['observation-not-started'])
+      }
     })
     expect(terminalized.run).toEqual(document.runs[0])
     expect(terminalized.result.status).toBe('completed')
+  })
+
+  it('persists the observer evidence summary on the terminal Run', async () => {
+    const harness = createHarness()
+    const fileEvidence = {
+      schemaVersion: 1 as const,
+      evidenceId: 'notebook-file-evidence-run-evidence',
+      state: 'partial' as const,
+      checksum: 'a'.repeat(64),
+      storageKey: 'file-evidence/runs/run-evidence.json',
+      relationCount: 2,
+      generationCount: 1,
+      managedRootsFinalState: 'partial' as const,
+      fileReads: 'unavailable' as const,
+      externalPaths: 'unavailable' as const,
+      writerAttribution: 'unavailable' as const,
+      reasonCodes: ['file-reads-not-observed' as const]
+    }
+
+    await harness.owner.run({
+      session,
+      runningRun: runningRun('run-evidence'),
+      invoke: async () => ({ ...completedResult(), fileEvidence })
+    })
+
+    expect(harness.document().runs[0]?.fileEvidence).toEqual(fileEvidence)
   })
 
   it('keeps an admitted Run running across hours without an elapsed-time transition', async () => {

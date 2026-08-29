@@ -479,7 +479,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request, () => {
         kernelDispatched = true
       })
-      const workingFiles = await workingFileObservation.finish()
+      const fileObservation = await workingFileObservation.finish()
       workingFileObservation = undefined
 
       const figureResult = await this.readFigures(response.figures)
@@ -513,13 +513,22 @@ class NotebookKernelExecutor implements NotebookExecutor {
           ? mapped.outputs.filter((output) => output.type !== 'error')
           : mapped.outputs,
         truncated: response.outputTruncated || figureResult.truncated,
-        workingFiles,
+        workingFiles: fileObservation.workingFiles,
+        fileEvidence: fileObservation.fileEvidence,
         ...(helperModulesInitialized.length ? { helperModulesInitialized } : {}),
         environmentOverlay: response.environmentOverlay
       }
     } catch (error) {
-      await workingFileObservation?.finish()
-      return errorToExecutionResult(error, request, kernelDispatched, helperModulesInitialized)
+      const fileObservation = await workingFileObservation?.finish()
+      return {
+        ...errorToExecutionResult(error, request, kernelDispatched, helperModulesInitialized),
+        ...(fileObservation
+          ? {
+              workingFiles: fileObservation.workingFiles,
+              fileEvidence: fileObservation.fileEvidence
+            }
+          : {})
+      }
     }
   }
 
