@@ -643,6 +643,7 @@ describe('ConnectorAddForm (remote server)', () => {
   })
 
   it('requires an imported OAuth client secret locally and submits pre-registered credentials', async () => {
+    useSettingsStore.setState({ encryptionAvailable: true })
     act(() => {
       root.render(
         <ConnectorAddForm
