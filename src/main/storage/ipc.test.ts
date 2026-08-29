@@ -1658,12 +1658,17 @@ describe('storage IPC handlers', () => {
     const alternateParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-alternate-'))
     await mkdir(join(dataRootFor(alternateParent), 'artifacts'), { recursive: true })
     let releaseCommit: (() => void) | undefined
+    let markCommitStarted: (() => void) | undefined
+    const commitStarted = new Promise<void>((resolve) => {
+      markCommitStarted = resolve
+    })
     let setDataRootCalls = 0
     const deps = fakeDeps({
       settingsService: {
         setDataRoot: vi.fn(async () => {
           setDataRootCalls += 1
           if (setDataRootCalls === 1) {
+            markCommitStarted?.()
             await new Promise<void>((resolve) => {
               releaseCommit = resolve
             })
@@ -1678,7 +1683,7 @@ describe('storage IPC handlers', () => {
     try {
       await invoke('storage:migrate', { parent: targetParent })
       const commitPromise = invoke('storage:commit-and-relaunch', { parent: targetParent })
-      await tick()
+      await commitStarted
 
       await expect(
         invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
@@ -1696,21 +1701,25 @@ describe('storage IPC handlers', () => {
   it('rejects commit during copying without clearing the write gate', async () => {
     initDataRoot(dataRoot)
     let releaseDisconnect: (() => void) | undefined
+    let markDisconnectStarted: (() => void) | undefined
+    const disconnectStarted = new Promise<void>((resolve) => {
+      markDisconnectStarted = resolve
+    })
     const deps = fakeDeps({
       runtime: {
-        disconnect: vi.fn(
-          () =>
-            new Promise<void>((resolve) => {
-              releaseDisconnect = resolve
-            })
-        ),
+        disconnect: vi.fn(() => {
+          markDisconnectStarted?.()
+          return new Promise<void>((resolve) => {
+            releaseDisconnect = resolve
+          })
+        }),
         shutdownForQuit: vi.fn().mockResolvedValue(undefined)
       }
     })
     registerStorageIpcHandlers(deps)
 
     const migratePromise = invoke('storage:migrate', { parent: targetParent })
-    await tick()
+    await disconnectStarted
     const commitOutcome = await invoke('storage:commit-and-relaunch', { parent: targetParent })
     const pendingAfterCommit = isMigrationPending()
 
