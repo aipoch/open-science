@@ -14,6 +14,8 @@ import { projectTaskRuntimeEvents } from './application-event-projections'
 import { HeadlessTaskApi } from './task-api'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
 
+const log = createLogger('web-service')
+
 // A single-instance web service that can be started at launch (--serve) or later, on demand, when a
 // second launch forwards a --serve request to the already-running instance. Starting is idempotent: a
 // second ensureStarted while one is running (or in flight) reuses it rather than binding a new port.
@@ -222,12 +224,11 @@ const createWebServiceController = (
     }
 
     const url = authUrl(token, server.port)
-    createLogger('web-service').info('local web service started', {
+    log.info(`Open Science Web: http://127.0.0.1:${server.port}/`, {
       host: '127.0.0.1',
       port: server.port,
       attached
     })
-    console.log(`Open Science Web: http://127.0.0.1:${server.port}/`)
     return { port: server.port, url }
   }
 

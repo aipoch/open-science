@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ProjectFileSource } from '../../shared/project-files'
+import { createLogger } from '../logger'
 import {
   buildProjectCollisionFilters,
   describeError,
@@ -15,6 +16,8 @@ import {
   type ProjectFilesClient,
   type ProjectFilesClientProvider
 } from './mutation-projection'
+
+const log = createLogger('project-files')
 
 // Valid persisted revisions are non-negative. A collision loser stores this sentinel so it cannot
 // take the revision fast path and can claim the canonical row after its current owner is deleted.
@@ -95,7 +98,7 @@ class ProjectFilesMutationOwner {
           // a legacy duplicate reference, but it must not steal ownership or make migration unretryable.
           if (activeOtherSessionRow) {
             hasActiveCollision = true
-            console.warn('Skipping duplicate file reference owned by another active session', {
+            log.warn('skipping duplicate file reference owned by another active session', {
               projectId: file.projectId,
               sessionId: file.sessionId,
               canonicalSessionId: activeOtherSessionRow.sessionId,

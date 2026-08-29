@@ -1,6 +1,7 @@
+import { readdirSync, readFileSync } from 'node:fs'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -27,6 +28,26 @@ afterEach(async () => {
     await rm(logDir, { recursive: true, force: true })
     logDir = undefined
   }
+})
+
+const productionTypeScriptFiles = (directory: string): string[] =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) return productionTypeScriptFiles(path)
+    if (!entry.isFile() || !/\.tsx?$/.test(entry.name)) return []
+    if (/\.(?:test|integration|certification)\.tsx?$/.test(entry.name)) return []
+    return path.endsWith(`${join('src', 'main', 'logger.ts')}`) ? [] : [path]
+  })
+
+describe('logger: main-process boundary', () => {
+  it('keeps the central logger as the only production console adapter', () => {
+    const directConsoleCalls = productionTypeScriptFiles(__dirname).flatMap((path) => {
+      const source = readFileSync(path, 'utf8')
+      return /\bconsole\s*(?:\.|\[)/.test(source) ? [path.slice(__dirname.length + 1)] : []
+    })
+
+    expect(directConsoleCalls).toEqual([])
+  })
 })
 
 describe('logger: formatLine', () => {

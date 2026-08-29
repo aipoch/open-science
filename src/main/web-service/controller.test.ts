@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const { log } = vi.hoisted(() => ({
+  log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+}))
+
+vi.mock('../logger', () => ({ createLogger: () => log }))
+
 import { ApplicationEventHub } from '../application-events'
 import type { ApplicationEventSource } from '../application-events'
 import type { ApplicationCommandComposition } from '../application-command-composition'
@@ -194,18 +200,18 @@ describe('createWebServiceController', () => {
   })
 
   it('keeps the bearer token out of daemon stdout when the service starts', async () => {
-    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const h = makeController()
+    log.info.mockClear()
 
-    try {
-      const result = await h.controller.ensureStarted(44100, { attached: false })
+    const result = await h.controller.ensureStarted(44100, { attached: false })
 
-      expect(result.url).toBe('http://127.0.0.1:44100/?token=tok-123')
-      expect(stdout).toHaveBeenCalledWith('Open Science Web: http://127.0.0.1:44100/')
-      expect(stdout.mock.calls.flat().join(' ')).not.toContain('tok-123')
-    } finally {
-      stdout.mockRestore()
-    }
+    expect(result.url).toBe('http://127.0.0.1:44100/?token=tok-123')
+    expect(log.info).toHaveBeenCalledWith('Open Science Web: http://127.0.0.1:44100/', {
+      host: '127.0.0.1',
+      port: 44100,
+      attached: false
+    })
+    expect(JSON.stringify(log.info.mock.calls)).not.toContain('tok-123')
   })
 
   it('is idempotent: a second ensureStarted while running reuses the server (no second start)', async () => {

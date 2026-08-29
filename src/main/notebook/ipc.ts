@@ -1,4 +1,5 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
+import { createLogger, diagnosticErrorFields } from '../logger'
 
 import type {
   AppendNotebookCodeCellRequest,
@@ -14,12 +15,7 @@ import type {
 } from '../../shared/notebook'
 import type { NotebookCommandWorkflows } from './notebook-workflows'
 
-const lastNonEmptyLine = (value: string): string | undefined =>
-  value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .at(-1)
+const log = createLogger('notebook:ipc')
 
 // Registers renderer-callable notebook commands on the main-process IPC bus.
 const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void => {
@@ -52,28 +48,24 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
         request.inputKind === 'terminal' &&
         result.status !== 'completed'
       ) {
-        console.error('[notebook] User terminal execution failed', {
+        log.error('user terminal execution failed', {
           sessionId: request.sessionId,
           projectId: request.projectId,
           language: request.language ?? 'python',
           environment: result.environment,
           runId: result.runId,
-          status: result.status,
-          error:
-            lastNonEmptyLine(result.text.traceback) ??
-            lastNonEmptyLine(result.text.stderr) ??
-            'unknown'
+          status: result.status
         })
       }
       return result
     } catch (error) {
       if (request.source === 'user' && request.inputKind === 'terminal') {
-        console.error('[notebook] User terminal submission failed', {
+        log.error('user terminal submission failed', {
           sessionId: request.sessionId,
           projectId: request.projectId,
           language: request.language ?? 'python',
           codeLength: request.code.length,
-          error
+          ...diagnosticErrorFields(error)
         })
       }
       throw error

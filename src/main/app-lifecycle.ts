@@ -433,7 +433,7 @@ export const installAppLifecycle = (
 
         if (deps.flushLogs) {
           const result = await flushDiagnosticsWithTimeout(deps.flushLogs, logFlushTimeoutMs)
-          if (result === 'timeout') console.warn('[shutdown] final log flush timed out')
+          if (result === 'timeout') deps.log?.warn('final log flush timed out')
         }
       } finally {
         if (shutdownAbortedForRendererPersistence) {

@@ -3,6 +3,7 @@ import { lstat, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
+import { createLogger } from '../logger'
 import {
   operationJournalPath,
   readOperationChild,
@@ -20,6 +21,8 @@ import { defaultOperationChildLiveness, reconcileInterruptedOperations } from '.
 import { verifyExecutable } from './provisioner-runtime'
 import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+
+const log = createLogger('notebook:recovery')
 
 const isPathInside = (root: string, candidate: string): boolean => {
   const nested = relative(root, candidate)
@@ -192,9 +195,7 @@ export class NotebookRecoveryCoordinator {
     )
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.runtimeRoot))
     if ((await journal.readState()) === 'corrupt') {
-      console.error(
-        '[notebook] operation journal is unreadable; blocking all runtime writes until recovery'
-      )
+      log.error('operation journal is unreadable; blocking all runtime writes until recovery')
       this.recoveryCorrupt = true
       return
     }

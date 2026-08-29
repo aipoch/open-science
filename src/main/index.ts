@@ -35,6 +35,7 @@ const shouldRunReviewerMcpProxy = process.argv.includes(REVIEWER_MCP_PROXY_ARG)
 const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SERVER_ARG)
 const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_SERVER_ARG)
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
+const bootstrapLog = createLogger('bootstrap')
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush = flushLogs
 
@@ -43,7 +44,7 @@ if (shouldRunArtifactMcpServer) {
   void import('./artifacts/mcp-server')
     .then(({ runArtifactMcpServer }) => runArtifactMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('artifact MCP server failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunNotebookMcpServer) {
@@ -51,35 +52,35 @@ if (shouldRunArtifactMcpServer) {
   void import('./notebook/mcp-server')
     .then(({ runNotebookMcpServer }) => runNotebookMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('notebook MCP server failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunReviewerMcpProxy) {
   void import('./reviewer/mcp-stdio-proxy')
     .then(({ runReviewerMcpStdioProxy }) => runReviewerMcpStdioProxy())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('reviewer MCP proxy failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunSkillImportMcpServer) {
   void import('./skills/mcp-server')
     .then(({ runSkillImportMcpServer }) => runSkillImportMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('skill import MCP server failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunSkillRuntimeMcpServer) {
   void import('./skills/runtime-mcp-server')
     .then(({ runSkillRuntimeMcpServer }) => runSkillRuntimeMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('skill runtime MCP server failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunPlanMcpServer) {
   void import('./session-plan/plan-mcp-server')
     .then(({ runPlanMcpServer }) => runPlanMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('plan MCP server failed', error)
       process.exitCode = 1
     })
 } else {
@@ -89,7 +90,7 @@ if (shouldRunArtifactMcpServer) {
       error,
       flush: startupFlush
     })
-    console.error(error)
+    bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
     process.exitCode = 1
   })
 }

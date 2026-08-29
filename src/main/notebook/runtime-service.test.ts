@@ -5603,12 +5603,13 @@ describe('notebook runtime service', () => {
     // A cell can os.chdir() to a directory outside the repository-managed session tree (whose
     // sub-directories are recreated on every write); simulate that, then delete it.
     const changedCwd = await mkdtemp(join(tmpdir(), 'open-science-notebook-chdir-'))
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const error = vi.fn()
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
+      logger: { info: vi.fn(), warn: vi.fn(), error },
       executorFactory: () => ({
         execute: async (): Promise<NotebookExecutionResult> => ({
           status: 'completed',
@@ -5632,9 +5633,9 @@ describe('notebook runtime service', () => {
     const second = await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '2' })
 
     expect(second.status).toBe('completed')
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Session cwd is missing'))
-
-    errorSpy.mockRestore()
+    expect(error).toHaveBeenCalledWith('session working directory is missing before execution', {
+      sessionId: 'session-1'
+    })
   })
 
   describe('inspectPackages', () => {

@@ -1,10 +1,13 @@
 import { dialog } from 'electron'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
+import { createLogger, diagnosticErrorFields } from '../logger'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeSelection } from '../../shared/notebook-runtime'
 import type { RuntimeSelectionWorkflows } from './runtime-selection-workflows'
+
+const log = createLogger('notebook:runtime-ipc')
 
 export type RuntimeIpcOptions = {
   // Injectable for tests; production defaults to the Electron native open-file dialog.
@@ -69,7 +72,7 @@ const registerRuntimeIpcHandlers = (
     } catch (err) {
       // Never let a picker failure surface as a raw rejection to the renderer; the choose action
       // becomes a no-op instead.
-      console.error('[runtime-ipc] pick-interpreter failed', err)
+      log.error('pick interpreter failed', diagnosticErrorFields(err))
       return null
     }
   })

@@ -93,7 +93,7 @@ import {
   type NotebookSessionRuntimeBinding
 } from './session-aggregate'
 import { NotebookSessionRegistry } from './session-registry'
-import { createLogger, errorLogFields, getLogFilePath } from '../logger'
+import { createLogger, errorLogFields } from '../logger'
 import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from './environment-state-tracker'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
@@ -282,7 +282,10 @@ const resolveLoopScript = (envOverride: string | undefined, fileName: string): s
   if (!resolved) {
     // Surface the miss instead of silently handing the executor a path that only fails once the loop
     // actually tries to spawn.
-    console.error(`[notebook] Could not resolve ${fileName}; tried:`, candidates)
+    createLogger('notebook:runtime').error('could not resolve loop script', {
+      fileName,
+      candidateCount: candidates.length
+    })
     return candidates[candidates.length - 1]
   }
 
@@ -343,7 +346,7 @@ class NotebookRuntimeService {
     ((language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>) | undefined
   private readonly runtimeBindingOwner: NotebookRuntimeBindingOwner
   private readonly recoveryCoordinator: NotebookRecoveryCoordinator
-  private readonly runtimeLogger?: RuntimeDiagnosticLogger
+  private readonly runtimeLogger: RuntimeDiagnosticLogger
   private readonly environmentStateTracker: Pick<
     EnvironmentStateTracker,
     | 'prepareRun'
@@ -398,8 +401,7 @@ class NotebookRuntimeService {
             ? this.runtimeBindingOwner.dependencyInterpreter(run.kernelKind, run.runtimeId)
             : Promise.resolve(undefined)
       })
-    this.runtimeLogger =
-      options.logger ?? (getLogFilePath() ? createLogger('notebook:runtime') : undefined)
+    this.runtimeLogger = options.logger ?? createLogger('notebook:runtime')
     this.environmentOperations = new NotebookEnvironmentOperations({
       recovery: this.recoveryCoordinator,
       bindings: this.runtimeBindingOwner,
@@ -444,8 +446,7 @@ class NotebookRuntimeService {
           kind,
           environment: env
         }
-        if (this.runtimeLogger) this.runtimeLogger.error(message, fields)
-        else console.error(`[notebook] ${message}`, fields)
+        this.runtimeLogger.error(message, fields)
       }
     })
     this.runtimeRepair = new NotebookRuntimeRepairOwner({
@@ -530,6 +531,7 @@ class NotebookRuntimeService {
           ...(interpreter ? { interpreter } : {})
         }),
       helperModules: this.helperModules,
+      logger: this.runtimeLogger,
       platform: options.platform,
       shellProcess: options.shellProcess
     })

@@ -5,6 +5,7 @@ import { Prisma, type ManagedFile, type PrismaClient } from '@prisma/client'
 
 import type { ProjectFileSource } from '../../shared/project-files'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { createLogger } from '../logger'
 import {
   DEFAULT_UPLOAD_PROJECT_ID,
   getUploadedAttachmentName,
@@ -14,6 +15,7 @@ import {
 const ARTIFACTS_DIR = 'artifacts'
 const UPLOADS_DIR = 'uploads'
 const PENDING_ARTIFACT_DIR = '.pending'
+const log = createLogger('project-files')
 
 type ProjectFilesClient = Pick<
   PrismaClient,
@@ -391,7 +393,7 @@ const toIndexedFile = async (
   const requestedPath = resolve(input.path)
 
   if (!isPathInsideRoot(managedRoot, requestedPath)) {
-    console.warn('Skipping file outside managed storage', {
+    log.warn('skipping file outside managed storage', {
       projectId: input.projectId,
       sessionId: input.sessionId,
       source: input.source
@@ -413,7 +415,7 @@ const toIndexedFile = async (
   }
 
   if (!isPathInsideRoot(canonicalRoot, canonicalPath)) {
-    console.warn('Skipping file whose canonical path leaves managed storage', {
+    log.warn('skipping file whose canonical path leaves managed storage', {
       projectId: input.projectId,
       sessionId: input.sessionId,
       source: input.source

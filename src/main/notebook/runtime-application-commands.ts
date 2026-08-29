@@ -14,7 +14,10 @@ import {
   type ApplicationCommandRegistrar
 } from '../application-command-router'
 import type { CallerContext } from '../caller-context'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import type { RuntimeSelectionWorkflows } from './runtime-selection-workflows'
+
+const log = createLogger('notebook:runtime-commands')
 
 type RuntimeLanguageRequest = Readonly<{ language: NotebookLanguage }>
 type RuntimeEnvironmentRequest = Readonly<{ language: NotebookLanguage; envId: string }>
@@ -155,7 +158,7 @@ const registerRuntimeApplicationCommands = (
         try {
           return await dependencies.pickInterpreter()
         } catch (error) {
-          console.error('[runtime-commands] pick-interpreter failed', error)
+          log.error('pick interpreter failed', diagnosticErrorFields(error))
           return null
         }
       },

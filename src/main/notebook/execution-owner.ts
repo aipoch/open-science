@@ -14,6 +14,7 @@ import type {
   NotebookWorkingFile,
   RunNotebookCellRequest
 } from '../../shared/notebook'
+import type { Logger } from '../logger'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import {
@@ -117,6 +118,7 @@ type NotebookExecutionOwnerOptions = {
     NotebookHelperModuleHost,
     'preflight' | 'plan' | 'commitInitialized' | 'loadedEvidence'
   >
+  logger: Pick<Logger, 'error'>
   platform?: NodeJS.Platform
   shellProcess?: NotebookShellProcess
 }
@@ -245,9 +247,9 @@ class NotebookExecutionOwner {
       inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
     }
     if (!existsSync(cwdBefore)) {
-      console.error(
-        `[notebook] Session cwd is missing before execution, the kernel may run in an unexpected directory: ${cwdBefore}`
-      )
+      this.options.logger.error('session working directory is missing before execution', {
+        sessionId: session.sessionId
+      })
     }
     const kernelMarkedRunning = admission.rejection === undefined
     if (kernelMarkedRunning) {

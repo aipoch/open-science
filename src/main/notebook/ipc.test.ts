@@ -2,8 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRuntimeService } from './runtime-service'
 
-const { ipcHandlers } = vi.hoisted(() => ({
-  ipcHandlers: new Map<string, (...args: unknown[]) => unknown>()
+const { ipcHandlers, log } = vi.hoisted(() => ({
+  ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
+  log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+}))
+
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: () => log
 }))
 
 vi.mock('electron', () => ({
@@ -19,6 +25,7 @@ import { beginMigration, clearMigrationPending } from '../storage/migration-stat
 
 beforeEach(() => {
   ipcHandlers.clear()
+  log.error.mockClear()
 })
 afterEach(() => clearMigrationPending())
 
@@ -222,7 +229,6 @@ describe('notebook IPC handlers', () => {
       .mockResolvedValueOnce(executionFailure)
       .mockRejectedValueOnce(submissionFailure)
     const service = { execute } as unknown as NotebookRuntimeService
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     registerNotebookIpcHandlers(createNotebookCommandWorkflows(service))
     const request = {
       sessionId: 'session-1',
@@ -238,22 +244,24 @@ describe('notebook IPC handlers', () => {
     await expect(handler?.(undefined, request)).resolves.toBe(executionFailure)
     await expect(handler?.(undefined, request)).rejects.toBe(submissionFailure)
 
-    expect(errorSpy).toHaveBeenNthCalledWith(1, '[notebook] User terminal execution failed', {
+    expect(log.error).toHaveBeenNthCalledWith(1, 'user terminal execution failed', {
       sessionId: 'session-1',
       projectId: 'project-1',
       language: 'python',
       environment: 'default-python',
       runId: 'run-failed',
-      status: 'failed',
-      error: 'ValueError: diagnostic detail'
+      status: 'failed'
     })
-    expect(errorSpy).toHaveBeenNthCalledWith(2, '[notebook] User terminal submission failed', {
+    expect(log.error).toHaveBeenNthCalledWith(2, 'user terminal submission failed', {
       sessionId: 'session-1',
       projectId: 'project-1',
       language: 'python',
       codeLength: 11,
-      error: submissionFailure
+      errorCategory: 'error'
     })
-    expect(errorSpy.mock.calls.flat().join(' ')).not.toContain('secret = 42')
+    const logged = JSON.stringify(log.error.mock.calls)
+    expect(logged).not.toContain('secret = 42')
+    expect(logged).not.toContain('diagnostic detail')
+    expect(logged).not.toContain('kernel connection closed')
   })
 })

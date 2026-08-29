@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 
+import { createLogger, errorLogFields } from '../logger'
 import type { RuntimeOperationJournal, RuntimeOperationRecord } from './operation-journal'
+
+const log = createLogger('notebook:recovery')
 
 // Injected side-effects for reconciling ONE interrupted runtime operation, so the startup-recovery
 // orchestration is unit-tested without real processes, filesystem, or provisioner. See
@@ -140,17 +143,17 @@ export const reconcileInterruptedOperations = async (
         try {
           await deps.blockUnknownChildTarget(raw)
         } catch (blockError) {
-          console.error(
-            `[notebook] could not block cache publication recovery for ${raw.operationId}`,
-            blockError
-          )
+          log.error('could not block cache publication recovery', {
+            operationId: raw.operationId,
+            ...errorLogFields(blockError)
+          })
         }
       }
       deps.onRetained?.(raw)
-      console.error(
-        `[notebook] operation recovery failed for ${raw.operationId}; leaving journal entry`,
-        error
-      )
+      log.error('operation recovery failed; leaving journal entry', {
+        operationId: raw.operationId,
+        ...errorLogFields(error)
+      })
     }
   }
 
