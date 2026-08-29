@@ -921,14 +921,6 @@ export const commitDataRootSwitch = async (
     }
   }
 
-  try {
-    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata)
-    await restorePortableMetadata(target, sourceMetadata)
-  } catch (error) {
-    operation.fail(error)
-    return { ok: false, error: 'Could not restore copied data metadata. Run the move again.' }
-  }
-
   // Persist the exact, already-validated cleanup capability before the pointer commit. A crash after
   // setDataRoot can then retry only this source→target operation; arbitrary paths from settings or a
   // renderer request are never treated as cleanup authority.
@@ -954,6 +946,17 @@ export const commitDataRootSwitch = async (
     }
   }
 
+  try {
+    // Staging snapshots the exact source entries that cleanup may later remove. Reapply portable
+    // metadata afterward because that content scan necessarily reads the source tree.
+    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata)
+    await restorePortableMetadata(target, sourceMetadata)
+  } catch (error) {
+    await deps.cleanupJournal?.clear(marker.token).catch(() => undefined)
+    operation.fail(error)
+    return { ok: false, error: 'Could not restore copied data metadata. Run the move again.' }
+  }
+
   operation.phase('persist-pointer')
   try {
     await deps.setDataRoot(target)
@@ -975,13 +978,25 @@ export const commitDataRootSwitch = async (
   let cleanupDegraded = false
   const doDeleteSources = deps.deleteSources ?? deleteSources
   let cleanupFailureCount = 0
-  try {
-    const deleteResult = await doDeleteSources(deps.currentDataRoot, dirsToDelete)
-    cleanupFailureCount = deleteResult.failed.length
-    if (cleanupFailureCount > 0) cleanupDegraded = true
-  } catch {
-    cleanupDegraded = true
-    cleanupFailureCount = 1
+  if (deps.cleanupJournal) {
+    try {
+      await deps.cleanupJournal.markCommitted(marker.token)
+    } catch {
+      // The pointer already committed. Leave the prepared intent in place so startup can prove the
+      // live target and promote it before retrying; do not delete without the durable receipt.
+      cleanupDegraded = true
+      cleanupFailureCount = 1
+    }
+  }
+  if (!cleanupDegraded) {
+    try {
+      const deleteResult = await doDeleteSources(deps.currentDataRoot, dirsToDelete)
+      cleanupFailureCount = deleteResult.failed.length
+      if (cleanupFailureCount > 0) cleanupDegraded = true
+    } catch {
+      cleanupDegraded = true
+      cleanupFailureCount = 1
+    }
   }
 
   if (!cleanupDegraded) {
@@ -999,7 +1014,7 @@ export const commitDataRootSwitch = async (
     cleanupDegraded,
     cleanupFailureCount
   })
-  return cleanupFailureCount > 0
+  return cleanupDegraded
     ? {
         ok: true,
         cleanupWarning:

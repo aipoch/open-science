@@ -1388,9 +1388,11 @@ describe('storage IPC handlers', () => {
     expect(existsSync(target)).toBe(false)
   })
 
-  it('rejects a new migration while cleanup from an earlier move is pending', async () => {
-    initDataRoot(dataRoot)
+  it('allows a later migration while cleanup from an earlier move remains queued', async () => {
+    initDataRoot(target)
     await mkdir(target)
+    const alternateParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-alternate-'))
+    const alternateTarget = dataRootFor(alternateParent)
     const cleanupJournal = new DataRootCleanupJournal(join(currentParent, 'config'))
     await cleanupJournal.stage({
       token: 'pending-cleanup',
@@ -1399,15 +1401,25 @@ describe('storage IPC handlers', () => {
       dirs: ['artifacts'],
       createdAt: 1
     })
-    const deps = fakeDeps({ cleanupJournal })
+    const runDataRootMigration = vi.fn<NonNullable<FakeDeps['runDataRootMigration']>>(
+      async (_deps, parent, options) => {
+        await mkdir(alternateTarget)
+        options.onVerified?.({ token: 'next-migration', target: dataRootFor(parent) })
+        return { ok: true }
+      }
+    )
+    const deps = fakeDeps({ cleanupJournal, runDataRootMigration })
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
-      ok: false,
-      error: 'Old data cleanup is still pending. Restart the app before moving data again.'
-    })
-    expect(deps.runtime.disconnect).not.toHaveBeenCalled()
-    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    try {
+      await expect(invoke('storage:migrate', { parent: alternateParent })).resolves.toEqual({
+        ok: true
+      })
+      expect(runDataRootMigration).toHaveBeenCalledOnce()
+      await expect(cleanupJournal.hasPending()).resolves.toBe(true)
+    } finally {
+      await rm(alternateParent, { recursive: true, force: true })
+    }
   })
 
   it('discard lifts the write-gate after a staged copy is thrown away', async () => {
@@ -1589,8 +1601,8 @@ describe('storage IPC handlers', () => {
     }
   })
 
-  it('rejects a pointer-only switch while cleanup from an earlier move is pending', async () => {
-    initDataRoot(dataRoot)
+  it('allows a pointer-only switch while cleanup from an earlier move remains queued', async () => {
+    initDataRoot(target)
     await mkdir(target)
     const alternateParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-alternate-'))
     await mkdir(join(dataRootFor(alternateParent), 'artifacts'), { recursive: true })
@@ -1608,12 +1620,12 @@ describe('storage IPC handlers', () => {
     try {
       await expect(
         invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
-      ).resolves.toEqual({
-        ok: false,
-        error: 'Old data cleanup is still pending. Restart the app before moving data again.'
+      ).resolves.toEqual({ ok: true })
+      expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(dataRootFor(alternateParent), {
+        completeOnboarding: false
       })
-      expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
-      expect(deps.relaunch).not.toHaveBeenCalled()
+      expect(deps.relaunch).toHaveBeenCalledOnce()
+      await expect(cleanupJournal.hasPending()).resolves.toBe(true)
     } finally {
       await rm(alternateParent, { recursive: true, force: true })
     }

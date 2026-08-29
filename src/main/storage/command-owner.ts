@@ -121,9 +121,6 @@ type StorageCommandOwnerDeps = {
 type StorageParentRequest = Readonly<{ parent: string }>
 type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
 
-const CLEANUP_PENDING_ERROR =
-  'Old data cleanup is still pending. Restart the app before moving data again.'
-
 // Pushes migration progress to every live window, mirroring the acp/update broadcast pattern.
 const defaultBroadcast = (progress: MigrationProgress): void => {
   broadcastToRenderers('storage:migrate-progress', progress)
@@ -343,12 +340,6 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     let rendererPrepared = false
     let handoffPending = false
     try {
-      if (await cleanupJournal.hasPending().catch(() => true)) {
-        return { ok: false, error: CLEANUP_PENDING_ERROR }
-      }
-      if (controller.signal.aborted) {
-        return { ok: false, error: 'migration cancelled', cancelled: true }
-      }
       // Reject stale/invalid requests before stopping any producer. The migration engine validates
       // again at its own filesystem boundary, but ordinary invalid targets must have no teardown side
       // effects at the command boundary.
@@ -861,14 +852,6 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     let rendererPrepared = false
     operation.phase('classify-target')
     try {
-      if (await cleanupJournal.hasPending().catch(() => true)) {
-        operation.fail(new Error(CLEANUP_PENDING_ERROR), { mode: 'cleanup-pending' })
-        return { ok: false, error: CLEANUP_PENDING_ERROR }
-      }
-      if (signal.aborted) {
-        operation.fail(new Error('data root change cancelled'))
-        return { ok: false, error: 'Data-root change cancelled.' }
-      }
       const classification = await classifyDataRootImpl(request.parent, resolveDataRoot())
       if (signal.aborted) {
         operation.fail(new Error('data root change cancelled'))

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { deleteSources } from './data-migration'
 import { DataRootCleanupJournal } from './data-root-cleanup'
 import { readMigrationMarker, scanInventory, writeMigrationMarker } from './migration-marker'
 
@@ -37,7 +38,7 @@ afterEach(async () => {
 })
 
 describe('DataRootCleanupJournal', () => {
-  it('refuses to overwrite cleanup authority that is still pending', async () => {
+  it('retains earlier cleanup authority when another move is staged', async () => {
     const journal = new DataRootCleanupJournal(configRoot)
     await journal.stage({
       token: 'cleanup-token',
@@ -46,26 +47,53 @@ describe('DataRootCleanupJournal', () => {
       dirs: ['artifacts'],
       createdAt: 1
     })
+    await journal.markCommitted('cleanup-token')
     const otherSource = join(root, 'other-old-root')
     const otherTarget = join(root, 'other-new-root')
-    await mkdir(otherSource)
-    await mkdir(otherTarget)
+    await mkdir(join(otherSource, 'artifacts'), { recursive: true })
+    await mkdir(join(otherTarget, 'artifacts'), { recursive: true })
+    await writeFile(join(otherSource, 'artifacts', 'other.txt'), 'other source')
 
-    await expect(
-      journal.stage({
-        token: 'other-token',
-        source: otherSource,
-        target: otherTarget,
-        dirs: ['artifacts'],
-        createdAt: 2
-      })
-    ).rejects.toThrow('cleanup is still pending')
+    await journal.stage({
+      token: 'other-token',
+      source: otherSource,
+      target: otherTarget,
+      dirs: ['artifacts'],
+      createdAt: 2
+    })
 
-    const deleteSources = vi.fn().mockResolvedValue({ deleted: ['artifacts'], failed: [] })
-    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
-      pending: false,
+    await expect(journal.recover(otherTarget, deleteSources)).resolves.toEqual({
+      pending: true,
       failureCount: 0
     })
+    await expect(readFile(join(source, 'artifacts', 'result.txt'), 'utf8')).rejects.toThrow()
+    await expect(readFile(join(otherSource, 'artifacts', 'other.txt'), 'utf8')).resolves.toBe(
+      'other source'
+    )
+    await expect(journal.hasPending()).resolves.toBe(true)
+  })
+
+  it('never deletes a source directory that was replaced after staging', async () => {
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    await rm(join(source, 'artifacts'), { recursive: true, force: true })
+    await mkdir(join(source, 'artifacts'))
+    await writeFile(join(source, 'artifacts', 'new-user-data.txt'), 'must survive')
+
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: true,
+      failureCount: 0
+    })
+    await expect(readFile(join(source, 'artifacts', 'new-user-data.txt'), 'utf8')).resolves.toBe(
+      'must survive'
+    )
+    await expect(journal.hasPending()).resolves.toBe(true)
   })
 
   it('keeps a failed cleanup durable and clears it after a later startup retry succeeds', async () => {
