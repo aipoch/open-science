@@ -426,14 +426,17 @@ describe('provider registry', () => {
     expect(vendorHasRegions('tencent')).toBe(true)
     expect(resolveVendorBaseUrl('tencent')).toBe('https://tokenhub.tencentmaas.com')
     expect(resolveVendorOpenAiBaseUrl('tencent')).toBe('https://tokenhub.tencentmaas.com/v1')
-    expect(resolveVendorBaseUrl('tencent', 'singapore')).toBe(
-      'https://tokenhub-intl.tencentmaas.com'
-    )
-    expect(resolveVendorOpenAiBaseUrl('tencent', 'singapore')).toBe(
-      'https://tokenhub-intl.tencentmaas.com/v1'
-    )
     expect(resolveVendorApiKeyUrl('tencent')).toBe(
       'https://console.cloud.tencent.com/tokenhub/apikey'
+    )
+    expect(resolveVendorBaseUrl('tencent', 'international')).toBe(
+      'https://tokenhub-intl.tencentcloudmaas.com'
+    )
+    expect(resolveVendorOpenAiBaseUrl('tencent', 'international')).toBe(
+      'https://tokenhub-intl.tencentcloudmaas.com/v1'
+    )
+    expect(resolveVendorApiKeyUrl('tencent', 'international')).toBe(
+      'https://console.tencentcloud.com/tokenhub/apikey'
     )
     expect(resolveVendorModelsUrl('tencent')).toBeUndefined()
     expect(defaultVendorModel('tencent')).toBe('hy4-preview')

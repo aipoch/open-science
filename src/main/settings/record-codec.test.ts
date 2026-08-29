@@ -74,7 +74,7 @@ describe('settings record codec', () => {
         type: 'official',
         name: 'Tencent TokenHub',
         vendorId: 'tencent',
-        region: 'singapore',
+        region: 'international',
         keyRef: 'encrypted:key',
         keyMask: 'sk-…abcd'
       })
@@ -83,7 +83,7 @@ describe('settings record codec', () => {
       type: 'official',
       name: 'Tencent TokenHub',
       vendorId: 'tencent',
-      region: 'singapore',
+      region: 'international',
       keyRef: 'encrypted:key',
       keyMask: 'sk-…abcd'
     })

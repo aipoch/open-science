@@ -133,7 +133,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
       id: 'tencent-tokenhub',
       type: 'official',
       vendorId: 'tencent',
-      region: 'singapore',
+      region: 'international',
       name: 'Tencent TokenHub'
     }
 
@@ -150,8 +150,8 @@ describe('ProviderRuntimeProjectionOwner', () => {
         frameworkCompatible: true,
         provider: {
           vendorId: 'tencent',
-          baseUrl: 'https://tokenhub-intl.tencentmaas.com',
-          openaiBaseUrl: 'https://tokenhub-intl.tencentmaas.com/v1',
+          baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
+          openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
           model: 'hy4-preview',
           contextWindow: 1_000_000,
           supportsImageInput: false

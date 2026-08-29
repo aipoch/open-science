@@ -627,26 +627,27 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     label: 'Tencent TokenHub',
     reasoningEffort: 'unsupported',
     // TokenHub exposes Anthropic Messages, OpenAI Chat Completions, and Responses from regional
-    // hosts. API keys are region-bound, so keep Guangzhou and Singapore as explicit choices rather
-    // than silently retrying a credential against the other site. The broader TokenHub catalog also
-    // contains non-language models, so this provider stays curated instead of enabling live refresh.
+    // hosts. China and International are separate account sites with distinct consoles, API keys,
+    // and domains, so keep the site explicit rather than retrying credentials across editions. The
+    // broader TokenHub catalog also contains non-language models, so this provider stays curated.
     apiEndpoints: ['anthropic', 'openai', 'responses'],
     anthropicApiKeyHeader: true,
     regions: [
       {
-        id: 'guangzhou',
+        id: 'china',
         label: 'China (Guangzhou)',
         baseUrl: 'https://tokenhub.tencentmaas.com',
-        openaiBaseUrl: 'https://tokenhub.tencentmaas.com/v1'
+        openaiBaseUrl: 'https://tokenhub.tencentmaas.com/v1',
+        apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/apikey'
       },
       {
-        id: 'singapore',
-        label: 'Singapore',
-        baseUrl: 'https://tokenhub-intl.tencentmaas.com',
-        openaiBaseUrl: 'https://tokenhub-intl.tencentmaas.com/v1'
+        id: 'international',
+        label: 'International (Singapore)',
+        baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
+        openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
+        apiKeyUrl: 'https://console.tencentcloud.com/tokenhub/apikey'
       }
     ],
-    apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/apikey',
     models: [{ id: 'hy4-preview', contextWindow: 1_000_000 }]
     // Hy4 preview is text-only in TokenHub's model matrix, so no `multimodal` rule.
   },
