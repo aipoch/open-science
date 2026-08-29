@@ -187,7 +187,14 @@ const launchOpenScience = async (
 
   if (process.platform === 'linux') {
     await application.evaluate(({ safeStorage }) => {
+      // Linux CI has no desktop keyring. Keep its isolated test cipher, but make this
+      // Playwright-controlled main process report a secure test backend so fake credentials can
+      // exercise the production Settings path without adding a production security bypass.
       safeStorage.setUsePlainTextEncryption(true)
+      Object.defineProperty(safeStorage, 'getSelectedStorageBackend', {
+        configurable: true,
+        value: () => 'gnome_libsecret'
+      })
     })
   }
 
