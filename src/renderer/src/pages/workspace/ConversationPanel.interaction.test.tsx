@@ -151,9 +151,11 @@ vi.mock('@/components/RemoteJobBadge', () => ({
 
 vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: ({
+    credentialPending,
     isResumingSession,
     pendingElicitations = []
   }: {
+    credentialPending?: boolean
     isResumingSession?: boolean
     pendingElicitations?: unknown[]
   }): React.JSX.Element => (
@@ -162,6 +164,7 @@ vi.mock('./WorkspaceMessageScroller', () => ({
         <span data-testid="resume-progress-indicator">Resuming session</span>
       ) : null}
       <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
+      <span data-testid="scroller-credential-pending">{String(credentialPending ?? false)}</span>
     </>
   )
 }))
@@ -1527,6 +1530,9 @@ describe('ConversationPanel composer intake', () => {
     expect(container.querySelector('[data-testid="credential-composer-scroll"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Resize credential panel"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="connector-credential-controls"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="scroller-credential-pending"]')?.textContent
+    ).toBe('true')
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     expectComposerCoveredByBlockingOverlay()

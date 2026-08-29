@@ -100,6 +100,7 @@ import type { AnnotationPort } from './annotations/annotation-port'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
+  credentialPending?: boolean
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: SendEditedMessage
@@ -388,6 +389,7 @@ const EditableWorkspaceMessageItem = (
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScrollerImpl = ({
   activeSession,
+  credentialPending = false,
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
@@ -915,7 +917,7 @@ const WorkspaceMessageScrollerImpl = ({
       )
     )
   }, [conversationItems])
-  const agentLoadingPhase = getAgentLoadingPhase(activeSession)
+  const agentLoadingPhase = getAgentLoadingPhase(activeSession, { credentialPending })
   const [terminalAnnouncement, setTerminalAnnouncement] = useState<
     TerminalAnnouncement | undefined
   >()
@@ -1851,6 +1853,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  (previous.credentialPending ?? false) === (next.credentialPending ?? false) &&
   previous.optimisticMessage === next.optimisticMessage &&
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&

@@ -199,13 +199,18 @@ const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAtta
 
 const renderScroller = async (
   session: ChatSession,
-  props: { isResumingSession?: boolean; optimisticMessage?: ChatMessage } = {}
+  props: {
+    credentialPending?: boolean
+    isResumingSession?: boolean
+    optimisticMessage?: ChatMessage
+  } = {}
 ): Promise<string> => {
   const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
 
   return renderToStaticMarkup(
     <WorkspaceMessageScroller
       activeSession={session}
+      credentialPending={props.credentialPending}
       isResumingSession={props.isResumingSession}
       optimisticMessage={props.optimisticMessage}
       onSendEditedMessage={vi.fn()}
@@ -1357,6 +1362,22 @@ describe('WorkspaceMessageScroller loading render', () => {
       ).resolves.toContain(`>${label}</span>`)
     }
   )
+
+  it('renders credential recovery as waiting for a response', async () => {
+    await expect(
+      renderScroller(
+        createSession({
+          status: 'running',
+          activeRun: {
+            promptMessageId: 'prompt-1',
+            startedAt: 1710000000100
+          },
+          messages: [createMessage({ id: 'prompt-1' })]
+        }),
+        { credentialPending: true }
+      )
+    ).resolves.toContain('>Waiting for your response</span>')
+  })
 
   it('renders the loading row for a follow-up prompt after a tool-calling turn', async () => {
     const html = await renderScroller(

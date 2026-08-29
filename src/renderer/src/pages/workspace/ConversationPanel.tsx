@@ -1028,6 +1028,7 @@ const ConversationPanel = ({
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
+              credentialPending={pendingCredentialRequest !== undefined}
               optimisticMessage={optimisticMessage}
               isResumingSession={isResuming}
               notebookReference={notebookReference}
