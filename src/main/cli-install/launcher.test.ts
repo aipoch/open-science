@@ -443,11 +443,23 @@ describe('buildWindowsPathCommand', () => {
     const script = args[args.length - 1]
     expect(script).toContain(`$binDir = '${binDir}'`)
     expect(script).toContain(`$pendingPath = '${join(binDir, '.open-science-path-pending')}'`)
+    expect(script).toContain(
+      `$pendingTempPath = '${join(binDir, '.open-science-path-pending.tmp')}'`
+    )
     expect(script).toContain(`$receiptPath = '${join(binDir, '.open-science-path-receipt')}'`)
     expect(script).toContain(`$receiptOwner = '${WINDOWS_PATH_RECEIPT_OWNER}'`)
     expect(script).toContain("TrimEnd([char[]]'\\/') -ieq $normalizedBinDir")
     expect(script).toContain("[Environment]::SetEnvironmentVariable('Path'")
+    expect(script).toContain(
+      '$stream = [IO.File]::Open($pendingTempPath, [IO.FileMode]::CreateNew,'
+    )
+    expect(script).toContain(
+      'if ([IO.File]::Exists($pendingTempPath)) { [IO.File]::Delete($pendingTempPath) }'
+    )
     expect(script.indexOf('$stream.Flush($true)')).toBeLessThan(
+      script.indexOf('[IO.File]::Move($pendingTempPath, $pendingPath)')
+    )
+    expect(script.indexOf('[IO.File]::Move($pendingTempPath, $pendingPath)')).toBeLessThan(
       script.lastIndexOf("[Environment]::SetEnvironmentVariable('Path', $next")
     )
     expect(script.lastIndexOf("[Environment]::SetEnvironmentVariable('Path', $next")).toBeLessThan(
