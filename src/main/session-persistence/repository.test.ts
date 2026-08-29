@@ -1,4 +1,14 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -18,10 +28,16 @@ import {
 } from './repository'
 
 let storageRoot: string | undefined
+let externalRoot: string | undefined
 
 const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-sessions-'))
   return storageRoot
+}
+
+const createExternalRoot = async (): Promise<string> => {
+  externalRoot = await mkdtemp(join(tmpdir(), 'open-science-sessions-external-'))
+  return externalRoot
 }
 
 const createSession = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSession => ({
@@ -62,6 +78,10 @@ afterEach(async () => {
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
+  }
+  if (externalRoot) {
+    await rm(externalRoot, { recursive: true, force: true })
+    externalRoot = undefined
   }
 })
 
@@ -1289,6 +1309,110 @@ describe('session persistence repository (per-session files)', () => {
     expect(readDirectoryEntries).toHaveBeenCalledWith(projectDir)
   })
 
+  it('rejects saving through a symbolic link at the active sessions root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await symlink(
+      outside,
+      join(root, 'sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const repository = new SessionRepository(root)
+
+    const saveRejected = await repository.saveSession(createSession()).then(
+      () => false,
+      () => true
+    )
+    const escaped = await readFile(join(outside, 'project-a', 'session-1.json'), 'utf8').then(
+      () => true,
+      () => false
+    )
+
+    expect({ saveRejected, escaped }).toEqual({ saveRejected: true, escaped: false })
+  })
+
+  it('rejects saving through a symbolic link at an active Project directory', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    await symlink(
+      outside,
+      join(root, 'sessions', 'project-a'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const repository = new SessionRepository(root)
+
+    const saveRejected = await repository.saveSession(createSession()).then(
+      () => false,
+      () => true
+    )
+    const escaped = await readFile(join(outside, 'session-1.json'), 'utf8').then(
+      () => true,
+      () => false
+    )
+
+    expect({ saveRejected, escaped }).toEqual({ saveRejected: true, escaped: false })
+  })
+
+  it('marks the active Session scan incomplete for a symbolic-link Project entry', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    await writeFile(
+      join(outside, 'session-1.json'),
+      JSON.stringify({ version: 2, session: createSession() }),
+      'utf8'
+    )
+    await symlink(
+      outside,
+      join(root, 'sessions', 'project-a'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const scan = await new SessionRepository(root).loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+  })
+
+  it('marks the active Session scan incomplete for a symbolic-link sessions root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await mkdir(join(outside, 'project-a'), { recursive: true })
+    await writeFile(
+      join(outside, 'project-a', 'session-1.json'),
+      JSON.stringify({ version: 2, session: createSession() }),
+      'utf8'
+    )
+    await symlink(
+      outside,
+      join(root, 'sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const scan = await new SessionRepository(root).loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+  })
+
+  it('marks the active Session scan incomplete for a symbolic-link JSON entry', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    const projectDir = join(root, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await symlink(
+      outside,
+      join(projectDir, 'session-1.json'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const scan = await new SessionRepository(root).loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+  })
+
   it('distinguishes an unreadable Session from an absent Session for terminal mutations', async () => {
     const root = await createStorageRoot()
     const session = createSession()
@@ -1935,7 +2059,9 @@ describe('session persistence repository (per-session files)', () => {
   })
 
   it('rejects ownership checks when the durable Session catalog is unreadable', async () => {
-    const repository = new SessionRepository(await createStorageRoot(), {
+    const root = await createStorageRoot()
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    const repository = new SessionRepository(root, {
       readDirectoryEntries: vi
         .fn()
         .mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }))

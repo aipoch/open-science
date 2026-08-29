@@ -164,6 +164,7 @@ type ProjectSessionLoadDiagnostics = {
 }
 
 type ProjectSessionDeletionState = 'live' | 'legacy-committed' | 'prepared' | 'absent'
+type FilesystemBoundaryState = 'missing' | 'valid' | 'invalid'
 
 class UnsupportedSessionFileError extends DurableJsonRecoveryBarrierError {}
 
@@ -333,6 +334,43 @@ class SessionRepository {
 
   private deletedProjectDir(projectId: string): string {
     return join(this.deletedSessionsDir, assertSafeSegment(projectId))
+  }
+
+  private async inspectDirectoryBoundary(path: string): Promise<FilesystemBoundaryState> {
+    try {
+      const metadata = await lstat(path)
+      return metadata.isDirectory() && !metadata.isSymbolicLink() ? 'valid' : 'invalid'
+    } catch (error) {
+      return isMissingFileError(error) ? 'missing' : 'invalid'
+    }
+  }
+
+  private async inspectFileBoundary(path: string): Promise<FilesystemBoundaryState> {
+    try {
+      const metadata = await lstat(path)
+      return metadata.isFile() && !metadata.isSymbolicLink() ? 'valid' : 'invalid'
+    } catch (error) {
+      return isMissingFileError(error) ? 'missing' : 'invalid'
+    }
+  }
+
+  private async inspectActiveProjectBoundary(projectId: string): Promise<FilesystemBoundaryState> {
+    const sessions = await this.inspectDirectoryBoundary(this.sessionsDir)
+    if (sessions !== 'valid') return sessions
+    return this.inspectDirectoryBoundary(this.projectDir(projectId))
+  }
+
+  private async ensureDirectoryBoundary(path: string, label: string): Promise<void> {
+    await mkdir(path, { recursive: true })
+    if ((await this.inspectDirectoryBoundary(path)) !== 'valid') {
+      throw new Error(`${label} is not a regular directory.`)
+    }
+  }
+
+  private async assertFileBoundary(path: string, label: string): Promise<void> {
+    if ((await this.inspectFileBoundary(path)) === 'invalid') {
+      throw new Error(`${label} is not a regular file.`)
+    }
   }
 
   // Loads every per-session file plus the manifest.
@@ -588,6 +626,7 @@ class SessionRepository {
     sessionId: string
   ): Promise<PersistedChatSession | undefined> {
     const safeProjectId = assertSafeSegment(projectId)
+    if ((await this.inspectActiveProjectBoundary(safeProjectId)) !== 'valid') return undefined
     return (
       await this.readSessionFile(
         this.sessionFilePath(safeProjectId, assertSafeSegment(sessionId)),
@@ -605,6 +644,9 @@ class SessionRepository {
   ): Promise<SessionLoadDiagnostic> {
     const safeProjectId = assertSafeSegment(projectId)
     const safeSessionId = assertSafeSegment(sessionId)
+    const projectBoundary = await this.inspectActiveProjectBoundary(safeProjectId)
+    if (projectBoundary === 'invalid') return { status: 'unreadable' }
+    if (projectBoundary === 'missing') return { status: 'missing' }
     const read = await this.readSessionFile(
       this.sessionFilePath(safeProjectId, safeSessionId),
       safeProjectId,
@@ -1018,6 +1060,7 @@ class SessionRepository {
 
   // Writes through a unique temp file, then atomically replaces the target session file.
   private async writeSession(session: PersistedChatSession): Promise<void> {
+    await this.ensureDirectoryBoundary(this.sessionsDir, 'Active Session root')
     await this.writeSessionToDirectory(session, this.projectDir(session.projectId))
   }
 
@@ -1037,9 +1080,12 @@ class SessionRepository {
     const filePath = join(projectDirectory, `${assertSafeSegment(session.id)}.json`)
     const sanitizedSession = sanitizeSessionUploadedAttachments(session)
 
-    await mkdir(projectDirectory, { recursive: true })
+    await this.ensureDirectoryBoundary(projectDirectory, 'Session Project directory')
+    await this.assertFileBoundary(filePath, 'Session file')
     await this.preservePreS2Backup(filePath, sanitizedSession)
     await this.preservePreSubagentModelBackup(filePath, sanitizedSession)
+    await this.ensureDirectoryBoundary(projectDirectory, 'Session Project directory')
+    await this.assertFileBoundary(filePath, 'Session file')
     await this.atomicWrite(filePath, createSessionFile(encodeSessionDataPaths(sanitizedSession)))
   }
 
@@ -1145,7 +1191,8 @@ class SessionRepository {
   }
 
   private async writeManifest(request: SaveSessionManifestRequest): Promise<void> {
-    await mkdir(this.sessionsDir, { recursive: true })
+    await this.ensureDirectoryBoundary(this.sessionsDir, 'Active Session root')
+    await this.assertFileBoundary(this.manifestPath, 'Session manifest')
     await this.atomicWrite(this.manifestPath, normalizeSessionManifest(request))
   }
 
@@ -1162,6 +1209,21 @@ class SessionRepository {
     manifest: PersistedSessionManifest
     warning?: SessionLoadWarning
   }> {
+    const sessionsBoundary = await this.inspectDirectoryBoundary(this.sessionsDir)
+    if (sessionsBoundary === 'missing') return { manifest: createEmptySessionManifest() }
+    if (
+      sessionsBoundary === 'invalid' ||
+      (await this.inspectFileBoundary(this.manifestPath)) === 'invalid'
+    ) {
+      return {
+        manifest: createEmptySessionManifest(),
+        warning: {
+          kind: 'manifest-unreadable',
+          fileName: MANIFEST_FILE,
+          recovered: false
+        }
+      }
+    }
     try {
       const read = await readDurableJsonFile(
         this.manifestPath,
@@ -1234,7 +1296,8 @@ class SessionRepository {
         missingDirectoryIsIncomplete: true,
         quarantineInvalidFiles: options.quarantineInvalidFiles,
         warnings,
-        scanMetrics: options.scanMetrics
+        scanMetrics: options.scanMetrics,
+        sessionsBoundaryValidated: true
       })
       sessions.push(...project.sessions)
       isComplete &&= project.isComplete
@@ -1251,9 +1314,16 @@ class SessionRepository {
       quarantineInvalidFiles?: boolean
       warnings?: SessionLoadWarning[]
       scanMetrics?: SessionScanMetrics
+      sessionsBoundaryValidated?: boolean
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
     const projectId = assertSafeSegment(projectIdValue)
+    if (!options.sessionsBoundaryValidated) {
+      const sessionsBoundary = await this.inspectDirectoryBoundary(this.sessionsDir)
+      if (sessionsBoundary !== 'valid') {
+        return { sessions: [], isComplete: sessionsBoundary === 'missing' }
+      }
+    }
     return this.readProjectSessionsAtDirectory(
       projectId,
       join(this.sessionsDir, projectId),
@@ -1272,6 +1342,10 @@ class SessionRepository {
       scanMetrics?: SessionScanMetrics
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
+    const directoryBoundary = await this.inspectDirectoryBoundary(projectDir)
+    if (directoryBoundary === 'invalid') {
+      return { sessions: [], isComplete: false }
+    }
     let recoveryComplete = true
     try {
       await recoverDurableJsonDirectory(
@@ -1289,7 +1363,8 @@ class SessionRepository {
       recoveryComplete = false
     }
     const sessionFiles = await this.listSessionFileNames(projectDir, {
-      missingIsIncomplete: options.missingDirectoryIsIncomplete
+      missingIsIncomplete: options.missingDirectoryIsIncomplete,
+      directoryBoundaryValidated: directoryBoundary === 'valid'
     })
     const sessions: PersistedChatSession[] = []
     const activeQuarantines = new Set(sessionFiles.quarantinedPrimaryFileNames)
@@ -1347,6 +1422,18 @@ class SessionRepository {
     wasQuarantined?: boolean
     warning?: SessionLoadWarning
   }> {
+    const initialBoundary = await this.inspectFileBoundary(filePath)
+    if (initialBoundary === 'invalid') {
+      return {
+        isComplete: false,
+        warning: {
+          kind: 'unreadable',
+          projectId,
+          fileName: basename(filePath),
+          recovered: false
+        }
+      }
+    }
     let read:
       | { status: 'found'; value: { session: PersistedChatSession; bytes: number } }
       | { status: 'missing' }
@@ -1421,6 +1508,17 @@ class SessionRepository {
         }
       }
     }
+    if (initialBoundary === 'missing' && (await this.inspectFileBoundary(filePath)) !== 'valid') {
+      return {
+        isComplete: false,
+        warning: {
+          kind: 'unreadable',
+          projectId,
+          fileName: basename(filePath),
+          recovered: false
+        }
+      }
+    }
     if (options.scanMetrics) options.scanMetrics.sessionBytes += read.value.bytes
     return { session: read.value.session, isComplete: true }
   }
@@ -1461,12 +1559,16 @@ class SessionRepository {
 
   // ENOENT is an authoritative empty directory; any other readdir failure is a partial scan.
   private async listDirectoryNames(dir: string): Promise<{ names: string[]; isComplete: boolean }> {
+    const boundary = await this.inspectDirectoryBoundary(dir)
+    if (boundary !== 'valid') {
+      return { names: [], isComplete: boundary === 'missing' }
+    }
     try {
       const entries = await this.dependencies.readDirectoryEntries(dir)
 
       return {
         names: entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
-        isComplete: true
+        isComplete: entries.every((entry) => entry.isDirectory() || entry.isFile())
       }
     } catch (error) {
       return { names: [], isComplete: isMissingFileError(error) }
@@ -1478,12 +1580,22 @@ class SessionRepository {
   // In-progress temp writes stay excluded and non-ENOENT directory failures disable reconciliation.
   private async listSessionFileNames(
     dir: string,
-    options: { missingIsIncomplete?: boolean } = {}
+    options: { missingIsIncomplete?: boolean; directoryBoundaryValidated?: boolean } = {}
   ): Promise<{
     names: string[]
     isComplete: boolean
     quarantinedPrimaryFileNames: string[]
   }> {
+    if (!options.directoryBoundaryValidated) {
+      const boundary = await this.inspectDirectoryBoundary(dir)
+      if (boundary !== 'valid') {
+        return {
+          names: [],
+          isComplete: boundary === 'missing' && !options.missingIsIncomplete,
+          quarantinedPrimaryFileNames: []
+        }
+      }
+    }
     try {
       const entries = await this.dependencies.readDirectoryEntries(dir)
 
@@ -1497,8 +1609,9 @@ class SessionRepository {
               !entry.name.includes('.invalid-')
           )
           .map((entry) => entry.name),
-        isComplete: true,
+        isComplete: entries.every((entry) => entry.isFile() || !entry.name.includes('.json')),
         quarantinedPrimaryFileNames: entries.flatMap((entry) => {
+          if (!entry.isFile()) return []
           const match = /^(.*\.json)\.invalid-\d+-\d+$/u.exec(entry.name)
           return match ? [match[1]] : []
         })
