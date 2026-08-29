@@ -718,7 +718,6 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         return { ok: false, error: 'migration cancelled', cancelled: true }
       }
 
-      const previousDataRoot = resolveDataRoot()
       let outcome: MigrationOutcome
       try {
         outcome = await commitDataRootSwitch(
@@ -729,6 +728,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
             // Prove the on-disk copy is the one this session staged (guards against a stale marker).
             expectedToken: staged.token,
             cleanupJournal,
+            cleanupRuntimeCache: (sourceRoot) => cleanupRuntimeCache(join(sourceRoot, 'runtime')),
             logger,
             diagnosticCorrelationId: staged.correlationId
           },
@@ -749,10 +749,6 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         activeStaged = undefined
         pointerCommitted = true
         quitOperation.markCommitted()
-        // A pending cleanup intent snapshots the old root exactly. Do not mutate its rebuildable
-        // caches after commit; startup recovery must validate and delete that unchanged snapshot.
-        const cleanupPending = await cleanupJournal.hasPending().catch(() => true)
-        if (!cleanupPending) cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
         // The pointer has committed. Let the migration-relaunch trigger own the non-cancellable quit;
         // leaving the preparation guard raised would make app-lifecycle reject its own relaunch.
         endMigrationCopy()

@@ -521,6 +521,7 @@ type MigrationCommitDeps = {
   ) => Promise<{ deleted: string[]; failed: { dir: string; error: string }[] }>
   validateProvenanceState?: (root: string) => Promise<void>
   cleanupJournal?: DataRootCleanupJournal
+  cleanupRuntimeCache?: (sourceRoot: string) => Promise<boolean> | boolean
 }
 
 // PHASE 1 (copy): validate the move parent -> interrupt running writers -> copy+verify the migrated
@@ -1000,6 +1001,18 @@ export const commitDataRootSwitch = async (
       const deleteResult = await doDeleteSources(deps.currentDataRoot, stagedDirsToDelete)
       cleanupFailureCount = deleteResult.failed.length
       if (cleanupFailureCount > 0) cleanupDegraded = true
+    } catch {
+      cleanupDegraded = true
+      cleanupFailureCount = 1
+    }
+  }
+
+  if (!cleanupDegraded && !cleanupDeferred && deps.cleanupRuntimeCache) {
+    try {
+      if (!(await deps.cleanupRuntimeCache(deps.currentDataRoot))) {
+        cleanupDegraded = true
+        cleanupFailureCount = 1
+      }
     } catch {
       cleanupDegraded = true
       cleanupFailureCount = 1

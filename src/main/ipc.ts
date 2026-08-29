@@ -324,6 +324,8 @@ import {
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { DataRootCleanupJournal } from './storage/data-root-cleanup'
 import { deleteSources } from './storage/data-migration'
+import { removeMicromambaCacheForRoot } from './notebook/micromamba-cache'
+import { removeNotebookWorkloadCache } from './notebook/notebook-workload-cache-paths'
 import { createDelegatedActivityProjection, detectActiveSessions } from './storage/detect-active'
 import {
   computeDefaultDataRoot,
@@ -496,7 +498,16 @@ const createApplicationModules = async (
   initDataRoot(storedSettings.dataRoot)
   const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
   try {
-    const cleanup = await dataRootCleanupJournal.recover(resolveDataRoot(), deleteSources)
+    const cleanup = await dataRootCleanupJournal.recover(
+      resolveDataRoot(),
+      deleteSources,
+      (sourceRoot) => {
+        const runtimeRoot = join(sourceRoot, 'runtime')
+        const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
+        const micromambaRemoved = removeMicromambaCacheForRoot(runtimeRoot)
+        return workloadRemoved && micromambaRemoved
+      }
+    )
     if (cleanup.pending) {
       storageLog.warn('old data root cleanup remains pending', {
         cleanupFailureCount: cleanup.failureCount

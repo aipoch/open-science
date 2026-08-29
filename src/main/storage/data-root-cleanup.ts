@@ -62,6 +62,7 @@ type DeleteSources = (
   source: string,
   dirs: string[]
 ) => Promise<{ deleted: string[]; failed: { dir: string; error: string }[] }>
+type CleanupRuntimeCache = (source: string) => Promise<boolean> | boolean
 type CleanupRecoveryResult = Readonly<{ pending: boolean; failureCount: number }>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -430,7 +431,8 @@ class DataRootCleanupJournal {
   private async recoverIntent(
     intent: DataRootCleanupIntent,
     currentDataRoot: string,
-    deleteSources: DeleteSources
+    deleteSources: DeleteSources,
+    cleanupRuntimeCache?: CleanupRuntimeCache
   ): Promise<number> {
     const committedIntent = await this.prepareCommittedIntent(intent, currentDataRoot)
     if (!committedIntent) {
@@ -499,6 +501,14 @@ class DataRootCleanupJournal {
       if (result.failed.length > 0) return result.failed.length
     }
 
+    if (cleanupRuntimeCache) {
+      try {
+        if (!(await cleanupRuntimeCache(source))) return 1
+      } catch {
+        return 1
+      }
+    }
+
     try {
       await removeMigrationMarker(committedIntent.target)
       await this.clear(committedIntent.token)
@@ -510,7 +520,8 @@ class DataRootCleanupJournal {
 
   async recover(
     currentDataRoot: string,
-    deleteSources: DeleteSources
+    deleteSources: DeleteSources,
+    cleanupRuntimeCache?: CleanupRuntimeCache
   ): Promise<CleanupRecoveryResult> {
     let journal: DataRootCleanupJournalFile | undefined
     try {
@@ -539,11 +550,21 @@ class DataRootCleanupJournal {
         return { pending: true, failureCount }
       }
       if (!currentIntent || dependsOnPendingTarget) continue
-      failureCount += await this.recoverIntent(currentIntent, currentDataRoot, deleteSources)
+      failureCount += await this.recoverIntent(
+        currentIntent,
+        currentDataRoot,
+        deleteSources,
+        cleanupRuntimeCache
+      )
     }
     return { pending: await this.hasPending(), failureCount }
   }
 }
 
 export { DATA_ROOT_CLEANUP_FILENAME, DataRootCleanupJournal }
-export type { CleanupRecoveryResult, DeleteSources, StageDataRootCleanupIntent }
+export type {
+  CleanupRecoveryResult,
+  CleanupRuntimeCache,
+  DeleteSources,
+  StageDataRootCleanupIntent
+}

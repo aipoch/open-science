@@ -1864,6 +1864,31 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('EACCES')
   })
 
+  it('keeps rebuildable cache cleanup failures durable for startup retry', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const cleanupJournal = new DataRootCleanupJournal(join(emptyParent, 'config'))
+    const cleanupRuntimeCache = vi.fn(async () => false)
+
+    const result = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot: vi.fn(async () => {}),
+        deleteSources: vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] })),
+        cleanupJournal,
+        cleanupRuntimeCache,
+        expectedToken: 'tok-test'
+      },
+      emptyParent
+    )
+
+    expect(result).toEqual(
+      expect.objectContaining({ ok: true, cleanupWarning: expect.any(String) })
+    )
+    expect(cleanupRuntimeCache).toHaveBeenCalledWith(currentDataRoot)
+    await expect(cleanupJournal.hasPending()).resolves.toBe(true)
+    await expect(readMigrationMarker(target)).resolves.toMatchObject({ token: 'tok-test' })
+  })
+
   it('defers deleting a root that still proves an earlier cleanup intent', async () => {
     const olderRoot = join(currentParent, 'older-root')
     await mkdir(join(olderRoot, 'artifacts'), { recursive: true })

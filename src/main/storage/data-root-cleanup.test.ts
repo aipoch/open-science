@@ -274,6 +274,36 @@ describe('DataRootCleanupJournal', () => {
     await expect(readMigrationMarker(target)).resolves.toMatchObject({ token: 'cleanup-token' })
   })
 
+  it('retries rebuildable runtime-cache cleanup before clearing the durable intent', async () => {
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts'],
+      createdAt: 1
+    })
+    await journal.markCommitted('cleanup-token')
+    const cleanupRuntimeCache = vi
+      .fn<(sourceRoot: string) => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+
+    await expect(journal.recover(target, deleteSources, cleanupRuntimeCache)).resolves.toEqual({
+      pending: true,
+      failureCount: 1
+    })
+    await expect(journal.hasPending()).resolves.toBe(true)
+    await expect(readMigrationMarker(target)).resolves.toMatchObject({ token: 'cleanup-token' })
+
+    await expect(journal.recover(target, deleteSources, cleanupRuntimeCache)).resolves.toEqual({
+      pending: false,
+      failureCount: 0
+    })
+    expect(cleanupRuntimeCache).toHaveBeenNthCalledWith(1, source)
+    expect(cleanupRuntimeCache).toHaveBeenNthCalledWith(2, source)
+  })
+
   it('removes the migration marker before clearing the durable cleanup intent', async () => {
     class MarkerOrderJournal extends DataRootCleanupJournal {
       override async clear(expectedToken?: string): Promise<void> {
