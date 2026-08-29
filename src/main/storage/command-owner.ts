@@ -749,7 +749,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         activeStaged = undefined
         pointerCommitted = true
         quitOperation.markCommitted()
-        cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
+        // A pending cleanup intent snapshots the old root exactly. Do not mutate its rebuildable
+        // caches after commit; startup recovery must validate and delete that unchanged snapshot.
+        const cleanupPending = await cleanupJournal.hasPending().catch(() => true)
+        if (!cleanupPending) cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
         // The pointer has committed. Let the migration-relaunch trigger own the non-cancellable quit;
         // leaving the preparation guard raised would make app-lifecycle reject its own relaunch.
         endMigrationCopy()

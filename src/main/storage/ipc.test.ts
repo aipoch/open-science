@@ -194,6 +194,28 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
   })
 
+  it('does not mutate the old runtime after cleanup is durably deferred', async () => {
+    class DeferredCleanupJournal extends DataRootCleanupJournal {
+      override async markCommitted(expectedToken: string): Promise<boolean> {
+        await super.markCommitted(expectedToken)
+        return true
+      }
+    }
+
+    initDataRoot(dataRoot)
+    const cleanupRuntimeCache = vi.fn(() => true)
+    const cleanupJournal = new DeferredCleanupJournal(join(currentParent, 'config'))
+    const deps = fakeDeps({ cleanupRuntimeCache, cleanupJournal })
+    const owner = createStorageCommandOwner(deps)
+
+    await expect(owner.migrate({ parent: targetParent })).resolves.toEqual({ ok: true })
+    cleanupRuntimeCache.mockClear()
+    await expect(owner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({ ok: true })
+
+    expect(cleanupRuntimeCache).not.toHaveBeenCalled()
+    await expect(cleanupJournal.hasPending()).resolves.toBe(true)
+  })
+
   it('refuses a recovered commit when the source changed after verification', async () => {
     initDataRoot(dataRoot)
     await seedVerifiedMarker(target, dataRoot)
