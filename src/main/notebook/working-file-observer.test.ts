@@ -74,7 +74,7 @@ describe('working-file evidence', () => {
       ],
       fileEvidence: {
         state: 'partial',
-        storageKey: 'file-evidence/runs/run-created/evidence.json',
+        storageKey: 'file-evidence/run-run-created/evidence.json',
         relationCount: 1,
         generationCount: 1,
         reasonCodes: expect.arrayContaining([
@@ -88,7 +88,7 @@ describe('working-file evidence', () => {
     })
 
     const evidenceText = await readFile(
-      join(sessionRoot, 'file-evidence', 'runs', 'run-created', 'evidence.json'),
+      join(sessionRoot, 'file-evidence', 'run-run-created', 'evidence.json'),
       'utf8'
     )
     expect(createHash('sha256').update(evidenceText).digest('hex')).toBe(
@@ -146,10 +146,7 @@ describe('working-file evidence', () => {
       reasonCodes: expect.arrayContaining(['generation-budget-exceeded'])
     })
     const evidence = JSON.parse(
-      await readFile(
-        join(sessionRoot, 'file-evidence', 'runs', 'run-changes', 'evidence.json'),
-        'utf8'
-      )
+      await readFile(join(sessionRoot, 'file-evidence', 'run-run-changes', 'evidence.json'), 'utf8')
     ) as { relations: Array<{ relation: string; relativePath: string; reasonCode?: string }> }
     expect(evidence.relations).toEqual([
       {
@@ -199,7 +196,7 @@ describe('working-file evidence', () => {
 
     const generationContent = async (runId: string): Promise<string> => {
       const evidence = JSON.parse(
-        await readFile(join(sessionRoot, 'file-evidence', 'runs', runId, 'evidence.json'), 'utf8')
+        await readFile(join(sessionRoot, 'file-evidence', `run-${runId}`, 'evidence.json'), 'utf8')
       ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
       return readFile(
         join(sessionRoot, ...evidence.relations[0].generation.contentStorageKey.split('/')),
@@ -263,7 +260,7 @@ describe('working-file evidence', () => {
       { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-persist-failure' },
       {
         watchDirectory: watcherUnavailable,
-        writeEvidenceFile: async () => {
+        runEvidenceWorker: async () => {
           throw new Error('simulated sidecar failure')
         }
       }
@@ -283,14 +280,9 @@ describe('working-file evidence', () => {
     expect(result.workingFiles[0]).not.toHaveProperty('generationId')
     expect(result.workingFiles[0]).not.toHaveProperty('checksum')
     await expect(
-      readFile(join(sessionRoot, 'file-evidence', 'runs', 'run-persist-failure', 'evidence.json'))
+      readFile(join(sessionRoot, 'file-evidence', 'run-run-persist-failure', 'evidence.json'))
     ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      readdir(join(sessionRoot, 'file-evidence', 'staging')).catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-        throw error
-      })
-    ).resolves.toEqual([])
+    await expect(readdir(join(sessionRoot, 'file-evidence'))).resolves.toEqual([])
   })
 
   it('rejects a user-created file-evidence symlink without writing through it', async () => {
@@ -314,13 +306,56 @@ describe('working-file evidence', () => {
     await expect(readdir(outsideRoot)).resolves.toEqual([])
   })
 
+  it('rejects evidence when the bound root path is replaced during publication', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const outsideRoot = join(storageRoot as string, 'outside-race')
+    const displacedRoot = join(storageRoot as string, 'displaced-evidence')
+    await mkdir(outsideRoot)
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-replaced-root' },
+      {
+        watchDirectory: watcherUnavailable,
+        runEvidenceWorker: async (evidenceRoot) => {
+          await rename(evidenceRoot, displacedRoot)
+          await symlink(outsideRoot, evidenceRoot, 'dir')
+          return {
+            ok: true,
+            generations: [],
+            fileEvidence: {
+              schemaVersion: 1,
+              evidenceId: 'notebook-file-evidence-run-replaced-root',
+              state: 'partial',
+              checksum: 'a'.repeat(64),
+              storageKey: 'file-evidence/run-run-replaced-root/evidence.json',
+              relationCount: 1,
+              generationCount: 0,
+              managedRootsFinalState: 'partial',
+              fileReads: 'unavailable',
+              externalPaths: 'unavailable',
+              writerAttribution: 'unavailable',
+              reasonCodes: []
+            }
+          }
+        }
+      }
+    )
+    await writeFile(join(dataRoot, 'result.csv'), 'must not be published')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+    await expect(readdir(outsideRoot)).resolves.toEqual([])
+  })
+
   it('reconciles crash-orphaned staging and unpublished run directories', async () => {
     const { sessionRoot } = await createRoots()
-    const stagingRoot = join(sessionRoot, 'file-evidence', 'staging')
-    const runsRoot = join(sessionRoot, 'file-evidence', 'runs')
-    await mkdir(join(stagingRoot, 'run-crashed-staging'), { recursive: true })
-    await mkdir(join(runsRoot, 'run-unpublished'), { recursive: true })
-    await mkdir(join(runsRoot, 'run-referenced'), { recursive: true })
+    const evidenceRoot = join(sessionRoot, 'file-evidence')
+    await mkdir(join(evidenceRoot, 'staging-run-crashed-staging'), { recursive: true })
+    await mkdir(join(evidenceRoot, 'run-run-unpublished'), { recursive: true })
+    await mkdir(join(evidenceRoot, 'run-run-referenced'), { recursive: true })
 
     const result = await reconcileWorkingFileEvidence(sessionRoot, [
       {
@@ -330,7 +365,7 @@ describe('working-file evidence', () => {
           evidenceId: 'notebook-file-evidence-run-referenced',
           state: 'partial',
           checksum: 'checksum',
-          storageKey: 'file-evidence/runs/run-referenced/evidence.json',
+          storageKey: 'file-evidence/run-run-referenced/evidence.json',
           relationCount: 0,
           generationCount: 0,
           managedRootsFinalState: 'partial',
@@ -343,18 +378,15 @@ describe('working-file evidence', () => {
     ])
 
     expect(result).toEqual({ removedStagingEntries: 1, removedRunEntries: 1 })
-    await expect(readdir(stagingRoot)).resolves.toEqual([])
-    await expect(readdir(runsRoot)).resolves.toEqual(['run-referenced'])
+    await expect(readdir(evidenceRoot)).resolves.toEqual(['run-run-referenced'])
   })
 
   it('refuses crash cleanup through a replaced evidence directory', async () => {
     const { sessionRoot } = await createRoots()
-    const evidenceRoot = join(sessionRoot, 'file-evidence')
     const outsideRoot = join(storageRoot as string, 'outside-cleanup')
-    await mkdir(evidenceRoot)
     await mkdir(outsideRoot)
     await writeFile(join(outsideRoot, 'keep.txt'), 'keep')
-    await symlink(outsideRoot, join(evidenceRoot, 'runs'), 'dir')
+    await symlink(outsideRoot, join(sessionRoot, 'file-evidence'), 'dir')
 
     await expect(reconcileWorkingFileEvidence(sessionRoot, [])).rejects.toThrow(
       /Unsafe Notebook file-evidence directory/
@@ -385,32 +417,30 @@ describe('working-file evidence', () => {
       reasonCodes: expect.arrayContaining(['generation-freeze-failed'])
     })
     await expect(
-      readdir(join(sessionRoot, 'file-evidence', 'runs', 'run-cancelled-freeze', 'blobs'))
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+      readdir(join(sessionRoot, 'file-evidence', 'run-run-cancelled-freeze'))
+    ).resolves.toEqual(['evidence.json'])
   })
 
-  it('flushes staged generation bytes before publishing the run-owned directory', async () => {
+  it('flushes generation bytes before publishing the run-owned directory', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
-    let flushedContent: string | undefined
     const observation = await startWorkingFileObservation(
       { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-flushed' },
-      {
-        watchDirectory: watcherUnavailable,
-        syncFile: async (path) => {
-          flushedContent = await readFile(path, 'utf8')
-        },
-        publishDirectory: async (source, destination) => {
-          expect(flushedContent).toBe('durable bytes')
-          await rename(source, destination)
-        }
-      }
+      { watchDirectory: watcherUnavailable }
     )
     await writeFile(join(dataRoot, 'result.csv'), 'durable bytes')
 
     const result = await observation.finish()
 
     expect(result.fileEvidence).toMatchObject({ state: 'partial', generationCount: 1 })
-    expect(flushedContent).toBe('durable bytes')
+    const evidence = JSON.parse(
+      await readFile(join(sessionRoot, ...result.fileEvidence.storageKey!.split('/')), 'utf8')
+    ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
+    await expect(
+      readFile(
+        join(sessionRoot, ...evidence.relations[0].generation.contentStorageKey.split('/')),
+        'utf8'
+      )
+    ).resolves.toBe('durable bytes')
   })
 
   it('does not turn unobserved reads, transient files, or external writes into false evidence', async () => {
