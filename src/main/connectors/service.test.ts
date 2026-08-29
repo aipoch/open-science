@@ -1849,7 +1849,7 @@ describe('ConnectorService specialist capability gate', () => {
         autoAllowIds: [] as string[],
         openAlexApiKeyRef: undefined as string | undefined
       }
-      let current: SpecialistProfileView | undefined = specialist()
+      let current: SpecialistView | undefined = specialist()
       let settleCredential: ((configured: boolean) => void) | undefined
       const fetchImpl = vi.fn()
       const requestCredential = vi.fn(
@@ -1894,13 +1894,13 @@ describe('ConnectorService specialist capability gate', () => {
       openAlexApiKeyRef: undefined as string | undefined
     }
     const current = specialist()
-    let settleAccessRecheck: ((profile: SpecialistProfileView) => void) | undefined
+    let settleAccessRecheck: ((profile: SpecialistView) => void) | undefined
     const resolveSpecialistProfile = vi
       .fn()
       .mockResolvedValueOnce(current)
       .mockImplementationOnce(
         () =>
-          new Promise<SpecialistProfileView>((resolve) => {
+          new Promise<SpecialistView>((resolve) => {
             settleAccessRecheck = resolve
           })
       )
