@@ -266,7 +266,8 @@ describe('storage IPC handlers', () => {
     initDataRoot(dataRoot)
     await seedVerifiedMarker(target, dataRoot)
     const pauseDataRootWriters = vi.fn().mockRejectedValue(new Error('busy'))
-    const deps = fakeDeps({ pauseDataRootWriters })
+    const notifyDataRootHandoffAborted = vi.fn()
+    const deps = { ...fakeDeps({ pauseDataRootWriters }), notifyDataRootHandoffAborted }
     const restartedOwner = createStorageCommandOwner(deps)
 
     await expect(restartedOwner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
@@ -277,6 +278,7 @@ describe('storage IPC handlers', () => {
     expect(await readMigrationMarker(target)).toMatchObject({ status: 'verified' })
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(isMigrationPending()).toBe(false)
+    expect(notifyDataRootHandoffAborted).toHaveBeenCalledOnce()
   })
 
   it('blocks recovered commit while delegated work is still running', async () => {
@@ -1930,6 +1932,46 @@ describe('storage IPC handlers', () => {
 
     await expect(handoff).resolves.toEqual({ ok: true })
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledOnce()
+  })
+
+  it('restores renderer preparation when a direct handoff fails after durability', async () => {
+    initDataRoot(dataRoot)
+    const notifyDataRootHandoffAborted = vi.fn()
+    const deps = {
+      ...fakeDeps({
+        pauseDataRootWriters: vi.fn().mockRejectedValue(new Error('busy')),
+        classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+      }),
+      notifyDataRootHandoffAborted
+    }
+    const owner = createStorageCommandOwner(deps)
+
+    await expect(owner.setDataRootAndRelaunch({ parent: targetParent })).resolves.toMatchObject({
+      ok: false
+    })
+
+    expect(notifyDataRootHandoffAborted).toHaveBeenCalledOnce()
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+  })
+
+  it('restores renderer preparation when a migration copy fails after durability', async () => {
+    initDataRoot(dataRoot)
+    const notifyDataRootHandoffAborted = vi.fn()
+    const deps = {
+      ...fakeDeps({
+        runDataRootMigration: vi.fn().mockResolvedValue({ ok: false, error: 'copy failed' })
+      }),
+      notifyDataRootHandoffAborted
+    }
+    const owner = createStorageCommandOwner(deps)
+
+    await expect(owner.migrate({ parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'copy failed'
+    })
+
+    expect(notifyDataRootHandoffAborted).toHaveBeenCalledOnce()
+    expect(isMigrationPending()).toBe(false)
   })
 
   it.each([

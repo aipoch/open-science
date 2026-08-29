@@ -502,6 +502,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
                 notifyRendererSessionPersistenceFlushAborted(getWindow)
                 return false
               },
+              notifyRendererDurabilityAborted: () =>
+                notifyRendererSessionPersistenceFlushAborted(() => mainWindowGetterBox.current?.()),
               onAppIconVariantChanged: (variant) => {
                 appIconControllerBox.current?.setVariant(variant)
                 // Keep the tray glyph on the same variant as the window icon. No-op before the lifecycle

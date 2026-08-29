@@ -19,13 +19,22 @@ export type InstallReadiness = {
 // never starts while a background process still holds app files open.
 export type InstallGate = () => Promise<InstallReadiness>
 
+const restoreAfterFinalRefusal = (restore: () => void): void => {
+  try {
+    restore()
+  } catch {
+    // Refusal remains authoritative if the best-effort renderer wake-up races a disappearing window.
+  }
+}
+
 // Checks active research before teardown and once more at the final install boundary. Kept
 // independent of Electron/runtime types so composition tests can prove both admission races close.
 export const createActiveResearchSafeInstallGate =
   (
     detectBlockers: () => UpdateBlocker[],
     runTeardownGate: InstallGate,
-    isExclusiveHandoffActive: () => boolean = () => false
+    isExclusiveHandoffActive: () => boolean = () => false,
+    onFinalRefusal: () => void = () => undefined
   ): InstallGate =>
   async () => {
     if (isExclusiveHandoffActive()) return { completed: false, reaped: false }
@@ -34,12 +43,22 @@ export const createActiveResearchSafeInstallGate =
 
     const readiness = await runTeardownGate()
     if (!readiness.completed || !readiness.reaped) return readiness
-    if (isExclusiveHandoffActive()) return { completed: false, reaped: false }
+    if (isExclusiveHandoffActive()) {
+      restoreAfterFinalRefusal(onFinalRefusal)
+      return { completed: false, reaped: false }
+    }
     const finalBlockedBy = [...new Set(detectBlockers())]
-    return finalBlockedBy.length > 0
-      ? { completed: false, reaped: false, blockedBy: finalBlockedBy }
-      : readiness
+    if (finalBlockedBy.length === 0) return readiness
+    restoreAfterFinalRefusal(onFinalRefusal)
+    return { completed: false, reaped: false, blockedBy: finalBlockedBy }
   }
+
+// Keeps the data-root teardown composition independently testable from the full IPC graph. Direct
+// root switches have no confirmation step, so every producer must be absent before teardown starts.
+export const createDataRootResearchSafeInstallGate = (
+  detectBlockers: () => UpdateBlocker[],
+  runTeardownGate: InstallGate
+): InstallGate => createActiveResearchSafeInstallGate(detectBlockers, runTeardownGate)
 
 // Confirms renderer-owned state is durable only after backend teardown has stopped producing runtime
 // events. A refused durability check leaves the installer untouched, while the non-latching teardown

@@ -110,6 +110,7 @@ type StorageCommandOwnerDeps = {
     response: SessionPersistenceFlushResponse,
     lifecycleClientId: string
   ) => void
+  notifyDataRootHandoffAborted?: () => void
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -168,6 +169,14 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     return {
       ok: false,
       error: 'Could not prepare the app to switch data locations safely. Please try again.'
+    }
+  }
+
+  const notifyDataRootHandoffAborted = (): void => {
+    try {
+      deps.notifyDataRootHandoffAborted?.()
+    } catch (error) {
+      logger.warn('data root handoff abort notification failed', diagnosticErrorFields(error))
     }
   }
 
@@ -317,6 +326,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     // at the same boundary so an ordinary quit cannot start while validation/preparation is awaiting.
     activeMigration = controller
     const quitOperation = beginMigrationPreparation(controller)
+    let rendererPrepared = false
+    let handoffPending = false
     try {
       // Reject stale/invalid requests before stopping any producer. The migration engine validates
       // again at its own filesystem boundary, but ordinary invalid targets must have no teardown side
@@ -333,6 +344,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       }
 
       const preparationFailure = await prepareDataRootHandoff(handoffTarget)
+      rendererPrepared = preparationFailure === undefined
       if (controller.signal.aborted) {
         return { ok: false, error: 'migration cancelled', cancelled: true }
       }
@@ -389,6 +401,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         // A failed/cancelled copy leaves the app on the old root, so clear the write-gate now.
         clearMigrationPending()
         activeStaged = undefined
+      } else {
+        handoffPending = true
       }
       return result
     } catch (err) {
@@ -403,6 +417,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       // Relax the quit guard now the copy is done; `pending` (write-gate) persists on success.
       endMigrationCopy()
       quitOperation.finish()
+      if (rendererPrepared && !handoffPending) notifyDataRootHandoffAborted()
     }
   }
 
@@ -464,6 +479,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       return { ok: false, error: toErrorMessage(err) }
     }
     resolutionInProgress = true
+    let handoffAbandoned = false
     try {
       const staged = activeStaged
         ? samePath(activeStaged.target, target)
@@ -475,6 +491,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         return { ok: false, error: 'No matching staged data copy was found.' }
       }
       activeStaged = staged
+      handoffAbandoned = true
       const result = await discardStagedCopyImpl(
         {
           currentDataRoot: resolveDataRoot(),
@@ -502,6 +519,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       return { ok: true, cleanupWarning: 'The unused data copy could not be removed.' }
     } finally {
       resolutionInProgress = false
+      if (handoffAbandoned) notifyDataRootHandoffAborted()
     }
   }
 
@@ -565,6 +583,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     resolutionInProgress = true
     const quitOperation = beginMigrationPreparation()
     const { signal } = quitOperation
+    let rendererPrepared = false
+    let pointerCommitted = false
     try {
       const staged = activeStaged
         ? samePath(activeStaged.target, target)
@@ -605,6 +625,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       }
 
       const preparationFailure = await prepareDataRootHandoff(handoffTarget)
+      rendererPrepared = preparationFailure === undefined
       if (signal.aborted) {
         endMigrationCopy()
         resolutionInProgress = false
@@ -714,6 +735,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         // On success the write-gate stays set through relaunch: the fresh process starts with
         // pending=false, so writes naturally resume against the now-live new root.
         activeStaged = undefined
+        pointerCommitted = true
         quitOperation.markCommitted()
         cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
         // The pointer has committed. Let the migration-relaunch trigger own the non-cancellable quit;
@@ -738,6 +760,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       return outcome
     } finally {
       quitOperation.finish()
+      if (rendererPrepared && !pointerCommitted) notifyDataRootHandoffAborted()
     }
   }
 
@@ -814,6 +837,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     const { signal } = quitOperation
     let pointerCommitted = false
     let writeGateHeld = false
+    let rendererPrepared = false
     operation.phase('classify-target')
     try {
       const classification = await classifyDataRootImpl(request.parent, resolveDataRoot())
@@ -851,6 +875,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         })
         return preparationFailure
       }
+      rendererPrepared = true
 
       // Preparation stops current producers and flushes renderer state. Raise the shared write gate
       // synchronously when that await resolves, before mkdir or settings persistence can yield and let
@@ -923,6 +948,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     } finally {
       quitOperation.finish()
       if (!pointerCommitted) {
+        if (rendererPrepared) notifyDataRootHandoffAborted()
         if (writeGateHeld) clearMigrationPending()
         else endMigrationCopy()
         resolutionInProgress = false

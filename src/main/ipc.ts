@@ -335,6 +335,7 @@ import { createUpdateCommandOwner, registerUpdateIpcHandlers } from './update/ip
 import { createUpdateStrategy } from './update/create-strategy'
 import {
   createActiveResearchSafeInstallGate,
+  createDataRootResearchSafeInstallGate,
   createDurableInstallGate,
   type InstallReadiness
 } from './update/strategy'
@@ -378,6 +379,7 @@ type IpcRegistrationOptions = {
     policy?: RendererSessionPersistenceFlushPolicy,
     surface?: RendererSessionPersistenceSurface
   ) => Promise<boolean>
+  notifyRendererDurabilityAborted?: () => void
   // Retained as an explicit startup marker while the app owns the only handoff composition.
   handoffRuntime?: 'production'
 }
@@ -424,7 +426,8 @@ const createApplicationModules = async (
     translate = englishNativeTranslator,
     onAppIconVariantChanged,
     listAppIconPreviews,
-    confirmRendererDurability = () => Promise.resolve(true)
+    confirmRendererDurability = () => Promise.resolve(true),
+    notifyRendererDurabilityAborted = () => undefined
   }: IpcRegistrationOptions,
   modules: ApplicationModuleBuilder,
   composition: DiagnosticOperation
@@ -2689,17 +2692,25 @@ const createApplicationModules = async (
     () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
     () => confirmRendererDurability()
   )
-  // Migration confirmation has no reviewer row, so reviewer teardown is never implicitly
-  // authorized. Check at the teardown boundary as well as in the storage owner: Promise.all starts
-  // every shutdown step before yielding, closing the command-to-teardown race.
-  const reviewerSafeDataRootTeardownGate = createActiveResearchSafeInstallGate(
-    () => (reviewerModelRuntimeShutdown?.hasActiveWork() ? ['reviewer'] : []),
+  const detectResearchBlockers = (): UpdateBlocker[] => {
+    const blockers: UpdateBlocker[] = detectActiveSessions({
+      runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+      delegated: { getActiveDelegatedSessions },
+      notebook: notebookService
+    }).map((session) => session.kind)
+    if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
+    return blockers
+  }
+  // Keep the data-root admission policy at a pure seam: Promise.all starts every shutdown step
+  // before yielding, so the synchronous check immediately before it owns the teardown boundary.
+  const researchSafeDataRootTeardownGate = createDataRootResearchSafeInstallGate(
+    detectResearchBlockers,
     () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
   )
   const durableDataRootHandoffGate = (
     target: RendererSessionPersistenceTarget
   ): Promise<InstallReadiness> =>
-    createDurableInstallGate(reviewerSafeDataRootTeardownGate, async () => {
+    createDurableInstallGate(researchSafeDataRootTeardownGate, async () => {
       if (target.surface !== 'web-renderer') {
         return confirmRendererDurability('data-root-handoff', target.surface)
       }
@@ -2714,17 +2725,10 @@ const createApplicationModules = async (
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
     installGate: createActiveResearchSafeInstallGate(
-      () => {
-        const blockers: UpdateBlocker[] = detectActiveSessions({
-          runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
-          delegated: { getActiveDelegatedSessions },
-          notebook: notebookService
-        }).map((session) => session.kind)
-        if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
-        return blockers
-      },
+      detectResearchBlockers,
       durableBackendHandoffGate,
-      () => isMigrationInProgress() || isMigrationPending()
+      () => isMigrationInProgress() || isMigrationPending(),
+      notifyRendererDurabilityAborted
     )
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
@@ -3212,6 +3216,13 @@ const createApplicationModules = async (
     settingsService,
     micromambaRunner,
     acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
+    notifyDataRootHandoffAborted: () => {
+      try {
+        notifyRendererDurabilityAborted()
+      } finally {
+        webSessionPersistenceFlush.notifyAborted()
+      }
+    },
     prepareDataRootHandoff: async (target) => {
       const readiness = await durableDataRootHandoffGate(target)
       return readiness.completed && readiness.reaped
