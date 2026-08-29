@@ -186,40 +186,70 @@ const defaultRunCommand: CommandRunner = (command, args) => {
   return result.status === 0
 }
 
+const WINDOWS_PATH_RECEIPT_NAME = '.open-science-path-receipt'
+const WINDOWS_PATH_RECEIPT_CONTENT = 'Open Science Windows PATH entry. Managed by the app.'
+// The receipt is written only after the app appends the directory. Without it, uninstall preserves
+// matching PATH entries so legacy installs and user-managed entries are never claimed retroactively.
+const windowsPathReceiptPath = (binDir: string): string => join(binDir, WINDOWS_PATH_RECEIPT_NAME)
+const powershellLiteral = (value: string): string => `'${value.replace(/'/g, "''")}'`
+
 // Builds the PowerShell invocation that appends binDir to the persistent per-user PATH
 // (HKCU\Environment), without an admin prompt. The path is embedded as a single-quoted PowerShell
 // literal (single quotes doubled) rather than passed via `-args`: under `-Command`, trailing tokens
 // like `-args <dir>` are unreliable and can leave $args empty, writing the wrong value into PATH.
 export const buildWindowsPathCommand = (binDir: string): { command: string; args: string[] } => {
-  const literal = `'${binDir.replace(/'/g, "''")}'`
+  const receiptPath = windowsPathReceiptPath(binDir)
   const script = [
-    `$binDir = ${literal}`,
+    "$ErrorActionPreference = 'Stop'",
+    `$binDir = ${powershellLiteral(binDir)}`,
+    `$receiptPath = ${powershellLiteral(receiptPath)}`,
+    `$receiptContent = ${powershellLiteral(WINDOWS_PATH_RECEIPT_CONTENT)}`,
     "$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
     "$parts = @($current -split ';' | Where-Object { $_ -ne '' })",
     "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
     "if (-not ($parts | Where-Object { $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir })) {",
+    '  $hasReceipt = Test-Path -LiteralPath $receiptPath',
+    '  if ($hasReceipt) {',
+    '    if ([IO.File]::ReadAllText($receiptPath) -ne $receiptContent) {',
+    "      throw 'The PATH ownership receipt is not managed by Open Science.'",
+    '    }',
+    '  }',
     "  $next = (@($parts) + $binDir) -join ';'",
     "  [Environment]::SetEnvironmentVariable('Path', $next, 'User')",
+    '  if (-not $hasReceipt) {',
+    '    try {',
+    '      [IO.File]::WriteAllText($receiptPath, $receiptContent)',
+    '    } catch {',
+    "      try { [Environment]::SetEnvironmentVariable('Path', $current, 'User') } catch {}",
+    '      throw',
+    '    }',
+    '  }',
     '}'
   ].join('\n')
   return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
 }
 
 const buildWindowsPathRemovalCommand = (binDir: string): { command: string; args: string[] } => {
-  const literal = `'${binDir.replace(/'/g, "''")}'`
   const script = [
-    `$binDir = ${literal}`,
+    "$ErrorActionPreference = 'Stop'",
+    `$binDir = ${powershellLiteral(binDir)}`,
     "$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
     "$parts = @($current -split ';' | Where-Object { $_ -ne '' })",
     "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
-    "$nextParts = @($parts | Where-Object { $_.TrimEnd([char[]]'\\/') -ine $normalizedBinDir })",
-    'if ($nextParts.Count -ne $parts.Count) {',
+    '$removeIndex = -1',
+    'for ($i = $parts.Count - 1; $i -ge 0; $i--) {',
+    "  if ($parts[$i].TrimEnd([char[]]'\\/') -ieq $normalizedBinDir) {",
+    '    $removeIndex = $i',
+    '    break',
+    '  }',
+    '}',
+    'if ($removeIndex -ge 0) {',
+    '  $nextParts = @(for ($i = 0; $i -lt $parts.Count; $i++) {',
+    '    if ($i -ne $removeIndex) { $parts[$i] }',
+    '  })',
     "  $next = $nextParts -join ';'",
     "  [Environment]::SetEnvironmentVariable('Path', $next, 'User')",
-    '}',
-    "$remaining = @([Environment]::GetEnvironmentVariable('Path', 'User') -split ';' |",
-    "  Where-Object { $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir })",
-    'if ($remaining.Count -gt 0) { exit 1 }'
+    '}'
   ].join('\n')
   return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
 }
@@ -310,6 +340,35 @@ const readCliLauncher = async (target: string): Promise<string | undefined> => {
   } finally {
     await opened.handle.close()
   }
+}
+
+const openManagedWindowsPathReceipt = async (
+  binDir: string
+): Promise<OpenCliLauncher | undefined> => {
+  const receiptPath = windowsPathReceiptPath(binDir)
+  let opened: OpenCliLauncher | undefined
+  try {
+    opened = await openStableCliLauncher(receiptPath, constants.O_RDONLY)
+  } catch (error) {
+    if (error instanceof UnmanagedCliLauncherError) return undefined
+    throw error
+  }
+  if (opened === undefined) return undefined
+
+  try {
+    const content = await opened.handle.readFile('utf8')
+    if (
+      content === WINDOWS_PATH_RECEIPT_CONTENT &&
+      (await isOpenCliLauncherCurrent(receiptPath, opened.stats))
+    ) {
+      return opened
+    }
+  } catch (error) {
+    await opened.handle.close()
+    throw error
+  }
+  await opened.handle.close()
+  return undefined
 }
 
 const isManagedCliLauncher = (content: string): boolean => {
@@ -436,6 +495,13 @@ export const installCliLauncher = async (
   let pathHint: string | undefined
   if (!onPath) {
     if (env.platform === 'win32') {
+      const receiptPath = windowsPathReceiptPath(plan.binDir)
+      if (
+        (await statCliLauncher(receiptPath)) !== undefined &&
+        (await readCliLauncher(receiptPath)) !== WINDOWS_PATH_RECEIPT_CONTENT
+      ) {
+        refuseUnmanagedCliLauncher(receiptPath)
+      }
       const { command, args } = buildWindowsPathCommand(plan.binDir)
       onPath = runCommand(command, args)
       pathHint = onPath
@@ -455,6 +521,7 @@ export const uninstallCliLauncher = async (
   const plan = planCliLauncher(env)
   const opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
   if (opened !== undefined) {
+    let pathReceipt: OpenCliLauncher | undefined
     try {
       const existing = await opened.handle.readFile('utf8')
       if (!isManagedCliLauncher(existing)) refuseUnmanagedCliLauncher(plan.target)
@@ -462,12 +529,31 @@ export const uninstallCliLauncher = async (
         refuseUnmanagedCliLauncher(plan.target)
       }
       if (env.platform === 'win32') {
-        const { command, args } = buildWindowsPathRemovalCommand(plan.binDir)
-        if (!runCommand(command, args)) {
-          throw new Error(`Could not remove ${plan.binDir} from the user PATH.`)
+        pathReceipt = await openManagedWindowsPathReceipt(plan.binDir)
+        if (pathReceipt !== undefined) {
+          const receiptPath = windowsPathReceiptPath(plan.binDir)
+          const receiptStats = pathReceipt.stats
+          const { command, args } = buildWindowsPathRemovalCommand(plan.binDir)
+          if (!runCommand(command, args)) {
+            throw new Error(`Could not remove ${plan.binDir} from the user PATH.`)
+          }
+          if (!(await isOpenCliLauncherCurrent(receiptPath, pathReceipt.stats))) {
+            refuseUnmanagedCliLauncher(receiptPath)
+          }
+          await pathReceipt.handle.close()
+          pathReceipt = undefined
+
+          const finalReceipt = await statCliLauncher(receiptPath)
+          if (finalReceipt !== undefined) {
+            if (!isDirectRegularFile(finalReceipt) || !isSameFile(finalReceipt, receiptStats)) {
+              refuseUnmanagedCliLauncher(receiptPath)
+            }
+            await rm(receiptPath)
+          }
         }
       }
     } finally {
+      await pathReceipt?.handle.close()
       await opened.handle.close()
     }
 
