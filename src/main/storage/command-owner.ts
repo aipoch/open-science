@@ -333,6 +333,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       }
       if (preparationFailure) return preparationFailure
 
+      if (deps.hasActiveReviewerWork()) {
+        return { ok: false, error: 'A review is still running. Stop it before moving data.' }
+      }
+
       // The preparation gate is intentionally non-latching. A delegated task can appear during its
       // await, so recheck before synchronously raising the write gate and entering the copy engine.
       if (deps.getActiveDelegatedSessions().length > 0) {
@@ -606,6 +610,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         resolutionInProgress = false
         return preparationFailure
       }
+      if (deps.hasActiveReviewerWork()) {
+        endMigrationCopy()
+        resolutionInProgress = false
+        return { ok: false, error: 'A review is still running. Stop it before finishing the move.' }
+      }
 
       if (staged.recovered) {
         // Recovery happens in a fresh process: the original write gate and paused runtimes are gone.
@@ -655,6 +664,16 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           error:
             'Subagents are still running. Return to their tasks and stop them before finishing the move.'
         }
+      }
+      if (deps.hasActiveReviewerWork()) {
+        if (staged.recovered) {
+          clearMigrationPending()
+          activeStaged = undefined
+        } else {
+          endMigrationCopy()
+        }
+        resolutionInProgress = false
+        return { ok: false, error: 'A review is still running. Stop it before finishing the move.' }
       }
       if (signal.aborted) {
         endMigrationCopy()

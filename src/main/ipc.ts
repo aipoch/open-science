@@ -313,7 +313,11 @@ import type {
 import { editSessionDetailsRequestSchema } from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
-import { withDataRootWrite } from './storage/migration-state'
+import {
+  isMigrationInProgress,
+  isMigrationPending,
+  withDataRootWrite
+} from './storage/migration-state'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { createDelegatedActivityProjection, detectActiveSessions } from './storage/detect-active'
 import {
@@ -3320,6 +3324,7 @@ const createApplicationModules = async (
   const reviewerModelRuntime = await modules.add(
     {
       appVersion: app.getVersion(),
+      isDataRootHandoffActive: () => isMigrationInProgress() || isMigrationPending(),
       captureModel: () => settingsService.admitReviewerExecutionModel(),
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context)

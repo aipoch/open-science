@@ -741,6 +741,30 @@ describe('storage IPC handlers', () => {
     expect(runDataRootMigration).not.toHaveBeenCalled()
   })
 
+  it('rechecks reviewer work after migration handoff preparation', async () => {
+    initDataRoot(dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+    const runDataRootMigration = vi.fn().mockResolvedValue({ ok: true })
+    const deps = fakeDeps({
+      hasActiveReviewerWork: vi
+        .fn()
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(false)
+        .mockReturnValue(true),
+      prepareDataRootHandoff,
+      runDataRootMigration
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'A review is still running. Stop it before moving data.'
+    })
+
+    expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
+    expect(runDataRootMigration).not.toHaveBeenCalled()
+  })
+
   it('rejects an invalid migration target before preparing the handoff', async () => {
     initDataRoot(dataRoot)
     const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
@@ -954,6 +978,31 @@ describe('storage IPC handlers', () => {
     })
 
     expect(prepareDataRootHandoff).not.toHaveBeenCalled()
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('rechecks reviewer work immediately before recovered pointer commit', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+    const deps = fakeDeps({
+      hasActiveReviewerWork: vi
+        .fn()
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(false)
+        .mockReturnValue(true),
+      prepareDataRootHandoff,
+      pauseDataRootWriters: vi.fn().mockResolvedValue(undefined)
+    })
+    const restartedOwner = createStorageCommandOwner(deps)
+
+    await expect(restartedOwner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'A review is still running. Stop it before finishing the move.'
+    })
+
+    expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
   })

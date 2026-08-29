@@ -5,6 +5,22 @@ import type { ResolvedAgentBackend } from '../agent-framework'
 import { ReviewerModelRuntimeOwner } from './model-runtime-owner'
 
 describe('ReviewerModelRuntimeOwner', () => {
+  it('rejects new Reviewer admission for the full data-root handoff window', async () => {
+    let dataRootHandoffActive = true
+    const owner = new ReviewerModelRuntimeOwner({
+      appVersion: 'test',
+      captureModel: async () => ({ model: 'inherited-model' }),
+      resolveTarget: vi.fn(),
+      isDataRootHandoffActive: () => dataRootHandoffActive
+    })
+
+    await expect(owner.admit()).rejects.toThrow(/moving data/i)
+
+    dataRootHandoffActive = false
+    const admission = await owner.admit()
+    await admission.release()
+  })
+
   it('tracks inherited Reviewer work until its shared-runtime admission is released', async () => {
     const owner = new ReviewerModelRuntimeOwner({
       appVersion: 'test',
