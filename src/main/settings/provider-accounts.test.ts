@@ -14,6 +14,9 @@ import { getAgentFramework } from '../agent-framework'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 
 vi.mock('electron', () => ({
+  net: {
+    fetch: (input: string, init?: RequestInit) => globalThis.fetch(input, init)
+  },
   safeStorage: {
     isEncryptionAvailable: () => true,
     encryptString: (plaintext: string) => Buffer.from(`cipher:${plaintext}`, 'utf8'),
@@ -577,6 +580,121 @@ describe('ProviderAccountsModule', () => {
         }
       })
     ).resolves.toMatchObject({ ok: false, category: 'incompatible' })
+  })
+
+  it('discards a model catalog fetched for a provider target changed during refresh', async () => {
+    await module.upsertProvider({
+      type: 'official',
+      name: 'DeepSeek',
+      vendorId: 'deepseek',
+      model: 'deepseek-v4-pro',
+      key: 'old-key'
+    })
+    const original = (await repository.getSettings()).providers[0]
+    const requestStarted = deferred<void>()
+    const response = deferred<Response>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        requestStarted.resolve()
+        return response.promise
+      })
+    )
+
+    const refresh = module.refreshProviderModels({ providerId: original.id })
+    await requestStarted.promise
+    await module.upsertProvider({
+      id: original.id,
+      requireExisting: true,
+      type: 'official',
+      name: 'OpenAI replacement',
+      vendorId: 'openai',
+      key: 'new-key'
+    })
+    const edited = (await repository.getSettings()).providers[0]
+    response.resolve(Response.json({ data: [{ id: 'deepseek-v5' }] }))
+
+    await expect(refresh).resolves.toMatchObject({ ok: true, models: ['deepseek-v5'] })
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      providers: [
+        expect.objectContaining({
+          id: original.id,
+          name: 'OpenAI replacement',
+          vendorId: 'openai',
+          keyRef: edited.keyRef
+        })
+      ]
+    })
+    expect((await repository.getSettings()).providers[0].fetchedModels).toBeUndefined()
+  })
+
+  it('preserves unrelated provider edits while applying a pending model catalog refresh', async () => {
+    await module.upsertProvider({
+      type: 'official',
+      name: 'DeepSeek',
+      vendorId: 'deepseek',
+      key: 'old-key'
+    })
+    const original = (await repository.getSettings()).providers[0]
+    const requestStarted = deferred<void>()
+    const response = deferred<Response>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        requestStarted.resolve()
+        return response.promise
+      })
+    )
+
+    const refresh = module.refreshProviderModels({ providerId: original.id })
+    await requestStarted.promise
+    await module.upsertProvider({
+      id: original.id,
+      requireExisting: true,
+      type: 'official',
+      name: 'Renamed DeepSeek',
+      vendorId: 'deepseek'
+    })
+    response.resolve(Response.json({ data: [{ id: 'deepseek-v5' }] }))
+
+    await expect(refresh).resolves.toMatchObject({ ok: true, models: ['deepseek-v5'] })
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      providers: [
+        expect.objectContaining({
+          id: original.id,
+          name: 'Renamed DeepSeek',
+          keyRef: original.keyRef,
+          fetchedModels: ['deepseek-v5']
+        })
+      ]
+    })
+  })
+
+  it('does not recreate a provider deleted while its model catalog refresh is pending', async () => {
+    await module.upsertProvider({
+      type: 'official',
+      name: 'DeepSeek',
+      vendorId: 'deepseek',
+      key: 'old-key'
+    })
+    const providerId = (await repository.getSettings()).providers[0].id
+    const requestStarted = deferred<void>()
+    const response = deferred<Response>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        requestStarted.resolve()
+        return response.promise
+      })
+    )
+
+    const refresh = module.refreshProviderModels({ providerId })
+    await requestStarted.promise
+    await module.deleteProvider(providerId)
+    response.resolve(Response.json({ data: [{ id: 'deepseek-v5' }] }))
+
+    await expect(refresh).resolves.toMatchObject({ ok: true, models: ['deepseek-v5'] })
+    await expect(repository.getSettings()).resolves.toMatchObject({ providers: [] })
   })
 
   it.each(['contextWindow', 'maxInputTokens', 'maxOutputTokens'] as const)(

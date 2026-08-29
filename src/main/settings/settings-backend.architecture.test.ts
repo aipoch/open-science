@@ -394,6 +394,7 @@ describe('Settings backend ownership architecture', () => {
       'updateClaudeIsolatedValidationIfKeyMatches',
       'updateClaudeSharedValidationIfUnchanged',
       'updateCustomServer',
+      'updateProviderModelCatalogIfTargetMatches',
       'upsertClaudeIsolatedProvider',
       'upsertProvider'
     ])

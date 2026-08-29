@@ -89,6 +89,38 @@ class SettingsRepository {
     })
   }
 
+  // Records a fetched catalog only while the provider still points at the target that produced it.
+  // The patch is applied to the current record so unrelated edits made during the network request
+  // are preserved, and a deleted provider can never be recreated by a stale completion.
+  async updateProviderModelCatalogIfTargetMatches(
+    expectedProvider: StoredProvider,
+    fetchedModels: string[]
+  ): Promise<boolean> {
+    let applied = false
+
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex((provider) => provider.id === expectedProvider.id)
+      if (index < 0) return settings
+
+      const currentProvider = settings.providers[index]
+      if (
+        currentProvider.type !== expectedProvider.type ||
+        currentProvider.vendorId !== expectedProvider.vendorId ||
+        currentProvider.region !== expectedProvider.region ||
+        currentProvider.keyRef !== expectedProvider.keyRef
+      ) {
+        return settings
+      }
+
+      const providers = [...settings.providers]
+      providers[index] = { ...currentProvider, fetchedModels }
+      applied = true
+      return { ...settings, providers }
+    })
+
+    return applied
+  }
+
   // Updates the single claude-isolated provider record (id is fixed at builtin-claude-isolated).
   // The patch carries only the key-bearing fields the controller writes — model/lastValidatedAt/etc
   // stay on whatever the renderer/service previously set, so a paste does not stomp the validated-at
