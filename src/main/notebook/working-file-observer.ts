@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { constants, createReadStream, watch, type FSWatcher } from 'node:fs'
-import { copyFile, lstat, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
+import { watch, type FSWatcher } from 'node:fs'
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
@@ -8,8 +8,15 @@ import type {
   NotebookRunFileEvidence,
   NotebookWorkingFile
 } from '../../shared/notebook'
-import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
+import {
+  assertDiskReserve,
+  copyOpenFileWithinBudget,
+  digestFileWithinBudget
+} from '../bounded-file-io'
+import { LOCAL_RESOURCE_BUDGETS, ResourceBudgetExceededError } from '../resource-budget'
+import { defaultFileDurability } from '../storage/file-durability'
 import { writeDurableJsonFile } from '../storage/durable-json-file'
+import { availableBytes } from '../storage/usage'
 
 type WorkingFileObservationRequest = {
   dataRoot: string
@@ -32,6 +39,10 @@ type WorkingFileObservationDependencies = {
   now?: () => number
   maxGenerationBytes?: number
   maxRunBytes?: number
+  diskReserveBytes?: number
+  getAvailableBytes?: typeof availableBytes
+  writeEvidenceFile?: typeof writeDurableJsonFile
+  publishDirectory?: typeof rename
 }
 
 type ActiveObservation = { conflicted: boolean }
@@ -88,6 +99,7 @@ type PersistedNotebookFileEvidence = {
 }
 
 const activeByObservedRoot = new Map<string, Set<ActiveObservation>>()
+let reservedDiskBytes = 0
 const MAX_CHANGED_PATHS = 10_000
 const MAX_FALLBACK_SNAPSHOT_ENTRIES = 50_000
 const EVENT_SETTLE_MS = 20
@@ -471,12 +483,6 @@ const startRootObservation = async (
   }
 }
 
-const sha256File = async (path: string): Promise<string> => {
-  const hash = createHash('sha256')
-  for await (const chunk of createReadStream(path)) hash.update(chunk)
-  return hash.digest('hex')
-}
-
 const fingerprint = (
   value: Pick<SnapshotEntry, 'dev' | 'ino' | 'size' | 'mtimeMs' | 'ctimeMs'>
 ): string => [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs].join(':')
@@ -485,7 +491,8 @@ const freezeGeneration = async (
   request: Required<Pick<WorkingFileObservationRequest, 'notebookSessionRoot' | 'runId'>>,
   file: SnapshotEntry,
   dependencies: WorkingFileObservationDependencies,
-  reservedBytes: number
+  reservedBytes: number,
+  stagingRunRoot: string
 ): Promise<
   | { state: 'available'; generation: PersistedFileGeneration }
   | { state: 'unavailable'; reason: NotebookFileEvidenceReason }
@@ -500,36 +507,71 @@ const freezeGeneration = async (
   ) {
     return { state: 'unavailable', reason: 'generation-budget-exceeded' }
   }
+  const fileSize = file.size
 
-  const evidenceRoot = join(request.notebookSessionRoot, 'file-evidence')
-  const stagingRoot = join(evidenceRoot, 'staging')
-  const temporaryPath = join(stagingRoot, `${request.runId}-${randomUUID()}.tmp`)
+  const temporaryPath = join(stagingRunRoot, 'incoming', `${randomUUID()}.tmp`)
+  let releaseDiskReservation: (() => void) | undefined
   try {
-    await mkdir(stagingRoot, { recursive: true })
-    const beforeCopy = await stat(file.physicalPath)
-    if (fingerprint(file) !== fingerprint(beforeCopy)) {
-      return { state: 'unavailable', reason: 'generation-freeze-failed' }
-    }
-    await copyFile(file.physicalPath, temporaryPath, constants.COPYFILE_EXCL)
-    const [afterCopy, copied] = await Promise.all([stat(file.physicalPath), stat(temporaryPath)])
-    if (fingerprint(beforeCopy) !== fingerprint(afterCopy) || copied.size !== file.size) {
-      return { state: 'unavailable', reason: 'generation-freeze-failed' }
+    await mkdir(dirname(temporaryPath), { recursive: true })
+    const sourceHandle = await open(file.physicalPath, 'r')
+    let copied: { sizeBytes: number; checksum: string }
+    try {
+      const beforeCopy = await sourceHandle.stat()
+      if (!beforeCopy.isFile() || fingerprint(file) !== fingerprint(beforeCopy)) {
+        return { state: 'unavailable', reason: 'generation-freeze-failed' }
+      }
+
+      const freeBytes = await (dependencies.getAvailableBytes ?? availableBytes)(stagingRunRoot)
+      assertDiskReserve(
+        Math.max(0, freeBytes - reservedDiskBytes),
+        fileSize,
+        dependencies.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+      )
+      reservedDiskBytes += fileSize
+      releaseDiskReservation = () => {
+        reservedDiskBytes -= fileSize
+      }
+
+      // The snapshot size is also the stream limit. A growing source therefore cannot consume
+      // unreserved disk before the post-copy fingerprint check rejects it.
+      copied = await copyOpenFileWithinBudget(
+        sourceHandle,
+        temporaryPath,
+        Math.min(maxGenerationBytes, fileSize)
+      )
+      const afterCopy = await sourceHandle.stat()
+      if (fingerprint(beforeCopy) !== fingerprint(afterCopy) || copied.sizeBytes !== fileSize) {
+        return { state: 'unavailable', reason: 'generation-freeze-failed' }
+      }
+    } finally {
+      await sourceHandle.close()
     }
 
-    const checksum = await sha256File(temporaryPath)
+    const checksum = copied.checksum
     const contentStorageKey = toPortableNotebookRelativePath(
-      join('file-evidence', 'blobs', 'sha256', checksum.slice(0, 2), checksum)
+      join(
+        'file-evidence',
+        'runs',
+        request.runId,
+        'blobs',
+        'sha256',
+        checksum.slice(0, 2),
+        checksum
+      )
     )
-    const contentPath = join(request.notebookSessionRoot, ...contentStorageKey.split('/'))
-    await mkdir(dirname(contentPath), { recursive: true })
-    await copyFile(temporaryPath, contentPath, constants.COPYFILE_EXCL).catch(
-      async (error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-        const existing = await stat(contentPath)
-        if (existing.size !== copied.size || (await sha256File(contentPath)) !== checksum)
-          throw error
-      }
+    const stagedContentPath = join(
+      stagingRunRoot,
+      'blobs',
+      'sha256',
+      checksum.slice(0, 2),
+      checksum
     )
+    await mkdir(dirname(stagedContentPath), { recursive: true })
+    await rename(temporaryPath, stagedContentPath).catch(async (error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const existing = await digestFileWithinBudget(stagedContentPath, maxGenerationBytes)
+      if (existing.sizeBytes !== copied.sizeBytes || existing.checksum !== checksum) throw error
+    })
 
     return {
       state: 'available',
@@ -537,14 +579,21 @@ const freezeGeneration = async (
         generationId: (dependencies.createId ?? randomUUID)(),
         relativePath: file.relativePath,
         checksum,
-        sizeBytes: file.size,
+        sizeBytes: fileSize,
         contentStorageKey,
         capturedAt: new Date((dependencies.now ?? Date.now)()).toISOString()
       }
     }
-  } catch {
-    return { state: 'unavailable', reason: 'generation-freeze-failed' }
+  } catch (error) {
+    return {
+      state: 'unavailable',
+      reason:
+        error instanceof ResourceBudgetExceededError
+          ? 'generation-budget-exceeded'
+          : 'generation-freeze-failed'
+    }
   } finally {
+    releaseDiskReservation?.()
     await rm(temporaryPath, { force: true }).catch(() => undefined)
   }
 }
@@ -575,6 +624,9 @@ const persistEvidence = async (
   }
 
   const evidenceId = `notebook-file-evidence-${request.runId}`
+  const evidenceRoot = join(request.notebookSessionRoot, 'file-evidence')
+  const stagingRunRoot = join(evidenceRoot, 'staging', `${request.runId}-${randomUUID()}`)
+  const finalRunRoot = join(evidenceRoot, 'runs', request.runId)
   const relationResults: PersistedFileRelation[] = []
   const dynamicReasons = rootResults.flatMap((result) => result.reasonCodes)
   let reservedBytes = 0
@@ -603,7 +655,8 @@ const persistEvidence = async (
         { notebookSessionRoot: request.notebookSessionRoot, runId: request.runId },
         change.after,
         dependencies,
-        reservedBytes
+        reservedBytes,
+        stagingRunRoot
       )
       if (frozen.state === 'available') {
         relation.generation = frozen.generation
@@ -638,12 +691,23 @@ const persistEvidence = async (
   const serialized = `${JSON.stringify(sidecar, null, 2)}\n`
   const checksum = createHash('sha256').update(serialized).digest('hex')
   const evidenceStorageKey = toPortableNotebookRelativePath(
-    join('file-evidence', 'runs', `${request.runId}.json`)
+    join('file-evidence', 'runs', request.runId, 'evidence.json')
   )
-  const evidencePath = join(request.notebookSessionRoot, ...evidenceStorageKey.split('/'))
+  const stagedEvidencePath = join(stagingRunRoot, 'evidence.json')
+  let published = false
   try {
-    await mkdir(dirname(evidencePath), { recursive: true })
-    await writeDurableJsonFile(evidencePath, serialized)
+    await rm(join(stagingRunRoot, 'incoming'), { recursive: true, force: true })
+    await mkdir(stagingRunRoot, { recursive: true })
+    assertDiskReserve(
+      await (dependencies.getAvailableBytes ?? availableBytes)(stagingRunRoot),
+      Buffer.byteLength(serialized),
+      dependencies.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+    )
+    await (dependencies.writeEvidenceFile ?? writeDurableJsonFile)(stagedEvidencePath, serialized)
+    await mkdir(dirname(finalRunRoot), { recursive: true })
+    await (dependencies.publishDirectory ?? rename)(stagingRunRoot, finalRunRoot)
+    published = true
+    await defaultFileDurability.syncDirectory(dirname(finalRunRoot))
     return {
       workingFiles,
       fileEvidence: {
@@ -662,6 +726,9 @@ const persistEvidence = async (
       }
     }
   } catch {
+    await rm(published ? finalRunRoot : stagingRunRoot, { recursive: true, force: true }).catch(
+      () => undefined
+    )
     return {
       workingFiles,
       fileEvidence: unavailableEvidence([...reasonCodes, 'evidence-persistence-failed'])

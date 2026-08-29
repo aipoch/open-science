@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -63,7 +63,7 @@ describe('working-file evidence', () => {
       ],
       fileEvidence: {
         state: 'partial',
-        storageKey: 'file-evidence/runs/run-created.json',
+        storageKey: 'file-evidence/runs/run-created/evidence.json',
         relationCount: 1,
         generationCount: 1,
         reasonCodes: expect.arrayContaining([
@@ -77,7 +77,7 @@ describe('working-file evidence', () => {
     })
 
     const evidenceText = await readFile(
-      join(sessionRoot, 'file-evidence', 'runs', 'run-created.json'),
+      join(sessionRoot, 'file-evidence', 'runs', 'run-created', 'evidence.json'),
       'utf8'
     )
     expect(createHash('sha256').update(evidenceText).digest('hex')).toBe(
@@ -135,7 +135,10 @@ describe('working-file evidence', () => {
       reasonCodes: expect.arrayContaining(['generation-budget-exceeded'])
     })
     const evidence = JSON.parse(
-      await readFile(join(sessionRoot, 'file-evidence', 'runs', 'run-changes.json'), 'utf8')
+      await readFile(
+        join(sessionRoot, 'file-evidence', 'runs', 'run-changes', 'evidence.json'),
+        'utf8'
+      )
     ) as { relations: Array<{ relation: string; relativePath: string; reasonCode?: string }> }
     expect(evidence.relations).toEqual([
       {
@@ -185,7 +188,7 @@ describe('working-file evidence', () => {
 
     const generationContent = async (runId: string): Promise<string> => {
       const evidence = JSON.parse(
-        await readFile(join(sessionRoot, 'file-evidence', 'runs', `${runId}.json`), 'utf8')
+        await readFile(join(sessionRoot, 'file-evidence', 'runs', runId, 'evidence.json'), 'utf8')
       ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
       return readFile(
         join(sessionRoot, ...evidence.relations[0].generation.contentStorageKey.split('/')),
@@ -218,6 +221,59 @@ describe('working-file evidence', () => {
         reasonCodes: expect.arrayContaining(['observer-conflict'])
       })
     }
+  })
+
+  it('refuses to freeze a generation when doing so would consume the disk reserve', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const getAvailableBytes = vi.fn().mockResolvedValueOnce(8).mockResolvedValue(100_000)
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-disk-reserve' },
+      {
+        watchDirectory: watcherUnavailable,
+        getAvailableBytes,
+        diskReserveBytes: 8
+      }
+    )
+    await writeFile(join(dataRoot, 'result.csv'), 'too large')
+
+    const result = await observation.finish()
+
+    expect(result.workingFiles[0]).not.toHaveProperty('generationId')
+    expect(result.fileEvidence).toMatchObject({
+      state: 'partial',
+      generationCount: 0,
+      reasonCodes: expect.arrayContaining(['generation-budget-exceeded'])
+    })
+  })
+
+  it('removes run-owned generations when the evidence sidecar cannot be published', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-persist-failure' },
+      {
+        watchDirectory: watcherUnavailable,
+        writeEvidenceFile: async () => {
+          throw new Error('simulated sidecar failure')
+        }
+      }
+    )
+    await writeFile(join(dataRoot, 'result.csv'), 'unpublished')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+    await expect(
+      readFile(join(sessionRoot, 'file-evidence', 'runs', 'run-persist-failure', 'evidence.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readdir(join(sessionRoot, 'file-evidence', 'staging')).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+        throw error
+      })
+    ).resolves.toEqual([])
   })
 
   it('does not turn unobserved reads, transient files, or external writes into false evidence', async () => {
