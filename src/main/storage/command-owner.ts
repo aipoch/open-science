@@ -57,6 +57,7 @@ import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
 import type { SetDataRootOptions } from '../settings/capabilities'
 import { toErrorMessage } from '../error-message'
 import type { RendererSessionPersistenceSurface } from '../session-persistence/renderer-flush'
+import type { SessionPersistenceFlushResponse } from '../../shared/session-persistence-flush'
 
 type LegacySessionSource = { projectId: string; sessionId: string }
 type NotebookSessionSource = { projectId: string; sessionId: string }
@@ -105,6 +106,7 @@ type StorageCommandOwnerDeps = {
   // Stops data producers and proves renderer-owned Session state is durable before any data-root
   // pointer can be persisted. Optional only for isolated storage tests and non-desktop adapters.
   prepareDataRootHandoff?: (surface: RendererSessionPersistenceSurface) => Promise<boolean>
+  acknowledgeWebRendererFlush?: (response: SessionPersistenceFlushResponse) => void
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -926,6 +928,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   }
 
   return Object.freeze({
+    acknowledgeDataRootHandoffFlush: (response: SessionPersistenceFlushResponse): void =>
+      deps.acknowledgeWebRendererFlush?.(response),
     getStatus,
     getInfo,
     revealAppStorage,

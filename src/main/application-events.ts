@@ -37,6 +37,7 @@ import type { UpdateStatus } from '../shared/update'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { TagsChangedEvent } from '../shared/tags'
 import type { MemoryChangedEvent } from '../shared/memory'
+import type { SessionPersistenceFlushRequest } from '../shared/session-persistence-flush'
 import { createLogger, errorLogFields } from './logger'
 
 const log = createLogger('application-events')
@@ -61,6 +62,8 @@ export type ApplicationEventMap = {
   'session:created': SessionUpsertEvent
   'session:updated': SessionUpsertEvent
   'session:deleted': SessionDeletedEvent
+  'sessions:flush-aborted': undefined
+  'sessions:flush-request': SessionPersistenceFlushRequest
   'project-files:changed': ProjectFilesChangedEvent
   'permissions:changed': PermissionGrantsChangedEvent
   'tags:changed': TagsChangedEvent

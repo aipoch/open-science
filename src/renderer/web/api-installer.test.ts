@@ -45,7 +45,7 @@ describe('installWebRendererContracts', () => {
     expect(invoke).toHaveBeenCalledWith('projects:list', [{ includeArchived: false }])
   })
 
-  it('flushes local Web persistence before a data-root handoff RPC', async () => {
+  it('does not mistake a pre-RPC Web flush for post-teardown durability', async () => {
     const api: Record<string, unknown> = {}
     const order: string[] = []
     const invoke = vi.fn(async () => {
@@ -66,7 +66,7 @@ describe('installWebRendererContracts', () => {
 
     await methodAt(api, 'storage.setDataRootAndRelaunch')?.('/data', true)
 
-    expect(order).toEqual(['flush', 'invoke'])
+    expect(order).toEqual(['invoke'])
   })
 
   it('preserves the Web optional-argument codecs when dispatching RPC', async () => {

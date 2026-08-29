@@ -99,6 +99,33 @@ describe('completeQuitPersistenceFlush', () => {
     expect(removeRequest).toHaveBeenCalledOnce()
   })
 
+  it('acknowledges a Web handoff through the local storage command', async () => {
+    let notifyFlush: (request: { requestId: string }) => void = () => undefined
+    const ackDataRootHandoffFlush = vi.fn(async () => undefined)
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          onFlushRequest: (listener: (request: { requestId: string }) => void) => {
+            notifyFlush = listener
+            return vi.fn()
+          }
+        },
+        storage: { ackDataRootHandoffFlush }
+      }
+    })
+
+    const { unmount } = renderHook(() => useQuitPersistenceFlush())
+    notifyFlush({ requestId: 'web-flush-1' })
+
+    await vi.waitFor(() =>
+      expect(ackDataRootHandoffFlush).toHaveBeenCalledWith({
+        requestId: 'web-flush-1',
+        status: 'completed'
+      })
+    )
+    unmount()
+  })
+
   it('drains terminal runtime events before flushing and acknowledging', async () => {
     const calls: string[] = []
 

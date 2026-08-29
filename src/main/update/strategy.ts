@@ -22,8 +22,13 @@ export type InstallGate = () => Promise<InstallReadiness>
 // Performs the active-research check before invoking the destructive backend teardown gate. Kept
 // independent of Electron/runtime types so composition tests can prove blocked work remains untouched.
 export const createActiveResearchSafeInstallGate =
-  (detectBlockers: () => UpdateBlocker[], runTeardownGate: InstallGate): InstallGate =>
+  (
+    detectBlockers: () => UpdateBlocker[],
+    runTeardownGate: InstallGate,
+    isExclusiveHandoffActive: () => boolean = () => false
+  ): InstallGate =>
   async () => {
+    if (isExclusiveHandoffActive()) return { completed: false, reaped: false }
     const blockedBy = [...new Set(detectBlockers())]
     return blockedBy.length > 0 ? { completed: false, reaped: false, blockedBy } : runTeardownGate()
   }

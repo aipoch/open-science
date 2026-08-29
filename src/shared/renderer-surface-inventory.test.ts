@@ -72,8 +72,6 @@ const GENERATED_SOURCE_OMISSIONS = [
   'officePreview.onState',
   'officePreview.open',
   'officePreview.reportState',
-  'sessions.onFlushAborted',
-  'sessions.onFlushRequest',
   'sessions.sendFlushResponse',
   'settings.exportCustomServerTemplate',
   'settings.exportSkill',
@@ -232,6 +230,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'wait-xai-oauth-login'
   ],
   storage: [
+    'ack-data-root-handoff-flush',
     'cancel-migrate',
     'commit-and-relaunch',
     'discard-migrated-copy',

@@ -108,6 +108,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     abortFixLoop: vi.fn(() => undefined)
   },
   storage: {
+    acknowledgeDataRootHandoffFlush: vi.fn(() => undefined),
     getStatus: vi.fn(async () => ({
       dataRoot: '/data',
       isDefault: true,
@@ -175,7 +176,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 53 request channels in their existing capability groups', () => {
+  it('defines the exact 54 request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -193,7 +194,7 @@ describe('Host application commands', () => {
       }
     })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(53)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(54)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -209,7 +210,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(53)
+    expect(router.dispatcher.commandNames()).toHaveLength(54)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -228,6 +229,7 @@ describe('Host application commands', () => {
     const reviewSession = { projectId: 'project-1', appSessionId: 'session-1' }
     const parent = { parent: '/target' }
     const root = { parent: '/target', markOnboarding: true }
+    const flushResponse = { requestId: 'flush-1', status: 'completed' as const }
     const markReadRequest = { ids: ['message-1'] }
     const markAllReadRequest = { throughSequence: 7 }
     const markSessionCompletionsReadRequest = { sessionIds: ['session-1'] }
@@ -320,6 +322,10 @@ describe('Host application commands', () => {
       invocation([reviewSession])
     )
     await router.dispatcher.invoke(hostApplicationCommands.reviewer.run, invocation([reviewRun]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.acknowledgeDataRootHandoffFlush,
+      invocation([flushResponse])
+    )
     await router.dispatcher.invoke(hostApplicationCommands.storage.cancelMigrate, invocation([]))
     await router.dispatcher.invoke(
       hostApplicationCommands.storage.commitAndRelaunch,
@@ -383,6 +389,7 @@ describe('Host application commands', () => {
     expect(dependencies.reviewer.run).toHaveBeenCalledWith(reviewRun)
     expect(dependencies.reviewer.getForSession).toHaveBeenCalledWith(reviewSession)
     expect(dependencies.reviewer.abort).toHaveBeenCalledWith(reviewSession)
+    expect(dependencies.storage.acknowledgeDataRootHandoffFlush).toHaveBeenCalledWith(flushResponse)
     expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent, 'electron-renderer')
     expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(
       root,
@@ -397,7 +404,7 @@ describe('Host application commands', () => {
     ).toBe(true)
   })
 
-  it('marks local Web data-root handoffs as already flushed by their requesting renderer', async () => {
+  it('routes local Web data-root handoffs to the post-teardown renderer handshake', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerHostApplicationCommands(router.registrar, dependencies)
@@ -431,6 +438,7 @@ describe('Host application commands', () => {
     const previewRequest = { path: '/data/result.txt', encoding: 'utf8' as const }
     const parent = { parent: '/target' }
     const argsByChannel: Readonly<Record<string, readonly unknown[]>> = {
+      'storage:ack-data-root-handoff-flush': [{ requestId: 'flush-1', status: 'completed' }],
       'local-fs:grant-root': [{ path: '/data', access: 'ro' }],
       'local-fs:granted-roots:remove': [{ id: 'root-1' }],
       'local-fs:granted-roots:set-access': [{ id: 'root-1', access: 'rw' }],
@@ -458,7 +466,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(26)
+    expect(localOnlyChannels).toHaveLength(27)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

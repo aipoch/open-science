@@ -95,9 +95,11 @@ import {
   type ShutdownStepOutcome
 } from './lifecycle-shutdown'
 import { registerLifecycleIpcHandlers } from './lifecycle-broadcast'
-import type {
-  RendererSessionPersistenceFlushPolicy,
-  RendererSessionPersistenceSurface
+import {
+  createWebSessionPersistenceFlush,
+  rendererSessionPersistenceFlushBlocksShutdown,
+  type RendererSessionPersistenceFlushPolicy,
+  type RendererSessionPersistenceSurface
 } from './session-persistence/renderer-flush'
 import { createLogsCommandOwner, registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
@@ -449,6 +451,7 @@ const createApplicationModules = async (
     installRendererBroadcastEventHub,
     createApplicationEventModule
   )
+  const webSessionPersistenceFlush = createWebSessionPersistenceFlush(applicationEvents)
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
   const settingsRepository = new SettingsRepository(
@@ -2695,23 +2698,33 @@ const createApplicationModules = async (
   const durableDataRootHandoffGate = (
     surface: RendererSessionPersistenceSurface
   ): Promise<InstallReadiness> =>
-    createDurableInstallGate(reviewerSafeDataRootTeardownGate, () =>
-      confirmRendererDurability('data-root-handoff', surface)
-    )()
+    createDurableInstallGate(reviewerSafeDataRootTeardownGate, async () => {
+      if (surface !== 'web-renderer') {
+        return confirmRendererDurability('data-root-handoff', surface)
+      }
+      const outcome = await webSessionPersistenceFlush.flush()
+      const blocked = rendererSessionPersistenceFlushBlocksShutdown(outcome, 'data-root-handoff')
+      if (blocked) webSessionPersistenceFlush.notifyAborted()
+      return !blocked
+    })()
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
-    installGate: createActiveResearchSafeInstallGate(() => {
-      const blockers: UpdateBlocker[] = detectActiveSessions({
-        runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
-        delegated: { getActiveDelegatedSessions },
-        notebook: notebookService
-      }).map((session) => session.kind)
-      if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
-      return blockers
-    }, durableBackendHandoffGate)
+    installGate: createActiveResearchSafeInstallGate(
+      () => {
+        const blockers: UpdateBlocker[] = detectActiveSessions({
+          runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+          delegated: { getActiveDelegatedSessions },
+          notebook: notebookService
+        }).map((session) => session.kind)
+        if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
+        return blockers
+      },
+      durableBackendHandoffGate,
+      () => isMigrationInProgress() || isMigrationPending()
+    )
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
   let stopUpdateScheduler: (() => void) | undefined
@@ -3197,6 +3210,7 @@ const createApplicationModules = async (
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
     settingsService,
     micromambaRunner,
+    acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
     prepareDataRootHandoff: async (surface) => {
       const readiness = await durableDataRootHandoffGate(surface)
       return readiness.completed && readiness.reaped

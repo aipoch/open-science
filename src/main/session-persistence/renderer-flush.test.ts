@@ -8,6 +8,7 @@ import {
 import type { SessionPersistenceFlushResponse } from '../../shared/session-persistence-flush'
 import {
   createElectronSessionPersistenceFlush,
+  createWebSessionPersistenceFlush,
   notifyRendererSessionPersistenceFlushAborted,
   rendererSessionPersistenceFlushBlocksShutdown,
   requestRendererSessionPersistenceFlush
@@ -168,14 +169,10 @@ describe('rendererSessionPersistenceFlushBlocksShutdown', () => {
     )
   })
 
-  it('allows an absent Electron renderer after a headless Web handoff flushed locally', () => {
-    expect(
-      rendererSessionPersistenceFlushBlocksShutdown(
-        'unavailable',
-        'data-root-handoff',
-        'web-renderer'
-      )
-    ).toBe(false)
+  it('requires a post-teardown Web acknowledgement for a data-root handoff', () => {
+    expect(rendererSessionPersistenceFlushBlocksShutdown('unavailable', 'data-root-handoff')).toBe(
+      true
+    )
   })
 })
 
@@ -289,5 +286,29 @@ describe('createElectronSessionPersistenceFlush', () => {
       'render-process-gone',
       rendererGoneListener
     )
+  })
+})
+
+describe('createWebSessionPersistenceFlush', () => {
+  it('publishes a post-teardown request and waits for its Web acknowledgement', async () => {
+    const publish = vi.fn()
+    const coordinator = createWebSessionPersistenceFlush({ publish }, 1_000)
+    const request = coordinator.flush()
+    const flushRequest = publish.mock.calls[0][1] as { requestId: string }
+
+    expect(publish).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, flushRequest)
+    coordinator.acknowledge({ requestId: 'stale', status: 'completed' })
+    coordinator.acknowledge({ requestId: flushRequest.requestId, status: 'completed' })
+
+    await expect(request).resolves.toBe('completed')
+  })
+
+  it('notifies Web when a refused handoff must resume renderer activity', () => {
+    const publish = vi.fn()
+    const coordinator = createWebSessionPersistenceFlush({ publish })
+
+    coordinator.notifyAborted()
+
+    expect(publish).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, undefined)
   })
 })

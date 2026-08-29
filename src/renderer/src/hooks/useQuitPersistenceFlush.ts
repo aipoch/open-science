@@ -45,8 +45,8 @@ export const useQuitPersistenceFlush = (): void => {
   useEffect(() => {
     const onFlushAborted = window.api.sessions?.onFlushAborted
     const onFlushRequest = window.api.sessions?.onFlushRequest
-    const sendFlushResponse = window.api.sessions?.sendFlushResponse
-    // Web/headless renderers do not participate in Electron's before-quit handshake.
+    const sendFlushResponse =
+      window.api.sessions?.sendFlushResponse ?? window.api.storage?.ackDataRootHandoffFlush
     if (!onFlushRequest || !sendFlushResponse) return
 
     const removeFlushAborted = onFlushAborted?.(resumeAutoReviewsAfterQuitAbort)

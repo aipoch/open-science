@@ -32,6 +32,7 @@ import type {
   ReviewWithChecks
 } from '../shared/reviewer'
 import type { RendererSessionPersistenceSurface } from './session-persistence/renderer-flush'
+import type { SessionPersistenceFlushResponse } from '../shared/session-persistence-flush'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -239,6 +240,11 @@ const reviewerCommands = Object.freeze({
 })
 
 const storageCommands = Object.freeze({
+  acknowledgeDataRootHandoffFlush: defineApplicationCommand<
+    'storage:ack-data-root-handoff-flush',
+    readonly [response: SessionPersistenceFlushResponse],
+    void
+  >('storage:ack-data-root-handoff-flush'),
   cancelMigrate: defineApplicationCommand<'storage:cancel-migrate', readonly [], void>(
     'storage:cancel-migrate'
   ),
@@ -374,6 +380,7 @@ type HostApplicationCommandDependencies = Readonly<{
   >
   reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
+    acknowledgeDataRootHandoffFlush: (response: SessionPersistenceFlushResponse) => void
     getStatus: () => Promise<StorageStatus>
     getInfo: () => Promise<StorageInfo>
     revealAppStorage: () => Promise<RevealAppStorageResult>
@@ -546,6 +553,17 @@ const registerHostApplicationCommands = (
       'reviewer:run': ({ args }) => dependencies.reviewer.run(args[0])
     })
     scope.registerGroup(hostApplicationCommandGroups[7], {
+      'storage:ack-data-root-handoff-flush': ({ args, callerContext }) =>
+        localCommand(callerContext, 'storage:ack-data-root-handoff-flush', () => {
+          const response = args[0]
+          if (
+            typeof response?.requestId !== 'string' ||
+            !['completed', 'conflict', 'failed'].includes(response.status)
+          ) {
+            throw new Error('Invalid data-root handoff flush acknowledgement.')
+          }
+          dependencies.storage.acknowledgeDataRootHandoffFlush(response)
+        }),
       'storage:cancel-migrate': ({ callerContext }) =>
         localCommand(callerContext, 'storage:cancel-migrate', () =>
           dependencies.storage.cancelMigrate()

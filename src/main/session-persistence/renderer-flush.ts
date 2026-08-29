@@ -8,6 +8,7 @@ import {
   type SessionPersistenceFlushRequest,
   type SessionPersistenceFlushResponse
 } from '../../shared/session-persistence-flush'
+import type { ApplicationEventPublisher } from '../application-events'
 
 type RendererSessionPersistenceFlushDeps = {
   isRendererAvailable: () => boolean
@@ -34,14 +35,45 @@ export type RendererSessionPersistenceSurface = 'electron-renderer' | 'web-rende
 
 export const rendererSessionPersistenceFlushBlocksShutdown = (
   outcome: RendererSessionPersistenceFlushOutcome,
-  policy: RendererSessionPersistenceFlushPolicy = 'ordinary-shutdown',
-  surface: RendererSessionPersistenceSurface = 'electron-renderer'
+  policy: RendererSessionPersistenceFlushPolicy = 'ordinary-shutdown'
 ): boolean => {
   if (policy === 'data-root-handoff') {
-    if (surface === 'web-renderer' && outcome === 'unavailable') return false
     return outcome !== 'completed'
   }
   return outcome === 'conflict' || outcome === 'renderer-failed'
+}
+
+export const createWebSessionPersistenceFlush = (
+  events: ApplicationEventPublisher,
+  timeoutMs = DEFAULT_RENDERER_FLUSH_TIMEOUT_MS
+): Readonly<{
+  flush: () => Promise<RendererSessionPersistenceFlushOutcome>
+  acknowledge: (response: SessionPersistenceFlushResponse) => void
+  notifyAborted: () => void
+}> => {
+  const responseListeners = new Set<(response: SessionPersistenceFlushResponse) => void>()
+
+  return Object.freeze({
+    flush: () =>
+      requestRendererSessionPersistenceFlush({
+        // A local Web command can only reach this gate from a live renderer. If its event stream is
+        // unavailable, the bounded acknowledgement wait fails closed instead of switching roots.
+        isRendererAvailable: () => true,
+        sendRequest: (requestId) =>
+          events.publish(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, { requestId }),
+        onResponse: (listener) => {
+          responseListeners.add(listener)
+          return () => responseListeners.delete(listener)
+        },
+        onRendererGone: () => () => undefined,
+        createRequestId: randomUUID,
+        timeoutMs
+      }),
+    acknowledge: (response) => {
+      for (const listener of responseListeners) listener(response)
+    },
+    notifyAborted: () => events.publish(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, undefined)
+  })
 }
 
 export const requestRendererSessionPersistenceFlush = async (
