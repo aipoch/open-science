@@ -66,6 +66,38 @@ describe('validate: request construction', () => {
     expect(request.headers.authorization).toBeUndefined()
   })
 
+  it.each([
+    [
+      'Tencent Coding Plan',
+      'tencentcodingplan' as const,
+      'https://api.lkeap.cloud.tencent.com/coding/anthropic',
+      'deepseek-v4-pro-202606'
+    ],
+    [
+      'Tencent Token Plan',
+      'tencenttokenplan' as const,
+      'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic',
+      'deepseek-v4-pro-202606'
+    ]
+  ])('uses bearer authentication for %s Messages validation', (_, vendorId, baseUrl, model) => {
+    const request = buildValidationRequest(
+      {
+        type: 'official',
+        vendorId,
+        baseUrl,
+        model,
+        key: 'plan-key',
+        apiEndpoints: ['anthropic', 'openai']
+      },
+      false,
+      ['anthropic']
+    )
+
+    expect(request.url).toBe(`${baseUrl}/v1/messages`)
+    expect(request.headers.authorization).toBe('Bearer plan-key')
+    expect(request.headers['x-api-key']).toBeUndefined()
+  })
+
   it('throws for a missing or unparseable base URL', () => {
     expect(() => buildValidationRequest({ type: 'custom' })).toThrow(/missing base url/i)
     expect(() => buildValidationRequest({ type: 'custom', baseUrl: 'not a url' })).toThrow(

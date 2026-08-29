@@ -171,6 +171,53 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
   })
 
+  it.each([
+    {
+      vendorId: 'tencentcodingplan' as const,
+      name: 'Tencent Coding Plan',
+      model: 'deepseek-v4-flash-202605',
+      baseUrl: 'https://api.lkeap.cloud.tencent.com/coding/anthropic',
+      openaiBaseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3'
+    },
+    {
+      vendorId: 'tencenttokenplan' as const,
+      name: 'Tencent Token Plan',
+      model: 'glm-5.2',
+      baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic',
+      openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/v3'
+    }
+  ])('projects $name across every supported framework', (expected) => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: expected.vendorId,
+      type: 'official',
+      vendorId: expected.vendorId,
+      name: expected.name
+    }
+
+    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model: expected.model },
+          getAgentFramework(frameworkId)
+        )
+      ).toMatchObject({
+        effectiveModel: expected.model,
+        apiEndpoints: ['anthropic', 'openai'],
+        frameworkCompatible: true,
+        needsChatResponsesBridge: frameworkId === 'codex',
+        needsNativeResponsesCompatibility: false,
+        provider: {
+          vendorId: expected.vendorId,
+          baseUrl: expected.baseUrl,
+          openaiBaseUrl: expected.openaiBaseUrl,
+          model: expected.model
+        }
+      })
+    }
+  })
+
   it('routes mixed OpenCode Zen models only through their documented protocol', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

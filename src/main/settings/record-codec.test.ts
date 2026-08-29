@@ -67,23 +67,27 @@ describe('settings record codec', () => {
     ).toBeUndefined()
   })
 
-  it('preserves Tencent TokenHub provider identity and region', () => {
+  it.each([
+    ['tencent', 'Tencent TokenHub', 'international'],
+    ['tencentcodingplan', 'Tencent Coding Plan', undefined],
+    ['tencenttokenplan', 'Tencent Token Plan', undefined]
+  ] as const)('preserves the %s provider identity', (vendorId, name, region) => {
     expect(
       sanitizeProvider({
-        id: 'tencent-tokenhub',
+        id: vendorId,
         type: 'official',
-        name: 'Tencent TokenHub',
-        vendorId: 'tencent',
-        region: 'international',
+        name,
+        vendorId,
+        region,
         keyRef: 'encrypted:key',
         keyMask: 'sk-…abcd'
       })
     ).toEqual({
-      id: 'tencent-tokenhub',
+      id: vendorId,
       type: 'official',
-      name: 'Tencent TokenHub',
-      vendorId: 'tencent',
-      region: 'international',
+      name,
+      vendorId,
+      ...(region ? { region } : {}),
       keyRef: 'encrypted:key',
       keyMask: 'sk-…abcd'
     })

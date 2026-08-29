@@ -32,6 +32,8 @@ export type OfficialVendorId =
   | 'sensenova'
   | 'volcengine'
   | 'tencent'
+  | 'tencentcodingplan'
+  | 'tencenttokenplan'
   | 'opencode-go'
   | 'opencode'
   | 'openrouter'
@@ -659,6 +661,48 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     ]
     // The curated language models above are text-only in TokenHub's model matrix, so no
     // `multimodal` rule.
+  },
+  {
+    id: 'tencentcodingplan',
+    label: 'Tencent Coding Plan',
+    reasoningEffort: 'unsupported',
+    // Mainland China's subscription plan exposes separate Anthropic Messages and OpenAI Chat
+    // Completions routes. Tencent documents ANTHROPIC_AUTH_TOKEN for the former, so it keeps the
+    // default Authorization: Bearer transport. Accepted aliases are intentionally omitted so the
+    // picker shows each model once; the first documented id is the canonical selection.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://api.lkeap.cloud.tencent.com/coding/anthropic',
+    openaiBaseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3',
+    apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/codingplan',
+    models: [
+      { id: 'deepseek-v4-flash-202605', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro-202606', contextWindow: 1_000_000 },
+      { id: 'minimax-m2.7', contextWindow: 204_800 },
+      { id: 'glm-5', contextWindow: 200_000 },
+      { id: 'glm-5.1', contextWindow: 200_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000 },
+      { id: 'hy3', contextWindow: 256_000 }
+    ]
+  },
+  {
+    id: 'tencenttokenplan',
+    label: 'Tencent Token Plan',
+    reasoningEffort: 'unsupported',
+    // The international subscription is a distinct product with its own key, endpoints, and model
+    // catalog. Its Claude Code guide also uses ANTHROPIC_AUTH_TOKEN (Authorization: Bearer). Keep it
+    // separate from both mainland Coding Plan and pay-as-you-go Tencent TokenHub.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic',
+    openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/v3',
+    apiKeyUrl: 'https://console.intl.cloud.tencent.com/tokenhub/tokenplan',
+    models: [
+      { id: 'glm-5.2', contextWindow: 1_000_000 },
+      { id: 'kimi-k2.6', contextWindow: 256_000 },
+      { id: 'deepseek-v4-pro-202606', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash-202605', contextWindow: 1_000_000 },
+      { id: 'minimax-m3', contextWindow: 1_000_000 }
+    ],
+    multimodal: { multimodalModels: ['kimi-k2.6'] }
   },
   {
     id: 'opencode-go',

@@ -38,6 +38,8 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('openai')).toBe(true)
     expect(isOfficialVendorId('xai')).toBe(true)
     expect(isOfficialVendorId('tencent')).toBe(true)
+    expect(isOfficialVendorId('tencentcodingplan')).toBe(true)
+    expect(isOfficialVendorId('tencenttokenplan')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
   })
@@ -460,6 +462,57 @@ describe('provider registry', () => {
     expect(resolveVendorModelReasoningEffort('tencent', 'hy4-preview')).toEqual({
       supported: false
     })
+  })
+
+  it('routes Tencent Coding Plan through its mainland subscription endpoints', () => {
+    expect(resolveVendorApiEndpoints('tencentcodingplan')).toEqual(['anthropic', 'openai'])
+    expect(vendorHasRegions('tencentcodingplan')).toBe(false)
+    expect(resolveVendorBaseUrl('tencentcodingplan')).toBe(
+      'https://api.lkeap.cloud.tencent.com/coding/anthropic'
+    )
+    expect(resolveVendorOpenAiBaseUrl('tencentcodingplan')).toBe(
+      'https://api.lkeap.cloud.tencent.com/coding/v3'
+    )
+    expect(resolveVendorApiKeyUrl('tencentcodingplan')).toBe(
+      'https://console.cloud.tencent.com/tokenhub/codingplan'
+    )
+    expect(getOfficialVendor('tencentcodingplan')?.models.map(({ id }) => id)).toEqual([
+      'deepseek-v4-flash-202605',
+      'deepseek-v4-pro-202606',
+      'minimax-m2.7',
+      'glm-5',
+      'glm-5.1',
+      'glm-5.2',
+      'hy3'
+    ])
+    expect(defaultVendorModel('tencentcodingplan')).toBe('deepseek-v4-flash-202605')
+    expect(resolveVendorModelsUrl('tencentcodingplan')).toBeUndefined()
+    expect(isVendorModelResponsesSupported('tencentcodingplan', 'glm-5.2')).toBe(false)
+  })
+
+  it('routes Tencent Token Plan through its international subscription endpoints', () => {
+    expect(resolveVendorApiEndpoints('tencenttokenplan')).toEqual(['anthropic', 'openai'])
+    expect(vendorHasRegions('tencenttokenplan')).toBe(false)
+    expect(resolveVendorBaseUrl('tencenttokenplan')).toBe(
+      'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic'
+    )
+    expect(resolveVendorOpenAiBaseUrl('tencenttokenplan')).toBe(
+      'https://tokenhub-intl.tencentcloudmaas.com/plan/v3'
+    )
+    expect(resolveVendorApiKeyUrl('tencenttokenplan')).toBe(
+      'https://console.intl.cloud.tencent.com/tokenhub/tokenplan'
+    )
+    expect(getOfficialVendor('tencenttokenplan')?.models.map(({ id }) => id)).toEqual([
+      'glm-5.2',
+      'kimi-k2.6',
+      'deepseek-v4-pro-202606',
+      'deepseek-v4-flash-202605',
+      'minimax-m3'
+    ])
+    expect(defaultVendorModel('tencenttokenplan')).toBe('glm-5.2')
+    expect(resolveVendorModelsUrl('tencenttokenplan')).toBeUndefined()
+    expect(isVendorModelMultimodal('tencenttokenplan', 'kimi-k2.6')).toBe(true)
+    expect(isVendorModelMultimodal('tencenttokenplan', 'glm-5.2')).toBe(false)
   })
 
   it('routes Grok through xAI Chat Completions and Responses with a curated model catalog', () => {
