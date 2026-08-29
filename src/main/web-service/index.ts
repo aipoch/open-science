@@ -124,6 +124,7 @@ const createWebServiceController = (
       }
     | undefined
   let starting: Promise<{ port: number; url: string }> | undefined
+  let closing: Promise<void> | undefined
   let disposal: Promise<void> | undefined
   let disposed = false
   const stoppedListeners = new Set<() => void>()
@@ -139,10 +140,18 @@ const createWebServiceController = (
     }
   }
 
-  const close = async (): Promise<void> => {
-    const pending = starting
-    if (pending) await pending.catch(() => undefined)
-    await closeRunning()
+  const close = (): Promise<void> => {
+    if (closing) return closing
+    const operation = (async () => {
+      const pending = starting
+      if (pending) await pending.catch(() => undefined)
+      await closeRunning()
+    })()
+    const settled = operation.finally(() => {
+      if (closing === settled) closing = undefined
+    })
+    closing = settled
+    return settled
   }
 
   const dispose = (): Promise<void> => {
@@ -226,6 +235,8 @@ const createWebServiceController = (
     port: number,
     { attached }: { attached: boolean }
   ): Promise<{ port: number; url: string }> => {
+    if (disposed) throw new Error('Web service controller is disposed.')
+    if (closing) await closing
     if (disposed) throw new Error('Web service controller is disposed.')
     if (running) {
       const token = await loadWebToken(running.configRoot)

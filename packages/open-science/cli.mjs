@@ -121,6 +121,15 @@ export class CliUsageError extends Error {
   }
 }
 
+const parsePortOption = (value) => {
+  const normalized = value.trim()
+  const port = Number(normalized)
+  if (!/^\d+$/.test(normalized) || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new CliUsageError(`Invalid port: ${value}`)
+  }
+  return port
+}
+
 export const parseCliArgs = (argv) => {
   const args = [...argv]
   const command = args.shift()
@@ -179,11 +188,7 @@ export const parseCliArgs = (argv) => {
     }
   }
   if (options.port !== undefined) {
-    const port = Number.parseInt(options.port, 10)
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new CliUsageError(`Invalid port: ${options.port}`)
-    }
-    options.port = port
+    options.port = parsePortOption(options.port)
   }
   if (options.approvalProfile && !['ask', 'auto', 'full'].includes(options.approvalProfile)) {
     throw new CliUsageError(`Invalid approval profile: ${options.approvalProfile}`)

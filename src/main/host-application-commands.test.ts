@@ -506,6 +506,35 @@ describe('Host application commands', () => {
     expect(dependencies.remoteAccess.detect).not.toHaveBeenCalled()
   })
 
+  it('rejects malformed Remote Access arguments before entering an owner', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerHostApplicationCommands(router.registrar, dependencies)
+    const cases: Array<readonly [string, readonly unknown[]]> = [
+      ['remote-access:approve', [undefined]],
+      ['remote-access:detect', [{}]],
+      ['remote-access:disable', [{}]],
+      ['remote-access:get-snapshot', [{}]],
+      ['remote-access:reject', [undefined]],
+      ['remote-access:revoke-browser', [undefined]],
+      ['remote-access:set-mode', [{ mode: 'invalid' }]]
+    ]
+
+    for (const [channel, args] of cases) {
+      await expect(
+        router.dispatcher.invoke(commandByName(channel), invocation(args))
+      ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+    }
+
+    expect(dependencies.remoteAccess.approve).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.detect).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.disable).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.snapshot).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.reject).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.revoke).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.setMode).not.toHaveBeenCalled()
+  })
+
   it('keeps pending-notification token validation ahead of owner mutation', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()

@@ -425,8 +425,12 @@ export class RemoteAccessService {
     this.error = undefined
     this.notifyChanged()
     this.shutdownPromise = this.serialize(async () => {
-      await invalidation
-      this.webController = undefined
+      try {
+        await invalidation
+      } finally {
+        this.pairing.dispose()
+        this.webController = undefined
+      }
     })
     return this.shutdownPromise
   }

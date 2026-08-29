@@ -24,6 +24,7 @@ import type {
   RevokeRemoteBrowserRequest,
   SetRemoteAccessModeRequest
 } from '../shared/remote-access'
+import { remoteAccessApplicationCommandContracts } from '../shared/remote-access'
 import type {
   ReviewRunRequest,
   ReviewRunResult,
@@ -184,33 +185,35 @@ const remoteAccessCommands = Object.freeze({
     'remote-access:approve',
     readonly [request: ApproveRemotePairingRequest],
     RemoteAccessSnapshot
-  >('remote-access:approve'),
+  >('remote-access:approve', remoteAccessApplicationCommandContracts.approve),
   detect: defineApplicationCommand<'remote-access:detect', readonly [], RemoteAccessSnapshot>(
-    'remote-access:detect'
+    'remote-access:detect',
+    remoteAccessApplicationCommandContracts.detect
   ),
   disable: defineApplicationCommand<'remote-access:disable', readonly [], RemoteAccessSnapshot>(
-    'remote-access:disable'
+    'remote-access:disable',
+    remoteAccessApplicationCommandContracts.disable
   ),
   getSnapshot: defineApplicationCommand<
     'remote-access:get-snapshot',
     readonly [],
     RemoteAccessSnapshot
-  >('remote-access:get-snapshot'),
+  >('remote-access:get-snapshot', remoteAccessApplicationCommandContracts.getSnapshot),
   reject: defineApplicationCommand<
     'remote-access:reject',
     readonly [request: RemotePairingRequestId],
     RemoteAccessSnapshot
-  >('remote-access:reject'),
+  >('remote-access:reject', remoteAccessApplicationCommandContracts.reject),
   revokeBrowser: defineApplicationCommand<
     'remote-access:revoke-browser',
     readonly [request: RevokeRemoteBrowserRequest],
     RemoteAccessSnapshot
-  >('remote-access:revoke-browser'),
+  >('remote-access:revoke-browser', remoteAccessApplicationCommandContracts.revokeBrowser),
   setMode: defineApplicationCommand<
     'remote-access:set-mode',
     readonly [request: SetRemoteAccessModeRequest],
     RemoteAccessSnapshot
-  >('remote-access:set-mode')
+  >('remote-access:set-mode', remoteAccessApplicationCommandContracts.setMode)
 })
 
 const reviewerCommands = Object.freeze({

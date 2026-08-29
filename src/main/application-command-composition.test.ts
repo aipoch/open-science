@@ -296,7 +296,16 @@ describe('application command composition', () => {
   })
 
   it('late-binds the single Remote Access owner and fails closed around its lifetime', async () => {
-    const snapshot = Object.freeze({ lifecycle: 'disabled' })
+    const snapshot = Object.freeze({
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off' as const,
+      enabled: false,
+      lifecycle: 'disabled' as const,
+      remoteIt: Object.freeze({ installed: false, loggedIn: false, registered: false }),
+      pendingRequests: Object.freeze([]),
+      trustedBrowsers: Object.freeze([])
+    })
     const firstSnapshot = vi.fn(() => snapshot)
     const firstOwner = {
       snapshot: firstSnapshot,
@@ -307,7 +316,9 @@ describe('application command composition', () => {
       reject: vi.fn(),
       revoke: vi.fn()
     }
-    const replacementSnapshot = vi.fn(() => Object.freeze({ lifecycle: 'running' }))
+    const replacementSnapshot = vi.fn(() =>
+      Object.freeze({ ...snapshot, mode: 'remoteit' as const, enabled: true, lifecycle: 'running' })
+    )
     const replacementOwner = { ...firstOwner, snapshot: replacementSnapshot }
     const composition = createApplicationCommandComposition(dependencies())
 

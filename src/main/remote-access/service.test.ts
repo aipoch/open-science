@@ -302,7 +302,7 @@ describe('RemoteAccessService', () => {
   it('ignores an invalid legacy Browser URL when authorizing App access', async () => {
     const repository = await createRepository()
     await repository.save({
-      version: 4,
+      version: 5,
       mode: 'remoteit',
       remoteItAppServiceId: 'app-service',
       remoteItBrowserServiceId: 'browser-service',
@@ -330,7 +330,7 @@ describe('RemoteAccessService', () => {
   it('disconnects the revoked trusted browser immediately', async () => {
     const repository = await createRepository()
     await repository.save({
-      version: 4,
+      version: 5,
       mode: 'remoteit-public',
       trustedBrowsers: [
         {
@@ -339,7 +339,8 @@ describe('RemoteAccessService', () => {
           platform: 'macOS',
           tokenHash: '00',
           createdAt: 1,
-          lastSeenAt: 1
+          lastSeenAt: 1,
+          expiresAt: Number.MAX_SAFE_INTEGER
         }
       ]
     })

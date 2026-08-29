@@ -255,6 +255,42 @@ describe('createWebServiceController', () => {
     expect(h.startServer).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps replacement state when start is requested while the previous server closes', async () => {
+    let releaseFirstClose: (() => void) | undefined
+    const firstCloseGate = new Promise<void>((resolve) => {
+      releaseFirstClose = resolve
+    })
+    const firstClose = vi.fn(async () => firstCloseGate)
+    const startServer = vi.fn(async (options: StartOptions) => ({
+      port: options.port,
+      closeExternalConnections: vi.fn(),
+      close: options.port === 44100 ? firstClose : vi.fn().mockResolvedValue(undefined)
+    }))
+    let statePort: number | undefined
+    const h = makeController({
+      startServer,
+      writeState: vi.fn(async (_configRoot, state) => {
+        statePort = state.port
+      }),
+      removeState: vi.fn(async () => {
+        statePort = undefined
+      })
+    })
+    const stopped = vi.fn()
+    h.controller.onStopped(stopped)
+    await h.controller.ensureStarted(44100, { attached: true })
+
+    const close = h.controller.close()
+    await vi.waitFor(() => expect(firstClose).toHaveBeenCalledOnce())
+    const restart = h.controller.ensureStarted(44101, { attached: true })
+    releaseFirstClose?.()
+    await Promise.all([close, restart])
+
+    expect(startServer).toHaveBeenCalledTimes(2)
+    expect(statePort).toBe(44101)
+    expect(stopped).toHaveBeenCalledOnce()
+  })
+
   it('preserves Task run state and its caller lease across a restartable close', async () => {
     const project = {
       id: 'project-1',

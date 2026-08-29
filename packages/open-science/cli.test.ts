@@ -29,6 +29,11 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 ]
 
 describe('task CLI', () => {
+  it('rejects ports that are not complete decimal values', () => {
+    expect(() => parseCliArgs(['start', '--port', '44100xyz'])).toThrow('Invalid port: 44100xyz')
+    expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')
+  })
+
   it('parses the first milestone run interface', () => {
     expect(
       parseCliArgs(['project', 'create', 'Research', '--agent-context', 'Always cite sources.'])

@@ -15,6 +15,7 @@ import { REMOTE_PAIR_STATUS_PATH, renderPairingPage } from './pairing-page'
 import {
   defaultRemoteAccessState,
   RemoteAccessRepository,
+  TRUSTED_BROWSER_TTL_MS,
   type StoredRemoteAccess,
   type StoredTrustedBrowser
 } from './repository'
@@ -23,9 +24,10 @@ const PAIRING_COOKIE = 'open_science_remote_pairing'
 const SESSION_COOKIE = 'open_science_remote_session'
 const PAIRING_TTL_MS = 10 * 60 * 1_000
 const ONE_TIME_SESSION_TTL_MS = 12 * 60 * 60 * 1_000
-const TRUSTED_COOKIE_MAX_AGE_SECONDS = 180 * 24 * 60 * 60
 const MAX_PENDING_REQUESTS = 20
 const LAST_SEEN_WRITE_INTERVAL_MS = 60_000
+const MAX_TIMER_DELAY_MS = 2_147_483_647
+const CLEANUP_RETRY_MS = 1_000
 
 type BrowserDescription = { browser: string; platform: string }
 
@@ -87,7 +89,7 @@ const readCookies = (request: IncomingMessage): Map<string, string> => {
 
 const sessionCookie = (value: string, persistent: boolean): string =>
   `${SESSION_COOKIE}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=${persistent ? 'Lax' : 'Strict'}; Path=/${
-    persistent ? `; Max-Age=${TRUSTED_COOKIE_MAX_AGE_SECONDS}` : ''
+    persistent ? `; Max-Age=${TRUSTED_BROWSER_TTL_MS / 1_000}` : ''
   }`
 
 const pairingCookie = (value: string): string =>
@@ -162,7 +164,9 @@ export class RemoteSessionPairingManager {
   private readonly now: () => number
   private storedMutationQueue: Promise<void> = Promise.resolve()
   private unclaimedTrustedBrowserCleanupTask: Promise<void> | undefined
+  private expirationTimer: ReturnType<typeof setTimeout> | undefined
   private authorizationGeneration = 0
+  private disposed = false
 
   private constructor(
     private readonly options: PairingManagerOptions,
@@ -170,6 +174,7 @@ export class RemoteSessionPairingManager {
   ) {
     this.stored = stored
     this.now = options.now ?? Date.now
+    this.scheduleExpirationTimer()
   }
 
   static async create(options: PairingManagerOptions): Promise<RemoteSessionPairingManager> {
@@ -247,7 +252,9 @@ export class RemoteSessionPairingManager {
   }
 
   trustedViews(): TrustedRemoteBrowserView[] {
+    this.pruneExpired()
     return [...this.stored.trustedBrowsers]
+      .filter((browser) => !this.unclaimedTrustedBrowserCleanup.has(browser.id))
       .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
       .map(({ id, browser, platform, createdAt, lastSeenAt }) => ({
         id,
@@ -282,13 +289,15 @@ export class RemoteSessionPairingManager {
           expiresAt: this.now() + ONE_TIME_SESSION_TTL_MS
         })
       } else {
+        const createdAt = this.now()
         const trusted: StoredTrustedBrowser = {
           id: sessionId,
           browser: request.browser,
           platform: request.platform,
           tokenHash: hash(secret),
-          createdAt: this.now(),
-          lastSeenAt: this.now()
+          createdAt,
+          lastSeenAt: createdAt,
+          expiresAt: createdAt + TRUSTED_BROWSER_TTL_MS
         }
         await this.commitStoredMutation((stored) => ({
           ...stored,
@@ -306,6 +315,7 @@ export class RemoteSessionPairingManager {
       }
 
       request.status = 'approved'
+      this.scheduleExpirationTimer()
       this.options.onChanged()
     } catch (error) {
       if (
@@ -345,6 +355,7 @@ export class RemoteSessionPairingManager {
         }
         return { ...stored, trustedBrowsers }
       })
+      this.scheduleExpirationTimer()
       this.options.onChanged()
     } finally {
       this.pendingRevocations.delete(browserId)
@@ -360,9 +371,18 @@ export class RemoteSessionPairingManager {
     )
     this.pending.clear()
     this.oneTimeSessions.clear()
+    this.scheduleExpirationTimer()
     this.options.onChanged()
     const changed = await this.cleanupUnclaimedTrustedBrowsers(unclaimedTrustedBrowsers)
+    this.scheduleExpirationTimer()
     if (changed) this.options.onChanged()
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    if (this.expirationTimer) clearTimeout(this.expirationTimer)
+    this.expirationTimer = undefined
   }
 
   readonly webAccess: ExternalWebAccess = {
@@ -499,6 +519,7 @@ export class RemoteSessionPairingManager {
       status: 'pending'
     }
     this.pending.set(id, pending)
+    this.scheduleExpirationTimer()
     response.setHeader('set-cookie', pairingCookie(`${id}.${secret}`))
     this.options.onChanged()
     return pending
@@ -532,6 +553,7 @@ export class RemoteSessionPairingManager {
     }
     if (pending.status === 'rejected' || !pending.grant) {
       this.pending.delete(pending.id)
+      this.scheduleExpirationTimer()
       response.setHeader('set-cookie', clearCookie(PAIRING_COOKIE))
       json(response, 200, { status: 'rejected' })
       return
@@ -542,6 +564,7 @@ export class RemoteSessionPairingManager {
       clearCookie(PAIRING_COOKIE)
     ])
     this.pending.delete(pending.id)
+    this.scheduleExpirationTimer()
     json(response, 200, { status: 'approved' })
   }
 
@@ -561,14 +584,32 @@ export class RemoteSessionPairingManager {
     if (this.pendingRevocations.has(id)) return undefined
 
     const trusted = this.stored.trustedBrowsers.find((browser) => browser.id === id)
-    if (!trusted || !safeHashEqual(trusted.tokenHash, tokenHash)) return undefined
+    if (!trusted) return undefined
+    if (this.unclaimedTrustedBrowserCleanup.has(id)) return undefined
+    if (trusted.expiresAt <= this.now()) {
+      const changed = await this.removeStoredTrustedBrowsers(new Set([id]))
+      this.scheduleExpirationTimer()
+      if (changed) this.options.onChanged()
+      return undefined
+    }
+    if (!safeHashEqual(trusted.tokenHash, tokenHash)) return undefined
     if (this.now() - trusted.lastSeenAt >= LAST_SEEN_WRITE_INTERVAL_MS) {
       let authorized = false
-      const changed = await this.commitStoredMutation((stored) => {
+      let expired = false
+      let authorizedExpiresAt: number | undefined
+      let changed = await this.commitStoredMutation((stored) => {
         const current = stored.trustedBrowsers.find((browser) => browser.id === id)
         if (!current || !safeHashEqual(current.tokenHash, tokenHash)) return undefined
-        authorized = true
         const lastSeenAt = this.now()
+        if (current.expiresAt <= lastSeenAt) {
+          expired = true
+          return {
+            ...stored,
+            trustedBrowsers: stored.trustedBrowsers.filter((browser) => browser.id !== id)
+          }
+        }
+        authorized = true
+        authorizedExpiresAt = current.expiresAt
         if (lastSeenAt - current.lastSeenAt < LAST_SEEN_WRITE_INTERVAL_MS) return undefined
         return {
           ...stored,
@@ -577,8 +618,14 @@ export class RemoteSessionPairingManager {
           )
         }
       })
-      if (!authorized) return undefined
+      if (authorizedExpiresAt !== undefined && authorizedExpiresAt <= this.now()) {
+        authorized = false
+        expired = true
+        changed = (await this.removeStoredTrustedBrowsers(new Set([id]))) || changed
+      }
+      if (expired) this.scheduleExpirationTimer()
       if (changed) this.options.onChanged()
+      if (!authorized) return undefined
     }
     return { kind: 'trusted', sessionId: id }
   }
@@ -637,14 +684,19 @@ export class RemoteSessionPairingManager {
         if (this.unclaimedTrustedBrowserCleanupTask !== cleanupTask) return
         this.unclaimedTrustedBrowserCleanupTask = undefined
         if (succeeded) this.scheduleUnclaimedTrustedBrowserCleanup()
+        this.scheduleExpirationTimer()
       })
     this.unclaimedTrustedBrowserCleanupTask = cleanupTask
   }
 
   private pruneExpired(): void {
     const now = this.now()
+    let pendingViewsChanged = false
     for (const [id, request] of this.pending) {
       if (request.expiresAt > now) continue
+      if (request.status === 'pending' || request.status === 'approving') {
+        pendingViewsChanged = true
+      }
       if (request.grant?.decision === 'always') {
         this.unclaimedTrustedBrowserCleanup.add(request.grant.sessionId)
       } else if (request.grant?.decision === 'once') {
@@ -655,7 +707,43 @@ export class RemoteSessionPairingManager {
     for (const [id, session] of this.oneTimeSessions) {
       if (session.expiresAt <= now) this.oneTimeSessions.delete(id)
     }
+    for (const browser of this.stored.trustedBrowsers) {
+      if (browser.expiresAt <= now) this.unclaimedTrustedBrowserCleanup.add(browser.id)
+    }
     this.scheduleUnclaimedTrustedBrowserCleanup()
+    this.scheduleExpirationTimer()
+    if (pendingViewsChanged) this.options.onChanged()
+  }
+
+  private scheduleExpirationTimer(): void {
+    if (this.expirationTimer) clearTimeout(this.expirationTimer)
+    this.expirationTimer = undefined
+    if (this.disposed) return
+
+    const now = this.now()
+    const deadlines = [
+      ...[...this.pending.values()].map((request) => request.expiresAt),
+      ...[...this.oneTimeSessions.values()].map((session) => session.expiresAt),
+      ...this.stored.trustedBrowsers.flatMap((browser) =>
+        this.unclaimedTrustedBrowserCleanup.has(browser.id) ||
+        this.pendingRevocations.has(browser.id)
+          ? []
+          : [browser.expiresAt]
+      ),
+      ...(this.unclaimedTrustedBrowserCleanup.size > 0 && !this.unclaimedTrustedBrowserCleanupTask
+        ? [now + CLEANUP_RETRY_MS]
+        : [])
+    ]
+    if (deadlines.length === 0) return
+
+    const delay = Math.max(0, Math.min(Math.min(...deadlines) - now, MAX_TIMER_DELAY_MS))
+    const timer = setTimeout(() => {
+      if (this.expirationTimer !== timer) return
+      this.expirationTimer = undefined
+      this.pruneExpired()
+    }, delay)
+    timer.unref()
+    this.expirationTimer = timer
   }
 }
 
