@@ -100,6 +100,11 @@ describe('GitHubTokenControl', () => {
     expect(settingsApi.saveGitHubToken).toHaveBeenCalledWith({ token: 'github_pat_verified' })
     expect(document.body.textContent).toContain('Token verified and saved.')
     expect(document.body.textContent).toContain('Saved token: gith…fied')
+    expect(document.body.querySelectorAll('#github-token-status')).toHaveLength(1)
+    expect(document.body.querySelectorAll('#github-token-feedback')).toHaveLength(1)
+    expect(document.body.querySelector('#github-token')?.getAttribute('aria-describedby')).toBe(
+      'github-token-status github-token-feedback'
+    )
     expect(document.body.querySelector<HTMLInputElement>('#github-token')?.value).toBe('')
 
     await act(async () => i18next.changeLanguage('zh-Hans'))

@@ -42,6 +42,12 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
   const [availability, setAvailability] = useState<Availability>('checking')
   const [busy, setBusy] = useState<'loading' | 'saving' | 'removing' | null>('loading')
   const [feedback, setFeedback] = useState<Feedback | null>(null)
+  const descriptionIds = [
+    status?.configured ? 'github-token-status' : '',
+    feedback ? 'github-token-feedback' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   useEffect(() => {
     let active = true
@@ -144,7 +150,7 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
           value={token}
           disabled={busy !== null}
           aria-invalid={feedback?.kind === 'error' || undefined}
-          aria-describedby="github-token-feedback"
+          aria-describedby={descriptionIds || undefined}
           onChange={(value) => {
             setToken(value)
             setFeedback(null)
@@ -165,7 +171,7 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
 
       <div className="min-h-5 space-y-2">
         {status?.configured ? (
-          <p id="github-token-feedback" className="text-xs text-muted-foreground">
+          <p id="github-token-status" className="text-xs text-muted-foreground">
             {t('Saved token:')} {status.mask}
           </p>
         ) : null}
