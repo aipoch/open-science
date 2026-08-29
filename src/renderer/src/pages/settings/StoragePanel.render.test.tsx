@@ -32,6 +32,7 @@ const richInfo: StorageInfo = {
   defaultParent: '/home/u',
   dataRootMissing: false,
   legacyDataMovePrompt: false,
+  cleanupPending: false,
   usage: {
     categories: [
       { key: 'artifacts', bytes: 22_700_000 },
@@ -97,7 +98,8 @@ beforeEach(() => {
         defaultDataRoot: '/home/u/.open-science',
         defaultParent: '/home/u',
         dataRootMissing: false,
-        legacyDataMovePrompt: false
+        legacyDataMovePrompt: false,
+        cleanupPending: false
       }),
       getInfo: vi.fn().mockResolvedValue({
         dataRoot: '/home/u/.open-science',
@@ -106,6 +108,7 @@ beforeEach(() => {
         defaultParent: '/home/u',
         dataRootMissing: false,
         legacyDataMovePrompt: false,
+        cleanupPending: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       }),
@@ -152,6 +155,7 @@ describe('StoragePanel', () => {
         defaultParent: '/home/u',
         dataRootMissing: false,
         legacyDataMovePrompt: false,
+        cleanupPending: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       })
@@ -175,6 +179,7 @@ describe('StoragePanel', () => {
         defaultParent: '/home/u',
         dataRootMissing: false,
         legacyDataMovePrompt: false,
+        cleanupPending: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       })
@@ -207,7 +212,8 @@ describe('StoragePanel', () => {
       defaultDataRoot: '/home/u/.open-science',
       defaultParent: '/home/u',
       dataRootMissing: false,
-      legacyDataMovePrompt: false
+      legacyDataMovePrompt: false,
+      cleanupPending: false
     }
     useStorageInfoStore.setState({
       status: cachedInfo,

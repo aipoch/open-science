@@ -84,6 +84,7 @@ const storageInfo = (overrides: Partial<StorageInfo> = {}): StorageInfo => ({
   defaultParent: '/home/u',
   dataRootMissing: false,
   legacyDataMovePrompt: false,
+  cleanupPending: false,
   usage: { categories: [], totalBytes: 0 },
   availableBytes: 500_000_000_000,
   ...overrides
