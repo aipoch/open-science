@@ -47,7 +47,7 @@
     "{{count}} notebooks already exist in the chosen directory._other": "Le dossier choisi contient déjà {{count}} Notebooks.",
     "Overwrite": "Écraser",
     "Save the update installer": "Enregistrer le programme d'installation de la mise à jour",
-    "Could not open the update installer: {{error}}": "Impossible d'ouvrir le programme d'installation de la mise à jour : {{error}}",
+    "Could not open the update installer: {{error}}": "Impossible d'ouvrir le programme d'installation de la mise à jour: {{error}}",
     "Export Skill": "Exporter la compétence",
     "Skill ZIP": "Archive ZIP de la compétence",
     "ZIP archive": "Archive ZIP",
