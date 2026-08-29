@@ -14,4 +14,13 @@ describe('ProviderKindIcon', () => {
       expect(html).not.toContain('text-muted-foreground')
     }
   )
+
+  it('renders the Tencent Cloud provider logo for Tencent TokenHub', () => {
+    const html = renderToStaticMarkup(<ProviderKindIcon kindKey="official:tencent" />)
+
+    expect(html).toContain('<svg')
+    expect(html).toContain('<title>TencentCloud</title>')
+    expect(html).toContain('#006EFF')
+    expect(html).not.toContain('text-muted-foreground')
+  })
 })

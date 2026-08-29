@@ -648,8 +648,17 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/apikey'
       }
     ],
-    models: [{ id: 'hy4-preview', contextWindow: 1_000_000 }]
-    // Hy4 preview is text-only in TokenHub's model matrix, so no `multimodal` rule.
+    models: [
+      { id: 'hy4-preview', contextWindow: 1_000_000 },
+      { id: 'glm-5.3', contextWindow: 1_000_000 },
+      { id: 'glm-5.3-flash', contextWindow: 1_000_000 },
+      { id: 'kimi-k3', contextWindow: 1_048_576 },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
+      { id: 'minimax-m3', contextWindow: 1_000_000 }
+    ]
+    // The curated language models above are text-only in TokenHub's model matrix, so no
+    // `multimodal` rule.
   },
   {
     id: 'opencode-go',

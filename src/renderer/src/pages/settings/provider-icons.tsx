@@ -4,6 +4,7 @@ import { CirclePlus, Sparkles } from 'lucide-react'
 import ClaudeColor from '@lobehub/icons/es/Claude/components/Color'
 import Codex from '@lobehub/icons/es/Codex/components/Mono'
 import OpenCode from '@lobehub/icons/es/OpenCode/components/Mono'
+import TencentCloudColor from '@lobehub/icons/es/TencentCloud/components/Color'
 
 import { cn } from '@/lib/utils'
 import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
@@ -112,6 +113,16 @@ export const ProviderKindIcon = ({
       <OpenCode
         size={20}
         className={cn('size-5 shrink-0 text-foreground', className)}
+        aria-hidden="true"
+      />
+    )
+  }
+
+  if (kindKey === 'official:tencent') {
+    return (
+      <TencentCloudColor
+        size={20}
+        className={cn('size-5 shrink-0', className)}
         aria-hidden="true"
       />
     )

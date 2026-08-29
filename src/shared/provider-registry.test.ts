@@ -419,7 +419,7 @@ describe('provider registry', () => {
     expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260628')
   })
 
-  it('routes Tencent TokenHub through all three APIs with regional keys and Hy4 preview', () => {
+  it('routes Tencent TokenHub through all three APIs with regional keys and curated models', () => {
     expect(resolveVendorApiEndpoints('tencent')).toEqual(['anthropic', 'openai', 'responses'])
     expect(usesVendorAnthropicApiKeyHeader('tencent')).toBe(true)
     expect(usesVendorAnthropicApiKeyHeader('deepseek')).toBe(false)
@@ -440,7 +440,21 @@ describe('provider registry', () => {
     )
     expect(resolveVendorModelsUrl('tencent')).toBeUndefined()
     expect(defaultVendorModel('tencent')).toBe('hy4-preview')
+    expect(getOfficialVendor('tencent')?.models.map(({ id }) => id)).toEqual([
+      'hy4-preview',
+      'glm-5.3',
+      'glm-5.3-flash',
+      'kimi-k3',
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'minimax-m3'
+    ])
     expect(resolveModelContextWindow('tencent', 'hy4-preview')).toBe(1_000_000)
+    expect(resolveModelContextWindow('tencent', 'kimi-k3')).toBe(1_048_576)
+    expect(isVendorModelResponsesSupported('tencent', 'glm-5.3')).toBe(true)
+    expect(isVendorModelResponsesSupported('tencent', 'deepseek-v4-flash')).toBe(true)
+    expect(isVendorModelResponsesSupported('tencent', 'deepseek-v4-pro')).toBe(true)
+    expect(isVendorModelResponsesSupported('tencent', 'minimax-m3')).toBe(true)
     expect(isVendorModelResponsesSupported('tencent', 'hy4-preview')).toBe(true)
     expect(isVendorModelMultimodal('tencent', 'hy4-preview')).toBe(false)
     expect(resolveVendorModelReasoningEffort('tencent', 'hy4-preview')).toEqual({
