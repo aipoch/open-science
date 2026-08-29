@@ -755,8 +755,14 @@ const persistEvidence = async (
     await rm(published ? finalRunRoot : stagingRunRoot, { recursive: true, force: true }).catch(
       () => undefined
     )
+    const unpublishedWorkingFiles = workingFiles.map((file) => {
+      const unpublished = { ...file }
+      delete unpublished.generationId
+      delete unpublished.checksum
+      return unpublished
+    })
     return {
-      workingFiles,
+      workingFiles: unpublishedWorkingFiles,
       fileEvidence: unavailableEvidence([...reasonCodes, 'evidence-persistence-failed'])
     }
   }

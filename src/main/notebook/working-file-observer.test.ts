@@ -265,6 +265,12 @@ describe('working-file evidence', () => {
       state: 'unavailable',
       reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
     })
+    expect(result.workingFiles[0]).toMatchObject({
+      relativePath: 'data/result.csv',
+      change: 'created'
+    })
+    expect(result.workingFiles[0]).not.toHaveProperty('generationId')
+    expect(result.workingFiles[0]).not.toHaveProperty('checksum')
     await expect(
       readFile(join(sessionRoot, 'file-evidence', 'runs', 'run-persist-failure', 'evidence.json'))
     ).rejects.toMatchObject({ code: 'ENOENT' })
