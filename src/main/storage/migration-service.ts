@@ -190,7 +190,17 @@ const validateCanonicalTarget = async (
   resolvedParent: string,
   target: string
 ): Promise<DataRootValidationResult> => {
-  const current = resolve(await realpath(currentDataRoot))
+  let current: string
+  try {
+    current = resolve(await realpath(currentDataRoot))
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+    // Missing-root recovery has no source tree to escape into. Retain the normalized configured
+    // path for lexical overlap checks; setDataRootAndRelaunch classifies again after target mkdir,
+    // so a drive that reconnects during the operation is canonicalized before pointer persistence.
+    current = resolve(currentDataRoot)
+  }
   const canonicalTarget = await canonicalTargetForParent(resolvedParent, target)
   if (samePath(canonicalTarget, current)) {
     return { ok: false, error: 'The new location is the same as the current one.' }

@@ -1778,6 +1778,25 @@ describe('storage IPC handlers', () => {
     })
   })
 
+  it('inspects and switches to a replacement when the configured data root is missing', async () => {
+    initDataRoot(dataRoot)
+    await rm(dataRoot, { recursive: true })
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+      kind: 'move',
+      dataRoot: target
+    })
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      completeOnboarding: false
+    })
+    expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
   it('inspect-data-root returns adopt when the derived target already holds our data', async () => {
     initDataRoot(dataRoot)
     await mkdir(join(target, 'artifacts'), { recursive: true })
