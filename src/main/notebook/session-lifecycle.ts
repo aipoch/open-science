@@ -28,6 +28,7 @@ import {
   type NotebookLaneIdentity
 } from './lane-identity'
 import { resolveProjectId } from '../../shared/project-scope'
+import { reconcileWorkingFileEvidence } from './working-file-observer'
 
 type RuntimeSession = NotebookSessionAggregate
 
@@ -137,6 +138,7 @@ class NotebookSessionLifecycleOwner {
           lane
         )
       }
+      await reconcileWorkingFileEvidence(document.notebookSessionRoot, document.runs)
 
       const ownedExecutor = this.createExecutor(lane)
       const session = new NotebookSessionAggregate({

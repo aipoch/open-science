@@ -1,10 +1,21 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  unlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  reconcileWorkingFileEvidence,
   startWorkingFileObservation,
   toPortableNotebookRelativePath
 } from './working-file-observer'
@@ -280,6 +291,75 @@ describe('working-file evidence', () => {
         throw error
       })
     ).resolves.toEqual([])
+  })
+
+  it('rejects a user-created file-evidence symlink without writing through it', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const outsideRoot = join(storageRoot as string, 'outside')
+    await mkdir(outsideRoot)
+    await symlink(outsideRoot, join(sessionRoot, 'file-evidence'), 'dir')
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-symlink' },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'result.csv'), 'must stay local')
+
+    const result = await observation.finish()
+
+    expect(result.workingFiles[0]).not.toHaveProperty('generationId')
+    expect(result.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+    await expect(readdir(outsideRoot)).resolves.toEqual([])
+  })
+
+  it('reconciles crash-orphaned staging and unpublished run directories', async () => {
+    const { sessionRoot } = await createRoots()
+    const stagingRoot = join(sessionRoot, 'file-evidence', 'staging')
+    const runsRoot = join(sessionRoot, 'file-evidence', 'runs')
+    await mkdir(join(stagingRoot, 'run-crashed-staging'), { recursive: true })
+    await mkdir(join(runsRoot, 'run-unpublished'), { recursive: true })
+    await mkdir(join(runsRoot, 'run-referenced'), { recursive: true })
+
+    const result = await reconcileWorkingFileEvidence(sessionRoot, [
+      {
+        runId: 'run-referenced',
+        fileEvidence: {
+          schemaVersion: 1,
+          evidenceId: 'notebook-file-evidence-run-referenced',
+          state: 'partial',
+          checksum: 'checksum',
+          storageKey: 'file-evidence/runs/run-referenced/evidence.json',
+          relationCount: 0,
+          generationCount: 0,
+          managedRootsFinalState: 'partial',
+          fileReads: 'unavailable',
+          externalPaths: 'unavailable',
+          writerAttribution: 'unavailable',
+          reasonCodes: []
+        }
+      }
+    ])
+
+    expect(result).toEqual({ removedStagingEntries: 1, removedRunEntries: 1 })
+    await expect(readdir(stagingRoot)).resolves.toEqual([])
+    await expect(readdir(runsRoot)).resolves.toEqual(['run-referenced'])
+  })
+
+  it('refuses crash cleanup through a replaced evidence directory', async () => {
+    const { sessionRoot } = await createRoots()
+    const evidenceRoot = join(sessionRoot, 'file-evidence')
+    const outsideRoot = join(storageRoot as string, 'outside-cleanup')
+    await mkdir(evidenceRoot)
+    await mkdir(outsideRoot)
+    await writeFile(join(outsideRoot, 'keep.txt'), 'keep')
+    await symlink(outsideRoot, join(evidenceRoot, 'runs'), 'dir')
+
+    await expect(reconcileWorkingFileEvidence(sessionRoot, [])).rejects.toThrow(
+      /Unsafe Notebook file-evidence directory/
+    )
+    await expect(readFile(join(outsideRoot, 'keep.txt'), 'utf8')).resolves.toBe('keep')
   })
 
   it('passes cancellation into generation freezing and cleans the incomplete copy', async () => {
