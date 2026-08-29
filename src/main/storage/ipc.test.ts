@@ -1588,7 +1588,7 @@ describe('storage IPC handlers', () => {
 
       await expect(
         invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
-      ).resolves.toEqual({ ok: false, error: 'A migration copy is still in progress.' })
+      ).resolves.toEqual({ ok: false, error: 'A data-root change is already in progress.' })
       expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
       expect(deps.relaunch).not.toHaveBeenCalled()
 
@@ -1614,7 +1614,7 @@ describe('storage IPC handlers', () => {
         invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
       ).resolves.toEqual({
         ok: false,
-        error: 'A completed migration is waiting to be committed or discarded.'
+        error: 'A data-root change is already in progress.'
       })
       expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
       expect(deps.relaunch).not.toHaveBeenCalled()
@@ -1682,7 +1682,7 @@ describe('storage IPC handlers', () => {
 
       await expect(
         invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
-      ).resolves.toEqual({ ok: false, error: 'A migration is already being resolved.' })
+      ).resolves.toEqual({ ok: false, error: 'A data-root change is already in progress.' })
       expect(deps.settingsService.setDataRoot).toHaveBeenCalledTimes(1)
 
       releaseCommit?.()
