@@ -667,8 +667,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     label: 'Tencent Coding Plan',
     reasoningEffort: 'unsupported',
     // Mainland China's subscription plan exposes separate Anthropic Messages and OpenAI Chat
-    // Completions routes. Its accepted aliases are intentionally omitted so the picker shows each
-    // model once; the first documented id for each model is the canonical selection.
+    // Completions routes. Tencent documents ANTHROPIC_AUTH_TOKEN for the former, so it keeps the
+    // default Authorization: Bearer transport. Accepted aliases are intentionally omitted so the
+    // picker shows each model once; the first documented id is the canonical selection.
     apiEndpoints: ['anthropic', 'openai'],
     baseUrl: 'https://api.lkeap.cloud.tencent.com/coding/anthropic',
     openaiBaseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3',
@@ -688,7 +689,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     label: 'Tencent Token Plan',
     reasoningEffort: 'unsupported',
     // The international subscription is a distinct product with its own key, endpoints, and model
-    // catalog. Keep it separate from both mainland Coding Plan and pay-as-you-go Tencent TokenHub.
+    // catalog. Its Claude Code guide also uses ANTHROPIC_AUTH_TOKEN (Authorization: Bearer). Keep it
+    // separate from both mainland Coding Plan and pay-as-you-go Tencent TokenHub.
     apiEndpoints: ['anthropic', 'openai'],
     baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic',
     openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/v3',

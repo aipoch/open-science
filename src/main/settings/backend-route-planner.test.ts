@@ -346,6 +346,53 @@ describe('BackendRoutePlanner provider candidates', () => {
     )
   })
 
+  it.each([
+    [
+      'Tencent Coding Plan',
+      'tencentcodingplan' as const,
+      'https://api.lkeap.cloud.tencent.com/coding/anthropic'
+    ],
+    [
+      'Tencent Token Plan',
+      'tencenttokenplan' as const,
+      'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic'
+    ]
+  ])('keeps %s Claude bridge targets on bearer authentication', (_, vendorId, baseUrl) => {
+    const provider = makeStoredProvider({
+      type: 'official',
+      vendorId,
+      apiEndpoints: ['anthropic'],
+      baseUrl,
+      model: 'deepseek-v4-pro-202606'
+    })
+    const target = makeTarget(provider, {
+      apiEndpoints: ['anthropic'],
+      // Official providers project to the custom credential transport while retaining vendorId.
+      provider: { type: 'custom', vendorId, apiEndpoints: ['anthropic'] }
+    })
+
+    const plan = makePlanner().planBackend({
+      settings: { ...makeSettings(provider), agentFrameworkId: 'claude-code' },
+      frameworkId: 'claude-code',
+      target,
+      effortIntent: 'high',
+      conversationSkillImportEnabled: true
+    })
+
+    expect(plan.transport).toEqual({
+      kind: 'claude-anthropic',
+      targets: [
+        {
+          id: JSON.stringify([provider.id, provider.model]),
+          baseUrl,
+          key: 'plain-provider-key',
+          model: provider.model
+        }
+      ],
+      initialTargetId: JSON.stringify([provider.id, provider.model])
+    })
+  })
+
   it('filters model catalogs by route and preserves deduplicated effort slots', () => {
     const provider = makeStoredProvider()
     const active = makeTarget(provider, {
