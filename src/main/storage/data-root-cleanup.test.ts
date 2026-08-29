@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -108,12 +108,13 @@ describe('DataRootCleanupJournal', () => {
     })
     await expect(journal.markCommitted('later-token')).resolves.toBe(true)
 
-    const failEarlierCleanup = vi.fn(async (cleanupSource: string, dirs: string[]) => {
-      if (cleanupSource === source) {
-        return { deleted: [], failed: [{ dir: 'artifacts', error: 'busy' }] }
-      }
-      return deleteSources(cleanupSource, dirs)
-    })
+    const failEarlierCleanup = vi
+      .fn<Parameters<typeof journal.recover>[1]>()
+      .mockResolvedValueOnce({
+        deleted: [],
+        failed: [{ dir: 'artifacts', error: 'busy' }]
+      })
+      .mockImplementation(deleteSources)
     await expect(journal.recover(latestTarget, failEarlierCleanup)).resolves.toEqual({
       pending: true,
       failureCount: 1
@@ -302,8 +303,9 @@ describe('DataRootCleanupJournal', () => {
       pending: false,
       failureCount: 0
     })
-    expect(cleanupRuntimeCache).toHaveBeenNthCalledWith(1, source)
-    expect(cleanupRuntimeCache).toHaveBeenNthCalledWith(2, source)
+    const canonicalSource = await realpath(source)
+    expect(cleanupRuntimeCache).toHaveBeenNthCalledWith(1, canonicalSource)
+    expect(cleanupRuntimeCache).toHaveBeenNthCalledWith(2, canonicalSource)
   })
 
   it('removes the migration marker before clearing the durable cleanup intent', async () => {
