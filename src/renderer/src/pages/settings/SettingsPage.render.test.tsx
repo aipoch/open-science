@@ -205,6 +205,9 @@ const installApi = (): void => {
         availableBytes: 1_000_000_000
       })
     },
+    sessions: {
+      openRecoveryFolder: vi.fn().mockResolvedValue(undefined)
+    },
     cli: {
       getStatus: vi.fn().mockResolvedValue({
         installed: false,

@@ -89,7 +89,7 @@ const mocks = vi.hoisted(() => {
         | { kind: 'repairable'; reason: 'session-scan' | 'startup-reconciliation' }
         | {
             kind: 'damaged-authority'
-            affectedFileCount: number
+            affectedFiles: Array<{ projectId: string; fileName: string }>
           }
         | {
             kind: 'unsupported-version'
@@ -475,6 +475,9 @@ describe('App startup routing', () => {
         replayPendingSkillImportApprovals: vi.fn().mockResolvedValue(undefined)
       },
       notifications: mocks.notifications,
+      sessions: {
+        openRecoveryFolder: vi.fn().mockResolvedValue(undefined)
+      },
       compute: {
         onApprovalRequest: vi.fn(() => vi.fn()),
         onApprovalSettled: vi.fn(() => vi.fn()),
@@ -1389,7 +1392,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
     mocks.sessionPersistence.catalogRecovery = {
       kind: 'damaged-authority',
-      affectedFileCount: 1
+      affectedFiles: [{ projectId: 'project-1', fileName: 'session-1.json' }]
     }
     mocks.sessionPersistence.loadWarning =
       '1 saved conversation file was damaged and moved aside. The remaining conversations were loaded.'
