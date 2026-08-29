@@ -38,7 +38,7 @@ afterEach(async () => {
 })
 
 describe('DataRootCleanupJournal', () => {
-  it('retains earlier cleanup authority when another move is staged', async () => {
+  it('does not recover a committed intent outside the live cleanup chain', async () => {
     const journal = new DataRootCleanupJournal(configRoot)
     await journal.stage({
       token: 'cleanup-token',
@@ -66,7 +66,9 @@ describe('DataRootCleanupJournal', () => {
       pending: true,
       failureCount: 0
     })
-    await expect(readFile(join(source, 'artifacts', 'result.txt'), 'utf8')).rejects.toThrow()
+    await expect(readFile(join(source, 'artifacts', 'result.txt'), 'utf8')).resolves.toBe(
+      'preserved'
+    )
     await expect(readFile(join(otherSource, 'artifacts', 'other.txt'), 'utf8')).resolves.toBe(
       'other source'
     )
@@ -328,7 +330,7 @@ describe('DataRootCleanupJournal', () => {
     await expect(journal.hasPending()).resolves.toBe(false)
   })
 
-  it('finishes a committed intent after marker removal when every source entry is gone', async () => {
+  it('retries matching source leftovers after marker removal when journal clearing failed', async () => {
     class FailOnceJournal extends DataRootCleanupJournal {
       private failClear = true
 
@@ -350,15 +352,24 @@ describe('DataRootCleanupJournal', () => {
     })
     await journal.markCommitted('cleanup-token')
 
-    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+    const leaveSourceBehind = vi
+      .fn<Parameters<typeof journal.recover>[1]>()
+      .mockResolvedValueOnce({ deleted: ['artifacts'], failed: [] })
+      .mockImplementationOnce(deleteSources)
+
+    await expect(journal.recover(target, leaveSourceBehind)).resolves.toEqual({
       pending: true,
       failureCount: 1
     })
     await expect(readMigrationMarker(target)).resolves.toBeNull()
-    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+    await expect(readFile(join(source, 'artifacts', 'result.txt'), 'utf8')).resolves.toBe(
+      'preserved'
+    )
+    await expect(journal.recover(target, leaveSourceBehind)).resolves.toEqual({
       pending: false,
       failureCount: 0
     })
+    await expect(readFile(join(source, 'artifacts', 'result.txt'), 'utf8')).rejects.toThrow()
     await expect(journal.hasPending()).resolves.toBe(false)
   })
 

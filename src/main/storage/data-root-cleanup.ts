@@ -9,6 +9,7 @@ import {
   writeDurableJsonFile
 } from './durable-json-file'
 import {
+  MIGRATION_MARKER_FILENAME,
   readMigrationMarker,
   removeMigrationMarker,
   scanInventory,
@@ -186,6 +187,15 @@ const missingPathError = (error: unknown): boolean => {
   return code === 'ENOENT' || code === 'ENOTDIR'
 }
 
+const migrationMarkerIsMissing = async (target: string): Promise<boolean> => {
+  try {
+    await lstat(join(target, MIGRATION_MARKER_FILENAME))
+    return false
+  } catch (error) {
+    return missingPathError(error)
+  }
+}
+
 const captureEntrySnapshot = async (source: string, dir: string): Promise<CleanupEntrySnapshot> => {
   let stats
   try {
@@ -358,7 +368,8 @@ class DataRootCleanupJournal {
 
   private async prepareCommittedIntent(
     intent: DataRootCleanupIntent,
-    currentDataRoot: string
+    currentDataRoot: string,
+    allowMissingMarker: boolean
   ): Promise<DataRootCleanupIntent | undefined> {
     let current: string
     let source: string
@@ -393,8 +404,16 @@ class DataRootCleanupJournal {
     }
 
     const marker = await readMigrationMarker(target)
+    if (!marker) {
+      if (intent.committed && allowMissingMarker && (await migrationMarkerIsMissing(target))) {
+        // Marker removal is the first half of cleanup completion. If clearing the journal then
+        // fails or the process exits, the committed journal plus the live migration chain remains
+        // sufficient authority to retry only the snapshotted source entries.
+        return intent
+      }
+      return undefined
+    }
     if (
-      !marker ||
       marker.status !== 'verified' ||
       marker.token !== intent.token ||
       !marker.inventory ||
@@ -435,9 +454,14 @@ class DataRootCleanupJournal {
     intent: DataRootCleanupIntent,
     currentDataRoot: string,
     deleteSources: DeleteSources,
-    cleanupRuntimeCache?: CleanupRuntimeCache
+    cleanupRuntimeCache: CleanupRuntimeCache | undefined,
+    allowMissingMarker: boolean
   ): Promise<number> {
-    const committedIntent = await this.prepareCommittedIntent(intent, currentDataRoot)
+    const committedIntent = await this.prepareCommittedIntent(
+      intent,
+      currentDataRoot,
+      allowMissingMarker
+    )
     if (!committedIntent) {
       if (!intent.committed) return 0
       for (const { dir } of intent.entries) {
@@ -471,7 +495,16 @@ class DataRootCleanupJournal {
       return 0
     }
     if (samePath(current, source) || !samePath(source, committedIntent.source)) return 0
-    if (!sourcePresent && committedIntent.entries.some(({ present }) => present)) return 0
+    if (!sourcePresent && committedIntent.entries.some(({ present }) => present)) {
+      if (allowMissingMarker && (await migrationMarkerIsMissing(committedIntent.target))) {
+        try {
+          await this.clear(committedIntent.token)
+        } catch {
+          return 1
+        }
+      }
+      return 0
+    }
 
     const dirsToDelete: string[] = []
     for (const expected of committedIntent.entries) {
@@ -534,8 +567,39 @@ class DataRootCleanupJournal {
     }
     if (!journal) return { pending: false, failureCount: 0 }
 
+    let current: string
+    try {
+      current = (await canonicalizeCleanupSource(currentDataRoot)).path
+    } catch {
+      return { pending: true, failureCount: 0 }
+    }
+
+    // Follow target <- source links back from the live root. Only that chain can authorize source
+    // deletion; an independent committed intent remains pending instead of deleting an unrelated
+    // old root. A duplicated target or cycle is ambiguous and therefore fails closed.
+    const cleanupChain: DataRootCleanupIntent[] = []
+    const cleanupTokens = new Set<string>()
+    let cursor = current
+    while (true) {
+      const candidates = journal.intents.filter(({ target }) => samePath(target, cursor))
+      if (candidates.length === 0) break
+      if (candidates.length > 1) return { pending: true, failureCount: 0 }
+      const [candidate] = candidates
+      if (cleanupTokens.has(candidate.token)) return { pending: true, failureCount: 0 }
+      cleanupTokens.add(candidate.token)
+      cleanupChain.unshift(candidate)
+      cursor = candidate.source
+    }
+
+    // Failed switchovers never authorize deletion, but their uncommitted receipt can be retired
+    // once the source is still the live root, even if the discarded staging target is gone.
+    const abandoned = journal.intents.filter(
+      ({ committed, source, token }) =>
+        !committed && !cleanupTokens.has(token) && samePath(source, current)
+    )
+
     let failureCount = 0
-    for (const intent of journal.intents) {
+    for (const intent of [...cleanupChain, ...abandoned]) {
       let currentIntent: DataRootCleanupIntent | undefined
       let dependsOnPendingTarget = false
       try {
@@ -557,7 +621,8 @@ class DataRootCleanupJournal {
         currentIntent,
         currentDataRoot,
         deleteSources,
-        cleanupRuntimeCache
+        cleanupRuntimeCache,
+        cleanupTokens.has(currentIntent.token)
       )
     }
     return { pending: await this.hasPending(), failureCount }
