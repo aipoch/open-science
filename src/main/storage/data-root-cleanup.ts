@@ -214,6 +214,33 @@ const markerAllowsCleanup = (marker: MigrationMarker, intent: DataRootCleanupInt
   )
 }
 
+const canonicalizeCleanupSource = async (
+  input: string
+): Promise<{ path: string; present: boolean }> => {
+  const resolvedInput = resolve(input)
+  try {
+    return { path: resolve(await realpath(resolvedInput)), present: true }
+  } catch (error) {
+    if (!missingPathError(error)) throw error
+  }
+
+  let ancestor = dirname(resolvedInput)
+  while (true) {
+    try {
+      const canonicalAncestor = resolve(await realpath(ancestor))
+      return {
+        path: resolve(canonicalAncestor, relative(ancestor, resolvedInput)),
+        present: false
+      }
+    } catch (error) {
+      if (!missingPathError(error)) throw error
+      const parent = dirname(ancestor)
+      if (parent === ancestor) return { path: resolvedInput, present: false }
+      ancestor = parent
+    }
+  }
+}
+
 class DataRootCleanupJournal {
   private readonly filePath: string
 
@@ -239,7 +266,7 @@ class DataRootCleanupJournal {
     await writeDurableJsonFile(this.filePath, `${JSON.stringify(journal, null, 2)}\n`)
   }
 
-  async stage(input: StageDataRootCleanupIntent): Promise<void> {
+  async stage(input: StageDataRootCleanupIntent): Promise<string[]> {
     if (
       input.dirs.length === 0 ||
       new Set(input.dirs).size !== input.dirs.length ||
@@ -247,8 +274,11 @@ class DataRootCleanupJournal {
     ) {
       throw new Error('Refused unsafe data-root cleanup paths.')
     }
-    const [source, target] = await Promise.all([realpath(input.source), realpath(input.target)])
-    const canonicalSource = resolve(source)
+    const [source, target] = await Promise.all([
+      canonicalizeCleanupSource(input.source),
+      realpath(input.target)
+    ])
+    const canonicalSource = source.path
     const canonicalTarget = resolve(target)
     if (
       isPathInsideOrEqual(canonicalSource, canonicalTarget) ||
@@ -256,14 +286,18 @@ class DataRootCleanupJournal {
     ) {
       throw new Error('Refused overlapping data-root cleanup paths.')
     }
-    const sourceMetadata = await capturePortableMetadata(canonicalSource, input.dirs)
     let entries: CleanupEntrySnapshot[]
-    try {
-      entries = await Promise.all(
-        input.dirs.map((dir) => captureEntrySnapshot(canonicalSource, dir))
-      )
-    } finally {
-      await restorePortableMetadata(canonicalSource, sourceMetadata)
+    if (source.present) {
+      const sourceMetadata = await capturePortableMetadata(canonicalSource, input.dirs)
+      try {
+        entries = await Promise.all(
+          input.dirs.map((dir) => captureEntrySnapshot(canonicalSource, dir))
+        )
+      } finally {
+        await restorePortableMetadata(canonicalSource, sourceMetadata)
+      }
+    } else {
+      entries = input.dirs.map((dir) => ({ dir, present: false }))
     }
     const existing = (await this.read())?.intents ?? []
     if (existing.some(({ token }) => token === input.token)) {
@@ -280,6 +314,7 @@ class DataRootCleanupJournal {
         committed: false
       }
     ])
+    return entries.filter(({ present }) => present).map(({ dir }) => dir)
   }
 
   async markCommitted(expectedToken: string): Promise<void> {
@@ -322,11 +357,14 @@ class DataRootCleanupJournal {
     let source: string
     let target: string
     try {
-      ;[current, source, target] = await Promise.all([
-        realpath(currentDataRoot).then(resolve),
-        realpath(intent.source).then(resolve),
+      const [canonicalCurrent, canonicalSource, canonicalTarget] = await Promise.all([
+        canonicalizeCleanupSource(currentDataRoot),
+        canonicalizeCleanupSource(intent.source),
         realpath(intent.target).then(resolve)
       ])
+      current = canonicalCurrent.path
+      source = canonicalSource.path
+      target = canonicalTarget
     } catch {
       return undefined
     }
@@ -356,10 +394,12 @@ class DataRootCleanupJournal {
     let markerSource: string
     let markerTarget: string
     try {
-      ;[markerSource, markerTarget] = await Promise.all([
-        realpath(marker.source).then(resolve),
+      const [canonicalMarkerSource, canonicalMarkerTarget] = await Promise.all([
+        canonicalizeCleanupSource(marker.source),
         realpath(marker.target).then(resolve)
       ])
+      markerSource = canonicalMarkerSource.path
+      markerTarget = canonicalMarkerTarget
     } catch {
       return undefined
     }
@@ -380,10 +420,12 @@ class DataRootCleanupJournal {
     let current: string
     let source: string
     try {
-      ;[current, source] = await Promise.all([
-        realpath(currentDataRoot).then(resolve),
-        realpath(committedIntent.source).then(resolve)
+      const [canonicalCurrent, canonicalSource] = await Promise.all([
+        canonicalizeCleanupSource(currentDataRoot),
+        canonicalizeCleanupSource(committedIntent.source)
       ])
+      current = canonicalCurrent.path
+      source = canonicalSource.path
     } catch {
       return 0
     }

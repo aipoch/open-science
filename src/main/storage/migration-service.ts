@@ -933,9 +933,10 @@ export const commitDataRootSwitch = async (
   const runtimePreserved =
     existsSync(join(newRuntime, 'envs.lock')) && existsSync(join(newRuntime, 'pkgs'))
   const dirsToDelete = runtimePreserved ? [...MIGRATED_DIRS, 'runtime'] : migratedDirs
+  let stagedDirsToDelete = dirsToDelete
   if (deps.cleanupJournal) {
     try {
-      await deps.cleanupJournal.stage({
+      stagedDirsToDelete = await deps.cleanupJournal.stage({
         token: marker.token,
         source: deps.currentDataRoot,
         target,
@@ -995,7 +996,7 @@ export const commitDataRootSwitch = async (
   }
   if (!cleanupDegraded) {
     try {
-      const deleteResult = await doDeleteSources(deps.currentDataRoot, dirsToDelete)
+      const deleteResult = await doDeleteSources(deps.currentDataRoot, stagedDirsToDelete)
       cleanupFailureCount = deleteResult.failed.length
       if (cleanupFailureCount > 0) cleanupDegraded = true
     } catch {

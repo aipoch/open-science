@@ -1364,6 +1364,29 @@ describe('runDataRootMigration (copy phase)', () => {
 })
 
 describe('commitDataRootSwitch (commit phase)', () => {
+  it('commits an empty migration with cleanup journaling when the source root is missing', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+    await rm(currentDataRoot, { recursive: true, force: true })
+    const cleanupJournal = new DataRootCleanupJournal(join(emptyParent, 'config'))
+    const setDataRoot = vi.fn().mockResolvedValue(undefined)
+
+    const result = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot,
+        cleanupJournal,
+        expectedToken: 'tok-test',
+        validateProvenanceState: async () => undefined
+      },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(setDataRoot).toHaveBeenCalledWith(target)
+    await expect(cleanupJournal.hasPending()).resolves.toBe(false)
+    await expect(readMigrationMarker(target)).resolves.toBeNull()
+  })
+
   it('preserves timestamps after target verification and the commit-time recheck', async () => {
     const sourceFile = join(currentDataRoot, 'artifacts', 'observations.csv')
     await mkdir(join(currentDataRoot, 'artifacts'), { recursive: true })
