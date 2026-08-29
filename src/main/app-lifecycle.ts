@@ -251,16 +251,16 @@ export const installAppLifecycle = (
       return
     }
     const trigger = shutdownTrigger()
-    // Renderer persistence may cancel only an ordinary quit. Update and data-root relaunches have
-    // already committed their handoff state by the time app.quit() runs, so a renderer failure must
-    // not leave the current process alive. Delegated-work safety remains a separate policy below.
+    // Renderer persistence may cancel only an ordinary quit. Update and data-root relaunches pass a
+    // producer-teardown + renderer-durability gate before committing their handoff; once app.quit()
+    // runs, cancellation would leave the old process alive after the external pointer changed.
     const ordinaryQuit = trigger === 'quit'
     const delegatedWorkBlocksShutdown = trigger !== 'migration-relaunch'
 
     // Final synchronous delegated-work safety boundary. A delegated Attempt may start after an earlier
-    // confirmation snapshot (or after a saved close preference was read). A committed data-root
-    // handoff must continue because its pointer already changed; ordinary quits and updates clear
-    // confirmation/trigger state and show the hard-blocking prompt instead.
+    // confirmation snapshot (or after a saved close preference was read). Storage commands quiesce and
+    // await all producers before marking migration-relaunch, so that committed handoff must continue;
+    // ordinary quits and updates still clear state and show the hard-blocking prompt instead.
     const delegatedAtShutdownBoundary = detectDelegatedWork()
     if (delegatedWorkBlocksShutdown && delegatedAtShutdownBoundary.length > 0) {
       event.preventDefault()

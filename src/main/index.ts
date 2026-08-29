@@ -492,7 +492,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               managedPreviewProtocol: managedPreviewProtocolBridge.registrar,
               handoffRuntime: 'production',
               headless: webMode.headless,
-              confirmUpdateRendererDurability: async () => {
+              confirmRendererDurability: async () => {
                 const getWindow = (): InstanceType<typeof BrowserWindow> | undefined =>
                   mainWindowGetterBox.current?.()
                 const outcome = await createElectronSessionPersistenceFlush(getWindow)()

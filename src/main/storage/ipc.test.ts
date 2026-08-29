@@ -94,6 +94,7 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
     getStoredSettings: vi.fn().mockResolvedValue({})
   },
   cleanupRuntimeCache: vi.fn(() => true),
+  prepareDataRootHandoff: vi.fn().mockResolvedValue(true),
   relaunch: vi.fn(),
   ...overrides
 })
@@ -636,6 +637,23 @@ describe('storage IPC handlers', () => {
     expect(isMigrationPending()).toBe(false)
   })
 
+  it('does not start a migration copy when handoff durability cannot be confirmed', async () => {
+    initDataRoot(dataRoot)
+    const runDataRootMigration = vi.fn()
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(false)
+    const deps = fakeDeps({ runDataRootMigration, prepareDataRootHandoff })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'Could not prepare the app to switch data locations safely. Please try again.'
+    })
+
+    expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
+    expect(runDataRootMigration).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
+  })
+
   it('uses the shared prepared runner when exporting runtime locks for migration', async () => {
     initDataRoot(dataRoot)
     const runner = {
@@ -706,6 +724,23 @@ describe('storage IPC handlers', () => {
     expect(outcome.ok).toBe(false)
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('commit-and-relaunch keeps the old root when handoff durability cannot be confirmed', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(false)
+    const deps = fakeDeps({ prepareDataRootHandoff })
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:commit-and-relaunch', { parent: targetParent })
+    ).resolves.toMatchObject({ ok: false })
+
+    expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+    expect(existsSync(target)).toBe(true)
   })
 
   it('commit-and-relaunch delegates production cleanup to the orderly app quit lifecycle', async () => {
@@ -1257,6 +1292,49 @@ describe('storage IPC handlers', () => {
       completeOnboarding: false
     })
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('set-data-root-and-relaunch keeps the old root when handoff durability cannot be confirmed', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'artifacts'), { recursive: true })
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(false)
+    const deps = fakeDeps({
+      prepareDataRootHandoff,
+      classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Could not prepare the app to switch data locations safely. Please try again.'
+    })
+
+    expect(prepareDataRootHandoff).toHaveBeenCalledOnce()
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('set-data-root-and-relaunch refuses delegated work before preparing the handoff', async () => {
+    initDataRoot(dataRoot)
+    const prepareDataRootHandoff = vi.fn().mockResolvedValue(true)
+    const deps = fakeDeps({
+      getActiveDelegatedSessions: vi
+        .fn()
+        .mockReturnValue([{ projectId: 'project-1', sessionId: 'delegated-1' }]),
+      prepareDataRootHandoff,
+      classifyDataRoot: vi.fn().mockResolvedValue({ kind: 'adopt' })
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toMatchObject({ ok: false })
+
+    expect(prepareDataRootHandoff).not.toHaveBeenCalled()
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
   it('diagnoses an adopted data root without retaining its path', async () => {

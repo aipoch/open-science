@@ -358,8 +358,8 @@ type IpcRegistrationOptions = {
   // Renders the built-in icon variants to preview data URLs for the Appearance picker.
   listAppIconPreviews?: () => AppIconPreview[]
   // Flushes renderer-owned Session/Preview state after backend teardown and before an in-place
-  // updater can close the renderer. Desktop startup supplies the late-bound window implementation.
-  confirmUpdateRendererDurability?: () => Promise<boolean>
+  // handoff (update install or data-root switch). Desktop startup supplies the late-bound window.
+  confirmRendererDurability?: () => Promise<boolean>
   // Retained as an explicit startup marker while the app owns the only handoff composition.
   handoffRuntime?: 'production'
 }
@@ -406,7 +406,7 @@ const createApplicationModules = async (
     translate = englishNativeTranslator,
     onAppIconVariantChanged,
     listAppIconPreviews,
-    confirmUpdateRendererDurability = () => Promise.resolve(true)
+    confirmRendererDurability = () => Promise.resolve(true)
   }: IpcRegistrationOptions,
   modules: ApplicationModuleBuilder,
   composition: DiagnosticOperation
@@ -2666,26 +2666,24 @@ const createApplicationModules = async (
     notebook: notebookService,
     log: createLogger('shutdown')
   })
+  const durableBackendHandoffGate = createDurableInstallGate(
+    () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
+    confirmRendererDurability
+  )
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
-    installGate: createActiveResearchSafeInstallGate(
-      () => {
-        const blockers: UpdateBlocker[] = detectActiveSessions({
-          runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
-          delegated: { getActiveDelegatedSessions },
-          notebook: notebookService
-        }).map((session) => session.kind)
-        if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
-        return blockers
-      },
-      createDurableInstallGate(
-        () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
-        confirmUpdateRendererDurability
-      )
-    )
+    installGate: createActiveResearchSafeInstallGate(() => {
+      const blockers: UpdateBlocker[] = detectActiveSessions({
+        runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+        delegated: { getActiveDelegatedSessions },
+        notebook: notebookService
+      }).map((session) => session.kind)
+      if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
+      return blockers
+    }, durableBackendHandoffGate)
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
   let stopUpdateScheduler: (() => void) | undefined
@@ -3169,7 +3167,11 @@ const createApplicationModules = async (
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
     getActiveDelegatedSessions,
     settingsService,
-    micromambaRunner
+    micromambaRunner,
+    prepareDataRootHandoff: async () => {
+      const readiness = await durableBackendHandoffGate()
+      return readiness.completed && readiness.reaped
+    }
   })
   declareElectronAdapter('storage', () =>
     registerStorageIpcHandlers(

@@ -90,6 +90,12 @@ type StorageCommandOwnerDeps = {
   discardStagedCopy?: typeof discardStagedCopy
   runDataRootMigration?: typeof runDataRootMigration
   pauseDataRootWriters?: typeof pauseDataRootWriters
+  // Windows classification probes volume capabilities; inject only when a host-independent command
+  // boundary test needs to reach the pointer mutation without depending on its temporary drive.
+  classifyDataRoot?: typeof classifyDataRoot
+  // Stops data producers and proves renderer-owned Session state is durable before any data-root
+  // pointer can be persisted. Optional only for isolated storage tests and non-desktop adapters.
+  prepareDataRootHandoff?: () => Promise<boolean>
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -121,6 +127,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const discardStagedCopyImpl = deps.discardStagedCopy ?? discardStagedCopy
   const runDataRootMigrationImpl = deps.runDataRootMigration ?? runDataRootMigration
   const pauseDataRootWritersImpl = deps.pauseDataRootWriters ?? pauseDataRootWriters
+  const classifyDataRootImpl = deps.classifyDataRoot ?? classifyDataRoot
   const unsafeLogger = deps.logger ?? createLogger('storage:ipc')
   const emitSafely = (level: keyof Logger, message: string, data?: unknown): void => {
     try {
@@ -134,6 +141,17 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     info: (message, data) => emitSafely('info', message, data),
     warn: (message, data) => emitSafely('warn', message, data),
     error: (message, data) => emitSafely('error', message, data)
+  }
+  const prepareDataRootHandoff = async (): Promise<MigrationOutcome | undefined> => {
+    try {
+      if ((await deps.prepareDataRootHandoff?.()) !== false) return undefined
+    } catch (error) {
+      logger.error('data root handoff preparation failed', diagnosticErrorFields(error))
+    }
+    return {
+      ok: false,
+      error: 'Could not prepare the app to switch data locations safely. Please try again.'
+    }
   }
 
   const getStatus = async (): Promise<StorageStatus> => {
@@ -259,6 +277,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           'Subagents are still running. Return to their tasks and stop them before moving data.'
       }
     }
+
+    const preparationFailure = await prepareDataRootHandoff()
+    if (preparationFailure) return preparationFailure
 
     const controller = new AbortController()
     const correlationId = randomUUID()
@@ -467,17 +488,27 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       return { ok: false, error: 'No completed migration copy was found.' }
     }
 
+    // A recovered commit has no process-local migration gate, while a staged commit may have been
+    // waiting in its modal long enough for an unexpected delegated writer to appear. Refuse before
+    // either case can persist the new pointer.
+    if (deps.getActiveDelegatedSessions().length > 0) {
+      resolutionInProgress = false
+      return {
+        ok: false,
+        error:
+          'Subagents are still running. Return to their tasks and stop them before finishing the move.'
+      }
+    }
+
+    const preparationFailure = await prepareDataRootHandoff()
+    if (preparationFailure) {
+      resolutionInProgress = false
+      return preparationFailure
+    }
+
     if (staged.recovered) {
       // Recovery happens in a fresh process: the original write gate and paused runtimes are gone.
       // Re-establish those invariants before inventory verification and pointer persistence.
-      if (deps.getActiveDelegatedSessions().length > 0) {
-        resolutionInProgress = false
-        return {
-          ok: false,
-          error:
-            'Subagents are still running. Return to their tasks and stop them before finishing the move.'
-        }
-      }
       beginMigration()
       try {
         await pauseDataRootWritersImpl({
@@ -573,7 +604,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     try {
       if (typeof request?.parent !== 'string') throw new Error('The selected folder is not usable.')
       dataRoot = dataRootForPicked(request.parent)
-      const result = await classifyDataRoot(request.parent, resolveDataRoot())
+      const result = await classifyDataRootImpl(request.parent, resolveDataRoot())
       return { ...result, dataRoot }
     } catch (err) {
       logger.warn('data root inspection boundary failed', diagnosticErrorFields(err))
@@ -609,12 +640,31 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     })
     operation.phase('classify-target')
     try {
-      const classification = await classifyDataRoot(request.parent, resolveDataRoot())
+      const classification = await classifyDataRootImpl(request.parent, resolveDataRoot())
       if (classification.kind !== 'move' && classification.kind !== 'adopt') {
         operation.fail(new Error(classification.error ?? 'invalid target'), {
           mode: classification.kind
         })
         return { ok: false, error: classification.error ?? 'The selected folder is not usable.' }
+      }
+
+      // This command has no separate copy phase to establish a write gate. Refuse active delegated
+      // work at the mutating boundary, then stop all remaining data producers and flush renderer state
+      // before the durable pointer changes.
+      if (deps.getActiveDelegatedSessions().length > 0) {
+        operation.fail(new Error('delegated work is active'), { mode: classification.kind })
+        return {
+          ok: false,
+          error:
+            'Subagents are still running. Return to their tasks and stop them before moving data.'
+        }
+      }
+      const preparationFailure = await prepareDataRootHandoff()
+      if (preparationFailure) {
+        operation.fail(new Error('handoff durability was not confirmed'), {
+          mode: classification.kind
+        })
+        return preparationFailure
       }
 
       const target = dataRootForPicked(request.parent)
