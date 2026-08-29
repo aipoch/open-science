@@ -1,6 +1,8 @@
 import { safeStorage } from 'electron'
 
-// Wraps Electron safeStorage for provider credential material. Plaintext values exist only transiently in main
+import { isSecureStorageAvailable } from '../secure-storage'
+
+// Wraps Electron safeStorage for Settings credential material. Plaintext values exist only transiently in main
 // memory (during validation and env assembly); at rest they are OS-encrypted ciphertext, and the
 // renderer only ever sees the masked hint produced by maskKey().
 
@@ -10,8 +12,8 @@ const KEY_REF_PREFIX = 'enc:'
 // Legacy reduced-protection refs remain readable for migration, but new writes never create them.
 const PLAIN_REF_PREFIX = 'plain:'
 
-// Reports whether the OS keychain backing safeStorage is usable on this machine.
-const isEncryptionAvailable = (): boolean => safeStorage.isEncryptionAvailable()
+// Reports whether safeStorage is backed by an OS credential vault on this machine.
+const isEncryptionAvailable = (): boolean => isSecureStorageAvailable()
 
 // Turns plaintext into an OS-protected keyRef. Saving secrets fails closed when safeStorage is absent.
 const encryptKey = (plaintext: string): string => {
@@ -28,6 +30,12 @@ const encryptKey = (plaintext: string): string => {
 
 // Decrypts a stored keyRef. `plain:` is accepted only for backwards-compatible migration.
 const decryptKey = (keyRef: string): string => {
+  if (!isEncryptionAvailable()) {
+    throw new Error(
+      'Secure credential storage is unavailable. Unlock the system keychain and retry.'
+    )
+  }
+
   if (keyRef.startsWith(PLAIN_REF_PREFIX)) {
     return Buffer.from(keyRef.slice(PLAIN_REF_PREFIX.length), 'base64').toString('utf8')
   }
