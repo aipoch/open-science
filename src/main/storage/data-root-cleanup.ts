@@ -352,7 +352,6 @@ class DataRootCleanupJournal {
     intent: DataRootCleanupIntent,
     currentDataRoot: string
   ): Promise<DataRootCleanupIntent | undefined> {
-    if (intent.committed) return intent
     let current: string
     let source: string
     let target: string
@@ -369,11 +368,11 @@ class DataRootCleanupJournal {
       return undefined
     }
     if (samePath(current, source)) {
-      await this.clear(intent.token)
+      if (!intent.committed) await this.clear(intent.token)
       return undefined
     }
     if (
-      !samePath(current, target) ||
+      (!intent.committed && !samePath(current, target)) ||
       !samePath(source, intent.source) ||
       !samePath(target, intent.target) ||
       isPathInsideOrEqual(source, target) ||
@@ -387,6 +386,7 @@ class DataRootCleanupJournal {
       !marker ||
       marker.status !== 'verified' ||
       marker.token !== intent.token ||
+      !marker.inventory ||
       !markerAllowsCleanup(marker, intent)
     ) {
       return undefined
@@ -405,8 +405,19 @@ class DataRootCleanupJournal {
     }
     if (!samePath(markerSource, source) || !samePath(markerTarget, target)) return undefined
 
-    await this.markCommitted(intent.token)
-    return { ...intent, committed: true }
+    let targetInventory: CleanupInventory
+    try {
+      targetInventory = await scanInventory(target, marker.migratedDirs ?? marker.inventory.dirs)
+    } catch {
+      return undefined
+    }
+    if (!sameInventory(marker.inventory, targetInventory)) return undefined
+
+    if (!intent.committed) {
+      await this.markCommitted(intent.token)
+      return { ...intent, committed: true }
+    }
+    return intent
   }
 
   private async recoverIntent(
