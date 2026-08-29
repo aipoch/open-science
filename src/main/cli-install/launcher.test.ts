@@ -56,11 +56,27 @@ const winEnv = (overrides: Partial<CliLauncherEnv> = {}): CliLauncherEnv => ({
   ...overrides
 })
 
-const WINDOWS_PATH_RECEIPT_CONTENT = 'Open Science Windows PATH entry. Managed by the app.'
+const WINDOWS_PATH_RECEIPT_OWNER = 'Open Science Windows PATH entry. Managed by the app.'
+const windowsPathPendingPath = (env: CliLauncherEnv): string =>
+  join(planCliLauncher(env).binDir, '.open-science-path-pending')
 const windowsPathReceiptPath = (env: CliLauncherEnv): string =>
   join(planCliLauncher(env).binDir, '.open-science-path-receipt')
-const writeWindowsPathReceipt = async (env: CliLauncherEnv): Promise<void> => {
-  await writeFile(windowsPathReceiptPath(env), WINDOWS_PATH_RECEIPT_CONTENT)
+const writeWindowsPathJournal = async (
+  env: CliLauncherEnv,
+  state: 'pending' | 'owned' = 'owned',
+  beforePath = 'C:\\Windows\\System32'
+): Promise<void> => {
+  const binDir = planCliLauncher(env).binDir
+  await writeFile(
+    state === 'pending' ? windowsPathPendingPath(env) : windowsPathReceiptPath(env),
+    JSON.stringify({
+      version: 1,
+      owner: WINDOWS_PATH_RECEIPT_OWNER,
+      binDir,
+      beforePath,
+      afterPath: `${beforePath};${binDir}`
+    })
+  )
 }
 
 beforeEach(async () => {
@@ -426,16 +442,18 @@ describe('buildWindowsPathCommand', () => {
     expect(args).not.toContain('-args')
     const script = args[args.length - 1]
     expect(script).toContain(`$binDir = '${binDir}'`)
+    expect(script).toContain(`$pendingPath = '${join(binDir, '.open-science-path-pending')}'`)
     expect(script).toContain(`$receiptPath = '${join(binDir, '.open-science-path-receipt')}'`)
-    expect(script).toContain(`$receiptContent = '${WINDOWS_PATH_RECEIPT_CONTENT}'`)
+    expect(script).toContain(`$receiptOwner = '${WINDOWS_PATH_RECEIPT_OWNER}'`)
     expect(script).toContain("TrimEnd([char[]]'\\/') -ieq $normalizedBinDir")
     expect(script).toContain("[Environment]::SetEnvironmentVariable('Path'")
-    expect(script.indexOf("[Environment]::SetEnvironmentVariable('Path', $next")).toBeLessThan(
-      script.indexOf('[IO.File]::WriteAllText')
+    expect(script.indexOf('$stream.Flush($true)')).toBeLessThan(
+      script.lastIndexOf("[Environment]::SetEnvironmentVariable('Path', $next")
     )
-    expect(script).toContain(
-      "try { [Environment]::SetEnvironmentVariable('Path', $current, 'User') } catch {}"
+    expect(script.lastIndexOf("[Environment]::SetEnvironmentVariable('Path', $next")).toBeLessThan(
+      script.lastIndexOf('[IO.File]::Move($pendingPath, $receiptPath)')
     )
+    expect(script).toContain("throw 'The pending PATH ownership journal cannot be reconciled.'")
   })
 
   it("doubles embedded single quotes so a quote in the path can't break out of the literal", () => {
@@ -489,7 +507,7 @@ describe('uninstallCliLauncher on Windows PATH edit', () => {
   it('removes the owned PATH entry before deleting the managed shim', async () => {
     const env = winEnv()
     await installCliLauncher(env, () => true)
-    await writeWindowsPathReceipt(env)
+    await writeWindowsPathJournal(env)
     const calls: Array<{ command: string; args: string[] }> = []
 
     const status = await uninstallCliLauncher(env, (command, args) => {
@@ -499,10 +517,11 @@ describe('uninstallCliLauncher on Windows PATH edit', () => {
 
     expect(calls).toHaveLength(1)
     const script = calls[0].args.at(-1) ?? ''
-    expect(script).toContain('$removeIndex = -1')
-    expect(script).toContain('for ($i = $parts.Count - 1; $i -ge 0; $i--)')
+    expect(script).toContain("$state = 'owned'")
+    expect(script).toContain('$matches = @(for ($i = 0; $i -lt $parts.Count; $i++)')
     expect(script).toContain("TrimEnd([char[]]'\\/') -ieq $normalizedBinDir")
     expect(script).toContain('if ($i -ne $removeIndex) { $parts[$i] }')
+    expect(script).toContain("throw 'Multiple equivalent PATH entries make ownership ambiguous.'")
     expect(script).toContain("SetEnvironmentVariable('Path', $next, 'User')")
     expect(status).toMatchObject({ installed: false, onPath: false })
     await expect(readFile(planCliLauncher(env).target, 'utf8')).rejects.toMatchObject({
@@ -513,18 +532,45 @@ describe('uninstallCliLauncher on Windows PATH edit', () => {
     })
   })
 
-  it('keeps the managed shim so a failed PATH cleanup can be retried', async () => {
+  it('fails closed for ambiguous duplicates and keeps cleanup retryable', async () => {
     const env = winEnv()
     await installCliLauncher(env, () => true)
-    await writeWindowsPathReceipt(env)
+    await writeWindowsPathJournal(env)
 
-    await expect(uninstallCliLauncher(env, () => false)).rejects.toThrow('Could not remove')
+    await expect(
+      uninstallCliLauncher(env, (_command, args) => {
+        expect(args.at(-1)).toContain(
+          "throw 'Multiple equivalent PATH entries make ownership ambiguous.'"
+        )
+        return false
+      })
+    ).rejects.toThrow('Could not remove')
     await expect(readFile(planCliLauncher(env).target, 'utf8')).resolves.toContain(
       'Managed by the app'
     )
-    await expect(readFile(windowsPathReceiptPath(env), 'utf8')).resolves.toBe(
-      WINDOWS_PATH_RECEIPT_CONTENT
+    await expect(readFile(windowsPathReceiptPath(env), 'utf8')).resolves.toContain(
+      WINDOWS_PATH_RECEIPT_OWNER
     )
+  })
+
+  it('reconciles a pending journal only when PATH matches its before or after snapshot', async () => {
+    const env = winEnv()
+    await installCliLauncher(env, () => true)
+    await writeWindowsPathJournal(env, 'pending')
+    const calls: Array<{ command: string; args: string[] }> = []
+
+    await uninstallCliLauncher(env, (command, args) => {
+      calls.push({ command, args })
+      return true
+    })
+
+    const script = calls[0].args.at(-1) ?? ''
+    expect(script).toContain("$state = 'pending'")
+    expect(script).toContain('if ($current -ceq $beforePath) { return }')
+    expect(script).toContain('if ($current -cne $afterPath)')
+    await expect(readFile(windowsPathPendingPath(env), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
   })
 
   it('preserves a pre-existing user PATH entry when no ownership receipt exists', async () => {
