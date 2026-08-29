@@ -318,6 +318,15 @@ const json = (response: ServerResponse, status: number, value: unknown): void =>
   response.end(content)
 }
 
+const hasValidUrlPathEncoding = (pathname: string): boolean => {
+  try {
+    decodeURI(pathname)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const webRpcError = (
   response: ServerResponse,
   status: number,
@@ -942,6 +951,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       if (!authorized) {
         response.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
         response.end('Unauthorized')
+        return
+      }
+      if (!hasValidUrlPathEncoding(url.pathname)) {
+        json(response, 400, { error: 'Malformed URL encoding.' })
         return
       }
       if (auth.ok && auth.queryToken && request.method === 'GET' && url.pathname === '/') {

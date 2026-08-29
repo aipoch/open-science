@@ -143,6 +143,54 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('rejects malformed URL encoding at the public HTTP boundary', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: {
+        channels: () => ['projects:list'],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      tasks: {
+        runWithCallerContext,
+        subscribeProgress: vi.fn(() => vi.fn()),
+        getRun: vi.fn()
+      } as never,
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    const statuses = await Promise.all([
+      fetch(`${base}/api/bootstrap`, {
+        headers: { cookie: 'open_science_web_token=%' }
+      }).then((response) => response.status),
+      fetch(`${base}/rpc/%`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      }).then((response) => response.status),
+      fetch(`${base}/api/v1/runs/%`, {
+        headers: { authorization: 'Bearer test-token' }
+      }).then((response) => response.status)
+    ])
+
+    expect(statuses).toEqual([401, 400, 400])
+  })
+
   it('retains a parsed body reservation when the client disconnects before its handler completes', async () => {
     const body = JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
     const bodyBytes = Buffer.byteLength(body)
