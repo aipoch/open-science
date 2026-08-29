@@ -10,7 +10,7 @@ type CredentialRequestBrokerDeps = {
   timeoutMs?: number
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
-  onSettled?: (id: string) => void
+  onSettled?: (id: string, configured: boolean) => void
 }
 
 type PendingCredentialRequest = {
@@ -98,7 +98,7 @@ export class CredentialRequestBroker {
     }
     entry.resolve(configured)
     try {
-      this.deps.onSettled?.(id)
+      this.deps.onSettled?.(id, configured)
     } catch {
       // Event projection cannot roll back the already-settled Connector call.
     }

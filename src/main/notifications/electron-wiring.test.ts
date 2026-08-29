@@ -3,12 +3,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeApprovalRequest } from '../../shared/compute'
 import type {
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
 import { TaskNotificationService } from './task-notifications'
 import {
   buildComputeApprovalBroadcast,
   buildConnectorApprovalBroadcast,
+  buildConnectorCredentialRequestBroadcast,
   buildSkillImportApprovalBroadcast,
   buildTaskNotificationShow
 } from './electron-wiring'
@@ -212,6 +214,32 @@ describe('buildConnectorApprovalBroadcast', () => {
 
     expect(broadcastToRenderers).toHaveBeenCalledWith('connectors:approval-request', request)
     expect(onNotificationError).toHaveBeenCalledWith(error)
+  })
+})
+
+describe('buildConnectorCredentialRequestBroadcast', () => {
+  it('broadcasts the Composer request and records its global attention path', () => {
+    const broadcastToRenderers = vi.fn()
+    const handleConnectorCredentialRequest = vi.fn().mockResolvedValue(undefined)
+    const broadcast = buildConnectorCredentialRequestBroadcast({
+      broadcastToRenderers,
+      taskNotifications: { handleConnectorCredentialRequest } as Pick<
+        TaskNotificationService,
+        'handleConnectorCredentialRequest'
+      >
+    })
+    const request = {
+      id: 'credential-1',
+      credentialId: 'openalex',
+      connector: 'literature',
+      method: 'openalex_search_works',
+      sessionId: 'session-42'
+    } satisfies ConnectorCredentialRequest
+
+    broadcast(request)
+
+    expect(broadcastToRenderers).toHaveBeenCalledWith('connectors:credential-request', request)
+    expect(handleConnectorCredentialRequest).toHaveBeenCalledWith(request)
   })
 })
 

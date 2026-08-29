@@ -10,6 +10,7 @@ import type {
 } from '../../shared/notifications'
 import type {
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
 import {
@@ -136,6 +137,9 @@ const AUTHORIZATION_INBOX_SUMMARY = {
 } as const satisfies Record<Exclude<NotificationSource, 'agent-question' | 'agent-runtime'>, string>
 
 const AGENT_QUESTION_INBOX_SUMMARY = 'The agent is waiting for your response.'
+
+const connectorCredentialDedupeKey = (originId: string): string =>
+  `input:connector-credential:${originId}`
 
 const TASK_ATTENTION_REASON_BY_STOP: Readonly<Record<string, NotificationAttentionReason>> = {
   max_tokens: 'task-max-tokens',
@@ -579,6 +583,29 @@ export class TaskNotificationService {
     await inboxUpdate
   }
 
+  // Session-bound credential recovery lives in the owning Composer, so the durable inbox provides
+  // the app-wide path back to it. Sessionless requests keep their existing global dialog instead.
+  handleConnectorCredentialRequest = async (request: ConnectorCredentialRequest): Promise<void> => {
+    if (!request.sessionId) return
+    const tracked = this.trackedFor(request.sessionId)
+    if (!tracked) return
+
+    const notification = describeAgentQuestionNotification(tracked.snippet)
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: connectorCredentialDedupeKey(request.id),
+      kind: 'task.needs-attention',
+      source: 'connector',
+      attentionReason: 'waiting-for-user',
+      sessionId: request.sessionId,
+      originId: request.id,
+      title: notification.title,
+      summary: AGENT_QUESTION_INBOX_SUMMARY,
+      actionState: 'pending'
+    })
+    await this.deliver(notification, request.sessionId)
+    await inboxUpdate
+  }
+
   // Compute approvals carry their conversation separately from the renderer payload. Keep the same
   // internal-turn gate as other session-scoped approvals; legacy sessionless calls still surface.
   handleComputeApproval = async (
@@ -677,6 +704,20 @@ export class TaskNotificationService {
   ): Promise<void> => {
     try {
       await this.deps.inbox?.settleAuthorization(source, originId, state)
+    } catch (error) {
+      reportTaskNotificationError(this.deps.onInboxError, error)
+    }
+  }
+
+  settleConnectorCredentialRequest = async (
+    originId: string,
+    configured: boolean
+  ): Promise<void> => {
+    try {
+      await this.deps.inbox?.settleAction(
+        connectorCredentialDedupeKey(originId),
+        configured ? 'resolved' : 'cancelled'
+      )
     } catch (error) {
       reportTaskNotificationError(this.deps.onInboxError, error)
     }

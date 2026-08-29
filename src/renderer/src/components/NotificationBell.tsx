@@ -90,7 +90,10 @@ const clamp = (value: number, minimum: number, maximum: number): number =>
 
 const replayPendingApproval = async (item: NotificationInboxItem): Promise<boolean> => {
   if (item.actionState !== 'pending') return false
-  if (item.source === 'connector') {
+  if (
+    item.source === 'connector' &&
+    (item.attentionReason === undefined || item.attentionReason === 'waiting-permission')
+  ) {
     const request = await window.api.settings.replayConnectorApproval(item.originId)
     if (!request) return false
     useSettingsStore.getState().enqueueApproval(request)

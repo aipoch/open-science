@@ -1007,6 +1007,75 @@ describe('TaskNotificationService', () => {
     expect(onActivate).toHaveBeenCalledWith('session-1')
   })
 
+  it('records a Session credential request as a navigable response wait', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const { service, shown } = createService({ inbox })
+    const onActivate = vi.fn()
+
+    service.setActivationHandler(onActivate)
+    service.trackPrompt({ sessionId: 'session-1', text: 'Search OpenAlex' })
+    await service.handleConnectorCredentialRequest({
+      id: 'credential-1',
+      credentialId: 'openalex',
+      connector: 'literature',
+      method: 'openalex_search_works',
+      sessionId: 'session-1'
+    })
+
+    expect(inbox.record).toHaveBeenCalledWith({
+      dedupeKey: 'input:connector-credential:credential-1',
+      kind: 'task.needs-attention',
+      source: 'connector',
+      attentionReason: 'waiting-for-user',
+      sessionId: 'session-1',
+      originId: 'credential-1',
+      title: 'Response needed',
+      summary: 'The agent is waiting for your response.',
+      actionState: 'pending'
+    })
+    expect(shown[0]).toMatchObject({
+      title: 'Response needed',
+      body: '"Search OpenAlex" needs your response.'
+    })
+    shown[0]?.onClick()
+    expect(onActivate).toHaveBeenCalledWith('session-1')
+  })
+
+  it('settles credential waits without creating an entry for the sessionless dialog', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const { service, shown } = createService({ inbox })
+
+    await service.handleConnectorCredentialRequest({
+      id: 'credential-sessionless',
+      credentialId: 'openalex',
+      connector: 'literature',
+      method: 'openalex_search_works'
+    })
+    await service.settleConnectorCredentialRequest('credential-1', true)
+    await service.settleConnectorCredentialRequest('credential-2', false)
+
+    expect(inbox.record).not.toHaveBeenCalled()
+    expect(shown).toHaveLength(0)
+    expect(inbox.settleAction).toHaveBeenNthCalledWith(
+      1,
+      'input:connector-credential:credential-1',
+      'resolved'
+    )
+    expect(inbox.settleAction).toHaveBeenNthCalledWith(
+      2,
+      'input:connector-credential:credential-2',
+      'cancelled'
+    )
+  })
+
   it('does not notify for connector approvals while the app is focused', async () => {
     const { service, shown } = createService({ isAppFocused: () => true })
 

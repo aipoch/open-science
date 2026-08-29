@@ -491,6 +491,38 @@ describe('NotificationBell', () => {
     expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
   })
 
+  it('opens a credential wait without replaying it as a connector approval', async () => {
+    const replayConnectorApproval = vi.fn(async () => null)
+    const openSessionById = vi.fn()
+    window.api.settings.replayConnectorApproval = replayConnectorApproval
+    useNavigationStore.setState({ openSessionById })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead: vi.fn(async () => undefined),
+      items: item
+        ? [
+            {
+              ...item,
+              kind: 'task.needs-attention',
+              attentionReason: 'waiting-for-user',
+              sessionId: 'session-1'
+            }
+          ]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => message?.click())
+
+    expect(replayConnectorApproval).not.toHaveBeenCalled()
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+  })
+
   it('does not wait for the read write before navigating to the notification target', async () => {
     let completeMarkRead: (() => void) | undefined
     const markRead = vi.fn(

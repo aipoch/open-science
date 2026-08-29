@@ -106,6 +106,7 @@ import { bindNotificationInboxDeletionRuntime } from './notifications/notificati
 import {
   buildSkillImportApprovalBroadcast,
   buildConnectorApprovalBroadcast,
+  buildConnectorCredentialRequestBroadcast,
   buildTaskNotificationShow
 } from './notifications/electron-wiring'
 import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
@@ -1456,11 +1457,21 @@ const createApplicationModules = async (
       },
       replayConnectorApproval: (request) =>
         broadcastToRenderers('connectors:approval-request', request),
-      broadcastCredentialRequest: (request) =>
-        broadcastToRenderers('connectors:credential-request', request),
+      broadcastCredentialRequest: buildConnectorCredentialRequestBroadcast({
+        broadcastToRenderers,
+        taskNotifications,
+        onNotificationError: (error) =>
+          notificationsLog.warn('connector credential notification failed', errorLogFields(error))
+      }),
       replayCredentialRequest: (request) =>
         broadcastToRenderers('connectors:credential-request', request),
-      onCredentialRequestSettled: (id) => broadcastToRenderers('connectors:credential-settled', id),
+      onCredentialRequestSettled: (id, configured) => {
+        try {
+          broadcastToRenderers('connectors:credential-settled', id)
+        } finally {
+          void taskNotifications.settleConnectorCredentialRequest(id, configured)
+        }
+      },
       broadcastSkillImportApproval: buildSkillImportApprovalBroadcast({
         broadcastToRenderers,
         taskNotifications,

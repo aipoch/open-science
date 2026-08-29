@@ -28,7 +28,7 @@ describe('CredentialRequestBroker', () => {
     broker.respond('credential-1', true)
 
     await expect(result).resolves.toBe(true)
-    expect(onSettled).toHaveBeenCalledWith('credential-1')
+    expect(onSettled).toHaveBeenCalledWith('credential-1', true)
     expect(broker.getPending('credential-1')).toBeNull()
   })
 
@@ -119,6 +119,8 @@ describe('CredentialRequestBroker', () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([true, true])
     expect(onSettled).toHaveBeenCalledTimes(2)
+    expect(onSettled).toHaveBeenNthCalledWith(1, 'credential-1', true)
+    expect(onSettled).toHaveBeenNthCalledWith(2, 'credential-2', true)
     expect(broker.getPending('credential-1')).toBeNull()
     expect(broker.getPending('credential-2')).toBeNull()
   })

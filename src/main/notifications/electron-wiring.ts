@@ -3,6 +3,7 @@ import type { Notification } from 'electron'
 import type { ComputeApprovalRequest } from '../../shared/compute'
 import type {
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
 import type { ComputeApprovalContext } from '../compute/compute-approval-broker'
@@ -70,6 +71,25 @@ export const buildConnectorApprovalBroadcast =
     deps.broadcastToRenderers('connectors:approval-request', request)
     runTaskNotificationInBackground(
       () => deps.taskNotifications.handleConnectorApproval(request, request.sessionId),
+      deps.onNotificationError
+    )
+  }
+
+export type BuildConnectorCredentialRequestBroadcastDeps = {
+  broadcastToRenderers: (
+    channel: 'connectors:credential-request',
+    payload: ConnectorCredentialRequest
+  ) => void
+  taskNotifications: Pick<TaskNotificationService, 'handleConnectorCredentialRequest'>
+  onNotificationError?: (error: unknown) => void
+}
+
+export const buildConnectorCredentialRequestBroadcast =
+  (deps: BuildConnectorCredentialRequestBroadcastDeps) =>
+  (request: ConnectorCredentialRequest): void => {
+    deps.broadcastToRenderers('connectors:credential-request', request)
+    runTaskNotificationInBackground(
+      () => deps.taskNotifications.handleConnectorCredentialRequest(request),
       deps.onNotificationError
     )
   }
