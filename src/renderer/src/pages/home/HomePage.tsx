@@ -176,6 +176,9 @@ const HomePage = ({
 }: HomePageProps): React.JSX.Element => {
   const { t } = useTranslation()
   const projects = useProjectStore((state) => state.projects)
+  const hasPendingProjectCleanup = useProjectStore(
+    (state) => state.pendingDeletionCleanupProjectIds.size > 0
+  )
   const loadError = useProjectStore((state) => state.loadError)
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const updateProject = useProjectStore((state) => state.updateProject)
@@ -208,7 +211,6 @@ const HomePage = ({
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined)
   const [isDeletingProject, setIsDeletingProject] = useState(false)
   const [deleteProjectError, setDeleteProjectError] = useState<string | undefined>(undefined)
-  const [projectCleanupNotice, setProjectCleanupNotice] = useState<string | undefined>(undefined)
   const [archivingProjectIds, setArchivingProjectIds] = useState<Set<string>>(() => new Set())
   const [pinningProjectIds, setPinningProjectIds] = useState<Set<string>>(() => new Set())
   const [projectActionError, setProjectActionError] = useState<string | undefined>(undefined)
@@ -464,7 +466,6 @@ const HomePage = ({
     if (!canDeleteProjects) return
 
     setDeleteProjectError(undefined)
-    setProjectCleanupNotice(undefined)
     setProjectToDelete(project)
   }
 
@@ -593,12 +594,9 @@ const HomePage = ({
     setDeleteProjectError(undefined)
 
     void deleteProject(projectId)
-      .then((outcome) => {
+      .then(() => {
         useSessionStore.getState().removeSessionsForProject(projectId)
         setProjectToDelete(undefined)
-        if (outcome.status === 'cleanup-pending') {
-          setProjectCleanupNotice(t('Project deleted. Cleanup will continue in the background.'))
-        }
       })
       .catch((error: unknown) => {
         // Durable deletion failed; keep the target and in-memory sessions visible so the user can
@@ -881,12 +879,12 @@ const HomePage = ({
                 {projectActionError}
               </div>
             ) : null}
-            {projectCleanupNotice ? (
+            {hasPendingProjectCleanup ? (
               <div
                 className="mb-3 rounded-2xl border border-status-warning-foreground/30 bg-status-warning-surface/40 px-4 py-3 text-sm text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
                 role="status"
               >
-                {projectCleanupNotice}
+                {t('Project deleted. Cleanup will continue in the background.')}
               </div>
             ) : null}
             {loadError ? (

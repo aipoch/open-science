@@ -40,6 +40,9 @@ const ArchivedPanel = ({
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
   const projects = useProjectStore((state) => state.projects)
+  const hasPendingProjectCleanup = useProjectStore(
+    (state) => state.pendingDeletionCleanupProjectIds.size > 0
+  )
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
@@ -48,7 +51,6 @@ const ArchivedPanel = ({
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>()
   const [busyKey, setBusyKey] = useState<string | undefined>()
   const [panelError, setPanelError] = useState<string | undefined>()
-  const [panelNotice, setPanelNotice] = useState<string | undefined>()
   const [projectDeleteError, setProjectDeleteError] = useState<string | undefined>()
   const [sessionDeleteError, setSessionDeleteError] = useState<
     'runtime' | 'persistence' | undefined
@@ -139,7 +141,6 @@ const ArchivedPanel = ({
   const openProjectDeleteDialog = (project: Project): void => {
     if (!canDeleteProjects) return
     setProjectDeleteError(undefined)
-    setPanelNotice(undefined)
     setProjectToDelete(project)
   }
 
@@ -157,13 +158,10 @@ const ArchivedPanel = ({
     setBusyKey(`project:${project.id}`)
     setProjectDeleteError(undefined)
     void (async () => {
-      const outcome = await deleteProject(project.id)
+      await deleteProject(project.id)
       useSessionStore.getState().removeSessionsForProject(project.id)
       useArchiveUndoStore.getState().dismissProject(project.id)
       setProjectToDelete(undefined)
-      if (outcome.status === 'cleanup-pending') {
-        setPanelNotice(t('Project deleted. Cleanup will continue in the background.'))
-      }
     })()
       .then(() => onNavigate({ kind: 'list' }))
       .catch((deleteError: unknown) => {
@@ -229,12 +227,12 @@ const ArchivedPanel = ({
           {panelError}
         </p>
       ) : null}
-      {panelNotice ? (
+      {hasPendingProjectCleanup ? (
         <p
           role="status"
           className="rounded-md border border-status-warning-foreground/30 bg-status-warning-surface/40 px-3 py-2 text-sm text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
         >
-          {panelNotice}
+          {t('Project deleted. Cleanup will continue in the background.')}
         </p>
       ) : null}
       {selectedProject ? (

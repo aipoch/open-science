@@ -10,6 +10,7 @@ import type {
 
 type ProjectStoreData = {
   projects: Project[]
+  pendingDeletionCleanupProjectIds: Set<string>
   isLoaded: boolean
   loadError: string | undefined
 }
@@ -47,6 +48,7 @@ let projectMutationSequence = 0
 
 export const createInitialProjectState = (): ProjectStoreData => ({
   projects: [],
+  pendingDeletionCleanupProjectIds: new Set(),
   isLoaded: false,
   loadError: undefined
 })
@@ -115,7 +117,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const outcome = await window.api.projects.delete({ id })
 
     projectMutationSequence += 1
-    set((state) => ({ projects: state.projects.filter((project) => project.id !== id) }))
+    set((state) => {
+      const pendingDeletionCleanupProjectIds = new Set(state.pendingDeletionCleanupProjectIds)
+      if (outcome.status === 'cleanup-pending') pendingDeletionCleanupProjectIds.add(id)
+      else pendingDeletionCleanupProjectIds.delete(id)
+
+      return {
+        projects: state.projects.filter((project) => project.id !== id),
+        pendingDeletionCleanupProjectIds
+      }
+    })
     return outcome
   },
 
@@ -126,6 +137,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   removeProject: (id) => {
     projectMutationSequence += 1
-    set((state) => ({ projects: state.projects.filter((project) => project.id !== id) }))
+    set((state) => {
+      const pendingDeletionCleanupProjectIds = new Set(state.pendingDeletionCleanupProjectIds)
+      pendingDeletionCleanupProjectIds.delete(id)
+
+      return {
+        projects: state.projects.filter((project) => project.id !== id),
+        pendingDeletionCleanupProjectIds
+      }
+    })
   }
 }))

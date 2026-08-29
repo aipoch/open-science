@@ -248,7 +248,12 @@ describe('ArchivedPanel', () => {
 
   it('removes committed archived Project state and explains pending background cleanup', async () => {
     const archivedProject = { ...project, archivedAt: 2 }
-    deleteProject.mockResolvedValueOnce({ status: 'cleanup-pending' })
+    deleteProject.mockImplementationOnce(async () => {
+      useProjectStore.setState({
+        pendingDeletionCleanupProjectIds: new Set([project.id])
+      } as never)
+      return { status: 'cleanup-pending' }
+    })
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [archivedProject],
@@ -281,6 +286,10 @@ describe('ArchivedPanel', () => {
     )
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
+
+    await act(async () => useProjectStore.getState().removeProject(project.id))
+
+    expect(container.querySelector('[role="status"]')).toBeNull()
   })
 
   it('shows Project recovery in Settings and keeps deletion unavailable until retry succeeds', async () => {

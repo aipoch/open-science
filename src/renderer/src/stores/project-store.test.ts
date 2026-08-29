@@ -118,6 +118,11 @@ describe('project store', () => {
 
     expect(outcome).toEqual({ status: 'cleanup-pending' })
     expect(useProjectStore.getState().projects.map((project) => project.id)).toEqual(['keep'])
+    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(true)
+
+    useProjectStore.getState().removeProject('drop')
+
+    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(false)
   })
 })
 
