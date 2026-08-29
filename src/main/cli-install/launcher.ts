@@ -314,9 +314,13 @@ const writeCliLauncher = async (handle: FileHandle, plan: CliLauncherPlan): Prom
   if (plan.mode !== undefined) await handle.chmod(plan.mode)
 }
 
-// Publish an existing launcher through a same-directory temporary file. Until rename succeeds the
-// old command remains untouched; a write/flush failure therefore cannot truncate a working launcher.
-const replaceCliLauncher = async (plan: CliLauncherPlan, expected: Stats): Promise<void> => {
+// Publish an existing launcher through a same-directory temporary file while retaining the handle
+// whose managed contents were validated. Until rename succeeds the old command remains untouched; a
+// write/flush failure therefore cannot truncate a working launcher.
+const replaceCliLauncher = async (
+  plan: CliLauncherPlan,
+  expected: OpenCliLauncher
+): Promise<void> => {
   const temporaryPath = join(
     plan.binDir,
     `.${basename(plan.target)}.${process.pid}-${randomUUID()}.tmp`
@@ -334,7 +338,12 @@ const replaceCliLauncher = async (plan: CliLauncherPlan, expected: Stats): Promi
     await handle.close()
     handle = undefined
 
-    if (!(await isOpenCliLauncherCurrent(plan.target, expected))) {
+    const opened = await expected.handle.stat()
+    if (
+      !isDirectRegularFile(opened) ||
+      !isSameFile(expected.stats, opened) ||
+      !(await isOpenCliLauncherCurrent(plan.target, opened))
+    ) {
       refuseUnmanagedCliLauncher(plan.target)
     }
     await rename(temporaryPath, plan.target)
@@ -392,11 +401,11 @@ export const installCliLauncher = async (
     try {
       const existing = await opened.handle.readFile('utf8')
       if (!isManagedCliLauncher(existing)) refuseUnmanagedCliLauncher(plan.target)
+      await replaceCliLauncher(plan, opened)
+      written = true
     } finally {
       await opened.handle.close()
     }
-    await replaceCliLauncher(plan, opened.stats)
-    written = true
   }
   if (!written) throw new Error(`The CLI launcher path kept changing: ${plan.target}`)
 

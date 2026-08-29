@@ -10,7 +10,8 @@ import {
   rm,
   stat,
   symlink,
-  writeFile
+  writeFile,
+  type FileHandle
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -198,6 +199,46 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
     await expect(readFile(originalPlan.target, 'utf8')).resolves.toBe(originalPlan.shim)
     expect((await stat(originalPlan.target)).mode & 0o777).toBe(originalMode)
     await expect(readdir(originalPlan.binDir)).resolves.toEqual(['open-science'])
+  })
+
+  it('revalidates the open managed launcher after flushing replacement bytes', async () => {
+    const originalEnv = posixEnv()
+    const originalPlan = planCliLauncher(originalEnv)
+    await installCliLauncher(originalEnv)
+
+    const probe = await open(join(home, 'file-handle-probe'), 'w')
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as {
+      stat: typeof probe.stat
+      sync: typeof probe.sync
+    }
+    const originalStat = fileHandlePrototype.stat
+    const originalSync = fileHandlePrototype.sync
+    await probe.close()
+    const events: Array<{ operation: 'stat' | 'sync'; fd: number }> = []
+    vi.spyOn(fileHandlePrototype, 'stat').mockImplementation(async function (
+      this: FileHandle,
+      ...args
+    ) {
+      events.push({ operation: 'stat', fd: this.fd })
+      return originalStat.apply(this, args)
+    })
+    vi.spyOn(fileHandlePrototype, 'sync').mockImplementation(async function (
+      this: FileHandle,
+      ...args
+    ) {
+      events.push({ operation: 'sync', fd: this.fd })
+      return originalSync.apply(this, args)
+    })
+
+    const nextEnv = posixEnv({ appExecPath: '/opt/Open Science/open-science-next' })
+    await installCliLauncher(nextEnv)
+
+    const validatedFd = events.find((event) => event.operation === 'stat')?.fd
+    const flushedAt = events.findIndex((event) => event.operation === 'sync')
+    expect(validatedFd).toBeTypeOf('number')
+    expect(flushedAt).toBeGreaterThanOrEqual(0)
+    expect(events.slice(flushedAt + 1)).toContainEqual({ operation: 'stat', fd: validatedFd })
+    await expect(readFile(originalPlan.target, 'utf8')).resolves.toBe(planCliLauncher(nextEnv).shim)
   })
 })
 
