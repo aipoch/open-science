@@ -114,16 +114,8 @@ export const useJobAnalysisEffect = ({
         if (session.resumeRecovery?.promptMessageId === messageId) {
           return session.resumeRecovery.cause === 'cancelled' ? 'cancelled' : 'failed'
         }
-        if (
-          session.activeRun?.promptMessageId === messageId ||
-          session.status === 'running' ||
-          session.status === 'waiting-for-user' ||
-          session.status === 'waiting-permission' ||
-          session.status === 'waiting-plan-approval'
-        ) {
-          return 'running'
-        }
-        return session.status === 'idle' ? 'succeeded' : 'failed'
+        if (session.activeRun?.promptMessageId === messageId) return 'running'
+        return 'missing'
       },
       onTurnEnd: (sessionId, callback) => {
         // Keep runtime completion listeners inside the same readiness lifecycle as dispatch.
