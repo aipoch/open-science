@@ -128,6 +128,7 @@ export function ConnectorsPanel({
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
   const retryCustomServer = useSettingsStore((state) => state.retryCustomServer)
+  const disconnectCustomServer = useSettingsStore((state) => state.disconnectCustomServer)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
@@ -142,6 +143,9 @@ export function ConnectorsPanel({
   >({})
   const [retryingIds, setRetryingIds] = useState<Set<string>>(() => new Set())
   const [oauthSignInServer, setOAuthSignInServer] = useState<CustomServerView>()
+  const [oauthConnectionServer, setOAuthConnectionServer] = useState<CustomServerView>()
+  const [oauthConnectionBusy, setOAuthConnectionBusy] = useState(false)
+  const [oauthConnectionError, setOAuthConnectionError] = useState<string | null>(null)
   const [removal, setRemoval] = useState<{
     server: CustomServerView
     specialistNames?: string[]
@@ -170,6 +174,30 @@ export function ConnectorsPanel({
 
   const retryCatalog = (): void => {
     void loadCatalog()
+  }
+
+  const disconnectOAuth = async (reauthenticate: boolean): Promise<void> => {
+    if (!oauthConnectionServer || oauthConnectionBusy) return
+    const server = oauthConnectionServer
+    setOAuthConnectionBusy(true)
+    setOAuthConnectionError(null)
+    try {
+      await disconnectCustomServer({ id: server.id })
+      setOAuthConnectionServer(undefined)
+      if (reauthenticate) {
+        setOAuthSignInServer({
+          ...server,
+          enabled: false,
+          oauth: server.oauth ? { ...server.oauth, hasTokens: false } : undefined
+        })
+      }
+    } catch (error) {
+      setOAuthConnectionError(
+        error instanceof Error ? error.message : t('Failed to disconnect Connector.')
+      )
+    } finally {
+      setOAuthConnectionBusy(false)
+    }
   }
 
   useEffect(() => {
@@ -745,10 +773,11 @@ export function ConnectorsPanel({
                                 ? 'outline'
                                 : 'default'
                             }
-                            disabled={
-                              server.oauth.hasTokens && server.availability !== 'unauthenticated'
+                            onClick={() =>
+                              server.oauth?.hasTokens && server.availability !== 'unauthenticated'
+                                ? setOAuthConnectionServer(server)
+                                : setOAuthSignInServer(server)
                             }
-                            onClick={() => setOAuthSignInServer(server)}
                           >
                             {server.oauth.hasTokens && server.availability !== 'unauthenticated'
                               ? t('Connected')
@@ -937,6 +966,62 @@ export function ConnectorsPanel({
                 onClick={() => void confirmRemoval()}
               >
                 {removing ? t('Removing…') : t('Remove Connector')}
+              </Button>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+      <AlertDialog.Root
+        open={oauthConnectionServer !== undefined}
+        onOpenChange={(open) => {
+          if (!open && !oauthConnectionBusy) {
+            setOAuthConnectionServer(undefined)
+            setOAuthConnectionError(null)
+          }
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <AlertDialog.Title className={dialogTitleClassName}>
+                {t('Manage “{{name}}” connection', {
+                  name: oauthConnectionServer?.displayName ?? ''
+                })}
+              </AlertDialog.Title>
+            </div>
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {t(
+                  'Disconnect removes OAuth tokens from this app and disables the Connector. It does not revoke access on the service.'
+                )}
+              </AlertDialog.Description>
+              {oauthConnectionError ? (
+                <p className="mt-3 text-sm text-status-failure">{oauthConnectionError}</p>
+              ) : null}
+            </div>
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" disabled={oauthConnectionBusy}>
+                  {tCommon('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={oauthConnectionBusy}
+                onClick={() => void disconnectOAuth(false)}
+              >
+                {t('Disconnect')}
+              </Button>
+              <Button
+                type="button"
+                disabled={oauthConnectionBusy}
+                onClick={() => void disconnectOAuth(true)}
+              >
+                {t('Reauthenticate')}
               </Button>
             </div>
           </AlertDialog.Content>

@@ -26,6 +26,11 @@ import type {
 import { inferResourceId, validateResourceId } from '../../shared/resource-id'
 import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
 import {
+  assertAddCustomServerLimits,
+  assertCustomServerCapacity,
+  assertUpdateCustomServerLimits
+} from './connector-resource-limits'
+import {
   customConnectorNameFromSkillName,
   isCustomConnectorName
 } from '../../shared/custom-connector'
@@ -352,6 +357,8 @@ class ConnectorSettingsModule {
     const displayName = request.displayName.trim()
     const connectors = (await this.repository.getSettings()).connectors
     const existingServers = connectors?.customMcpServers ?? []
+    assertCustomServerCapacity(existingServers.length)
+    assertAddCustomServerLimits(request)
     if (!displayName) throw new Error('Display name is required')
     if (!isCustomConnectorName(name)) {
       throw new Error('Connector name must use only lowercase letters, numbers, and hyphens')
@@ -467,6 +474,7 @@ class ConnectorSettingsModule {
     )
 
     if (!existing) throw new Error(`Unknown custom connector: ${request.id}`)
+    assertUpdateCustomServerLimits(request, existing)
     const displayName = request.displayName?.trim() ?? existing.displayName
     if (!displayName) throw new Error('Display name is required')
 
@@ -599,6 +607,21 @@ class ConnectorSettingsModule {
     })
   }
 
+  async disconnectCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
+    const stored = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
+      (server) => server.id === serverId
+    )
+    if (!stored) throw new Error(`Unknown custom connector: ${serverId}`)
+    if (!stored.oauth) throw new Error(`Custom connector "${serverId}" is not configured for OAuth`)
+
+    await this.repository.updateCustomServer(serverId, {
+      ...stored,
+      enabled: false,
+      oauthRef: undefined
+    })
+    return this.connectorsSnapshot()
+  }
+
   private decryptOAuthState(ref: string): StoredCustomMcpOAuthState | undefined {
     const value = tryDecryptKey(ref)
     if (!value) return undefined
@@ -681,7 +704,10 @@ class ConnectorSettingsModule {
               }
             : {}),
           ...(server.transport === 'stdio'
-            ? { hasEnv: hasResolvedSecretRecord(server.envRefs, server.env) }
+            ? {
+                hasEnv: hasResolvedSecretRecord(server.envRefs, server.env),
+                environmentNames: Object.keys(server.envRefs ?? server.env ?? {}).sort()
+              }
             : {}),
           ...(server.oauth
             ? {

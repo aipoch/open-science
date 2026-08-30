@@ -12,6 +12,13 @@ import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-clie
 import type { StoredCustomMcpOAuthState } from '../settings/types'
 import { augmentedPathEnv } from '../settings/shell-path'
 import { netFetchStandard } from '../skills/net-fetch'
+import { redactSensitiveText } from '../diagnostic-redaction'
+import { createLogger } from '../logger'
+
+const log = createLogger('connectors:mcp-client')
+const STDERR_LINE_LIMIT = 4 * 1024
+const STDERR_TOTAL_LIMIT = 64 * 1024
+const STDERR_TRUNCATION_MARKER = '…[truncated]'
 
 // Config for a user-added custom MCP server. OAuth state is a transient main-process projection;
 // stdio remains non-OAuth and remote servers can use OAuth, static headers, or neither.
@@ -94,6 +101,89 @@ function waitForConnection(promise: Promise<Client>, signal?: AbortSignal): Prom
   })
 }
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+
+const knownValuePattern = (values: readonly string[]): RegExp | undefined => {
+  const alternatives = [...new Set(values.filter(Boolean))]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+  return alternatives.length > 0 ? new RegExp(alternatives.join('|'), 'gu') : undefined
+}
+
+const truncateUtf8 = (value: string, maxBytes: number): string => {
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
+  const markerBytes = Buffer.byteLength(STDERR_TRUNCATION_MARKER, 'utf8')
+  let result = ''
+  let resultBytes = 0
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, 'utf8')
+    if (resultBytes + characterBytes > maxBytes - markerBytes) break
+    result += character
+    resultBytes += characterBytes
+  }
+  return `${result}${STDERR_TRUNCATION_MARKER}`
+}
+
+const captureStdioStderr = (
+  stderr: import('node:stream').Stream | null,
+  config: CustomMcpServerConfig
+): void => {
+  if (!stderr) return
+  const readable = stderr as unknown as NodeJS.ReadableStream
+
+  const knownValues = knownValuePattern(Object.values(config.env ?? {}))
+  let pending = ''
+  let receivedBytes = 0
+  let totalTruncationLogged = false
+
+  const writeLine = (rawLine: string): void => {
+    const exactRedacted = knownValues
+      ? rawLine.replace(/\r$/u, '').replace(knownValues, '[REDACTED]')
+      : rawLine.replace(/\r$/u, '')
+    const redacted = redactSensitiveText(exactRedacted)
+    if (!redacted) return
+    const line = truncateUtf8(redacted, STDERR_LINE_LIMIT)
+    log.warn('custom MCP server stderr', { serverId: config.id, line })
+  }
+
+  readable.setEncoding?.('utf8')
+  readable.on('data', (chunk: string | Buffer) => {
+    if (receivedBytes >= STDERR_TOTAL_LIMIT) {
+      if (!totalTruncationLogged) {
+        totalTruncationLogged = true
+        log.warn('custom MCP server stderr truncated', {
+          serverId: config.id,
+          limitBytes: STDERR_TOTAL_LIMIT
+        })
+      }
+      return
+    }
+    const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+    const remaining = STDERR_TOTAL_LIMIT - receivedBytes
+    const accepted = Buffer.from(text, 'utf8').subarray(0, remaining).toString('utf8')
+    receivedBytes += Buffer.byteLength(accepted, 'utf8')
+    pending += accepted
+
+    const lines = pending.split('\n')
+    pending = lines.pop() ?? ''
+    for (const line of lines) writeLine(line)
+
+    if (Buffer.byteLength(text, 'utf8') > remaining && !totalTruncationLogged) {
+      if (pending) writeLine(pending)
+      pending = ''
+      totalTruncationLogged = true
+      log.warn('custom MCP server stderr truncated', {
+        serverId: config.id,
+        limitBytes: STDERR_TOTAL_LIMIT
+      })
+    }
+  })
+  readable.on('end', () => {
+    if (pending) writeLine(pending)
+    pending = ''
+  })
+}
+
 // Pure factory: picks the transport for a custom server config. Exported so callers/tests can
 // build a transport without a full connect, and so defaultCreateClient below stays a thin wrapper.
 export function buildTransport(
@@ -105,14 +195,17 @@ export function buildTransport(
       if (!config.command) {
         throw new Error(`custom MCP server "${config.name}" is missing a command for stdio`)
       }
-      return new StdioClientTransport({
+      const transport = new StdioClientTransport({
         command: config.command,
         args: config.args,
+        stderr: 'pipe',
         env: augmentedPathEnv({
           ...getDefaultEnvironment(),
           ...config.env
         }) as Record<string, string>
       })
+      captureStdioStderr(transport.stderr, config)
+      return transport
     }
     case 'streamable_http': {
       if (!config.url) {

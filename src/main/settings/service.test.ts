@@ -374,6 +374,31 @@ describe('SettingsService: custom MCP OAuth', () => {
     await service.cancelCustomServerAuthentication(id)
     expect(cancel).toHaveBeenCalledWith(id)
   })
+
+  it('disconnects locally by closing runtime access and removing stored OAuth tokens', async () => {
+    const service = createService()
+    const added = await service.addCustomServer({
+      name: 'oauth-mcp',
+      displayName: 'OAuth MCP',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { scopes: ['openid'] }
+    })
+    const id = added.customServers[0].id
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'access', token_type: 'Bearer' }
+    })
+    const disconnectRuntime = vi.fn(async () => undefined)
+    service.setCustomServerAuthenticator(vi.fn(), vi.fn(), disconnectRuntime)
+
+    const snapshot = await service.disconnectCustomServer(id)
+
+    expect(disconnectRuntime).toHaveBeenCalledWith(id)
+    expect(snapshot.customServers[0]).toMatchObject({ enabled: false, oauth: { hasTokens: false } })
+    expect(
+      (await repository.getSettings()).connectors?.customMcpServers?.[0].oauthRef
+    ).toBeUndefined()
+  })
 })
 
 describe('SettingsService: providers', () => {
@@ -1166,7 +1191,7 @@ describe('SettingsService: providers', () => {
 
     const view = snapshot.providers[0]
     expect(view.hasKey).toBe(true)
-    expect(view.maskedKey).toBe('sk-s…cret')
+    expect(view.maskedKey).toBe('••••cret')
     expect(JSON.stringify(view)).not.toContain('sk-super-secret')
 
     // The stored record holds ciphertext, not the plaintext key.

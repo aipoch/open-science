@@ -184,6 +184,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.detectCodeBuddy': 'settings:detect-codebuddy',
   'settings.detectCodex': 'settings:detect-codex',
   'settings.detectOpencode': 'settings:detect-opencode',
+  'settings.disconnectCustomServer': 'settings:disconnect-custom-server',
   'settings.getConnectorDetail': 'settings:get-connector-detail',
   'settings.getGitHubTokenStatus': 'settings:get-github-token-status',
   'settings.getPackageMirror': 'settings:get-package-mirror',

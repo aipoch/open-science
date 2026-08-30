@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import type { AddCustomServerRequest, ConnectorsSnapshot } from '../../shared/settings'
 
-const keychain = vi.hoisted(() => ({ available: true }))
+const keychain = vi.hoisted(() => ({ available: true, encryptedValues: [] as string[] }))
 
 // Reversible fake safeStorage so secrets can be encrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -13,6 +13,7 @@ vi.mock('electron', () => ({
     isEncryptionAvailable: () => keychain.available,
     encryptString: (plaintext: string) => {
       if (!keychain.available) throw new Error('Encryption is unavailable')
+      keychain.encryptedValues.push(plaintext)
       return Buffer.from(`cipher:${plaintext}`, 'utf8')
     },
     decryptString: (buffer: Buffer) => {
@@ -40,6 +41,7 @@ describe('ConnectorSettingsModule', () => {
 
   beforeEach(async () => {
     keychain.available = true
+    keychain.encryptedValues.length = 0
     dir = await mkdtemp(join(tmpdir(), 'osci-svc-connectors-'))
     repository = new SettingsRepository(dir)
     service = new ConnectorSettingsModule(repository)
@@ -308,6 +310,78 @@ describe('ConnectorSettingsModule', () => {
     expect(afterRemoval?.autoAllowIds).not.toContain(added.name)
     expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.name}/lookup`)
     expect(afterRemoval?.pendingCustomServerDeletionIds).toBeUndefined()
+  })
+
+  it('rejects oversized manual Connector fields before persistence', async () => {
+    await expect(
+      addCustomServer({
+        name: 'oversized-args',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['x'.repeat(2_049)]
+      })
+    ).rejects.toThrow('Connector argument must not exceed 2048 characters.')
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it('rejects excessive manual Connector secrets before encryption', async () => {
+    const env = Object.fromEntries(
+      Array.from({ length: 65 }, (_, index) => [`TOKEN_${index}`, `secret-${index}`])
+    )
+
+    await expect(
+      addCustomServer({
+        name: 'oversized-env',
+        transport: 'stdio',
+        command: 'npx',
+        env
+      })
+    ).rejects.toThrow('Connector environment variables must not exceed 64 entries.')
+
+    expect(keychain.encryptedValues).toEqual([])
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it('rejects a 65th custom Connector before persistence', async () => {
+    for (let index = 0; index < 64; index += 1) {
+      await addCustomServer({
+        name: `capacity-${index}`,
+        transport: 'stdio',
+        command: 'npx'
+      })
+    }
+
+    await expect(
+      addCustomServer({ name: 'capacity-overflow', transport: 'stdio', command: 'npx' })
+    ).rejects.toThrow('Custom Connector limit of 64 reached.')
+    expect((await repository.getSettings()).connectors?.customMcpServers).toHaveLength(64)
+  })
+
+  it('grandfathers an unchanged oversized public field on an existing Connector', async () => {
+    const historicalArgument = 'x'.repeat(2_049)
+    await repository.addCustomServer({
+      id: 'historical-oversized',
+      name: 'historical-oversized',
+      displayName: 'Historical',
+      transport: 'stdio',
+      command: 'npx',
+      args: [historicalArgument],
+      enabled: true,
+      trustedAt: Date.now()
+    })
+
+    await expect(
+      service.updateCustomServer({
+        id: 'historical-oversized',
+        displayName: 'Historical renamed',
+        transport: 'stdio',
+        command: 'npx',
+        args: [historicalArgument]
+      })
+    ).resolves.toMatchObject({
+      customServers: [expect.objectContaining({ displayName: 'Historical renamed' })]
+    })
   })
 
   it('retains a deletion journal and reserves its ID when permission pruning fails', async () => {

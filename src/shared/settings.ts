@@ -1359,13 +1359,13 @@ export type CustomServerView = {
   availability?: 'unavailable' | 'unauthenticated'
   // Background discovery is transient and does not make the Connector unavailable by itself.
   checking?: boolean
-  // Display-only config summary (the command that runs, its args, or the remote URL). env/headers
-  // are intentionally omitted — they may hold secrets and stay write-only from the UI.
+  // Display-only config summary. Environment names are safe to show; values stay write-only.
   command?: string
   args?: string[]
   url?: string
   hasHeaders?: boolean
   hasEnv?: boolean
+  environmentNames?: string[]
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
@@ -1423,6 +1423,7 @@ export type AddCustomServerRequest = {
 export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
 export type RemoveCustomServerRequest = { id: string }
 export type AuthenticateCustomServerRequest = { id: string }
+export type DisconnectCustomServerRequest = { id: string }
 
 export const CONNECTOR_TEMPLATE_MAX_BYTES = 256 * 1024
 

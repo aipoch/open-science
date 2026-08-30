@@ -66,12 +66,29 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
     expect(view).toMatchObject({
       models: ['lab-model'],
-      maskedKey: 'secr…-key',
+      maskedKey: '••••-key',
       hasKey: true,
       needsKey: false
     })
     expect(JSON.stringify(view)).not.toContain('secret-key')
     expect(provider).toEqual(before)
+  })
+
+  it('hardens historical persisted key masks before projecting them', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'provider-1',
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      keyRef: encryptKey('secret-key'),
+      keyMask: 'secr…-key',
+      apiEndpoints: ['openai']
+    }
+
+    expect(owner.toProviderView(provider).maskedKey).toBe('••••-key')
+    expect(provider.keyMask).toBe('secr…-key')
   })
 
   it('routes DeepSeek V4 Pro through native Responses for Codex', () => {

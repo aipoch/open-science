@@ -760,6 +760,49 @@ describe('ConnectorAddForm (edit)', () => {
     expect(onDone).toHaveBeenCalled()
   })
 
+  it('shows saved environment names and can explicitly clear them', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{
+            ...editServer,
+            hasEnv: true,
+            environmentNames: ['API_TOKEN', 'ORG_ID']
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    openAdvancedSettings()
+    expect(document.body.textContent).toContain('API_TOKEN, ORG_ID')
+    selectOption('Environment variable action', 'Clear saved variables')
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    await act(async () => save?.click())
+
+    expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ env: {} }))
+  })
+
+  it('reports malformed environment lines instead of silently dropping them', () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'GOOD=value\nBROKEN')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: use KEY=VALUE.')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
   it('keeps a legacy Connector editable when its name matches another stored ID', () => {
     useSettingsStore.setState({
       ...createInitialSettingsState(),

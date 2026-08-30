@@ -101,7 +101,8 @@ const createConnectorApplication = (
       if (!server) throw new Error(`Unknown custom connector: ${serverId}`)
       await mcpClientManager.authenticate(toCustomMcpConfig(server))
     },
-    (serverId) => mcpClientManager.cancelAuthentication(serverId)
+    (serverId) => mcpClientManager.cancelAuthentication(serverId),
+    (serverId) => mcpClientManager.close(serverId)
   )
 
   const connectorApprovals =

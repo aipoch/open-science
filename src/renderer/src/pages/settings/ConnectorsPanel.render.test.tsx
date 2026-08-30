@@ -83,6 +83,7 @@ beforeEach(() => {
     addCustomServer: vi.fn().mockResolvedValue(undefined),
     authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
     cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
+    disconnectCustomServer: vi.fn().mockResolvedValue(undefined),
     retryCustomServer: vi.fn().mockResolvedValue(undefined),
     setCustomServerEnabled: vi.fn().mockResolvedValue(undefined),
     removeCustomServer: vi.fn().mockResolvedValue(undefined)
@@ -668,9 +669,22 @@ describe('ConnectorsPanel (groups)', () => {
     const connectedStatus = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
     ).find((button) => button.textContent?.trim() === 'Connected')
-    expect(connectedStatus?.disabled).toBe(true)
+    expect(connectedStatus?.disabled).toBe(false)
     act(() => connectedStatus?.click())
-    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('Reauthenticate')
+    expect(document.body.textContent).toContain('Disconnect')
+    await act(async () => clickButtonByText('Disconnect'))
+    expect(useSettingsStore.getState().disconnectCustomServer).toHaveBeenCalledWith({
+      id: 'oauth-mcp'
+    })
+
+    const connectedAgain = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Connected')
+    act(() => connectedAgain?.click())
+    await act(async () => clickButtonByText('Reauthenticate'))
+    expect(useSettingsStore.getState().disconnectCustomServer).toHaveBeenCalledTimes(2)
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledTimes(2)
   })
 
   it('shows an unavailable custom Connector and retries it in place', async () => {

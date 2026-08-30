@@ -84,9 +84,10 @@ describe('crypto', () => {
     expect(tryDecryptKey(legacyRef)).toBe('sk-degraded')
   })
 
-  it('masks long keys as prefix…suffix and short keys as bullets', () => {
-    expect(maskKey('sk-abcdef1234')).toBe('sk-a…1234')
-    expect(maskKey('short')).toBe('•••••')
+  it('masks keys without exposing a prefix or the original short-key length', () => {
+    expect(maskKey('sk-abcdef1234')).toBe('••••1234')
+    expect(maskKey('123456789')).toBe('••••6789')
+    expect(maskKey('short')).toBe('••••••••')
     expect(maskKey('')).toBe('')
   })
 })

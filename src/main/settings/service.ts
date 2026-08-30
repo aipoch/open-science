@@ -201,6 +201,7 @@ class SettingsService {
   private readonly log: Logger
   private customServerAuthenticator?: (serverId: string) => Promise<void>
   private customServerAuthenticationCanceller?: (serverId: string) => Promise<void>
+  private customServerDisconnector?: (serverId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -1020,10 +1021,12 @@ class SettingsService {
 
   setCustomServerAuthenticator(
     authenticator: (serverId: string) => Promise<void>,
-    cancel: (serverId: string) => Promise<void>
+    cancel: (serverId: string) => Promise<void>,
+    disconnect?: (serverId: string) => Promise<void>
   ): void {
     this.customServerAuthenticator = authenticator
     this.customServerAuthenticationCanceller = cancel
+    this.customServerDisconnector = disconnect
   }
 
   async authenticateCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
@@ -1036,6 +1039,14 @@ class SettingsService {
 
   async cancelCustomServerAuthentication(serverId: string): Promise<void> {
     await this.customServerAuthenticationCanceller?.(serverId)
+  }
+
+  async disconnectCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
+    if (!this.customServerDisconnector) {
+      throw new Error('Custom MCP OAuth disconnect is not available yet')
+    }
+    await this.customServerDisconnector(serverId)
+    return this.connectors.disconnectCustomServer(serverId)
   }
 
   // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.

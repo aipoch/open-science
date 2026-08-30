@@ -489,6 +489,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.detectCodeBuddy',
       'settings.detectCodex',
       'settings.detectOpencode',
+      'settings.disconnectCustomServer',
       'settings.exportCustomServerTemplate',
       'settings.exportSkill',
       'settings.getConnectorDetail',

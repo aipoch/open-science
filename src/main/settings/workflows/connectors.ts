@@ -1,5 +1,6 @@
 import type {
   AuthenticateCustomServerRequest,
+  DisconnectCustomServerRequest,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
   SetConnectorAutoAllowRequest,
@@ -29,6 +30,7 @@ type ConnectorSettingsWorkflowStore = Pick<
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'disconnectCustomServer'
 >
 
 type ConnectorSettingsWorkflowEffects = {
@@ -124,7 +126,7 @@ class ConnectorSettingsWorkflows {
   }
 
   async authenticateCustomServer(
-    request: AuthenticateCustomServerRequest
+    request: DisconnectCustomServerRequest
   ): WorkflowResult<'authenticateCustomServer'> {
     const snapshot = await this.settings.authenticateCustomServer(request.id)
     this.effects.clearCustomServerFailure(request.id)
@@ -136,6 +138,15 @@ class ConnectorSettingsWorkflows {
     request: AuthenticateCustomServerRequest
   ): WorkflowResult<'cancelCustomServerAuthentication'> {
     return this.settings.cancelCustomServerAuthentication(request.id)
+  }
+
+  async disconnectCustomServer(
+    request: AuthenticateCustomServerRequest
+  ): WorkflowResult<'disconnectCustomServer'> {
+    const snapshot = await this.settings.disconnectCustomServer(request.id)
+    this.effects.clearCustomServerFailure(request.id)
+    this.connectorsChanged()
+    return snapshot
   }
 
   async retryCustomServer(

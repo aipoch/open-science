@@ -43,17 +43,24 @@ const parseArgs = (raw: string, onePerLine = false): string[] =>
     .map((token) => token.trim())
     .filter((token) => token.length > 0)
 
-// Parses one KEY=VALUE per line into a record; blank lines and lines without '=' are ignored.
-const parseEnv = (raw: string): Record<string, string> => {
+type ParsedEnvironment = { values: Record<string, string>; invalidLines: number[] }
+type EnvironmentUpdateMode = 'keep' | 'replace' | 'clear'
+
+// Parses one KEY=VALUE per line and preserves line numbers for actionable validation feedback.
+const parseEnv = (raw: string): ParsedEnvironment => {
   const env: Record<string, string> = {}
-  for (const line of raw.split('\n')) {
+  const invalidLines: number[] = []
+  for (const [index, line] of raw.split('\n').entries()) {
     const trimmed = line.trim()
     if (!trimmed) continue
     const eq = trimmed.indexOf('=')
-    if (eq <= 0) continue
+    if (eq <= 0) {
+      invalidLines.push(index + 1)
+      continue
+    }
     env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim()
   }
-  return env
+  return { values: env, invalidLines }
 }
 
 // Parses one "Name: Value" per line into a headers record; blank/invalid lines are ignored.
@@ -214,6 +221,9 @@ export function ConnectorAddForm({
   const [envText, setEnvText] = useState(
     (initialTemplate?.requiredSecrets?.environment ?? []).map((key) => `${key}=`).join('\n')
   )
+  const [environmentUpdateMode, setEnvironmentUpdateMode] = useState<EnvironmentUpdateMode>(
+    isEdit && editServer?.hasEnv ? 'keep' : 'replace'
+  )
   // Remote fields.
   const [url, setUrl] = useState(editServer?.url ?? initialTemplate?.url ?? '')
   const [remoteTransport, setRemoteTransport] = useState<RemoteTransport>(
@@ -291,7 +301,10 @@ export function ConnectorAddForm({
     advancedOpen || Boolean(displayName.trim() && nameError) || Boolean(idError)
 
   const parsedArgs = parseArgs(argsText, initialTemplate !== undefined)
-  const parsedEnv = parseEnv(envText)
+  const parsedEnvironment = parseEnv(envText)
+  const parsedEnv = parsedEnvironment.values
+  const environmentErrors =
+    environmentUpdateMode === 'replace' ? parsedEnvironment.invalidLines : []
   const parsedHeaders = parseHeaders(headersText)
   const commandPreview = [command.trim(), ...parsedArgs].filter((part) => part.length > 0).join(' ')
   const requiredEnvironment = initialTemplate?.requiredSecrets?.environment ?? []
@@ -335,7 +348,8 @@ export function ConnectorAddForm({
     !idError &&
     (mode === 'local' ? command.trim().length > 0 : url.trim().length > 0) &&
     oauthRegistrationValid &&
-    requiredSecretValuesFilled
+    requiredSecretValuesFilled &&
+    environmentErrors.length === 0
   const canSubmit = requiredFilled && trusted && !submitting && !editTargetMissing
 
   const switchMode = (next: ConnectorMode): void => {
@@ -355,7 +369,6 @@ export function ConnectorAddForm({
         .map((scope) => scope.trim())
         .filter(Boolean)
       // Omitted env/headers keep the stored (secret) values on edit; on add they are simply unset.
-      const hasEnv = envText.trim().length > 0
       const hasHeaders = headersText.trim().length > 0
       const transport: CustomServerTransport = mode === 'local' ? 'stdio' : remoteTransport
       const oauth =
@@ -396,7 +409,11 @@ export function ConnectorAddForm({
         const request: UpdateCustomServerRequest = {
           id: stableEditServerId,
           ...shared,
-          ...(mode === 'local' && hasEnv ? { env } : {}),
+          ...(mode === 'local' && environmentUpdateMode === 'replace'
+            ? { env }
+            : mode === 'local' && environmentUpdateMode === 'clear'
+              ? { env: {} }
+              : {}),
           ...(mode === 'remote' && remoteAuth !== 'headers'
             ? { headers: {} }
             : hasHeaders
@@ -688,17 +705,43 @@ export function ConnectorAddForm({
                       {t('Environment variables')}{' '}
                       <span className="font-normal text-muted-foreground">{t('(optional)')}</span>
                     </label>
-                    <Textarea
-                      id="connector-env"
-                      aria-label={t('Environment variables')}
-                      aria-required={requiredEnvironment.length > 0 || undefined}
-                      aria-describedby="connector-env-help"
-                      value={envText}
-                      rows={3}
-                      placeholder={'KEY=value\nANOTHER_KEY=value'}
-                      className="resize-y font-mono text-[13px]"
-                      onChange={(event) => setEnvText(event.target.value)}
-                    />
+                    {isEdit && editServer?.hasEnv ? (
+                      <Select
+                        value={environmentUpdateMode}
+                        onValueChange={(value) =>
+                          setEnvironmentUpdateMode(value as EnvironmentUpdateMode)
+                        }
+                      >
+                        <SelectTrigger aria-label={t('Environment variable action')}>
+                          <span>
+                            {environmentUpdateMode === 'keep'
+                              ? t('Keep saved variables')
+                              : environmentUpdateMode === 'replace'
+                                ? t('Replace saved variables')
+                                : t('Clear saved variables')}
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="keep">{t('Keep saved variables')}</SelectItem>
+                          <SelectItem value="replace">{t('Replace saved variables')}</SelectItem>
+                          <SelectItem value="clear">{t('Clear saved variables')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : null}
+                    {!isEdit || environmentUpdateMode === 'replace' ? (
+                      <Textarea
+                        id="connector-env"
+                        aria-label={t('Environment variables')}
+                        aria-required={requiredEnvironment.length > 0 || undefined}
+                        aria-invalid={environmentErrors.length > 0 || undefined}
+                        aria-describedby="connector-env-help"
+                        value={envText}
+                        rows={3}
+                        placeholder={'KEY=value\nANOTHER_KEY=value'}
+                        className="resize-y font-mono text-[13px]"
+                        onChange={(event) => setEnvText(event.target.value)}
+                      />
+                    ) : null}
                     <p id="connector-env-help" className={helperClassName}>
                       {t('One KEY=VALUE per line.')}
                       {initialTemplate?.requiredSecrets?.environment?.length
@@ -707,8 +750,18 @@ export function ConnectorAddForm({
                             names: initialTemplate.requiredSecrets.environment.join(', ')
                           })
                         : ''}
-                      {isEdit ? ' ' + t('Leave blank to keep the current values.') : ''}
+                      {editServer?.environmentNames?.length
+                        ? ' ' +
+                          t('Saved names: {{names}}.', {
+                            names: editServer.environmentNames.join(', ')
+                          })
+                        : ''}
                     </p>
+                    {environmentErrors.map((line) => (
+                      <p key={line} className="text-xs text-status-failure">
+                        {t('Line {{line}}: use KEY=VALUE.', { line })}
+                      </p>
+                    ))}
                   </div>
                 </>
               ) : (

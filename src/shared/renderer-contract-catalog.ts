@@ -321,6 +321,7 @@ import type {
   OpenAlexCredentialValidation,
   AddCustomServerRequest,
   AuthenticateCustomServerRequest,
+  DisconnectCustomServerRequest,
   SetCustomServerEnabledRequest,
   RemoveCustomServerRequest,
   UpdateCustomServerRequest,
@@ -1465,7 +1466,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: AddCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:add-custom-server']),
   'settings.authenticateCustomServer': callable<
-    (request: AuthenticateCustomServerRequest) => Promise<ConnectorsSnapshot>
+    (request: DisconnectCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:authenticate-custom-server', LOCAL]),
   'settings.beginXaiOAuthLogin': callable<() => Promise<XaiOAuthDeviceAuthorization>>()(
     'settings',
@@ -1482,6 +1483,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.cancelCustomServerAuthentication': callable<
     (request: AuthenticateCustomServerRequest) => Promise<void>
   >()('settings', ['settings:cancel-custom-server-authentication', LOCAL]),
+  'settings.disconnectCustomServer': callable<
+    (request: AuthenticateCustomServerRequest) => Promise<ConnectorsSnapshot>
+  >()('settings', ['settings:disconnect-custom-server', LOCAL]),
   'settings.cancelIsolatedClaudeLogin': callable<() => Promise<void>>()('settings', [
     'settings:cancel-isolated-claude-login',
     LOCAL

@@ -28,6 +28,7 @@ import {
   type SetAgentFrameworkRequest,
   type AddCustomServerRequest,
   type AuthenticateCustomServerRequest,
+  type DisconnectCustomServerRequest,
   type ConnectorTemplateSelectionResult,
   type ExportCustomServerTemplateRequest,
   type ExportCustomServerTemplateResult,
@@ -362,10 +363,8 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMainHandle('settings:list-connectors', () => service.listConnectors())
-  ipcMainHandle(
-    'settings:retry-custom-server',
-    (_event, request: AuthenticateCustomServerRequest) =>
-      workflows.connectors.retryCustomServer(request)
+  ipcMainHandle('settings:retry-custom-server', (_event, request: DisconnectCustomServerRequest) =>
+    workflows.connectors.retryCustomServer(request)
   )
   ipcMainHandle('settings:preview-custom-server-template-export', (_event, id: string) =>
     service.previewCustomServerTemplateExport(id)
@@ -472,6 +471,11 @@ const registerSettingsIpcHandlers = ({
     'settings:cancel-custom-server-authentication',
     (_event, request: AuthenticateCustomServerRequest) =>
       workflows.connectors.cancelCustomServerAuthentication(request)
+  )
+  ipcMainHandle(
+    'settings:disconnect-custom-server',
+    (_event, request: AuthenticateCustomServerRequest) =>
+      workflows.connectors.disconnectCustomServer(request)
   )
   // Compute file browser bookmarks: keyed by provider_id in settings.computeBookmarks.
   ipcMainHandle('compute:bookmarks:get', (_event, providerId: string) =>

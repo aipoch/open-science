@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { delimiter } from 'node:path'
+import type { Writable } from 'node:stream'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -13,11 +14,25 @@ import type { CustomMcpServerConfig } from './mcp-client-manager'
 import { OAuthCallbackServer, type PersistentOAuthClientProvider } from './oauth-client'
 import { EXTRA_PATH_DIRS } from '../settings/shell-path'
 
-const { netFetch } = vi.hoisted(() => ({ netFetch: vi.fn() }))
+const { netFetch, stderrWarn } = vi.hoisted(() => ({
+  netFetch: vi.fn(),
+  stderrWarn: vi.fn()
+}))
 
 vi.mock('electron', () => ({ net: { fetch: netFetch } }))
+vi.mock('../logger', () => ({
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: stderrWarn,
+    error: vi.fn()
+  })
+}))
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  stderrWarn.mockClear()
+})
 
 // Builds an in-memory MCP server with one echo tool and one always-erroring tool, and an
 // injectable createClient that links a fresh Client to it via InMemoryTransport — no process
@@ -604,6 +619,38 @@ describe('buildTransport', () => {
 
     expect(pathDirs).toEqual(expect.arrayContaining(EXTRA_PATH_DIRS))
     expect(childEnv?.CUSTOM_API_KEY).toBe('configured-secret')
+  })
+
+  it('pipes, redacts, and bounds custom stdio stderr before logging it', () => {
+    const configuredSecret = 'configured-secret-value'
+    const transport = buildTransport({
+      id: 'srv-stdio',
+      name: 'stdio-server',
+      transport: 'stdio',
+      command: 'npx',
+      env: { CUSTOM_API_KEY: configuredSecret }
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    expect(stderr).not.toBeNull()
+    stderr?.write(
+      `configured=${configuredSecret} Authorization: Bearer generic-secret-value\n${'x'.repeat(8_192)}\n`
+    )
+    for (let index = 0; index < 80; index += 1) stderr?.write(`${'y'.repeat(1_024)}\n`)
+
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain(configuredSecret)
+    expect(serialized).not.toContain('generic-secret-value')
+    expect(stderrWarn.mock.calls.length).toBeLessThan(80)
+    expect(stderrWarn.mock.calls).toContainEqual([
+      'custom MCP server stderr truncated',
+      expect.objectContaining({ serverId: 'srv-stdio' })
+    ])
+    expect(
+      stderrWarn.mock.calls
+        .filter(([message]) => message === 'custom MCP server stderr')
+        .every(([, fields]) => String((fields as { line?: unknown }).line ?? '').length <= 4_096)
+    ).toBe(true)
   })
 
   it('keeps an explicitly configured stdio PATH ahead of the augmented directories', () => {

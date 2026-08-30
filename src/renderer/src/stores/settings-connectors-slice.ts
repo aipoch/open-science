@@ -7,6 +7,7 @@ import type {
   ConnectorDetailView,
   ConnectorView,
   CustomServerView,
+  DisconnectCustomServerRequest,
   NcbiCredentialsView,
   OpenAlexCredentialView,
   OpenAlexCredentialValidation,
@@ -57,6 +58,7 @@ export type SettingsConnectorsActions = {
   updateCustomServer: (request: UpdateCustomServerRequest) => Promise<void>
   authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
   cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
+  disconnectCustomServer: (request: DisconnectCustomServerRequest) => Promise<void>
   retryCustomServer: (id: string) => Promise<void>
   setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
   removeCustomServer: (id: string) => Promise<void>
@@ -82,6 +84,7 @@ type SettingsConnectorsCommands = Pick<
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'disconnectCustomServer'
   | 'retryCustomServer'
   | 'onConnectorRuntimeChanged'
   | 'setCustomServerEnabled'
@@ -349,6 +352,8 @@ export const createSettingsConnectorsSlice = ({
       }),
     cancelCustomServerAuthentication: (request) =>
       getCommands().cancelCustomServerAuthentication(request),
+    disconnectCustomServer: (request) =>
+      reconcileMutation(() => getCommands().disconnectCustomServer(request)),
     retryCustomServer: (id) => reconcileMutation(() => getCommands().retryCustomServer({ id })),
     setCustomServerEnabled: async (id, enabled) => {
       const key = customServerEnabledKey(id)

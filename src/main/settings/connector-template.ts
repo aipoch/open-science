@@ -9,6 +9,7 @@ import type {
   ConnectorTemplatePreview,
   CustomServerTransport
 } from '../../shared/settings'
+import { CONNECTOR_RESOURCE_LIMITS } from './connector-resource-limits'
 import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
@@ -216,7 +217,9 @@ const readHttpUrl = (
   diagnostics: ConnectorTemplateDiagnostic[],
   path: string
 ): string | undefined => {
-  const raw = readString(value, diagnostics, path, { max: 2_048 })
+  const raw = readString(value, diagnostics, path, {
+    max: CONNECTOR_RESOURCE_LIMITS.urlCharacters
+  })
   if (!raw) return undefined
   let url: URL
   try {
@@ -280,10 +283,12 @@ const readOAuth = (
     'oauth.authorization_server_url'
   )
   const scopes = readStringList(value.scopes, diagnostics, 'oauth.scopes', {
-    maxItems: 32,
-    maxLength: 128
+    maxItems: CONNECTOR_RESOURCE_LIMITS.oauthScopes,
+    maxLength: CONNECTOR_RESOURCE_LIMITS.oauthScopeCharacters
   })
-  const clientId = readString(value.client_id, diagnostics, 'oauth.client_id', { max: 2_048 })
+  const clientId = readString(value.client_id, diagnostics, 'oauth.client_id', {
+    max: CONNECTOR_RESOURCE_LIMITS.urlCharacters
+  })
   const rawRedirectUri = readHttpUrl(value.redirect_uri, diagnostics, 'oauth.redirect_uri')
   let redirectUri: string | undefined
   if (rawRedirectUri) {
@@ -328,11 +333,15 @@ const readRequiredSecrets = (
     value.environment,
     diagnostics,
     'required_secrets.environment',
-    { maxItems: 64, maxLength: 128, pattern: SAFE_ENV_NAME }
+    {
+      maxItems: CONNECTOR_RESOURCE_LIMITS.secretEntries,
+      maxLength: CONNECTOR_RESOURCE_LIMITS.secretNameCharacters,
+      pattern: SAFE_ENV_NAME
+    }
   )
   const headers = readStringList(value.headers, diagnostics, 'required_secrets.headers', {
-    maxItems: 64,
-    maxLength: 128,
+    maxItems: CONNECTOR_RESOURCE_LIMITS.secretEntries,
+    maxLength: CONNECTOR_RESOURCE_LIMITS.secretNameCharacters,
     pattern: SAFE_HEADER_NAME
   })
   const oauthClientSecret = value.oauth_client_secret
@@ -654,10 +663,13 @@ export const parseConnectorTemplate = (
     )
   }
 
-  const name = readString(parsed.name, diagnostics, 'name', { required: true, max: 64 })
+  const name = readString(parsed.name, diagnostics, 'name', {
+    required: true,
+    max: CONNECTOR_RESOURCE_LIMITS.nameCharacters
+  })
   const displayName = readString(parsed.display_name, diagnostics, 'display_name', {
     required: true,
-    max: 128
+    max: CONNECTOR_RESOURCE_LIMITS.displayNameCharacters
   })
   if (name && !isCustomConnectorName(name)) {
     diagnostic(
@@ -668,7 +680,9 @@ export const parseConnectorTemplate = (
       'name'
     )
   }
-  const description = readString(parsed.description, diagnostics, 'description', { max: 2_000 })
+  const description = readString(parsed.description, diagnostics, 'description', {
+    max: CONNECTOR_RESOURCE_LIMITS.descriptionCharacters
+  })
   const transport = TRANSPORTS.has(parsed.transport as CustomServerTransport)
     ? (parsed.transport as CustomServerTransport)
     : undefined
@@ -681,8 +695,13 @@ export const parseConnectorTemplate = (
       'transport'
     )
   }
-  const command = readString(parsed.command, diagnostics, 'command', { max: 1_024 })
-  const args = readStringList(parsed.args, diagnostics, 'args', { maxItems: 128, maxLength: 2_048 })
+  const command = readString(parsed.command, diagnostics, 'command', {
+    max: CONNECTOR_RESOURCE_LIMITS.commandCharacters
+  })
+  const args = readStringList(parsed.args, diagnostics, 'args', {
+    maxItems: CONNECTOR_RESOURCE_LIMITS.arguments,
+    maxLength: CONNECTOR_RESOURCE_LIMITS.argumentCharacters
+  })
   const url = parsed.url === undefined ? undefined : readHttpUrl(parsed.url, diagnostics, 'url')
   const requiredSecrets = readRequiredSecrets(parsed.required_secrets, diagnostics)
   const oauth = readOAuth(parsed.oauth, diagnostics)

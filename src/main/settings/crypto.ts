@@ -60,15 +60,43 @@ const tryDecryptKey = (keyRef: string | undefined): string | undefined => {
   }
 }
 
-// Builds a non-secret display hint like "sk-a…wxyz". Short keys are collapsed to bullets so the
-// full value can never be reconstructed from the mask.
+const FIXED_MASK_PREFIX = '••••'
+
+// Reveals only a four-character suffix and never the original length for short credentials.
 const maskKey = (plaintext: string): string => {
   const trimmed = plaintext.trim()
+  const characters = Array.from(trimmed)
 
-  if (trimmed.length === 0) return ''
-  if (trimmed.length <= 8) return '•'.repeat(trimmed.length)
+  if (characters.length === 0) return ''
+  if (characters.length <= 8) return '•'.repeat(8)
 
-  return `${trimmed.slice(0, 4)}…${trimmed.slice(-4)}`
+  return `${FIXED_MASK_PREFIX}${characters.slice(-4).join('')}`
 }
 
-export { KEY_REF_PREFIX, decryptKey, encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey }
+// Old settings may contain prefix-revealing masks. Harden them at the projection boundary without
+// rewriting settings just because they were viewed.
+const hardenKeyMask = (mask: string | undefined): string | undefined => {
+  if (mask === undefined || mask === '') return mask
+  if (/^•+$/u.test(mask)) return '•'.repeat(8)
+
+  const ellipsis = mask.lastIndexOf('…')
+  if (ellipsis >= 0)
+    return `${FIXED_MASK_PREFIX}${Array.from(mask.slice(ellipsis + 1))
+      .slice(-4)
+      .join('')}`
+  if (mask.startsWith(FIXED_MASK_PREFIX)) {
+    return `${FIXED_MASK_PREFIX}${Array.from(mask.slice(FIXED_MASK_PREFIX.length)).slice(-4).join('')}`
+  }
+
+  return '•'.repeat(8)
+}
+
+export {
+  KEY_REF_PREFIX,
+  decryptKey,
+  encryptKey,
+  hardenKeyMask,
+  isEncryptionAvailable,
+  maskKey,
+  tryDecryptKey
+}
