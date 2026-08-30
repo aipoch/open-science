@@ -65,8 +65,11 @@ const TRANSPORTS = new Set<CustomServerTransport>(['stdio', 'streamable_http', '
 const SUSPICIOUS_QUERY_KEYS = new Set([
   'accesstoken',
   'apikey',
+  'apitoken',
   'auth',
+  'authtoken',
   'authorization',
+  'bearertoken',
   'clientassertion',
   'clientsecret',
   'code',
@@ -77,18 +80,46 @@ const SUSPICIOUS_QUERY_KEYS = new Set([
   'key',
   'passwd',
   'password',
+  'privatekey',
   'refreshtoken',
+  'securitytoken',
   'secret',
+  'sessiontoken',
+  'signature',
   'token',
-  'tokenkey'
+  'tokenkey',
+  'xapikey'
 ])
 const JWT = /(?:^|[=:\s])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|\s)/
-const SECRET_FLAG = /^--?(?:api[-_]?key|token|secret|password|credential|authorization)(?:=|$)/i
+const SECRET_FLAG =
+  /^--?(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?(?:key|token)|auth(?:entication)?[-_]?(?:key|token)|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|refresh[-_]?token|secret(?:[-_]?access[-_]?key)?|security[-_]?token|session[-_]?token|tokens?)(?:[-_]?(?:file|path))?(?:=|:|$)/i
 const CREDENTIAL_HEADER =
   /^(?:authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token|x-access-token)\s*:\s*\S/i
 const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SAFE_HEADER_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
 const CONNECTOR_TEMPLATE_DIGEST_CACHE_LIMIT = 64
+
+const hasSuspiciousQueryKey = (url: URL): boolean =>
+  [...url.searchParams.keys()].some((key) =>
+    SUSPICIOUS_QUERY_KEYS.has(key.toLowerCase().replace(/[^a-z0-9]/g, ''))
+  )
+
+const urlContainsCredential = (value: string): boolean => {
+  try {
+    const url = new URL(value)
+    return Boolean(url.username || url.password || hasSuspiciousQueryKey(url))
+  } catch {
+    return false
+  }
+}
+
+const argumentUrlContainsCredential = (argument: string): boolean => {
+  const trimmed = argument.trim()
+  if (urlContainsCredential(trimmed)) return true
+
+  const separator = trimmed.indexOf('=')
+  return separator >= 0 && urlContainsCredential(trimmed.slice(separator + 1))
+}
 
 const headerArgumentValue = (argument: string): string => {
   const trimmed = argument.trim()
@@ -103,12 +134,8 @@ const argumentContainsCredential = (argument: string): boolean =>
   JWT.test(argument) ||
   /^Bearer\s+/i.test(argument) ||
   SECRET_FLAG.test(argument) ||
-  CREDENTIAL_HEADER.test(headerArgumentValue(argument))
-
-const hasSuspiciousQueryKey = (url: URL): boolean =>
-  [...url.searchParams.keys()].some((key) =>
-    SUSPICIOUS_QUERY_KEYS.has(key.toLowerCase().replace(/[^a-z0-9]/g, ''))
-  )
+  CREDENTIAL_HEADER.test(headerArgumentValue(argument)) ||
+  argumentUrlContainsCredential(argument)
 
 export const hasEmbeddedConnectorCredentials = (fields: {
   args?: readonly string[]
@@ -117,12 +144,7 @@ export const hasEmbeddedConnectorCredentials = (fields: {
   if (fields.args?.some(argumentContainsCredential)) return true
   if (!fields.url) return false
 
-  try {
-    const url = new URL(fields.url)
-    return Boolean(url.username || url.password || hasSuspiciousQueryKey(url))
-  } catch {
-    return false
-  }
+  return urlContainsCredential(fields.url)
 }
 
 // Keeps preview digests opaque to the renderer without persisting exported connector metadata.

@@ -989,8 +989,28 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it.each([
+    ['split credential flag', ['--auth-token', 'plaintext-secret']],
+    [
+      'credential-bearing URL argument',
+      ['--endpoint', 'https://mcp.example.test?auth_token=plaintext-secret']
+    ]
+  ])('rejects a %s when adding a custom server', async (_description, args) => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-argument-form',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it.each([
     'https://user:plaintext-secret@mcp.example.test',
-    'https://mcp.example.test?api_key=plaintext-secret'
+    'https://mcp.example.test?api_key=plaintext-secret',
+    'https://mcp.example.test?auth_token=plaintext-secret'
   ])('rejects a credential-bearing URL when updating a custom server', async (url) => {
     const added = await addCustomServer({
       name: 'unsafe-url-update',

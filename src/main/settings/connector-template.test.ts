@@ -211,6 +211,11 @@ describe('Connector configuration templates', () => {
     [{ headers: { Authorization: 'Bearer secret' } }, 'Unknown field "headers"'],
     [{ args: ['--api-key=secret'] }, 'appears to contain a credential'],
     [{ args: ['--header', 'Authorization: Bearer secret'] }, 'appears to contain a credential'],
+    [{ args: ['--auth-token', 'secret'] }, 'appears to contain a credential'],
+    [
+      { args: ['--endpoint', 'https://mcp.example.test/mcp?auth_token=secret'] },
+      'appears to contain a credential'
+    ],
     [{ url: 'https://mcp.example.test/mcp?token=secret' }, 'credential-like query parameter']
   ])('rejects secret-bearing or unknown fields', (extra, message) => {
     const preview = parseConnectorTemplate(
