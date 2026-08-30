@@ -26,6 +26,8 @@ type NetworkStore = {
 // Minimum time an announced probe's Checking… presentation stays visible, so a clicked
 // re-check reads as a deliberate check instead of a flash.
 const MIN_CHECKING_MS = 500
+const REACHABILITY_RECHECK_TTL_MS = 60_000
+let lastProbedAt = 0
 
 export const useNetworkStore = create<NetworkStore>((set, get) => {
   let probeGeneration = 0
@@ -82,6 +84,7 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     if (probeGeneration === generation && (get().isOnline || !reachable)) {
       const connectivity = reachable ? 'reachable' : 'unreachable'
       lastKnownConnectivity = connectivity
+      lastProbedAt = Date.now()
       set({ connectivity })
     }
   }
@@ -97,8 +100,8 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
 // Installs the window listeners and runs the first probe. Called once from the app entry
 // (main.tsx) — deliberately NOT at module scope, so importing the store in tests stays free
 // of side effects. Probing happens on startup, on every link recovery, on window focus /
-// becoming visible while a previous probe is still failing, and on demand (Retry). There is
-// no background polling: a live link with a recovered path out (proxy, DNS) is picked up
+// becoming visible while a previous probe is failing or its known result has expired, and on demand
+// (Retry). There is no background polling: a changed path out (Wi-Fi, VPN, proxy, DNS) is picked up
 // when the user returns to the window, not on a timer.
 let monitorStarted = false
 
@@ -120,7 +123,15 @@ export const startNetworkMonitor = (): void => {
   const silentlyRecheckIfStale = (): void => {
     const { isOnline, connectivity } = useNetworkStore.getState()
     if (!isOnline) return
-    if (connectivity !== 'unreachable' && connectivity !== 'probe-failed') return
+    const now = Date.now()
+    const resultExpired =
+      lastProbedAt === 0 || now < lastProbedAt || now - lastProbedAt >= REACHABILITY_RECHECK_TTL_MS
+    if (
+      connectivity !== 'unreachable' &&
+      connectivity !== 'probe-failed' &&
+      !(connectivity === 'reachable' && resultExpired)
+    )
+      return
     if (silentProbeInFlight) return
     silentProbeInFlight = true
     void useNetworkStore

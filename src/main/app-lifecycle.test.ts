@@ -19,6 +19,16 @@ import type {
 type QuitEvent = { preventDefault: () => void; defaultPrevented: boolean }
 type Handler = (event: QuitEvent) => void
 
+const makeQuitEvent = (): QuitEvent => {
+  const event: QuitEvent = {
+    defaultPrevented: false,
+    preventDefault(): void {
+      event.defaultPrevented = true
+    }
+  }
+  return event
+}
+
 afterEach(() => clearApplicationShutdownTrigger())
 
 type FakeApp = {
@@ -39,14 +49,28 @@ const makeFakeApp = (): FakeApp => {
     },
     exit: vi.fn(),
     emit(event): QuitEvent {
-      const evt: QuitEvent = {
-        defaultPrevented: false,
-        preventDefault(): void {
-          evt.defaultPrevented = true
-        }
-      }
+      const evt = makeQuitEvent()
       for (const handler of handlers.get(event) ?? []) handler(evt)
       return evt
+    }
+  }
+}
+
+const makeFakeSignalSource = (): NonNullable<AppLifecycleDeps['headlessSignalSource']> & {
+  emit: (signal: 'SIGTERM' | 'SIGINT') => void
+} => {
+  const listeners = new Map<'SIGTERM' | 'SIGINT', () => void>()
+  return {
+    once(signal, listener): void {
+      listeners.set(signal, listener)
+    },
+    removeListener(signal, listener): void {
+      if (listeners.get(signal) === listener) listeners.delete(signal)
+    },
+    emit(signal): void {
+      const listener = listeners.get(signal)
+      listeners.delete(signal)
+      listener?.()
     }
   }
 }
@@ -63,12 +87,13 @@ type FakeWindow = {
   show: () => void
   hide: () => void
   focus: () => void
-  on: (event: 'hide' | 'show', handler: () => void) => void
+  on: (event: string, handler: Handler) => void
+  emit: (event: string) => QuitEvent
 }
 
 // A fake BrowserWindow tracking visibility/focus/destroyed state.
 const makeFakeWindow = (): FakeWindow => {
-  const handlers = new Map<'hide' | 'show', Array<() => void>>()
+  const handlers = new Map<string, Handler[]>()
 
   return {
     destroyed: false,
@@ -89,17 +114,22 @@ const makeFakeWindow = (): FakeWindow => {
     },
     show(): void {
       this.visible = true
-      for (const handler of handlers.get('show') ?? []) handler()
+      for (const handler of handlers.get('show') ?? []) handler(makeQuitEvent())
     },
     hide(): void {
       this.visible = false
-      for (const handler of handlers.get('hide') ?? []) handler()
+      for (const handler of handlers.get('hide') ?? []) handler(makeQuitEvent())
     },
     focus(): void {
       this.focused = true
     },
     on(event, handler): void {
       handlers.set(event, [...(handlers.get(event) ?? []), handler])
+    },
+    emit(event): QuitEvent {
+      const evt = makeQuitEvent()
+      for (const handler of handlers.get(event) ?? []) handler(evt)
+      return evt
     }
   }
 }
@@ -153,6 +183,8 @@ const setup = (
       | 'isMigrationInProgress'
       | 'platform'
       | 'createInitialWindow'
+      | 'headlessSignalSource'
+      | 'subscribePowerShutdown'
       | 'onAppearanceChanged'
       | 'initialWindow'
       | 'configureMainWindow'
@@ -212,6 +244,8 @@ const setup = (
     quit,
     countWindows: () => windows.filter((w) => !w.destroyed).length,
     createInitialWindow: overrides.createInitialWindow,
+    headlessSignalSource: overrides.headlessSignalSource,
+    subscribePowerShutdown: overrides.subscribePowerShutdown,
     onAppearanceChanged: overrides.onAppearanceChanged,
     platform: overrides.platform ?? 'linux',
     detectActiveSessions,
@@ -344,6 +378,97 @@ describe('installAppLifecycle', () => {
     await flush()
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(tray?.destroy).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('routes a preventable Windows session end through the existing shutdown owner', async () => {
+    const { app, windows, shutdownBackends, flushSessionPersistence, quit, confirmClose } = setup({
+      platform: 'win32'
+    })
+
+    const event = windows[0].emit('query-session-end')
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(quit).toHaveBeenCalledTimes(1)
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+    expect(shutdownBackends).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('uses Windows session-end as a best-effort fallback when the preventable event was missed', () => {
+    const { windows, quit } = setup({ platform: 'win32' })
+
+    const event = windows[0].emit('session-end')
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not block a system shutdown on active work or renderer persistence conflicts', async () => {
+    const flushSessionPersistence = vi.fn(async () => 'conflict' as const)
+    const { app, windows, shutdownBackends, confirmClose } = setup({
+      platform: 'win32',
+      detectActiveSessions: () => [
+        { projectId: 'project-1', sessionId: 'session-1', kind: 'delegated' }
+      ],
+      flushSessionPersistence
+    })
+
+    windows[0].emit('query-session-end')
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+    expect(shutdownBackends).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it.each(['SIGTERM', 'SIGINT'] as const)(
+    'routes headless %s through the existing shutdown owner',
+    async (signal) => {
+      const headlessSignalSource = makeFakeSignalSource()
+      const { app, shutdownBackends, quit, confirmClose } = setup({
+        createInitialWindow: false,
+        headlessSignalSource
+      })
+
+      headlessSignalSource.emit(signal)
+      expect(quit).toHaveBeenCalledTimes(1)
+
+      app.emit('before-quit')
+      await flush()
+
+      expect(confirmClose).not.toHaveBeenCalled()
+      expect(shutdownBackends).toHaveBeenCalledTimes(1)
+      expect(app.exit).toHaveBeenCalledWith(0)
+    }
+  )
+
+  it('routes a preventable power shutdown through the existing shutdown owner', async () => {
+    let onPowerShutdown: ((event: QuitEvent) => void) | undefined
+    const { app, shutdownBackends, quit, confirmClose } = setup({
+      subscribePowerShutdown: (listener) => {
+        onPowerShutdown = listener
+      }
+    })
+    const event = makeQuitEvent()
+
+    onPowerShutdown?.(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(quit).toHaveBeenCalledTimes(1)
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 

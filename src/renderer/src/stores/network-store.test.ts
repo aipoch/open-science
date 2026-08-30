@@ -237,9 +237,10 @@ describe('startNetworkMonitor silent recovery', () => {
   })
 
   it('does not re-probe on focus while already reachable', async () => {
-    const checkConnectivity = vi.fn().mockResolvedValue(false)
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
     stubCheckConnectivity(checkConnectivity)
-    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+    await useNetworkStore.getState().probeConnectivity()
+    checkConnectivity.mockClear()
 
     window.dispatchEvent(new Event('focus'))
     await Promise.resolve()
@@ -247,6 +248,29 @@ describe('startNetworkMonitor silent recovery', () => {
 
     expect(checkConnectivity).not.toHaveBeenCalled()
     expect(useNetworkStore.getState().connectivity).toBe('reachable')
+  })
+
+  it('silently re-probes a reachable result that is stale when the window regains focus', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-08-30T00:00:00.000Z'))
+      const checkConnectivity = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+      stubCheckConnectivity(checkConnectivity)
+
+      await useNetworkStore.getState().probeConnectivity()
+      expect(useNetworkStore.getState().connectivity).toBe('reachable')
+
+      await vi.advanceTimersByTimeAsync(60_001)
+      window.dispatchEvent(new Event('focus'))
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(checkConnectivity).toHaveBeenCalledTimes(2)
+      expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+    } finally {
+      vi.useRealTimers()
+      stubCheckConnectivity(vi.fn().mockResolvedValue(true))
+      await useNetworkStore.getState().probeConnectivity()
+    }
   })
 
   it('does not re-probe on focus while the link is down', async () => {

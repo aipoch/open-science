@@ -21,7 +21,7 @@ const {
   showMessageBoxMock,
   webFrameMainFromIdMock
 } = vi.hoisted(() => ({
-  openExternalMock: vi.fn(),
+  openExternalMock: vi.fn(async () => undefined),
   ipcMainOnMock: vi.fn(),
   ipcMainRemoveListenerMock: vi.fn(),
   showMessageBoxMock: vi.fn(),
@@ -37,7 +37,8 @@ const { windowLogSpies } = vi.hoisted(() => ({
 }))
 
 vi.mock('./logger', () => ({
-  createLogger: () => windowLogSpies
+  createLogger: () => windowLogSpies,
+  diagnosticErrorFields: () => ({ errorCategory: 'error' })
 }))
 
 // The overlay manager is a collaborator with its own deep test suite; here we only need to observe
@@ -995,6 +996,7 @@ describe('window-open external handler', () => {
   beforeEach(() => {
     windowOpenHandler = undefined
     openExternalMock.mockClear()
+    windowLogSpies.warn.mockClear()
   })
 
   // Regression: app links use rel="noreferrer" and the packaged app runs on a file:// origin, so the
@@ -1015,6 +1017,20 @@ describe('window-open external handler', () => {
     windowOpenHandler!({ url: 'javascript:alert(1)', referrer: { url: '' } })
 
     expect(openExternalMock).not.toHaveBeenCalled()
+  })
+
+  it('records a rejected operating-system open without leaving an unhandled rejection', async () => {
+    openExternalMock.mockRejectedValueOnce(new Error('no protocol handler'))
+    createMainWindow()
+
+    windowOpenHandler!({ url: 'https://example.com/report', referrer: { url: '' } })
+
+    await vi.waitFor(() =>
+      expect(windowLogSpies.warn).toHaveBeenCalledWith(
+        'external link open failed',
+        expect.objectContaining({ errorCategory: 'error' })
+      )
+    )
   })
 })
 

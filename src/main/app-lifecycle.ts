@@ -10,6 +10,7 @@ import { startDiagnosticOperation } from './diagnostics/operation'
 import {
   clearApplicationShutdownTrigger,
   currentApplicationShutdownTrigger,
+  markApplicationShutdownTrigger,
   type ApplicationShutdownTrigger
 } from './application-shutdown-trigger'
 import type {
@@ -21,6 +22,12 @@ import type {
 
 // Menu action callbacks the tray is wired to.
 export type TrayHandlers = { onShow: () => void; onHide: () => void; onQuit: () => void }
+
+type PreventableSystemShutdownEvent = { preventDefault: () => void }
+type HeadlessSignalSource = {
+  once: (signal: 'SIGTERM' | 'SIGINT', listener: () => void) => unknown
+  removeListener: (signal: 'SIGTERM' | 'SIGINT', listener: () => void) => unknown
+}
 
 // Wires the window/tray/quit lifecycle for the UI process. Kept as a dependency-injected unit (no direct
 // electron imports beyond types) so the event ordering, migration-guard interaction, tray-quit cleanup,
@@ -79,6 +86,9 @@ export type AppLifecycleDeps = {
   countWindows: () => number
   // Headless web mode starts the backend and tray without opening a renderer window.
   createInitialWindow?: boolean
+  // Native process/power sources are injected so their global event bridges remain unit-testable.
+  headlessSignalSource?: HeadlessSignalSource
+  subscribePowerShutdown?: (listener: (event: PreventableSystemShutdownEvent) => void) => void
   // Overridable for tests; defaults to the host platform.
   platform?: NodeJS.Platform
   // Snapshot of sessions with running work (in-flight agent prompt or a notebook cell mid-execution),
@@ -122,6 +132,7 @@ export const installAppLifecycle = (
   // Latches make the async quit cleanup idempotent: once started, further quits are held until exit.
   let shutdownStarted = false
   let shutdownFinished = false
+  let systemShutdownRequested = false
   // Set once the user has confirmed a quit (via the dialog or a prior 'confirm' close), so a re-issued
   // before-quit skips straight to teardown instead of asking again.
   let quitConfirmed = false
@@ -174,6 +185,18 @@ export const installAppLifecycle = (
     confirmedDelegatedSessionKeys = new Set(delegated.map(delegatedSessionKey))
     deps.quit()
   }
+  const requestSystemShutdown = (): void => {
+    if (systemShutdownRequested || shutdownStarted || shutdownFinished) return
+    systemShutdownRequested = true
+    const rollbackTrigger = markApplicationShutdownTrigger('system')
+    try {
+      deps.quit()
+    } catch (error) {
+      systemShutdownRequested = false
+      rollbackTrigger()
+      throw error
+    }
+  }
 
   // Synchronous close classification, evaluated at close time. A mid-quit close is held so the
   // renderer survives persistence flushing; otherwise darwin keeps its dock convention (real close),
@@ -223,6 +246,16 @@ export const installAppLifecycle = (
     // taskbar attention can distinguish a legitimate minimized window from one hidden to the tray.
     window.on('hide', () => hiddenWindows.add(window))
     window.on('show', () => hiddenWindows.delete(window))
+    if (platform === 'win32') {
+      window.on('query-session-end', (event) => {
+        event.preventDefault()
+        requestSystemShutdown()
+      })
+      // This notification can no longer delay Windows logoff/shutdown. It is only a best-effort
+      // fallback for a host that did not deliver query-session-end; the preventable event above owns
+      // the bounded, awaited path.
+      window.on('session-end', requestSystemShutdown)
+    }
     return window
   }
 
@@ -258,6 +291,22 @@ export const installAppLifecycle = (
     onQuit: () => deps.quit()
   })
 
+  if (deps.createInitialWindow === false && deps.headlessSignalSource) {
+    const source = deps.headlessSignalSource
+    const onSignal = (): void => {
+      source.removeListener('SIGTERM', onSignal)
+      source.removeListener('SIGINT', onSignal)
+      requestSystemShutdown()
+    }
+    source.once('SIGTERM', onSignal)
+    source.once('SIGINT', onSignal)
+  }
+
+  deps.subscribePowerShutdown?.((event) => {
+    event.preventDefault()
+    requestSystemShutdown()
+  })
+
   // Authoritative quit cleanup: stop the agent process tree (awaited, so Windows taskkill /T finishes)
   // and every notebook kernel before exiting. app.on (not once) plus latches: a re-issued quit while
   // cleanup runs is held until app.exit(0), which itself skips before-quit/will-quit. Gated on the
@@ -276,6 +325,7 @@ export const installAppLifecycle = (
       // confirmation and shutdown trigger so neither leaks into a later close: otherwise a later
       // ordinary quit could bypass its active-session confirmation.
       clearApplicationShutdownTrigger()
+      systemShutdownRequested = false
       quitConfirmed = false
       confirmedDelegatedSessionKeys = new Set()
       return

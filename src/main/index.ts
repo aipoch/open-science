@@ -97,8 +97,16 @@ if (shouldRunArtifactMcpServer) {
 
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
-  const { app, BrowserWindow, crashReporter, ipcMain, nativeImage, nativeTheme, protocol } =
-    createRequire(import.meta.url)('electron') as typeof import('electron')
+  const {
+    app,
+    BrowserWindow,
+    crashReporter,
+    ipcMain,
+    nativeImage,
+    nativeTheme,
+    powerMonitor,
+    protocol
+  } = createRequire(import.meta.url)('electron') as typeof import('electron')
 
   // Electron accepts privileged schemes only before app ready. Keep this in the synchronous UI
   // bootstrap before any awaited import can yield to the ready event.
@@ -724,6 +732,17 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             quit: () => app.quit(),
             countWindows: () => BrowserWindow.getAllWindows().length,
             createInitialWindow: !ctx.webMode.headless,
+            headlessSignalSource: ctx.webMode.headless ? process : undefined,
+            subscribePowerShutdown:
+              process.platform === 'win32'
+                ? undefined
+                : (listener) =>
+                    powerMonitor.on('shutdown', ((event?: { preventDefault?: () => void }) =>
+                      listener({
+                        // Electron's generated v39 type omits this documented event argument.
+                        // Keep the bridge safe if a host also omits it at runtime.
+                        preventDefault: () => event?.preventDefault?.()
+                      })) as () => void),
             detectActiveSessions: ctx.detectActiveSessions,
             hasActiveReviewerWork: ctx.hasActiveReviewerWork,
             prepareForQuit: ctx.prepareForQuit,
