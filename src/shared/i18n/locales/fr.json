@@ -562,6 +562,7 @@
     "Command line tool path": "Chemin d'accès à l'outil de ligne de commande",
     "Command palette": "Palette de commandes",
     "Commands": "Commandes",
+    "Compute cache": "Cache de calcul",
     "Common causes: an xychart is missing the <kw1>title</kw1> keyword, axis labels are not quoted, or <kw2>y-axis</kw2> or <kw3>bar/line</kw3> data rows are missing.": "Causes courantes : un graphique xy ne contient pas le mot-clé <kw1>title</kw1>, les étiquettes des axes ne sont pas citées ou les lignes de données <kw2>y-axis</kw2> ou <kw3>bar/line</kw3> sont manquantes.",
     "Community": "Communauté",
     "Compact": "Compacte",

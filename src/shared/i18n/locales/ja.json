@@ -548,6 +548,7 @@
     "Command line tool path": "コマンドラインツールパス",
     "Command palette": "コマンドパレット",
     "Commands": "コマンド",
+    "Compute cache": "計算キャッシュ",
     "Common causes: an xychart is missing the <kw1>title</kw1> keyword, axis labels are not quoted, or <kw2>y-axis</kw2> or <kw3>bar/line</kw3> data rows are missing.": "一般的な原因：xychart に <kw1>title</kw1> キーワードが欠落している、軸ラベルが引用符で囲まれていない、または <kw2>y-axis</kw2> または <kw3>bar/line</kw3> データ行が欠落しています。",
     "Community": "コミュニティ",
     "Compact": "コンパクト",

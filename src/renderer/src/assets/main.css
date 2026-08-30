@@ -192,6 +192,7 @@
   /* Settings-only categorical and status roles. These aliases preserve the established palette
      while keeping feature components independent from raw Tailwind color names. */
   --color-storage-artifacts: var(--color-sky-500);
+  --color-storage-compute: var(--color-indigo-500);
   --color-storage-delegation: var(--color-cyan-500);
   --color-storage-runtime: var(--color-violet-500);
   --color-storage-uploads: var(--color-amber-500);

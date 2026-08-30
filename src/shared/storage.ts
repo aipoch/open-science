@@ -2,6 +2,7 @@
 
 export const STORAGE_USAGE_CATEGORY_KEYS = [
   'artifacts',
+  'compute',
   'delegation',
   'uploads',
   'runtime',

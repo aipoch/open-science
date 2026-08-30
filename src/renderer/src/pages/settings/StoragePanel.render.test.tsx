@@ -36,6 +36,7 @@ const richInfo: StorageInfo = {
   usage: {
     categories: [
       { key: 'artifacts', bytes: 22_700_000 },
+      { key: 'compute', bytes: 125 },
       {
         key: 'runtime',
         bytes: 3_700_000_000,
@@ -48,7 +49,7 @@ const richInfo: StorageInfo = {
       { key: 'notebooks', bytes: 0 },
       { key: 'notebook-file-evidence', bytes: 8_300_000 }
     ],
-    totalBytes: 3_731_000_000
+    totalBytes: 3_731_000_125
   },
   availableBytes: 530_600_000_000
 }
@@ -658,6 +659,7 @@ describe('StoragePanel', () => {
 
     expect(container.textContent).toContain('Artifacts')
     expect(container.textContent).toMatch(/22\.7 MB/)
+    expect(container.textContent).toContain('Compute cache')
     expect(container.textContent).toContain('Runtime')
     expect(container.textContent).toMatch(/3\.7 GB/)
     expect(container.textContent).toContain('Notebook evidence')
@@ -666,6 +668,7 @@ describe('StoragePanel', () => {
     expect(container.textContent).toContain('Available on disk')
     expect(container.textContent).toMatch(/530\.6 GB/)
     expect(container.querySelector('.bg-storage-artifacts')).not.toBeNull()
+    expect(container.querySelector('.bg-storage-compute')).not.toBeNull()
     expect(container.querySelector('.bg-storage-runtime')).not.toBeNull()
     expect(container.querySelector('.bg-storage-notebook-evidence')).not.toBeNull()
     expect(container.querySelector('.bg-sky-500')).toBeNull()

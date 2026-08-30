@@ -203,6 +203,32 @@ describe('SessionCacheOwner', () => {
     await expect(stat(active.path)).resolves.toMatchObject({ size: 6 })
   })
 
+  it('removes interrupted downloads while preserving completed cache from older versions', async () => {
+    const sessionDirectory = join(
+      storageRoot,
+      'compute',
+      'session-cache',
+      'project-1',
+      'active-session'
+    )
+    const completedDirectory = join(sessionDirectory, '00000000-0000-4000-8000-000000000001')
+    const interruptedDirectory = join(
+      sessionDirectory,
+      '.partial-00000000-0000-4000-8000-000000000002'
+    )
+    await mkdir(completedDirectory, { recursive: true })
+    await mkdir(interruptedDirectory)
+    await writeFile(join(completedDirectory, 'completed.csv'), 'completed')
+    await writeFile(join(interruptedDirectory, 'partial.csv'), 'partial')
+
+    await owner.reconcileActiveSessions([{ sessionId: 'active-session', projectId: 'project-1' }])
+
+    await expect(stat(join(completedDirectory, 'completed.csv'))).resolves.toMatchObject({
+      size: 9
+    })
+    await expect(stat(interruptedDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('allows later Sessions under a Project whose orphan cache was reconciled', async () => {
     const orphan = await owner.createOperationFile('project-1', 'orphan-session', 'orphan.csv')
     await writeFile(orphan.path, 'orphan')

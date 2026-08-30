@@ -504,8 +504,9 @@ export class ComputeRemoteOperationOwner {
         operation.path,
         remoteSize
       )
+      const committedPath = await operation.commit()
       return {
-        path: operation.path,
+        path: committedPath,
         name: filename,
         size: localSize,
         mimeType: inferMimeType(filename)

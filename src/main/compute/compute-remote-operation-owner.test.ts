@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1286,6 +1286,12 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     expect(result.size).toBe(7) // 'content' is 7 bytes
     expect(result.path).toContain('results.csv')
     expect(result.mimeType).toBe('text/csv')
+    const transferPath = vi.mocked(scpRunner.copy).mock.calls[0]?.[1].at(-1) as string
+    expect(basename(dirname(transferPath))).toMatch(/^\.partial-/)
+    expect(basename(dirname(result.path))).not.toMatch(/^\.partial-/)
+    expect(result.path).not.toBe(transferPath)
+    await expect(readFile(result.path, 'utf8')).resolves.toBe('content')
+    await expect(stat(dirname(transferPath))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('rejects a session-cache download when the remote size changes during transfer', async () => {

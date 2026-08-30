@@ -645,6 +645,7 @@
     "Command line tool path": "命令列工具路徑",
     "Command palette": "命令面板",
     "Commands": "命令",
+    "Compute cache": "運算快取",
     "Common causes: an xychart is missing the <kw1>title</kw1> keyword, axis labels are not quoted, or <kw2>y-axis</kw2> or <kw3>bar/line</kw3> data rows are missing.": "常見原因：xychart 缺少 <kw1>title</kw1> 關鍵字，軸標籤沒有加引號，或是 <kw2>y-axis</kw2> 或 <kw3>bar/line</kw3> 的資料列缺失。",
     "Community": "社群",
     "Compact": "壓縮",

@@ -1,8 +1,10 @@
-import { lstat, mkdir, readdir, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 
 import type { ComputeJobSessionOwner } from './job-repository'
+
+const PARTIAL_OPERATION_PREFIX = '.partial-'
 
 const isSafeSegment = (segment: string): boolean =>
   segment.length > 0 &&
@@ -62,6 +64,7 @@ export class SessionCacheOwner {
   private readonly closedProjects = new Set<string>()
   private readonly closedSessions = new Set<string>()
   private readonly reconcilingProjects = new Set<string>()
+  private readonly reconcilingSessions = new Set<string>()
 
   constructor(storageRoot: string) {
     this.computeRoot = join(storageRoot, 'compute')
@@ -72,20 +75,33 @@ export class SessionCacheOwner {
     projectId: string,
     sessionId: string,
     filename: string
-  ): Promise<{ operationId: string; path: string; release(): void }> {
+  ): Promise<{ operationId: string; path: string; commit(): Promise<string>; release(): void }> {
     const safeFilename = assertSafeFilename(filename)
     const safeProjectId = assertSafeSegment(projectId, 'Project id')
     const safeSessionId = assertSafeSegment(sessionId, 'Session id')
     const release = this.registerOperation(safeProjectId, safeSessionId)
     const operationId = randomUUID()
-    const directory = join(this.root, safeProjectId, safeSessionId, operationId)
+    const partialOperationId = `${PARTIAL_OPERATION_PREFIX}${operationId}`
+    const directory = join(this.root, safeProjectId, safeSessionId, partialOperationId)
     try {
       await createSafeDirectory(this.computeRoot, 'Compute')
       await createSafeDirectory(this.root, 'root')
       await createSafeDirectory(join(this.root, safeProjectId), 'Project')
       await createSafeDirectory(join(this.root, safeProjectId, safeSessionId), 'Session')
       await createSafeDirectory(directory, 'operation')
-      return { operationId, path: join(directory, safeFilename), release }
+      return {
+        operationId,
+        path: join(directory, safeFilename),
+        commit: async () => {
+          if (!(await this.assertSafePath(safeProjectId, safeSessionId, partialOperationId))) {
+            throw new Error('Session cache operation directory is unavailable.')
+          }
+          const committedDirectory = join(this.root, safeProjectId, safeSessionId, operationId)
+          await rename(directory, committedDirectory)
+          return join(committedDirectory, safeFilename)
+        },
+        release
+      }
     } catch (error) {
       release()
       throw error
@@ -96,11 +112,12 @@ export class SessionCacheOwner {
     const safeProjectId = assertSafeSegment(projectId, 'Project id')
     const safeSessionId = assertSafeSegment(sessionId, 'Session id')
     const safeOperationId = assertSafeSegment(operationId, 'operation id')
-    if (!(await this.assertSafePath(safeProjectId, safeSessionId, safeOperationId))) return
-    await rm(join(this.root, safeProjectId, safeSessionId, safeOperationId), {
-      recursive: true,
-      force: true
-    })
+    if (!(await this.assertSafePath(safeProjectId, safeSessionId))) return
+    for (const candidate of [`${PARTIAL_OPERATION_PREFIX}${safeOperationId}`, safeOperationId]) {
+      const directory = join(this.root, safeProjectId, safeSessionId, candidate)
+      if (!(await assertSafeExistingDirectory(directory, 'operation'))) continue
+      await rm(directory, { recursive: true, force: true })
+    }
   }
 
   async removeSession(projectId: string, sessionId: string): Promise<void> {
@@ -159,6 +176,8 @@ export class SessionCacheOwner {
         if (!sessionEntry.isDirectory() || !isSafeSegment(sessionEntry.name)) continue
         if (!activeSessions.has(sessionEntry.name)) {
           await this.removeSession(projectEntry.name, sessionEntry.name)
+        } else {
+          await this.removeInterruptedOperations(projectEntry.name, sessionEntry.name)
         }
       }
     }
@@ -169,7 +188,8 @@ export class SessionCacheOwner {
     if (
       this.closedProjects.has(projectId) ||
       this.closedSessions.has(key) ||
-      this.reconcilingProjects.has(projectId)
+      this.reconcilingProjects.has(projectId) ||
+      this.reconcilingSessions.has(key)
     ) {
       throw new Error('Session cache is being deleted and cannot accept new operations.')
     }
@@ -204,6 +224,27 @@ export class SessionCacheOwner {
       recursive: true,
       force: true
     })
+  }
+
+  private async removeInterruptedOperations(projectId: string, sessionId: string): Promise<void> {
+    const key = this.sessionKey(projectId, sessionId)
+    this.reconcilingSessions.add(key)
+    try {
+      if ((this.activeOperations.get(key)?.size ?? 0) > 0) return
+      const sessionDirectory = join(this.root, projectId, sessionId)
+      if (!(await this.assertSafePath(projectId, sessionId))) return
+      const entries = await readdir(sessionDirectory, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.name.startsWith(PARTIAL_OPERATION_PREFIX)) continue
+        if (entry.isSymbolicLink()) {
+          throw new Error('Unsafe Session cache operation directory.')
+        }
+        if (!entry.isDirectory() || !isSafeSegment(entry.name)) continue
+        await rm(join(sessionDirectory, entry.name), { recursive: true, force: true })
+      }
+    } finally {
+      this.reconcilingSessions.delete(key)
+    }
   }
 
   private async assertSafePath(

@@ -567,6 +567,7 @@
     "Command line tool path": "Путь к инструменту командной строки",
     "Command palette": "Панель команд",
     "Commands": "Команды",
+    "Compute cache": "Кэш вычислений",
     "Common causes: an xychart is missing the <kw1>title</kw1> keyword, axis labels are not quoted, or <kw2>y-axis</kw2> or <kw3>bar/line</kw3> data rows are missing.": "Общие причины: в xychart отсутствует ключевое слово <kw1>title</kw1>, метки осей не заключены в кавычки, или отсутствуют строки данных <kw2>y-axis</kw2> или <kw3>bar/line</kw3>.",
     "Community": "Сообщество",
     "Compact": "Компактный",

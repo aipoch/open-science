@@ -46,6 +46,18 @@ const writeSized = async (path: string, bytes: number): Promise<void> => {
 }
 
 describe('computeStorageUsage', () => {
+  it('counts Session cache downloads in the compute category and total', async () => {
+    await writeSized(join(dataRoot, 'compute', 'session-cache', 'result.bin'), 125)
+
+    const usage = await computeStorageUsage(dataRoot)
+
+    expect(usage.categories.find((category) => category.key === 'compute')).toEqual({
+      key: 'compute',
+      bytes: 125
+    })
+    expect(usage.totalBytes).toBe(125)
+  })
+
   it('sums per-category bytes and gives runtime a sorted children breakdown', async () => {
     await writeSized(join(dataRoot, 'artifacts', 'a.bin'), 100)
     await writeSized(join(dataRoot, 'delegation', 'project-1', 'frame.bin'), 75)
@@ -60,6 +72,7 @@ describe('computeStorageUsage', () => {
 
     expect(usage.categories).toEqual([
       { key: 'artifacts', bytes: 100 },
+      { key: 'compute', bytes: 0 },
       { key: 'delegation', bytes: 75 },
       { key: 'uploads', bytes: 50 },
       {
@@ -188,6 +201,7 @@ describe('computeStorageUsage', () => {
 
     expect(usage.categories).toEqual([
       { key: 'artifacts', bytes: 0 },
+      { key: 'compute', bytes: 0 },
       { key: 'delegation', bytes: 0 },
       { key: 'uploads', bytes: 0 },
       { key: 'runtime', bytes: 0, children: [] },
