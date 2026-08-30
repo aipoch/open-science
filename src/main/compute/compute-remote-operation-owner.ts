@@ -537,11 +537,17 @@ export class ComputeRemoteOperationOwner {
       `  echo '? 0'`,
       `fi`
     ].join('\n')
-    const result = await connection.run(command, {
-      timeoutMs: 10_000,
-      loginShell: false,
-      maxOutputBytes: 64
-    })
+    let result
+    try {
+      result = await connection.run(command, {
+        timeoutMs: 10_000,
+        loginShell: false,
+        maxOutputBytes: 64
+      })
+    } catch (error) {
+      if (error instanceof Error && 'remoteFsError' in error) throw error
+      throw remoteConnectionError(error)
+    }
 
     if (result.timedOut || result.exitCode === 255) {
       const fsError = new Error('SSH connection failed during stat') as Error & {

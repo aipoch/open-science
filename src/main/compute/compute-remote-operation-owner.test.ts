@@ -824,6 +824,42 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
     expect(await readdir(tmpDir)).toEqual([])
   })
 
+  it('classifies a rejected post-transfer stat as a connection failure', async () => {
+    const run = vi
+      .fn<SshRunner['run']>()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'f 10',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      .mockRejectedValueOnce(new ComputeConnectionError('authentication_failed'))
+    const runner: SshRunner = { run }
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'downloaded')
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const service = makeOwner(runner, repo, undefined, scpRunner, tmpDir)
+
+    const error = await service
+      .download('ssh:biowulf', '/remote/data.csv', { kind: 'os-downloads' })
+      .catch((cause) => cause)
+
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(error.remoteFsError).toEqual({
+      detail: 'Authentication failed. Verify the username and password.',
+      remoteKind: 'connection',
+      retry_after_user_action: true,
+      authenticationCode: 'authentication_failed'
+    })
+    expect(await readdir(tmpDir)).toEqual([])
+  })
+
   it('renames colliding file with (1) suffix', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
