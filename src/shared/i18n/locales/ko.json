@@ -843,6 +843,8 @@
     "Line {{line}}: use KEY=VALUE.": "{{line}}번 줄: KEY=VALUE 형식을 사용하세요.",
     "Line {{line}}: use Name: Value.": "{{line}}번 줄: Name: Value 형식을 사용하세요.",
     "Line {{line}}: {{name}} is duplicated.": "{{line}}번 줄: {{name}}이(가) 중복되었습니다.",
+    "Show full arguments": "전체 인수 표시",
+    "Hide full arguments": "전체 인수 숨기기",
     "Manage “{{name}}” connection": "‘{{name}}’ 연결 관리",
     "Reauthenticate": "다시 인증",
     "Replace saved variables": "저장된 변수 바꾸기",

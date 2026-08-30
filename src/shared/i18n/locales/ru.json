@@ -856,6 +856,8 @@
     "Line {{line}}: use KEY=VALUE.": "Строка {{line}}: используйте KEY=VALUE.",
     "Line {{line}}: use Name: Value.": "Строка {{line}}: используйте Name: Value.",
     "Line {{line}}: {{name}} is duplicated.": "Строка {{line}}: {{name}} дублируется.",
+    "Show full arguments": "Показать аргументы полностью",
+    "Hide full arguments": "Скрыть аргументы полностью",
     "Manage “{{name}}” connection": "Управление подключением «{{name}}»",
     "Reauthenticate": "Повторно войти",
     "Replace saved variables": "Заменить сохранённые переменные",

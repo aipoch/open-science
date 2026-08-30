@@ -1523,8 +1523,16 @@ export type UpdateCustomServerRequest = {
 export type ConnectorApprovalRequest = {
   id: string
   connector: string // bundled connector id or custom server name
+  // Custom Connector identity/route metadata. Optional for bundled requests and compatibility with
+  // an older main process during development.
+  connectorId?: string
+  connectorName?: string
+  displayName?: string
+  transport?: CustomServerTransport
+  target?: string
   method: string
   argsPreview: string // truncated JSON preview of the call arguments
+  argsJson?: string // complete serialized arguments, expandable in the approval dialog
   // The session that triggered the connector call, so a desktop notification can surface and open
   // that conversation. Absent for call paths that don't carry one.
   sessionId?: string

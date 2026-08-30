@@ -47,14 +47,25 @@ export function ConnectorApprovalDialog({
   const [pendingBroadScope, setPendingBroadScope] = useState<PendingBroadScope>()
   const [responding, setResponding] = useState(false)
   const [responseErrorRequestId, setResponseErrorRequestId] = useState<string>()
+  const [expandedArgsRequestId, setExpandedArgsRequestId] = useState<string>()
 
   if (!request) return null
   const availableScopes = request.availableScopes ?? ['once']
 
   const displayName =
+    request.displayName ??
     connectors.find((c) => c.id === request.connector)?.displayName ??
     customServers.find((s) => s.name === request.connector)?.name ??
     request.connector
+  const transportLabel =
+    request.transport === 'streamable_http'
+      ? t('Streamable HTTP')
+      : request.transport === 'sse'
+        ? t('SSE')
+        : request.transport === 'stdio'
+          ? t('Local command')
+          : undefined
+  const argsExpanded = expandedArgsRequestId === request.id
 
   const submitResponse = (decision: 'once' | 'session' | 'project' | 'global' | 'deny'): void => {
     if (responding) return
@@ -115,6 +126,36 @@ export function ConnectorApprovalDialog({
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Connector')}</span>
                 <span className="min-w-0 truncate font-medium text-foreground">{displayName}</span>
               </div>
+              {request.connectorName ? (
+                <div className="flex gap-2">
+                  <span className="w-24 shrink-0 text-muted-foreground">{t('Connector name')}</span>
+                  <span className="min-w-0 break-all font-mono text-foreground">
+                    {request.connectorName}
+                  </span>
+                </div>
+              ) : null}
+              {request.connectorId ? (
+                <div className="flex gap-2">
+                  <span className="w-24 shrink-0 text-muted-foreground">{t('Connector ID')}</span>
+                  <span className="min-w-0 break-all font-mono text-foreground">
+                    {request.connectorId}
+                  </span>
+                </div>
+              ) : null}
+              {transportLabel ? (
+                <div className="flex gap-2">
+                  <span className="w-24 shrink-0 text-muted-foreground">{t('Transport')}</span>
+                  <span className="min-w-0 text-foreground">{transportLabel}</span>
+                </div>
+              ) : null}
+              {request.target ? (
+                <div className="flex gap-2">
+                  <span className="w-24 shrink-0 text-muted-foreground">{t('Target')}</span>
+                  <span className="min-w-0 break-all font-mono text-foreground">
+                    {request.target}
+                  </span>
+                </div>
+              ) : null}
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Tool')}</span>
                 <span className="min-w-0 truncate font-mono text-foreground">{request.method}</span>
@@ -122,9 +163,20 @@ export function ConnectorApprovalDialog({
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Args')}</span>
                 <span className="min-w-0 break-all font-mono text-muted-foreground">
-                  {request.argsPreview}
+                  {argsExpanded ? request.argsJson : request.argsPreview}
                 </span>
               </div>
+              {request.argsJson && request.argsJson !== request.argsPreview ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto justify-start px-0 py-1 text-xs"
+                  onClick={() => setExpandedArgsRequestId(argsExpanded ? undefined : request.id)}
+                >
+                  {argsExpanded ? t('Hide full arguments') : t('Show full arguments')}
+                </Button>
+              ) : null}
             </div>
             {responseErrorRequestId === request.id ? (
               <div
@@ -182,7 +234,7 @@ export function ConnectorApprovalDialog({
           active && pendingBroadScope && request.id === pendingBroadScope.requestId
             ? {
                 scope: pendingBroadScope.scope,
-                subject: `${displayName} ${request.method}`,
+                subject: `${displayName} (${request.connectorName ?? request.connector}${request.target ? ` · ${request.target}` : ''}) ${request.method}`,
                 codeExecution: false
               }
             : undefined

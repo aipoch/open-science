@@ -824,6 +824,8 @@
     "Line {{line}}: use KEY=VALUE.": "{{line}} 行目: KEY=VALUE 形式を使用してください。",
     "Line {{line}}: use Name: Value.": "{{line}} 行目: Name: Value 形式を使用してください。",
     "Line {{line}}: {{name}} is duplicated.": "{{line}} 行目: {{name}} が重複しています。",
+    "Show full arguments": "引数の全体を表示",
+    "Hide full arguments": "引数の全体を隠す",
     "Manage “{{name}}” connection": "「{{name}}」の接続を管理",
     "Reauthenticate": "再認証",
     "Replace saved variables": "保存済みの変数を置換",

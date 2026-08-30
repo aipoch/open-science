@@ -898,6 +898,8 @@
     "Line {{line}}: use KEY=VALUE.": "第 {{line}} 行：请使用 KEY=VALUE 格式。",
     "Line {{line}}: use Name: Value.": "第 {{line}} 行：请使用 Name: Value 格式。",
     "Line {{line}}: {{name}} is duplicated.": "第 {{line}} 行：{{name}} 重复。",
+    "Show full arguments": "显示完整参数",
+    "Hide full arguments": "隐藏完整参数",
     "Manage “{{name}}” connection": "管理“{{name}}”连接",
     "Reauthenticate": "重新认证",
     "Replace saved variables": "替换已保存的变量",

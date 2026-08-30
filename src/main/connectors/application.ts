@@ -67,14 +67,14 @@ type ConnectorApplication = {
   skillImportApprovals: SkillImportApprovalBroker
 }
 
-const previewArgs = (args: Record<string, unknown>): string => {
+const serializeArgs = (args: Record<string, unknown>): { preview: string; json: string } => {
   let json: string
   try {
     json = JSON.stringify(args)
   } catch {
     json = '{…}'
   }
-  return json.length > 300 ? `${json.slice(0, 300)}…` : json
+  return { preview: json.length > 300 ? `${json.slice(0, 300)}…` : json, json }
 }
 
 const createConnectorApplication = (
@@ -153,17 +153,24 @@ const createConnectorApplication = (
     resolveApiKey: deps.resolveApiKey,
     mcpClientManager,
     permissionGrantRegistry: deps.permissionGrantRegistry,
-    requestApproval: ({ connector, method, args, sessionId, availableScopes }, signal) =>
-      connectorApprovals.request(
+    requestApproval: (
+      { connector, method, args, sessionId, availableScopes, approvalTarget },
+      signal
+    ) => {
+      const serializedArgs = serializeArgs(args)
+      return connectorApprovals.request(
         {
           connector,
+          ...(approvalTarget ?? {}),
           method,
-          argsPreview: previewArgs(args),
+          argsPreview: serializedArgs.preview,
+          argsJson: serializedArgs.json,
           ...(sessionId ? { sessionId } : {}),
           availableScopes
         },
         signal
-      ),
+      )
+    },
     requestCredential: (request, signal) =>
       deps.canRequestCredential()
         ? credentialRequests.request(request, signal)
@@ -193,11 +200,7 @@ export const createConnectorApplicationModule = async (
     new McpClientManager({
       openExternal: deps.openExternal,
       saveOAuthState: (serverId, state, expectedConfigurationFingerprint) =>
-        deps.settings.saveCustomServerOAuthState(
-          serverId,
-          state,
-          expectedConfigurationFingerprint
-        )
+        deps.settings.saveCustomServerOAuthState(serverId, state, expectedConfigurationFingerprint)
     })
 
   try {

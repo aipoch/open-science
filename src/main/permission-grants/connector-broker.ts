@@ -13,9 +13,18 @@ type ConnectorPermissionPrompt = (
     args: Record<string, unknown>
     sessionId?: string
     availableScopes: ConnectorApprovalScope[]
+    approvalTarget?: ConnectorApprovalTarget
   },
   signal?: AbortSignal
 ) => Promise<ApprovalDecision>
+
+type ConnectorApprovalTarget = {
+  connectorId: string
+  connectorName: string
+  displayName: string
+  transport: 'stdio' | 'streamable_http' | 'sse'
+  target: string
+}
 
 type ConnectorPolicyInput = {
   aliases: readonly string[]
@@ -30,6 +39,7 @@ type ConnectorPermissionRequest = {
   connector: string
   method: string
   args: Record<string, unknown>
+  approvalTarget?: ConnectorApprovalTarget
   policy: ConnectorPolicyInput
 }
 
@@ -86,7 +96,8 @@ class ConnectorPermissionBroker {
       method: request.method,
       args: request.args,
       ...(request.context.sessionId ? { sessionId: request.context.sessionId } : {}),
-      availableScopes
+      availableScopes,
+      ...(request.approvalTarget ? { approvalTarget: request.approvalTarget } : {})
     }
     const decision = options.signal
       ? await this.prompt(prompt, options.signal)

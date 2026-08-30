@@ -53,6 +53,7 @@ type ConnectorServiceDeps = {
       // open the right conversation.
       sessionId?: string
       availableScopes: ConnectorApprovalScope[]
+      approvalTarget?: NonNullable<ConnectorPermissionRequest['approvalTarget']>
     },
     signal?: AbortSignal
   ) => Promise<ApprovalDecision>
@@ -770,7 +771,17 @@ export class ConnectorService {
         method,
         args,
         context,
-        connectors
+        connectors,
+        {
+          connectorId: current.id,
+          connectorName: current.name,
+          displayName: current.displayName,
+          transport: current.transport,
+          target:
+            current.transport === 'stdio'
+              ? (current.command ?? '')
+              : new URL(current.url ?? '').origin
+        }
       )
       if (access.bypassMainPolicy) {
         return { custom: current, request, requireApprovalSatisfied }
@@ -846,7 +857,8 @@ export class ConnectorService {
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext,
-    connectors: StoredConnectors | undefined = this.deps.getConnectors()
+    connectors: StoredConnectors | undefined = this.deps.getConnectors(),
+    approvalTarget?: ConnectorPermissionRequest['approvalTarget']
   ): ConnectorPermissionRequest {
     return {
       capability: { kind: 'mcp_tool', key: `mcp:${capabilityServerId}/${method}` },
@@ -854,6 +866,7 @@ export class ConnectorService {
       connector: connectorLabel,
       method,
       args,
+      ...(approvalTarget ? { approvalTarget } : {}),
       policy: {
         aliases: policyIds,
         autoAllowIds: connectors?.autoAllowIds,

@@ -865,6 +865,8 @@
     "Line {{line}}: use KEY=VALUE.": "Línea {{line}}: use KEY=VALUE.",
     "Line {{line}}: use Name: Value.": "Línea {{line}}: use Name: Value.",
     "Line {{line}}: {{name}} is duplicated.": "Línea {{line}}: {{name}} está duplicado.",
+    "Show full arguments": "Mostrar todos los argumentos",
+    "Hide full arguments": "Ocultar todos los argumentos",
     "Manage “{{name}}” connection": "Gestionar la conexión «{{name}}»",
     "Reauthenticate": "Volver a autenticar",
     "Replace saved variables": "Reemplazar variables guardadas",
