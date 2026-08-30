@@ -149,8 +149,12 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
       }
       onDismiss={startup.quitPersistence.dismissNotice}
       onRetry={() => {
-        startup.quitPersistence.dismissNotice()
         sessions.retryWrites()
+        if (startup.quitPersistence.notice?.reason === 'conflict') {
+          startup.quitPersistence.dismissNotice()
+          return
+        }
+        void startup.quitPersistence.retryPersistence().catch(() => undefined)
       }}
     />
   ) : null

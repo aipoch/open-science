@@ -25,6 +25,7 @@ type QuitPersistenceFlushDeps = {
 type QuitPersistenceFlushProjection = Readonly<{
   notice: SessionPersistenceFlushAbortedEvent | undefined
   dismissNotice: () => void
+  retryPersistence: () => Promise<void>
 }>
 
 export const completeQuitPersistenceFlush = async (
@@ -50,6 +51,12 @@ export const completeQuitPersistenceFlush = async (
 export const useQuitPersistenceFlush = (): QuitPersistenceFlushProjection => {
   const [notice, setNotice] = useState<SessionPersistenceFlushAbortedEvent>()
   const dismissNotice = useCallback(() => setNotice(undefined), [])
+  const retryPersistence = useCallback(async (): Promise<void> => {
+    await drainWorkspaceRuntimeEventsForPersistence()
+    await flushSessionPersistence()
+    await flushPreviewPersistence()
+    setNotice(undefined)
+  }, [])
 
   useEffect(() => {
     const onFlushAborted = window.api.sessions?.onFlushAborted
@@ -83,7 +90,7 @@ export const useQuitPersistenceFlush = (): QuitPersistenceFlushProjection => {
     }
   }, [])
 
-  return { notice, dismissNotice }
+  return { notice, dismissNotice, retryPersistence }
 }
 
 export type { QuitPersistenceFlushProjection }

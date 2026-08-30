@@ -3,12 +3,17 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { flushPreviewPersistence, flushSessionPersistence, resumeAutoReviewsAfterQuitAbort } =
-  vi.hoisted(() => ({
-    flushPreviewPersistence: vi.fn(async () => undefined),
-    flushSessionPersistence: vi.fn(async () => undefined),
-    resumeAutoReviewsAfterQuitAbort: vi.fn()
-  }))
+const {
+  drainWorkspaceRuntimeEventsForPersistence,
+  flushPreviewPersistence,
+  flushSessionPersistence,
+  resumeAutoReviewsAfterQuitAbort
+} = vi.hoisted(() => ({
+  drainWorkspaceRuntimeEventsForPersistence: vi.fn(async () => undefined),
+  flushPreviewPersistence: vi.fn(async () => undefined),
+  flushSessionPersistence: vi.fn(async () => undefined),
+  resumeAutoReviewsAfterQuitAbort: vi.fn()
+}))
 
 vi.mock('../lib/preview-persistence/preview-persistence', () => ({
   flushPreviewPersistence
@@ -19,7 +24,7 @@ vi.mock('../lib/acp/workspace-events', () => ({
   suppressAutoReviewsForQuit: vi.fn()
 }))
 vi.mock('../lib/acp/useWorkspaceAgentRuntime', () => ({
-  drainWorkspaceRuntimeEventsForPersistence: vi.fn(async () => undefined)
+  drainWorkspaceRuntimeEventsForPersistence
 }))
 vi.mock('../lib/session-persistence/session-persistence', () => ({
   flushSessionPersistence
@@ -29,6 +34,7 @@ import { completeQuitPersistenceFlush, useQuitPersistenceFlush } from './useQuit
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  drainWorkspaceRuntimeEventsForPersistence.mockClear()
   flushPreviewPersistence.mockClear()
   flushSessionPersistence.mockClear()
   resumeAutoReviewsAfterQuitAbort.mockClear()
@@ -82,6 +88,54 @@ describe('completeQuitPersistenceFlush', () => {
 
     expect(resumeAutoReviewsAfterQuitAbort).toHaveBeenCalledOnce()
     expect(result.current.notice).toBeUndefined()
+  })
+
+  it('retries every renderer persistence phase after a failed quit flush', async () => {
+    let notifyAborted: (event: { reason: 'renderer-failed' }) => void = () => undefined
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          onFlushAborted: (listener: typeof notifyAborted) => {
+            notifyAborted = listener
+            return vi.fn()
+          },
+          onFlushRequest: () => vi.fn(),
+          sendFlushResponse: vi.fn()
+        }
+      }
+    })
+
+    const { result } = renderHook(() => useQuitPersistenceFlush())
+    act(() => notifyAborted({ reason: 'renderer-failed' }))
+    await act(() => result.current.retryPersistence())
+
+    expect(drainWorkspaceRuntimeEventsForPersistence).toHaveBeenCalledOnce()
+    expect(flushSessionPersistence).toHaveBeenCalledOnce()
+    expect(flushPreviewPersistence).toHaveBeenCalledOnce()
+    expect(result.current.notice).toBeUndefined()
+  })
+
+  it('keeps the failed quit notice when a complete persistence retry still fails', async () => {
+    let notifyAborted: (event: { reason: 'renderer-failed' }) => void = () => undefined
+    flushPreviewPersistence.mockRejectedValueOnce(new Error('preview write failed'))
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          onFlushAborted: (listener: typeof notifyAborted) => {
+            notifyAborted = listener
+            return vi.fn()
+          },
+          onFlushRequest: () => vi.fn(),
+          sendFlushResponse: vi.fn()
+        }
+      }
+    })
+
+    const { result } = renderHook(() => useQuitPersistenceFlush())
+    act(() => notifyAborted({ reason: 'renderer-failed' }))
+    await expect(result.current.retryPersistence()).rejects.toThrow('preview write failed')
+
+    expect(result.current.notice).toEqual({ reason: 'renderer-failed' })
   })
 
   it('flushes Preview persistence before acknowledging quit', async () => {
