@@ -604,6 +604,14 @@ const reconcileWorkingFileEvidence = async (
   location: WorkingFileEvidenceLocation,
   runs: readonly Pick<NotebookRunRecord, 'runId' | 'fileEvidence'>[]
 ): Promise<{ removedStagingEntries: number; removedRunEntries: number }> => {
+  const projectScope = projectEvidenceScope(
+    location.storageRoot,
+    location.root,
+    location.storageKeyPrefix
+  )
+  if (projectScope) {
+    await ensureWorkingFileEvidenceProject(location.storageRoot, projectScope.projectId)
+  }
   const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
   const retained = runs.flatMap((run) => {
     const evidence = run.fileEvidence
@@ -1106,6 +1114,13 @@ const beginEvidenceCapture = async (
       throw new Error('File-evidence initial capture returned an invalid result.')
     }
     return capture
+  } catch (error) {
+    await (dependencies.runEvidenceWorker ?? runEvidenceWorker)(capture.evidenceRoot.path, {
+      operation: 'cleanup',
+      expectedRootIdentity: capture.evidenceRoot.identity,
+      receiptName: capture.receiptName
+    }).catch(() => undefined)
+    throw error
   } finally {
     reservedDiskBytes -= reservedBytes
   }

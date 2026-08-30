@@ -14,6 +14,7 @@ const {
   readdirSync,
   readSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
   statfsSync,
@@ -215,6 +216,42 @@ const removeOwnedDirectory = (name, expectedIdentity) => {
     throw new Error(`File-evidence owned directory identity changed: ${name}`)
   }
   rmSync(name, { recursive: true, force: true })
+  return true
+}
+const removeProjectTombstone = (name, ownershipToken, expectedRootIdentity) => {
+  const expectedIdentity = entryIdentity(name)
+  if (!expectedIdentity) return false
+  const rootPath = process.cwd()
+  const markerName = ownershipFile(ownershipToken)
+  process.chdir(name)
+  try {
+    if (!sameIdentity(identity(statSync('.')), expectedIdentity)) {
+      throw new Error('Notebook file-evidence Project tombstone changed before deletion.')
+    }
+    let entries = readdirSync('.')
+    if (entries.includes(markerName)) {
+      verifyProjectMarker('.', ownershipToken)
+      for (const entry of entries) {
+        if (entry !== markerName) rmSync(entry, { recursive: true, force: true })
+      }
+      syncDirectory()
+      verifyProjectMarker('.', ownershipToken)
+      rmSync(markerName)
+      syncDirectory()
+      entries = readdirSync('.')
+    }
+    if (entries.length !== 0) {
+      throw new Error('Notebook file-evidence Project tombstone lost its ownership marker.')
+    }
+  } finally {
+    process.chdir(rootPath)
+  }
+  assertBoundRoot(expectedRootIdentity)
+  const actualIdentity = entryIdentity(name)
+  if (!actualIdentity || !sameIdentity(actualIdentity, expectedIdentity)) {
+    throw new Error('Notebook file-evidence Project tombstone changed during deletion.')
+  }
+  rmdirSync(name)
   return true
 }
 const projectOwnershipShape = (value, projectName) => {
@@ -1007,11 +1044,14 @@ const deleteProject = (request) => {
     throw new Error('Notebook file-evidence Project path is unsafe during deletion.')
   }
   const tombstonePresent = entryExists(receipt.tombstoneName)
-  const tombstoneIdentity = entryIdentity(receipt.tombstoneName)
-  if (tombstonePresent && !tombstoneIdentity) {
+  if (tombstonePresent && !entryIdentity(receipt.tombstoneName)) {
     throw new Error('Notebook file-evidence Project deletion tombstone is unsafe.')
   }
-  const removed = removeOwnedDirectory(receipt.tombstoneName, tombstoneIdentity)
+  const removed = removeProjectTombstone(
+    receipt.tombstoneName,
+    receipt.ownershipToken,
+    request.expectedRootIdentity
+  )
   syncDirectory()
   rmSync(receiptName, { force: true })
   syncDirectory()

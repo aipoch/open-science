@@ -430,6 +430,31 @@ describe('working-file evidence', () => {
     await first.finish()
   })
 
+  it('immediately cleans an initial-capture receipt and staging directory after failure', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    await writeFile(join(dataRoot, 'baseline.csv'), 'frozen baseline')
+    const worker: typeof runEvidenceWorker = async (evidenceRoot, request, signal) => {
+      const result = await runEvidenceWorker(evidenceRoot, request, signal)
+      if (request.operation === 'begin') throw new Error('simulated failure after capture')
+      return result
+    }
+
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'initial-cleanup' },
+      { watchDirectory: watcherUnavailable, runEvidenceWorker: worker }
+    )
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+    await expect(readdir(join(storageRoot as string, 'file-evidence'))).resolves.toEqual([])
+    await expect(readdir(join(storageRoot as string, 'file-evidence-blobs'))).resolves.toHaveLength(
+      1
+    )
+  })
+
   it('persists Python/R multi-file scientific outputs without changing member generations', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const observation = await startWorkingFileObservation(
@@ -1137,6 +1162,33 @@ describe('working-file evidence', () => {
     await expect(readdir(join(projectRoot, 'blobs'))).resolves.toHaveLength(1)
   })
 
+  it('claims the Project before session evidence reconciliation creates its root', async () => {
+    await createRoots()
+    const evidenceRoot = join(
+      storageRoot as string,
+      'notebook-file-evidence',
+      'project-reconcile',
+      'session-1'
+    )
+
+    await reconcileWorkingFileEvidence(
+      {
+        storageRoot: storageRoot as string,
+        root: evidenceRoot,
+        storageKeyPrefix: 'notebook-file-evidence/project-reconcile/session-1'
+      },
+      []
+    )
+
+    const projectRoot = join(storageRoot as string, 'notebook-file-evidence', 'project-reconcile')
+    expect(await readdir(join(storageRoot as string, 'notebook-file-evidence'))).toContain(
+      '.project-ownership-project-reconcile.json'
+    )
+    expect((await readdir(projectRoot)).some((name) => name.startsWith('.ownership-'))).toBe(true)
+    await deleteWorkingFileEvidenceProject(storageRoot as string, 'project-reconcile')
+    await expect(readdir(projectRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('deletes only the requested Project private evidence root', async () => {
     await createRoots()
     const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
@@ -1186,7 +1238,7 @@ describe('working-file evidence', () => {
     await expect(readdir(evidenceRoot)).resolves.toEqual([])
   })
 
-  it('retries a partially removed Project tombstone without requiring its deleted marker', async () => {
+  it('retries a partially removed Project tombstone while preserving its marker until last', async () => {
     await createRoots()
     const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
     await mkdir(evidenceRoot)
@@ -1213,11 +1265,83 @@ describe('working-file evidence', () => {
         tombstoneName
       })}\n`
     )
-    await unlink(join(evidenceRoot, tombstoneName, `.ownership-${receipt.ownershipToken}`))
-
     await deleteWorkingFileEvidenceProject(storageRoot as string, 'project-partial-delete')
 
     await expect(readdir(evidenceRoot)).resolves.toEqual([])
+  })
+
+  it('finishes deleting an empty Project tombstone after its marker was removed', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'ensure-project',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      projectName: 'project-empty-delete-gap'
+    })
+    const receiptPath = join(evidenceRoot, '.project-ownership-project-empty-delete-gap.json')
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8')) as {
+      ownershipToken: string
+    }
+    const tombstoneName = `deleting-${receipt.ownershipToken}`
+    await rename(join(evidenceRoot, 'project-empty-delete-gap'), join(evidenceRoot, tombstoneName))
+    await writeFile(
+      receiptPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        phase: 'deleting',
+        projectName: 'project-empty-delete-gap',
+        ownershipToken: receipt.ownershipToken,
+        tombstoneName
+      })}\n`
+    )
+    await unlink(join(evidenceRoot, tombstoneName, `.ownership-${receipt.ownershipToken}`))
+
+    await deleteWorkingFileEvidenceProject(storageRoot as string, 'project-empty-delete-gap')
+
+    await expect(readdir(evidenceRoot)).resolves.toEqual([])
+  })
+
+  it('preserves a non-empty unowned directory recreated at a deletion tombstone name', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'ensure-project',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      projectName: 'project-replaced-tombstone'
+    })
+    const receiptPath = join(evidenceRoot, '.project-ownership-project-replaced-tombstone.json')
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8')) as {
+      ownershipToken: string
+    }
+    const tombstoneName = `deleting-${receipt.ownershipToken}`
+    await rename(
+      join(evidenceRoot, 'project-replaced-tombstone'),
+      join(evidenceRoot, tombstoneName)
+    )
+    await writeFile(
+      receiptPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        phase: 'deleting',
+        projectName: 'project-replaced-tombstone',
+        ownershipToken: receipt.ownershipToken,
+        tombstoneName
+      })}\n`
+    )
+    await rm(join(evidenceRoot, tombstoneName), { recursive: true })
+    await mkdir(join(evidenceRoot, tombstoneName))
+    await writeFile(join(evidenceRoot, tombstoneName, 'keep.txt'), 'unowned')
+
+    await expect(
+      deleteWorkingFileEvidenceProject(storageRoot as string, 'project-replaced-tombstone')
+    ).rejects.toThrow(/lost its ownership marker/)
+    await expect(readFile(join(evidenceRoot, tombstoneName, 'keep.txt'), 'utf8')).resolves.toBe(
+      'unowned'
+    )
   })
 
   it('preserves an unowned Project directory during deletion', async () => {
