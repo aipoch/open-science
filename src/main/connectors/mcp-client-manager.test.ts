@@ -707,6 +707,36 @@ describe('buildTransport', () => {
     expect(serialized).not.toContain('omega-private-material')
   })
 
+  it('bounds stderr redaction work for configured secrets sharing a long prefix', () => {
+    const sharedPrefix = 'a'.repeat(4_096)
+    const env = Object.fromEntries(
+      Array.from({ length: 64 }, (_, index) => [
+        `SECRET_${index}`,
+        `${sharedPrefix}${index.toString().padStart(2, '0')}`
+      ])
+    )
+    const transport = buildTransport({
+      id: 'srv-stdio-prefix-stress',
+      name: 'stdio-prefix-stress',
+      transport: 'stdio',
+      command: 'npx',
+      env
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    const startedAt = performance.now()
+    stderr?.write(`${sharedPrefix.repeat(4)}\n`)
+    const elapsedMs = performance.now() - startedAt
+
+    expect(elapsedMs).toBeLessThan(500)
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain(sharedPrefix)
+    expect(stderrWarn.mock.calls).toContainEqual([
+      'custom MCP server stderr redaction budget exceeded',
+      expect.objectContaining({ serverId: 'srv-stdio-prefix-stress' })
+    ])
+  })
+
   it('keeps an explicitly configured stdio PATH ahead of the augmented directories', () => {
     const customPath = '/custom/bin'
     const pathDirs = stdioTransportEnvironment({ PATH: customPath }).PATH?.split(delimiter) ?? []

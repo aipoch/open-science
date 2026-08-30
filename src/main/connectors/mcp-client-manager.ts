@@ -18,6 +18,7 @@ import { createLogger } from '../logger'
 const log = createLogger('connectors:mcp-client')
 const STDERR_LINE_LIMIT = 4 * 1024
 const STDERR_TOTAL_LIMIT = 64 * 1024
+const STDERR_REDACTION_COMPARISON_LIMIT = 4 * 1024 * 1024
 const STDERR_TRUNCATION_MARKER = '…[truncated]'
 
 // Config for a user-added custom MCP server. OAuth state is a transient main-process projection;
@@ -145,6 +146,8 @@ const captureStdioStderr = (
   let linePending = ''
   let receivedBytes = 0
   let totalTruncationLogged = false
+  let redactionComparisonsRemaining = STDERR_REDACTION_COMPARISON_LIMIT
+  let redactionBudgetExceeded = false
 
   const writeLine = (rawLine: string): void => {
     const redacted = redactSensitiveText(rawLine.replace(/\r$/u, ''))
@@ -178,10 +181,32 @@ const captureStdioStderr = (
         continue
       }
       const remaining = redactionPending.slice(cursor)
-      const complete = candidates.find((value) => remaining.startsWith(value))
-      const mayCompleteLongerValue = candidates.some(
-        (value) => value.length > remaining.length && value.startsWith(remaining)
-      )
+      let complete: string | undefined
+      let mayCompleteLongerValue = false
+      for (const value of candidates) {
+        const comparedCharacters = Math.min(value.length, remaining.length)
+        if (comparedCharacters > redactionComparisonsRemaining) {
+          if (ready) appendRedactedText(ready)
+          appendRedactedText('[REDACTED]')
+          redactionPending = ''
+          heldKnownValuePrefixLength = 0
+          redactionBudgetExceeded = true
+          log.warn('custom MCP server stderr redaction budget exceeded', {
+            serverId: config.id,
+            limitCharacters: STDERR_REDACTION_COMPARISON_LIMIT
+          })
+          return
+        }
+        redactionComparisonsRemaining -= comparedCharacters
+        if (value.length > remaining.length) {
+          if (value.startsWith(remaining)) mayCompleteLongerValue = true
+          continue
+        }
+        if (remaining.startsWith(value)) {
+          complete = value
+          break
+        }
+      }
       if (mayCompleteLongerValue) {
         ready += redactionPending.slice(emittedStart, cursor)
         redactionPending = remaining
@@ -227,6 +252,7 @@ const captureStdioStderr = (
 
   readable.setEncoding?.('utf8')
   readable.on('data', (chunk: string | Buffer) => {
+    if (redactionBudgetExceeded) return
     if (receivedBytes >= STDERR_TOTAL_LIMIT) {
       if (!totalTruncationLogged) {
         totalTruncationLogged = true
