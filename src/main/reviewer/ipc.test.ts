@@ -588,6 +588,41 @@ describe('reviewer IPC handlers', () => {
     expect(runReview).toHaveBeenCalledTimes(1)
   })
 
+  it('publishes the running and completed lifecycle for a manual re-review', async () => {
+    const runningReview = {
+      id: 'manual-review',
+      turnMessageId: 'message-1',
+      lifecycle: 'running'
+    }
+    const completedReview = {
+      ...runningReview,
+      lifecycle: 'complete',
+      outcome: 'pass'
+    }
+    runReview.mockImplementationOnce(
+      (opts?: { onStarted?: () => void; onReviewUpdate?: (review: unknown) => void }) => {
+        opts?.onStarted?.()
+        opts?.onReviewUpdate?.(runningReview)
+        opts?.onReviewUpdate?.(completedReview)
+        return Promise.resolve(completedReview)
+      }
+    )
+    getReviewsForSession.mockResolvedValue([{ turnMessageId: 'message-1' }])
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    const result = await runHandler?.({}, { ...createRequest(), origin: 'manual' })
+
+    expect(result).toEqual({ started: true })
+    expect(getReviewsForSession).not.toHaveBeenCalled()
+    expect(broadcastToRenderers.mock.calls).toEqual(
+      expect.arrayContaining([
+        [REVIEWER_IPC.UPDATED, { review: runningReview }],
+        [REVIEWER_IPC.UPDATED, { review: completedReview }]
+      ])
+    )
+  })
+
   describe('reviewer:get-for-session handler', () => {
     it('loads persisted reviews and runs them through the stale-review detector', async () => {
       const reviews = [

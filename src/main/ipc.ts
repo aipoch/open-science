@@ -144,6 +144,8 @@ import {
 import { registerOfficePreviewIpcHandlers } from './office-preview/office-preview-ipc'
 import {
   createOfficePreviewRuntimeUrl,
+  createReviewerPagedPreviewRuntimeUrl,
+  OFFICE_PREVIEW_RUNTIME_ORIGIN,
   registerOfficePreviewRuntimeProtocol
 } from './office-preview/office-preview-runtime-protocol'
 import { OfficePreviewSupervisor } from './office-preview/office-preview-supervisor'
@@ -184,6 +186,8 @@ import {
 } from './reviewer/ipc'
 import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
 import { ReviewerProjectRuntimeOwner } from './reviewer/project-runtime-owner'
+import { createReviewerPagedContentResolver } from './reviewer/paged-preview-resolver'
+import { renderPdfPagePreviews } from './uploads/attachment-media'
 import {
   canReconcileSessionAbsences,
   createDefaultReviewRepository,
@@ -3482,6 +3486,59 @@ const createApplicationModules = async (
       archiveCoordinator.withProjectAvailable(projectId, operation),
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
+    pagedContentResolver: createReviewerPagedContentResolver({
+      createWindow: () => {
+        const previewWindow = new BrowserWindow({
+          show: false,
+          width: 1_024,
+          height: 1_280,
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            backgroundThrottling: false,
+            partition: 'reviewer-paged-preview'
+          }
+        })
+        previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+        previewWindow.webContents.on('will-navigate', (event, url) => {
+          const target = new URL(url)
+          const runtime = new URL(OFFICE_PREVIEW_RUNTIME_ORIGIN)
+          if (target.protocol !== runtime.protocol || target.hostname !== runtime.hostname) {
+            event.preventDefault()
+          }
+        })
+        previewWindow.webContents.session.setPermissionRequestHandler(
+          (_contents, _permission, callback) => callback(false)
+        )
+        return previewWindow
+      },
+      createSessionId: randomUUID,
+      createRuntimeUrl: createReviewerPagedPreviewRuntimeUrl,
+      acquireResource: (
+        ownerId,
+        resolvedPath,
+        filename,
+        verifiedObservation,
+        verifiedChecksum,
+        maxBytes
+      ) =>
+        previewResources.acquireResolvedFile(
+          ownerId,
+          {
+            path: resolvedPath,
+            mimeType: filename.endsWith('.docx')
+              ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              : 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            verifiedObservation,
+            verifiedChecksum
+          },
+          maxBytes
+        ),
+      releaseResource: (ownerId, resourceId) => previewResources.release(ownerId, { resourceId }),
+      renderPdfPages: renderPdfPagePreviews,
+      getProcessMemoryUsageBytes: createOfficePreviewProcessMemoryReader(app)
+    }),
     resolveSessionAgentTarget,
     saveSessionAgentConfiguration: (
       session: PersistedChatSession,

@@ -56,6 +56,7 @@ import { LOCAL_RESOURCE_BUDGETS, type LocalResourceBudgetOverrides } from '../re
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { bindArtifactReconstructionEvidence } from './provenance-reconstruction-evidence'
+import { ReviewerTurnFileEvidenceReader } from './reviewer-turn-file-evidence-reader'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -129,8 +130,10 @@ class ArtifactProvenanceRepository {
   private readonly dependencyReader: ArtifactProvenanceDependencyReader
   private readonly finalizationRecovery: ArtifactProvenanceFinalizationRecovery
   private readonly messageFinalizer: ArtifactProvenanceMessageFinalizer
+  private readonly notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
   private readonly producerCapture: ArtifactProvenanceProducerCapture
   private readonly readModel: ArtifactProvenanceReadModel
+  private readonly reviewerTurnFileEvidenceReader: ReviewerTurnFileEvidenceReader
   private readonly stagingRecovery: ArtifactProvenanceStagingRecovery
   private readonly unindexedRecovery: ArtifactProvenanceUnindexedRecovery
   private readonly versionWriter: ArtifactProvenanceVersionWriter
@@ -139,7 +142,7 @@ class ArtifactProvenanceRepository {
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
     this.compatibilityRepository =
       options.compatibilityRepository ?? new ArtifactRepository(options.storageRoot)
-    const notebookRepository =
+    this.notebookRepository =
       options.notebookRepository ?? new NotebookRunRepository(options.storageRoot)
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
@@ -158,6 +161,11 @@ class ArtifactProvenanceRepository {
         getClient: options.getClient
       })
     this.dependencyReader = new ArtifactProvenanceDependencyReader(options.getClient)
+    this.reviewerTurnFileEvidenceReader = new ReviewerTurnFileEvidenceReader({
+      storageRoot: options.storageRoot,
+      getClient: options.getClient,
+      notebookRepository: this.notebookRepository
+    })
     this.readModel = new ArtifactProvenanceReadModel({
       storageRoot: options.storageRoot,
       getClient: options.getClient,
@@ -180,7 +188,7 @@ class ArtifactProvenanceRepository {
     )
     this.producerCapture = new ArtifactProvenanceProducerCapture({
       inputAuthority,
-      notebookRepository,
+      notebookRepository: this.notebookRepository,
       storageRoot: options.storageRoot,
       createId: this.createId
     })
@@ -496,6 +504,36 @@ class ArtifactProvenanceRepository {
     return this.readModel.getVersionProvenance(request, sections)
   }
 
+  // Reviewer lookup starts from the immutable Version id held by TurnScope. Resolve its owning
+  // lineage/session inside the provenance authority so neither the model nor Session prose can
+  // supply or widen those locators.
+  async getReviewerVersionTrace(request: {
+    projectId: string
+    versionId: string
+  }): Promise<ArtifactVersionProvenance> {
+    const projectId = assertSafeSegment(request.projectId, 'project id')
+    const versionId = assertSafeSegment(request.versionId, 'artifact version id')
+    const client = await this.options.getClient()
+    const version = await client.artifactVersion.findFirst({
+      where: {
+        id: versionId,
+        state: { in: ['pending', 'finalized'] },
+        artifact: { is: { projectId } }
+      },
+      select: { artifactId: true, artifact: { select: { sessionId: true } } }
+    })
+    if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
+    return this.readModel.getVersionProvenance(
+      {
+        projectId,
+        appSessionId: version.artifact.sessionId,
+        artifactId: version.artifactId,
+        versionId
+      },
+      { execution: true, messages: false, review: false }
+    )
+  }
+
   // Resolves the stable Version ids embedded in copied historical messages. This intentionally
   // returns only relocatable metadata: preview/open paths remain main-process capabilities.
   async resolveVersionDescriptors(
@@ -550,6 +588,21 @@ class ArtifactProvenanceRepository {
     request: GetArtifactVersionProvenanceRequest
   ): Promise<ArtifactVersionProvenance> {
     return this.readModel.getVersionCore(request)
+  }
+
+  async resolveReviewerTurnFileEvidence(request: {
+    projectId: string
+    sessionId: string
+    artifactVersionIds: readonly string[]
+    messageIds: readonly string[]
+  }): ReturnType<ReviewerTurnFileEvidenceReader['resolve']> {
+    const projectId = assertSafeSegment(request.projectId, 'project id')
+    const sessionId = assertSafeSegment(request.sessionId, 'session id')
+    return this.reviewerTurnFileEvidenceReader.resolve({
+      ...request,
+      projectId,
+      sessionId
+    })
   }
 
   async readDependencyRelations(request: {
@@ -640,6 +693,25 @@ class ArtifactProvenanceRepository {
       },
       include: { artifact: true }
     })
+    if (!version && !artifactId) {
+      const uploadVersion = await client.uploadVersion.findFirst({
+        where: {
+          id: versionId,
+          state: 'ready',
+          uploadFile: {
+            is: { projectId, ...(appSessionId ? { sessionId: appSessionId } : {}) }
+          }
+        }
+      })
+      if (uploadVersion) {
+        return {
+          path: resolveStorageKey(this.options.storageRoot, uploadVersion.contentStorageKey),
+          filename: uploadVersion.filename,
+          contentType: uploadVersion.contentType ?? undefined,
+          checksum: uploadVersion.checksum
+        }
+      }
+    }
     if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
 
     return {

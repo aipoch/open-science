@@ -12,11 +12,12 @@ import {
 } from '../../shared/conversation-graph'
 import type { ReviewerAcpRuntime } from './acp-runtime'
 import { ReviewerCorrectionOwner } from './correction'
-import type { ArtifactVersionContentResolver } from './host-sdk'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
+import type { ArtifactVersionEvidenceResolvers } from './host-sdk'
 import { runReviewAssessment } from './review-assessment-owner'
 import type { ReviewRepository } from './repository'
 import { toErrorMessage } from '../error-message'
+import type { ReviewerFileEvidenceResolver } from './turn-evidence'
 
 const log = createLogger('reviewer:orchestrator')
 
@@ -50,7 +51,8 @@ type ReviewerFixLoopOptions = {
   // Runtime pinned for every scoped Reviewer re-assessment in this chain.
   reviewerAcpRuntime?: ReviewerAcpRuntime
   artifactStorageRoot: string
-  artifactVersionContentResolver?: ArtifactVersionContentResolver
+  artifactVersionResolvers?: ArtifactVersionEvidenceResolvers
+  reviewerFileEvidenceResolver?: ReviewerFileEvidenceResolver
   reviewerMcpEntryPath?: string
   model: string
   onReviewUpdate?: (review: ReviewWithChecks) => void
@@ -121,7 +123,8 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
     acpRuntime,
     reviewerAcpRuntime = acpRuntime,
     artifactStorageRoot,
-    artifactVersionContentResolver,
+    artifactVersionResolvers,
+    reviewerFileEvidenceResolver,
     reviewerMcpEntryPath,
     model,
     onReviewUpdate,
@@ -318,7 +321,8 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       runSessionMutation,
       acpRuntime: reviewerAcpRuntime,
       artifactStorageRoot,
-      artifactVersionContentResolver,
+      artifactVersionResolvers,
+      reviewerFileEvidenceResolver,
       reviewerMcpEntryPath,
       model,
       onReviewUpdate,

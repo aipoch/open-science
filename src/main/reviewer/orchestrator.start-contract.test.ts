@@ -26,10 +26,19 @@ vi.mock('./host-sdk', () => ({
 }))
 
 vi.mock('./mcp-server', () => ({
+  serializeReviewerEvidenceCoverage: (coverage: unknown) => coverage,
   ReviewerMcpServer: class {
     start = vi.fn().mockResolvedValue(undefined)
     stop = vi.fn().mockResolvedValue(undefined)
     toAcpMcpServerConfig = (): Record<string, never> => ({})
+    get evidenceCoverage(): object {
+      return {
+        turnRead: false,
+        allExecutionLogsRead: false,
+        executionLogActivityIds: [],
+        artifactReads: []
+      }
+    }
   }
 }))
 

@@ -49,9 +49,10 @@ type DriveOptions = {
   maxUpdates: number
   signal?: AbortSignal
   logLimits?: Partial<ReviewerLogLimits>
+  finalLogEntryReserveBytes?: number
 }
 
-type DriveCallbacks = {
+export type ReviewerLogDriveCallbacks = {
   // Called for each update that should be captured into the reviewer log.
   // The caller assembles streaming chunks into whole entries and appends them.
   onUpdate?: (entry: ReviewerLogEntry) => void
@@ -100,9 +101,13 @@ class ReviewerLogBudget {
 
   constructor(
     private readonly maxBytes: number,
-    private readonly onUpdate: (entry: ReviewerLogEntry) => void
+    private readonly onUpdate: (entry: ReviewerLogEntry) => void,
+    finalEntryReserveBytes = 0
   ) {
-    this.contentLimit = Math.max(2, maxBytes - REVIEW_LOG_TRUNCATION_RESERVE_BYTES)
+    this.contentLimit = Math.max(
+      2,
+      maxBytes - Math.max(REVIEW_LOG_TRUNCATION_RESERVE_BYTES, finalEntryReserveBytes)
+    )
   }
 
   emit(entry: ReviewerLogEntry): void {
@@ -118,6 +123,21 @@ class ReviewerLogBudget {
     this.entryBytes.set(entry, bytes)
     this.totalBytes += separatorBytes + bytes
     this.onUpdate(entry)
+  }
+
+  remainingFinalEntryBytes(): number {
+    return Math.max(0, this.maxBytes - this.totalBytes - (this.entries.length > 0 ? 1 : 0))
+  }
+
+  emitFinal(entry: ReviewerLogEntry): boolean {
+    const bytes = serializedEntryBytes(entry)
+    const separatorBytes = this.entries.length > 0 ? 1 : 0
+    if (this.totalBytes + separatorBytes + bytes > this.maxBytes) return false
+    this.entries.push(entry)
+    this.entryBytes.set(entry, bytes)
+    this.totalBytes += separatorBytes + bytes
+    this.onUpdate(entry)
+    return true
   }
 
   reconcileTool(
@@ -179,6 +199,28 @@ class ReviewerLogBudget {
   }
 }
 
+export const appendFinalReviewerLogEntry = (
+  callbacks: ReviewerLogDriveCallbacks,
+  createEntry: (maxEntryBytes: number) => ReviewerLogEntry
+): boolean => {
+  const budget = callbacks.logState?.budget
+  if (!budget) return false
+  return budget.emitFinal(createEntry(budget.remainingFinalEntryBytes()))
+}
+
+export const initializeReviewerLogBudget = (
+  callbacks: ReviewerLogDriveCallbacks,
+  options: { maxLogBytes?: number; finalLogEntryReserveBytes?: number } = {}
+): void => {
+  if (!callbacks.onUpdate || callbacks.logState?.budget) return
+  callbacks.logState ??= {}
+  callbacks.logState.budget = new ReviewerLogBudget(
+    options.maxLogBytes ?? DEFAULT_REVIEWER_LOG_LIMITS.maxLogBytes,
+    callbacks.onUpdate,
+    options.finalLogEntryReserveBytes
+  )
+}
+
 // Extracts a text chunk from an ACP update's content field (may be a { type:'text', text:string } block).
 const extractTextContent = (update: { content?: unknown }): string => {
   const content = update.content
@@ -199,8 +241,13 @@ const MAX_STRUCTURED_OBJECT_ENTRIES = 200
 const MAX_STRUCTURED_DEPTH = 12
 
 const OMITTED_RAW_VALUE = Symbol('omitted-raw-value')
+const REVIEWER_MEDIA_LOG_MARKER = '[omitted: MCP image content]'
 
-type StructuredValueBudget = { remainingBytes: number }
+type StructuredValueBudget = {
+  remainingBytes: number
+  redactMcpImageData?: boolean
+  mediaRead?: boolean
+}
 type SanitizedRawValue = {
   value: unknown | typeof OMITTED_RAW_VALUE
   truncated: boolean
@@ -340,12 +387,14 @@ const sanitizeRawValue = (
       truncated = true
       break
     }
-    const sanitized = sanitizeRawValue(
-      (value as Record<string, unknown>)[key],
-      budget,
-      depth + 1,
-      ancestors
-    )
+    const child =
+      budget.redactMcpImageData &&
+      key === 'data' &&
+      (value as Record<string, unknown>).type === 'image'
+        ? REVIEWER_MEDIA_LOG_MARKER
+        : (value as Record<string, unknown>)[key]
+    if (child === REVIEWER_MEDIA_LOG_MARKER && key === 'data') budget.mediaRead = true
+    const sanitized = sanitizeRawValue(child, budget, depth + 1, ancestors)
     if (sanitized.value === OMITTED_RAW_VALUE) {
       budget.remainingBytes = snapshot
       truncated = true
@@ -372,11 +421,42 @@ const sanitizeRawValue = (
 
 const stringifyRawWithinLimit = (
   value: unknown,
-  maxBytes: number
-): { text: string; truncated: boolean } => {
-  if (typeof value === 'string') return appendWithinUtf8Limit('', value, maxBytes)
-  const sanitized = sanitizeRawValue(value, { remainingBytes: Math.max(0, maxBytes) })
-  if (sanitized.value === OMITTED_RAW_VALUE) return { text: '', truncated: true }
+  maxBytes: number,
+  options: { redactMcpImageData?: boolean } = {}
+): { text: string; truncated: boolean; mediaRead: boolean } => {
+  let candidate = value
+  if (typeof value === 'string') {
+    if (!options.redactMcpImageData) {
+      const bounded = appendWithinUtf8Limit('', value, maxBytes)
+      return { ...bounded, mediaRead: false }
+    }
+    const looksLikeMedia = /"type"\s*:\s*"image"/.test(value) && /"data"\s*:/.test(value)
+    if (!looksLikeMedia) {
+      const bounded = appendWithinUtf8Limit('', value, maxBytes)
+      return { ...bounded, mediaRead: false }
+    }
+    // Avoid parsing an attacker-sized serialized tool result. A known image-shaped payload over the
+    // bounded parse allowance is replaced wholesale, so no base64 prefix can enter the log.
+    if (Buffer.byteLength(value, 'utf8') > maxBytes * 4) {
+      const bounded = appendWithinUtf8Limit('', REVIEWER_MEDIA_LOG_MARKER, maxBytes)
+      return { text: bounded.text, truncated: true, mediaRead: true }
+    }
+    try {
+      candidate = JSON.parse(value) as unknown
+    } catch {
+      const bounded = appendWithinUtf8Limit('', REVIEWER_MEDIA_LOG_MARKER, maxBytes)
+      return { text: bounded.text, truncated: true, mediaRead: true }
+    }
+  }
+  const budget: StructuredValueBudget = {
+    remainingBytes: Math.max(0, maxBytes),
+    redactMcpImageData: options.redactMcpImageData,
+    mediaRead: false
+  }
+  const sanitized = sanitizeRawValue(candidate, budget)
+  if (sanitized.value === OMITTED_RAW_VALUE) {
+    return { text: '', truncated: true, mediaRead: budget.mediaRead === true }
+  }
   let serialized: string
   try {
     serialized = JSON.stringify(sanitized.value) ?? String(sanitized.value)
@@ -385,7 +465,11 @@ const stringifyRawWithinLimit = (
     sanitized.truncated = true
   }
   const bounded = appendWithinUtf8Limit('', serialized, maxBytes)
-  return { text: bounded.text, truncated: sanitized.truncated || bounded.truncated }
+  return {
+    text: bounded.text,
+    truncated: sanitized.truncated || bounded.truncated,
+    mediaRead: budget.mediaRead === true
+  }
 }
 
 const flushThought = (
@@ -443,14 +527,18 @@ const ABORTED = Symbol('reviewer-drive-aborted')
 export const driveReviewerToStop = async (
   session: DrivableSession,
   options: DriveOptions,
-  callbacks?: DriveCallbacks
+  callbacks?: ReviewerLogDriveCallbacks
 ): Promise<string | undefined> => {
   const { timeoutMs, maxUpdates, signal } = options
   const logLimits = { ...DEFAULT_REVIEWER_LOG_LIMITS, ...options.logLimits }
   const { onUpdate, logState, onNotification, onStop } = callbacks ?? {}
   let logBudget = logState?.budget
   if (!logBudget && onUpdate) {
-    logBudget = new ReviewerLogBudget(logLimits.maxLogBytes, onUpdate)
+    logBudget = new ReviewerLogBudget(
+      logLimits.maxLogBytes,
+      onUpdate,
+      options.finalLogEntryReserveBytes
+    )
     if (logState) logState.budget = logBudget
   }
   const emitUpdate = logBudget
@@ -596,8 +684,11 @@ export const driveReviewerToStop = async (
             changedFields.push('rawInput')
           }
           if (u.rawOutput !== undefined) {
-            const rawOutput = stringifyRawWithinLimit(u.rawOutput, logLimits.maxToolOutputBytes)
+            const rawOutput = stringifyRawWithinLimit(u.rawOutput, logLimits.maxToolOutputBytes, {
+              redactMcpImageData: entry.toolName.endsWith('read_artifact')
+            })
             entry.rawOutput = rawOutput.text
+            if (rawOutput.mediaRead) entry.evidenceKind = 'media'
             if (rawOutput.truncated) entry.rawOutputTruncated = true
             else delete entry.rawOutputTruncated
             changedFields.push('rawOutput')

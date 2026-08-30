@@ -6,21 +6,41 @@ import {
   collectReferencedPptxMediaUrls,
   MAX_PPTX_MEDIA_URLS,
   releaseDecodedPptxMedia,
-  renderOfficeFile
+  renderOfficeFile,
+  renderTargetedOfficeFile
 } from './office-renderers'
 
 const mocks = vi.hoisted(() => ({
   renderDocx: vi.fn(),
+  parseDocx: vi.fn(),
+  renderDocxDocument: vi.fn(),
   renderSpreadsheet: vi.fn(),
   constructPptx: vi.fn(),
   openPptx: vi.fn(),
   destroyPptx: vi.fn(),
+  loadPptx: vi.fn(),
+  renderPptxSlide: vi.fn(),
+  parsePptxLazy: vi.fn(),
+  buildPptx: vi.fn(),
   exposePptxMediaCache: true,
   exposePptxMediaResolver: true,
   zipLimits: { maxEntries: 4000 }
 }))
 
-vi.mock('docx-preview', () => ({ renderAsync: mocks.renderDocx }))
+vi.mock('docx-preview', () => ({
+  renderAsync: mocks.renderDocx,
+  parseAsync: mocks.parseDocx,
+  renderDocument: mocks.renderDocxDocument,
+  defaultOptions: {
+    h: (descriptor: string | Node | { tagName: string; className?: string }) => {
+      if (typeof descriptor === 'string') return document.createTextNode(descriptor)
+      if (descriptor instanceof Node) return descriptor
+      const element = document.createElement(descriptor.tagName)
+      if (descriptor.className) element.className = descriptor.className
+      return element
+    }
+  }
+}))
 vi.mock('@file-viewer/renderer-spreadsheet', () => ({
   renderFileViewerSpreadsheet: mocks.renderSpreadsheet
 }))
@@ -33,6 +53,9 @@ vi.mock('@aiden0z/pptx-renderer', () => {
 
     open = mocks.openPptx
     destroy = mocks.destroyPptx
+    load = mocks.loadPptx
+    renderSlide = mocks.renderPptxSlide
+    slideCount = 5
     slideWidth = 960
     slideHeight = 540
     mediaUrlCache = mocks.exposePptxMediaCache ? new Map<string, string>() : undefined
@@ -50,7 +73,12 @@ vi.mock('@aiden0z/pptx-renderer', () => {
     }
   }
 
-  return { PptxViewer: MockPptxViewer, RECOMMENDED_ZIP_LIMITS: mocks.zipLimits }
+  return {
+    PptxViewer: MockPptxViewer,
+    RECOMMENDED_ZIP_LIMITS: mocks.zipLimits,
+    parseZipLazyMedia: mocks.parsePptxLazy,
+    buildPresentation: mocks.buildPptx
+  }
 })
 
 describe('renderOfficeFile', () => {
@@ -89,6 +117,73 @@ describe('renderOfficeFile', () => {
     container.remove()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it('materializes only admitted PPTX slides on demand', async () => {
+    mocks.parsePptxLazy.mockResolvedValue({ slides: new Map() })
+    mocks.buildPptx.mockReturnValue({ slides: Array.from({ length: 5 }, () => ({})) })
+    mocks.renderPptxSlide.mockImplementation(async (index: number) => {
+      const pptxContainer = mocks.constructPptx.mock.calls.at(-1)?.[0] as HTMLElement
+      pptxContainer.replaceChildren()
+      const item = document.createElement('div')
+      item.dataset.slideIndex = String(index)
+      const holder = document.createElement('div')
+      const slide = document.createElement('div')
+      slide.textContent = `slide ${index + 1}`
+      holder.appendChild(slide)
+      item.appendChild(holder)
+      pptxContainer.appendChild(item)
+    })
+
+    const session = await renderTargetedOfficeFile({
+      bytes,
+      extension: 'pptx',
+      container,
+      signal,
+      targetPages: [2, 5]
+    })
+
+    expect(mocks.parsePptxLazy).toHaveBeenCalledWith(expect.any(ArrayBuffer), mocks.zipLimits)
+    expect(mocks.buildPptx).toHaveBeenCalledWith(expect.anything(), { lazySlides: true })
+    expect(mocks.renderPptxSlide).not.toHaveBeenCalled()
+    expect(session.pageCountComplete).toBe(true)
+    expect((await session.preparePage(5)).textContent).toBe('slide 5')
+    expect(mocks.renderPptxSlide).toHaveBeenCalledTimes(1)
+    expect(mocks.renderPptxSlide).toHaveBeenCalledWith(4)
+    expect(container.querySelector('[data-slide-index="0"]')).toBeNull()
+    await expect(session.preparePage(1)).rejects.toThrow(/not admitted/i)
+    session.dispose()
+    expect(mocks.destroyPptx).toHaveBeenCalledOnce()
+  })
+
+  it('stops DOCX layout after the highest target and releases each non-target page', async () => {
+    const materialized: HTMLElement[] = []
+    mocks.parseDocx.mockResolvedValue({ document: 'model' })
+    mocks.renderDocxDocument.mockImplementation(async (_model, options) => {
+      options.h({ tagName: 'style' })
+      for (let pageNumber = 1; pageNumber <= 20; pageNumber += 1) {
+        const page = options.h({ tagName: 'section', className: 'docx' }) as HTMLElement
+        page.append(`page ${pageNumber}`)
+        materialized.push(page)
+      }
+      return []
+    })
+
+    const session = await renderTargetedOfficeFile({
+      bytes,
+      extension: 'docx',
+      container,
+      signal,
+      targetPages: [2, 3]
+    })
+
+    expect(materialized).toHaveLength(3)
+    expect(materialized[0].childNodes).toHaveLength(0)
+    expect(container.querySelectorAll('section.docx')).toHaveLength(2)
+    expect((await session.preparePage(2)).textContent).toBe('page 2')
+    await expect(session.preparePage(1)).rejects.toThrow(/does not contain/i)
+    expect(session.pageCount).toBe(3)
+    expect(session.pageCountComplete).toBe(false)
   })
 
   it('waits for slide unmount before evicting PPTX media Blob URLs', () => {

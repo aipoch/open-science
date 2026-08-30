@@ -593,6 +593,7 @@ it.runIf(runLiveContract)(
 
     const scope = { turnMessageId: 'turn-1', blocks: [], artifactVersionIds: [] }
     const evidence = {
+      fileRole: vi.fn(() => 'work_product' as const),
       readTurn: vi.fn(() => [
         {
           id: 'block-1',
@@ -607,6 +608,7 @@ it.runIf(runLiveContract)(
       queryExecutionLog: vi.fn(() => []),
       readArtifact: vi.fn(async () => ({
         id: 'artifact-1',
+        role: 'work_product' as const,
         kind: 'raw' as const,
         content: 'artifact evidence',
         encoding: 'utf8' as const

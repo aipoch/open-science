@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { Sharp } from 'sharp'
+import { ResourceBudgetExceededError } from '../resource-budget'
 
 import { joinPdfTextItems } from '../../shared/pdf-text'
 
@@ -164,6 +165,18 @@ export const inspectPdfPageCount = async (filePath: string): Promise<number> => 
   } finally {
     await document.destroy()
   }
+}
+
+export type TargetedPdfTextResult = {
+  pages: Array<{ pageNumber: number; text: string }>
+  pageCount: number
+  truncated: boolean
+}
+
+export type TargetedPdfPreviewResult = {
+  pageCount: number
+  media: Array<{ pageNumber: number; data: string; mimeType: 'image/jpeg' }>
+  budgetExhaustedPages: number[]
 }
 
 // Accounts for the bytes that will actually be inserted into JSON rather than the decoded image
@@ -618,7 +631,6 @@ export const extractPdfText = async (
       useSystemFonts: false,
       verbosity: 0
     })
-
     const document = await loadingTask.promise
 
     try {
@@ -636,16 +648,13 @@ export const extractPdfText = async (
         const page = await document.getPage(pageNumber)
         const content = await page.getTextContent()
         page.cleanup()
-
         const pageText = joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {})))
 
-        // Skip empty pages so a scanned/image-only PDF yields no text and hits the caller's fallback.
         if (!pageText) continue
 
         const block = `--- Page ${pageNumber} ---\n${pageText}`
         pageTexts.push(block)
         totalChars += block.length
-
         if (totalChars >= maxChars) {
           truncated = true
           break
@@ -657,10 +666,160 @@ export const extractPdfText = async (
         text = text.slice(0, maxChars)
         truncated = true
       }
-
       return { text: text.trim(), pageCount: document.numPages, truncated }
     } finally {
       await document.destroy()
     }
   })
+}
+
+// Targeted counterpart used by Reviewer content reads. It shares the bounded extraction pool but
+// asks pdfjs only for the requested pages and bounds the extracted text before it enters model context.
+export const extractPdfTextPages = async (
+  filePath: string,
+  requestedPages?: number[],
+  maxChars = MAX_PDF_TEXT_CHARS,
+  signal?: AbortSignal
+): Promise<TargetedPdfTextResult> => {
+  signal?.throwIfAborted()
+  const fileInfo = await stat(filePath)
+  if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
+    throw new Error(
+      `PDF source is ${fileInfo.size} bytes, exceeding the automatic extraction limit.`
+    )
+  }
+  return withPdfTextExtractionSlot(async () => {
+    signal?.throwIfAborted()
+    const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
+    const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
+    const fileData = await readFile(filePath, { signal })
+    const loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(fileData),
+      cMapUrl,
+      cMapPacked: true,
+      standardFontDataUrl,
+      isEvalSupported: false,
+      useSystemFonts: false,
+      verbosity: 0
+    })
+    const document = await loadingTask.promise
+
+    try {
+      const selectedPages =
+        requestedPages ?? Array.from({ length: document.numPages }, (_, index) => index + 1)
+      const pages = [...new Set(selectedPages)]
+      if (
+        pages.some(
+          (pageNumber) =>
+            !Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > document.numPages
+        )
+      ) {
+        throw new Error(`Requested PDF page must be between 1 and ${document.numPages}.`)
+      }
+
+      const pageTexts: TargetedPdfTextResult['pages'] = []
+      let totalChars = 0
+      let truncated = false
+      for (const pageNumber of pages) {
+        signal?.throwIfAborted()
+        const page = await document.getPage(pageNumber)
+        const content = await page.getTextContent()
+        page.cleanup()
+        const pageText = joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {})))
+        const remaining = Math.max(0, maxChars - totalChars)
+        pageTexts.push({ pageNumber, text: pageText.slice(0, remaining) })
+        totalChars += pageText.length
+        if (totalChars >= maxChars) {
+          truncated = true
+          break
+        }
+      }
+      return { pages: pageTexts, pageCount: document.numPages, truncated }
+    } finally {
+      await document.destroy()
+    }
+  })
+}
+
+// Renders only explicitly requested PDF pages. The source and encoded output are both bounded;
+// cancellation tears down PDF.js before another target is decoded.
+export const renderPdfPagePreviews = async (
+  filePath: string,
+  requestedPages: number[],
+  maxBase64Bytes: number,
+  signal?: AbortSignal
+): Promise<TargetedPdfPreviewResult> => {
+  signal?.throwIfAborted()
+  const fileInfo = await stat(filePath)
+  if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
+    throw new ResourceBudgetExceededError(
+      'reviewer-session',
+      fileInfo.size,
+      MAX_AUTO_EXTRACT_PDF_BYTES
+    )
+  }
+  const [{ createCanvas }, pdfjs] = await Promise.all([
+    import('@napi-rs/canvas'),
+    import('pdfjs-dist/legacy/build/pdf.mjs') as Promise<typeof import('pdfjs-dist')>
+  ])
+  signal?.throwIfAborted()
+  const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(await readFile(filePath, { signal })),
+    cMapUrl,
+    cMapPacked: true,
+    standardFontDataUrl,
+    isEvalSupported: false,
+    useSystemFonts: false,
+    verbosity: 0
+  })
+  const abort = (): void => {
+    void loadingTask.destroy()
+  }
+  signal?.addEventListener('abort', abort, { once: true })
+  try {
+    const document = await loadingTask.promise
+    const pages = [...new Set(requestedPages)]
+    if (
+      pages.some(
+        (pageNumber) =>
+          !Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > document.numPages
+      )
+    ) {
+      throw new Error(`Requested PDF page must be between 1 and ${document.numPages}.`)
+    }
+    const media: TargetedPdfPreviewResult['media'] = []
+    const budgetExhaustedPages: number[] = []
+    let returnedBytes = 0
+    for (const pageNumber of pages) {
+      signal?.throwIfAborted()
+      const page = await document.getPage(pageNumber)
+      try {
+        const base = page.getViewport({ scale: 1 })
+        const scale = Math.min(1.5, 1_200 / Math.max(base.width, base.height))
+        const viewport = page.getViewport({ scale })
+        const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+        const context = canvas.getContext('2d')
+        await page.render({
+          canvas: canvas as never,
+          canvasContext: context as never,
+          viewport
+        }).promise
+        signal?.throwIfAborted()
+        const data = (await canvas.encode('jpeg', 75)).toString('base64')
+        if (returnedBytes + data.length > maxBase64Bytes) {
+          budgetExhaustedPages.push(pageNumber)
+          continue
+        }
+        media.push({ pageNumber, data, mimeType: 'image/jpeg' })
+        returnedBytes += data.length
+      } finally {
+        page.cleanup()
+      }
+    }
+    return { pageCount: document.numPages, media, budgetExhaustedPages }
+  } finally {
+    signal?.removeEventListener('abort', abort)
+    await loadingTask.destroy()
+  }
 }

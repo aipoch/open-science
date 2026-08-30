@@ -12,7 +12,8 @@ import { createLogger } from '../logger'
 import type { DelegatedReviewEvidenceScope, ReviewWithChecks } from '../../shared/reviewer'
 import type { ReviewRepository } from './repository'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { ArtifactVersionContentResolver } from './host-sdk'
+import type { ArtifactVersionEvidenceResolvers } from './host-sdk'
+import type { ReviewerFileEvidenceResolver } from './turn-evidence'
 import { buildHistoryPreamble } from '../../shared/history-preamble'
 import { runReviewAssessment } from './review-assessment-owner'
 import { runReviewerFixLoop } from './reviewer-fix-loop-owner'
@@ -72,7 +73,8 @@ export type RunReviewOptions = {
   artifactStorageRoot: string
   // Native Version resolver for current provenance rows. Tests and legacy callers may omit it and
   // retain the old session-path lookup.
-  artifactVersionContentResolver?: ArtifactVersionContentResolver
+  artifactVersionResolvers?: ArtifactVersionEvidenceResolvers
+  reviewerFileEvidenceResolver?: ReviewerFileEvidenceResolver
   // Main-process entry reused by the Windows-only Reviewer stdio proxy.
   reviewerMcpEntryPath?: string
   // The model/provider tag to record on the Review row.
@@ -138,7 +140,8 @@ const runReviewWithSession = async (
     acpRuntime,
     reviewerAcpRuntime = acpRuntime,
     artifactStorageRoot,
-    artifactVersionContentResolver,
+    artifactVersionResolvers,
+    reviewerFileEvidenceResolver,
     reviewerMcpEntryPath,
     model = '',
     onReviewUpdate,
@@ -168,7 +171,8 @@ const runReviewWithSession = async (
     runSessionMutation,
     acpRuntime: reviewerAcpRuntime,
     artifactStorageRoot,
-    artifactVersionContentResolver,
+    artifactVersionResolvers,
+    reviewerFileEvidenceResolver,
     reviewerMcpEntryPath,
     model,
     onReviewUpdate,
@@ -200,7 +204,8 @@ const runReviewWithSession = async (
         acpRuntime,
         reviewerAcpRuntime,
         artifactStorageRoot,
-        artifactVersionContentResolver,
+        artifactVersionResolvers,
+        reviewerFileEvidenceResolver,
         reviewerMcpEntryPath,
         model,
         onReviewUpdate,

@@ -40,7 +40,8 @@ const harness = vi.hoisted(() => ({
     | undefined,
   disposeError: undefined as Error | undefined,
   stopError: undefined as Error | undefined,
-  bridgeScoped: undefined as boolean | undefined
+  bridgeScoped: undefined as boolean | undefined,
+  coverage: undefined as object | undefined
 }))
 const logSpies = vi.hoisted(() => ({
   info: vi.fn(),
@@ -88,6 +89,7 @@ vi.mock('./host-sdk', () => ({
 }))
 
 vi.mock('./mcp-server', () => ({
+  serializeReviewerEvidenceCoverage: (coverage: unknown) => coverage,
   ReviewerMcpServer: class {
     constructor(
       _scope: TurnScope,
@@ -112,6 +114,29 @@ vi.mock('./mcp-server', () => ({
 
     get submissionAttempted(): boolean {
       return harness.submissionAttempted
+    }
+
+    get evidenceCoverage(): object {
+      return (
+        harness.coverage ?? {
+          turnRead: true,
+          allExecutionLogsRead: false,
+          executionLogActivityIds: [],
+          artifactReads: [
+            {
+              versionId: 'source-v1',
+              role: 'source_document',
+              traceRead: false,
+              contentRead: true,
+              mediaRead: false,
+              partial: false,
+              requestedTargets: [{ pages: [4] }],
+              actualTargets: [{ pages: [4] }],
+              limitations: []
+            }
+          ]
+        }
+      )
     }
 
     toAcpMcpServerConfig(): Record<string, never> {
@@ -287,6 +312,7 @@ describe('review assessment owner', () => {
     harness.disposeError = undefined
     harness.stopError = undefined
     harness.bridgeScoped = undefined
+    harness.coverage = undefined
     vi.clearAllMocks()
   })
 
@@ -480,6 +506,16 @@ describe('review assessment owner', () => {
     })
     expect(harness.events).toContain('acp:dispose')
     expect(harness.events).toContain('mcp:stop')
+    const errorPatch = vi
+      .mocked(reviewRepository.updateReview)
+      .mock.calls.map(([, patch]) => patch)
+      .find((patch) => patch.lifecycle === 'error')
+    expect(Buffer.byteLength(JSON.stringify(errorPatch?.reviewerLog), 'utf8')).toBeLessThanOrEqual(
+      1_024 * 1_024
+    )
+    expect(errorPatch?.reviewerLog).toContainEqual(
+      expect.objectContaining({ kind: 'tool', toolName: 'review_coverage' })
+    )
   })
 
   it('records the selected session model instead of the context tokenization model', async () => {
@@ -510,6 +546,36 @@ describe('review assessment owner', () => {
 
   it('shares the reviewer log budget with the protocol recovery turn', async () => {
     harness.submission = undefined
+    harness.coverage = {
+      turnRead: true,
+      allExecutionLogsRead: false,
+      executionLogActivityIds: [],
+      artifactReads: [
+        {
+          versionId: 'source-large',
+          role: 'source_document',
+          traceRead: false,
+          contentRead: true,
+          mediaRead: false,
+          partial: true,
+          requestedTargets: Array.from({ length: 80 }, (_, index) => ({
+            sheet: `Requested-${index}-${'r'.repeat(120)}`,
+            rowStart: index + 1,
+            rowEnd: index + 2
+          })),
+          actualTargets: Array.from({ length: 80 }, (_, index) => ({
+            sheet: `Actual-${index}-${'a'.repeat(120)}`,
+            rowStart: index + 1,
+            rowEnd: index + 1
+          })),
+          limitations: Array.from({ length: 80 }, (_, index) => ({
+            kind: 'truncated',
+            subjectId: `source-${index}`,
+            detail: `distinct-${index}-${'x'.repeat(1_024)}`
+          }))
+        }
+      ]
+    }
     const contentUpdates = (
       prefix: string
     ): Array<{
@@ -552,7 +618,48 @@ describe('review assessment owner', () => {
     expect(Buffer.byteLength(JSON.stringify(persistedLog), 'utf8')).toBeLessThanOrEqual(
       1_024 * 1_024
     )
-    expect(persistedLog.at(-1)).toMatchObject({ reviewLogTruncated: true })
+    expect(Buffer.byteLength(JSON.stringify(persistedLog), 'utf8')).toBeGreaterThan(900_000)
+    expect(persistedLog).toContainEqual(expect.objectContaining({ reviewLogTruncated: true }))
+    const coverage = persistedLog.find(
+      (entry) => entry.kind === 'tool' && entry.toolName === 'review_coverage'
+    )
+    expect(() =>
+      JSON.parse(coverage?.kind === 'tool' ? (coverage.rawOutput ?? '') : '')
+    ).not.toThrow()
+    expect(
+      JSON.parse(coverage?.kind === 'tool' ? (coverage.rawOutput ?? '{}') : '{}')
+    ).toMatchObject({
+      truncation: { kind: 'coverage-truncated' }
+    })
+  })
+
+  it('persists structured Reviewer Coverage in the durable reviewer log', async () => {
+    const reviewRepository = makeRepository()
+
+    await runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      mode: 'initial'
+    })
+
+    const commit = vi.mocked(reviewRepository.commitScopedSubmission).mock.calls[0]?.[0]
+    const coverage = commit?.reviewerLog?.find(
+      (entry) => entry.kind === 'tool' && entry.toolName === 'review_coverage'
+    )
+    expect(coverage).toMatchObject({ kind: 'tool', status: 'ok' })
+    expect(
+      JSON.parse(coverage?.kind === 'tool' ? (coverage.rawOutput ?? '{}') : '{}')
+    ).toMatchObject({
+      artifactReads: [
+        {
+          versionId: 'source-v1',
+          role: 'source_document',
+          contentRead: true,
+          mediaRead: false,
+          requestedTargets: [{ pages: [4] }],
+          actualTargets: [{ pages: [4] }]
+        }
+      ]
+    })
   })
 
   it('does not retry a cancelled reviewer turn', async () => {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, truncate, utimes, writeFile } from 'node:fs/promises'
+import { mkdtemp, rename, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,6 +9,7 @@ import {
   ManagedPreviewResources,
   readExactRange
 } from './managed-preview-resources'
+import type { FileObservation } from './bounded-file-io'
 
 describe('ManagedPreviewResources', () => {
   let temporaryDirectory: string | undefined
@@ -26,6 +27,17 @@ describe('ManagedPreviewResources', () => {
 
     await writeFile(filePath, content)
     return filePath
+  }
+
+  const observe = async (path: string): Promise<FileObservation> => {
+    const value = await stat(path)
+    return {
+      device: value.dev,
+      inode: value.ino,
+      sizeBytes: value.size,
+      modifiedAtMs: value.mtimeMs,
+      changedAtMs: value.ctimeMs
+    }
   }
 
   it('registers the preview scheme for streaming and cross-scheme capability fetches', () => {
@@ -194,6 +206,88 @@ describe('ManagedPreviewResources', () => {
     expect('fileHandle' in protocolResource).toBe(true)
     expect('filePath' in protocolResource).toBe(false)
     if ('fileHandle' in protocolResource) await protocolResource.fileHandle.close()
+  })
+
+  it.each([
+    ['report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['slides.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation']
+  ])('mints a strict capability for trusted resolved Office path %s', async (name, mimeType) => {
+    const filePath = await createFile(Buffer.from('native-office'), name)
+    const resolvePath = vi.fn().mockRejectedValue(new Error('must not resolve twice'))
+    const resources = new ManagedPreviewResources({
+      resolvePath,
+      createId: () => 'reviewer-resource'
+    })
+
+    const resource = await resources.acquireResolvedFile(
+      17,
+      {
+        path: filePath,
+        mimeType,
+        verifiedObservation: await observe(filePath),
+        verifiedChecksum: 'verified-checksum'
+      },
+      100
+    )
+    const protocolResource = await resources.resolveProtocolResource(resource.id)
+
+    expect(resolvePath).not.toHaveBeenCalled()
+    expect(resource).toMatchObject({ mimeType, size: 13 })
+    expect(protocolResource).toMatchObject({ mimeType, size: 13 })
+    expect('fileHandle' in protocolResource).toBe(true)
+    if ('fileHandle' in protocolResource) await protocolResource.fileHandle.close()
+  })
+
+  it('rejects a resolved file swapped after verification before capability acquisition', async () => {
+    const filePath = await createFile(Buffer.from('trusted-native'), 'report.docx')
+    const verifiedObservation = await observe(filePath)
+    const replacementPath = join(temporaryDirectory!, 'replacement.docx')
+    await writeFile(replacementPath, Buffer.from('hostile-bytes!'))
+    await rename(replacementPath, filePath)
+    const createId = vi.fn(() => 'must-not-mint')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId
+    })
+
+    await expect(
+      resources.acquireResolvedFile(
+        17,
+        {
+          path: filePath,
+          verifiedObservation,
+          verifiedChecksum: 'trusted-checksum'
+        },
+        100
+      )
+    ).rejects.toMatchObject({ name: 'FileObservationMismatchError' })
+    expect(createId).not.toHaveBeenCalled()
+  })
+
+  it('never serves replacement bytes swapped after capability admission', async () => {
+    const filePath = await createFile(Buffer.from('trusted-office'), 'report.docx')
+    const verifiedObservation = await observe(filePath)
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId: () => 'verified-capability'
+    })
+    const resource = await resources.acquireResolvedFile(
+      17,
+      {
+        path: filePath,
+        verifiedObservation,
+        verifiedChecksum: 'trusted-checksum'
+      },
+      100
+    )
+    const replacementPath = join(temporaryDirectory!, 'replacement-after-admission.docx')
+    await writeFile(replacementPath, Buffer.from('hostile-office'))
+    await rename(replacementPath, filePath)
+
+    await expect(resources.resolveProtocolResource(resource.id)).rejects.toMatchObject({
+      name: 'FileObservationMismatchError'
+    })
+    await expect(resources.resolveProtocolResource(resource.id)).rejects.toThrow(/not available/i)
   })
 
   it('rejects oversized ranges and access from another owner', async () => {

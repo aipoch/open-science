@@ -34,6 +34,7 @@ import {
 } from '../acp/session-agent-target'
 import type { SessionAgentConfiguration } from '../../shared/settings'
 import { toErrorMessage } from '../error-message'
+import type { ReviewerPagedContentResolver } from './host-sdk'
 
 const log = createLogger('reviewer:ipc')
 
@@ -91,8 +92,12 @@ type ReviewerIpcOptions = {
   dataRoot?: string
   artifactProvenanceRepository?: Pick<
     ArtifactProvenanceRepository,
-    'resolveVersionContent' | 'resolveVersionContentForStreamingVerification'
-  >
+    | 'resolveVersionContent'
+    | 'resolveVersionContentForStreamingVerification'
+    | 'getReviewerVersionTrace'
+  > &
+    Partial<Pick<ArtifactProvenanceRepository, 'resolveReviewerTurnFileEvidence'>>
+  pagedContentResolver?: ReviewerPagedContentResolver
   withSessionMutation?: <Result>(
     projectId: string,
     sessionId: string,
@@ -432,8 +437,18 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           : {}),
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
         artifactStorageRoot: dataRoot,
-        artifactVersionContentResolver: (request) =>
-          artifactProvenanceRepository.resolveVersionContentForStreamingVerification(request),
+        artifactVersionResolvers: {
+          content: (request) =>
+            artifactProvenanceRepository.resolveVersionContentForStreamingVerification(request),
+          trace: (request) => artifactProvenanceRepository.getReviewerVersionTrace(request),
+          ...(options.pagedContentResolver ? { pagedContent: options.pagedContentResolver } : {})
+        },
+        ...(artifactProvenanceRepository.resolveReviewerTurnFileEvidence
+          ? {
+              reviewerFileEvidenceResolver: (request) =>
+                artifactProvenanceRepository.resolveReviewerTurnFileEvidence!(request)
+            }
+          : {}),
         reviewerMcpEntryPath: options.mcpEntryPath,
         onStarted: () => settle({ started: true }),
         onReviewUpdate: (review: ReviewWithChecks) => {

@@ -9,6 +9,7 @@ import {
   canInlineImageInSession,
   consumeInlineImageBudget,
   extractPdfText,
+  extractPdfTextPages,
   inspectPdfPageCount,
   ImageContentError,
   MAX_AUTO_EXTRACT_PDF_BYTES,
@@ -727,9 +728,29 @@ describe('extractPdfText', () => {
     await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
 
     const result = await extractPdfText(filePath)
+    const targeted = await extractPdfTextPages(filePath, [1])
 
     expect(result.pageCount).toBe(1)
     expect(result.text).toBe('')
+    expect(targeted).toEqual({
+      pageCount: 1,
+      pages: [{ pageNumber: 1, text: '' }],
+      truncated: false
+    })
+  })
+
+  it('extracts only explicitly targeted PDF pages', async () => {
+    const filePath = join(root, 'targeted.pdf')
+    await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+
+    const result = await extractPdfTextPages(filePath, [2])
+
+    expect(result).toEqual({
+      pageCount: 2,
+      pages: [{ pageNumber: 2, text: 'Second page' }],
+      truncated: false
+    })
+    expect(JSON.stringify(result)).not.toContain('Hello world')
   })
 })
 

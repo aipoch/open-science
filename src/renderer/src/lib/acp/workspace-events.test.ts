@@ -48,6 +48,17 @@ const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
   ...overrides
 })
 
+type SessionSaveBoundary = (
+  session: Parameters<typeof saveSessionInOrder>[0]
+) => Promise<Parameters<typeof saveSessionInOrder>[0] | void>
+
+const stubReviewerApi = (
+  reviewerRun: ReturnType<typeof vi.fn>,
+  saveSession: SessionSaveBoundary = async (session) => session
+): void => {
+  vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun }, sessions: { saveSession } } })
+}
+
 // Creates a pending permission request tied to the default test session.
 const createPermissionRequest = (
   overrides: Partial<AcpPermissionRequest> = {}
@@ -2538,7 +2549,7 @@ describe('workspace runtime events', () => {
     const finalizeRunArtifacts = vi.fn()
     const saveSession = vi.fn()
     const reviewerRun = vi.fn().mockResolvedValue({ started: true })
-    vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+    stubReviewerApi(reviewerRun)
     useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
     await applyWorkspaceRuntimeEvent(
       createEvent({
@@ -2944,10 +2955,58 @@ describe('workspace runtime events', () => {
   })
 
   describe('auto-review gate on stop event', () => {
+    it('does not auto-review a turn that stopped for a durable user choice', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue({ started: true })
+      const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+
+      stubReviewerApi(reviewerRun)
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'I need your choice before I can continue.'
+      })
+
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'choice-pending',
+          kind: 'tool',
+          toolCallId: 'choice-tool',
+          promptMessageId,
+          status: 'pending',
+          elicitation: {
+            message: 'Choose an approach',
+            state: 'pending',
+            durable: {
+              kind: 'agent-user-choice',
+              requestId: 'choice-request',
+              ...(promptMessageId ? { promptMessageId } : {})
+            },
+            fields: [
+              {
+                id: 'question_0',
+                label: 'Approach',
+                kind: 'single-select',
+                options: [{ value: 'minimal', label: 'Minimal' }]
+              }
+            ]
+          }
+        })
+      )
+      await applyWorkspaceRuntimeEvent(
+        createEvent({ id: 'choice-turn-stop', kind: 'stop', text: 'end_turn', promptMessageId })
+      )
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).not.toHaveBeenCalled()
+      vi.unstubAllGlobals()
+    })
+
     it('cancels pending and future auto-reviews once quit begins', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
         sessionId: 'transport-session-1',
@@ -2970,7 +3029,7 @@ describe('workspace runtime events', () => {
     it('allows future auto-reviews after quit preparation is aborted', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
         sessionId: 'transport-session-1',
@@ -2991,7 +3050,7 @@ describe('workspace runtime events', () => {
     it('triggers a review via window.api.reviewer.run when autoReviewEnabled is true', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       // Auto-review defaults off, so it must be explicitly enabled for this session.
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
@@ -3015,10 +3074,46 @@ describe('workspace runtime events', () => {
       vi.unstubAllGlobals()
     })
 
+    it('starts auto-review only after the completed turn is durable', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue({ started: true })
+      let finishSave: (() => void) | undefined
+      const saveSession = vi.fn(
+        (session: Parameters<typeof saveSessionInOrder>[0]) =>
+          new Promise<typeof session>((resolve) => {
+            finishSave = () => resolve(session)
+          })
+      )
+      stubReviewerApi(reviewerRun)
+
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }), {
+        saveSession
+      })
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(reviewerRun).not.toHaveBeenCalled()
+
+      finishSave?.()
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'transport-session-1' })
+      )
+
+      vi.unstubAllGlobals()
+    })
+
     it('does not trigger a review when autoReviewEnabled is false', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       // Disable auto-review on this session.
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', false)
@@ -3042,7 +3137,7 @@ describe('workspace runtime events', () => {
     it('does not auto-review a hidden Save as skill evaluation', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendUserMessage({
         sessionId: 'transport-session-1',
@@ -3068,7 +3163,7 @@ describe('workspace runtime events', () => {
     it('does not trigger a review by default when autoReviewEnabled was never set', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       // No setAutoReviewEnabled call: the session keeps its default (off).
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3090,7 +3185,7 @@ describe('workspace runtime events', () => {
     it('re-enables a review after toggling autoReviewEnabled back to true', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', false)
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
@@ -3121,7 +3216,7 @@ describe('workspace runtime events', () => {
         .fn()
         .mockResolvedValueOnce({ started: false, reason: 'not-found' }) // session not on disk yet
         .mockResolvedValueOnce({ started: true }) // flushed by the time the retry runs
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3150,7 +3245,7 @@ describe('workspace runtime events', () => {
         .fn()
         .mockResolvedValueOnce({ started: false, reason: 'already-in-flight' })
         .mockResolvedValueOnce({ started: true }) // would be a DUPLICATE if wrongly retried
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3176,7 +3271,7 @@ describe('workspace runtime events', () => {
         .fn()
         .mockResolvedValueOnce({ started: false, reason: 'run-failed' })
         .mockResolvedValueOnce({ started: true })
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3199,7 +3294,7 @@ describe('workspace runtime events', () => {
       // A retryable reason that never resolves (e.g. session genuinely gone): retries must be bounded.
       vi.useFakeTimers()
       const reviewerRun = vi.fn().mockResolvedValue({ started: false, reason: 'not-found' })
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3225,7 +3320,7 @@ describe('workspace runtime events', () => {
         .fn()
         .mockResolvedValueOnce({ started: false, reason: 'idempotency-check-failed' }) // lookup threw
         .mockResolvedValueOnce({ started: true }) // lookup recovered, no prior review → starts
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3250,7 +3345,7 @@ describe('workspace runtime events', () => {
         .fn()
         .mockResolvedValueOnce({ started: false, reason: 'load-failed' }) // store read blipped
         .mockResolvedValueOnce({ started: true }) // succeeds on retry
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3280,7 +3375,7 @@ describe('workspace runtime events', () => {
         .mockResolvedValueOnce({ started: false, reason: 'not-found' })
         .mockResolvedValueOnce({ started: false, reason: 'already-reviewed' })
         .mockResolvedValue({ started: true }) // would be a DUPLICATE if wrongly retried again
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3302,7 +3397,7 @@ describe('workspace runtime events', () => {
 
     it('tags auto-review requests with origin auto so main can enforce per-turn idempotency', async () => {
       const reviewerRun = vi.fn().mockResolvedValue({ started: true })
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
 
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3326,7 +3421,7 @@ describe('workspace runtime events', () => {
         operationOrder.push('review')
         return { started: true }
       })
-      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      stubReviewerApi(reviewerRun)
       useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
       const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
       useSessionStore.getState().appendAgentMessageChunk({
@@ -3443,7 +3538,7 @@ describe('loop guard: suppressNextAutoReview', () => {
 
   it('suppresses triggerAutoReview for exactly one stop, then resumes normal behavior', async () => {
     const reviewerRun = vi.fn().mockResolvedValue(undefined)
-    vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+    stubReviewerApi(reviewerRun)
 
     // Mark the next stop for suppression (simulates the [Auditor] correction turn).
     suppressNextAutoReview('transport-session-1')
@@ -3482,7 +3577,7 @@ describe('loop guard: suppressNextAutoReview', () => {
 
   it('does not suppress a different session', async () => {
     const reviewerRun = vi.fn().mockResolvedValue(undefined)
-    vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+    stubReviewerApi(reviewerRun)
 
     // Suppress only 'other-session'.
     suppressNextAutoReview('other-session')
@@ -3501,7 +3596,7 @@ describe('loop guard: suppressNextAutoReview', () => {
 
   it('clearSuppressNextAutoReview cancels a pending suppression (correction turn failed to send)', async () => {
     const reviewerRun = vi.fn().mockResolvedValue(undefined)
-    vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+    stubReviewerApi(reviewerRun)
 
     // A correction was about to fire (suppress set), but its sendPrompt failed — clear the flag so
     // the user's next real turn is not silently skipped.

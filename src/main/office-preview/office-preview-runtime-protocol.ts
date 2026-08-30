@@ -67,6 +67,12 @@ const createOfficePreviewRuntimeUrl = (sessionId: string): string => {
   return url.toString()
 }
 
+const createReviewerPagedPreviewRuntimeUrl = (sessionId: string): string => {
+  const url = new URL('/reviewer-paged-preview.html', OFFICE_PREVIEW_RUNTIME_ORIGIN)
+  url.searchParams.set('sessionId', sessionId)
+  return url.toString()
+}
+
 // Maps only runtime-owned paths; arbitrary filesystem paths never cross this protocol boundary.
 const resolveOfficePreviewRuntimeTarget = (
   requestUrl: URL,
@@ -166,6 +172,7 @@ const registerOfficePreviewRuntimeProtocol = (
 export {
   createOfficePreviewRuntimeProtocolHandler,
   createOfficePreviewRuntimeUrl,
+  createReviewerPagedPreviewRuntimeUrl,
   OFFICE_PREVIEW_RUNTIME_HOST,
   OFFICE_PREVIEW_RUNTIME_ORIGIN,
   OFFICE_PREVIEW_RUNTIME_SCHEME,

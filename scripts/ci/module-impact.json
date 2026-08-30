@@ -672,6 +672,7 @@
         "src/main/artifacts/provenance-storage.ts",
         "src/main/artifacts/provenance-unindexed-recovery.ts",
         "src/main/artifacts/provenance-version-writer.ts",
+        "src/main/artifacts/reviewer-turn-file-evidence-reader.ts",
         "src/main/artifacts/write-budget-owner.ts"
       ],
       "interfacePaths": [
