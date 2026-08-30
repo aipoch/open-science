@@ -344,6 +344,36 @@ describe('application surface shutdown', () => {
     }
   })
 
+  it('reserves completion time for IPC when Remote Access exhausts its final-surface share', async () => {
+    vi.useFakeTimers()
+    const order: string[] = []
+    let outcome: Awaited<ReturnType<typeof shutdownApplicationSurfaces>> | undefined
+
+    try {
+      void shutdownApplicationSurfaces({
+        disposeWebController: vi.fn(),
+        disposeApplicationRuntime: vi.fn(),
+        shutdownRemoteAccess: () => new Promise<void>(() => undefined),
+        disposeIpcHandlers: async () => {
+          order.push('ipc-handlers:start')
+          await new Promise<void>((resolve) => setTimeout(resolve, 1))
+          order.push('ipc-handlers:end')
+        }
+      }).then((result) => {
+        outcome = result
+      })
+
+      await vi.advanceTimersByTimeAsync(APPLICATION_MODULE_DISPOSAL_BUDGET_MS / 2)
+      expect(order).toEqual(['ipc-handlers:start'])
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(order).toEqual(['ipc-handlers:start', 'ipc-handlers:end'])
+      expect(outcome).toBe('timeout')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('times out a hung surface and still attempts every later surface', async () => {
     vi.useFakeTimers()
     let outcome: Awaited<ReturnType<typeof shutdownApplicationSurfaces>> | undefined
