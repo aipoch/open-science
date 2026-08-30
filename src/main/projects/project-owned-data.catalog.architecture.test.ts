@@ -231,7 +231,8 @@ describe('Project-owned data catalog architecture', () => {
       'side-chat-runtime-state',
       'notebook-kernel-runtime-state',
       'compute-runtime-state',
-      'notebook-project-workspace'
+      'notebook-project-workspace',
+      'notebook-file-evidence'
     ])
     expect(
       [
@@ -244,6 +245,7 @@ describe('Project-owned data catalog architecture', () => {
     ).toEqual([
       'compute-job-project-delete',
       'delegated-runtime-quiescence',
+      'notebook-file-evidence-tail',
       'notification-session-invalidation',
       'project-deletion-intent-protocol',
       'project-file-projection-delete',
@@ -377,6 +379,10 @@ describe('Project-owned data catalog architecture', () => {
         'this.sessions.completeProjectSessionDeletion',
         'this.projects.deleteDeletionIntent'
       ]
+    )
+    expectCall(
+      objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
+      'notebookService.deleteProjectFileEvidence'
     )
   })
 

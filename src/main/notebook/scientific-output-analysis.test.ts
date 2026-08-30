@@ -48,6 +48,18 @@ describe('scientific output analysis', () => {
     ])
   })
 
+  it('preserves a POSIX filename containing a literal backslash', () => {
+    const relativePath = 'data/literal\\figure.png'
+
+    expect(analyzeScientificOutputs([{ relation: 'created', relativePath }])).toMatchObject([
+      {
+        storageShape: 'single-file',
+        formatHint: 'image',
+        members: [relativePath]
+      }
+    ])
+  })
+
   it('groups a partitioned Arrow dataset without grouping unrelated files at the managed root', () => {
     const outputs = analyzeScientificOutputs([
       { relation: 'created', relativePath: 'data/dataset/species=setosa/part-0.parquet' },

@@ -29,6 +29,7 @@ import {
 import { isRecord } from './value-guards'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const NOTEBOOK_FILE_EVIDENCE_DIR = 'notebook-file-evidence'
 const MAX_DOCUMENT_CACHE_ENTRIES = 8
 const MAX_DOCUMENT_CACHE_BYTES = 32 * 1024 * 1024
 const MAX_DOCUMENT_READ_ATTEMPTS = 2
@@ -142,6 +143,7 @@ const notebookFileEvidenceCandidate = (value: unknown): value is NotebookRunFile
   isRecord(value) &&
   value.schemaVersion === 1 &&
   FILE_EVIDENCE_STATES.has(String(value.state)) &&
+  FILE_EVIDENCE_COVERAGE.has(String(value.initialViewState)) &&
   FILE_EVIDENCE_COVERAGE.has(String(value.managedRootsFinalState)) &&
   FILE_EVIDENCE_COVERAGE.has(String(value.scientificOutputAnalysis)) &&
   FILE_EVIDENCE_COVERAGE.has(String(value.fileReads)) &&
@@ -330,6 +332,28 @@ const getNotebookDataRoot = (
   sessionId: string,
   lane?: NotebookLaneIdentity
 ): string => join(getNotebookSessionRoot(storageRoot, projectId, sessionId, lane), 'data')
+
+const getNotebookFileEvidenceLocation = (
+  storageRoot: string,
+  projectId: string,
+  sessionId: string,
+  lane: NotebookLaneIdentity
+): { root: string; storageKeyPrefix: string } => {
+  const safeProjectId = assertSafeNotebookPathSegment(projectId)
+  const safeSessionId = assertSafeNotebookPathSegment(sessionId)
+  const scope = notebookLaneScope(lane)
+  if (scope.projectId !== projectId || scope.sessionId !== sessionId) {
+    throw new Error('Notebook lane does not match file-evidence scope.')
+  }
+  const segments = [NOTEBOOK_FILE_EVIDENCE_DIR, safeProjectId, safeSessionId]
+  if (scope.kind === 'frame') {
+    segments.push('frames', assertSafeNotebookPathSegment(scope.agentFrameId))
+  }
+  return {
+    root: join(storageRoot, ...segments),
+    storageKeyPrefix: segments.join('/')
+  }
+}
 
 // Creates the empty text projection used before an execution has produced output.
 const emptyText = (): NotebookRunRecord['text'] => ({
@@ -1064,6 +1088,7 @@ class NotebookRunRepository {
 export {
   NotebookRunRepository,
   getNotebookDataRoot,
+  getNotebookFileEvidenceLocation,
   getNotebookRunJsonPath,
   getNotebookSessionRoot,
   getRuntimeRoot

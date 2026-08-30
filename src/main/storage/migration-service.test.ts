@@ -825,9 +825,11 @@ describe('runDataRootMigration (copy phase)', () => {
     // runtime/ is excluded wholesale; only relocatable durable subtrees are copied explicitly.
     expect(MIGRATED_DIRS).not.toContain('runtime')
     expect(MIGRATED_DIRS).toContain('delegation')
+    expect(MIGRATED_DIRS).toContain('notebook-file-evidence')
     expect(MIGRATED_DIRS).toContain('workspaces')
     expect(DATA_ROOT_DIRS).toContain('runtime')
     expect(DATA_ROOT_DIRS).toContain('delegation')
+    expect(DATA_ROOT_DIRS).toContain('notebook-file-evidence')
     expect(DATA_ROOT_DIRS).toContain('workspaces')
     expect(deps.setDataRoot).not.toHaveBeenCalled()
   })

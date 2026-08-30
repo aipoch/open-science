@@ -9,7 +9,11 @@ import type {
 } from '../../shared/notebook'
 import { parseNotebookLanguage } from '../../shared/notebook'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
-import { NotebookRunRepository, getNotebookRunJsonPath } from './repository'
+import {
+  NotebookRunRepository,
+  getNotebookFileEvidenceLocation,
+  getNotebookRunJsonPath
+} from './repository'
 import {
   NotebookSessionAggregate,
   type NotebookSessionExecutor,
@@ -29,8 +33,10 @@ import {
 } from './lane-identity'
 import { resolveProjectId } from '../../shared/project-scope'
 import { reconcileWorkingFileEvidence } from './working-file-observer'
+import { createLogger, diagnosticErrorFields } from '../logger'
 
 type RuntimeSession = NotebookSessionAggregate
+const log = createLogger('notebook:file-evidence-lifecycle')
 
 type NotebookExecutorLifecycleCallbacks = {
   onIdleShutdown: (kind?: KernelProcessKind, env?: string) => Promise<void>
@@ -138,7 +144,27 @@ class NotebookSessionLifecycleOwner {
           lane
         )
       }
-      await reconcileWorkingFileEvidence(document.notebookSessionRoot, document.runs)
+      const fileEvidenceLocation = getNotebookFileEvidenceLocation(
+        this.options.storageRoot,
+        projectId,
+        request.sessionId,
+        lane
+      )
+      await reconcileWorkingFileEvidence(
+        {
+          storageRoot: this.options.storageRoot,
+          root: fileEvidenceLocation.root,
+          storageKeyPrefix: fileEvidenceLocation.storageKeyPrefix
+        },
+        document.runs
+      ).catch((error) => {
+        log.warn('Notebook file-evidence reconciliation failed closed', {
+          projectId,
+          sessionId: request.sessionId,
+          lane: notebookLaneKey(lane),
+          ...diagnosticErrorFields(error)
+        })
+      })
 
       const ownedExecutor = this.createExecutor(lane)
       const session = new NotebookSessionAggregate({

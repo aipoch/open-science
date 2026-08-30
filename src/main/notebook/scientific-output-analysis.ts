@@ -139,7 +139,6 @@ const analyzeScientificOutputs = (
 ): NotebookScientificOutput[] => {
   const candidates = relations
     .filter((relation) => relation.relativePath.length > 0)
-    .map((relation) => ({ ...relation, relativePath: relation.relativePath.replaceAll('\\', '/') }))
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath))
   const activePaths = new Set(
     candidates

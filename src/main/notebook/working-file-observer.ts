@@ -5,6 +5,7 @@ import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
+  NotebookFileEvidenceCoverage,
   NotebookFileEvidenceReason,
   NotebookRunFileEvidence,
   NotebookRunRecord,
@@ -22,6 +23,9 @@ const log = createLogger('notebook:file-evidence')
 type WorkingFileObservationRequest = {
   dataRoot: string
   notebookSessionRoot: string
+  fileEvidenceStorageRoot?: string
+  fileEvidenceRoot?: string
+  fileEvidenceStoragePrefix?: string
   runId?: string
   signal?: AbortSignal
 }
@@ -47,7 +51,9 @@ type WorkingFileObservationDependencies = {
 }
 
 type ActiveObservation = { conflicted: boolean }
-type SnapshotEntry = NotebookWorkingFile & {
+type SnapshotEntry = Omit<NotebookWorkingFile, 'size' | 'mtimeMs'> & {
+  size: number
+  mtimeMs: number
   physicalPath: string
   dev: number
   ino: number
@@ -67,15 +73,41 @@ type RootObservationResult = {
   reasonCodes: NotebookFileEvidenceReason[]
   available: boolean
 }
-type RootObservation = { finish: () => Promise<RootObservationResult> }
+type RootObservation = {
+  initialFiles: readonly SnapshotEntry[]
+  initialAvailable: boolean
+  finish: () => Promise<RootObservationResult>
+}
 type FileIdentity = { dev: number; ino: number }
-type EvidenceWorkerPersistRequest = {
-  operation: 'persist'
+type EvidenceWorkerBeginRequest = {
+  operation: 'begin'
   expectedRootIdentity: FileIdentity
+  receiptName: string
   stagingName: string
   finalName: string
   runId: string
   evidenceId: string
+  storageKeyPrefix: string
+  initialViewState: NotebookFileEvidenceCoverage
+  initialFiles: Array<{
+    file: SnapshotEntry
+    generation: { generationId: string; capturedAt: string }
+  }>
+  maxGenerationBytes: number
+  maxRunBytes: number
+  diskReserveBytes: number
+  availableBytes: number
+  captureCancelled: boolean
+}
+type EvidenceWorkerPersistRequest = {
+  operation: 'persist'
+  expectedRootIdentity: FileIdentity
+  receiptName: string
+  stagingName: string
+  finalName: string
+  runId: string
+  evidenceId: string
+  storageKeyPrefix: string
   rootKinds: Array<'data' | 'handoff'>
   rootsAvailable: boolean
   reasonCodes: NotebookFileEvidenceReason[]
@@ -88,22 +120,61 @@ type EvidenceWorkerPersistRequest = {
   maxRunBytes: number
   diskReserveBytes: number
   availableBytes: number
-  publicationAvailableBytes: number
   captureCancelled: boolean
 }
-type EvidenceWorkerReconcileRequest = {
-  operation: 'reconcile' | 'cleanup'
+type EvidenceWorkerCompleteRequest = {
+  operation: 'complete'
   expectedRootIdentity: FileIdentity
-  retainedFinalNames?: string[]
-  names?: string[]
+  receiptName: string
+  finalName: string
+  runId: string
+  evidenceId: string
+  checksum: string
+  storageKey: string
+}
+type EvidenceWorkerReconcileRequest = {
+  operation: 'reconcile'
+  expectedRootIdentity: FileIdentity
+  retained: Array<{
+    receiptName: string
+    finalName: string
+    runId: string
+    evidenceId: string
+    checksum: string
+    storageKey: string
+  }>
+}
+type EvidenceWorkerCleanupRequest = {
+  operation: 'cleanup'
+  expectedRootIdentity: FileIdentity
+  receiptName: string
+}
+type EvidenceWorkerDeleteProjectRequest = {
+  operation: 'delete-project'
+  expectedRootIdentity: FileIdentity
+  projectName: string
 }
 type EvidenceWorkerResult =
+  | { ok: true; capturedInitialGenerations: number }
   | {
       ok: true
       generations: Array<{ path: string; generationId: string; checksum: string }>
       fileEvidence: NotebookRunFileEvidence
     }
   | { ok: true; removedStagingEntries: number; removedRunEntries: number }
+  | { ok: true; removedProjectEntries: number }
+
+type ActiveEvidenceCapture = {
+  evidenceRoot: { path: string; identity: FileIdentity }
+  receiptName: string
+  stagingName: string
+  finalName: string
+  evidenceId: string
+  storageKeyPrefix: string
+  maxGenerationBytes: number
+  maxRunBytes: number
+  diskReserveBytes: number
+}
 
 const activeByObservedRoot = new Map<string, Set<ActiveObservation>>()
 let reservedDiskBytes = 0
@@ -116,7 +187,6 @@ const EVIDENCE_WORKER_TIMEOUT_MS = 10 * 60 * 1000
 const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const BASELINE_REASON_CODES: NotebookFileEvidenceReason[] = [
   'file-reads-not-observed',
-  'initial-file-generations-not-captured',
   'external-paths-not-observed',
   'remote-outputs-not-observed',
   'transient-files-not-captured',
@@ -145,6 +215,7 @@ const unavailableEvidence = (
   schemaVersion: 1,
   state: 'unavailable',
   scientificOutputCount: 0,
+  initialViewState: 'unavailable',
   managedRootsFinalState: 'unavailable',
   scientificOutputAnalysis: 'unavailable',
   fileReads: 'unavailable',
@@ -152,12 +223,6 @@ const unavailableEvidence = (
   writerAttribution: 'unavailable',
   reasonCodes: uniqueReasons([...BASELINE_REASON_CODES, ...reasons])
 })
-
-const isMissingPathError = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  'code' in error &&
-  (error as NodeJS.ErrnoException).code === 'ENOENT'
 
 const isExistingPathError = (error: unknown): boolean =>
   typeof error === 'object' &&
@@ -200,15 +265,23 @@ const assertEvidenceRootIdentity = async (path: string, expected: FileIdentity):
 }
 
 const secureEvidenceRoot = async (
-  notebookSessionRoot: string
+  storageRoot: string,
+  requestedEvidenceRoot: string
 ): Promise<{ path: string; identity: FileIdentity }> => {
-  const resolvedSessionRoot = resolve(notebookSessionRoot)
-  await assertRealDirectory(resolvedSessionRoot)
-  const canonicalSessionRoot = await realpath(resolvedSessionRoot)
-  const evidenceRoot = join(canonicalSessionRoot, 'file-evidence')
-  await ensureRealDirectory(evidenceRoot)
-  if ((await realpath(evidenceRoot)) !== evidenceRoot) {
-    throw new UnsafeEvidencePathError('Notebook file-evidence root resolves through a symlink.')
+  const resolvedStorageRoot = resolve(storageRoot)
+  await assertRealDirectory(resolvedStorageRoot)
+  const canonicalStorageRoot = await realpath(resolvedStorageRoot)
+  const nested = relative(resolvedStorageRoot, resolve(requestedEvidenceRoot))
+  if (nested === '' || isAbsolute(nested) || nested === '..' || nested.startsWith(`..${sep}`)) {
+    throw new UnsafeEvidencePathError('Notebook file-evidence root escapes app storage.')
+  }
+  let evidenceRoot = canonicalStorageRoot
+  for (const segment of nested.split(sep)) {
+    evidenceRoot = join(evidenceRoot, segment)
+    await ensureRealDirectory(evidenceRoot)
+    if ((await realpath(evidenceRoot)) !== evidenceRoot) {
+      throw new UnsafeEvidencePathError('Notebook file-evidence root resolves through a symlink.')
+    }
   }
   return { path: evidenceRoot, identity: await directoryIdentity(evidenceRoot) }
 }
@@ -241,7 +314,13 @@ const resolveEvidenceWorkerPath = (): string => {
 
 export const runEvidenceWorker = async (
   evidenceRoot: string,
-  request: EvidenceWorkerPersistRequest | EvidenceWorkerReconcileRequest,
+  request:
+    | EvidenceWorkerBeginRequest
+    | EvidenceWorkerPersistRequest
+    | EvidenceWorkerCompleteRequest
+    | EvidenceWorkerReconcileRequest
+    | EvidenceWorkerCleanupRequest
+    | EvidenceWorkerDeleteProjectRequest,
   signal?: AbortSignal
 ): Promise<EvidenceWorkerResult> =>
   new Promise((resolveResult, rejectResult) => {
@@ -295,6 +374,7 @@ export const runEvidenceWorker = async (
     }, EVIDENCE_WORKER_TIMEOUT_MS)
     timeout.unref()
     child.once('error', rejectOnce)
+    child.stdin.once('error', rejectOnce)
     child.once('close', (code) => {
       if (settled) return
       if (signal?.aborted) {
@@ -326,33 +406,94 @@ export const runEvidenceWorker = async (
     child.stdin.end(JSON.stringify(request))
   })
 
+type WorkingFileEvidenceLocation = {
+  storageRoot: string
+  root: string
+  storageKeyPrefix: string
+}
+
+const receiptNameForRun = (runId: string): string => `receipt-${runId}.json`
+const finalNameForRun = (runId: string): string => `run-${runId}`
+
+const deleteWorkingFileEvidenceProject = async (
+  storageRoot: string,
+  projectId: string
+): Promise<void> => {
+  if (!SAFE_RUN_ID.test(projectId)) throw new Error('Unsafe Notebook file-evidence Project ID.')
+  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, 'notebook-file-evidence'))
+  const result = await runEvidenceWorker(root.path, {
+    operation: 'delete-project',
+    expectedRootIdentity: root.identity,
+    projectName: projectId
+  })
+  if (!('removedProjectEntries' in result)) {
+    throw new Error('File-evidence Project deletion returned an invalid result.')
+  }
+}
+
+const completeWorkingFileEvidence = async (
+  location: WorkingFileEvidenceLocation,
+  run: Pick<NotebookRunRecord, 'runId' | 'fileEvidence'>
+): Promise<void> => {
+  const evidence = run.fileEvidence
+  if (
+    !SAFE_RUN_ID.test(run.runId) ||
+    !evidence?.evidenceId ||
+    !evidence.checksum ||
+    !evidence.storageKey
+  ) {
+    return
+  }
+  const finalName = finalNameForRun(run.runId)
+  if (evidence.storageKey !== `${location.storageKeyPrefix}/${finalName}/evidence.json`) return
+  const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
+  const result = await runEvidenceWorker(evidenceRoot.path, {
+    operation: 'complete',
+    expectedRootIdentity: evidenceRoot.identity,
+    receiptName: receiptNameForRun(run.runId),
+    finalName,
+    runId: run.runId,
+    evidenceId: evidence.evidenceId,
+    checksum: evidence.checksum,
+    storageKey: evidence.storageKey
+  })
+  if (!('removedStagingEntries' in result)) {
+    throw new Error('File-evidence completion returned an invalid result.')
+  }
+}
+
 const reconcileWorkingFileEvidence = async (
-  notebookSessionRoot: string,
+  location: WorkingFileEvidenceLocation,
   runs: readonly Pick<NotebookRunRecord, 'runId' | 'fileEvidence'>[]
 ): Promise<{ removedStagingEntries: number; removedRunEntries: number }> => {
-  const resolvedSessionRoot = resolve(notebookSessionRoot)
-  await assertRealDirectory(resolvedSessionRoot)
-  const canonicalSessionRoot = await realpath(resolvedSessionRoot)
-  const evidenceRoot = join(canonicalSessionRoot, 'file-evidence')
-  try {
-    await assertRealDirectory(evidenceRoot)
-  } catch (error) {
-    if (isMissingPathError(error)) return { removedStagingEntries: 0, removedRunEntries: 0 }
-    throw error
-  }
-  if ((await realpath(evidenceRoot)) !== evidenceRoot) {
-    throw new UnsafeEvidencePathError('Notebook file-evidence root resolves through a symlink.')
-  }
-  const retainedFinalNames = runs.flatMap((run) => {
-    if (!SAFE_RUN_ID.test(run.runId)) return []
-    const finalName = `run-${run.runId}`
-    const expectedStorageKey = `file-evidence/${finalName}/evidence.json`
-    return run.fileEvidence?.storageKey === expectedStorageKey ? [finalName] : []
+  const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
+  const retained = runs.flatMap((run) => {
+    const evidence = run.fileEvidence
+    if (
+      !SAFE_RUN_ID.test(run.runId) ||
+      !evidence?.evidenceId ||
+      !evidence.checksum ||
+      !evidence.storageKey
+    ) {
+      return []
+    }
+    const finalName = finalNameForRun(run.runId)
+    if (evidence.storageKey !== `${location.storageKeyPrefix}/${finalName}/evidence.json`) return []
+    return [
+      {
+        receiptName: receiptNameForRun(run.runId),
+        finalName,
+        runId: run.runId,
+        evidenceId: evidence.evidenceId,
+        checksum: evidence.checksum,
+        storageKey: evidence.storageKey
+      }
+    ]
   })
-  const result = await runEvidenceWorker(evidenceRoot, {
+  const result = await runEvidenceWorker(evidenceRoot.path, {
     operation: 'reconcile',
-    expectedRootIdentity: await directoryIdentity(evidenceRoot),
-    retainedFinalNames
+    expectedRootIdentity: evidenceRoot.identity,
+    retained
   })
   if (!('removedStagingEntries' in result)) {
     throw new Error('File-evidence reconciliation returned an invalid result.')
@@ -495,6 +636,8 @@ const fallbackObservation = (
 ): RootObservation => {
   let finished = false
   return {
+    initialFiles: [...before.values()],
+    initialAvailable: true,
     finish: async () => {
       if (finished) {
         return { changes: [], reasonCodes: ['observer-failed'], available: false }
@@ -542,6 +685,8 @@ const startRootObservation = async (
     ])
     if (!isPathInside(sessionRoot, observedRoot)) {
       return {
+        initialFiles: [],
+        initialAvailable: false,
         finish: async () => ({ changes: [], reasonCodes: ['observer-failed'], available: false })
       }
     }
@@ -591,6 +736,8 @@ const startRootObservation = async (
     if (before.state === 'unavailable') {
       watcher?.close()
       return {
+        initialFiles: [],
+        initialAvailable: false,
         finish: async () => ({ changes: [], reasonCodes: [before.reason], available: false })
       }
     }
@@ -612,6 +759,8 @@ const startRootObservation = async (
 
     const unregister = registerObservation(observedRoot, active)
     return {
+      initialFiles: [...before.files.values()],
+      initialAvailable: true,
       finish: async () => {
         if (finished) {
           return { changes: [], reasonCodes: ['observer-failed'], available: false }
@@ -702,8 +851,97 @@ const startRootObservation = async (
   } catch {
     watcher?.close()
     return {
+      initialFiles: [],
+      initialAvailable: false,
       finish: async () => ({ changes: [], reasonCodes: ['observer-failed'], available: false })
     }
+  }
+}
+
+const beginEvidenceCapture = async (
+  request: WorkingFileObservationRequest,
+  observations: readonly RootObservation[],
+  dependencies: WorkingFileObservationDependencies
+): Promise<ActiveEvidenceCapture | undefined> => {
+  if (!request.runId || !SAFE_RUN_ID.test(request.runId)) return undefined
+  // Injected executors may omit the app-owned location. Keep their evidence outside the writable
+  // Notebook session by falling back to a sibling private root; production supplies the canonical
+  // project/session location explicitly.
+  const fileEvidenceStorageRoot =
+    request.fileEvidenceStorageRoot ?? resolve(request.notebookSessionRoot, '..')
+  const fileEvidenceRoot =
+    request.fileEvidenceRoot ?? join(fileEvidenceStorageRoot, 'file-evidence')
+  const fileEvidenceStoragePrefix = request.fileEvidenceStoragePrefix ?? 'file-evidence'
+  const evidenceId = `notebook-file-evidence-${request.runId}`
+  const capture: ActiveEvidenceCapture = {
+    evidenceRoot: await secureEvidenceRoot(fileEvidenceStorageRoot, fileEvidenceRoot),
+    receiptName: receiptNameForRun(request.runId),
+    stagingName: `staging-${request.runId}-${randomUUID()}`,
+    finalName: finalNameForRun(request.runId),
+    evidenceId,
+    storageKeyPrefix: fileEvidenceStoragePrefix,
+    maxGenerationBytes: dependencies.maxGenerationBytes ?? LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+    maxRunBytes: dependencies.maxRunBytes ?? LOCAL_RESOURCE_BUDGETS.artifactTurnBytes,
+    diskReserveBytes: dependencies.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+  }
+  const initialFiles = observations.flatMap((observation) => observation.initialFiles)
+  const initialViewState: NotebookFileEvidenceCoverage = observations.every(
+    (observation) => observation.initialAvailable
+  )
+    ? 'complete'
+    : observations.some((observation) => observation.initialAvailable)
+      ? 'partial'
+      : 'unavailable'
+  const plannedBytes = Math.min(
+    capture.maxRunBytes,
+    initialFiles.reduce((total, file) => total + file.size, 0)
+  )
+  let reservedBytes = 0
+  try {
+    const freeBytes = await (dependencies.getAvailableBytes ?? availableBytes)(
+      capture.evidenceRoot.path
+    )
+    assertDiskReserve(
+      Math.max(0, freeBytes - reservedDiskBytes),
+      plannedBytes,
+      capture.diskReserveBytes
+    )
+    reservedDiskBytes += plannedBytes
+    reservedBytes = plannedBytes
+    const capturedAt = new Date((dependencies.now ?? Date.now)()).toISOString()
+    const result = await (dependencies.runEvidenceWorker ?? runEvidenceWorker)(
+      capture.evidenceRoot.path,
+      {
+        operation: 'begin',
+        expectedRootIdentity: capture.evidenceRoot.identity,
+        receiptName: capture.receiptName,
+        stagingName: capture.stagingName,
+        finalName: capture.finalName,
+        runId: request.runId,
+        evidenceId,
+        storageKeyPrefix: fileEvidenceStoragePrefix,
+        initialViewState,
+        initialFiles: initialFiles.map((file) => ({
+          file,
+          generation: {
+            generationId: (dependencies.createId ?? randomUUID)(),
+            capturedAt
+          }
+        })),
+        maxGenerationBytes: capture.maxGenerationBytes,
+        maxRunBytes: capture.maxRunBytes,
+        diskReserveBytes: capture.diskReserveBytes,
+        availableBytes: Math.max(0, freeBytes - reservedDiskBytes + reservedBytes),
+        captureCancelled: request.signal?.aborted ?? false
+      },
+      request.signal
+    )
+    if (!('capturedInitialGenerations' in result)) {
+      throw new Error('File-evidence initial capture returned an invalid result.')
+    }
+    return capture
+  } finally {
+    reservedDiskBytes -= reservedBytes
   }
 }
 
@@ -711,6 +949,7 @@ const persistEvidence = async (
   request: WorkingFileObservationRequest,
   rootKinds: Array<'data' | 'handoff'>,
   rootResults: RootObservationResult[],
+  capture: ActiveEvidenceCapture | undefined,
   dependencies: WorkingFileObservationDependencies
 ): Promise<WorkingFileObservationResult> => {
   const changes = rootResults.flatMap((result) => result.changes)
@@ -738,19 +977,6 @@ const persistEvidence = async (
     })),
     request.runId
   )
-
-  const evidenceId = `notebook-file-evidence-${request.runId}`
-  const stagingName = `staging-${request.runId}-${randomUUID()}`
-  const finalName = `run-${request.runId}`
-  let evidenceRoot: { path: string; identity: FileIdentity }
-  try {
-    evidenceRoot = await secureEvidenceRoot(request.notebookSessionRoot)
-  } catch {
-    return {
-      workingFiles,
-      fileEvidence: unavailableEvidence(['evidence-persistence-failed'])
-    }
-  }
   for (const change of changes) {
     if (change.after) {
       const workingFile = workingFilesByPath.get(change.after.path)
@@ -759,38 +985,44 @@ const persistEvidence = async (
       }
     }
   }
+  if (!capture) {
+    return {
+      workingFiles,
+      fileEvidence: unavailableEvidence([
+        'initial-file-generations-not-captured',
+        'evidence-persistence-failed'
+      ])
+    }
+  }
 
-  const maxGenerationBytes =
-    dependencies.maxGenerationBytes ?? LOCAL_RESOURCE_BUDGETS.artifactFileBytes
-  const maxRunBytes = dependencies.maxRunBytes ?? LOCAL_RESOURCE_BUDGETS.artifactTurnBytes
-  const diskReserveBytes = dependencies.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
   const plannedBytes = Math.min(
-    maxRunBytes,
+    capture.maxRunBytes,
     changes.reduce((total, change) => total + (change.after?.size ?? 0), 0) +
       Buffer.byteLength(JSON.stringify(changes))
   )
   let reservedBytes = 0
   try {
-    const freeBytes = await (dependencies.getAvailableBytes ?? availableBytes)(evidenceRoot.path)
-    const publicationFreeBytes = await (dependencies.getAvailableBytes ?? availableBytes)(
-      evidenceRoot.path
+    const freeBytes = await (dependencies.getAvailableBytes ?? availableBytes)(
+      capture.evidenceRoot.path
     )
     assertDiskReserve(
-      Math.max(0, publicationFreeBytes - reservedDiskBytes),
+      Math.max(0, freeBytes - reservedDiskBytes),
       Math.min(plannedBytes, Buffer.byteLength(JSON.stringify(changes))),
-      diskReserveBytes
+      capture.diskReserveBytes
     )
     reservedDiskBytes += plannedBytes
     reservedBytes = plannedBytes
     const result = await (dependencies.runEvidenceWorker ?? runEvidenceWorker)(
-      evidenceRoot.path,
+      capture.evidenceRoot.path,
       {
         operation: 'persist',
-        expectedRootIdentity: evidenceRoot.identity,
-        stagingName,
-        finalName,
+        expectedRootIdentity: capture.evidenceRoot.identity,
+        receiptName: capture.receiptName,
+        stagingName: capture.stagingName,
+        finalName: capture.finalName,
         runId: request.runId,
-        evidenceId,
+        evidenceId: capture.evidenceId,
+        storageKeyPrefix: capture.storageKeyPrefix,
         rootKinds,
         rootsAvailable: rootResults.every((result) => result.available),
         reasonCodes: rootResults.flatMap((result) => result.reasonCodes),
@@ -798,18 +1030,14 @@ const persistEvidence = async (
         changes: changes.map((change) => ({
           change,
           generation: {
-            generationId: (dependencies.createId ?? randomUUID)(),
+            generationId: change.after ? (dependencies.createId ?? randomUUID)() : '',
             capturedAt: new Date((dependencies.now ?? Date.now)()).toISOString()
           }
         })),
-        maxGenerationBytes,
-        maxRunBytes,
-        diskReserveBytes,
+        maxGenerationBytes: capture.maxGenerationBytes,
+        maxRunBytes: capture.maxRunBytes,
+        diskReserveBytes: capture.diskReserveBytes,
         availableBytes: Math.max(0, freeBytes - reservedDiskBytes + reservedBytes),
-        publicationAvailableBytes: Math.max(
-          0,
-          publicationFreeBytes - reservedDiskBytes + reservedBytes
-        ),
         captureCancelled: request.signal?.aborted ?? false
       },
       request.signal?.aborted ? undefined : request.signal
@@ -817,7 +1045,7 @@ const persistEvidence = async (
     if (!('generations' in result)) {
       throw new Error('File-evidence persistence returned an invalid result.')
     }
-    await assertEvidenceRootIdentity(evidenceRoot.path, evidenceRoot.identity)
+    await assertEvidenceRootIdentity(capture.evidenceRoot.path, capture.evidenceRoot.identity)
     for (const generation of result.generations) {
       const workingFile = workingFilesByPath.get(generation.path)
       if (workingFile) {
@@ -833,10 +1061,10 @@ const persistEvidence = async (
     if (process.env.OPEN_SCIENCE_DEBUG_FILE_EVIDENCE === '1') {
       log.error('file-evidence publication failed', diagnosticErrorFields(error))
     }
-    await runEvidenceWorker(evidenceRoot.path, {
+    await runEvidenceWorker(capture.evidenceRoot.path, {
       operation: 'cleanup',
-      expectedRootIdentity: evidenceRoot.identity,
-      names: [stagingName]
+      expectedRootIdentity: capture.evidenceRoot.identity,
+      receiptName: capture.receiptName
     }).catch(() => undefined)
     return {
       workingFiles: stripUnpublishedGenerations(workingFiles),
@@ -868,6 +1096,12 @@ const startWorkingFileObservation = async (
       startRootObservation(root.path, root.logicalPath, logicalSessionRoot, dependencies)
     )
   )
+  const capture = await beginEvidenceCapture(request, observations, dependencies).catch((error) => {
+    if (process.env.OPEN_SCIENCE_DEBUG_FILE_EVIDENCE === '1') {
+      log.error('file-evidence initial capture failed', diagnosticErrorFields(error))
+    }
+    return undefined
+  })
   let finished = false
   return {
     finish: async (signal) => {
@@ -880,11 +1114,18 @@ const startWorkingFileObservation = async (
         { ...request, signal: signal ?? request.signal },
         roots.map((root) => root.kind),
         results,
+        capture,
         dependencies
       )
     }
   }
 }
 
-export { reconcileWorkingFileEvidence, startWorkingFileObservation, toPortableNotebookRelativePath }
-export type { WorkingFileObservation, WorkingFileObservationResult }
+export {
+  completeWorkingFileEvidence,
+  deleteWorkingFileEvidenceProject,
+  reconcileWorkingFileEvidence,
+  startWorkingFileObservation,
+  toPortableNotebookRelativePath
+}
+export type { WorkingFileEvidenceLocation, WorkingFileObservation, WorkingFileObservationResult }

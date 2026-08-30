@@ -218,6 +218,7 @@ describe('NotebookRunTerminalizationOwner', () => {
       relationCount: 2,
       generationCount: 1,
       scientificOutputCount: 1,
+      initialViewState: 'complete' as const,
       managedRootsFinalState: 'partial' as const,
       scientificOutputAnalysis: 'partial' as const,
       fileReads: 'unavailable' as const,

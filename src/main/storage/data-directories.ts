@@ -4,6 +4,7 @@ export const RELOCATABLE_DATA_DIRS = [
   'artifacts',
   'delegation',
   'notebooks',
+  'notebook-file-evidence',
   'uploads',
   'workspaces'
 ] as const

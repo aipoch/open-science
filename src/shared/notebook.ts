@@ -417,6 +417,7 @@ export type NotebookRunFileEvidence = {
   relationCount?: number
   generationCount?: number
   scientificOutputCount: number
+  initialViewState: NotebookFileEvidenceCoverage
   managedRootsFinalState: NotebookFileEvidenceCoverage
   scientificOutputAnalysis: NotebookFileEvidenceCoverage
   fileReads: NotebookFileEvidenceCoverage

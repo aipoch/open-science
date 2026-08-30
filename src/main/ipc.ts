@@ -945,6 +945,7 @@ const createApplicationModules = async (
         const owner = sideChatOwnerRef.current
         if (!owner) throw new Error('Side chat runtime cleanup is not initialized.')
         await owner.completeProjectDeletion(projectId)
+        await notebookService.deleteProjectFileEvidence(projectId)
       },
       completeProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)

@@ -1373,6 +1373,9 @@ describe('notebook runtime service', () => {
       cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
       notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
       dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+      fileEvidenceStorageRoot: root,
+      fileEvidenceRoot: join(root, 'notebook-file-evidence', 'default-project', 'session-1'),
+      fileEvidenceStoragePrefix: 'notebook-file-evidence/default-project/session-1',
       runtimeRoot: join(root, 'runtime')
     })
     expect(captureCompletedRun).toHaveBeenCalledWith(

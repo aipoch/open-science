@@ -4530,6 +4530,37 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     })
   })
 
+  it('keeps save(list = ...) conservative because the serialized names are dynamic', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-save-list-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-save-list',
+        'value <- 1\nnames <- "value"\nsave(list = names, file = "result.RData")',
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['dynamic-namespace'])
+    })
+  })
+
   it('classifies a base R plot with a deterministic marker loop without marking it unknown', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-plot-loop-'))
     temporaryRoots.push(storageRoot)

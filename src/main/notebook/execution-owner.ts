@@ -47,6 +47,7 @@ import {
   type NotebookDependencyProjection
 } from './dependency-analysis'
 import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
+import { getNotebookFileEvidenceLocation } from './repository'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
@@ -89,6 +90,7 @@ type McpRpcConnectionResolver = (
 
 type NotebookExecutionOwnerOptions = {
   configRoot: string
+  storageRoot: string
   runTerminalization: NotebookRunTerminalizationOwner
   dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   environmentStateTracker: Pick<EnvironmentStateTracker, 'prepareRun' | 'captureCompletedRun'>
@@ -158,6 +160,24 @@ class NotebookExecutionOwner {
 
   constructor(private readonly options: NotebookExecutionOwnerOptions) {
     this.shellProcess = options.shellProcess ?? new NotebookShellProcessAdapter(options.platform)
+  }
+
+  private fileEvidenceLocation(session: NotebookSessionAggregate): {
+    fileEvidenceStorageRoot: string
+    fileEvidenceRoot: string
+    fileEvidenceStoragePrefix: string
+  } {
+    const location = getNotebookFileEvidenceLocation(
+      this.options.storageRoot,
+      session.projectId,
+      session.sessionId,
+      session.lane
+    )
+    return {
+      fileEvidenceStorageRoot: this.options.storageRoot,
+      fileEvidenceRoot: location.root,
+      fileEvidenceStoragePrefix: location.storageKeyPrefix
+    }
   }
 
   setControlCompletionInterceptor(
@@ -293,6 +313,7 @@ class NotebookExecutionOwner {
               environment,
               notebookSessionRoot: session.notebookSessionRoot,
               dataRoot: session.dataRoot,
+              ...this.fileEvidenceLocation(session),
               runtimeRoot: session.runtimeRoot,
               protectedDirs: [
                 getAppClaudeConfigDir(this.options.configRoot),
@@ -526,6 +547,7 @@ class NotebookExecutionOwner {
                   cwd: session.cwd,
                   notebookSessionRoot: session.notebookSessionRoot,
                   dataRoot: session.dataRoot,
+                  ...this.fileEvidenceLocation(session),
                   runtimeRoot: session.runtimeRoot,
                   protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
                   timeoutMs: request.timeoutMs,
@@ -602,6 +624,7 @@ class NotebookExecutionOwner {
         const workingFileObservation = await startWorkingFileObservation({
           dataRoot: session.dataRoot,
           notebookSessionRoot: session.notebookSessionRoot,
+          ...this.fileEvidenceLocation(session),
           runId,
           signal
         })

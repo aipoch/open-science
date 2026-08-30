@@ -58,7 +58,11 @@ import {
   type InspectPackagesRequest,
   type InspectPackagesResult
 } from './package-operations'
-import { NotebookRunRepository, getRuntimeRoot } from './repository'
+import {
+  NotebookRunRepository,
+  getNotebookFileEvidenceLocation,
+  getRuntimeRoot
+} from './repository'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -107,6 +111,10 @@ import {
 } from './execution-owner'
 import { NotebookSessionReadModel, type NotebookHandoffContext } from './session-read-model'
 import { notebookLaneKey } from './lane-identity'
+import {
+  completeWorkingFileEvidence,
+  deleteWorkingFileEvidenceProject
+} from './working-file-observer'
 import {
   NotebookSessionLifecycleOwner,
   type NotebookExecutorLifecycleCallbacks,
@@ -508,11 +516,34 @@ class NotebookRuntimeService {
     })
     this.runTerminalization = new NotebookRunTerminalizationOwner({
       repository: this.repository,
-      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession)
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession),
+      afterCommit: async (session, run) => {
+        const location = getNotebookFileEvidenceLocation(
+          options.dataRoot,
+          session.projectId,
+          session.sessionId,
+          session.lane
+        )
+        await completeWorkingFileEvidence(
+          {
+            storageRoot: options.dataRoot,
+            root: location.root,
+            storageKeyPrefix: location.storageKeyPrefix
+          },
+          run
+        ).catch((error) => {
+          this.runtimeLogger.error('Notebook file-evidence receipt settlement failed', {
+            ...errorLogFields(error),
+            runId: run.runId,
+            lane: notebookLaneKey(session.lane)
+          })
+        })
+      }
     })
     this.helperModules = new NotebookHelperModuleHost(options.helperModuleCatalog)
     this.executionOwner = new NotebookExecutionOwner({
       configRoot: options.configRoot,
+      storageRoot: options.dataRoot,
       runTerminalization: this.runTerminalization,
       dataExecutionAdmission: this.dataExecutionAdmission,
       environmentStateTracker: this.environmentStateTracker,
@@ -1072,6 +1103,10 @@ class NotebookRuntimeService {
 
   async shutdownProject(projectId: string): Promise<void> {
     return this.sessionLifecycle.shutdownProject(projectId)
+  }
+
+  async deleteProjectFileEvidence(projectId: string): Promise<void> {
+    await deleteWorkingFileEvidenceProject(this.options.dataRoot, projectId)
   }
 
   beginProjectDeletion(projectId: string): void {

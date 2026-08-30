@@ -52,6 +52,9 @@ export type NotebookSessionExecutionRequest = {
   cwd: string
   notebookSessionRoot: string
   dataRoot: string
+  fileEvidenceStorageRoot?: string
+  fileEvidenceRoot?: string
+  fileEvidenceStoragePrefix?: string
   runtimeRoot: string
   protectedDirs?: string[]
   timeoutMs?: number

@@ -52,6 +52,10 @@ type TerminalizeNotebookRunRequest<Result extends NotebookRunTerminalResult> = {
 type NotebookRunTerminalizationOwnerOptions = {
   repository: Pick<NotebookRunRepository, 'appendRun' | 'updateRun'>
   notifyChanged: (session: NotebookRunTerminalizationSession) => void
+  afterCommit?: (
+    session: NotebookRunTerminalizationSession,
+    run: NotebookRunRecord
+  ) => Promise<void>
   now?: () => number
 }
 
@@ -65,6 +69,7 @@ const unavailableFileEvidence = (): NotebookRunFileEvidence => ({
   schemaVersion: 1,
   state: 'unavailable',
   scientificOutputCount: 0,
+  initialViewState: 'unavailable',
   managedRootsFinalState: 'unavailable',
   scientificOutputAnalysis: 'unavailable',
   fileReads: 'unavailable',
@@ -255,6 +260,8 @@ class NotebookRunTerminalizationOwner {
     if (!run) {
       throw new Error(`Notebook run not found after update: ${terminalRun.runId}`)
     }
+
+    await this.options.afterCommit?.(session, run)
 
     return run
   }

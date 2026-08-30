@@ -1696,7 +1696,12 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
       return
     }
     if (op === 'assign') unknown.push('dynamic-assignment')
-    if (op === 'save.image') unknown.push('dynamic-namespace')
+    if (
+      op === 'save.image' ||
+      (op === 'save' &&
+        (namedArgument(expr, 'list') !== null || namedArgument(expr, 'envir') !== null))
+    )
+      unknown.push('dynamic-namespace')
     if (['get', 'eval', 'parse', 'substitute', 'do.call'].includes(op))
       unknown.push('dynamic-namespace')
     if (op === 'library' || op === 'require') {
