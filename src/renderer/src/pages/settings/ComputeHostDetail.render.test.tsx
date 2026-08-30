@@ -568,6 +568,24 @@ describe('ComputeHostDetail', () => {
     expect(clearScratch).toHaveBeenCalledWith('ssh:biowulf')
   })
 
+  it('shows a restore auto-detection failure while the scratch root remains pinned', async () => {
+    const clearScratch = vi.fn().mockRejectedValue(new Error('clear failed'))
+    useComputeStore.setState({
+      hosts: [host({ scratchRoot: '/scratch/user', scratchPinned: true })],
+      isLoaded: true,
+      clearScratch
+    })
+
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+    const restoreButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Restore auto-detection'
+    )
+    await act(async () => restoreButton?.click())
+
+    expect(container.textContent).toContain('clear failed')
+    expect(container.textContent).toContain('PINNED')
+  })
+
   it('does not allow saving an empty scratch root', () => {
     useComputeStore.setState({ hosts: [host()], isLoaded: true })
 

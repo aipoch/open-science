@@ -87,7 +87,6 @@ const HostCard = ({
       </button>
 
       <TooltipProvider delayDuration={200}>
-        {/* File browser: enabled when host has been probed and is reachable. */}
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex">
@@ -95,29 +94,15 @@ const HostCard = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                disabled={status !== 'last_probe_ok'}
                 onClick={onBrowse}
-                aria-label={
-                  status === 'last_probe_ok'
-                    ? t('Browse files on {{name}}', { name: host.displayName })
-                    : t('Host must be probed and reachable to browse files')
-                }
-                className={cn(
-                  'shrink-0',
-                  status === 'last_probe_ok'
-                    ? 'text-muted-foreground hover:text-foreground'
-                    : 'text-muted-foreground/50'
-                )}
+                aria-label={t('Browse files on {{name}}', { name: host.displayName })}
+                className="shrink-0 text-muted-foreground hover:text-foreground"
               >
                 <Folder className="size-4" aria-hidden="true" />
               </Button>
             </span>
           </TooltipTrigger>
-          <TooltipContent>
-            {status === 'last_probe_ok'
-              ? t('Browse files')
-              : t('Probe the host first to enable browsing')}
-          </TooltipContent>
+          <TooltipContent>{t('Browse files')}</TooltipContent>
         </Tooltip>
         <ComputeHostRemovalDialog host={host} onRemoved={onRemoved} />
       </TooltipProvider>

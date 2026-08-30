@@ -835,11 +835,6 @@ export function ComputeHostDetail({
               aria-label={t('Scratch root path')}
               aria-describedby={scratchError ? 'scratch-error' : undefined}
             />
-            {scratchError ? (
-              <p id="scratch-error" role="alert" className="text-xs text-destructive">
-                {errorText(scratchError)}
-              </p>
-            ) : null}
             <div className="flex justify-end gap-2">
               <Button
                 type="button"
@@ -881,6 +876,11 @@ export function ComputeHostDetail({
             {t('Not set. Will be updated from $SCRATCH on next probe.')}
           </p>
         )}
+        {scratchError ? (
+          <p id="scratch-error" role="alert" className="mt-2 text-xs text-destructive">
+            {errorText(scratchError)}
+          </p>
+        ) : null}
       </div>
 
       {/* Concurrent job limit block */}

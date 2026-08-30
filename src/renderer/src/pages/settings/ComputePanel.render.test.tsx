@@ -232,4 +232,15 @@ describe('ComputePanel', () => {
     expect(container.textContent).toContain('Last probe succeeded')
     expect(container.textContent).not.toContain('Connected')
   })
+
+  it('allows browsing without treating a persisted Probe as a reachability gate', () => {
+    useComputeStore.setState({ hosts: [host()], isLoaded: true })
+
+    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+
+    const browseButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Browse files on biowulf"]'
+    )
+    expect(browseButton?.disabled).toBe(false)
+  })
 })
