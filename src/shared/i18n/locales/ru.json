@@ -1395,6 +1395,7 @@
     "Node v": "Node v",
     "None": "Нет",
     "Not available yet.": "Еще недоступно.",
+    "The app could not write to the log file during its most recent attempt.": "При последней попытке приложению не удалось записать данные в файл журнала.",
     "Not compatible with the active agent framework.": "Несовместимо с активным фреймворком агента.",
     "Not configured": "Не настроен",
     "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "Не настроен — пакеты поступают с публичных хостов (conda.anaconda.org, pypi.org)",

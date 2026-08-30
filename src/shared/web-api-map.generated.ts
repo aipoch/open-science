@@ -77,7 +77,7 @@ export const WEB_INVOKE_CHANNELS = {
   'localFs.removeGrantedRoot': 'local-fs:granted-roots:remove',
   'localFs.reveal': 'local-fs:reveal',
   'localFs.setGrantedRootAccess': 'local-fs:granted-roots:set-access',
-  'logs.getPath': 'logs:get-path',
+  'logs.getStatus': 'logs:get-status',
   'logs.openFile': 'logs:open-file',
   'logs.revealInFolder': 'logs:reveal-in-folder',
   'memory.clearAll': 'memory:clear-all',

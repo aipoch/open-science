@@ -181,7 +181,13 @@ const installApi = (): void => {
       onChanged: vi.fn().mockReturnValue(() => undefined)
     },
     logs: {
-      getPath: vi.fn().mockResolvedValue('/Users/x/Library/Logs/Open Science/main.log'),
+      getStatus: vi.fn().mockResolvedValue({
+        configured: true,
+        path: '/Users/x/Library/Logs/Open Science/main.log',
+        existing: true,
+        lastWriteSucceeded: true,
+        lastFailureCategory: null
+      }),
       openFile: vi.fn().mockResolvedValue({ opened: true }),
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     },
@@ -1949,6 +1955,38 @@ describe('SettingsPage layout', () => {
       (window as unknown as { api: { logs: { revealInFolder: ReturnType<typeof vi.fn> } } }).api
         .logs.revealInFolder
     ).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not enable log actions for a configured path whose file does not exist', async () => {
+    const logs = (
+      window as unknown as {
+        api: {
+          logs: {
+            getStatus: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.logs
+    logs.getStatus.mockResolvedValueOnce({
+      configured: true,
+      path: '/Users/x/Library/Logs/Open Science/main.log',
+      existing: false,
+      lastWriteSucceeded: null,
+      lastFailureCategory: null
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('General')?.click())
+
+    const buttons = Array.from(document.body.querySelectorAll('button'))
+    const openButton = buttons.find((button) => /^open$/i.test((button.textContent ?? '').trim()))
+    const revealButton = buttons.find((button) =>
+      /^reveal$/i.test((button.textContent ?? '').trim())
+    )
+    expect(openButton?.disabled).toBe(true)
+    expect(revealButton?.disabled).toBe(true)
   })
 
   it('opens the Remote panel with three scenario-based access modes', async () => {

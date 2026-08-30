@@ -113,7 +113,13 @@ beforeEach(() => {
   })
   ;(window as unknown as { api: unknown }).api = {
     logs: {
-      getPath: vi.fn().mockResolvedValue('/logs/main.log'),
+      getStatus: vi.fn().mockResolvedValue({
+        configured: true,
+        path: '/logs/main.log',
+        existing: true,
+        lastWriteSucceeded: true,
+        lastFailureCategory: null
+      }),
       openFile: vi.fn().mockResolvedValue({ opened: true }),
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     },
@@ -315,6 +321,30 @@ describe('GeneralPanel close behavior', () => {
 
     expect(settingsApi.setClosePreference).toHaveBeenCalledWith({ preference: 'quit' })
     expect(useSettingsStore.getState().closePreference).toBe('quit')
+  })
+})
+
+describe('GeneralPanel diagnostics', () => {
+  it('shows a recent write failure without hiding an existing log file', async () => {
+    const getStatus = (
+      window as unknown as { api: { logs: { getStatus: ReturnType<typeof vi.fn> } } }
+    ).api.logs.getStatus
+    getStatus.mockResolvedValueOnce({
+      configured: true,
+      path: '/logs/main.log',
+      existing: true,
+      lastWriteSucceeded: false,
+      lastFailureCategory: 'append'
+    })
+
+    await act(async () => root.render(<GeneralPanel />))
+    await flush()
+
+    expect(container.textContent).toContain(
+      'The app could not write to the log file during its most recent attempt.'
+    )
+    expect(findButton(/^open$/i)?.disabled).toBe(false)
+    expect(findButton(/^reveal$/i)?.disabled).toBe(false)
   })
 })
 

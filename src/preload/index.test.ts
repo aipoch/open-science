@@ -344,7 +344,7 @@ describe('preload bridge — public surface inventory', () => {
       'locale.initialize',
       'locale.onChanged',
       'locale.setPreference',
-      'logs.getPath',
+      'logs.getStatus',
       'logs.openFile',
       'logs.revealInFolder',
       'memory.clearAll',

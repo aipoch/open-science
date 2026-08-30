@@ -14,6 +14,7 @@ import { errorDetail } from '@/lib/error-detail'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
+import type { LogFileStatus } from '../../../../shared/logs'
 import { APP } from '../../../../shared/app-config'
 import { AppIconSection } from './AppIconSection'
 import { AppVersionSection } from './AppVersionSection'
@@ -59,7 +60,7 @@ const XMark = ({ className }: { className?: string }): React.JSX.Element => (
 const GeneralPanel = (): React.JSX.Element => {
   const { t } = useTranslation()
   const isMac = window.api.platform === 'darwin'
-  const [logPath, setLogPath] = useState<string | null>(null)
+  const [logStatus, setLogStatus] = useState<LogFileStatus | null>(null)
   const [message, setMessage] = useState<GeneralActionError | undefined>(undefined)
   const [isOpening, setIsOpening] = useState(false)
   const [cli, setCli] = useState<CliLauncherStatus | null>(null)
@@ -71,9 +72,12 @@ const GeneralPanel = (): React.JSX.Element => {
   const setClosePreference = useSettingsStore((state) => state.setClosePreference)
 
   useEffect(() => {
-    void window.api.logs.getPath().then(setLogPath)
+    void window.api.logs.getStatus().then(setLogStatus, () => setLogStatus(null))
     void window.api.cli.getStatus().then(setCli)
   }, [])
+
+  const logPath = logStatus?.path ?? null
+  const logExists = logStatus?.existing === true
 
   const handleCli = async (action: 'install' | 'uninstall'): Promise<void> => {
     setIsUpdatingCli(true)
@@ -259,7 +263,7 @@ const GeneralPanel = (): React.JSX.Element => {
               type="button"
               variant="outline"
               onClick={() => void handleReveal()}
-              disabled={!logPath}
+              disabled={!logExists}
             >
               <FolderOpen className="size-4" aria-hidden="true" />
               {t('Reveal')}
@@ -268,7 +272,7 @@ const GeneralPanel = (): React.JSX.Element => {
               type="button"
               variant="outline"
               onClick={() => void handleOpenLog()}
-              disabled={isOpening || !logPath}
+              disabled={isOpening || !logExists}
             >
               <ExternalLink className="size-4" aria-hidden="true" />
               {isOpening ? t('Opening…') : t('Open')}
@@ -282,6 +286,12 @@ const GeneralPanel = (): React.JSX.Element => {
         >
           {logPath ?? t('Not available yet.')}
         </pre>
+
+        {logStatus?.lastWriteSucceeded === false ? (
+          <p className="mt-2 text-xs text-destructive" role="status">
+            {t('The app could not write to the log file during its most recent attempt.')}
+          </p>
+        ) : null}
 
         {message ? (
           <div className="mt-2">

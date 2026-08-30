@@ -9,7 +9,7 @@ import type {
   RemoveGrantedLocalRootRequest,
   SetGrantedLocalRootAccessRequest
 } from '../shared/local-fs'
-import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   NotificationInboxSnapshot,
   NotificationMarkAllReadRequest,
@@ -138,7 +138,9 @@ const localFsCommands = Object.freeze({
 })
 
 const logsCommands = Object.freeze({
-  getPath: defineApplicationCommand<'logs:get-path', readonly [], string | null>('logs:get-path'),
+  getStatus: defineApplicationCommand<'logs:get-status', readonly [], LogFileStatus>(
+    'logs:get-status'
+  ),
   openFile: defineApplicationCommand<'logs:open-file', readonly [], OpenLogFileResult>(
     'logs:open-file'
   ),
@@ -485,7 +487,8 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[3], {
-      'logs:get-path': () => dependencies.logs.getPath(),
+      'logs:get-status': ({ callerContext }) =>
+        localCommand(callerContext, 'logs:get-status', () => dependencies.logs.getStatus()),
       'logs:open-file': ({ callerContext }) =>
         localCommand(callerContext, 'logs:open-file', () => dependencies.logs.openFile()),
       'logs:reveal-in-folder': ({ callerContext }) =>

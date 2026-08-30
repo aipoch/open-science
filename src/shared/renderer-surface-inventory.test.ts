@@ -179,7 +179,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'read-preview',
     'reveal'
   ],
-  logs: ['open-file', 'reveal-in-folder'],
+  logs: ['get-status', 'open-file', 'reveal-in-folder'],
   'notebook-env': ['cancel', 'provision', 'repair'],
   notebook: ['export-ipynb', 'export-ipynb-all'],
   runtime: [

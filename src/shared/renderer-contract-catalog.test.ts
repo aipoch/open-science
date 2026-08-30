@@ -13,6 +13,17 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('keeps every logs command local-only', () => {
+    const logs = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'logs')
+
+    expect(logs?.contracts.length).toBeGreaterThan(0)
+    expect(
+      logs?.contracts.every(
+        ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
+      )
+    ).toBe(true)
+  })
+
   it('pins the complete capability-owned inventory and legacy map projection', () => {
     const projection = projectRendererContractMaps(RENDERER_CONTRACT_CATALOG)
 

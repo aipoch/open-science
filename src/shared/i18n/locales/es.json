@@ -1399,6 +1399,7 @@
     "Node v": "Node v",
     "None": "Ninguno",
     "Not available yet.": "Aún no disponible.",
+    "The app could not write to the log file during its most recent attempt.": "La aplicación no pudo escribir en el archivo de registro durante el intento más reciente.",
     "Not compatible with the active agent framework.": "No es compatible con el framework de agentes activo.",
     "Not configured": "No configurado",
     "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "No configurado: los paquetes provienen de hosts públicos (conda.anaconda.org, pypi.org)",

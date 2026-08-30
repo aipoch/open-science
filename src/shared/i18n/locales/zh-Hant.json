@@ -1404,6 +1404,7 @@
     "Node v": "Node 版本 ",
     "None": "無",
     "Not available yet.": "尚不可用。",
+    "The app could not write to the log file during its most recent attempt.": "應用程式在最近一次嘗試中無法寫入日誌檔案。",
     "Not compatible with the active agent framework.": "與目前的智能體框架不相容。",
     "Not configured": "未設定",
     "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "未設定 —— 套件來自公共來源（conda.anaconda.org、pypi.org）",

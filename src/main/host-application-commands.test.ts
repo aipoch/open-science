@@ -75,9 +75,15 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     setGrantedRootAccess: vi.fn(async () => [])
   },
   logs: {
-    getPath: vi.fn(() => '/logs/main.log'),
+    getStatus: vi.fn(async () => ({
+      configured: true,
+      path: '/logs/main.log',
+      existing: true,
+      lastWriteSucceeded: true,
+      lastFailureCategory: null
+    })),
     openFile: vi.fn(async () => ({ opened: true })),
-    revealInFolder: vi.fn(() => ({ revealed: true }))
+    revealInFolder: vi.fn(async () => ({ revealed: true }))
   },
   notifications: {
     getSnapshot: vi.fn(async () => ({
@@ -263,7 +269,7 @@ describe('Host application commands', () => {
       hostApplicationCommands.localFs.setGrantedRootAccess,
       invocation([{ id: 'root-1', access: 'rw' }])
     )
-    await router.dispatcher.invoke(hostApplicationCommands.logs.getPath, invocation([]))
+    await router.dispatcher.invoke(hostApplicationCommands.logs.getStatus, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.logs.openFile, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.logs.revealInFolder, invocation([]))
     await router.dispatcher.invoke(
@@ -480,7 +486,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(27)
+    expect(localOnlyChannels).toHaveLength(28)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(
@@ -494,6 +500,28 @@ describe('Host application commands', () => {
     expect(
       ownerMethods.filter(vi.isMockFunction).every((method) => method.mock.calls.length === 0)
     ).toBe(true)
+  })
+
+  it('rejects every logs command from a remote Web caller before entering the owner', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerHostApplicationCommands(router.registrar, dependencies)
+    const remoteCaller = createWebCallerContext('remote-browser', { location: 'remote' })
+    const channels =
+      RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'logs')?.contracts.flatMap(
+        ({ channel }) => (channel === null ? [] : [channel])
+      ) ?? []
+
+    expect(channels.length).toBeGreaterThan(0)
+    for (const channel of channels) {
+      await expect(
+        router.dispatcher.invoke(commandByName(channel), invocation([], remoteCaller))
+      ).rejects.toThrow(`Channel only available from the local app: ${channel}`)
+    }
+
+    expect(dependencies.logs.getStatus).not.toHaveBeenCalled()
+    expect(dependencies.logs.openFile).not.toHaveBeenCalled()
+    expect(dependencies.logs.revealInFolder).not.toHaveBeenCalled()
   })
 
   it('preserves the five-state Remote Access authority and freshness matrix', async () => {

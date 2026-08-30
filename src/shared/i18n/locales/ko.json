@@ -1350,6 +1350,7 @@
     "Node v": "Node v",
     "None": "없음",
     "Not available yet.": "아직 사용할 수 없습니다.",
+    "The app could not write to the log file during its most recent attempt.": "최근 시도에서 앱이 로그 파일에 쓰지 못했습니다.",
     "Not compatible with the active agent framework.": "활성 에이전트 프레임워크와 호환되지 않습니다.",
     "Not configured": "구성되지 않음",
     "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "구성되지 않음 - 패키지가 공개 호스트(conda.anaconda.org, pypi.org)에서 제공됩니다.",

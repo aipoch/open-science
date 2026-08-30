@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Hoisted so the mock factory can mutate `logPath` per test.
-const logPath = vi.hoisted(() => ({ value: '/logs/main.log' as string | null }))
+// Hoisted so the mock factory can mutate the observed log state per test.
+const logStatus = vi.hoisted(() => ({
+  value: {
+    configured: true,
+    path: '/logs/main.log' as string | null,
+    existing: true,
+    lastWriteSucceeded: true as boolean | null,
+    lastFailureCategory: null as 'directory' | 'inspect' | 'rotation' | 'append' | null
+  }
+}))
 
 // Capture ipcMain.handle registrations and stub shell.showItemInFolder / shell.openPath so handlers
 // can be invoked directly from tests.
@@ -22,7 +30,7 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('./logger', () => ({
-  getLogFilePath: () => logPath.value
+  getLogFileStatus: async () => logStatus.value
 }))
 
 const { registerLogsIpcHandlers } = await import('./logs-ipc')
@@ -35,36 +43,48 @@ describe('logs IPC handlers', () => {
     handlers.clear()
     openPath.mockClear()
     showItemInFolder.mockClear()
-    logPath.value = '/logs/main.log'
+    logStatus.value = {
+      configured: true,
+      path: '/logs/main.log',
+      existing: true,
+      lastWriteSucceeded: true,
+      lastFailureCategory: null
+    }
   })
 
   it('delegates every channel to one injected command owner', async () => {
     const owner: LogsCommandOwner = {
-      getPath: vi.fn(() => '/injected/main.log'),
+      getStatus: vi.fn(async () => ({
+        configured: true,
+        path: '/injected/main.log',
+        existing: true,
+        lastWriteSucceeded: true,
+        lastFailureCategory: null
+      })),
       openFile: vi.fn().mockResolvedValue({ opened: true }),
-      revealInFolder: vi.fn(() => ({ revealed: true }))
+      revealInFolder: vi.fn(async () => ({ revealed: true }))
     }
 
     expect(registerLogsIpcHandlers(owner)).toBe(owner)
-    expect(invoke('logs:get-path')).toBe('/injected/main.log')
+    await expect(invoke('logs:get-status')).resolves.toMatchObject({ path: '/injected/main.log' })
     await expect(invoke('logs:open-file')).resolves.toEqual({ opened: true })
-    expect(invoke('logs:reveal-in-folder')).toEqual({ revealed: true })
+    await expect(invoke('logs:reveal-in-folder')).resolves.toEqual({ revealed: true })
   })
 
   it('registers the diagnostics channels', () => {
     handlers.clear()
     registerLogsIpcHandlers()
 
-    expect(handlers.has('logs:get-path')).toBe(true)
+    expect(handlers.has('logs:get-status')).toBe(true)
     expect(handlers.has('logs:open-file')).toBe(true)
     expect(handlers.has('logs:reveal-in-folder')).toBe(true)
   })
 
-  it('returns the log file path', () => {
+  it('returns the observed log file status', async () => {
     handlers.clear()
     registerLogsIpcHandlers()
 
-    expect(invoke('logs:get-path')).toBe('/logs/main.log')
+    await expect(invoke('logs:get-status')).resolves.toEqual(logStatus.value)
   })
 
   it('opens the log file (not its folder) and reports success', async () => {
@@ -87,19 +107,42 @@ describe('logs IPC handlers', () => {
     })
   })
 
-  it('reveals the log file in its containing folder when a path is available', () => {
+  it('does not ask the OS to open a configured log file that does not exist', async () => {
+    logStatus.value = {
+      configured: true,
+      path: '/logs/main.log',
+      existing: false,
+      lastWriteSucceeded: null,
+      lastFailureCategory: null
+    }
     registerLogsIpcHandlers()
 
-    expect(invoke('logs:reveal-in-folder')).toEqual({ revealed: true })
+    await expect(invoke('logs:open-file')).resolves.toEqual({
+      opened: false,
+      error: 'No log file is available yet.'
+    })
+    expect(openPath).not.toHaveBeenCalled()
+  })
+
+  it('reveals the log file in its containing folder when a path is available', async () => {
+    registerLogsIpcHandlers()
+
+    await expect(invoke('logs:reveal-in-folder')).resolves.toEqual({ revealed: true })
     expect(showItemInFolder).toHaveBeenCalledTimes(1)
     expect(showItemInFolder).toHaveBeenCalledWith('/logs/main.log')
   })
 
-  it('reports a missing log file when reveal is requested before one is written', () => {
-    logPath.value = null
+  it('reports a missing log file when reveal is requested before one is written', async () => {
+    logStatus.value = {
+      configured: true,
+      path: '/logs/main.log',
+      existing: false,
+      lastWriteSucceeded: null,
+      lastFailureCategory: null
+    }
     registerLogsIpcHandlers()
 
-    expect(invoke('logs:reveal-in-folder')).toEqual({
+    expect(await invoke('logs:reveal-in-folder')).toEqual({
       revealed: false,
       error: 'No log file is available yet.'
     })

@@ -1335,6 +1335,7 @@
     "Node v": "Node v",
     "None": "なし",
     "Not available yet.": "まだ利用できません。",
+    "The app could not write to the log file during its most recent attempt.": "直近の試行で、アプリはログファイルに書き込めませんでした。",
     "Not compatible with the active agent framework.": "アクティブなエージェントフレームワークと互換性がありません。",
     "Not configured": "未設定",
     "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "未設定 — パッケージはパブリックホスト (conda.anaconda.org、pypi.org) から取得されます。",
