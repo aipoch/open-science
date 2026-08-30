@@ -301,7 +301,9 @@ const createMainWindow = (
         if (initial) {
           // The startup shell waits for the resulting closed event and then lets the lifecycle create a
           // fresh window. A rejected load Promise is not guaranteed to reach its did-fail-load listener.
-          window.destroy()
+          // If crash recovery has already started, this is a stale rejection from the superseded initial
+          // attempt; leave the recovery-owned window intact.
+          if (rendererRecoveryTimes.length === 0) window.destroy()
           return
         }
         recoverRenderer('load-failed', true)

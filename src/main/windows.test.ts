@@ -1343,6 +1343,35 @@ describe('close chord interception', () => {
     await vi.waitFor(() => expect(window.destroyMock).toHaveBeenCalledTimes(1))
   })
 
+  it('keeps the window when a stale initial load rejects after crash recovery starts', async () => {
+    let rejectInitial!: (error: Error) => void
+    let loadAttempt = 0
+    loadRendererDocument = () => {
+      loadAttempt += 1
+      if (loadAttempt === 1) {
+        return new Promise<void>((_resolve, reject) => {
+          rejectInitial = reject
+        })
+      }
+      return Promise.resolve()
+    }
+
+    createMainWindow()
+    const window = currentWindow!
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
+    expect(window.loadFileMock).toHaveBeenCalledTimes(2)
+    await Promise.resolve()
+
+    rejectInitial(new Error('superseded initial load'))
+    await vi.waitFor(() =>
+      expect(windowLogSpies.error).toHaveBeenCalledWith('renderer document load rejected', {
+        errorName: 'Error'
+      })
+    )
+
+    expect(window.destroyMock).not.toHaveBeenCalled()
+  })
+
   it('recovers a main-frame document load failure within the renderer retry budget', async () => {
     showMessageBoxMock.mockReturnValueOnce(new Promise(() => undefined))
     createMainWindow()
