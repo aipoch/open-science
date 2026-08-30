@@ -158,7 +158,9 @@ describe('notebook run repository', () => {
         ],
         fileEvidence: {
           schemaVersion: 1,
-          evidenceId: 'notebook-file-evidence-external-run',
+          activityId: 'external-run',
+          activityKind: 'notebook-run',
+          evidenceId: 'execution-file-evidence-external-run',
           state: 'partial',
           checksum: 'a'.repeat(64),
           storageKey: 'file-evidence/runs/external-run.json',
@@ -194,7 +196,9 @@ describe('notebook run repository', () => {
           ],
           fileEvidence: {
             schemaVersion: 1,
-            evidenceId: 'notebook-file-evidence-external-run',
+            activityId: 'external-run',
+            activityKind: 'notebook-run',
+            evidenceId: 'execution-file-evidence-external-run',
             state: 'partial',
             checksum: 'a'.repeat(64),
             storageKey: 'file-evidence/runs/external-run.json',

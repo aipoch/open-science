@@ -94,6 +94,21 @@ describe('ComputeJob repository (SQLite integration)', () => {
     await migrateApplicationDatabase(client)
 
     const repo = makeJobRepository(client)
+    const fileEvidence = {
+      schemaVersion: 1 as const,
+      activityId: 'test-job-1',
+      activityKind: 'compute-job' as const,
+      parentActivityId: 'run-1',
+      state: 'unavailable' as const,
+      scientificOutputCount: 0,
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'unavailable' as const,
+      scientificOutputAnalysis: 'unavailable' as const,
+      fileReads: 'unavailable' as const,
+      externalPaths: 'unavailable' as const,
+      writerAttribution: 'complete' as const,
+      reasonCodes: ['remote-output-not-harvested' as const]
+    }
 
     // Fresh DB: no jobs.
     expect(await repo.findNonTerminal()).toEqual([])
@@ -105,6 +120,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
       shape: 'direct_ssh',
       sessionId: 'sess-1',
       projectId: 'proj-1',
+      producerRunId: 'run-1',
+      fileEvidence,
       intent: 'smoke test',
       command: 'echo hello',
       commandHash: 'abc123',
@@ -118,6 +135,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
     expect(created.command).toBe('echo hello')
     expect(created.timeout_seconds).toBe(3600)
     expect(created.remote_workdir).toBe('~/.openscience/jobs/test-job-1')
+    expect(created.producer_run_id).toBe('run-1')
+    expect(created.file_evidence).toEqual(fileEvidence)
     expect(created.created_at).toBeGreaterThan(0)
     expect(created.submitted_at).toBeGreaterThan(0)
 
@@ -156,6 +175,105 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
     // hasActiveJobsForProvider.
     expect(await repo.hasActiveJobsForProvider('ssh:biowulf')).toBe(false)
+
+    await client.computeJob.update({
+      where: { id: 'test-job-1' },
+      data: {
+        fileEvidence: JSON.stringify({
+          ...fileEvidence,
+          activityId: 'another-job',
+          state: 'partial'
+        })
+      }
+    })
+    await expect(repo.get('test-job-1')).resolves.toMatchObject({ file_evidence: undefined })
+
+    await client.computeJob.update({
+      where: { id: 'test-job-1' },
+      data: { fileEvidence: JSON.stringify({ ...fileEvidence, state: 'partial' }) }
+    })
+    await expect(repo.get('test-job-1')).resolves.toMatchObject({ file_evidence: undefined })
+
+    await client.computeJob.update({
+      where: { id: 'test-job-1' },
+      data: {
+        fileEvidence: JSON.stringify({ ...fileEvidence, reasonCodes: ['unrecognized-reason'] })
+      }
+    })
+    await expect(repo.get('test-job-1')).resolves.toMatchObject({ file_evidence: undefined })
+  })
+
+  it('does not downgrade an immutable file-evidence reference from a stale update', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-immutable-evidence-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+
+    const repo = makeJobRepository(client)
+    const immutableEvidence = {
+      schemaVersion: 1 as const,
+      activityId: 'immutable-evidence-job',
+      activityKind: 'compute-job' as const,
+      parentActivityId: 'producer-run',
+      state: 'available' as const,
+      evidenceId: 'execution-file-evidence-immutable-evidence-job',
+      checksum: 'a'.repeat(64),
+      storageKey:
+        'execution-file-evidence/project/session/activity-immutable-evidence-job/evidence.json',
+      relationCount: 1,
+      generationCount: 1,
+      scientificOutputCount: 1,
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'complete' as const,
+      scientificOutputAnalysis: 'complete' as const,
+      fileReads: 'unavailable' as const,
+      externalPaths: 'unavailable' as const,
+      writerAttribution: 'complete' as const,
+      reasonCodes: ['file-reads-not-observed' as const]
+    }
+    await repo.create({
+      id: 'immutable-evidence-job',
+      providerId: 'ssh:biowulf',
+      shape: 'direct_ssh',
+      sessionId: 'session',
+      projectId: 'project',
+      producerRunId: 'producer-run',
+      fileEvidence: immutableEvidence,
+      intent: 'preserve evidence',
+      command: 'true',
+      commandHash: 'immutable-evidence-hash'
+    })
+    await repo.update('immutable-evidence-job', {
+      status: 'success',
+      finishedAt: new Date()
+    })
+    await expect(repo.get('immutable-evidence-job')).resolves.toMatchObject({
+      file_evidence: immutableEvidence
+    })
+
+    await repo.update('immutable-evidence-job', {
+      harvestedAt: new Date(),
+      harvestError: 'stale re-harvest failed',
+      fileEvidence: {
+        ...immutableEvidence,
+        state: 'unavailable',
+        evidenceId: undefined,
+        checksum: undefined,
+        storageKey: undefined,
+        relationCount: undefined,
+        generationCount: undefined,
+        scientificOutputCount: 0,
+        managedRootsFinalState: 'unavailable',
+        scientificOutputAnalysis: 'unavailable',
+        reasonCodes: ['evidence-persistence-failed']
+      }
+    })
+
+    await expect(repo.get('immutable-evidence-job')).resolves.toMatchObject({
+      file_evidence: immutableEvidence,
+      harvest_error: 'stale re-harvest failed'
+    })
   })
 
   it('does not persist Compute Job execution secrets as plaintext', async () => {

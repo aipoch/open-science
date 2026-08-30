@@ -16,6 +16,8 @@ import type {
   PersistedToolActivity
 } from './session-persistence'
 import type { ArtifactVersionReviewProjection } from './reviewer'
+import type { ComputeJobStatus } from './compute'
+import type { ExecutionFileEvidenceReason } from './execution-file-evidence'
 
 export type CreateArtifactVersionRequest = {
   projectId: string
@@ -252,6 +254,21 @@ export type ArtifactConnectorExecutionEvidence = {
   arguments_checksum: string
 }
 
+export type ArtifactComputeExecutionEvidence = {
+  activity_id: string
+  provider_id: string
+  shape: string
+  status: ComputeJobStatus
+  file_evidence: {
+    state: 'available' | 'partial' | 'unavailable'
+    evidence_id?: string
+    checksum?: string
+    storage_key?: string
+    generation_count?: number
+    reason_codes: ExecutionFileEvidenceReason[]
+  }
+}
+
 export type ArtifactNotebookProducerEvidence = {
   state: 'available'
   notebook_session_id: string
@@ -408,6 +425,7 @@ export type ArtifactVersionEvidence = {
   reproduction_code?: string
   execution_snapshot_checksum?: string
   connector_execution?: ArtifactConnectorExecutionEvidence
+  compute_executions?: ArtifactComputeExecutionEvidence[]
   execution_status: ArtifactVersionAvailability
   inputs: ArtifactVersionInputEvidence[]
   producer:

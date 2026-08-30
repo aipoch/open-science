@@ -491,6 +491,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "environment" TEXT,
     "resourceRequest" TEXT,
     "inputManifest" TEXT,
+    "producerRunId" TEXT,
+    "fileEvidence" TEXT,
     "outputManifest" TEXT,
     "harvestConfig" TEXT,
     "timeoutSeconds" INTEGER,

@@ -1507,7 +1507,7 @@
     "Notebook runtime (optional)": "Notebook 런타임 (선택사항)",
     "Notebook runtimes": "Notebook 런타임",
     "Notebooks": "Notebook",
-    "Notebook evidence": "Notebook 증거",
+    "Execution evidence": "실행 증거",
     "Notebooks run in an app-managed Python environment by default. You can change any of this later in Settings → Runtimes.": "Notebook은 기본적으로 앱 관리 Python 환경에서 실행됩니다. 나중에 설정 → 런타임에서 변경할 수 있습니다.",
     "Notifications": "알림",
     "Earlier": "이전",

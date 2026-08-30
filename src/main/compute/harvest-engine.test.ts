@@ -18,6 +18,7 @@ import { randomBytes } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeJob } from '../../shared/compute'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { SshRunner } from './ssh-runner'
 import type { BoundedScpResult, ScpRunner, ScpResult } from './scp-runner'
 import {
@@ -34,6 +35,10 @@ import {
   type HarvestDeps
 } from './harvest-engine'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
+import {
+  beginComputeJobFileEvidence,
+  publishComputeJobFileEvidence
+} from '../notebook/working-file-observer'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -288,6 +293,93 @@ describe('harvestJob — clean harvest', () => {
       code: 'ENOENT'
     })
   })
+
+  it('preserves already-published file evidence when harvest is repeated', async () => {
+    const storageRoot = await mkTmp()
+    const fileEvidence = {
+      schemaVersion: 1 as const,
+      activityId: 'job-1',
+      activityKind: 'compute-job' as const,
+      state: 'available' as const,
+      evidenceId: 'execution-file-evidence-job-1',
+      checksum: 'a'.repeat(64),
+      storageKey: 'execution-file-evidence/proj-1/sess-1/activity-job-1/evidence.json',
+      scientificOutputCount: 1,
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'complete' as const,
+      scientificOutputAnalysis: 'complete' as const,
+      fileReads: 'unavailable' as const,
+      externalPaths: 'unavailable' as const,
+      writerAttribution: 'complete' as const,
+      reasonCodes: []
+    }
+    const job = makeJob({ file_evidence: fileEvidence, harvested_at: Date.now() })
+    const { repo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(makeSshRunner(''), makeScpRunner()),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: repo,
+      storageRoot
+    })
+
+    expect(updates[0]?.data).toMatchObject({ fileEvidence })
+  })
+
+  it('freezes featured and hidden outputs without treating stdout as a scientific output', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    await beginComputeJobFileEvidence({
+      storageRoot,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      jobId: job.job_id,
+      inputs: []
+    })
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(
+          findOutput([
+            { path: 'run.result', size_bytes: 10 },
+            { path: 'stdout', size_bytes: 10 }
+          ])
+        ),
+        makeWritingScpRunner()
+      ),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: makeJobRepo(job).repo,
+      storageRoot
+    })
+
+    const sidecar = JSON.parse(
+      await readFile(
+        join(
+          storageRoot,
+          'execution-file-evidence',
+          job.project_id,
+          job.session_id,
+          `activity-${job.job_id}`,
+          'evidence.json'
+        ),
+        'utf8'
+      )
+    ) as { relations: Array<{ relation: string; relativePath: string }> }
+    expect(sidecar.relations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: 'harvested-output',
+          relativePath: `hpc/${job.job_id}/featured/run.result`
+        })
+      ])
+    )
+    expect(sidecar.relations).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ relativePath: `hpc/${job.job_id}/stdout` })
+      ])
+    )
+  })
+
   it('writes and reports harvest files from the data-root session workspace, never the config root', async () => {
     const configRoot = await mkTmp()
     const dataRoot = await mkTmp()
@@ -426,14 +518,110 @@ describe('harvestJob — data-root migration gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — harvest_failed', () => {
-  it('does not publish a partial attempt or delete user .partial files after a download failure', async () => {
+  it('cleans unpublished Compute evidence after output snapshot failure', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    await beginComputeJobFileEvidence({
+      storageRoot,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      jobId: job.job_id,
+      inputs: []
+    })
+    const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
+    const attemptDir = `${harvestDir}.harvest-attempt`
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(findOutput([{ path: 'run.result', size_bytes: 10 }])),
+        makeWritingScpRunner()
+      ),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: makeJobRepo(job).repo,
+      storageRoot,
+      renameFn: async (source, destination) => {
+        await rename(source, destination)
+        if (String(source) === attemptDir && String(destination) === harvestDir) {
+          const output = join(harvestDir, 'featured', 'run.result')
+          await rename(output, `${output}.missing`)
+        }
+      }
+    })
+
+    await expect(
+      readdir(join(storageRoot, 'execution-file-evidence', job.project_id, job.session_id))
+    ).resolves.toEqual([])
+  })
+
+  it('preserves a concurrent Compute publication while cleaning a stale failure', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const sourcePath = join(storageRoot, 'published.result')
+    await writeFile(sourcePath, 'published evidence')
+    await beginComputeJobFileEvidence({
+      storageRoot,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      jobId: job.job_id,
+      inputs: []
+    })
+    const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
+    const attemptDir = `${harvestDir}.harvest-attempt`
+    let publishedStorageKey: string | undefined
+    const jobRepository = {
+      update: vi.fn(async () => {
+        const fileEvidence = await publishComputeJobFileEvidence({
+          storageRoot,
+          projectId: job.project_id,
+          sessionId: job.session_id,
+          jobId: job.job_id,
+          outputs: [{ localPath: sourcePath, relativePath: 'published.result' }]
+        })
+        publishedStorageKey = fileEvidence.storageKey
+        return job
+      }),
+      claimNotification: vi.fn()
+    } as unknown as Pick<ComputeJobRepository, 'update' | 'claimNotification'>
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(findOutput([{ path: 'run.result', size_bytes: 10 }])),
+        makeWritingScpRunner()
+      ),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository,
+      storageRoot,
+      renameFn: async (source, destination) => {
+        await rename(source, destination)
+        if (String(source) === attemptDir && String(destination) === harvestDir) {
+          const output = join(harvestDir, 'featured', 'run.result')
+          await rename(output, `${output}.missing`)
+        }
+      }
+    })
+
+    expect(publishedStorageKey).toBeDefined()
+    await expect(
+      readFile(join(storageRoot, ...publishedStorageKey!.split('/')), 'utf8')
+    ).resolves.toContain('published.result')
+  })
+
+  it('freezes successful outputs without publishing a partial workspace after a sibling download fails', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    await beginComputeJobFileEvidence({
+      storageRoot,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      jobId: job.job_id,
+      inputs: []
+    })
     const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
     const userPartial = join(harvestDir, 'featured', 'user-history.partial')
     await mkdir(dirname(userPartial), { recursive: true })
     await writeFile(userPartial, 'user-owned')
     const scp = makeScpRunner(2)
+    const { repo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
       connectionBroker: brokerFromRunners(
@@ -446,7 +634,7 @@ describe('harvestJob — harvest_failed', () => {
         scp
       ),
       hostRepository: makeHostRepo(sampleHost()),
-      jobRepository: makeJobRepo(job).repo,
+      jobRepository: repo,
       storageRoot
     })
 
@@ -454,6 +642,22 @@ describe('harvestJob — harvest_failed', () => {
     await expect(readFile(join(harvestDir, 'featured', 'first.result'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
+    const fileEvidence = (
+      updates.find(({ data }) => 'fileEvidence' in (data as object))?.data as {
+        fileEvidence?: ExecutionFileEvidenceSummary
+      }
+    ).fileEvidence
+    expect(fileEvidence).toMatchObject({
+      state: 'partial',
+      scientificOutputCount: 1,
+      reasonCodes: expect.arrayContaining(['harvest-incomplete'])
+    })
+    const sidecar = await readFile(
+      join(storageRoot, ...(fileEvidence!.storageKey as string).split('/')),
+      'utf8'
+    )
+    expect(sidecar).toContain('first.result')
+    expect(sidecar).not.toContain('second.result')
   })
 
   it('restores the previous complete generation when publication is interrupted', async () => {

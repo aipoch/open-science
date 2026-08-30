@@ -1561,7 +1561,7 @@
     "Notebook runtime (optional)": "Среда выполнения Notebook (необязательно)",
     "Notebook runtimes": "Среды выполнения Notebook",
     "Notebooks": "Notebook",
-    "Notebook evidence": "Доказательства Notebook",
+    "Execution evidence": "Доказательства выполнения",
     "Notebooks run in an app-managed Python environment by default. You can change any of this later in Settings → Runtimes.": "По умолчанию Notebook работают в управляемой приложением среде Python. Позже эти параметры можно изменить в разделе «Настройки → Среды выполнения».",
     "Notifications": "Уведомления",
     "Notifications only appear while you're using another app. Tasks you cancel and failures the app retries automatically stay silent. Your operating system may ask for notification permission the first time one appears.": "Уведомления появляются, только когда вы работаете в другом приложении. Отменённые задачи и ошибки, после которых приложение повторяет попытку автоматически, не показываются. При первом уведомлении операционная система может запросить разрешение.",

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readdir } from 'node:fs/promises'
+import { readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 
 import type {
@@ -12,6 +12,11 @@ import type {
 import { ComputeHostUnavailableError } from '../../shared/compute'
 import { resolveNotebookStagedInputPath } from '../notebook/input-staging'
 import { getNotebookSessionRoot } from '../notebook/repository'
+import { encodeDataPath } from '../storage/data-path'
+import {
+  beginComputeJobFileEvidence,
+  cleanupComputeJobFileEvidence
+} from '../notebook/working-file-observer'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import { projectJobStatus } from './compute-job-status'
@@ -96,6 +101,14 @@ export const resolveInputs = async (
 ): Promise<{ entries: StagedInputEntry[]; inputsSummary: string }> => {
   const entries: StagedInputEntry[] = []
   const summaryParts: string[] = []
+  const destinations = new Set<string>()
+
+  const reserveDestination = (dstFilename: string): void => {
+    if (destinations.has(dstFilename)) {
+      throw new Error(`dst_filename must be unique within a Compute Job (got "${dstFilename}")`)
+    }
+    destinations.add(dstFilename)
+  }
 
   for (const raw of rawInputs) {
     if ('remote_path' in raw) {
@@ -113,6 +126,7 @@ export const resolveInputs = async (
       }
       const dstFilename = raw.dst_filename ?? basename(remotePath)
       assertBareName(dstFilename, `remote_path "${remotePath}"`)
+      reserveDestination(dstFilename)
       entries.push({
         kind: 'symlink',
         remotePath,
@@ -125,6 +139,7 @@ export const resolveInputs = async (
 
     const { src, dst_filename: dstFilename } = raw
     assertBareName(dstFilename, `src "${src}"`)
+    reserveDestination(dstFilename)
     if (isAbsolute(src)) {
       if (!artifactResolver) {
         throw new Error(`Cannot resolve artifact "${src}": ArtifactResolver is not available`)
@@ -190,7 +205,7 @@ export class ComputeJobWorkflowOwner {
       timeoutSeconds?: number
       workspaceCwd?: string
     },
-    context: { sessionId: string; projectId: string },
+    context: { sessionId: string; projectId: string; producerRunId?: string },
     signal?: AbortSignal
   ): Promise<SubmitJobResult> {
     if (!this.jobRepository) {
@@ -328,10 +343,46 @@ export class ComputeJobWorkflowOwner {
     let allowUnencryptedPersistence = !this.jobRepository.isFieldProtectionAvailable()
     await requestApproval(allowUnencryptedPersistence)
 
+    let evidenceCaptureStarted = false
+    if (this.storageRoot) {
+      const uploads = stagedEntries.filter(
+        (entry): entry is Extract<StagedInputEntry, { kind: 'upload' }> => entry.kind === 'upload'
+      )
+      const frozen = await beginComputeJobFileEvidence({
+        storageRoot: this.storageRoot,
+        projectId: context.projectId,
+        sessionId: context.sessionId,
+        jobId,
+        producerRunId: context.producerRunId,
+        inputs: uploads.map((entry) => ({
+          localPath: entry.localPath,
+          dstFilename: entry.dstFilename,
+          label: entry.label
+        })),
+        signal
+      })
+      const frozenByDestination = new Map(frozen.map((entry) => [entry.dstFilename, entry]))
+      const evidenceStorageRoot = await realpath(this.storageRoot)
+      stagedEntries = stagedEntries.map((entry) => {
+        if (entry.kind !== 'upload') return entry
+        const generation = frozenByDestination.get(entry.dstFilename)
+        if (!generation) throw new Error(`Compute input could not be frozen: ${entry.label}`)
+        return {
+          ...entry,
+          localPath: encodeDataPath(generation.frozenPath, evidenceStorageRoot)!,
+          generationId: generation.generationId,
+          checksum: generation.checksum,
+          sizeBytes: generation.sizeBytes
+        }
+      })
+      evidenceCaptureStarted = true
+    }
+
     const commandHash = hashCommand(command)
     const inputManifest = stagedEntries.length > 0 ? JSON.stringify(stagedEntries) : undefined
     const jobRepository = this.jobRepository
     let dispatchHandoffHeld = false
+    let rowCreated = false
     const createRow = async (initialStatus: 'submitted' | 'queued'): Promise<void> => {
       if (initialStatus === 'submitted') {
         sharedDispatchTracker.begin(jobId)
@@ -349,6 +400,25 @@ export class ComputeJobWorkflowOwner {
         environment: options.environment,
         resourceRequest: options.resourceRequest,
         inputManifest,
+        producerRunId: context.producerRunId,
+        fileEvidence: {
+          schemaVersion: 1,
+          activityId: jobId,
+          activityKind: 'compute-job',
+          ...(context.producerRunId ? { parentActivityId: context.producerRunId } : {}),
+          state: 'unavailable',
+          scientificOutputCount: 0,
+          initialViewState: evidenceCaptureStarted ? 'complete' : 'unavailable',
+          managedRootsFinalState: 'unavailable',
+          scientificOutputAnalysis: 'unavailable',
+          fileReads: 'unavailable',
+          externalPaths: 'unavailable',
+          writerAttribution: context.producerRunId ? 'complete' : 'unavailable',
+          reasonCodes: [
+            ...(context.producerRunId ? [] : ['compute-activity-lineage-missing' as const]),
+            'remote-output-not-harvested'
+          ]
+        },
         outputManifest: options.outputManifest,
         harvestConfig: options.harvestConfig,
         timeoutSeconds,
@@ -356,49 +426,69 @@ export class ComputeJobWorkflowOwner {
         initialStatus,
         allowUnencryptedPersistence
       })
+      rowCreated = true
       this.handleJobUpdated(created)
     }
 
     let initialStatus: 'submitted' | 'queued' = 'submitted'
-    while (true) {
-      try {
-        if (this.concurrencyManager) {
-          const admitted = await this.concurrencyManager.admit(
-            { sessionId: context.sessionId, providerId },
-            createRow
-          )
-          if (admitted === 'queue_full') throw queueFullError()
-          initialStatus = admitted
-        } else {
-          await createRow('submitted')
-        }
+    try {
+      while (true) {
+        try {
+          if (this.concurrencyManager) {
+            const admitted = await this.concurrencyManager.admit(
+              { sessionId: context.sessionId, providerId },
+              createRow
+            )
+            if (admitted === 'queue_full') throw queueFullError()
+            initialStatus = admitted
+          } else {
+            await createRow('submitted')
+          }
 
-        if (initialStatus === 'submitted') {
-          const dispatch = dispatchJob(jobId, {
-            connectionBroker: this.connectionBroker,
-            hostRepository: this.hostRepository,
-            jobRepository: this.jobRepository,
-            onJobUpdated: this.handleJobUpdated
-          })
-          this.observeBackgroundDispatch?.(dispatch)
-          void dispatch
-        }
-        break
-      } catch (error) {
-        if (
-          allowUnencryptedPersistence ||
-          !(error instanceof UnencryptedComputeJobPersistenceApprovalRequiredError)
-        ) {
-          throw error
-        }
-        await requestApproval(true)
-        allowUnencryptedPersistence = true
-      } finally {
-        if (dispatchHandoffHeld) {
-          sharedDispatchTracker.end(jobId)
-          dispatchHandoffHeld = false
+          if (initialStatus === 'submitted') {
+            const dispatch = dispatchJob(jobId, {
+              connectionBroker: this.connectionBroker,
+              hostRepository: this.hostRepository,
+              jobRepository: this.jobRepository,
+              onJobUpdated: this.handleJobUpdated,
+              storageRoot: this.storageRoot
+            })
+            this.observeBackgroundDispatch?.(dispatch)
+            void dispatch
+          }
+          break
+        } catch (error) {
+          if (
+            allowUnencryptedPersistence ||
+            !(error instanceof UnencryptedComputeJobPersistenceApprovalRequiredError)
+          ) {
+            throw error
+          }
+          await requestApproval(true)
+          allowUnencryptedPersistence = true
+        } finally {
+          if (dispatchHandoffHeld) {
+            sharedDispatchTracker.end(jobId)
+            dispatchHandoffHeld = false
+          }
         }
       }
+    } catch (error) {
+      if (evidenceCaptureStarted && !rowCreated && this.storageRoot) {
+        const rowDefinitelyAbsent = await jobRepository
+          .get(jobId)
+          .then((job) => job === null)
+          .catch(() => false)
+        if (rowDefinitelyAbsent) {
+          await cleanupComputeJobFileEvidence({
+            storageRoot: this.storageRoot,
+            projectId: context.projectId,
+            sessionId: context.sessionId,
+            jobId
+          }).catch(() => undefined)
+        }
+      }
+      throw error
     }
 
     return {

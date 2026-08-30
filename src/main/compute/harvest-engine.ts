@@ -19,9 +19,13 @@
 
 import { randomUUID } from 'node:crypto'
 import { access, mkdir, realpath, rename, rm, statfs, unlink } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 
 import type { ComputeJob, JobSummary } from '../../shared/compute'
+import {
+  hasImmutableExecutionFileEvidenceReference,
+  parseOwnedExecutionFileEvidenceSummary
+} from '../../shared/execution-file-evidence'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJobRepository } from './job-repository'
 import {
@@ -45,11 +49,19 @@ import {
 } from './harvest-classifier'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import { emitJobNotification } from './job-notifier'
+import {
+  cleanupComputeJobFileEvidence,
+  publishComputeJobFileEvidence,
+  settleComputeJobFileEvidence
+} from '../notebook/working-file-observer'
 import { withDataRootWrite } from '../storage/migration-state'
 import { toErrorMessage } from '../error-message'
+import { workspaceRelativePath } from './workspace-path'
+import { createLogger, errorLogFields } from '../logger'
 
 const MIB_BYTES = 1024 * 1024
 export const HARVEST_FREE_DISK_RESERVE_BYTES = 2 * 1024 * MIB_BYTES
+const log = createLogger('compute:harvest')
 
 const getFreeDiskBytes = async (path: string): Promise<number> => {
   const stats = await statfs(path)
@@ -368,8 +380,28 @@ const harvestJobUnchecked = async (
   const { connectionBroker, hostRepository, jobRepository, storageRoot } = deps
 
   const { harvestDir, attemptDir, backupDir, renamePath } = publication
+  const workspaceCwd = getNotebookSessionRoot(storageRoot, job.project_id, job.session_id)
   const featuredDir = join(attemptDir, 'featured')
   const hiddenDir = join(attemptDir, 'hidden')
+  const downloadedOutputs: Array<{
+    attemptPath: string
+    publishedPath: string
+    relativePath: string
+  }> = []
+  const remoteInputPaths: string[] = []
+  if (job.input_manifest) {
+    try {
+      const entries = JSON.parse(job.input_manifest) as Array<{
+        kind?: string
+        remotePath?: string
+      }>
+      for (const entry of entries) {
+        if (entry.kind === 'symlink' && entry.remotePath) remoteInputPaths.push(entry.remotePath)
+      }
+    } catch {
+      // The repository validates new manifests; malformed historical rows remain evidence-unknown.
+    }
+  }
 
   // Ensure harvest directory structure exists (idempotent).
   await mkdir(featuredDir, { recursive: true })
@@ -382,11 +414,104 @@ const harvestJobUnchecked = async (
     harvestError: string | null,
     leftOnRemoteJson: string
   ): Promise<ComputeJob> => {
-    return await jobRepository.update(job.job_id, {
+    let leftOnRemoteCount = 0
+    try {
+      const leftOnRemote = JSON.parse(leftOnRemoteJson) as unknown[]
+      leftOnRemoteCount = Array.isArray(leftOnRemote) ? leftOnRemote.length : 0
+    } catch {
+      leftOnRemoteCount = 0
+    }
+    const reasonCodes = [
+      ...(harvestError ? (['harvest-incomplete'] as const) : []),
+      ...(leftOnRemoteCount > 0 ? (['remote-output-not-harvested'] as const) : [])
+    ]
+    let fileEvidence = parseOwnedExecutionFileEvidenceSummary(job.file_evidence, {
+      activityId: job.job_id,
+      activityKind: 'compute-job',
+      parentActivityId: job.producer_run_id,
+      storageKey: `execution-file-evidence/${job.project_id}/${job.session_id}/activity-${job.job_id}/evidence.json`
+    })
+    let publishedEvidence = false
+    let evidencePublicationFailed = false
+    if (!hasImmutableExecutionFileEvidenceReference(fileEvidence)) {
+      try {
+        fileEvidence = await publishComputeJobFileEvidence({
+          storageRoot,
+          projectId: job.project_id,
+          sessionId: job.session_id,
+          jobId: job.job_id,
+          producerRunId: job.producer_run_id,
+          outputs: downloadedOutputs.map((output) => ({
+            localPath: harvestError ? output.attemptPath : output.publishedPath,
+            relativePath: output.relativePath
+          })),
+          remoteInputPaths,
+          reasonCodes,
+          signal: deps.signal
+        })
+        publishedEvidence = true
+      } catch {
+        evidencePublicationFailed = true
+        fileEvidence = {
+          schemaVersion: 1,
+          activityId: job.job_id,
+          activityKind: 'compute-job',
+          ...(job.producer_run_id ? { parentActivityId: job.producer_run_id } : {}),
+          state: 'unavailable',
+          scientificOutputCount: 0,
+          initialViewState: 'unavailable',
+          managedRootsFinalState: 'unavailable',
+          scientificOutputAnalysis: 'unavailable',
+          fileReads: 'unavailable',
+          externalPaths: 'unavailable',
+          writerAttribution: 'unavailable',
+          reasonCodes: [
+            ...reasonCodes,
+            ...(job.producer_run_id ? [] : (['compute-activity-lineage-missing'] as const)),
+            'evidence-persistence-failed'
+          ]
+        }
+      }
+    }
+    const updated = await jobRepository.update(job.job_id, {
       harvestedAt: new Date(),
       harvestError,
-      leftOnRemote: leftOnRemoteJson
+      leftOnRemote: leftOnRemoteJson,
+      fileEvidence
     })
+    if (
+      evidencePublicationFailed &&
+      !hasImmutableExecutionFileEvidenceReference(updated.file_evidence)
+    ) {
+      await cleanupComputeJobFileEvidence({
+        storageRoot,
+        projectId: job.project_id,
+        sessionId: job.session_id,
+        jobId: job.job_id,
+        preservePublished: true
+      }).catch((error) =>
+        log.warn('Compute Job file-evidence cleanup deferred to startup recovery.', {
+          jobId: job.job_id,
+          ...errorLogFields(error)
+        })
+      )
+    }
+    if (publishedEvidence) {
+      await settleComputeJobFileEvidence({
+        storageRoot,
+        projectId: job.project_id,
+        sessionId: job.session_id,
+        jobId: job.job_id,
+        producerRunId: job.producer_run_id,
+        fileEvidence
+      }).catch((error) =>
+        log.warn('Compute Job file-evidence receipt remains for startup recovery.', {
+          jobId: job.job_id,
+          ...errorLogFields(error)
+        })
+      )
+    }
+    return updated
   }
 
   // Helper: finalize + broadcast + return (DRY for all early-exit paths).
@@ -545,7 +670,11 @@ const harvestJobUnchecked = async (
     })
   }
 
-  const safeDownload = async (relativePath: string, localPath: string): Promise<boolean> => {
+  const safeDownload = async (
+    relativePath: string,
+    localPath: string,
+    recordAsEvidence = true
+  ): Promise<boolean> => {
     deps.signal?.throwIfAborted()
     const expectedBytes = remoteSizeByPath.get(relativePath) ?? 0
     let currentFreeBytes: number
@@ -583,6 +712,14 @@ const harvestJobUnchecked = async (
       deps.signal?.throwIfAborted()
       await rename(temporaryPath, localPath)
       remainingBudgetBytes = Math.max(0, remainingBudgetBytes - bytesWritten)
+      if (recordAsEvidence) {
+        const publishedPath = join(harvestDir, relative(attemptDir, localPath))
+        downloadedOutputs.push({
+          attemptPath: localPath,
+          publishedPath,
+          relativePath: workspaceRelativePath(workspaceCwd, publishedPath)
+        })
+      }
       return true
     } catch (error) {
       await unlink(temporaryPath).catch(() => undefined)
@@ -623,7 +760,7 @@ const harvestJobUnchecked = async (
     // Download full logs last; bounded tails remain available when the budget excludes them.
     for (const relativePath of classification.logs) {
       deps.signal?.throwIfAborted()
-      await safeDownload(relativePath, join(attemptDir, relativePath))
+      await safeDownload(relativePath, join(attemptDir, relativePath), false)
     }
   } finally {
     await reservation.release()

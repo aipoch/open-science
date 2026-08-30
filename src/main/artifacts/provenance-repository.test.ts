@@ -2118,6 +2118,74 @@ describe('artifact provenance repository', () => {
         inputFiles: [{ ...inputFile, association: 'resolver-accessed' }]
       }
     })
+    await client.computeJob.create({
+      data: {
+        id: 'compute-job-1',
+        providerId: 'ssh:cluster',
+        shape: 'scheduler_cluster',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        producerRunId: 'notebook-run-2',
+        status: 'success',
+        intent: 'render the plot',
+        command: 'python render.py --token must-not-leak',
+        commandHash: 'compute-command-hash',
+        fileEvidence: JSON.stringify({
+          schemaVersion: 1,
+          activityId: 'compute-job-1',
+          activityKind: 'compute-job',
+          parentActivityId: 'notebook-run-2',
+          state: 'partial',
+          evidenceId: 'execution-file-evidence-compute-job-1',
+          checksum: 'd'.repeat(64),
+          storageKey:
+            'execution-file-evidence/project-1/session-1/activity-compute-job-1/evidence.json',
+          relationCount: 2,
+          generationCount: 2,
+          scientificOutputCount: 1,
+          initialViewState: 'complete',
+          managedRootsFinalState: 'partial',
+          scientificOutputAnalysis: 'complete',
+          fileReads: 'unavailable',
+          externalPaths: 'partial',
+          writerAttribution: 'complete',
+          reasonCodes: ['remote-input-generation-not-captured']
+        })
+      }
+    })
+    await client.computeJob.create({
+      data: {
+        id: 'compute-job-misbound',
+        providerId: 'ssh:cluster',
+        shape: 'scheduler_cluster',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        producerRunId: 'notebook-run-2',
+        status: 'success',
+        intent: 'must fail closed',
+        command: 'python forged.py --token must-not-leak-either',
+        commandHash: 'misbound-compute-command-hash',
+        fileEvidence: JSON.stringify({
+          schemaVersion: 1,
+          activityId: 'another-job',
+          activityKind: 'compute-job',
+          parentActivityId: 'notebook-run-2',
+          state: 'partial',
+          evidenceId: 'execution-file-evidence-another-job',
+          checksum: 'e'.repeat(64),
+          storageKey:
+            'execution-file-evidence/project-1/session-1/activity-another-job/evidence.json',
+          scientificOutputCount: 1,
+          initialViewState: 'complete',
+          managedRootsFinalState: 'partial',
+          scientificOutputAnalysis: 'partial',
+          fileReads: 'unavailable',
+          externalPaths: 'partial',
+          writerAttribution: 'complete',
+          reasonCodes: []
+        })
+      }
+    })
     await compatibilityRepository.writePendingFile({
       projectId: 'project-1',
       sessionId: 'artifact-session-1',
@@ -2229,8 +2297,37 @@ describe('artifact provenance repository', () => {
           source_kind: 'upload-version',
           strongest_association: 'resolver-accessed'
         }
+      ],
+      compute_executions: [
+        {
+          activity_id: 'compute-job-1',
+          provider_id: 'ssh:cluster',
+          shape: 'scheduler_cluster',
+          status: 'success',
+          file_evidence: {
+            state: 'partial',
+            evidence_id: 'execution-file-evidence-compute-job-1',
+            checksum: 'd'.repeat(64),
+            storage_key:
+              'execution-file-evidence/project-1/session-1/activity-compute-job-1/evidence.json',
+            generation_count: 2,
+            reason_codes: ['remote-input-generation-not-captured']
+          }
+        },
+        {
+          activity_id: 'compute-job-misbound',
+          provider_id: 'ssh:cluster',
+          shape: 'scheduler_cluster',
+          status: 'success',
+          file_evidence: {
+            state: 'unavailable',
+            reason_codes: ['evidence-persistence-failed']
+          }
+        }
       ]
     })
+    expect(row.evidenceJson).not.toContain('must-not-leak')
+    expect(row.evidenceJson).not.toContain('must-not-leak-either')
     expect(execution.runs.map((run) => run.runId)).toEqual(['notebook-run-1', 'notebook-run-2'])
     expect(execution).toMatchObject({ producerRunId: 'notebook-run-2', producerRunIndex: 3 })
     expect(execution.inputFiles).toEqual([

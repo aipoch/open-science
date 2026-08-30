@@ -26,7 +26,7 @@ type ProjectDeletionPath =
   | 'delegated-runtime-quiescence'
   | 'notification-session-invalidation'
   | 'notebook-input-cache-tail'
-  | 'notebook-file-evidence-tail'
+  | 'execution-file-evidence-tail'
   | 'project-deletion-intent-protocol'
   | 'project-file-projection-delete'
   | 'project-metadata-soft-delete'
@@ -573,13 +573,13 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
-    id: 'notebook-file-evidence',
+    id: 'execution-file-evidence',
     medium: 'filesystem',
-    resources: ['notebook-file-evidence/<projectId>/'],
+    resources: ['execution-file-evidence/<projectId>/'],
     policy: {
       kind: 'coordinator-cleanup',
       effect: 'hard-delete',
-      path: 'notebook-file-evidence-tail',
+      path: 'execution-file-evidence-tail',
       operation: 'NotebookRuntimeService.deleteProjectFileEvidence',
       note: 'The durable Project deletion intent retries removal of frozen Notebook file generations after runtime quiescence.'
     }

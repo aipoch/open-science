@@ -206,7 +206,7 @@ export class ComputeService {
       timeoutSeconds?: number
       workspaceCwd?: string
     },
-    context: { sessionId: string; projectId: string },
+    context: { sessionId: string; projectId: string; producerRunId?: string },
     signal?: AbortSignal
   ): Promise<SubmitJobResult> {
     return this.jobWorkflow.submitJob(providerId, intent, command, options, context, signal)

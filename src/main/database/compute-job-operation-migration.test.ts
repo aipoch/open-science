@@ -17,14 +17,14 @@ afterEach(async () => {
 })
 
 describe('Compute Job operation migration', () => {
-  it('upgrades the released 0019 schema directly without rewriting ComputeJob', async () => {
+  it('replays an unledgered operation suffix without rewriting ComputeJob', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-operation-upgrade-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe(`DROP TABLE "ComputeJobOperation"`)
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" = '0023_compute_job_operation'`
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0023_compute_job_operation', '0024_compute_job_file_evidence')`
     )
     const [{ sql: computeJobSqlBefore }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
       `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
@@ -40,7 +40,7 @@ describe('Compute Job operation migration', () => {
       client.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1`
       )
-    ).resolves.toEqual([{ id: '0023_compute_job_operation' }])
+    ).resolves.toEqual([{ id: '0024_compute_job_file_evidence' }])
   })
 
   it('adds a constrained operation sidecar without rebuilding historical ComputeJob rows', async () => {

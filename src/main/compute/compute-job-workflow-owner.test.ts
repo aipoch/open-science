@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
+import { decodeDataPath } from '../storage/data-path'
 import {
   ComputeJobWorkflowOwner,
   createComputeArtifactResolver,
@@ -420,6 +421,108 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({ session_id: 'sess-1', status: 'submitted' })
     )
+  })
+
+  it('preserves frozen inputs when row creation commits before rejecting', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'compute-ambiguous-create-'))
+    const workspaceRoot = join(storageRoot, 'workspace')
+    await mkdir(workspaceRoot)
+    await writeFile(join(workspaceRoot, 'input.csv'), 'frozen input')
+    const jobs = new Map<string, import('../../shared/compute').ComputeJob>()
+    const { repo: jobRepo } = makeJobRepo(jobs)
+    const create = jobRepo.create.bind(jobRepo)
+    jobRepo.create = vi.fn(async (request) => {
+      await create(request)
+      throw new Error('simulated ambiguous create failure')
+    })
+    const { repo } = makeRepo()
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(async () => 'once' as const),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    try {
+      await expect(
+        makeOwner(runner, repo, broker, jobRepo, undefined, undefined, storageRoot).submitJob(
+          'ssh:biowulf',
+          'ambiguous create',
+          'cat input.csv',
+          {
+            inputs: [{ src: 'input.csv', dst_filename: 'input.csv' }],
+            workspaceCwd: workspaceRoot
+          },
+          { sessionId: 'session-1', projectId: 'project-1' }
+        )
+      ).rejects.toThrow('simulated ambiguous create failure')
+
+      const [persisted] = [...jobs.values()]
+      expect(persisted).toBeDefined()
+      const manifest = JSON.parse(persisted!.input_manifest!) as Array<{ localPath: string }>
+      expect(manifest[0]!.localPath).toMatch(/^\$DATA\//u)
+      await expect(
+        readFile(decodeDataPath(manifest[0]!.localPath, storageRoot)!, 'utf8')
+      ).resolves.toBe('frozen input')
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('cleans frozen inputs when row creation is confirmed absent', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'compute-rejected-create-'))
+    const workspaceRoot = join(storageRoot, 'workspace')
+    await mkdir(workspaceRoot)
+    await writeFile(join(workspaceRoot, 'input.csv'), 'uncommitted input')
+    const { repo: jobRepo } = makeJobRepo()
+    let frozenPath: string | undefined
+    jobRepo.create = vi.fn(async (request) => {
+      const manifest = JSON.parse(request.inputManifest!) as Array<{ localPath: string }>
+      frozenPath = manifest[0]!.localPath
+      throw new Error('simulated rejected create')
+    })
+    const { repo } = makeRepo()
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(async () => 'once' as const),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    try {
+      await expect(
+        makeOwner(runner, repo, broker, jobRepo, undefined, undefined, storageRoot).submitJob(
+          'ssh:biowulf',
+          'rejected create',
+          'cat input.csv',
+          {
+            inputs: [{ src: 'input.csv', dst_filename: 'input.csv' }],
+            workspaceCwd: workspaceRoot
+          },
+          { sessionId: 'session-1', projectId: 'project-1' }
+        )
+      ).rejects.toThrow('simulated rejected create')
+
+      expect(frozenPath).toBeDefined()
+      expect(frozenPath).toMatch(/^\$DATA\//u)
+      await expect(
+        readFile(decodeDataPath(frozenPath!, storageRoot)!, 'utf8')
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
   })
 
   it('throws approval_denied and does NOT create a DB row when approval is denied', async () => {
@@ -903,6 +1006,19 @@ describe('resolveInputs — dst_filename validation', () => {
     await expect(
       resolveInputs([{ src: 'data.csv', dst_filename: '' }], '/workspace', undefined)
     ).rejects.toThrow(/bare filename/)
+  })
+
+  it('rejects duplicate destinations across upload and symlink inputs', async () => {
+    await expect(
+      resolveInputs(
+        [
+          { src: 'data.csv', dst_filename: 'input.csv' },
+          { remote_path: '/shared/reference.csv', dst_filename: 'input.csv' }
+        ],
+        '/workspace',
+        undefined
+      )
+    ).rejects.toThrow(/dst_filename must be unique/)
   })
 })
 

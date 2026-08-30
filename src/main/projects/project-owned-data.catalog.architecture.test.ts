@@ -234,7 +234,7 @@ describe('Project-owned data catalog architecture', () => {
       'compute-runtime-state',
       'notebook-project-workspace',
       'notebook-input-cache',
-      'notebook-file-evidence'
+      'execution-file-evidence'
     ])
     expect(
       [
@@ -247,7 +247,7 @@ describe('Project-owned data catalog architecture', () => {
     ).toEqual([
       'compute-job-project-delete',
       'delegated-runtime-quiescence',
-      'notebook-file-evidence-tail',
+      'execution-file-evidence-tail',
       'notebook-input-cache-tail',
       'notification-session-invalidation',
       'project-deletion-intent-protocol',

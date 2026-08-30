@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 
 import type {
-  NotebookScientificOutput,
-  NotebookScientificOutputRisk,
-  NotebookScientificOutputStorageShape
-} from '../../shared/notebook'
+  ScientificOutputEvidence,
+  ScientificOutputRisk,
+  ScientificOutputStorageShape
+} from '../../shared/execution-file-evidence'
 
 // This is deliberately advisory structural analysis. It groups only strong local path/layout
 // signatures and never opens, parses, deserializes, checkpoints, or otherwise mutates user output.
@@ -17,16 +17,16 @@ type ScientificOutputRelation = {
 
 type OutputGroup = {
   key: string
-  storageShape: NotebookScientificOutputStorageShape
+  storageShape: ScientificOutputStorageShape
   formatHint?: string
   members: ScientificOutputRelation[]
-  riskCodes?: NotebookScientificOutputRisk[]
+  riskCodes?: ScientificOutputRisk[]
 }
 
-const MULTI_FILE_RISK: NotebookScientificOutputRisk = 'multi-file-consistency-not-verified'
-const FORMAT_RISK: NotebookScientificOutputRisk = 'format-validity-not-verified'
-const DATABASE_RISK: NotebookScientificOutputRisk = 'database-state-not-verified'
-const RUNTIME_RISK: NotebookScientificOutputRisk = 'runtime-dependent-serialization'
+const MULTI_FILE_RISK: ScientificOutputRisk = 'multi-file-consistency-not-verified'
+const FORMAT_RISK: ScientificOutputRisk = 'format-validity-not-verified'
+const DATABASE_RISK: ScientificOutputRisk = 'database-state-not-verified'
+const RUNTIME_RISK: ScientificOutputRisk = 'runtime-dependent-serialization'
 
 const lower = (value: string): string => value.toLocaleLowerCase('en-US')
 const uniqueSorted = <Value extends string>(values: readonly Value[]): Value[] =>
@@ -38,7 +38,7 @@ const withoutCompoundSuffix = (value: string, suffix: string): string =>
 
 const formatForPath = (
   relativePath: string
-): { formatHint?: string; riskCodes: NotebookScientificOutputRisk[] } => {
+): { formatHint?: string; riskCodes: ScientificOutputRisk[] } => {
   const path = lower(relativePath)
   const extension = posix.extname(path)
   if (
@@ -136,7 +136,7 @@ const outputIdFor = (namespace: string, group: OutputGroup): string =>
 const analyzeScientificOutputs = (
   relations: readonly ScientificOutputRelation[],
   namespace: string
-): NotebookScientificOutput[] => {
+): ScientificOutputEvidence[] => {
   const candidates = relations
     .filter((relation) => relation.relativePath.length > 0)
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath))

@@ -11,6 +11,11 @@ import {
   OptionalSecureStorageStringProtection,
   type ProtectedJsonContainer
 } from './credential-vault'
+import {
+  hasImmutableExecutionFileEvidenceReference,
+  parseOwnedExecutionFileEvidenceSummary,
+  type ExecutionFileEvidenceSummary
+} from '../../shared/execution-file-evidence'
 
 // Only ComputeJob persistence and a transaction wrapper are needed.
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
@@ -71,6 +76,8 @@ export type CreateJobRequest = {
   environment?: string
   resourceRequest?: string
   inputManifest?: string
+  producerRunId?: string
+  fileEvidence?: ExecutionFileEvidenceSummary
   outputManifest?: string
   harvestConfig?: string
   timeoutSeconds?: number
@@ -102,6 +109,7 @@ export type UpdateJobRequest = {
   leftOnRemote?: string | null
   notifiedAt?: Date | null
   notificationConsumedAt?: Date | null
+  fileEvidence?: ExecutionFileEvidenceSummary
 }
 
 type ComputeJobUpdateData = Parameters<ComputeJobClient['computeJob']['update']>[0]['data']
@@ -224,6 +232,9 @@ export class ComputeJobRepository {
         environment: this.protectOptional(request.environment, encrypt),
         resourceRequest: this.protectJsonOptional(request.resourceRequest, 'object', encrypt),
         inputManifest: this.protectJsonOptional(request.inputManifest, 'array', encrypt),
+        producerRunId: request.producerRunId,
+        fileEvidence:
+          request.fileEvidence === undefined ? undefined : JSON.stringify(request.fileEvidence),
         outputManifest: this.protectJsonOptional(request.outputManifest, 'array', encrypt),
         harvestConfig: this.protectJsonOptional(request.harvestConfig, 'object', encrypt),
         timeoutSeconds: request.timeoutSeconds,
@@ -325,6 +336,27 @@ export class ComputeJobRepository {
   }
 
   async update(jobId: string, updates: UpdateJobRequest): Promise<ComputeJob> {
+    if (updates.fileEvidence !== undefined) {
+      return this.runMutation(async () => {
+        const client = await this.getClient()
+        return client.$transaction(async (transaction) => {
+          const current = await transaction.computeJob.findUnique({ where: { id: jobId } })
+          const currentEvidence = current ? parseFileEvidence(current) : undefined
+          const fileEvidence = hasImmutableExecutionFileEvidenceReference(currentEvidence)
+            ? currentEvidence
+            : updates.fileEvidence
+          const row = await transaction.computeJob.update({
+            where: { id: jobId },
+            data: this.toUpdateData(
+              { ...updates, fileEvidence },
+              current?.sensitiveDataEncrypted === true
+            ),
+            include: { operations: { where: { kind: 'cancel' } } }
+          })
+          return this.toJob(row)
+        })
+      })
+    }
     const client = await this.getClient()
     const current = await client.computeJob.findUnique({ where: { id: jobId } })
     const row = await client.computeJob.update({
@@ -649,6 +681,8 @@ export class ComputeJobRepository {
       environment: sensitive.environment,
       resource_request: sensitive.resourceRequest,
       input_manifest: sensitive.inputManifest,
+      producer_run_id: row.producerRunId ?? undefined,
+      file_evidence: parseFileEvidence(row),
       output_manifest: sensitive.outputManifest,
       harvest_config: sensitive.harvestConfig,
       timeout_seconds: row.timeoutSeconds ?? undefined,
@@ -792,6 +826,7 @@ export class ComputeJobRepository {
     if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
     if ('notificationConsumedAt' in updates)
       data.notificationConsumedAt = updates.notificationConsumedAt
+    if (updates.fileEvidence !== undefined) data.fileEvidence = JSON.stringify(updates.fileEvidence)
 
     return data
   }
@@ -872,6 +907,20 @@ export class ComputeJobRepository {
       () => undefined
     )
     return run
+  }
+}
+
+const parseFileEvidence = (row: PrismaComputeJob): ExecutionFileEvidenceSummary | undefined => {
+  if (row.fileEvidence === null) return undefined
+  try {
+    return parseOwnedExecutionFileEvidenceSummary(JSON.parse(row.fileEvidence), {
+      activityId: row.id,
+      activityKind: 'compute-job',
+      parentActivityId: row.producerRunId ?? undefined,
+      storageKey: `execution-file-evidence/${row.projectId}/${row.sessionId}/activity-${row.id}/evidence.json`
+    })
+  } catch {
+    return undefined
   }
 }
 

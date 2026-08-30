@@ -17,7 +17,11 @@ type SessionComputeHostRegistry = Readonly<{
   getSelected(sessionId: string): string[]
 }>
 
-type AgentComputeContext = Readonly<{ sessionId: string; projectId: string }>
+type AgentComputeContext = Readonly<{
+  sessionId: string
+  projectId: string
+  producerRunId?: string
+}>
 
 type RawComputeService = Pick<
   ComputeService,
