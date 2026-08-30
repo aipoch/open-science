@@ -61,6 +61,7 @@ export class SessionCacheOwner {
   private readonly activeOperations = new Map<string, Set<Promise<void>>>()
   private readonly closedProjects = new Set<string>()
   private readonly closedSessions = new Set<string>()
+  private readonly reconcilingProjects = new Set<string>()
 
   constructor(storageRoot: string) {
     this.computeRoot = join(storageRoot, 'compute')
@@ -139,7 +140,12 @@ export class SessionCacheOwner {
       if (!projectEntry.isDirectory() || !isSafeSegment(projectEntry.name)) continue
       const activeSessions = activeByProject.get(projectEntry.name)
       if (!activeSessions) {
-        await this.removeProjectDirectory(projectEntry.name)
+        this.reconcilingProjects.add(projectEntry.name)
+        try {
+          await this.removeProjectDirectory(projectEntry.name)
+        } finally {
+          this.reconcilingProjects.delete(projectEntry.name)
+        }
         continue
       }
 
@@ -160,7 +166,11 @@ export class SessionCacheOwner {
 
   private registerOperation(projectId: string, sessionId: string): () => void {
     const key = this.sessionKey(projectId, sessionId)
-    if (this.closedProjects.has(projectId) || this.closedSessions.has(key)) {
+    if (
+      this.closedProjects.has(projectId) ||
+      this.closedSessions.has(key) ||
+      this.reconcilingProjects.has(projectId)
+    ) {
       throw new Error('Session cache is being deleted and cannot accept new operations.')
     }
 

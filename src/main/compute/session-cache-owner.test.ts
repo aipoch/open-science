@@ -6,6 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SessionCacheOwner, withSessionCacheDeletion } from './session-cache-owner'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
+
 describe('SessionCacheOwner', () => {
   let storageRoot: string
   let owner: SessionCacheOwner
@@ -215,6 +220,31 @@ describe('SessionCacheOwner', () => {
       expect.any(String),
       'later.csv'
     ])
+    later.release()
+  })
+
+  it('blocks new Project operations while orphan reconciliation removes its cache', async () => {
+    const orphan = await owner.createOperationFile('project-1', 'orphan-session', 'orphan.csv')
+    orphan.release()
+    const removalStarted = Promise.withResolvers<void>()
+    const releaseRemoval = Promise.withResolvers<void>()
+    vi.mocked(rm).mockImplementationOnce(async () => {
+      removalStarted.resolve()
+      await releaseRemoval.promise
+    })
+
+    const reconciling = owner.reconcileActiveSessions([])
+    await removalStarted.promise
+    try {
+      await expect(
+        owner.createOperationFile('project-1', 'concurrent-session', 'result.csv')
+      ).rejects.toThrow('cannot accept new operations')
+    } finally {
+      releaseRemoval.resolve()
+      await reconciling
+    }
+
+    const later = await owner.createOperationFile('project-1', 'later-session', 'later.csv')
     later.release()
   })
 })
