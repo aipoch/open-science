@@ -740,6 +740,9 @@ export type AcpCreateSessionRequest = {
   // session-creation time — the renderer MUST NOT send systemPrompt or capability data, only the
   // stable ID. Absent or undefined means no specialist; use Main Agent.
   specialistId?: string
+  // The first prompt will link a PDF before dispatch. Provision Literature with session/new so a
+  // provider that has not produced its first resumable rollout does not need an immediate resume.
+  literatureContext?: true
   agentTarget?: AcpSessionAgentTarget
 }
 
@@ -863,6 +866,9 @@ export type AcpPromptRequest = {
   historyPreamble?: string
   historyAttachments?: UploadedAttachment[]
   historyImages?: AcpReplayMessageImage[]
+  // Current-turn visual Evidence. This is transient prompt input, never replay history or durable
+  // Session state, so text-only compatibility must fail closed instead of silently omitting it.
+  currentImages?: AcpMessageImage[]
   // Transient prompt-boundary signal: the provider context was replaced, so live application state
   // must be handed off even when there are no replayable transcript turns. Never persisted.
   contextReset?: boolean

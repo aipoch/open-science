@@ -20,7 +20,8 @@ export const renderPreviewFile = ({
   onAddAnnotation,
   onUpdateAnnotationNote,
   onRemoveAnnotation,
-  onAnnotationError
+  onAnnotationError,
+  onPdfReadingPositionChange
 }: PreviewFileRendererProps): React.JSX.Element | undefined => {
   const props = {
     item,
@@ -54,7 +55,9 @@ export const renderPreviewFile = ({
     case 'tiff':
       return <TiffPreviewRenderer item={item} />
     case 'pdf':
-      return <PdfPreviewRenderer item={item} />
+      return (
+        <PdfPreviewRenderer {...props} onPdfReadingPositionChange={onPdfReadingPositionChange} />
+      )
     case 'word':
     case 'spreadsheet':
     case 'presentation':

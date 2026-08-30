@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { TextAnnotation } from '../../../../shared/annotations'
 import type { CustomizePrefillIntent } from '@/stores/navigation-store'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 
 import type { UploadStagingApi } from './composer-upload-transfer'
 import {
@@ -70,6 +74,9 @@ const uploads = (
 type ControllerHook = {
   result: { current: ReturnType<typeof useWorkspaceComposerController> }
   selectDraft: (draftKey: string) => void
+  selectSession: (
+    session: Parameters<typeof useWorkspaceComposerController>[0]['activeSession']
+  ) => void
   setCustomizePrefill: (prefill: CustomizePrefillIntent) => void
   unmount: () => void
 }
@@ -77,9 +84,16 @@ type ControllerHook = {
 const renderController = (
   uploadApi = uploads(),
   loadSkills = vi.fn().mockResolvedValue(undefined),
-  historyEntries: ComposerHistoryEntry[] = []
+  historyEntries: ComposerHistoryEntry[] = [],
+  // Pass null to exercise the new-conversation draft (no active Session); undefined selects the
+  // default Session.
+  activeSession: Parameters<typeof useWorkspaceComposerController>[0]['activeSession'] | null = {
+    id: 'session-a',
+    projectId: 'project'
+  }
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
+  let selectedActiveSession = activeSession ?? undefined
   let pendingCustomizePrefill: CustomizePrefillIntent | undefined
   const container = document.createElement('div')
   const root = createRoot(container)
@@ -94,7 +108,7 @@ const renderController = (
       pendingCustomizePrefill,
       onCustomizePrefillApplied: vi.fn(),
       historyEntries,
-      hasActiveSession: true,
+      activeSession: selectedActiveSession,
       historyPolicy: {
         catalogSkillIds: new Set(),
         allowedSkillIds: undefined,
@@ -121,6 +135,11 @@ const renderController = (
       currentDraftKey = draftKey
       render()
     },
+    selectSession: (session): void => {
+      selectedActiveSession = session
+      currentDraftKey = session?.id ?? 'new:project'
+      render()
+    },
     setCustomizePrefill: (prefill: CustomizePrefillIntent): void => {
       pendingCustomizePrefill = prefill
       currentDraftKey = 'new:project'
@@ -135,10 +154,558 @@ const originalApi = window.api
 
 afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   window.api = originalApi
 })
 
 describe('workspace composer controller', () => {
+  it('starts a Reading mutation for a newly selected Session after the previous Session settles', async () => {
+    const sourceA = {
+      sourceKind: 'upload-version' as const,
+      sourceVersionId: 'version-a'
+    }
+    const sourceB = {
+      sourceKind: 'upload-version' as const,
+      sourceVersionId: 'version-b'
+    }
+    const bindingB = {
+      version: 1 as const,
+      bindingId: 'binding-b',
+      ...sourceB,
+      sourceFileId: 'upload-b',
+      sourceSessionId: 'source-session',
+      name: 'paper-b.pdf',
+      mimeType: 'application/pdf' as const,
+      sizeBytes: 42,
+      checksum: 'b'.repeat(64),
+      linkedAt: 1
+    }
+    const firstLink = deferred<{ version: 1; revision: number }>()
+    const linkPdfContext = vi
+      .fn()
+      .mockImplementationOnce(() => firstLink.promise)
+      .mockResolvedValueOnce({
+        version: 1,
+        revision: 1,
+        pdfContext: { version: 1, bindings: [bindingB] }
+      })
+    window.api = {
+      sessions: { linkPdfContext, unlinkPdfContext: vi.fn() }
+    } as unknown as Window['api']
+    const hook = renderController(uploads(), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: { revision: 0 }
+    })
+    mounted.push(hook)
+
+    let linkA!: Promise<void>
+    act(() => {
+      linkA = hook.result.current.actions.linkReadingContext(sourceA)
+    })
+    act(() =>
+      hook.selectSession({
+        id: 'session-b',
+        projectId: 'project',
+        runtimeContext: { revision: 0 }
+      })
+    )
+    let linkB!: Promise<void>
+    act(() => {
+      linkB = hook.result.current.actions.linkReadingContext(sourceB)
+    })
+
+    await act(async () => {
+      firstLink.resolve({ version: 1, revision: 1 })
+      await Promise.all([linkA, linkB])
+    })
+
+    expect(linkPdfContext).toHaveBeenLastCalledWith({
+      projectId: 'project',
+      sessionId: 'session-b',
+      expectedRevision: 0,
+      sources: [sourceB]
+    })
+  })
+
+  it('undoes and redoes Reading changes while coalescing rapid async mutations', async () => {
+    const source = {
+      sourceKind: 'upload-version' as const,
+      sourceVersionId: 'version-1'
+    }
+    const binding = {
+      version: 1 as const,
+      bindingId: 'binding-1',
+      ...source,
+      sourceFileId: 'upload-1',
+      sourceSessionId: 'source-session',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf' as const,
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 1
+    }
+    const firstLink = deferred<{
+      version: 1
+      revision: number
+      pdfContext: { version: 1; bindings: [typeof binding] }
+    }>()
+    const linkPdfContext = vi
+      .fn()
+      .mockImplementationOnce(() => firstLink.promise)
+      .mockResolvedValueOnce({
+        version: 1,
+        revision: 3,
+        pdfContext: { version: 1, bindings: [binding] }
+      })
+    const unlinkPdfContext = vi.fn().mockResolvedValue({
+      version: 1,
+      revision: 2,
+      pdfContext: { version: 1, bindings: [] }
+    })
+    window.api = {
+      sessions: { linkPdfContext, unlinkPdfContext }
+    } as unknown as Window['api']
+    const hook = renderController(uploads(), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: { revision: 0 }
+    })
+    mounted.push(hook)
+
+    let linking!: Promise<void>
+    act(() => {
+      linking = hook.result.current.actions.linkReadingContext(source)
+    })
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(linkPdfContext).toHaveBeenCalledOnce()
+    expect(unlinkPdfContext).not.toHaveBeenCalled()
+
+    await act(async () => {
+      firstLink.resolve({
+        version: 1,
+        revision: 1,
+        pdfContext: { version: 1, bindings: [binding] }
+      })
+      await linking
+    })
+    expect(unlinkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project',
+      sessionId: 'session-a',
+      expectedRevision: 1,
+      bindingId: 'binding-1'
+    })
+
+    act(() => expect(hook.result.current.actions.redo()).toBe(true))
+    await flushAsyncWork()
+    expect(linkPdfContext).toHaveBeenLastCalledWith({
+      projectId: 'project',
+      sessionId: 'session-a',
+      expectedRevision: 2,
+      sources: [source]
+    })
+  })
+
+  it('does not retain Reading undo entries when a coalesced link mutation fails', async () => {
+    const sourceA = {
+      sourceKind: 'upload-version' as const,
+      sourceVersionId: 'version-a'
+    }
+    const sourceB = {
+      sourceKind: 'upload-version' as const,
+      sourceVersionId: 'version-b'
+    }
+    const failedLink = deferred<never>()
+    const linkPdfContext = vi.fn().mockImplementation(() => failedLink.promise)
+    window.api = {
+      sessions: { linkPdfContext, unlinkPdfContext: vi.fn() }
+    } as unknown as Window['api']
+    const hook = renderController(uploads(), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: { revision: 0 }
+    })
+    mounted.push(hook)
+
+    let links!: Promise<unknown>
+    act(() => {
+      links = Promise.allSettled([
+        hook.result.current.actions.linkReadingContext(sourceA),
+        hook.result.current.actions.linkReadingContext(sourceB)
+      ])
+    })
+    await act(async () => {
+      failedLink.reject(new Error('link failed'))
+      await links
+    })
+
+    expect(hook.result.current.actions.undo()).toBe(false)
+    await flushAsyncWork()
+    expect(linkPdfContext).toHaveBeenCalledOnce()
+  })
+
+  it('removes the Reading redo entry when a link fails after an in-flight undo', async () => {
+    const source = {
+      sourceKind: 'upload-version' as const,
+      sourceVersionId: 'version-a'
+    }
+    const failedLink = deferred<never>()
+    const linkPdfContext = vi.fn().mockImplementation(() => failedLink.promise)
+    window.api = {
+      sessions: { linkPdfContext, unlinkPdfContext: vi.fn() }
+    } as unknown as Window['api']
+    const hook = renderController(uploads(), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: { revision: 0 }
+    })
+    mounted.push(hook)
+
+    let linking!: Promise<void>
+    act(() => {
+      linking = hook.result.current.actions.linkReadingContext(source)
+    })
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    await act(async () => {
+      failedLink.reject(new Error('link failed'))
+      await expect(linking).rejects.toThrow('link failed')
+    })
+
+    expect(hook.result.current.actions.redo()).toBe(false)
+    expect(linkPdfContext).toHaveBeenCalledOnce()
+  })
+
+  it('does not retain a Reading undo entry when unlink fails', async () => {
+    const source = {
+      sourceKind: 'upload-version' as const,
+      sourceVersionId: 'version-a'
+    }
+    const binding = {
+      version: 1 as const,
+      bindingId: 'binding-a',
+      ...source,
+      sourceFileId: 'upload-a',
+      sourceSessionId: 'source-session',
+      name: 'paper-a.pdf',
+      mimeType: 'application/pdf' as const,
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 1
+    }
+    const unlinkPdfContext = vi.fn().mockRejectedValue(new Error('unlink failed'))
+    window.api = {
+      sessions: { linkPdfContext: vi.fn(), unlinkPdfContext }
+    } as unknown as Window['api']
+    const hook = renderController(uploads(), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: {
+        revision: 1,
+        pdfContext: { version: 1, bindings: [binding] }
+      }
+    })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.unlinkReadingContext('binding-a'))
+    await flushAsyncWork()
+
+    expect(unlinkPdfContext).toHaveBeenCalledOnce()
+    expect(hook.result.current.actions.undo()).toBe(false)
+  })
+
+  it('copies the transient PDF viewport position only when capturing a send snapshot', () => {
+    const pdfContext = {
+      version: 1 as const,
+      bindings: [
+        {
+          version: 1 as const,
+          bindingId: 'binding-1',
+          sourceKind: 'artifact-version' as const,
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'source-session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf' as const,
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+    usePreviewWorkbenchStore.setState({
+      pdfReadingPositionByBindingId: {
+        'binding-1': { pageNumber: 7, pageCount: 14 }
+      }
+    })
+    const hook = renderController(uploads(), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: { revision: 1, pdfContext }
+    })
+    mounted.push(hook)
+
+    // The view projection no longer exposes the live position (the chip dropped the page line);
+    // captureSend still snapshots it straight from the store.
+    expect(hook.result.current.view.readingContext).not.toHaveProperty('readingPosition')
+    expect(hook.result.current.view.readingContext.bindings[0]).toMatchObject({
+      bindingId: 'binding-1'
+    })
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pdfReadingPosition: { pageNumber: 7, pageCount: 14 },
+      pdfContext: {
+        activeBindingId: 'binding-1',
+        readingPosition: { pageNumber: 7, pageCount: 14 }
+      }
+    })
+    expect(pdfContext).not.toHaveProperty('readingPosition')
+  })
+
+  it('shows a staged-upload draft selection while its attachment is in the draft', async () => {
+    const stageLocalFile = vi.fn().mockResolvedValue({
+      id: 'upload-pdf-1',
+      sessionId: '.pending',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: '/uploads/.pending/paper.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment)
+    const hook = renderController(uploads(stageLocalFile), undefined, [], null)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['pdf'], 'paper.pdf', { type: 'application/pdf' })
+      ])
+    )
+    await flushAsyncWork()
+    expect(hook.result.current.view.attachments).toHaveLength(1)
+    // The composer mirrors the draft's staged upload ids so preview surfaces can gate linking.
+    expect(usePreviewWorkbenchStore.getState().draftStagedUploadIds).toEqual(['upload-pdf-1'])
+
+    act(() =>
+      usePreviewWorkbenchStore.getState().setPendingPdfContext('project', {
+        kind: 'staged-upload',
+        attachmentId: 'upload-pdf-1',
+        previewItemId: 'upload:upload-pdf-1'
+      })
+    )
+
+    expect(hook.result.current.view.readingContext.bindings[0]).toMatchObject({
+      name: 'paper.pdf',
+      draftSelection: true
+    })
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project).toBeDefined()
+  })
+
+  it('does not expose a staged attachment until its local writer is claimed', async () => {
+    const claimed = deferred<void>()
+    const uploadApi = uploads(
+      vi.fn().mockResolvedValue({
+        id: 'upload-notes-1',
+        sessionId: '.pending',
+        name: 'research-notes.md',
+        originalName: 'research-notes.md',
+        path: '/uploads/.pending/research-notes.md',
+        mimeType: 'text/markdown',
+        size: 5
+      } satisfies UploadedAttachment)
+    )
+    uploadApi.claimLocalFile = vi.fn(() => claimed.promise)
+    const hook = renderController(uploadApi, undefined, [], null)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['notes'], 'research-notes.md', { type: 'text/markdown' })
+      ])
+    )
+    await flushAsyncWork()
+
+    expect(uploadApi.claimLocalFile).toHaveBeenCalledWith({ transferId: expect.any(String) })
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(hook.result.current.view.transfers).toHaveLength(1)
+
+    await act(async () => {
+      claimed.resolve()
+      await claimed.promise
+      await Promise.resolve()
+    })
+
+    expect(hook.result.current.view.attachments).toHaveLength(1)
+    expect(hook.result.current.view.transfers).toEqual([])
+  })
+
+  it('keeps a staged attachment unavailable when claiming its local writer fails', async () => {
+    const uploadApi = uploads(
+      vi.fn().mockResolvedValue({
+        id: 'upload-notes-1',
+        sessionId: '.pending',
+        name: 'research-notes.md',
+        originalName: 'research-notes.md',
+        path: '/uploads/.pending/research-notes.md',
+        mimeType: 'text/markdown',
+        size: 5
+      } satisfies UploadedAttachment)
+    )
+    uploadApi.claimLocalFile = vi.fn().mockRejectedValue(new Error('claim failed'))
+    const hook = renderController(uploadApi, undefined, [], null)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['notes'], 'research-notes.md', { type: 'text/markdown' })
+      ])
+    )
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(hook.result.current.view.transfers).toEqual([
+      expect.objectContaining({ status: 'error', error: 'claim failed' })
+    ])
+    expect(uploadApi.abortTransfer).toHaveBeenCalledWith({ transferId: expect.any(String) })
+  })
+
+  it('captures the pending PDF viewport position on the first send', async () => {
+    const stageLocalFile = vi.fn().mockResolvedValue({
+      id: 'upload-pdf-1',
+      sessionId: '.pending',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: '/uploads/.pending/paper.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment)
+    const hook = renderController(uploads(stageLocalFile), undefined, [], null)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['pdf'], 'paper.pdf', { type: 'application/pdf' })
+      ])
+    )
+    await flushAsyncWork()
+    act(() => {
+      usePreviewWorkbenchStore.getState().setPendingPdfContext('project', {
+        kind: 'staged-upload',
+        attachmentId: 'upload-pdf-1',
+        previewItemId: 'upload:upload-pdf-1'
+      })
+      usePreviewWorkbenchStore
+        .getState()
+        .setPdfReadingPosition('staged:upload-pdf-1', { pageNumber: 7, pageCount: 14 })
+    })
+
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextAttachmentIds: ['upload-pdf-1'],
+      pdfReadingPosition: { pageNumber: 7, pageCount: 14 }
+    })
+  })
+
+  it('captures a PDF-only new-conversation reading intent without showing draft context', async () => {
+    const staged = ['paper-a.pdf', 'paper-b.pdf'].map((name, index) => ({
+      id: `upload-pdf-${index + 1}`,
+      sessionId: '.pending',
+      name,
+      originalName: name,
+      path: `/uploads/.pending/${name}`,
+      mimeType: 'application/pdf',
+      size: 3
+    })) satisfies UploadedAttachment[]
+    const stageLocalFile = vi.fn().mockResolvedValueOnce(staged[0]).mockResolvedValueOnce(staged[1])
+    const filterPdfContextCandidates = vi.fn().mockResolvedValue({
+      sources: [],
+      pendingAttachmentIds: ['upload-pdf-1', 'upload-pdf-2']
+    })
+    window.api = {
+      sessions: {
+        filterPdfContextCandidates
+      }
+    } as unknown as Window['api']
+    const hook = renderController(uploads(stageLocalFile), undefined, [], null)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['pdf'], 'paper-a.pdf', { type: 'application/pdf' }),
+        new File(['pdf'], 'paper-b.pdf', { type: 'application/pdf' })
+      ])
+    )
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.readingContext.bindings).toEqual([])
+    expect(hook.result.current.view.readingContext.automaticAttachmentCount).toBe(2)
+    expect(filterPdfContextCandidates).not.toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project).toBeUndefined()
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextAttachmentIds: ['upload-pdf-1', 'upload-pdf-2']
+    })
+
+    act(() => hook.result.current.actions.dismissAutomaticReading())
+    expect(hook.result.current.view.readingContext.automaticAttachmentCount).toBe(0)
+    expect(hook.result.current.view.attachments).toEqual(staged)
+
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.readingContext.automaticAttachmentCount).toBe(2)
+
+    act(() => expect(hook.result.current.actions.redo()).toBe(true))
+    expect(hook.result.current.view.readingContext.automaticAttachmentCount).toBe(0)
+    expect(hook.result.current.view.attachments).toEqual(staged)
+    expect(
+      hook.result.current.lifecycle.captureSend().pendingPdfContextAttachmentIds
+    ).toBeUndefined()
+  })
+
+  it('adds an immutable PDF mentioned with @ as a send-time Reading candidate', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [
+          { type: 'text', text: 'Summarize ' },
+          {
+            type: 'artifact',
+            id: 'paper',
+            name: 'paper.pdf',
+            path: '/paper.pdf',
+            source: 'artifact',
+            mimeType: 'application/pdf',
+            versionId: 'paper-version'
+          }
+        ]
+      })
+    )
+
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextVersions: [
+        { sourceKind: 'artifact-version', sourceVersionId: 'paper-version' }
+      ]
+    })
+    expect(hook.result.current.lifecycle.captureSend(false)).toMatchObject({
+      pendingPdfContextVersions: [
+        { sourceKind: 'artifact-version', sourceVersionId: 'paper-version' }
+      ]
+    })
+  })
+
+  it('clears a staged-upload draft selection whose attachment is not in the draft', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+
+    // A preview tab can outlive its composer attachment; a selection pointing at the missing
+    // upload would read linked in the preview header while no chip or send could honor it.
+    act(() =>
+      usePreviewWorkbenchStore.getState().setPendingPdfContext('project', {
+        kind: 'staged-upload',
+        attachmentId: 'upload-gone',
+        previewItemId: 'upload:upload-gone'
+      })
+    )
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project).toBeUndefined()
+    expect(hook.result.current.view.readingContext.bindings).toEqual([])
+  })
+
   it('owns annotations in the draft and captured send snapshot', () => {
     const hook = renderController()
     mounted.push(hook)
@@ -153,6 +720,27 @@ describe('workspace composer controller', () => {
 
     act(() => hook.result.current.actions.removeAnnotation('annotation-1'))
     expect(hook.result.current.view.annotations).toEqual([])
+  })
+
+  it('undoes and redoes annotation add, edit, and removal', () => {
+    const hook = renderController()
+    mounted.push(hook)
+
+    act(() => expect(hook.result.current.actions.addAnnotation(annotation())).toBeUndefined())
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.annotations).toEqual([])
+
+    act(() => expect(hook.result.current.actions.redo()).toBe(true))
+    expect(hook.result.current.view.annotations).toEqual([annotation()])
+
+    act(() => hook.result.current.actions.updateAnnotationNote('annotation-1', 'Review'))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.annotations[0]?.note).toBeUndefined()
+
+    act(() => hook.result.current.actions.removeAnnotation('annotation-1'))
+    expect(hook.result.current.view.annotations).toEqual([])
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.annotations).toEqual([annotation()])
   })
 
   it('restores annotations with a failed send snapshot', () => {

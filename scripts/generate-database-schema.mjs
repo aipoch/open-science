@@ -37,7 +37,11 @@ const assertRuntimeDdlLocality = (files) => {
         `Unsafe migration SQL found in ${file.path}. Route trusted SQL through ${rawSqlOwner}.`
       )
     }
-    if (fullyOwnedPaths.has(file.path) || file.path.startsWith('src/main/database/migrations/')) {
+    if (
+      fullyOwnedPaths.has(file.path) ||
+      file.path.startsWith('src/main/database/migrations/') ||
+      file.path.startsWith('src/main/literature/migrations/')
+    ) {
       continue
     }
     const source = file.source.replaceAll(frozenDdlPattern, '')

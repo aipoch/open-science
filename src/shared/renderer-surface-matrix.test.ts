@@ -74,6 +74,7 @@ const computePaths = [
   'compute.jobsList',
   'compute.jobsMarkConsumed',
   'compute.jobsPendingNotification',
+  'compute.jobsTransitionAnalysis',
   'compute.list',
   'compute.listDir',
   'compute.passwordCapability',
@@ -83,6 +84,7 @@ const computePaths = [
   'compute.resetPassword',
   'compute.respondApproval',
   'compute.revealInFolder',
+  'compute.scratchClear',
   'compute.scratchSet',
   'compute.sshConfigAliases'
 ] as const

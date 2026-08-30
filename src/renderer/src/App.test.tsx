@@ -40,11 +40,13 @@ const mocks = vi.hoisted(() => {
       pendingApprovals: [] as unknown[],
       jobsList: vi.fn().mockResolvedValue([]),
       jobsPendingNotification: vi.fn().mockResolvedValue([]),
-      jobsMarkConsumed: vi.fn().mockResolvedValue(undefined)
+      jobsMarkConsumed: vi.fn().mockResolvedValue(undefined),
+      jobsTransitionAnalysis: vi.fn().mockResolvedValue([])
     },
-    runtimeSendMessage: vi
-      .fn()
-      .mockResolvedValue({ sessionId: 'session-1', messageId: 'analysis-message' }),
+    runtimeSendMessage: vi.fn(async (input: { sessionId?: string; messageId?: string }) => ({
+      sessionId: input.sessionId ?? 'session-1',
+      messageId: input.messageId ?? 'analysis-message'
+    })),
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string } & Record<string, unknown>>,
     appendRoutedUserMessage: vi.fn(),
@@ -414,6 +416,7 @@ describe('App startup routing', () => {
     mocks.compute.jobsList.mockClear()
     mocks.compute.jobsPendingNotification.mockClear()
     mocks.compute.jobsMarkConsumed.mockClear()
+    mocks.compute.jobsTransitionAnalysis.mockClear()
     mocks.runtimeSendMessage.mockClear()
     mocks.navigation.view = 'home'
     mocks.startupView = 'app'
@@ -486,6 +489,7 @@ describe('App startup routing', () => {
         jobsList: mocks.compute.jobsList,
         jobsPendingNotification: mocks.compute.jobsPendingNotification,
         jobsMarkConsumed: mocks.compute.jobsMarkConsumed,
+        jobsTransitionAnalysis: mocks.compute.jobsTransitionAnalysis,
         enabledHostsSet: vi.fn(() => Promise.resolve())
       },
       permissions: { onChanged: vi.fn(() => vi.fn()) },

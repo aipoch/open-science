@@ -77,6 +77,29 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     skillImport: options.skillImport,
     plan: options.plan,
     sideChat: options.sideChat,
+    literature: options.literature
+      ? {
+          isEnabled: options.literature.isEnabled,
+          handlerFor: (appSessionId, projectId) => ({
+            readDocument: (input) => {
+              const interaction = sessionInteractions.current(appSessionId)
+              if (interaction?.kind !== 'prompt' || !interaction.promptMessageId) {
+                return Promise.reject(
+                  new Error(
+                    'NO_LINKED_PDF_CONTEXT: Literature tools require an active message with a linked PDF snapshot.'
+                  )
+                )
+              }
+              return options.literature!.readDocument({
+                projectId,
+                sessionId: appSessionId,
+                promptMessageId: interaction.promptMessageId,
+                input
+              })
+            }
+          })
+        }
+      : undefined,
     mcpHttpHost: options.mcpHttpHost
   })
   let generationConnectionEffects: AcpGenerationConnectionEffects | undefined

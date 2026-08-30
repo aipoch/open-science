@@ -640,6 +640,10 @@ model ComputeJob {
   notifiedAt             DateTime?
   // notificationConsumedAt: set by wait_for_notification when the notification is consumed.
   notificationConsumedAt DateTime?
+  // Durable automatic-analysis delivery state. NULL preserves historical pending/consumed rows.
+  analysisState           String?
+  analysisMessageId       String?
+  analysisUpdatedAt       DateTime?
   createdAt              DateTime  @default(now())
   submittedAt            DateTime?
   startedAt              DateTime?

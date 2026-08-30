@@ -80,6 +80,7 @@ import type {
   ComputeApprovalRequest,
   ComputeJobsListFilter,
   ComputeJobsPendingNotificationFilter,
+  ComputeJobAnalysisTransition,
   ComputeHost,
   ComputeHostDeletionStatus,
   ComputePasswordCapability,
@@ -230,6 +231,9 @@ import type {
 import type {
   DeleteSessionRequest,
   EditSessionDetailsRequest,
+  FilterSessionPdfContextCandidatesRequest,
+  FilterSessionPdfContextCandidatesResult,
+  LinkSessionPdfContextRequest,
   SessionDeletionResult,
   LoadAllSessionsResult,
   ListSessionSummariesResult,
@@ -238,7 +242,9 @@ import type {
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
+  SessionRuntimeContext,
   SessionUsageProjection,
+  UnlinkSessionPdfContextRequest,
   UpdateSessionArchiveRequest
 } from './session-persistence'
 import type {
@@ -859,6 +865,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.jobsPendingNotification': callable<
     (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   >()('compute', ['compute:jobs:pending-notification']),
+  'compute.jobsTransitionAnalysis': callable<
+    (request: ComputeJobAnalysisTransition) => Promise<JobSummary[]>
+  >()('compute', ['compute:jobs:transition-analysis']),
   'compute.list': callable<() => Promise<ComputeHost[]>>()('compute', ['compute:list']),
   'compute.listDir': callable<(providerId: string, path: string) => Promise<DirListing>>()(
     'compute',
@@ -904,6 +913,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ]),
   'compute.scratchSet': callable<(providerId: string, path: string) => Promise<void>>()('compute', [
     'compute:scratch:set'
+  ]),
+  'compute.scratchClear': callable<(providerId: string) => Promise<void>>()('compute', [
+    'compute:scratch:clear'
   ]),
   'compute.sshConfigAliases': callable<() => Promise<string[]>>()('compute', [
     'compute:ssh-config-aliases'
@@ -1417,6 +1429,20 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.list': callable<() => Promise<ListSessionSummariesResult>>()('sessions', [
     'sessions:list'
   ]),
+  'sessions.filterPdfContextCandidates': callable<
+    (
+      request: FilterSessionPdfContextCandidatesRequest
+    ) => Promise<FilterSessionPdfContextCandidatesResult>
+  >()('sessions', [
+    'sessions:filter-pdf-context-candidates',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.linkPdfContext': callable<
+    (request: LinkSessionPdfContextRequest) => Promise<SessionRuntimeContext>
+  >()('sessions', ['sessions:link-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.loadAll': callable<() => Promise<LoadAllSessionsResult>>()('sessions', [
     'sessions:load-all'
   ]),
@@ -1462,6 +1488,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.updateArchive': callable<
     (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
   >()('sessions', ['sessions:update-archive']),
+  'sessions.unlinkPdfContext': callable<
+    (request: UnlinkSessionPdfContextRequest) => Promise<SessionRuntimeContext>
+  >()('sessions', ['sessions:unlink-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'settings.addCustomServer': callable<
     (request: AddCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:add-custom-server']),
@@ -2089,7 +2118,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ]),
   'uploads.finalizeSession': callable<
     (request: FinalizeUploadSessionRequest) => Promise<UploadedAttachment[]>
-  >()('uploads', ['uploads:finalize-session']),
+  >()('uploads', ['uploads:finalize-session', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'uploads.finishTransfer': callable<
     (request: UploadTransferRequest) => Promise<UploadedAttachment>
   >()('uploads', ['uploads:finish-transfer']),

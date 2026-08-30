@@ -66,8 +66,11 @@ const TRANSPORTS = new Set<CustomServerTransport>(['stdio', 'streamable_http', '
 const SUSPICIOUS_QUERY_KEYS = new Set([
   'accesstoken',
   'apikey',
+  'apitoken',
   'auth',
+  'authtoken',
   'authorization',
+  'bearertoken',
   'clientassertion',
   'clientsecret',
   'code',
@@ -78,16 +81,111 @@ const SUSPICIOUS_QUERY_KEYS = new Set([
   'key',
   'passwd',
   'password',
+  'privatekey',
   'refreshtoken',
+  'securitytoken',
   'secret',
+  'sessiontoken',
+  'signature',
   'token',
-  'tokenkey'
+  'tokenkey',
+  'xapikey'
 ])
 const JWT = /(?:^|[=:\s])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|\s)/
-const SECRET_FLAG = /^--?(?:api[-_]?key|token|secret|password|credential|authorization)(?:=|$)/i
+const SECRET_FLAG =
+  /^--?(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?(?:key|token)|auth(?:entication)?[-_]?(?:key|token)|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|refresh[-_]?token|secret(?:[-_]?access[-_]?key)?|security[-_]?token|session[-_]?token|tokens?|user)(?:[-_]?(?:file|path))?(?:=|:|$)/i
+const CREDENTIAL_USER_FLAG = /^-[uU](?:[=:]|[^-]*:)/
+const CREDENTIAL_HEADER_NAME =
+  /(?:^|[-_])(?:auth(?:entication|orization)?|bearer|cookie|credentials?|passphrase|passwd|password|pat|secret|signature|token|(?:access|api|client|private|refresh|security|session)[-_]?(?:key|secret|token))(?:$|[-_])/i
 const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SAFE_HEADER_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
 const CONNECTOR_TEMPLATE_DIGEST_CACHE_LIMIT = 64
+
+const hasSuspiciousQueryKey = (url: URL): boolean =>
+  [...url.searchParams.keys()].some((key) =>
+    SUSPICIOUS_QUERY_KEYS.has(key.toLowerCase().replace(/[^a-z0-9]/g, ''))
+  )
+
+const urlContainsCredential = (value: string): boolean => {
+  try {
+    const url = new URL(value)
+    return Boolean(url.username || url.password || hasSuspiciousQueryKey(url))
+  } catch {
+    return false
+  }
+}
+
+const argumentUrlContainsCredential = (argument: string): boolean => {
+  const trimmed = argument.trim()
+  if (urlContainsCredential(trimmed)) return true
+
+  const separator = trimmed.indexOf('=')
+  return separator >= 0 && urlContainsCredential(trimmed.slice(separator + 1))
+}
+
+const headerArgumentValue = (argument: string): string => {
+  const trimmed = argument.trim()
+  const longOption = /^--header(?:=|\s+)(.+)$/i.exec(trimmed)
+  if (longOption) return longOption[1].trim()
+
+  const shortOption = /^-H(?:=|\s+)?(.+)$/i.exec(trimmed)
+  return shortOption ? shortOption[1].trim() : trimmed
+}
+
+const headerArgumentContainsCredential = (argument: string): boolean => {
+  const value = headerArgumentValue(argument)
+  const separator = value.indexOf(':')
+  return (
+    separator > 0 &&
+    CREDENTIAL_HEADER_NAME.test(value.slice(0, separator).trim()) &&
+    /\S/.test(value.slice(separator + 1))
+  )
+}
+
+const argumentContainsCredential = (argument: string): boolean =>
+  JWT.test(argument) ||
+  /^Bearer\s+/i.test(argument) ||
+  SECRET_FLAG.test(argument) ||
+  CREDENTIAL_USER_FLAG.test(argument) ||
+  headerArgumentContainsCredential(argument) ||
+  argumentUrlContainsCredential(argument)
+
+const splitUserValueContainsCredential = (argument: string): boolean => {
+  const value = argument.trim()
+  if (/^[A-Za-z]:[\\/]/.test(value) || /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false
+  const separator = value.indexOf(':')
+  return separator >= 0 && /\S/.test(value.replace(':', ''))
+}
+
+const argumentsContainCredential = (args: readonly string[]): boolean =>
+  args.some(argumentContainsCredential) ||
+  args.some(
+    (argument, index) =>
+      /^-[uU]$/.test(argument.trim()) && splitUserValueContainsCredential(args[index + 1] ?? '')
+  ) ||
+  args.some((argument, index) => {
+    if (!/^(?:--header|-H)(?:=.+)?$/i.test(argument.trim())) return false
+    return argumentContainsCredential(args.slice(index).join(' '))
+  })
+
+export const hasEmbeddedConnectorCredentials = (fields: {
+  args?: readonly string[]
+  url?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    redirectUri?: string
+  } | null
+}): boolean => {
+  if (fields.args && argumentsContainCredential(fields.args)) return true
+  return [
+    fields.url,
+    fields.oauth?.clientMetadataUrl,
+    fields.oauth?.authorizationServerUrl,
+    fields.oauth?.redirectUri
+  ].some((url) => Boolean(url && urlContainsCredential(url)))
+}
+
 // Keeps preview digests opaque to the renderer without persisting exported connector metadata.
 const connectorTemplateDigests = new Map<string, string>()
 
@@ -246,18 +344,14 @@ const readHttpUrl = (
       path
     )
   }
-  for (const key of url.searchParams.keys()) {
-    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '')
-    if (SUSPICIOUS_QUERY_KEYS.has(normalizedKey)) {
-      diagnostic(
-        diagnostics,
-        'error',
-        'connector-template.url-secret',
-        `${path} contains a credential-like query parameter.`,
-        path
-      )
-      break
-    }
+  if (hasSuspiciousQueryKey(url)) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.url-secret',
+      `${path} contains a credential-like query parameter.`,
+      path
+    )
   }
   return raw
 }
@@ -389,6 +483,7 @@ const validateArgs = (
   args: string[] | undefined,
   diagnostics: ConnectorTemplateDiagnostic[]
 ): void => {
+  let credentialReported = false
   for (const [index, arg] of (args ?? []).entries()) {
     if (isLocalPath(arg)) {
       diagnostic(
@@ -408,7 +503,8 @@ const validateArgs = (
         `args[${index}]`
       )
     }
-    if (JWT.test(arg) || /^Bearer\s+/i.test(arg) || SECRET_FLAG.test(arg)) {
+    if (argumentContainsCredential(arg)) {
+      credentialReported = true
       diagnostic(
         diagnostics,
         'error',
@@ -417,6 +513,15 @@ const validateArgs = (
         `args[${index}]`
       )
     }
+  }
+  if (args && !credentialReported && argumentsContainCredential(args)) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.argument-secret',
+      'args appears to contain a credential.',
+      'args'
+    )
   }
 }
 
@@ -967,7 +1072,16 @@ export const buildConnectorTemplateExport = (
   }
   const contents = templateJson(definition)
   const parsed = parseConnectorTemplate(contents)
-  const digest = parsed.ready ? connectorTemplateDigest(contents) : undefined
+  if (!parsed.ready) {
+    return {
+      preview: {
+        ...parsed,
+        connectorId: source.id
+      }
+    }
+  }
+
+  const digest = connectorTemplateDigest(contents)
   const mcpClientContents = mcpClientJson(definition)
   const mcpClientDigest = connectorTemplateDigest(mcpClientContents)
   const mcpClientDiagnostics: ConnectorTemplateDiagnostic[] = source.oauth
@@ -984,14 +1098,14 @@ export const buildConnectorTemplateExport = (
     preview: {
       ...parsed,
       connectorId: source.id,
-      ...(digest
-        ? { digest, suggestedFileName: `open-science-connector-${source.name}.json` }
-        : {}),
+      digest,
+      suggestedFileName: `open-science-connector-${source.name}.json`,
       mcpClientDigest,
       mcpClientSuggestedFileName: `mcp-${source.name}.json`,
       ...(mcpClientDiagnostics.length ? { mcpClientDiagnostics } : {})
     },
-    ...(parsed.ready ? { contents, mcpClientContents } : {})
+    contents,
+    mcpClientContents
   }
 }
 

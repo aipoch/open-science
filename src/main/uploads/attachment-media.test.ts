@@ -9,9 +9,11 @@ import {
   canInlineImageInSession,
   consumeInlineImageBudget,
   extractPdfText,
+  inspectPdfPageCount,
   ImageContentError,
   MAX_AUTO_EXTRACT_PDF_BYTES,
   MAX_AUTO_PROCESS_IMAGE_BYTES,
+  MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS,
   MAX_IMAGE_PAYLOAD_BYTES,
   MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES,
   MAX_SESSION_INLINE_IMAGE_BYTES,
@@ -135,14 +137,29 @@ const sharpFactory = vi.fn((input: Buffer) => makeSharpPipeline(input))
 vi.mock('sharp', () => ({ default: (input: Buffer) => sharpFactory(input) }))
 
 // A fake pdfjs document so text extraction is deterministic and does not parse a real PDF.
-let fakePdf: { numPages: number; pages: string[][] }
+let beforePdfPageRead: (() => Promise<void>) | undefined
+type FakePdfTextItem =
+  | string
+  | Readonly<{
+      str: string
+      transform: readonly number[]
+      width: number
+      height: number
+      dir?: string
+    }>
+let fakePdf: { numPages: number; pages: FakePdfTextItem[][] }
 const getDocument = vi.fn(() => ({
   promise: Promise.resolve({
     numPages: fakePdf.numPages,
     getPage: async (pageNumber: number) => ({
-      getTextContent: async () => ({
-        items: (fakePdf.pages[pageNumber - 1] ?? []).map((str) => ({ str }))
-      }),
+      getTextContent: async () => {
+        await beforePdfPageRead?.()
+        return {
+          items: (fakePdf.pages[pageNumber - 1] ?? []).map((item) =>
+            typeof item === 'string' ? { str: item } : item
+          )
+        }
+      },
       cleanup: () => {}
     }),
     destroy: async () => {}
@@ -157,6 +174,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'attachment-media-'))
   sharpFactory.mockClear()
   getDocument.mockClear()
+  beforePdfPageRead = undefined
   fakeImage = {
     isEmpty: () => false,
     getSize: () => ({ width: 4000, height: 2000 }),
@@ -597,11 +615,19 @@ describe('consumeInlineImageBudget', () => {
 })
 
 describe('extractPdfText', () => {
-  it('does not read PDF sources above the automatic extraction limit', async () => {
+  it('reads PDF page count without extracting page text', async () => {
+    const filePath = join(root, 'count.pdf')
+    await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+
+    await expect(inspectPdfPageCount(filePath)).resolves.toBe(2)
+  })
+
+  it('does not inspect or read PDF sources above the automatic extraction limit', async () => {
     const filePath = join(root, 'huge.pdf')
     await writeFile(filePath, Buffer.from('%PDF-1.4'))
     await truncate(filePath, MAX_AUTO_EXTRACT_PDF_BYTES + 1)
 
+    await expect(inspectPdfPageCount(filePath)).rejects.toThrow(/automatic extraction limit/i)
     await expect(extractPdfText(filePath)).rejects.toThrow(/automatic extraction limit/i)
     expect(getDocument).not.toHaveBeenCalled()
   })
@@ -615,6 +641,84 @@ describe('extractPdfText', () => {
     expect(result.pageCount).toBe(2)
     expect(result.truncated).toBe(false)
     expect(result.text).toBe('--- Page 1 ---\nHello world\n\n--- Page 2 ---\nSecond page')
+  })
+
+  it('restores missing whitespace between adjacent PDF text items', async () => {
+    fakePdf = {
+      numPages: 1,
+      pages: [
+        [
+          { str: 'The method', transform: [10, 0, 0, 10, 0, 20], width: 50, height: 10 },
+          { str: 'uses retrieval', transform: [10, 0, 0, 10, 55, 20], width: 60, height: 10 }
+        ]
+      ]
+    }
+    const filePath = join(root, 'spacing.pdf')
+    await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+
+    await expect(extractPdfText(filePath)).resolves.toMatchObject({
+      text: '--- Page 1 ---\nThe method uses retrieval'
+    })
+  })
+
+  it('does not split a word when PDF text is emitted as adjacent glyph runs', async () => {
+    fakePdf = {
+      numPages: 1,
+      pages: [
+        [
+          { str: 'H', transform: [10, 0, 0, 10, 0, 20], width: 6, height: 10 },
+          { str: 'e', transform: [10, 0, 0, 10, 6, 20], width: 5, height: 10 },
+          { str: 'llo', transform: [10, 0, 0, 10, 11, 20], width: 12, height: 10 }
+        ]
+      ]
+    }
+    const filePath = join(root, 'glyph-runs.pdf')
+    await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+
+    await expect(extractPdfText(filePath)).resolves.toMatchObject({
+      text: '--- Page 1 ---\nHello'
+    })
+  })
+
+  it('extracts only the requested PDF page', async () => {
+    const filePath = join(root, 'page.pdf')
+    await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+
+    const result = await extractPdfText(filePath, 2)
+
+    expect(result.pageCount).toBe(2)
+    expect(result.truncated).toBe(false)
+    expect(result.text).toBe('--- Page 2 ---\nSecond page')
+  })
+
+  it('limits concurrent full PDF text extraction work', async () => {
+    const paths = await Promise.all(
+      Array.from({ length: MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS + 1 }, async (_, index) => {
+        const filePath = join(root, `concurrent-${index}.pdf`)
+        await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+        return filePath
+      })
+    )
+    let releaseReads: (() => void) | undefined
+    const readGate = new Promise<void>((resolve) => {
+      releaseReads = resolve
+    })
+    let startedReads = 0
+    beforePdfPageRead = async () => {
+      startedReads += 1
+      await readGate
+    }
+
+    const extractions = paths.map((filePath) => extractPdfText(filePath))
+    try {
+      await vi.waitFor(() => expect(startedReads).toBe(MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS))
+      expect(getDocument).toHaveBeenCalledTimes(MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS)
+    } finally {
+      releaseReads?.()
+    }
+
+    await expect(Promise.all(extractions)).resolves.toHaveLength(paths.length)
+    expect(getDocument).toHaveBeenCalledTimes(paths.length)
   })
 
   it('returns empty text for a PDF with no extractable content', async () => {

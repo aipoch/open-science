@@ -80,7 +80,221 @@ describe('workspace tool activity details', () => {
 
     expect(details?.displayName).toBe('Skill')
     expect(details?.subtitle).toBe('mcp-pubmed')
-    expect(details?.sections.map((section) => section.label)).toEqual(['Input', 'Output'])
+    expect(details?.sections.map((section) => 'label' in section && section.label)).toEqual([
+      'Input',
+      'Output'
+    ])
+  })
+
+  it('projects a Literature search as a semantic card instead of raw MCP JSON', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-literature__read_document',
+      title: 'mcp__open-science-literature__read_document',
+      rawInput: {
+        documentId: 'binding-secret-id',
+        query: 'main contributions method architecture evaluation results'
+      },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              scope: 'relevant-passages',
+              retrievalMode: 'bm25',
+              documents: [{ id: 'binding-secret-id', name: 'paper.pdf', pageCount: 14 }],
+              passages: [
+                { documentId: 'binding-secret-id', pageStart: 2, pageEnd: 3, content: 'One' },
+                { documentId: 'binding-secret-id', pageStart: 7, pageEnd: 7, content: 'Two' }
+              ]
+            })
+          }
+        }
+      ]
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details).toMatchObject({
+      displayName: 'Reading',
+      subtitle: 'main contributions method architecture evaluation results'
+    })
+    expect(details?.sections).toEqual([
+      {
+        kind: 'literature',
+        summary: {
+          action: 'search',
+          query: 'main contributions method architecture evaluation results',
+          documentNames: ['paper.pdf'],
+          documentCount: 1,
+          passageCount: 2,
+          pageStart: 2,
+          pageEnd: 7,
+          retrievalMode: 'bm25'
+        }
+      }
+    ])
+    expect(JSON.stringify(details)).not.toContain('binding-secret-id')
+  })
+
+  it('keeps a CJK retrieval query out of the Literature presentation', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-literature__read_document',
+      rawInput: {
+        documentId: 'binding-secret-id',
+        query: '梳理这篇论文的核心贡献'
+      }
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details).toMatchObject({
+      displayName: 'Reading',
+      subtitle: undefined,
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'search',
+            documentCount: 1
+          }
+        }
+      ]
+    })
+    expect(JSON.stringify(details)).not.toContain('梳理这篇论文的核心贡献')
+  })
+
+  it('uses the shared Literature presentation block when OpenCode truncates the full result', () => {
+    const activity = createActivity({
+      title: 'open_science_literature_read_document',
+      rawInput: { query: 'CRAG comparison scores accuracy margin' },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                retrievalMode: 'bm25',
+                documentNames: ['paper.pdf'],
+                passageCount: 4,
+                pageStart: 4,
+                pageEnd: 13
+              }
+            })
+          }
+        },
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: '{"scope":"relevant-passages","retrievalMode":"bm25","passages":[{"content":"truncated…'
+          }
+        }
+      ]
+    })
+
+    expect(buildToolActivityDetails(activity)).toMatchObject({
+      displayName: 'Reading',
+      subtitle: 'CRAG comparison scores accuracy margin',
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'search',
+            query: 'CRAG comparison scores accuracy margin',
+            retrievalMode: 'bm25',
+            documentNames: ['paper.pdf'],
+            documentCount: 1,
+            passageCount: 4,
+            pageStart: 4,
+            pageEnd: 13
+          }
+        }
+      ]
+    })
+  })
+
+  it('unwraps a native Responses MCP result envelope for the same Literature card', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-literature__read_document',
+      rawInput: {
+        documentId: 'binding-secret-id',
+        query: 'Table main results comparison performance benchmarks datasets'
+      },
+      rawOutput: {
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                openScienceLiteraturePresentation: {
+                  retrievalMode: 'bm25',
+                  documentNames: ['paper.pdf'],
+                  passageCount: 6,
+                  pageStart: 5,
+                  pageEnd: 9
+                }
+              })
+            },
+            { type: 'text', text: '{"passages":[{"content":"truncated…' }
+          ],
+          structuredContent: {
+            scope: 'relevant-passages',
+            retrievalMode: 'bm25',
+            documents: [{ id: 'binding-secret-id', name: 'paper.pdf', pageCount: 14 }],
+            passages: Array.from({ length: 6 }, (_, index) => ({
+              documentId: 'binding-secret-id',
+              pageStart: index + 1,
+              pageEnd: index + 1,
+              content: `Passage ${index + 1}`
+            }))
+          }
+        },
+        error: null
+      }
+    })
+
+    expect(buildToolActivityDetails(activity)?.sections[0]).toMatchObject({
+      kind: 'literature',
+      summary: {
+        action: 'search',
+        retrievalMode: 'bm25',
+        documentNames: ['paper.pdf'],
+        documentCount: 1,
+        passageCount: 6,
+        pageStart: 5,
+        pageEnd: 9
+      }
+    })
+  })
+
+  it('summarizes bounded Literature reads without exposing the cursor', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp.open-science-literature.read_document',
+      rawInput: { documentId: 'binding-id', cursor: 'opaque-cursor' },
+      rawOutput: {
+        scope: 'full-document',
+        document: { id: 'binding-id', name: 'paper.pdf', pageCount: 14 },
+        passage: { pageStart: 1, pageEnd: 5, text: 'content' },
+        nextCursor: 'next-opaque-cursor'
+      }
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.sections[0]).toMatchObject({
+      kind: 'literature',
+      summary: {
+        action: 'read',
+        documentNames: ['paper.pdf'],
+        documentCount: 1,
+        pageStart: 1,
+        pageEnd: 5,
+        hasMore: true
+      }
+    })
+    expect(JSON.stringify(details)).not.toContain('cursor')
   })
 
   it('extracts the renderable SKILL.md document from a load_skill output', () => {
@@ -952,7 +1166,10 @@ describe('workspace tool activity details', () => {
     const details = buildToolActivityDetails(activity)
 
     expect(details?.displayName).toBe('delete_artifact_file')
-    expect(details?.sections.map((section) => section.label)).toEqual(['Input', 'Output'])
+    expect(details?.sections.map((section) => 'label' in section && section.label)).toEqual([
+      'Input',
+      'Output'
+    ])
     expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('deleted')
   })
 
@@ -987,7 +1204,9 @@ describe('workspace tool activity details', () => {
     expect(details?.displayName).toBe('Write file')
     expect(details?.subtitle).toBe('sin.png')
     expect(details?.metaLabel).toBe('41 KB')
-    expect(details?.sections.map((section) => section.label)).toEqual(['File'])
+    expect(details?.sections.map((section) => 'label' in section && section.label)).toEqual([
+      'File'
+    ])
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).toContain('sin.png')
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain(
       'artifact_id'
@@ -1011,7 +1230,10 @@ describe('workspace tool activity details', () => {
 
     expect(details?.displayName).toBe('Web Fetch')
     expect(details?.subtitle).toBe('https://anthropic.com/news')
-    expect(details?.sections.map((section) => section.label)).toEqual(['Prompt', 'Result'])
+    expect(details?.sections.map((section) => 'label' in section && section.label)).toEqual([
+      'Prompt',
+      'Result'
+    ])
     expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('Feature A')
   })
 

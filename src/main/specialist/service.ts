@@ -20,6 +20,8 @@ import type {
   SpecialistSelectedConfig
 } from '../../shared/specialist'
 import {
+  CONNECTOR_TOOL_PATTERN_MAX_LENGTH,
+  CONNECTOR_TOOL_RULE_MAX_COUNT,
   inferSpecialistId,
   validateCreateSpecialistInput,
   validateUpdateSpecialistInput,
@@ -33,6 +35,7 @@ const isStringArray = (value: unknown): value is string[] =>
 
 const isConnectorToolRuleArray = (value: unknown): boolean =>
   Array.isArray(value) &&
+  value.length <= CONNECTOR_TOOL_RULE_MAX_COUNT &&
   value.every(
     (rule) =>
       rule &&
@@ -47,7 +50,13 @@ const isConnectorToolRuleArray = (value: unknown): boolean =>
       [
         (rule as { includeToolsPattern?: unknown }).includeToolsPattern,
         (rule as { excludeToolsPattern?: unknown }).excludeToolsPattern
-      ].every((pattern) => pattern === undefined || typeof pattern === 'string')
+      ].every(
+        (pattern) =>
+          pattern === undefined ||
+          (typeof pattern === 'string' &&
+            pattern.length > 0 &&
+            pattern.length <= CONNECTOR_TOOL_PATTERN_MAX_LENGTH)
+      )
   )
 
 const assertCapabilityConfigShape = (

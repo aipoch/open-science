@@ -105,6 +105,10 @@ const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
     !server.enabled
   )
 
+const cannotEnableCustomServer = (server: CustomServerView): boolean =>
+  requiresSignInBeforeEnable(server) ||
+  (!server.enabled && server.availability === 'credential_unavailable')
+
 type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void
   onOpenTag?: (tagId: string) => void
@@ -712,11 +716,13 @@ export function ConnectorsPanel({
                                   ? t('Checking…')
                                   : server.availability === 'unavailable'
                                     ? t('Unavailable')
-                                    : server.availability === 'unauthenticated'
-                                      ? t('Sign-in required')
-                                      : server.enabled
-                                        ? t('Connected')
-                                        : t('Disabled')}
+                                    : server.availability === 'credential_unavailable'
+                                      ? t('Credentials unavailable')
+                                      : server.availability === 'unauthenticated'
+                                        ? t('Sign-in required')
+                                        : server.enabled
+                                          ? t('Connected')
+                                          : t('Disabled')}
                             </span>
                             {server.enabled || usages.length > 0 ? (
                               <span className="inline-flex shrink-0 items-center gap-1">
@@ -754,7 +760,8 @@ export function ConnectorsPanel({
                             {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
                           </Button>
                         ) : null}
-                        {server.availability === 'unauthenticated' && !server.oauth ? (
+                        {(server.availability === 'unauthenticated' && !server.oauth) ||
+                        server.availability === 'credential_unavailable' ? (
                           <Button
                             type="button"
                             size="sm"
@@ -764,7 +771,7 @@ export function ConnectorsPanel({
                             {t('Configure')}
                           </Button>
                         ) : null}
-                        {server.oauth ? (
+                        {server.oauth && server.availability !== 'credential_unavailable' ? (
                           <Button
                             type="button"
                             size="sm"
@@ -829,9 +836,9 @@ export function ConnectorsPanel({
                           <SettingsToggle
                             enabled={server.enabled}
                             aria-label={t('Toggle {{name}}', { name: server.displayName })}
-                            aria-disabled={requiresSignInBeforeEnable(server) || undefined}
+                            aria-disabled={cannotEnableCustomServer(server) || undefined}
                             className={
-                              requiresSignInBeforeEnable(server)
+                              cannotEnableCustomServer(server)
                                 ? 'cursor-not-allowed opacity-50'
                                 : undefined
                             }
@@ -843,7 +850,7 @@ export function ConnectorsPanel({
                                   : t('Unavailable to Main Agent')
                             }
                             onToggle={() => {
-                              if (requiresSignInBeforeEnable(server)) return
+                              if (cannotEnableCustomServer(server)) return
                               void saveToggle(async () => {
                                 await setCustomServerEnabled(server.id, !server.enabled)
                               })

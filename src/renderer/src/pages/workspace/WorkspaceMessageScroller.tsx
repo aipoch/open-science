@@ -1377,6 +1377,7 @@ const WorkspaceMessageScrollerImpl = ({
                   }
                   const messageItemProps: EditableWorkspaceMessageItemProps = {
                     message: item.message,
+                    projectId: currentProjectId,
                     onPreviewArtifact,
                     onPreviewArtifactModal,
                     onPreviewUploadAttachment,
@@ -1708,6 +1709,7 @@ const WorkspaceMessageScrollerImpl = ({
               {optimisticMessage ? (
                 <WorkspaceMessageItem
                   message={optimisticMessage}
+                  projectId={currentProjectId}
                   onPreviewArtifact={onPreviewArtifact}
                   onPreviewArtifactModal={onPreviewArtifactModal}
                   onPreviewUploadAttachment={onPreviewUploadAttachment}

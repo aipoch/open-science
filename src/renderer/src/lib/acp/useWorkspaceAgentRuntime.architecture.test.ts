@@ -500,6 +500,7 @@ const hookKeys = [
 ] as const
 const sendIntentKeys = [
   'sessionId',
+  'messageId',
   'branchSourceSessionId',
   'branchSourceMessageId',
   'text',
@@ -512,6 +513,10 @@ const sendIntentKeys = [
   'permissionProfile',
   'forcedSkillIds',
   'referencedArtifacts',
+  'pdfContext',
+  'pdfReadingPosition',
+  'pendingPdfContextAttachmentIds',
+  'pendingPdfContextVersions',
   'parts',
   'specialistId',
   'enabledComputeHosts',

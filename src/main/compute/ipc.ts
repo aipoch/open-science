@@ -15,6 +15,7 @@ import type {
   ComputeJob,
   ComputeJobsListFilter,
   ComputeJobsPendingNotificationFilter,
+  ComputeJobAnalysisTransition,
   JobSummary,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
@@ -128,6 +129,9 @@ export const toJobSummary = async (
     // Phase 3b notification inbox timestamps (issue 06).
     notified_at: job.notified_at,
     notification_consumed_at: job.notification_consumed_at,
+    analysis_state: job.analysis_state,
+    analysis_message_id: job.analysis_message_id,
+    analysis_updated_at: job.analysis_updated_at,
     // Phase 3b compute_done payload fields (spec §11.3).
     featured_files: featuredFiles,
     featured_file_count: featuredFiles.length,
@@ -168,6 +172,8 @@ type ComputeHandlers = {
   ) => Promise<void>
   // Scratch root: set path and mark pinned.
   scratchSet: (providerId: string, path: string) => Promise<void>
+  // Scratch root: clear the override so probes may auto-detect it again.
+  scratchClear: (providerId: string) => Promise<void>
   // Enforced concurrent job limit: set 1..500.
   concurrencySet: (providerId: string, limit: number) => Promise<void>
   // Session-level concurrency control (Phase 3c, issue 04).
@@ -203,6 +209,7 @@ type ComputeHandlers = {
   jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   // Marks the given job ids as notification-consumed. Idempotent (issue 05).
   jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
+  jobsTransitionAnalysis: (request: ComputeJobAnalysisTransition) => Promise<JobSummary[]>
 }
 
 const createComputeHandlers = (
@@ -426,6 +433,7 @@ const createComputeHandlers = (
     detailsSave: (providerId, text, oldText, author) =>
       service.replaceDetails(providerId, { text, oldText, author }),
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
+    scratchClear: (providerId) => service.clearScratchRoot(providerId),
     concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
     setSessionConcurrencyLimit: (sessionId, limit) =>
       service.setSessionConcurrencyLimit(sessionId, limit),
@@ -482,6 +490,32 @@ const createComputeHandlers = (
     jobsMarkConsumed: async (sessionId, jobIds) => {
       if (!jobRepository) return
       await jobRepository.markNotificationsConsumed(sessionId, jobIds)
+    },
+    jobsTransitionAnalysis: async (request) => {
+      if (!jobRepository || !storageRoot) {
+        throw new Error('Compute analysis persistence is unavailable.')
+      }
+      const jobs = await jobRepository.transitionAnalysis(request)
+      for (const job of jobs) {
+        try {
+          onJobUpdated?.(job)
+        } catch (error) {
+          // The transition is already durable; a broadcast failure must not report it as rejected.
+          log.warn('compute analysis transition broadcast failed', errorLogFields(error))
+        }
+      }
+      const hostNameMap = new Map<string, string>()
+      try {
+        const hosts = await repository.list()
+        for (const host of hosts) hostNameMap.set(host.providerId, host.displayName)
+      } catch {
+        // The transition is already durable; provider IDs are valid summary fallbacks.
+      }
+      return Promise.all(
+        jobs.map((job) =>
+          toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
+        )
+      )
     }
   }
 }

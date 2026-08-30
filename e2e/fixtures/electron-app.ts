@@ -141,12 +141,10 @@ const launchEnvironment = (
   }
 
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
+  environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
   if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
-  if (environment.OPEN_SCIENCE_E2E_EXECUTABLE) {
-    environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
-  }
   if (fakeRemoteItRoot) {
     environment.OPEN_SCIENCE_FAKE_REMOTEIT_STATE = join(storageRoot, 'fake-remoteit-state.json')
     environment.OPEN_SCIENCE_REMOTEIT_BIN = process.execPath

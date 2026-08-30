@@ -38,6 +38,8 @@ type ComputeStore = ComputeStoreData & {
   saveDetails: (providerId: string, text: string, oldText: string) => Promise<void>
   // Sets the scratch root path and marks the host as pinned.
   setScratch: (providerId: string, path: string) => Promise<void>
+  // Clears the pinned path so a future probe may auto-detect the scratch root.
+  clearScratch: (providerId: string) => Promise<void>
   // Sets the enforced concurrent job limit (1..500).
   setConcurrency: (providerId: string, limit: number) => Promise<void>
   // Queues an incoming approval request (from the main-process compute gate).
@@ -235,6 +237,16 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
   // Sets the scratch root path and marks the host as pinned. Merges the updated host into cache.
   setScratch: async (providerId, path) => {
     await window.api.compute.scratchSet(providerId, path)
+    const updatedHost = await window.api.compute.get(providerId)
+    if (updatedHost) {
+      set((state) => ({
+        hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
+      }))
+    }
+  },
+
+  clearScratch: async (providerId) => {
+    await window.api.compute.scratchClear(providerId)
     const updatedHost = await window.api.compute.get(providerId)
     if (updatedHost) {
       set((state) => ({

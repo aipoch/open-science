@@ -109,6 +109,36 @@ describe('Connector application composition', () => {
     expect(mcpClientManager.closeAll).toHaveBeenCalledOnce()
   })
 
+  it('fails closed before OAuth authentication when the client secret cannot be decrypted', async () => {
+    const { settings, mcpClientManager, deps } = createHarness()
+    settings.getConnectors.mockResolvedValue({
+      customMcpServers: [
+        {
+          id: 'oauth-incomplete',
+          name: 'oauth-incomplete',
+          displayName: 'OAuth incomplete',
+          transport: 'streamable_http',
+          url: 'https://mcp.example.test',
+          enabled: false,
+          oauth: {
+            authorizationServerUrl: 'https://auth.example.test',
+            clientId: 'registered-client'
+          },
+          oauthClientSecretRef: 'enc:unavailable'
+        }
+      ]
+    })
+    const module = await createConnectorApplicationModule(deps)
+    const authenticate = settings.setCustomServerAuthenticator.mock.calls[0][0] as (
+      serverId: string
+    ) => Promise<void>
+
+    await expect(authenticate('oauth-incomplete')).rejects.toThrow(/credential_unavailable/)
+    expect(mcpClientManager.authenticate).not.toHaveBeenCalled()
+
+    await module.dispose?.()
+  })
+
   it('forwards the conversation cancellation signal to GitHub scanning', async () => {
     const { settings, skillImportApprovals, deps } = createHarness()
     const controller = new AbortController()

@@ -16,6 +16,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime.test-utils'
+import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
@@ -949,11 +950,11 @@ const contextUsageMap = (
 
 const promptContentLifecycle = (
   runtime: AcpRuntime
-): { resetSession: (sessionId: string) => void } =>
+): Pick<AcpPromptContentOwner, 'prepare' | 'resetSession'> =>
   (
     runtime as unknown as {
       contextCompactionWorkflow: {
-        options: { promptContent: { resetSession: (sessionId: string) => void } }
+        options: { promptContent: Pick<AcpPromptContentOwner, 'prepare' | 'resetSession'> }
       }
     }
   ).contextCompactionWorkflow.options.promptContent
@@ -1727,7 +1728,7 @@ describe('ACP runtime provider prompt acceptance', () => {
       await runtime.sendPrompt({
         sessionId: session.sessionId,
         text: 'Research this.',
-        historyImages: [
+        currentImages: [
           {
             mimeType: 'image/png',
             data: imageData,
@@ -5402,6 +5403,166 @@ describe('ACP runtime session management', () => {
         { sessionId: 'remote-session-2', text: 'reply for remote-session-2' }
       ])
     )
+  })
+
+  it('mounts Literature before a linked-PDF prompt when the earlier link could not reach a live runtime session', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const registerLiterature = vi.fn()
+    const mcpHttpHost = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerLiterature,
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn(async () => undefined)
+    } as unknown as AgentMcpHttpHost
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      mcpHttpHost,
+      literature: {
+        isEnabled: vi.fn(async () => false),
+        readDocument: vi.fn()
+      }
+    })
+    vi.spyOn(promptContentLifecycle(runtime), 'prepare').mockResolvedValue({
+      content: [{ type: 'text', text: 'linked PDF route' }],
+      historyImageCount: 0
+    })
+
+    await runtime.enableLiteratureContext('remote-session-1')
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: '全文总结一下',
+      referencedArtifacts: [
+        {
+          id: 'pdf-1',
+          name: 'paper.pdf',
+          source: 'upload',
+          path: 'upload-version:project-1/source-session/version-1',
+          versionId: 'version-1',
+          mimeType: 'application/pdf',
+          pdfReadingPosition: { pageNumber: 5, pageCount: 14 }
+        }
+      ]
+    })
+
+    expect(fakeAgent.resumedSessions).toHaveLength(1)
+    expect(fakeAgent.resumedSessions[0].mcpServers).toEqual([
+      expect.objectContaining({ type: 'http', name: 'open-science-literature' })
+    ])
+    expect(registerLiterature).toHaveBeenCalledOnce()
+    expect(fakeAgent.prompts).toHaveLength(1)
+  })
+
+  it('provisions Literature on the first provider Session without requiring a Codex rollout', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1', 'remote-session-2'], {
+      resumeInternalErrorDetails: 'no rollout found for thread id remote-session-1'
+    })
+    const registerLiterature = vi.fn()
+    const mcpHttpHost = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerLiterature,
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn(async () => undefined)
+    } as unknown as AgentMcpHttpHost
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      mcpHttpHost,
+      literature: {
+        isEnabled: vi.fn(async () => false),
+        readDocument: vi.fn()
+      }
+    })
+    vi.spyOn(promptContentLifecycle(runtime), 'prepare').mockResolvedValue({
+      content: [{ type: 'text', text: 'linked PDF route' }],
+      historyImageCount: 0
+    })
+
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      projectId: 'project-1',
+      literatureContext: true
+    })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: '全文总结一下',
+      referencedArtifacts: [
+        {
+          id: 'pdf-1',
+          name: 'paper.pdf',
+          source: 'upload',
+          path: 'upload-version:project-1/source-session/version-1',
+          versionId: 'version-1',
+          mimeType: 'application/pdf',
+          pdfReadingPosition: { pageNumber: 5, pageCount: 14 }
+        }
+      ]
+    })
+
+    expect(fakeAgent.newSessions).toHaveLength(1)
+    expect(fakeAgent.newSessions[0].mcpServers).toEqual([
+      expect.objectContaining({ type: 'http', name: 'open-science-literature' })
+    ])
+    expect(fakeAgent.resumedSessions).toEqual([])
+    expect(registerLiterature).toHaveBeenCalledTimes(2)
+    expect(fakeAgent.prompts).toEqual([{ sessionId: 'remote-session-1', text: 'linked PDF route' }])
+  })
+
+  it('reconfigures an idle provider Session without Literature after the final PDF is unlinked', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const mcpHttpHost = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerLiterature: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn(async () => undefined)
+    } as unknown as AgentMcpHttpHost
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      mcpHttpHost,
+      literature: {
+        isEnabled: vi.fn(async () => false),
+        readDocument: vi.fn()
+      }
+    })
+    const reconfigure = vi.spyOn(
+      (
+        runtime as unknown as {
+          providerSessionResumer: {
+            reconfigure: (request: { memoryEnabled?: boolean }) => Promise<unknown>
+          }
+        }
+      ).providerSessionResumer,
+      'reconfigure'
+    )
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      projectId: 'project-1',
+      memoryEnabled: false
+    })
+
+    await runtime.enableLiteratureContext(session.sessionId)
+    await runtime.disableLiteratureContext(session.sessionId)
+
+    expect(fakeAgent.resumedSessions).toHaveLength(2)
+    expect(fakeAgent.resumedSessions[0].mcpServers).toEqual([
+      expect.objectContaining({ type: 'http', name: 'open-science-literature' })
+    ])
+    expect(fakeAgent.resumedSessions[1].mcpServers).toEqual([])
+    expect(reconfigure.mock.calls.map(([request]) => request.memoryEnabled)).toEqual([false, false])
   })
 
   it('adds the hidden Plan mode context only to the requested turn and preserves user Messages', async () => {

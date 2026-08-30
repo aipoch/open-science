@@ -305,6 +305,46 @@ describe('AgentsService connector runtime availability', () => {
     ).rejects.toThrow(/host\.agents\.attach_connector:.*unavailable/)
     expect(attachConnector).not.toHaveBeenCalled()
   })
+
+  it('reports unresolved custom credentials and rejects a new attachment', async () => {
+    const stored: StoredConnectors = {
+      enabledIds: [],
+      autoAllowIds: [],
+      customMcpServers: [
+        {
+          id: 'credential-missing',
+          name: 'credential-missing',
+          displayName: 'Credential Missing',
+          transport: 'stdio',
+          enabled: true,
+          command: 'run',
+          envRefs: { API_TOKEN: 'enc:unavailable' }
+        }
+      ]
+    }
+    const profiles = mutatingSpecialistService([profile()])
+    const attachConnector = vi.fn(async () => profile())
+    profiles.attachConnector = attachConnector
+    const service = new AgentsService({
+      specialistService: profiles,
+      catalog: catalog({ getConnectors: vi.fn(async () => stored) })
+    })
+
+    const connector = (await service.listConnectors({})).find(
+      (item) => item.id === 'credential-missing'
+    )
+    expect(connector).toMatchObject({
+      availability: 'credential_unavailable',
+      mainEnabled: false
+    })
+    await expect(
+      service.dispatch({
+        op: 'attach_connector',
+        params: { name: 'Bio Expert', connector_ref: 'credential-missing', revision: 3 }
+      })
+    ).rejects.toThrow(/host\.agents\.attach_connector:.*credential_unavailable/)
+    expect(attachConnector).not.toHaveBeenCalled()
+  })
 })
 
 describe('AgentsService privileged dispatch — trusted session threading', () => {

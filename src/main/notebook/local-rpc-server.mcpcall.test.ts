@@ -723,7 +723,7 @@ describe('computeCall RPC', () => {
         provider_id: 'ssh:gpu',
         display_name: 'GPU cluster',
         shape: 'direct_ssh',
-        status: 'connected',
+        status: 'last_probe_ok',
         role: 'selected'
       }
     ]
@@ -759,7 +759,7 @@ describe('computeCall RPC', () => {
         provider_id: 'ssh:gpu',
         display_name: 'GPU cluster',
         shape: 'direct_ssh',
-        status: 'connected',
+        status: 'last_probe_ok',
         role: 'selected'
       }
     ])

@@ -20,12 +20,70 @@ import { PrismaClient } from '@prisma/client'
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
     expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
-      'c505fe7e55e8428d29e8506ad305c04fd46d8def53385a1f7839fba21047ab9d'
+      'b2bc8f9fd195a08a27af0e6ed2c78e0425002341ce1261952014130da1ea1a8d'
     )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
       /expected application database migration ledger/
     )
+  })
+
+  it('adds automatic-analysis state without reclassifying historical Compute Jobs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-job-analysis-'))
+    const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
+    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+
+    try {
+      await migrateApplicationDatabase(client)
+      for (const [id, consumed] of [
+        ['legacy-pending', false],
+        ['legacy-consumed', true]
+      ] as const) {
+        await client.computeJob.create({
+          data: {
+            id,
+            providerId: 'ssh:legacy',
+            shape: 'direct_ssh',
+            sessionId: 'legacy-session',
+            projectId: 'legacy-project',
+            status: 'success',
+            intent: id,
+            command: 'true',
+            commandHash: id,
+            notifiedAt: new Date('2026-01-01'),
+            ...(consumed ? { notificationConsumedAt: new Date('2026-01-02') } : {})
+          }
+        })
+      }
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisState"')
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisUpdatedAt"')
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisMessageId"')
+      await client.$executeRawUnsafe(
+        `DELETE FROM "_open_science_migrations" WHERE "id" = '0020_compute_job_analysis_state'`
+      )
+
+      await migrateApplicationDatabase(client)
+
+      await expect(
+        client.computeJob.findUnique({ where: { id: 'legacy-pending' } })
+      ).resolves.toMatchObject({
+        analysisState: null,
+        analysisMessageId: null,
+        analysisUpdatedAt: null,
+        notificationConsumedAt: null
+      })
+      await expect(
+        client.computeJob.findUnique({ where: { id: 'legacy-consumed' } })
+      ).resolves.toMatchObject({
+        analysisState: null,
+        analysisMessageId: null,
+        analysisUpdatedAt: null,
+        notificationConsumedAt: expect.any(Date)
+      })
+    } finally {
+      await client.$disconnect()
+      await rm(root, { force: true, recursive: true })
+    }
   })
 
   it('adds usage attribution columns without changing existing usage rows', async () => {
@@ -93,8 +151,11 @@ describe('packaged database migration ledger smoke', () => {
         'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
       )
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" = '0019_session_usage_attribution'`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_compute_job_analysis_state')`
       )
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisState"')
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisUpdatedAt"')
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisMessageId"')
 
       await migrateApplicationDatabase(client)
 
@@ -154,8 +215,11 @@ describe('packaged database migration ledger smoke', () => {
       await client.$executeRawUnsafe('DROP INDEX "Review_sessionId_idx"')
       await client.$executeRawUnsafe('DROP INDEX "Finding_reviewId_idx"')
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state')`
       )
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisState"')
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisUpdatedAt"')
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisMessageId"')
       await client.$executeRawUnsafe(
         'ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"'
       )

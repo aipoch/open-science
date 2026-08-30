@@ -30,10 +30,14 @@ import { formatSessionDetailsTitle } from '../../../shared/session-details'
 
 export type AppendUserMessageInput = {
   sessionId: string
+  messageId?: string
+  // Reuses a matching persisted Message as the owner of a restarted application prompt.
+  rearmExisting?: boolean
   content: string
   attachments?: PersistedUploadedAttachment[]
   parts?: MessagePart[]
   annotations?: Annotation[]
+  pdfContext?: PersistedChatMessage['pdfContext']
   turnIntent?: PersistedChatMessage['turnIntent']
   cwd?: string
   projectId?: string
@@ -338,6 +342,7 @@ export const buildMessage = (input: {
   uploads: PersistedUploadedAttachment[]
   parts?: MessagePart[]
   annotations?: Annotation[]
+  pdfContext?: PersistedChatMessage['pdfContext']
   turnIntent?: PersistedChatMessage['turnIntent']
   sortIndex: number
   now: number
@@ -353,6 +358,7 @@ export const buildMessage = (input: {
     uploads: persistedUploads.length > 0 ? persistedUploads : undefined,
     parts: input.parts && input.parts.length > 0 ? input.parts : undefined,
     annotations: input.annotations?.length ? input.annotations : undefined,
+    pdfContext: input.pdfContext,
     turnIntent: input.turnIntent,
     sortIndex: input.sortIndex,
     createdAt: input.now,

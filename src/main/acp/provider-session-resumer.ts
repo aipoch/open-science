@@ -1,5 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
-import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import type { ActiveSession, ClientConnection, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 
 import type {
@@ -100,6 +100,71 @@ export class AcpProviderSessionResumer {
     const attached = this.deps.registry.lookup(request.sessionId)?.attachment
     if (attached) return this.resumeAttached(request, attached)
 
+    return this.resumeDetached(request, false)
+  }
+
+  async reconfigure(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    const entry = this.deps.registry.lookup(request.sessionId)
+    const attachment = entry?.attachment
+    const snapshot = entry?.aggregate.snapshot()
+    const providerSessionId = attachment?.providerSessionId ?? request.providerSessionId
+    if (!attachment) {
+      return this.resumeDetached(
+        { ...request, ...(providerSessionId ? { providerSessionId } : {}) },
+        true
+      )
+    }
+    this.deps.registry.detach(attachment, 'provider')
+    try {
+      const result = await this.resumeDetached(
+        { ...request, providerSessionId: attachment.providerSessionId },
+        true
+      )
+      attachment.session.dispose()
+      return result
+    } catch (error) {
+      if (
+        snapshot?.cwd &&
+        snapshot.projectId &&
+        snapshot.frameworkId &&
+        snapshot.permissionProfile
+      ) {
+        const restored = this.deps.registry.reserve({
+          sessionIds: [request.sessionId, attachment.providerSessionId],
+          blockStartup: false
+        })
+        if (!restored.collision) {
+          try {
+            this.deps.registry.publish(restored.reservation, request.sessionId, {
+              session: attachment.session,
+              cwd: snapshot.cwd,
+              projectId: snapshot.projectId,
+              frameworkId: snapshot.frameworkId,
+              ...(snapshot.backendId ? { backendId: snapshot.backendId } : {}),
+              permissionProfile: {
+                ...snapshot.permissionProfile,
+                availableModeIds: [...snapshot.permissionProfile.availableModeIds]
+              },
+              ...(snapshot.appliedModel ? { appliedModel: snapshot.appliedModel } : {}),
+              ...(snapshot.configOptions
+                ? {
+                    configOptions: structuredClone(snapshot.configOptions) as SessionConfigOption[]
+                  }
+                : {})
+            })
+          } finally {
+            restored.reservation.release()
+          }
+        }
+      }
+      throw error
+    }
+  }
+
+  private async resumeDetached(
+    request: AcpResumeSessionRequest,
+    compatibleOnly: boolean
+  ): Promise<AcpCreateSessionResponse> {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectId = request.projectId?.trim() || this.deps.defaultProjectId
     const reserved = this.deps.reserveIdentity(request.sessionId)
@@ -111,7 +176,7 @@ export class AcpProviderSessionResumer {
       this.deps.assertCurrentConnection(connection)
       identity.renew()
       return await this.withTimeout(
-        () => this.resumeConnected(request, connection, cwd, projectId, identity),
+        () => this.resumeConnected(request, connection, cwd, projectId, identity, compatibleOnly),
         this.progressSessionIds(request)
       )
     } finally {
@@ -240,17 +305,33 @@ export class AcpProviderSessionResumer {
     connection: ClientConnection,
     cwd: string,
     projectId: string,
-    identity: AcpPrimarySessionIdentityReservation
+    identity: AcpPrimarySessionIdentityReservation,
+    compatibleOnly: boolean
   ): Promise<AcpCreateSessionResponse> {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()
     if (request.specialistBindingPending === true) {
+      if (compatibleOnly) {
+        throw new Error('ACP capability reconfiguration requires a compatible provider resume.')
+      }
       log.info('adopting fresh provider context for pending Specialist binding', {
         sessionId: request.sessionId,
         ...this.deps.diagnosticContext()
       })
       return this.adopt(request, connection, cwd, projectId, identity)
+    }
+    if (compatibleOnly && persistedProviderSessionId) {
+      return this.resumeCompatible(
+        request,
+        connection,
+        cwd,
+        projectId,
+        identity,
+        persistedProviderSessionId,
+        true,
+        true
+      )
     }
     const decision = this.policy.decide({
       appSessionId: request.sessionId,
@@ -266,6 +347,11 @@ export class AcpProviderSessionResumer {
     })
 
     if (decision.action === 'adopt') {
+      if (compatibleOnly) {
+        throw new Error(
+          `ACP capability reconfiguration cannot replace provider context (${decision.reason}).`
+        )
+      }
       log.info('skipping incompatible provider resume; adopting a fresh session', {
         sessionId: request.sessionId,
         reason: decision.reason,
@@ -280,7 +366,8 @@ export class AcpProviderSessionResumer {
       projectId,
       identity,
       decision.providerSessionId,
-      persistedProviderSessionId !== undefined
+      persistedProviderSessionId !== undefined,
+      compatibleOnly
     )
   }
 
@@ -291,7 +378,8 @@ export class AcpProviderSessionResumer {
     projectId: string,
     identity: AcpPrimarySessionIdentityReservation,
     providerSessionId: string,
-    providerSessionIdPersisted: boolean
+    providerSessionIdPersisted: boolean,
+    compatibleOnly: boolean
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
@@ -362,7 +450,7 @@ export class AcpProviderSessionResumer {
           currentModelRoute: backend.modelRoute,
           providerSessionIdPersisted
         })
-        if (failure.disposition !== 'adoptable') throw error
+        if (failure.disposition !== 'adoptable' || compatibleOnly) throw error
         try {
           identity.assertCurrent()
         } catch (supersededError) {

@@ -742,20 +742,17 @@ const ProjectFilesFilterMenu = ({
         <DropdownMenuLabel>{t('Remote')}</DropdownMenuLabel>
         <DropdownMenuGroup>
           {hosts.map((host) => {
-            const reachable = host.probeResult?.ok === true
+            const lastProbeSucceeded = host.probeResult?.ok === true
             return (
               <DropdownMenuItem
                 key={host.providerId}
-                disabled={!reachable}
-                onSelect={() => {
-                  if (reachable) onBrowseRemoteHost(host.providerId)
-                }}
-                className={cn('gap-2', !reachable && 'opacity-50 cursor-not-allowed')}
+                onSelect={() => onBrowseRemoteHost(host.providerId)}
+                className="gap-2"
               >
                 <span
                   className={cn(
                     'size-1.5 shrink-0 rounded-full',
-                    reachable ? 'bg-emerald-400' : 'bg-muted-foreground/40'
+                    lastProbeSucceeded ? 'bg-emerald-400' : 'bg-muted-foreground/40'
                   )}
                   aria-hidden="true"
                 />
@@ -765,9 +762,9 @@ const ProjectFilesFilterMenu = ({
                   aria-hidden="true"
                 />
                 <span className="min-w-0 flex-1 truncate">{host.displayName}</span>
-                {!reachable && (
+                {!lastProbeSucceeded && (
                   <span className="shrink-0 text-[11px] text-text-300">
-                    {t('Host unreachable')}
+                    {host.probeResult ? t('Probe failed') : t('Not probed')}
                   </span>
                 )}
               </DropdownMenuItem>

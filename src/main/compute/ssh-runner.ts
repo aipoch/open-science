@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 import type { SshOverrides } from '../../shared/compute'
+import { assertSafeSshAlias, shellSingleQuote } from './remote-path-security'
 
 // Maximum bytes captured per stream before we truncate. Caller can pass a smaller cap.
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
@@ -13,12 +14,6 @@ const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
 // window lets Node deliver the exit/close events after SIGKILL while still bounding every run.
 const TERMINATION_GRACE_MS = 2_000
 const FORCE_KILL_EVENT_GRACE_MS = 1_000
-
-// Wraps a string in POSIX single quotes, escaping embedded single quotes via the '\'' idiom. Inside
-// single quotes the shell expands nothing, so this is the only safe way to hand an arbitrary command
-// string to an outer `bash -lc` layer. (scp-runner exports an identical helper; duplicated here to keep
-// ssh-runner free of a dependency on the scp path.)
-const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
 // Short connect timeout used for probe calls; SSH itself honors ConnectTimeout from config but we
 // add it explicitly to override any large value from ~/.ssh/config (design.md §1).
@@ -61,6 +56,7 @@ export interface SshRunner {
 // bundle. Windows does not support ControlMaster so this returns an empty array there.
 export const controlMasterArgs = (alias: string): string[] => {
   if (platform() === 'win32') return []
+  const safeAlias = assertSafeSshAlias(alias)
   // Use a per-alias socket under ~/.ssh/ctrl/ so multiple hosts don't share a socket. ssh does not
   // create the ControlPath parent directory itself, so ensure it exists (mode 0700 like ~/.ssh) —
   // otherwise the control socket bind fails with "unix_listener: cannot bind ... No such file".
@@ -70,7 +66,7 @@ export const controlMasterArgs = (alias: string): string[] => {
   } catch {
     // Best-effort: if we can't create it, ssh will surface the bind error as before.
   }
-  const socketPath = join(ctrlDir, `%r@%h:%p.${alias}`)
+  const socketPath = join(ctrlDir, `%r@%h:%p.${safeAlias}`)
   return ['-o', `ControlMaster=auto`, '-o', `ControlPath=${socketPath}`, '-o', `ControlPersist=60`]
 }
 
@@ -120,9 +116,10 @@ export const readEffectiveConfig = async (
   alias: string,
   sshBinary: string
 ): Promise<Record<string, string>> => {
+  const safeAlias = assertSafeSshAlias(alias)
   const execFileAsync = promisify(execFile)
   try {
-    const { stdout } = await execFileAsync(sshBinary, ['-G', alias], { timeout: 5000 })
+    const { stdout } = await execFileAsync(sshBinary, ['-G', safeAlias], { timeout: 5000 })
     return parseSshG(stdout)
   } catch {
     return {}
@@ -150,6 +147,7 @@ export const resolveSshTarget = async (
     sshBinary: string
   ) => Promise<Record<string, string>> = readEffectiveConfig
 ): Promise<ResolvedSshTarget> => {
+  const safeAlias = assertSafeSshAlias(alias)
   const sshBinary = resolveSshBinary()
 
   // Read the effective connection config from ~/.ssh/config for this alias. Wrapped in try/catch so
@@ -157,7 +155,7 @@ export const resolveSshTarget = async (
   // caller falls back to the bare alias + defaults.
   let sshGConfig: Record<string, string> = {}
   try {
-    sshGConfig = await readConfig(alias, sshBinary)
+    sshGConfig = await readConfig(safeAlias, sshBinary)
   } catch {
     // readConfig failed — proceed with overrides and defaults only.
   }
@@ -169,7 +167,7 @@ export const resolveSshTarget = async (
   // when no override is set — but harmless (values match) and kept for clarity. IdentityFile, by
   // contrast, is override-only because ssh picks it up from config via the alias.
   const resolvedUser = overrides?.user?.trim() ?? sshGConfig['user']
-  if (resolvedUser && resolvedUser !== alias) {
+  if (resolvedUser && resolvedUser !== safeAlias) {
     extraArgs.push('-o', `User=${resolvedUser}`)
   }
 
@@ -195,12 +193,12 @@ export const resolveSshTarget = async (
   extraArgs.push('-o', `ConnectTimeout=${DEFAULT_CONNECT_TIMEOUT_SECS}`)
 
   // ControlMaster on mac/linux for connection reuse across the probe bundle.
-  extraArgs.push(...controlMasterArgs(alias))
+  extraArgs.push(...controlMasterArgs(safeAlias))
 
   // Pass the alias — NOT the resolved hostname — as the connection target (see the function
   // docstring above). ControlMaster's ControlPath uses %h, which ssh expands to the real HostName,
   // so the mux socket is identical whether the alias or the IP is the target.
-  const host = alias
+  const host = safeAlias
 
   return { sshBinary, host, extraArgs }
 }

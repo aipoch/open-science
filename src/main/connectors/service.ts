@@ -4,6 +4,7 @@ import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
 import {
   classifyCustomMcpFailure,
+  hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
   toCustomMcpConfig,
   type CustomMcpFailureAvailability
@@ -16,7 +17,11 @@ import { ConnectorPermissionBroker } from '../permission-grants/connector-broker
 import type { ConnectorPermissionRequest } from '../permission-grants/connector-broker'
 import type { PermissionGrantScope } from '../../shared/permission-grants'
 import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
-import type { SpecialistView } from '../../shared/specialist'
+import {
+  CONNECTOR_TOOL_PATTERN_MAX_LENGTH,
+  CONNECTOR_TOOL_RULE_MAX_COUNT,
+  type SpecialistView
+} from '../../shared/specialist'
 
 type McpClientManagerLike = {
   listTools(config: CustomMcpServerConfig, signal?: AbortSignal): Promise<Array<{ name: string }>>
@@ -120,6 +125,33 @@ const customMcpFailureCategory = (
 const CUSTOM_MCP_RETRY_BASE_MS = 1_000
 const CUSTOM_MCP_RETRY_MAX_MS = 30_000
 
+const matchesToolGlob = (method: string, pattern: string): boolean => {
+  let methodIndex = 0
+  let patternIndex = 0
+  let starIndex = -1
+  let starMethodIndex = 0
+
+  while (methodIndex < method.length) {
+    if (pattern[patternIndex] === '?' || pattern[patternIndex] === method[methodIndex]) {
+      methodIndex += 1
+      patternIndex += 1
+    } else if (pattern[patternIndex] === '*') {
+      starIndex = patternIndex
+      starMethodIndex = methodIndex
+      patternIndex += 1
+    } else if (starIndex >= 0) {
+      patternIndex = starIndex + 1
+      starMethodIndex += 1
+      methodIndex = starMethodIndex
+    } else {
+      return false
+    }
+  }
+
+  while (pattern[patternIndex] === '*') patternIndex += 1
+  return patternIndex === pattern.length
+}
+
 type CustomMcpFailureState = {
   category: 'connector_unavailable' | 'connector_unauthenticated'
   failureCount: number
@@ -186,6 +218,8 @@ const connectorGateGuidance: Readonly<Record<string, string>> = {
     'The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open Science before retrying.',
   connector_configuration_changed:
     'The Connector configuration changed before the external tool was called. Retry the exact same call once.',
+  credential_unavailable:
+    'One or more encrypted Connector credentials could not be read. Do not retry until the user re-enters them in Settings > Connectors.',
   credential_required:
     'A required credential was not configured. Do not retry until the user adds it in Settings > Credentials.'
 }
@@ -286,7 +320,7 @@ export class ConnectorService {
     const descriptor = getDescriptor(connector, method)
     const isBundled = descriptor !== undefined || ALL_CONNECTOR_IDS.includes(connector)
     if (isBundled) {
-      const access = await this.resolveAccess(connector, context, [connector], signal)
+      const access = await this.resolveAccess(connector, method, context, [connector], signal)
       return this.callBundled(connector, method, args, descriptor, context, access, signal)
     }
 
@@ -295,6 +329,7 @@ export class ConnectorService {
     const custom = customServers.find((server) => server.name === connector)
     const access = await this.resolveAccess(
       connector,
+      method,
       context,
       custom ? [custom.id, custom.name] : [connector],
       signal
@@ -310,6 +345,7 @@ export class ConnectorService {
 
   private async resolveAccess(
     connector: string,
+    method: string,
     context: ConnectorCallContext,
     aliases: readonly string[] = [connector],
     signal?: AbortSignal
@@ -330,11 +366,41 @@ export class ConnectorService {
     signal?.throwIfAborted()
     if (!profile || !profile.enabled) throw new ConnectorGateError('specialist_unavailable')
 
-    const allowed =
+    const capabilities =
+      profile.capabilityMode === 'full' ? profile.fullAccess : profile.selectedCapabilities
+    if (capabilities.connectorTools.length > CONNECTOR_TOOL_RULE_MAX_COUNT) {
+      throw new ConnectorGateError('specialist_capability_denied')
+    }
+    const connectorAllowed =
       profile.capabilityMode === 'full'
         ? !aliases.some((alias) => profile.fullAccess.excludedConnectorIds.includes(alias))
         : aliases.some((alias) => profile.selectedCapabilities.connectorIds.includes(alias))
-    if (!allowed) throw new ConnectorGateError('specialist_capability_denied')
+    const toolRules = capabilities.connectorTools.filter((rule) =>
+      aliases.includes(rule.connectorId)
+    )
+    const includedMethods = toolRules.flatMap((rule) => rule.includedMethods ?? [])
+    const excludedMethods = toolRules.flatMap((rule) => rule.excludedMethods ?? [])
+    const includePatterns = toolRules.flatMap((rule) =>
+      rule.includeToolsPattern === undefined ? [] : [rule.includeToolsPattern]
+    )
+    const excludePatterns = toolRules.flatMap((rule) =>
+      rule.excludeToolsPattern === undefined ? [] : [rule.excludeToolsPattern]
+    )
+    const invalidPattern = [...includePatterns, ...excludePatterns].some(
+      (pattern) => pattern.length === 0 || pattern.length > CONNECTOR_TOOL_PATTERN_MAX_LENGTH
+    )
+    const included =
+      includedMethods.includes(method) ||
+      includePatterns.some((pattern) => matchesToolGlob(method, pattern))
+    if (
+      !connectorAllowed ||
+      invalidPattern ||
+      ((includedMethods.length > 0 || includePatterns.length > 0) && !included) ||
+      excludedMethods.includes(method) ||
+      excludePatterns.some((pattern) => matchesToolGlob(method, pattern))
+    ) {
+      throw new ConnectorGateError('specialist_capability_denied')
+    }
 
     // A Specialist's configuration is independent from Main's enabled and Allow/Ask/Block settings.
     // Physical availability is still checked by the actual bundled/custom dispatch path below.
@@ -396,7 +462,7 @@ export class ConnectorService {
     // or Main enablement and policy, so a concurrent access revocation wins while retaining a Once
     // approval already granted to this exact Main call.
     if (credentialResult.prompted && access.specialistScoped) {
-      await this.resolveAccess(connector, context, [connector], signal)
+      await this.resolveAccess(connector, method, context, [connector], signal)
       credentials = this.credentials(await this.currentConnectors())
       signal?.throwIfAborted()
       if (
@@ -451,6 +517,9 @@ export class ConnectorService {
         'connector_disabled',
         disabledConnectorMessage(custom.displayName)
       )
+    }
+    if (!hasUsableCustomMcpCredentials(custom)) {
+      throw new ConnectorGateError('credential_unavailable')
     }
     if (!this.isCustomConfigRunnable(custom, customServers)) {
       throw new ConnectorGateError('connector_unavailable')
@@ -711,8 +780,14 @@ export class ConnectorService {
           disabledConnectorMessage(current.displayName)
         )
       }
+      if (!hasUsableCustomMcpCredentials(current)) {
+        throw new ConnectorGateError('credential_unavailable')
+      }
       if (!this.isCustomConfigRunnable(current, customServers)) {
         throw new ConnectorGateError('connector_unavailable')
+      }
+      if (access.specialistScoped) {
+        await this.resolveAccess(current.name, method, context, [current.id, current.name], signal)
       }
 
       const request = this.authorizationRequest(

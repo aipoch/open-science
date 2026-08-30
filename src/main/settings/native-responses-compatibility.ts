@@ -867,6 +867,7 @@ export class NativeResponsesCompatibilityProxy {
         ).length,
         promptCacheKeyPresent: promptCacheKey !== undefined,
         namespaceToolCount: aliases.size,
+        literatureToolPresent: aliases.has('mcp__open_science_literature__read_document'),
         stream: body.stream === true,
         reviewerScoped,
         toolLessScoped

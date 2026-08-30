@@ -219,4 +219,94 @@ describe('selectEnabledCustomServers', () => {
       })
     ).toEqual([])
   })
+
+  it('fails closed when encrypted credential records are only partially resolved', () => {
+    const partialEnvironment: StoredCustomMcpServer = {
+      ...stdioServer,
+      id: 'partial-environment',
+      name: 'partial-environment',
+      displayName: 'Partial environment',
+      envRefs: {
+        API_TOKEN: 'enc:resolved',
+        OPTIONAL_HOST_TOKEN: 'enc:unavailable'
+      },
+      env: { API_TOKEN: 'resolved-value' }
+    }
+    const partialHeaders: StoredCustomMcpServer = {
+      ...remoteServer,
+      id: 'partial-headers',
+      name: 'partial-headers',
+      displayName: 'Partial headers',
+      headerRefs: {
+        Authorization: 'enc:resolved',
+        'X-API-Key': 'enc:unavailable'
+      },
+      headers: { Authorization: 'Bearer resolved-value' }
+    }
+    const partialOAuthClient: StoredCustomMcpServer = {
+      ...authenticatedOAuthServer,
+      id: 'partial-oauth-client',
+      name: 'partial-oauth-client',
+      displayName: 'Partial OAuth client',
+      oauthClientSecretRef: 'enc:unavailable'
+    }
+
+    expect(
+      selectEnabledCustomServers({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [partialEnvironment, partialHeaders, partialOAuthClient]
+      })
+    ).toEqual([])
+  })
+
+  it('ignores unresolved credential maps that are unused by the active transport', () => {
+    const stdioWithStaleHeaders: StoredCustomMcpServer = {
+      ...stdioServer,
+      id: 'stdio-stale-headers',
+      name: 'stdio-stale-headers',
+      displayName: 'Stdio stale headers',
+      headerRefs: { Authorization: 'enc:unavailable' }
+    }
+    const remoteWithStaleEnvironment: StoredCustomMcpServer = {
+      ...remoteServer,
+      id: 'remote-stale-environment',
+      name: 'remote-stale-environment',
+      displayName: 'Remote stale environment',
+      envRefs: { API_TOKEN: 'enc:unavailable' }
+    }
+
+    expect(
+      selectEnabledCustomServers({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [stdioWithStaleHeaders, remoteWithStaleEnvironment]
+      })
+    ).toEqual([stdioWithStaleHeaders, remoteWithStaleEnvironment])
+  })
+
+  it('fails closed for historical servers with credentials embedded in args or URLs', () => {
+    const unsafeArguments: StoredCustomMcpServer = {
+      ...stdioServer,
+      id: 'unsafe-arguments',
+      name: 'unsafe-arguments',
+      displayName: 'Unsafe arguments',
+      args: ['--api-key=legacy-plaintext-secret']
+    }
+    const unsafeUrl: StoredCustomMcpServer = {
+      ...remoteServer,
+      id: 'unsafe-url',
+      name: 'unsafe-url',
+      displayName: 'Unsafe URL',
+      url: 'https://mcp.example.test?token=legacy-plaintext-secret'
+    }
+
+    expect(
+      selectEnabledCustomServers({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [unsafeArguments, unsafeUrl]
+      })
+    ).toEqual([])
+  })
 })

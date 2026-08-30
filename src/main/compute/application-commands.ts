@@ -35,6 +35,7 @@ type ComputeCommandOwner = Pick<
   | 'detailsGet'
   | 'detailsSave'
   | 'scratchSet'
+  | 'scratchClear'
   | 'concurrencySet'
   | 'listDir'
   | 'download'
@@ -45,6 +46,7 @@ type ComputeCommandOwner = Pick<
   | 'jobsList'
   | 'jobsPendingNotification'
   | 'jobsMarkConsumed'
+  | 'jobsTransitionAnalysis'
 >
 
 type ComputeBookmarksOwner = Readonly<{
@@ -150,6 +152,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'scratchSet'>,
     OwnerResult<ComputeCommandOwner, 'scratchSet'>
   >('compute:scratch:set'),
+  scratchClear: defineApplicationCommand<
+    'compute:scratch:clear',
+    OwnerArgs<ComputeCommandOwner, 'scratchClear'>,
+    OwnerResult<ComputeCommandOwner, 'scratchClear'>
+  >('compute:scratch:clear'),
   concurrencySet: defineApplicationCommand<
     'compute:concurrency:set',
     OwnerArgs<ComputeCommandOwner, 'concurrencySet'>,
@@ -200,6 +207,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'jobsMarkConsumed'>,
     OwnerResult<ComputeCommandOwner, 'jobsMarkConsumed'>
   >('compute:jobs:mark-consumed'),
+  jobsTransitionAnalysis: defineApplicationCommand<
+    'compute:jobs:transition-analysis',
+    OwnerArgs<ComputeCommandOwner, 'jobsTransitionAnalysis'>,
+    OwnerResult<ComputeCommandOwner, 'jobsTransitionAnalysis'>
+  >('compute:jobs:transition-analysis'),
   enabledHostsGet: defineApplicationCommand<
     'compute:enabled-hosts:get',
     OwnerArgs<ComputeEnabledHostsOwner, 'get'>,
@@ -252,6 +264,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.jobsList,
   computeApplicationCommands.jobsMarkConsumed,
   computeApplicationCommands.jobsPendingNotification,
+  computeApplicationCommands.jobsTransitionAnalysis,
   computeApplicationCommands.list,
   computeApplicationCommands.listDir,
   computeApplicationCommands.passwordCapability,
@@ -262,6 +275,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.approvalRespond,
   computeApplicationCommands.revealInFolder,
   computeApplicationCommands.scratchSet,
+  computeApplicationCommands.scratchClear,
   computeApplicationCommands.sshConfigAliases
 ] as const)
 
@@ -344,6 +358,7 @@ const registerComputeApplicationCommands = (
       'compute:details:save': ({ args }) =>
         dependencies.compute.detailsSave(args[0], args[1], args[2], args[3]),
       'compute:scratch:set': ({ args }) => dependencies.compute.scratchSet(args[0], args[1]),
+      'compute:scratch:clear': ({ args }) => dependencies.compute.scratchClear(args[0]),
       'compute:concurrency:set': ({ args }) =>
         dependencies.compute.concurrencySet(args[0], args[1]),
       'compute:list-dir': ({ args }) =>
@@ -384,6 +399,8 @@ const registerComputeApplicationCommands = (
         dependencies.compute.jobsPendingNotification(args[0]),
       'compute:jobs:mark-consumed': ({ args }) =>
         dependencies.compute.jobsMarkConsumed(args[0], args[1]),
+      'compute:jobs:transition-analysis': ({ args }) =>
+        dependencies.compute.jobsTransitionAnalysis(args[0]),
       'compute:enabled-hosts:get': ({ args }) => dependencies.enabledHosts.get(args[0]),
       'compute:enabled-hosts:set': ({ args }) =>
         commitComputeHostAccess(() => dependencies.enabledHosts.set(args[0], args[1])),

@@ -5,6 +5,8 @@ import { pathToFileURL } from 'node:url'
 
 import type { Sharp } from 'sharp'
 
+import { joinPdfTextItems } from '../../shared/pdf-text'
+
 // Images larger than this are downscaled/re-encoded before inlining so a single upload never
 // blows past the model's per-image (~5MB) and total-request (~32MB) limits after base64 growth.
 export const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
@@ -51,6 +53,23 @@ export const canInlineImageInSession = (
 
 // Extracted PDF text is bounded so a huge document can never recreate the oversized-request problem.
 export const MAX_PDF_TEXT_CHARS = 1024 * 1024
+export const MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS = 2
+
+let activePdfTextExtractions = 0
+const pendingPdfTextExtractions: Array<() => void> = []
+
+const withPdfTextExtractionSlot = async <Result>(work: () => Promise<Result>): Promise<Result> => {
+  if (activePdfTextExtractions >= MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS) {
+    await new Promise<void>((resolve) => pendingPdfTextExtractions.push(resolve))
+  }
+  activePdfTextExtractions += 1
+  try {
+    return await work()
+  } finally {
+    activePdfTextExtractions -= 1
+    pendingPdfTextExtractions.shift()?.()
+  }
+}
 
 export type ImageContentData = {
   data: string
@@ -123,6 +142,28 @@ export type PdfTextResult = {
   text: string
   pageCount: number
   truncated: boolean
+}
+
+export const inspectPdfPageCount = async (filePath: string): Promise<number> => {
+  const fileInfo = await stat(filePath)
+  if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
+    throw new Error(
+      `PDF source is ${fileInfo.size} bytes, exceeding the automatic extraction limit.`
+    )
+  }
+  const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
+  const loadingTask = pdfjs.getDocument({
+    url: filePath,
+    disableFontFace: true,
+    isEvalSupported: false,
+    verbosity: 0
+  })
+  const document = await loadingTask.promise
+  try {
+    return document.numPages
+  } finally {
+    await document.destroy()
+  }
 }
 
 // Accounts for the bytes that will actually be inserted into JSON rather than the decoded image
@@ -551,65 +592,75 @@ const resolvePdfjsAssetUrls = (): { cMapUrl: string; standardFontDataUrl: string
 
 // Extracts selectable text from a PDF so the model receives readable content instead of the raw
 // (base64) file, which would otherwise overflow the request size limit.
-export const extractPdfText = async (filePath: string): Promise<PdfTextResult> => {
+export const extractPdfText = async (
+  filePath: string,
+  targetPageNumber?: number,
+  options: Readonly<{ maxChars?: number }> = {}
+): Promise<PdfTextResult> => {
   const fileInfo = await stat(filePath)
   if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
     throw new Error(
       `PDF source is ${fileInfo.size} bytes, exceeding the automatic extraction limit.`
     )
   }
-  const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
-  const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
-  const fileData = await readFile(filePath)
+  return withPdfTextExtractionSlot(async () => {
+    const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
+    const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
+    const fileData = await readFile(filePath)
+    const maxChars = options.maxChars ?? MAX_PDF_TEXT_CHARS
 
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(fileData),
-    cMapUrl,
-    cMapPacked: true,
-    standardFontDataUrl,
-    isEvalSupported: false,
-    useSystemFonts: false,
-    verbosity: 0
-  })
+    const loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(fileData),
+      cMapUrl,
+      cMapPacked: true,
+      standardFontDataUrl,
+      isEvalSupported: false,
+      useSystemFonts: false,
+      verbosity: 0
+    })
 
-  const document = await loadingTask.promise
+    const document = await loadingTask.promise
 
-  try {
-    const pageTexts: string[] = []
-    let totalChars = 0
-    let truncated = false
+    try {
+      const pageTexts: string[] = []
+      let totalChars = 0
+      let truncated = false
+      const boundedTargetPage =
+        targetPageNumber !== undefined && Number.isSafeInteger(targetPageNumber)
+          ? Math.min(document.numPages, Math.max(1, targetPageNumber))
+          : undefined
+      const firstPage = boundedTargetPage ?? 1
+      const lastPage = boundedTargetPage ?? document.numPages
 
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber)
-      const content = await page.getTextContent()
-      page.cleanup()
+      for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
+        const page = await document.getPage(pageNumber)
+        const content = await page.getTextContent()
+        page.cleanup()
 
-      const pageText = content.items
-        .map((item) => ('str' in item ? item.str : ''))
-        .join('')
-        .trim()
+        const pageText = joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {})))
 
-      // Skip empty pages so a scanned/image-only PDF yields no text and hits the caller's fallback.
-      if (!pageText) continue
+        // Skip empty pages so a scanned/image-only PDF yields no text and hits the caller's fallback.
+        if (!pageText) continue
 
-      const block = `--- Page ${pageNumber} ---\n${pageText}`
-      pageTexts.push(block)
-      totalChars += block.length
+        const block = `--- Page ${pageNumber} ---\n${pageText}`
+        pageTexts.push(block)
+        totalChars += block.length
 
-      if (totalChars >= MAX_PDF_TEXT_CHARS) {
-        truncated = true
-        break
+        if (totalChars >= maxChars) {
+          truncated = true
+          break
+        }
       }
-    }
 
-    let text = pageTexts.join('\n\n')
-    if (text.length > MAX_PDF_TEXT_CHARS) {
-      text = text.slice(0, MAX_PDF_TEXT_CHARS)
-      truncated = true
-    }
+      let text = pageTexts.join('\n\n')
+      if (text.length > maxChars) {
+        text = text.slice(0, maxChars)
+        truncated = true
+      }
 
-    return { text: text.trim(), pageCount: document.numPages, truncated }
-  } finally {
-    await document.destroy()
-  }
+      return { text: text.trim(), pageCount: document.numPages, truncated }
+    } finally {
+      await document.destroy()
+    }
+  })
 }

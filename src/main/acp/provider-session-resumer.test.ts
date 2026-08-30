@@ -110,6 +110,7 @@ type ResumerHarness = {
   release: ReturnType<typeof vi.fn>
   backend: AcpBackendGenerationView
   request: ReturnType<typeof vi.fn>
+  reconfigure: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
   resume: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
   sessionSetupAppends: string[][]
   setTimer: ReturnType<typeof vi.fn>
@@ -230,8 +231,8 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
       session: providerSession,
       cwd: '/old-workspace',
       projectId: 'old-project',
-      frameworkId: 'claude-code',
-      backendId: 'claude-code',
+      frameworkId: currentBackend.framework.id,
+      backendId: currentBackend.backendId,
       permissionProfile
     })
     attached.reservation.release()
@@ -340,6 +341,15 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
       projectId: 'project-a',
       ...request
     })
+  const reconfigure = (
+    request: Partial<AcpResumeSessionRequest> = {}
+  ): Promise<AcpCreateSessionResponse> =>
+    resumer.reconfigure({
+      sessionId: 'stable-app-session',
+      cwd: '/workspace',
+      projectId: 'project-a',
+      ...request
+    })
 
   return {
     adopt,
@@ -362,6 +372,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     registry,
     release,
     request,
+    reconfigure,
     resume,
     sessionSetupAppends,
     setTimer,
@@ -400,6 +411,45 @@ describe('AcpProviderSessionResumer', () => {
       acp.methods.agent.session.resume,
       expect.objectContaining({ mcpServers: [capabilityServer, skillServer] })
     )
+  })
+
+  it.each([
+    ['claude-code', backend],
+    ['opencode', opencodeBackend],
+    ['codex-response', codexResponsesBackend],
+    ['codex-bridge', codexBridgeBackend]
+  ] as const)(
+    'reconfigures an attached %s Session with one compatible resume and no replay adoption',
+    async (_route, initialBackend) => {
+      const providerSessionId =
+        initialBackend.framework.id === 'codex'
+          ? '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+          : 'provider-session'
+      const harness = createHarness({ attached: true, initialBackend, providerSessionId })
+
+      await expect(harness.reconfigure()).resolves.toMatchObject({
+        sessionId: 'stable-app-session',
+        providerSessionId
+      })
+
+      expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+      expect(harness.request).toHaveBeenCalledOnce()
+      expect(harness.provision).toHaveBeenCalledOnce()
+      expect(harness.adopt).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not silently adopt a fresh context when capability reconfiguration cannot resume', async () => {
+    const harness = createHarness({
+      attached: true,
+      resumeError: { code: -32002, message: 'Resource not found' }
+    })
+
+    await expect(harness.reconfigure()).rejects.toEqual({
+      code: -32002,
+      message: 'Resource not found'
+    })
+    expect(harness.adopt).not.toHaveBeenCalled()
   })
 
   it('preserves the runtime capability policy on compatible provider resume', async () => {

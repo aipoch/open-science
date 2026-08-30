@@ -57,6 +57,9 @@ type PreloadApi = {
   sessions: {
     loadAll: () => unknown
     loadOne: (request: unknown) => unknown
+    filterPdfContextCandidates: (request: unknown) => Promise<unknown>
+    linkPdfContext: (request: unknown) => Promise<unknown>
+    unlinkPdfContext: (request: unknown) => Promise<unknown>
     saveSession: (session: unknown, options?: unknown) => unknown
     editDetails: (request: unknown) => unknown
     deleteSession: (request: unknown) => unknown
@@ -194,9 +197,11 @@ beforeAll(async () => {
   // Take the contextBridge branch of the preload's expose logic (production path with context isolation).
   Object.defineProperty(process, 'contextIsolated', { value: true, configurable: true })
   invokeMock.mockImplementation(async (channel: string) =>
-    validatedApplicationCommandChannels.has(channel) || channel === 'sessions:save-session'
-      ? { ok: true, result: undefined }
-      : undefined
+    channel === 'sessions:link-pdf-context' || channel === 'sessions:unlink-pdf-context'
+      ? { ok: true, result: { version: 1, revision: 0 } }
+      : validatedApplicationCommandChannels.has(channel) || channel === 'sessions:save-session'
+        ? { ok: true, result: undefined }
+        : undefined
   )
 
   await import('./index')
@@ -308,6 +313,7 @@ describe('preload bridge — public surface inventory', () => {
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',
+      'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
       'compute.onApprovalRequest',
@@ -320,6 +326,7 @@ describe('preload bridge — public surface inventory', () => {
       'compute.resetPassword',
       'compute.respondApproval',
       'compute.revealInFolder',
+      'compute.scratchClear',
       'compute.scratchSet',
       'compute.sshConfigAliases',
       'databaseStartup.getState',
@@ -459,6 +466,8 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.deleteSession',
       'sessions.editDetails',
       'sessions.exportConversation',
+      'sessions.filterPdfContextCandidates',
+      'sessions.linkPdfContext',
       'sessions.list',
       'sessions.loadAll',
       'sessions.loadOne',
@@ -472,6 +481,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.saveManifest',
       'sessions.saveSession',
       'sessions.sendFlushResponse',
+      'sessions.unlinkPdfContext',
       'sessions.updateArchive',
       'settings.addCustomServer',
       'settings.authenticateCustomServer',
@@ -799,7 +809,11 @@ describe('preload bridge — core renderer contract catalog', () => {
 
   it('routes every request method through its cataloged Electron channel', async () => {
     const requestContracts = coreContracts.filter(
-      ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
+      ({ dispatchPolicy, publicPath }) =>
+        dispatchPolicy.electron === 'electron-ipc-request' &&
+        publicPath !== 'sessions.filterPdfContextCandidates' &&
+        publicPath !== 'sessions.linkPdfContext' &&
+        publicPath !== 'sessions.unlinkPdfContext'
     )
     const localFile = { name: 'catalog.csv' } as File
 
@@ -835,6 +849,46 @@ describe('preload bridge — core renderer contract catalog', () => {
     expect(onMock).toHaveBeenCalledWith('memory:changed', wrappedListener)
     expect(listener).toHaveBeenCalledWith(event)
     expect(removeListenerMock).toHaveBeenCalledWith('memory:changed', wrappedListener)
+  })
+
+  it('unwraps the runtime-validated PDF context Session commands', async () => {
+    const cases = [
+      {
+        call: () =>
+          api.sessions.filterPdfContextCandidates({
+            projectId: 'project-1',
+            sources: []
+          }),
+        channel: 'sessions:filter-pdf-context-candidates'
+      },
+      {
+        call: () =>
+          api.sessions.linkPdfContext({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            expectedRevision: 0,
+            sourceKind: 'artifact-version',
+            sourceVersionId: 'version-1'
+          }),
+        channel: 'sessions:link-pdf-context'
+      },
+      {
+        call: () =>
+          api.sessions.unlinkPdfContext({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            expectedRevision: 1,
+            bindingId: 'binding-1'
+          }),
+        channel: 'sessions:unlink-pdf-context'
+      }
+    ]
+
+    for (const testCase of cases) {
+      invokeMock.mockResolvedValueOnce({ ok: true, result: { version: 1, revision: 2 } })
+      await expect(testCase.call()).resolves.toEqual({ version: 1, revision: 2 })
+      expect(invokeMock).toHaveBeenLastCalledWith(testCase.channel, expect.any(Object))
+    }
   })
 
   it('routes all generic events and removes each wrapped listener by exact identity', () => {

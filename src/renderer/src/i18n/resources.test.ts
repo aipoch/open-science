@@ -1550,6 +1550,14 @@ describe('mandatory product glossary', () => {
     }
   >
 
+  // Reviewed exceptions to the Agent/Skill glossary below: the confirmed literature-reading entry
+  // label (design decision D4, 2026-08-28) is an action phrase in Chinese ("start literature
+  // reading") that intentionally does not name the Agent.
+  const LOCALIZED_FEATURE_TERM_EXCEPTIONS = new Set([
+    'zh-Hans: Read with agent: 智能体',
+    'zh-Hant: Read with agent: 智能體'
+  ])
+
   it.each(TRANSLATED)('%s localizes Agent and Skill in user-visible prose', (locale) => {
     const expected = localizedFeatureTerms[locale]
     const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
@@ -1576,6 +1584,7 @@ describe('mandatory product glossary', () => {
               untranslated.test(prose))
         )
         .map(({ expected: term }) => `${key}: ${String(term)}`)
+        .filter((offender) => !LOCALIZED_FEATURE_TERM_EXCEPTIONS.has(`${locale}: ${offender}`))
     })
 
     expect(offenders).toEqual([])

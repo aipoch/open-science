@@ -209,7 +209,7 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(33)
+    expect(compute).toHaveLength(35)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
@@ -370,12 +370,16 @@ describe('renderer contract catalog', () => {
       'projects.update',
       'projects.updateArchive',
       'sessions.deleteSession',
+      'sessions.filterPdfContextCandidates',
+      'sessions.linkPdfContext',
+      'sessions.unlinkPdfContext',
       'tags.create',
       'tags.delete',
       'tags.reorder',
       'tags.setAssignment',
       'tags.snapshot',
-      'tags.update'
+      'tags.update',
+      'uploads.finalizeSession'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
       'memory:clear-all',
@@ -394,12 +398,16 @@ describe('renderer contract catalog', () => {
       'projects:update',
       'projects:update-archive',
       'sessions:delete-session',
+      'sessions:filter-pdf-context-candidates',
+      'sessions:link-pdf-context',
+      'sessions:unlink-pdf-context',
       'tags:create',
       'tags:delete',
       'tags:reorder',
       'tags:set-assignment',
       'tags:snapshot',
-      'tags:update'
+      'tags:update',
+      'uploads:finalize-session'
     ])
   })
 })

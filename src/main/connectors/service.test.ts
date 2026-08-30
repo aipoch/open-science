@@ -781,6 +781,162 @@ describe('ConnectorService', () => {
       )
     })
 
+    it('rejects a custom server when encrypted credentials are only partially resolved', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-partial-credentials',
+              name: 'partial-credentials',
+              displayName: 'Partial credentials',
+              transport: 'stdio',
+              command: 'example-mcp',
+              envRefs: {
+                API_TOKEN: 'enc:resolved',
+                OPTIONAL_HOST_TOKEN: 'enc:unavailable'
+              },
+              env: { API_TOKEN: 'resolved-value' },
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('partial-credentials', 'do_thing', {}, internal)).rejects.toThrow(
+        /credential_unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('rejects a historical custom server with credentials embedded in its URL', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-embedded-credential',
+              name: 'embedded-credential',
+              displayName: 'Embedded credential',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test?api_key=legacy-plaintext-secret',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('embedded-credential', 'do_thing', {}, internal)).rejects.toThrow(
+        /credential_unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('rejects a historical custom server with credentials embedded in an OAuth URL', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-oauth-url-credential',
+              name: 'oauth-url-credential',
+              displayName: 'OAuth URL credential',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test',
+              oauth: {
+                authorizationServerUrl: 'https://auth.example.test?api_key=legacy-plaintext-secret'
+              },
+              oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' } },
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('oauth-url-credential', 'do_thing', {}, internal)).rejects.toThrow(
+        /credential_unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('rejects a historical custom server with curl-style user credentials', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-user-credential',
+              name: 'user-credential',
+              displayName: 'User credential',
+              transport: 'stdio',
+              command: 'example-mcp',
+              args: ['-u', 'legacy-user:legacy-password'],
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('user-credential', 'do_thing', {}, internal)).rejects.toThrow(
+        /credential_unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('rejects a historical custom server with a credential-like custom header argument', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-custom-header-credential',
+              name: 'custom-header-credential',
+              displayName: 'Custom header credential',
+              transport: 'stdio',
+              command: 'example-mcp',
+              args: ['--header', 'X-API-Token: legacy-plaintext-secret'],
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('custom-header-credential', 'do_thing', {}, internal)).rejects.toThrow(
+        /credential_unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
     it('does not dispatch a custom name that collides with a bundled connector', async () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
@@ -1287,10 +1443,15 @@ describe('ConnectorService', () => {
           clientId: 'registered-client'
         },
         oauthClientSecretRef: 'enc:old-secret',
+        oauthClientSecret: 'old-secret',
         oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' as const } },
         enabled: true
       }
-      const replacement = { ...original, oauthClientSecretRef: 'enc:new-secret' }
+      const replacement = {
+        ...original,
+        oauthClientSecretRef: 'enc:new-secret',
+        oauthClientSecret: 'new-secret'
+      }
       let current = original
       let approve: ((decision: 'once') => void) | undefined
       const requestApproval = vi.fn(
@@ -2006,6 +2167,96 @@ describe('ConnectorService specialist capability gate', () => {
     expect(localHandler).toHaveBeenCalledTimes(3)
   })
 
+  it.each([
+    {
+      name: 'method outside include list',
+      connectorTools: [{ connectorId: 'molecule', includedMethods: ['render_molecule'] }],
+      method: 'preview_molecule',
+      allowed: false
+    },
+    {
+      name: 'method in include and exclude lists',
+      connectorTools: [
+        {
+          connectorId: 'molecule',
+          includedMethods: ['preview_molecule'],
+          excludedMethods: ['preview_molecule']
+        }
+      ],
+      method: 'preview_molecule',
+      allowed: false
+    },
+    {
+      name: 'method matching anchored include glob',
+      connectorTools: [{ connectorId: 'molecule', includeToolsPattern: 'preview_*' }],
+      method: 'preview_molecule',
+      allowed: true
+    },
+    {
+      name: 'method outside anchored include glob',
+      connectorTools: [{ connectorId: 'molecule', includeToolsPattern: 'preview_*' }],
+      method: 'render_molecule',
+      allowed: false
+    },
+    {
+      name: 'method matching include and exclude globs',
+      connectorTools: [
+        {
+          connectorId: 'molecule',
+          includeToolsPattern: '*',
+          excludeToolsPattern: 'preview_*'
+        }
+      ],
+      method: 'preview_molecule',
+      allowed: false
+    },
+    {
+      name: 'overlong persisted glob',
+      connectorTools: [{ connectorId: 'molecule', excludeToolsPattern: 'x'.repeat(129) }],
+      method: 'preview_molecule',
+      allowed: false
+    },
+    {
+      name: 'too many persisted rules',
+      connectorTools: Array.from({ length: 129 }, () => ({ connectorId: 'molecule' })),
+      method: 'preview_molecule',
+      allowed: false
+    }
+  ])(
+    'enforces Specialist Connector tool rules: $name',
+    async ({ connectorTools, method, allowed }) => {
+      const localHandler = vi.fn().mockResolvedValue({ ok: true })
+      const current = specialist({
+        capabilityMode: 'selected',
+        selectedCapabilities: {
+          skillIds: [],
+          connectorIds: ['molecule'],
+          connectorTools
+        }
+      })
+      const svc = new ConnectorService({
+        engine: { call: vi.fn() } as unknown as ParserEngine,
+        getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
+        resolveApiKey: () => undefined,
+        resolveSpecialistProfile: async () => current,
+        localToolHandlers: {
+          'molecule/preview_molecule': localHandler,
+          'molecule/render_molecule': localHandler
+        }
+      })
+      const call = svc.call(
+        'molecule',
+        method,
+        { smiles: 'CCO' },
+        { origin: 'agent', sessionId: `tool-rule-${method}`, specialistId: current.id }
+      )
+
+      if (allowed) await expect(call).resolves.toEqual({ ok: true })
+      else await expect(call).rejects.toThrow('specialist_capability_denied')
+      expect(localHandler).toHaveBeenCalledTimes(allowed ? 1 : 0)
+    }
+  )
+
   it('accepts a custom Connector local UUID or legacy public name as a capability reference', async () => {
     const call = vi.fn().mockResolvedValue({ ok: true })
     const listTools = vi.fn().mockResolvedValue([{ name: 'do_thing' }])
@@ -2066,6 +2317,74 @@ describe('ConnectorService specialist capability gate', () => {
       'specialist_capability_denied'
     )
     expect(call).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not dispatch a custom Connector method restricted during tool discovery', async () => {
+    const call = vi.fn().mockResolvedValue({ ok: true })
+    let settleTools: ((tools: Array<{ name: string }>) => void) | undefined
+    const listTools = vi.fn(
+      () =>
+        new Promise<Array<{ name: string }>>((resolve) => {
+          settleTools = resolve
+        })
+    )
+    let current = specialist({
+      capabilityMode: 'selected',
+      selectedCapabilities: {
+        skillIds: [],
+        connectorIds: ['custom-server-id'],
+        connectorTools: [
+          {
+            connectorId: 'custom-server-id',
+            includedMethods: ['lookup']
+          }
+        ]
+      }
+    })
+    const svc = new ConnectorService({
+      mcpClientManager: { call, listTools },
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [
+          {
+            id: 'custom-server-id',
+            name: 'custom-server',
+            displayName: 'Custom server',
+            transport: 'stdio',
+            command: 'custom-server',
+            enabled: true
+          }
+        ]
+      }),
+      resolveApiKey: () => undefined,
+      resolveSpecialistProfile: async () => current
+    })
+    const pending = svc.call(
+      'custom-server',
+      'lookup',
+      {},
+      { origin: 'agent', sessionId: 'custom-restriction', specialistId: current.id }
+    )
+
+    await vi.waitFor(() => expect(listTools).toHaveBeenCalledOnce())
+    current = specialist({
+      capabilityMode: 'selected',
+      selectedCapabilities: {
+        skillIds: [],
+        connectorIds: ['custom-server-id'],
+        connectorTools: [
+          {
+            connectorId: 'custom-server-id',
+            includedMethods: ['read_only']
+          }
+        ]
+      }
+    })
+    settleTools?.([{ name: 'lookup' }])
+
+    await expect(pending).rejects.toThrow('specialist_capability_denied')
+    expect(call).not.toHaveBeenCalled()
   })
 
   it('fails closed for missing agent session/profile/connector without exposing call data', async () => {

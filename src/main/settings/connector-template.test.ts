@@ -210,6 +210,20 @@ describe('Connector configuration templates', () => {
     [{ env: { API_TOKEN: 'secret' } }, 'Unknown field "env"'],
     [{ headers: { Authorization: 'Bearer secret' } }, 'Unknown field "headers"'],
     [{ args: ['--api-key=secret'] }, 'appears to contain a credential'],
+    [{ args: ['--header', 'Authorization: Bearer secret'] }, 'appears to contain a credential'],
+    [{ args: ['--header', 'X-API-Token: secret'] }, 'appears to contain a credential'],
+    [
+      { args: ['--header', 'Authorization:', 'Bearer', 'secret'] },
+      'appears to contain a credential'
+    ],
+    [{ args: ['--user=researcher:secret'] }, 'appears to contain a credential'],
+    [{ args: ['-u', 'researcher:secret'] }, 'appears to contain a credential'],
+    [{ args: ['-uresearcher:secret'] }, 'appears to contain a credential'],
+    [{ args: ['--auth-token', 'secret'] }, 'appears to contain a credential'],
+    [
+      { args: ['--endpoint', 'https://mcp.example.test/mcp?auth_token=secret'] },
+      'appears to contain a credential'
+    ],
     [{ url: 'https://mcp.example.test/mcp?token=secret' }, 'credential-like query parameter']
   ])('rejects secret-bearing or unknown fields', (extra, message) => {
     const preview = parseConnectorTemplate(
@@ -254,6 +268,43 @@ describe('Connector configuration templates', () => {
       })
     )
     expect(ordinary.ready).toBe(true)
+  })
+
+  it('accepts ordinary custom header arguments', () => {
+    const preview = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'ordinary-header',
+        display_name: 'Ordinary Header',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args: [
+          '--header',
+          'X-Request-ID: request-123',
+          '--header',
+          'Idempotency-Key: operation-123'
+        ]
+      })
+    )
+
+    expect(preview.ready).toBe(true)
+  })
+
+  it('accepts Python unbuffered mode without treating bare -u as a credential flag', () => {
+    const preview = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'python-server',
+        display_name: 'Python Server',
+        transport: 'stdio',
+        command: 'python3',
+        args: ['-u', 'server.py']
+      })
+    )
+
+    expect(preview.ready).toBe(true)
   })
 
   it('accepts local paths with portability warnings', () => {
@@ -402,6 +453,33 @@ describe('Connector configuration templates', () => {
     })
     expect(result.preview.mcpClientDigest).toMatch(/^[a-f0-9]{64}$/)
     expect(result.preview.mcpClientSuggestedFileName).toBe('mcp-example-server.json')
+  })
+
+  it.each([
+    ['split header credentials', ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']],
+    ['custom token header credentials', ['--header', 'X-API-Token:', 'plaintext-secret']],
+    ['curl-style user credentials', ['--user', 'researcher:plaintext-secret']]
+  ])('withholds both export formats for historical %s', (_description, args) => {
+    const result = buildConnectorTemplateExport({
+      id: 'unsafe-id',
+      name: 'unsafe-server',
+      displayName: 'Unsafe Server',
+      transport: 'stdio',
+      command: 'example-mcp',
+      args
+    })
+
+    expect(result.preview).toMatchObject({
+      ready: false,
+      connectorId: 'unsafe-id',
+      diagnostics: [expect.objectContaining({ code: 'connector-template.argument-secret' })]
+    })
+    expect(result.preview.digest).toBeUndefined()
+    expect(result.preview.suggestedFileName).toBeUndefined()
+    expect(result.preview.mcpClientDigest).toBeUndefined()
+    expect(result.preview.mcpClientSuggestedFileName).toBeUndefined()
+    expect(result.contents).toBeUndefined()
+    expect(result.mcpClientContents).toBeUndefined()
   })
 
   it('exports remote MCP client transport labels and excludes OAuth state', () => {

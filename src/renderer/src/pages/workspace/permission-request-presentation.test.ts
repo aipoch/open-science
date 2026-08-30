@@ -140,6 +140,36 @@ describe('describePermissionRequest', () => {
     })
   })
 
+  it('describes a Literature search without exposing its MCP identity', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'mcp__open-science-literature__read_document',
+          providerToolName: 'mcp__open-science-literature__read_document',
+          isMcp: true,
+          mcpIdentity: 'open-science-literature/read_document',
+          rawInput: { documentId: 'binding-id', query: 'core contributions and evaluation' }
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Search linked PDFs?',
+      categoryLabel: 'Reading',
+      hideToolIdentity: true
+    })
+  })
+
+  it('describes a bounded Literature read separately from search', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          isMcp: true,
+          mcpIdentity: 'open-science-literature/read_document',
+          rawInput: { documentId: 'binding-id' }
+        })
+      )
+    ).toMatchObject({ actionTitle: 'Read linked PDF?', categoryLabel: 'Reading' })
+  })
+
   it('distinguishes permission to create and decide Plans from approval of a specific Plan', () => {
     expect(
       describePermissionRequest(

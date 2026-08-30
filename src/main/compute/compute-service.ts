@@ -135,6 +135,10 @@ export class ComputeService {
     return this.hostProfiles.setScratchRoot(providerId, path)
   }
 
+  async clearScratchRoot(providerId: string): Promise<void> {
+    return this.hostProfiles.clearScratchRoot(providerId)
+  }
+
   async setConcurrencyLimit(providerId: string, limit: number): Promise<void> {
     if (this.concurrencyManager) {
       return this.concurrencyManager.setProviderLimit(providerId, limit)

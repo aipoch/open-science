@@ -108,7 +108,11 @@ export type ResolveSessionSpecialistRequest = {
 // The capability scope mode for a specialist.
 export type SpecialistCapabilityMode = 'full' | 'selected'
 
-// Per-connector tool-level rules. Uses bare method names (no connector prefix).
+export const CONNECTOR_TOOL_RULE_MAX_COUNT = 128
+export const CONNECTOR_TOOL_PATTERN_MAX_LENGTH = 128
+
+// Per-connector tool-level rules. Uses bare method names (no connector prefix). Patterns are
+// anchored globs where `*` matches any characters and `?` matches one character.
 export type ConnectorToolRule = {
   connectorId: string
   includedMethods?: string[]

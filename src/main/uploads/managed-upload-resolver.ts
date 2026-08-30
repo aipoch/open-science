@@ -114,7 +114,12 @@ class ManagedUploadResolver {
     }
 
     const safeProjectId = scope.projectId ? assertSafePathSegment(scope.projectId) : undefined
-    const safeSessionId = scope.sessionId ? assertSafePathSegment(scope.sessionId) : undefined
+    const safeSessionId =
+      scope.sessionId === PENDING_UPLOAD_SESSION_ID
+        ? PENDING_UPLOAD_SESSION_ID
+        : scope.sessionId
+          ? assertSafePathSegment(scope.sessionId)
+          : undefined
     if (safeProjectId || safeSessionId) {
       const relativeUploadPath = relative(resolvedUploadRoot, resolvedFilePath).split(sep).join('/')
       const contentStorageKey = [UPLOADS_DIR, relativeUploadPath].join('/')
@@ -187,6 +192,7 @@ class ManagedUploadResolver {
       if (
         safeProjectId &&
         requestedLegacySessionId &&
+        requestedLegacySessionId !== PENDING_UPLOAD_SESSION_ID &&
         safeProjectId !== DEFAULT_UPLOAD_PROJECT_ID &&
         this.options.getClient
       ) {

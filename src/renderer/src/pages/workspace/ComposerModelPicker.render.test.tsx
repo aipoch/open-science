@@ -87,11 +87,6 @@ const provider = (overrides: Partial<ProviderView>): ProviderView => ({
   ...overrides
 })
 
-// Official OpenAI models are documented as Responses-only. Tests that pick those catalog ids must
-// run under Codex, the framework that actually speaks Responses. The store's initial Claude Code
-// state only speaks Anthropic, so the picker would otherwise hide the trigger as
-// "No compatible model". OpenCode is not used here: its adapter only drives Anthropic and Chat
-// Completions, even if a fixture claimed otherwise.
 const codexFramework: {
   agentFrameworkId: 'codex'
   agentFrameworks: AgentFrameworkView[]
@@ -302,30 +297,6 @@ describe('ComposerModelPicker', () => {
     const trigger = container.querySelector('[aria-label="No compatible model"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.textContent).toContain('No compatible model')
-  })
-
-  it('treats official OpenAI Responses models as incompatible with Claude Code', () => {
-    // Official OpenAI catalog entries resolve to Responses regardless of the mock provider's omitted
-    // apiEndpoints. Claude Code remains Anthropic-only, so the picker must warn instead of treating
-    // those models as selectable.
-    useSettingsStore.setState({
-      agentFrameworkId: 'claude-code',
-      providers: [
-        provider({
-          id: 'off',
-          type: 'official',
-          vendorId: 'openai',
-          name: 'OpenAI',
-          models: ['gpt-5.2', 'gpt-5.5']
-        })
-      ],
-      activeProviderId: 'off',
-      activeModel: 'gpt-5.2'
-    })
-    render()
-
-    expect(container.querySelector('[aria-label="Select model"]')).toBeNull()
-    expect(container.querySelector('[aria-label="No compatible model"]')).not.toBeNull()
   })
 
   it('treats a Chat provider as bridge-compatible under Codex without a per-model probe', async () => {

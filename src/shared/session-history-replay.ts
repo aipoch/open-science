@@ -26,7 +26,17 @@ const buildSessionHistoryReplayMedia = (
   const images: AcpReplayMessageImage[] = []
   let imageBytes = 0
 
-  const uploads = messages.flatMap((message) => message.uploads ?? [])
+  const readingPdfVersionIds = new Set(
+    messages.flatMap(
+      (message) =>
+        message.pdfContext?.bindings
+          .filter(({ sourceKind }) => sourceKind === 'upload-version')
+          .map(({ sourceVersionId }) => sourceVersionId) ?? []
+    )
+  )
+  const uploads = messages
+    .flatMap((message) => message.uploads ?? [])
+    .filter((upload) => !upload.versionId || !readingPdfVersionIds.has(upload.versionId))
   const newestUploads = [...uploads].reverse()
   const imageUploads = newestUploads.filter((upload) =>
     imageAttachmentMimeType(upload.name, upload.mimeType)

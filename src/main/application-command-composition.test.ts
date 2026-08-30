@@ -207,12 +207,16 @@ describe('application command composition', () => {
       'projects:update',
       'projects:update-archive',
       'sessions:delete-session',
+      'sessions:filter-pdf-context-candidates',
+      'sessions:link-pdf-context',
+      'sessions:unlink-pdf-context',
       'tags:create',
       'tags:delete',
       'tags:reorder',
       'tags:set-assignment',
       'tags:snapshot',
-      'tags:update'
+      'tags:update',
+      'uploads:finalize-session'
     ])
   })
 

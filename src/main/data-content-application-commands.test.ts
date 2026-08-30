@@ -142,6 +142,12 @@ const createDependencies = () => {
   }
   const sessions = {
     editDetails: vi.fn(async () => session),
+    filterPdfContextCandidates: vi.fn(async () => ({
+      sources: [],
+      pendingAttachmentIds: []
+    })),
+    linkPdfContext: vi.fn(async () => ({ version: 1 as const, revision: 1 })),
+    unlinkPdfContext: vi.fn(async () => ({ version: 1 as const, revision: 1 })),
     list: vi.fn(),
     loadAll: vi.fn(),
     loadOne: vi.fn(),
@@ -172,7 +178,7 @@ const createDependencies = () => {
     finishTransfer: vi.fn(),
     abortTransfer: vi.fn(),
     deleteUpload: vi.fn(),
-    finalizeSession: vi.fn(),
+    finalizeSession: vi.fn(async () => []),
     readPreview: vi.fn()
   }
   const electron = {
@@ -221,6 +227,8 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
+  'sessionFilterPdfContextCandidates',
+  'sessionLinkPdfContext',
   'sessionList',
   'sessionLoadAll',
   'sessionLoadOne',
@@ -228,6 +236,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionSaveManifest',
   'sessionSave',
   'sessionSetDelegationPolicy',
+  'sessionUnlinkPdfContext',
   'uploadStageLocalFile',
   'uploadStageLocalPath'
 ] as const satisfies readonly DataContentCommandKey[]
@@ -254,7 +263,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 53 current data and content invoke channels', () => {
+  it('owns exactly the 56 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -291,12 +300,15 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:filter-pdf-context-candidates',
+        'sessions:link-pdf-context',
         'sessions:list',
         'sessions:load-all',
         'sessions:load-one',
         'sessions:load-usage',
         'sessions:save-manifest',
         'sessions:update-archive',
+        'sessions:unlink-pdf-context',
         'sessions:save-session',
         'sessions:set-delegation-policy',
         'uploads:abort-transfer',
@@ -485,7 +497,7 @@ describe('Data and content application commands', () => {
       },
       {
         key: 'uploadFinalizeSession',
-        args: [request('upload-finalize')],
+        args: [{ projectId: 'project-1', sessionId: 'session-1', attachments: [] }],
         owner: deps.uploads.finalizeSession,
         passInvocation: true
       },
@@ -531,6 +543,107 @@ describe('Data and content application commands', () => {
         .sort()
     )
   })
+
+  it.each([
+    {
+      label: 'malformed attachment',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: '.pending',
+            name: 'report.txt',
+            path: 'upload-version:version-1',
+            size: 10
+          }
+        ]
+      }
+    },
+    {
+      label: 'more than ten attachments',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        attachments: Array.from({ length: 11 }, (_, index) => ({
+          id: `upload-${index}`,
+          sessionId: '.pending',
+          name: `report-${index}.txt`,
+          originalName: `report-${index}.txt`,
+          path: `upload-version:version-${index}`,
+          size: 10
+        }))
+      }
+    },
+    {
+      label: 'duplicate attachment ids',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: '.pending',
+            name: 'report-1.txt',
+            originalName: 'report-1.txt',
+            path: 'upload-version:version-1',
+            size: 10
+          },
+          {
+            id: 'upload-1',
+            sessionId: '.pending',
+            name: 'report-2.txt',
+            originalName: 'report-2.txt',
+            path: 'upload-version:version-2',
+            size: 10
+          }
+        ]
+      }
+    },
+    {
+      label: 'duplicate attachment paths',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: '.pending',
+            name: 'report-1.txt',
+            originalName: 'report-1.txt',
+            path: 'upload-version:version-1',
+            size: 10
+          },
+          {
+            id: 'upload-2',
+            sessionId: '.pending',
+            name: 'report-2.txt',
+            originalName: 'report-2.txt',
+            path: 'upload-version:version-1',
+            size: 10
+          }
+        ]
+      }
+    }
+  ])(
+    'rejects an invalid finalize upload request ($label) before reaching the owner',
+    async ({ request }) => {
+      const router = createApplicationCommandRouter()
+      const deps = createDependencies()
+      registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+      const { result: dispatched } = dispatchCommand(
+        router,
+        'uploadFinalizeSession',
+        [request],
+        remoteCaller
+      )
+
+      await expect(dispatched).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+      expect(deps.uploads.finalizeSession).not.toHaveBeenCalled()
+    }
+  )
 
   it('routes existing owner seams and passes the exact caller lease to owned resources', async () => {
     const router = createApplicationCommandRouter()

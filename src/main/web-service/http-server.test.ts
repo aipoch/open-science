@@ -628,6 +628,7 @@ describe('startWebHttpServer', () => {
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html><title>Web test</title>')
     await writeFile(join(staticRoot, 'app.js'), 'window.__staticTest = true')
+    await writeFile(join(staticRoot, 'worker.mjs'), 'export const ready = true')
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
@@ -659,6 +660,11 @@ describe('startWebHttpServer', () => {
       expect(response.headers.get('x-frame-options')).toBe('DENY')
       expect(response.headers.get('referrer-policy')).toBe('no-referrer')
     }
+
+    const moduleResponse = await fetch(`http://127.0.0.1:${server.port}/worker.mjs`, {
+      headers: { authorization: 'Bearer test-token' }
+    })
+    expect(moduleResponse.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
   })
 
   it('dispatches local Web RPC through the narrow application command view', async () => {

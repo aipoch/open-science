@@ -432,11 +432,12 @@ describe('useAcpRuntime payload construction', () => {
     expect(acpApi.continueInterruptedTurn).toHaveBeenCalledWith(request)
   })
 
-  it('includes history preamble/attachments/images and resume fallback when a prompt replays context', async () => {
+  it('keeps current images separate from replay images in the prompt request', async () => {
     const { result } = await mountRuntime()
 
     const attachment = { id: 'up-1', name: 'a.txt', mimeType: 'text/plain', size: 1 }
     const image = { mimeType: 'image/png', data: 'aGVsbG8=' }
+    const currentImage = { mimeType: 'image/png', data: 'd29ybGQ=', byteLength: 5 }
     const resumeFallback = { historyPreamble: 'fallback transcript' }
 
     await act(async () => {
@@ -451,7 +452,12 @@ describe('useAcpRuntime payload construction', () => {
         [image] as never,
         resumeFallback as never,
         undefined,
-        true
+        true,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [currentImage] as never
       )
     })
 
@@ -462,6 +468,7 @@ describe('useAcpRuntime payload construction', () => {
       historyPreamble: 'prior transcript',
       historyAttachments: [attachment],
       historyImages: [image],
+      currentImages: [currentImage],
       resumeFallback,
       contextReset: true
     })
@@ -494,6 +501,7 @@ describe('useAcpRuntime payload construction', () => {
       'historyPreamble',
       'historyAttachments',
       'historyImages',
+      'currentImages',
       'resumeFallback',
       'contextReset'
     ]) {

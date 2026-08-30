@@ -196,10 +196,13 @@ export const createSessionMessageGraphOwner = <
   },
   appendUserMessage: ({
     sessionId,
+    messageId,
+    rearmExisting,
     content,
     attachments = [],
     parts,
     annotations,
+    pdfContext,
     turnIntent,
     cwd,
     projectId,
@@ -227,14 +230,58 @@ export const createSessionMessageGraphOwner = <
 
     const state = get()
     const existingSession = state.sessions.find((session) => session.id === sessionId)
+    const stableMessageId = messageId?.trim()
+    if (messageId !== undefined && !stableMessageId) return undefined
+    const existingMessage = stableMessageId
+      ? existingSession?.messages.find((message) => message.id === stableMessageId)
+      : undefined
+    if (existingMessage) {
+      if (existingMessage.role !== 'user' || existingMessage.content !== trimmedContent) {
+        return undefined
+      }
+      if (rearmExisting && existingSession) {
+        const now = Date.now()
+        const activeRun: ActiveRun = {
+          promptMessageId: existingMessage.id,
+          startedAt: now
+        }
+        set({
+          selectedSessionId: preserveSelection ? state.selectedSessionId : sessionId,
+          sessions: state.sessions.map((session) =>
+            session.id === sessionId
+              ? {
+                  ...session,
+                  status: 'running',
+                  activeRun,
+                  activeRunRuntimeSegmentId: undefined,
+                  interrupted: undefined,
+                  resumeRecovery: undefined,
+                  agentStatus: undefined,
+                  error: undefined,
+                  errorReportable: undefined,
+                  compacting: undefined,
+                  messages: session.messages.map((message) =>
+                    message.id === existingMessage.id
+                      ? { ...message, interrupted: undefined }
+                      : message
+                  ),
+                  updatedAt: now
+                }
+              : session
+          )
+        } as Partial<State>)
+      }
+      return { sessionId, messageId: existingMessage.id }
+    }
     const now = Date.now()
     const userMessage: ChatMessage = {
       ...buildUserMessage({
-        id: createMessageId(),
+        id: stableMessageId ?? createMessageId(),
         content: trimmedContent,
         uploads,
         parts,
         annotations,
+        pdfContext,
         turnIntent,
         sortIndex: createSortIndex()
       }),

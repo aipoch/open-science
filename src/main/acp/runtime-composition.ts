@@ -42,6 +42,7 @@ import type { SpecialistService } from '../specialist/service'
 import { resolveConfigRoot, resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import type { UploadRepository } from '../uploads/repository'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type { LiteratureDocumentReader } from '../literature/document-reader'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
@@ -148,6 +149,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     | 'loadSessionForContinuation'
     | 'sessionProjectId'
   >
+  literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent'>
   delegatedWork?: RootDelegatedWorkControl
   fixedBackend?: ResolvedAgentBackend
   runtimeCallbacks?: AcpRuntimeCallbacks
@@ -191,6 +193,7 @@ const createAcpRuntime = ({
   afterSessionDelete,
   specialistService,
   sessionPersistenceCoordinator,
+  literatureReader,
   delegatedWork,
   fixedBackend,
   runtimeCallbacks,
@@ -276,6 +279,27 @@ const createAcpRuntime = ({
             : settingsService.resolveAgentBackend(await selection!, context)),
         ...(spawnAgent ? { spawnAgent } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
+        ...(literatureReader && sessionPersistenceCoordinator
+          ? {
+              literature: {
+                isEnabled: async (appSessionId: string, projectId: string) => {
+                  try {
+                    return Boolean(
+                      (
+                        await sessionPersistenceCoordinator.readSessionRuntimeContext(
+                          projectId,
+                          appSessionId
+                        )
+                      ).pdfContext
+                    )
+                  } catch {
+                    return false
+                  }
+                },
+                readDocument: (request) => literatureReader.readCurrent(request)
+              }
+            }
+          : {}),
         skills: {
           needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
           namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids),

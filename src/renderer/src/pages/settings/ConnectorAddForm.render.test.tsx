@@ -175,6 +175,25 @@ describe('ConnectorAddForm (local command)', () => {
     expect(onDone).toHaveBeenCalled()
   })
 
+  it('submits whitespace-separated header input as separate arguments', async () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Header Server')
+    openAdvancedSettings()
+    setValue('Arguments', '--header Authorization: Bearer plaintext-secret')
+    checkTrust()
+
+    await act(async () => addButton()?.click())
+
+    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']
+      })
+    )
+  })
+
   it('previews an ID from the name and submits a valid user override', async () => {
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)

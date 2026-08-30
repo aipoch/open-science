@@ -67,7 +67,7 @@ export type ProbeGpu = {
   count: number
 }
 
-// Structured probe snapshot (drives Connected / Probe failed chrome). Written by the probe in a later
+// Structured probe snapshot (drives Last probe succeeded / Probe failed chrome). Written by the probe in a later
 // issue; Phase 1 only reads it back if present.
 export type ProbeResult = {
   ok: boolean
@@ -122,7 +122,7 @@ export type ComputeHostSummary = {
   provider_id: string
   display_name: string
   shape: ComputeHostShape
-  status: 'connected' | 'probe_failed' | 'not_probed'
+  status: 'last_probe_ok' | 'probe_failed' | 'not_probed'
 }
 
 // Canonical Agent-facing catalog entry. Disabled hosts are omitted entirely; an enabled host is
@@ -163,7 +163,7 @@ export const computeHostSummary = (host: ComputeHost): ComputeHostSummary => ({
     host.probeResult === undefined
       ? 'not_probed'
       : host.probeResult.ok
-        ? 'connected'
+        ? 'last_probe_ok'
         : 'probe_failed'
 })
 
@@ -310,6 +310,15 @@ export type ComputeApprovalRequest = {
 export type ComputeJobStatus =
   'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
 
+export type ComputeJobAnalysisState = 'dispatched' | 'succeeded' | 'failed' | 'cancelled'
+
+export type ComputeJobAnalysisTransition = Readonly<{
+  sessionId: string
+  jobIds: string[]
+  messageId: string
+  state: ComputeJobAnalysisState
+}>
+
 // A compute job record, normalized for cross-process sharing (main → renderer via IPC, main → repl
 // via JSON RPC). Timestamps are epoch milliseconds; JSON columns are parsed at the repository
 // boundary to their respective types.
@@ -348,6 +357,11 @@ export type ComputeJob = {
   notified_at?: number
   // notification_consumed_at: epoch ms when wait_for_notification consumed the notification.
   notification_consumed_at?: number
+  // Durable automatic-analysis lifecycle. Historical notified/unconsumed rows omit these fields and
+  // are interpreted as pending; consumed historical rows remain successful compatibility records.
+  analysis_state?: ComputeJobAnalysisState
+  analysis_message_id?: string
+  analysis_updated_at?: number
   created_at: number
   submitted_at: number | undefined
   started_at: number | undefined
@@ -433,6 +447,9 @@ export type JobSummary = {
   // Phase 3b: inbox timestamps — renderer uses these to decide whether to start an analysis turn.
   notified_at: number | undefined
   notification_consumed_at: number | undefined
+  analysis_state?: ComputeJobAnalysisState
+  analysis_message_id?: string
+  analysis_updated_at?: number
   // Phase 3b: compute_done payload fields (spec §11.3). Present when notified_at is set.
   featured_files?: string[]
   featured_file_count?: number

@@ -71,6 +71,8 @@ describe('Remote Compute Skill document', () => {
     expect(doc).not.toContain('open-science:compute-hosts')
     expect(doc).not.toContain('Every registered Compute Host is available')
     expect(doc).toContain("role === 'selected'")
+    expect(doc).toContain('`last_probe_ok`, `probe_failed`, or `not_probed`')
+    expect(doc).not.toContain('`connected`, `probe_failed`, or `not_probed`')
   })
 
   it('keeps bundled model-compute examples on the camelCase contract', async () => {

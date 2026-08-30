@@ -1992,6 +1992,123 @@ describe('compute handlers — jobsPendingNotification', () => {
     const result = await handlers.jobsPendingNotification('sess-1')
     expect(result[0]!.display_name).toBe('ssh:biowulf')
   })
+
+  it('persists an analysis transition and returns the updated Job summaries', async () => {
+    const request = {
+      sessionId: 'sess-1',
+      jobIds: ['job-pending'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    const transitionAnalysis = vi.fn(async () => [
+      makeJob({
+        analysis_state: 'dispatched',
+        analysis_message_id: request.messageId,
+        analysis_updated_at: 2_000
+      })
+    ])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn(async () => [sampleHost()]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ transitionAnalysis }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    await expect(handlers.jobsTransitionAnalysis(request)).resolves.toEqual([
+      expect.objectContaining({
+        job_id: 'job-pending',
+        analysis_state: 'dispatched',
+        analysis_message_id: 'analysis-message-1',
+        analysis_updated_at: 2_000
+      })
+    ])
+    expect(transitionAnalysis).toHaveBeenCalledWith(request)
+  })
+
+  it('publishes persisted analysis transitions through the shared Job update path', async () => {
+    const request = {
+      sessionId: 'sess-1',
+      jobIds: ['job-pending'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    const transitionedJob = makeJob({
+      analysis_state: 'dispatched',
+      analysis_message_id: request.messageId,
+      analysis_updated_at: 2_000
+    })
+    const onJobUpdated = vi.fn()
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn(async () => [sampleHost()]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ transitionAnalysis: vi.fn(async () => [transitionedJob]) }),
+      onJobUpdated,
+      undefined,
+      storageRoot
+    )
+
+    await handlers.jobsTransitionAnalysis(request)
+
+    expect(onJobUpdated).toHaveBeenCalledOnce()
+    expect(onJobUpdated).toHaveBeenCalledWith(transitionedJob)
+  })
+
+  it('returns provider fallback summaries when host lookup fails after an analysis transition', async () => {
+    const request = {
+      sessionId: 'sess-1',
+      jobIds: ['job-pending'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    const transitionAnalysis = vi.fn(async () => [
+      makeJob({
+        analysis_state: 'dispatched',
+        analysis_message_id: request.messageId,
+        analysis_updated_at: 2_000
+      })
+    ])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockRejectedValue(new Error('host lookup unavailable')) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ transitionAnalysis }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    await expect(handlers.jobsTransitionAnalysis(request)).resolves.toEqual([
+      expect.objectContaining({
+        job_id: 'job-pending',
+        display_name: 'ssh:biowulf',
+        analysis_state: 'dispatched'
+      })
+    ])
+    expect(transitionAnalysis).toHaveBeenCalledWith(request)
+  })
+
+  it('rejects an analysis transition when durable Job persistence is unavailable', async () => {
+    const handlers = createComputeHandlers(mockRepository({}))
+
+    await expect(
+      handlers.jobsTransitionAnalysis({
+        sessionId: 'sess-1',
+        jobIds: ['job-pending'],
+        messageId: 'analysis-message-1',
+        state: 'dispatched'
+      })
+    ).rejects.toThrow(/persistence is unavailable/i)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -2108,6 +2225,7 @@ describe('installComputeIpcHandlers', () => {
       'compute:details:get',
       'compute:details:save',
       'compute:scratch:set',
+      'compute:scratch:clear',
       'compute:concurrency:set',
       'compute:session:set-concurrency-limit',
       'compute:session:status',
@@ -2120,6 +2238,7 @@ describe('installComputeIpcHandlers', () => {
       COMPUTE_JOBS_LIST_CHANNEL,
       'compute:jobs:pending-notification',
       'compute:jobs:mark-consumed',
+      'compute:jobs:transition-analysis',
       'compute:enabled-hosts:get',
       'compute:enabled-hosts:set',
       'compute:host-enabled:set',

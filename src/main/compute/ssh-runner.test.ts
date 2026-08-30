@@ -12,6 +12,7 @@ import {
   CappedOutput,
   SystemSshRunner,
   controlMasterArgs,
+  readEffectiveConfig,
   resolveSshBinary,
   resolveSshTarget
 } from './ssh-runner'
@@ -297,6 +298,48 @@ describe('resolveSshTarget', () => {
     hostname: '47.98.96.100',
     port: '22',
     identityfile: '~/.ssh/aliyun-xt-test.pem'
+  })
+
+  it('rejects an option-like alias before consulting ssh -G', async () => {
+    const readConfig = vi.fn(async () => fakeSshG())
+
+    await expect(
+      resolveSshTarget('-oProxyCommand=touch /tmp/not-approved', undefined, readConfig)
+    ).rejects.toThrow(/alias/i)
+    expect(readConfig).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'host/name',
+    '../host',
+    'host\\name',
+    'host%h',
+    'host name',
+    '\ncluster',
+    'host\nname',
+    'host\x00name',
+    'a'.repeat(256)
+  ])('rejects an alias that cannot be passed to OpenSSH safely: %j', async (alias) => {
+    const readConfig = vi.fn(async () => fakeSshG())
+
+    await expect(resolveSshTarget(alias, undefined, readConfig)).rejects.toThrow(/alias/i)
+    expect(readConfig).not.toHaveBeenCalled()
+  })
+
+  it('accepts and trims a 255-character alias', async () => {
+    const alias = 'a'.repeat(255)
+    const target = await resolveSshTarget(` ${alias} `, undefined, async () => ({}))
+
+    expect(target.host).toBe(alias)
+  })
+
+  it('rejects an option-like alias before spawning ssh -G directly', async () => {
+    execFileMock.mockClear()
+
+    await expect(
+      readEffectiveConfig('-oProxyCommand=touch /tmp/not-approved', 'ssh')
+    ).rejects.toThrow(/alias/i)
+    expect(execFileMock).not.toHaveBeenCalled()
   })
 
   it('returns the alias as host, NOT the resolved hostname', async () => {

@@ -6,8 +6,10 @@ import { getExtensionPreservingFileNameParts } from '../extension-preserving-fil
 
 import type { FileReference } from '../../../../../shared/artifacts'
 import {
+  MAX_SESSION_PDF_CONTEXTS,
   MAX_SESSION_REFERENCES_PER_MESSAGE,
   type MessagePart,
+  type SessionPdfContextSource,
   type SessionReference
 } from '../../../../../shared/session-persistence'
 
@@ -225,6 +227,33 @@ export const docToArtifactRefs = (doc: ComposerDoc): FileReference[] => {
     }
   }
   return refs
+}
+
+// `@`-mentioned immutable PDF Versions become send-time Reading candidates. Main verifies the
+// actual page count; this renderer pass only removes obvious non-PDF and compatibility references.
+export const docToPdfContextSources = (doc: ComposerDoc): SessionPdfContextSource[] => {
+  const sources: SessionPdfContextSource[] = []
+  const seen = new Set<string>()
+  for (const reference of docToArtifactRefs(doc)) {
+    if (
+      reference.source === 'linked-folder' ||
+      !reference.versionId ||
+      (reference.mimeType?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/pdf' &&
+        !reference.name.toLowerCase().endsWith('.pdf'))
+    ) {
+      continue
+    }
+    const source: SessionPdfContextSource = {
+      sourceKind: reference.source === 'upload' ? 'upload-version' : 'artifact-version',
+      sourceVersionId: reference.versionId
+    }
+    const identity = `${source.sourceKind}:${source.sourceVersionId}`
+    if (seen.has(identity)) continue
+    seen.add(identity)
+    sources.push(source)
+    if (sources.length === MAX_SESSION_PDF_CONTEXTS) break
+  }
+  return sources
 }
 
 // Count artifact chips, used to enforce the per-message mention cap.

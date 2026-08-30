@@ -11,7 +11,8 @@ import { migrateApplicationDatabase, verifyCurrentApplicationSchema } from './mi
 
 const CURRENT_AGENT_MEMORY_MIGRATION_ID = '0017_agent_memory_project_scope'
 const SESSION_AUXILIARY_USAGE_MIGRATION_ID = '0018_session_auxiliary_turn_usage'
-const CURRENT_MIGRATION_ID = '0019_session_usage_attribution'
+const SESSION_USAGE_ATTRIBUTION_MIGRATION_ID = '0019_session_usage_attribution'
+const CURRENT_MIGRATION_ID = '0020_compute_job_analysis_state'
 const MEMORY_AUXILIARY_SCHEMA_NAMES = [
   'MemoryEntryFts',
   'MemoryEntry_fts_insert',
@@ -299,9 +300,10 @@ describe('agent memory project scope migration', () => {
   it('replays an unledgered partial memory migration and restores missing triggers', async () => {
     await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_update"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN (?, ?, ?)`,
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN (?, ?, ?, ?)`,
       CURRENT_AGENT_MEMORY_MIGRATION_ID,
       SESSION_AUXILIARY_USAGE_MIGRATION_ID,
+      SESSION_USAGE_ATTRIBUTION_MIGRATION_ID,
       CURRENT_MIGRATION_ID
     )
 
@@ -309,6 +311,7 @@ describe('agent memory project scope migration', () => {
       applied: [
         CURRENT_AGENT_MEMORY_MIGRATION_ID,
         SESSION_AUXILIARY_USAGE_MIGRATION_ID,
+        SESSION_USAGE_ATTRIBUTION_MIGRATION_ID,
         CURRENT_MIGRATION_ID
       ],
       to: CURRENT_MIGRATION_ID

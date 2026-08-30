@@ -35,12 +35,19 @@ import {
   isCustomConnectorName
 } from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import { isCustomMcpServerRouteSafe } from '../connectors/custom-mcp-bootstrap'
+import {
+  hasUsableCustomMcpCredentials,
+  isCustomMcpServerRouteSafe
+} from '../connectors/custom-mcp-bootstrap'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredCustomMcpServer } from './types'
-import { buildConnectorTemplateExport, parseConnectorTemplate } from './connector-template'
+import {
+  buildConnectorTemplateExport,
+  hasEmbeddedConnectorCredentials,
+  parseConnectorTemplate
+} from './connector-template'
 import { CustomServerIdConflictError } from './custom-server-identity'
 
 type CustomServerSecurityChangeGuard = {
@@ -96,6 +103,22 @@ const hasResolvedSecretRecord = (
 ): boolean => {
   const names = Object.keys(refs ?? values ?? {})
   return names.length > 0 && names.every((name) => Object.hasOwn(values ?? {}, name))
+}
+
+const assertCredentialFieldsAreEncrypted = (fields: {
+  args?: readonly string[]
+  url?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    redirectUri?: string
+  } | null
+}): void => {
+  if (hasEmbeddedConnectorCredentials(fields)) {
+    throw new Error(
+      'Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.'
+    )
+  }
 }
 
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
@@ -353,6 +376,7 @@ class ConnectorSettingsModule {
   }
 
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
+    assertCredentialFieldsAreEncrypted(request)
     const name = request.name.trim()
     const displayName = request.displayName.trim()
     const connectors = (await this.repository.getSettings()).connectors
@@ -436,6 +460,11 @@ class ConnectorSettingsModule {
         (candidate) => candidate.id === request.id
       )
       if (!server) throw new Error(`Unknown custom connector: ${request.id}`)
+      if (!hasUsableCustomMcpCredentials(server)) {
+        throw new Error(
+          `credential_unavailable: Re-enter credentials for "${server.displayName}" before enabling it`
+        )
+      }
       if (server.oauth && !server.oauthState?.tokens?.access_token) {
         throw new Error(`Sign in to "${server.displayName}" before enabling it`)
       }
@@ -469,6 +498,7 @@ class ConnectorSettingsModule {
       serverId: string
     ) => Promise<CustomServerSecurityChangeGuard | void>
   ): Promise<ConnectorsSnapshot> {
+    assertCredentialFieldsAreEncrypted(request)
     const existing = (await this.getConnectors())?.customMcpServers?.find(
       (server) => server.id === request.id
     )
@@ -478,10 +508,16 @@ class ConnectorSettingsModule {
     const displayName = request.displayName?.trim() ?? existing.displayName
     if (!displayName) throw new Error('Display name is required')
 
-    const envRefs = request.env ? this.encryptSecretRecord(request.env) : existing.envRefs
+    const envRefs =
+      request.transport === 'stdio'
+        ? request.env
+          ? this.encryptSecretRecord(request.env)
+          : existing.envRefs
+        : undefined
     // Preserve legacy plaintext only when the caller leaves it untouched and safeStorage is still
     // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
-    const legacyEnv = request.env === undefined ? existing.env : undefined
+    const legacyEnv =
+      request.transport === 'stdio' && request.env === undefined ? existing.env : undefined
     const nextOAuth =
       request.transport === 'stdio' && request.oauth === undefined
         ? undefined
@@ -508,14 +544,14 @@ class ConnectorSettingsModule {
           ? undefined
           : existing.oauthClientSecretRef
     validateOAuthRegistration(nextOAuth ?? {}, Boolean(oauthClientSecretRef))
-    const headerRefs = nextOAuth
-      ? undefined
-      : request.headers
-        ? this.encryptSecretRecord(request.headers)
-        : existing.headerRefs
-    const legacyHeaders = nextOAuth
-      ? undefined
-      : request.headers === undefined
+    const headerRefs =
+      request.transport !== 'stdio' && !nextOAuth
+        ? request.headers
+          ? this.encryptSecretRecord(request.headers)
+          : existing.headerRefs
+        : undefined
+    const legacyHeaders =
+      request.transport !== 'stdio' && !nextOAuth && request.headers === undefined
         ? existing.headers
         : undefined
     const oauthChanged = !isDeepStrictEqual(existing.oauth ?? undefined, nextOAuth ?? undefined)
@@ -668,6 +704,18 @@ class ConnectorSettingsModule {
     return customServers
       .map((server) => {
         const routeUnavailable = !isCustomMcpServerRouteSafe(server, customServers)
+        const argsContainCredentials = hasEmbeddedConnectorCredentials({ args: server.args })
+        const urlContainsCredentials = hasEmbeddedConnectorCredentials({ url: server.url })
+        const clientMetadataUrlContainsCredentials = hasEmbeddedConnectorCredentials({
+          url: server.oauth?.clientMetadataUrl
+        })
+        const authorizationServerUrlContainsCredentials = hasEmbeddedConnectorCredentials({
+          url: server.oauth?.authorizationServerUrl
+        })
+        const redirectUriContainsCredentials = hasEmbeddedConnectorCredentials({
+          url: server.oauth?.redirectUri
+        })
+        const credentialUnavailable = !hasUsableCustomMcpCredentials(server)
         const unavailable =
           routeUnavailable ||
           (server.transport === 'stdio' && !server.command) ||
@@ -675,9 +723,11 @@ class ConnectorSettingsModule {
         const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
         const configurationAvailability = unavailable
           ? ('unavailable' as const)
-          : unauthenticated
-            ? ('unauthenticated' as const)
-            : undefined
+          : credentialUnavailable
+            ? ('credential_unavailable' as const)
+            : unauthenticated
+              ? ('unauthenticated' as const)
+              : undefined
         const runtimeAvailability = server.enabled
           ? this.customServerRuntimeProjectionProvider.availability(server.id)
           : undefined
@@ -694,10 +744,10 @@ class ConnectorSettingsModule {
           displayName: server.displayName,
           description: server.description,
           transport: server.transport,
-          enabled: server.enabled && !unavailable && !unauthenticated,
+          enabled: server.enabled,
           command: server.command,
-          args: server.args,
-          url: server.url,
+          args: argsContainCredentials ? undefined : server.args,
+          url: urlContainsCredentials ? undefined : server.url,
           ...(server.transport !== 'stdio'
             ? {
                 hasHeaders: hasResolvedSecretRecord(server.headerRefs, server.headers)
@@ -712,15 +762,18 @@ class ConnectorSettingsModule {
           ...(server.oauth
             ? {
                 oauth: {
-                  ...(server.oauth.clientMetadataUrl
+                  ...(server.oauth.clientMetadataUrl && !clientMetadataUrlContainsCredentials
                     ? { clientMetadataUrl: server.oauth.clientMetadataUrl }
                     : {}),
-                  ...(server.oauth.authorizationServerUrl
+                  ...(server.oauth.authorizationServerUrl &&
+                  !authorizationServerUrlContainsCredentials
                     ? { authorizationServerUrl: server.oauth.authorizationServerUrl }
                     : {}),
                   ...(server.oauth.scopes ? { scopes: server.oauth.scopes } : {}),
                   ...(server.oauth.clientId ? { clientId: server.oauth.clientId } : {}),
-                  ...(server.oauth.redirectUri ? { redirectUri: server.oauth.redirectUri } : {}),
+                  ...(server.oauth.redirectUri && !redirectUriContainsCredentials
+                    ? { redirectUri: server.oauth.redirectUri }
+                    : {}),
                   hasTokens: Boolean(server.oauthState?.tokens?.access_token),
                   hasClientSecret: server.oauthClientSecret !== undefined
                 }

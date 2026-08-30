@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  pdfTextSelectorForRange,
   quoteOccurrenceForRange,
   reconcileTextAnnotationRanges,
   retargetTextAnnotationRange
@@ -192,5 +193,66 @@ describe('retargetTextAnnotationRange', () => {
 
     expect(retargetTextAnnotationRange(surface, 'repeat', existing)).toBeUndefined()
     surface.remove()
+  })
+})
+
+describe('pdfTextSelectorForRange', () => {
+  it('captures text quote, context, position, and normalized page quads', () => {
+    const surface = document.createElement('div')
+    const text = document.createTextNode('Before selected evidence after')
+    surface.appendChild(text)
+    const range = rangeAt(text, 7, 17)
+    Object.defineProperty(range, 'getClientRects', {
+      value: () => [
+        {
+          left: 120,
+          top: 240,
+          right: 320,
+          bottom: 270,
+          width: 200,
+          height: 30
+        }
+      ]
+    })
+    Object.defineProperty(surface, 'getBoundingClientRect', {
+      value: () => ({ left: 100, top: 200, width: 400, height: 600 })
+    })
+
+    expect(pdfTextSelectorForRange(surface, range, 5, 'pdfjs-5.4.624')).toEqual({
+      kind: 'text',
+      pageNumber: 5,
+      exact: 'selected evidence',
+      prefix: 'Before ',
+      suffix: ' after',
+      position: { start: 7, end: 24 },
+      quads: [{ x: 0.05, y: 1 / 15, width: 0.5, height: 0.05 }],
+      extractorVersion: 'pdfjs-5.4.624'
+    })
+  })
+
+  it('drops PDF line-break sentinels and merges duplicate fragments on the same line', () => {
+    const surface = document.createElement('div')
+    const text = document.createTextNode('selected evidence')
+    surface.appendChild(text)
+    const range = rangeAt(text, 0, text.data.length)
+    Object.defineProperty(range, 'getClientRects', {
+      value: () => [
+        // PDF.js line-break sentinel: it must never become a page-edge highlight.
+        { left: 100, top: 100, right: 100, bottom: 120, width: 0, height: 20 },
+        // Chromium can report the same text line twice with slightly different heights.
+        { left: 120, top: 240, right: 220, bottom: 270, width: 100, height: 30 },
+        { left: 120, top: 242, right: 220, bottom: 268, width: 100, height: 26 },
+        // A PDF.js whitespace span between two text fragments should join the line.
+        { left: 220, top: 242, right: 226, bottom: 268, width: 6, height: 26 },
+        { left: 232, top: 242, right: 320, bottom: 268, width: 88, height: 26 }
+      ]
+    })
+    Object.defineProperty(surface, 'getBoundingClientRect', {
+      value: () => ({ left: 100, top: 200, right: 500, bottom: 800, width: 400, height: 600 })
+    })
+
+    expect(pdfTextSelectorForRange(surface, range, 5, 'pdfjs-5.4.624')?.quads).toEqual([
+      { x: 0.05, y: 1 / 15, width: 0.5, height: 0.05 }
+    ])
   })
 })

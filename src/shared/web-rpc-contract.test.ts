@@ -79,6 +79,7 @@ describe('Web RPC contract', () => {
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',
+      'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
       'compute.passwordCapability',
@@ -88,6 +89,7 @@ describe('Web RPC contract', () => {
       'compute.resetPassword',
       'compute.respondApproval',
       'compute.revealInFolder',
+      'compute.scratchClear',
       'compute.scratchSet',
       'compute.sshConfigAliases'
     ])

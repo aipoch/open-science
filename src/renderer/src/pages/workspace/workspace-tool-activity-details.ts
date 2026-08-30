@@ -17,6 +17,11 @@ import {
   getLoadedSkillName,
   isSkillLoadActivity
 } from './workspace-skill-load'
+import {
+  buildLiteratureToolSummary,
+  isLiteratureReadDocumentTool,
+  type LiteratureToolSummary
+} from './literature-tool-presentation'
 
 type ToolCodeSection = {
   kind: 'code'
@@ -49,7 +54,13 @@ type ToolImageSection = {
   sizeLabel?: string
 }
 
-type ToolDetailSection = ToolCodeSection | ToolDiffSection | ToolImageSection
+type ToolLiteratureSection = {
+  kind: 'literature'
+  summary: LiteratureToolSummary
+}
+
+type ToolDetailSection =
+  ToolCodeSection | ToolDiffSection | ToolImageSection | ToolLiteratureSection
 
 type ToolActivityDetails = {
   displayName: string
@@ -398,6 +409,21 @@ const buildGenericDetails = (activity: ToolActivity): ToolActivityDetails | unde
     displayName,
     subtitle,
     sections
+  }
+}
+
+const buildLiteratureDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+  if (!isLiteratureReadDocumentTool(activity.providerToolName, activity.title)) return undefined
+
+  const contentTexts = collectToolTexts(activity)
+  const summary = buildLiteratureToolSummary(
+    activity.rawInput,
+    contentTexts.length > 0 ? contentTexts : activity.rawOutput
+  )
+  return {
+    displayName: 'Reading',
+    subtitle: summary.query ?? summary.documentNames[0],
+    sections: [{ kind: 'literature', summary }]
   }
 }
 
@@ -1204,6 +1230,8 @@ const buildToolActivityDetails = (
       ? { ...details, displayName: 'Skill', subtitle: getLoadedSkillName(activity) }
       : undefined
   }
+  const literatureDetails = buildLiteratureDetails(activity)
+  if (literatureDetails) return literatureDetails
   // Saved files show a metadata summary instead of dumping their (possibly base64) content.
   if (isArtifactWriteActivity(activity)) return buildArtifactDetails(activity)
   // File edits prefer a diff view, falling back to raw input/output when no diff is provided.
@@ -1246,5 +1274,6 @@ export type {
   ToolCodeSection,
   ToolDetailSection,
   ToolDiffSection,
-  ToolImageSection
+  ToolImageSection,
+  ToolLiteratureSection
 }
