@@ -1043,6 +1043,19 @@ describe('JobPoller', () => {
 
       await poller.tick()
 
+      expect(runner.run).toHaveBeenCalledTimes(2)
+      expect(runner.run).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.stringContaining('job.pid'),
+        expect.anything()
+      )
+      expect(runner.run).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.stringContaining('process_owned_by_workdir'),
+        expect.anything()
+      )
       expect(update).toHaveBeenCalledWith(
         'job-1',
         expect.objectContaining({
@@ -1053,6 +1066,127 @@ describe('JobPoller', () => {
       )
     }
   )
+
+  it('recovers a detached submitted job from job.pid after restart', async () => {
+    const job = makeJob({ status: 'submitted', remote_handle: undefined })
+    const update = vi.fn((_id: string, updates: unknown) =>
+      Promise.resolve({ ...job, ...(updates as object) })
+    )
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update,
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '1234\n',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    await new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker()
+    }).tick()
+
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('job.pid'),
+      expect.anything()
+    )
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        status: 'running',
+        remoteHandle: expect.stringContaining('"pid":1234')
+      })
+    )
+    expect(update).not.toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
+    )
+  })
+
+  it('polls and harvests an already-finished job after recovering its pid', async () => {
+    let current = makeJob({
+      status: 'submitted',
+      remote_handle: undefined,
+      started_at: undefined
+    })
+    const updateIfStatus = vi.fn(
+      async (_id: string, _expectedStatuses: unknown, updates: Record<string, unknown>) => {
+        current = {
+          ...current,
+          ...(updates.status === undefined ? {} : { status: updates.status }),
+          ...(updates.remoteHandle === undefined ? {} : { remote_handle: updates.remoteHandle }),
+          ...(updates.startedAt instanceof Date ? { started_at: updates.startedAt.getTime() } : {}),
+          ...(updates.exitCode === undefined ? {} : { exit_code: updates.exitCode })
+        } as ComputeJob
+        return current
+      }
+    )
+    const jobRepo = {
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      findNonTerminal: vi.fn(() => Promise.resolve([current])),
+      updateIfStatus
+    } as unknown as ComputeJobRepository
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: '1234\n',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: withNonce([
+          'JOB_START:job-1',
+          'alive:0',
+          '0',
+          'finished output',
+          'STDOUT_END:job-1',
+          '',
+          'STDERR_END:job-1'
+        ]),
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+    const harvestFn = vi.fn(() => Promise.resolve())
+
+    await new JobPoller({
+      connectionBroker: brokerFromRunner({ run } as SshRunner),
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker(),
+      harvestFn,
+      makeNonce: () => NONCE
+    }).tick()
+
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(updateIfStatus).toHaveBeenNthCalledWith(
+      1,
+      'job-1',
+      ['submitted'],
+      expect.objectContaining({ status: 'running', remoteHandle: expect.any(String) })
+    )
+    expect(updateIfStatus).toHaveBeenNthCalledWith(
+      2,
+      'job-1',
+      ['submitted', 'running'],
+      expect.objectContaining({ status: 'success', exitCode: 0 })
+    )
+    expect(harvestFn).toHaveBeenCalledOnce()
+  })
 
   it('does NOT flag a submitted+no-handle job whose dispatch is still in flight', async () => {
     // A job staging large inputs sits in submitted+no-handle across many ticks. Because its dispatch
