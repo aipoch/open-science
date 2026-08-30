@@ -39,7 +39,7 @@ type RenderResult = {
 
 // The wizard shell fetches the storage info up front and owns the relaunch flag; the step is
 // mounted directly with both as props/spies.
-const renderStep = async (): Promise<RenderResult> => {
+const renderStep = async (isResolvingDefaultLocation = false): Promise<RenderResult> => {
   const onBack = vi.fn()
   const onContinue = vi.fn()
   const setIsRelaunching = vi.fn()
@@ -62,6 +62,7 @@ const renderStep = async (): Promise<RenderResult> => {
         onRetryDataRootInfo={vi.fn()}
         onBack={onBack}
         onContinue={onContinue}
+        isResolvingDefaultLocation={isResolvingDefaultLocation}
         setIsRelaunching={setIsRelaunching}
       />
     )
@@ -87,6 +88,14 @@ describe('LocationStep', () => {
     await clickButton(/back/i)
 
     expect(onBack).toHaveBeenCalledOnce()
+  })
+
+  it('disables Continue, but not Back or Browse, while resolving the Windows default', async () => {
+    await renderStep(true)
+
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+    expect(findButton(/back/i)?.disabled).toBe(false)
+    expect(findButton(/browse/i)?.disabled).toBe(false)
   })
 
   it('shows the default location passed in from the wizard shell', async () => {

@@ -11,6 +11,7 @@ import { OnboardingWizard } from './OnboardingWizard'
 import {
   clickButton,
   DEFAULT_DATA_ROOT,
+  findButton,
   storageInfo,
   fillRequiredProviderFields,
   readyClaudeState,
@@ -301,7 +302,7 @@ describe('OnboardingWizard flow', () => {
     expect(container.textContent).not.toContain('D:\\OpenScience')
   })
 
-  it('does not update the draft after leaving Location while the Windows probe is pending', async () => {
+  it('waits for the Windows default probe before allowing Continue', async () => {
     let releaseDefaultProbe: (() => void) | undefined
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
@@ -327,15 +328,34 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
     expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
 
-    await clickButton(/^continue$/i)
-    expect(currentSection('Set up the agent runtime')).not.toBeNull()
     await act(async () => releaseDefaultProbe?.())
 
-    await clickButton(/^back$/i)
-    expect(currentSection('Choose data location')).not.toBeNull()
-    expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
-    expect(container.textContent).not.toContain('D:\\OpenScience')
+    expect(container.textContent).toContain('D:\\OpenScience')
+    expect(container.textContent).not.toContain('C:\\Users\\researcher\\OpenScience')
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
+  })
+
+  it('waits for Windows storage info before allowing Continue', async () => {
+    let resolveStorageInfo: ((info: ReturnType<typeof storageInfo>) => void) | undefined
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStorageInfo = resolve
+        })
+    )
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+
+    await act(async () => {
+      resolveStorageInfo?.(storageInfo({ canAutoSelectDataDrive: false }))
+    })
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
   })
 
   it('does not probe alternate drives outside Windows', async () => {

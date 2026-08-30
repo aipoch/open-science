@@ -37,6 +37,7 @@ type LocationStepProps = {
   onRetryDataRootInfo: () => void
   onBack: () => void
   onContinue: () => void
+  isResolvingDefaultLocation: boolean
   // Relaunch replaces the whole wizard with a bare "Setting up…" screen, so the flag lives in the
   // shell and this step only reports it.
   setIsRelaunching: (value: boolean) => void
@@ -60,6 +61,7 @@ const LocationStep = ({
   onRetryDataRootInfo,
   onBack,
   onContinue,
+  isResolvingDefaultLocation,
   setIsRelaunching
 }: LocationStepProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -178,7 +180,7 @@ const LocationStep = ({
       <CardContent className="flex-1 px-4 py-5 sm:px-6">
         <section
           aria-label={t('Choose data location')}
-          aria-busy={requestInFlight}
+          aria-busy={requestInFlight || isResolvingDefaultLocation}
           className="space-y-5"
         >
           {dataRootError ? (
@@ -278,7 +280,7 @@ const LocationStep = ({
         <Button
           type="button"
           onClick={handleContinueLocation}
-          disabled={requestInFlight}
+          disabled={requestInFlight || isResolvingDefaultLocation}
           className="px-4"
         >
           {t('Continue')}

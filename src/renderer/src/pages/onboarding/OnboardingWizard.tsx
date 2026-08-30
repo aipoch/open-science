@@ -169,17 +169,19 @@ const OnboardingWizard = ({
     chosenDataRoot: '',
     chosenKind: null
   })
+  const [didResolveStorageDefault, setDidResolveStorageDefault] = useState(false)
   // A slow automatic drive probe must never overwrite a location the user explicitly browsed to
   // (or their explicit reset back to the system default).
   const locationDraftTouched = useRef(false)
   const handleLocationDraftChange = useCallback((draft: LocationDraft): void => {
     locationDraftTouched.current = true
+    setDidResolveStorageDefault(true)
     setLocationDraft(draft)
   }, [])
   const leaveLocation = useCallback((nextStep: 'environment' | 'agent'): void => {
-    // Leaving is an explicit decision on the currently displayed draft. Freeze it synchronously so
-    // a recommendation still in flight cannot change the choice after Location has unmounted.
-    locationDraftTouched.current = true
+    // Continue is disabled until the automatic probe resolves, so leaving forward freezes the
+    // displayed choice. Back only cancels the in-flight probe; returning to Location retries it.
+    if (nextStep === 'agent') locationDraftTouched.current = true
     setStep(nextStep)
   }, [])
   const [relaunchError, setRelaunchError] = useState<string | undefined>(undefined)
@@ -209,6 +211,7 @@ const OnboardingWizard = ({
     )
   }, [])
   const retryDataRootInfo = useCallback((): void => {
+    setDataRootError(undefined)
     void loadStorageInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
   }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
 
@@ -217,20 +220,36 @@ const OnboardingWizard = ({
   }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
 
   useEffect(() => {
-    if (step !== 'location' || !dataRootInfo || locationDraftTouched.current) return
+    if (
+      step !== 'location' ||
+      !dataRootInfo ||
+      didResolveStorageDefault ||
+      locationDraftTouched.current
+    ) {
+      return
+    }
 
     let cancelled = false
     void findWindowsStorageDefault(dataRootInfo).then((recommendedDraft) => {
-      if (cancelled || !recommendedDraft || locationDraftTouched.current) {
-        return
+      if (cancelled || locationDraftTouched.current) return
+
+      if (recommendedDraft) {
+        setLocationDraft((current) => (current.chosenParent ? current : recommendedDraft))
       }
-      setLocationDraft((current) => (current.chosenParent ? current : recommendedDraft))
+      setDidResolveStorageDefault(true)
     })
 
     return () => {
       cancelled = true
     }
-  }, [dataRootInfo, step])
+  }, [dataRootInfo, didResolveStorageDefault, step])
+
+  const isResolvingStorageDefault =
+    step === 'location' &&
+    window.api.platform === 'win32' &&
+    dataRootError === undefined &&
+    (dataRootInfo === null ||
+      (dataRootInfo.isDefault && dataRootInfo.canAutoSelectDataDrive && !didResolveStorageDefault))
 
   // App starts this check on every launch. This local fallback also keeps the wizard self-contained in
   // tests or alternate entry surfaces where it may be mounted without App as its parent.
@@ -312,6 +331,7 @@ const OnboardingWizard = ({
                 onRetryDataRootInfo={retryDataRootInfo}
                 onBack={() => leaveLocation('environment')}
                 onContinue={() => leaveLocation('agent')}
+                isResolvingDefaultLocation={isResolvingStorageDefault}
                 setIsRelaunching={setIsRelaunching}
               />
             ) : step === 'agent' ? (
