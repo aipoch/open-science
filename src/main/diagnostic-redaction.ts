@@ -123,7 +123,7 @@ const redactSensitiveText = (value: string): string =>
       `$1$2$3${REDACTED_MARKER}$3`
     )
     .replace(
-      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
+      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/gi,
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
@@ -134,7 +134,7 @@ const redactSensitiveText = (value: string): string =>
           : match
     )
     .replace(
-      /\b([a-z][a-z0-9_-]*)(\s*=\s*)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
+      /\b([a-z][a-z0-9_-]*)(\s*=\s*)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/gi,
       (match, key: string, separator: string) =>
         isSensitiveDiagnosticKey(key) ? `${key}${separator}${REDACTED_MARKER}` : match
     )

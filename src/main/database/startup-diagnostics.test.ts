@@ -128,13 +128,25 @@ describe('buildStartupDiagnostics', () => {
     expect(result).not.toContain('Private Study')
   })
 
+  it('does not end a stack path at a parenthesis inside a directory name', () => {
+    const error = new Error('failed')
+    error.stack = 'Error: failed\n    at open (/srv/Research (2026)/patient.db:10:5)'
+
+    const result = buildStartupDiagnostics(error, { home: '/Users/alice' })
+
+    expect(result).toContain('at open (<absolute-path>/patient.db:10:5)')
+    expect(result).not.toContain('Research (2026)')
+  })
+
   it('reuses the diagnostic credential policy before diagnostics cross IPC', () => {
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzdGFydHVwIn0.signaturevalue123'
     const signedUrlSecret = 'signed-url-opaque-7319'
     const quotedSecretParts = ['quoted-left-opaque-7319', 'quoted-right-opaque-7319']
     const quotedSecret = quotedSecretParts.join(' ')
+    const unquotedSecretParts = ['unquoted-left-opaque-7319', 'unquoted-right-opaque-7319']
+    const unquotedSecret = unquotedSecretParts.join(' ')
     const error = new Error(
-      `request failed: Bearer bearer-opaque-7319; apiKey=key-opaque-7319; password="${quotedSecret}"; jwt=${jwt}; ` +
+      `request failed: Bearer bearer-opaque-7319; apiKey=key-opaque-7319; password="${quotedSecret}"; credential=${unquotedSecret}; status=denied; jwt=${jwt}; ` +
         'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&ok=1; ' +
         `https://bucket.example.test/private?X-Amz-Signature=${signedUrlSecret}&version=7`
     )
@@ -149,11 +161,13 @@ describe('buildStartupDiagnostics', () => {
       'password-opaque-7319',
       'query-opaque-7319',
       signedUrlSecret,
-      ...quotedSecretParts
+      ...quotedSecretParts,
+      ...unquotedSecretParts
     ]) {
       expect(result).not.toContain(secret)
     }
     expect(result).toContain('[redacted]')
+    expect(result).toContain('status=denied')
     expect(result).toContain('version=7')
   })
 

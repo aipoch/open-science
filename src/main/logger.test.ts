@@ -170,6 +170,10 @@ describe('logger: formatLine', () => {
         secrets: ['quoted-left-opaque-7319', 'quoted-right-opaque-7319']
       },
       {
+        text: 'password=unquoted-left-opaque-7319 unquoted-right-opaque-7319; status=denied',
+        secrets: ['unquoted-left-opaque-7319', 'unquoted-right-opaque-7319']
+      },
+      {
         text: 'token=comma-token-opaque-7319,remaining-token-opaque-7319',
         secrets: ['comma-token-opaque-7319', 'remaining-token-opaque-7319']
       },
@@ -183,6 +187,10 @@ describe('logger: formatLine', () => {
       },
       {
         text: "providerApiKey='compound-left-opaque-7319 compound-right-opaque-7319'",
+        secrets: ['compound-left-opaque-7319', 'compound-right-opaque-7319']
+      },
+      {
+        text: 'providerApiKey=compound-left-opaque-7319 compound-right-opaque-7319; status=denied',
         secrets: ['compound-left-opaque-7319', 'compound-right-opaque-7319']
       },
       {

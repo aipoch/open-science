@@ -54,7 +54,7 @@ const redactRemainingAbsolutePaths = (text: string): string =>
       (_match, quote: string, path: string) => `${quote}${absolutePathMarker(path)}${quote}`
     )
     .replace(
-      /\(((?:file:\/\/|[A-Za-z]:[\\/]|\\\\|\/)[^)\r\n]+)\)/g,
+      /\(((?:file:\/\/|[A-Za-z]:[\\/]|\\\\|\/)[^\r\n]+)\)/g,
       (_match, path: string) => `(${absolutePathMarker(path)})`
     )
     // Unquoted paths have no reliable end when a segment contains spaces. Redact the remaining line
