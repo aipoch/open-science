@@ -1233,6 +1233,96 @@ describe('working-file evidence', () => {
     ).resolves.toContain('rename-marker-missing')
   })
 
+  it('preserves the receipt when its allocated staging path becomes unsafe', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    const blobPool = await createWorkerBlobPool()
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'begin',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      receiptName: 'receipt-unsafe-staging.json',
+      stagingName: 'staging-unsafe-staging',
+      finalName: 'run-unsafe-staging',
+      runId: 'unsafe-staging',
+      evidenceId: 'notebook-file-evidence-unsafe-staging',
+      storageKeyPrefix: 'file-evidence',
+      ...blobPool,
+      initialViewState: 'complete',
+      initialFiles: [],
+      maxGenerationBytes: 1024,
+      maxRunBytes: 64 * 1024,
+      diskReserveBytes: 0,
+      availableBytes: 1024 * 1024,
+      captureCancelled: false
+    })
+    const stagingRoot = join(evidenceRoot, 'staging-unsafe-staging')
+    await rm(stagingRoot, { recursive: true })
+    await writeFile(stagingRoot, 'unsafe replacement')
+
+    await expect(
+      reconcileWorkingFileEvidence(
+        {
+          storageRoot: storageRoot as string,
+          root: evidenceRoot,
+          storageKeyPrefix: 'file-evidence'
+        },
+        []
+      )
+    ).rejects.toThrow(/File-evidence owned directory is unsafe/)
+    await expect(readFile(stagingRoot, 'utf8')).resolves.toBe('unsafe replacement')
+    await expect(
+      readFile(join(evidenceRoot, 'receipt-unsafe-staging.json'), 'utf8')
+    ).resolves.toContain('unsafe-staging')
+  })
+
+  it('preserves the receipt when its renamed final path becomes unsafe', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'file-evidence')
+    const outsideRoot = join(storageRoot as string, 'outside-final-replacement')
+    await mkdir(evidenceRoot)
+    await mkdir(outsideRoot)
+    await writeFile(join(outsideRoot, 'keep.txt'), 'unowned')
+    const root = await stat(evidenceRoot)
+    const blobPool = await createWorkerBlobPool()
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'begin',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      receiptName: 'receipt-unsafe-final.json',
+      stagingName: 'staging-unsafe-final',
+      finalName: 'run-unsafe-final',
+      runId: 'unsafe-final',
+      evidenceId: 'notebook-file-evidence-unsafe-final',
+      storageKeyPrefix: 'file-evidence',
+      ...blobPool,
+      initialViewState: 'complete',
+      initialFiles: [],
+      maxGenerationBytes: 1024,
+      maxRunBytes: 64 * 1024,
+      diskReserveBytes: 0,
+      availableBytes: 1024 * 1024,
+      captureCancelled: false
+    })
+    await rm(join(evidenceRoot, 'staging-unsafe-final'), { recursive: true })
+    await symlink(outsideRoot, join(evidenceRoot, 'run-unsafe-final'), 'dir')
+
+    await expect(
+      reconcileWorkingFileEvidence(
+        {
+          storageRoot: storageRoot as string,
+          root: evidenceRoot,
+          storageKeyPrefix: 'file-evidence'
+        },
+        []
+      )
+    ).rejects.toThrow(/File-evidence owned directory is unsafe/)
+    await expect(readFile(join(outsideRoot, 'keep.txt'), 'utf8')).resolves.toBe('unowned')
+    await expect(
+      readFile(join(evidenceRoot, 'receipt-unsafe-final.json'), 'utf8')
+    ).resolves.toContain('unsafe-final')
+  })
+
   it('retires the exact receipt after the terminal Run has committed', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const evidenceRoot = join(storageRoot as string, 'file-evidence')

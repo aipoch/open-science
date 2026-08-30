@@ -224,7 +224,10 @@ const verifyOwnershipMarker = (directoryName, ownershipToken, ownerLabel) => {
 }
 const removeOwnedDirectory = (name, expectedIdentity) => {
   const actual = entryIdentity(name)
-  if (!actual) return false
+  if (!actual) {
+    if (entryExists(name)) throw new Error(`File-evidence owned directory is unsafe: ${name}`)
+    return false
+  }
   if (expectedIdentity && !sameIdentity(actual, expectedIdentity)) {
     throw new Error(`File-evidence owned directory identity changed: ${name}`)
   }
@@ -233,7 +236,10 @@ const removeOwnedDirectory = (name, expectedIdentity) => {
 }
 const removeReceiptOwnedDirectory = (name, expectedIdentity, ownershipToken) => {
   const actual = entryIdentity(name)
-  if (!actual) return false
+  if (!actual) {
+    if (entryExists(name)) throw new Error(`File-evidence owned directory is unsafe: ${name}`)
+    return false
+  }
   if (!sameIdentity(actual, expectedIdentity)) {
     throw new Error(`File-evidence owned directory identity changed: ${name}`)
   }
@@ -397,7 +403,14 @@ const removeReceipt = (receiptName) => {
 }
 const preparedStagingIdentity = (receipt) => {
   const actual = entryIdentity(receipt.stagingName)
-  if (!actual) return undefined
+  if (!actual) {
+    if (entryExists(receipt.stagingName)) {
+      throw new Error(
+        `Prepared file-evidence staging directory is unsafe: ${receipt.stagingName}`
+      )
+    }
+    return undefined
+  }
   const entries = readdirSync(receipt.stagingName)
   if (entries.length === 0) return actual
   const markerName = ownershipFile(receipt.ownershipToken)
