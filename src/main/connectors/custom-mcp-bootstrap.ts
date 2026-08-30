@@ -4,6 +4,7 @@ import { hasEmbeddedConnectorCredentials } from '../settings/connector-template'
 import { ALL_CONNECTOR_IDS } from './registry'
 import { validateResourceId } from '../../shared/resource-id'
 import { customServerSecurityFingerprint } from '../settings/custom-server-identity'
+import { isSecureCustomMcpUrl } from './custom-mcp-url'
 
 export type CustomMcpFailureAvailability = 'unavailable' | 'unauthenticated'
 
@@ -64,7 +65,8 @@ export const isCustomMcpServerRouteSafe = (
   if (
     validateResourceId(server.id) ||
     ALL_CONNECTOR_IDS.includes(server.id) ||
-    ALL_CONNECTOR_IDS.includes(server.name)
+    ALL_CONNECTOR_IDS.includes(server.name) ||
+    (server.transport !== 'stdio' && (!server.url || !isSecureCustomMcpUrl(server.url)))
   ) {
     return false
   }

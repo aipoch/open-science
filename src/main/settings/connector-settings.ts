@@ -52,6 +52,7 @@ import {
   CustomServerIdConflictError,
   customServerSecurityFingerprint
 } from './custom-server-identity'
+import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp-url'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
@@ -330,7 +331,6 @@ class ConnectorSettingsModule {
       request.permission === 'block'
     )
     const connectorId = request.toolId.split('/')[0]
-
     return this.getConnectorDetail(connectorId)
   }
 
@@ -380,6 +380,9 @@ class ConnectorSettingsModule {
 
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
     assertCredentialFieldsAreEncrypted(request)
+    if (request.transport !== 'stdio' && request.url) {
+      assertSecureCustomMcpUrl(request.url.trim())
+    }
     const name = request.name.trim()
     const displayName = request.displayName.trim()
     const connectors = (await this.repository.getSettings()).connectors
@@ -502,6 +505,9 @@ class ConnectorSettingsModule {
     ) => Promise<CustomServerSecurityChangeGuard | void>
   ): Promise<ConnectorsSnapshot> {
     assertCredentialFieldsAreEncrypted(request)
+    if (request.transport !== 'stdio' && request.url) {
+      assertSecureCustomMcpUrl(request.url.trim())
+    }
     const existing = (await this.getConnectors())?.customMcpServers?.find(
       (server) => server.id === request.id
     )

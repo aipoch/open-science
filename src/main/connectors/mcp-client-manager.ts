@@ -14,6 +14,7 @@ import { augmentedPathEnv } from '../settings/shell-path'
 import { netFetchStandard } from '../skills/net-fetch'
 import { redactSensitiveText } from '../diagnostic-redaction'
 import { createLogger } from '../logger'
+import { assertSecureCustomMcpUrl } from './custom-mcp-url'
 
 const log = createLogger('connectors:mcp-client')
 const STDERR_LINE_LIMIT = 4 * 1024
@@ -316,6 +317,7 @@ export function buildTransport(
       if (!config.url) {
         throw new Error(`custom MCP server "${config.name}" is missing a url for streamable_http`)
       }
+      assertSecureCustomMcpUrl(config.url)
       return new StreamableHTTPClientTransport(new URL(config.url), {
         fetch: netFetchStandard,
         ...(authProvider ? { authProvider } : {}),
@@ -326,6 +328,7 @@ export function buildTransport(
       if (!config.url) {
         throw new Error(`custom MCP server "${config.name}" is missing a url for sse`)
       }
+      assertSecureCustomMcpUrl(config.url)
       return new SSEClientTransport(new URL(config.url), {
         fetch: netFetchStandard,
         ...(authProvider ? { authProvider } : {}),
