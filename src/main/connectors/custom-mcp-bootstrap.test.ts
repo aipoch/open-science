@@ -200,6 +200,22 @@ describe('selectEnabledCustomServers', () => {
     expect(selectEnabledCustomServers({ enabledIds: [], autoAllowIds: [] })).toEqual([])
   })
 
+  it('keeps a persisted non-loopback HTTP server out of runtime discovery', () => {
+    const insecureRemote: StoredCustomMcpServer = {
+      ...remoteServer,
+      url: 'http://example.com/mcp',
+      headers: { Authorization: 'Bearer secret' }
+    }
+
+    expect(
+      selectEnabledCustomServers({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [insecureRemote]
+      })
+    ).toEqual([])
+  })
+
   it('fails closed when custom Connectors have duplicate names', () => {
     const first: StoredCustomMcpServer = {
       ...stdioServer,

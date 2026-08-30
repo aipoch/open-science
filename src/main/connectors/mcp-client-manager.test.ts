@@ -589,6 +589,18 @@ describe('McpClientManager', () => {
 })
 
 describe('buildTransport', () => {
+  it('rejects a non-loopback HTTP transport before creating a client', () => {
+    expect(() =>
+      buildTransport({
+        id: 'srv-http-cleartext',
+        name: 'http-cleartext',
+        transport: 'streamable_http',
+        url: 'http://example.com/mcp',
+        headers: { Authorization: 'Bearer secret' }
+      })
+    ).toThrow(/HTTPS|loopback/)
+  })
+
   const stdioTransportEnvironment = (env?: Record<string, string>): Record<string, string> => {
     const transport = buildTransport({
       id: 'srv-stdio',
