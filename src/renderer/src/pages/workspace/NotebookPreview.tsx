@@ -1016,7 +1016,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                 <X className="size-4" aria-hidden="true" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">{t('Close')}</TooltipContent>
+            <TooltipContent side="bottom" className="z-[70]">
+              {t('Close')}
+            </TooltipContent>
           </Tooltip>
         </TooltipProvider>
         <div className="mr-auto min-w-0">
@@ -1399,19 +1401,23 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
 
-      {showVariables && activeDataLanguage ? (
-        <div className="flex min-h-0 flex-1" data-testid="notebook-responsive-variables-layout">
-          <div
-            className="hidden min-h-0 min-w-0 flex-1 overflow-hidden @min-[55rem]/notebook:flex"
-            data-testid="notebook-primary-view"
-          >
-            {notebookView}
-          </div>
-          {namespaceView}
+      <div
+        className="flex min-h-0 flex-1"
+        data-testid={
+          showVariables && activeDataLanguage ? 'notebook-responsive-variables-layout' : undefined
+        }
+      >
+        <div
+          className={cn(
+            'min-h-0 min-w-0 flex-1 overflow-hidden',
+            showVariables && activeDataLanguage ? 'hidden @min-[55rem]/notebook:flex' : 'flex'
+          )}
+          data-testid="notebook-primary-view"
+        >
+          {notebookView}
         </div>
-      ) : (
-        notebookView
-      )}
+        {showVariables && activeDataLanguage ? namespaceView : null}
+      </div>
 
       {!showVariables && (isNamespaceLost || isHistoricalEnvironmentView) ? (
         <footer

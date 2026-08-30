@@ -552,6 +552,9 @@ describe('NotebookPreview per-kernel tabs', () => {
   it('keeps notebook controls mounted for the responsive variables layout', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
 
+    const cellsBeforeOpen = container.querySelector('[data-testid="notebook-cells"]')
+    const terminalBeforeOpen = container.querySelector('[data-testid="kernel-terminal-input"]')
+
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Inspect variables' }))
     })
@@ -566,10 +569,21 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(primaryView).not.toBeNull()
     expect(primaryView?.className).toContain('hidden')
     expect(primaryView?.className).toContain('@min-[55rem]/notebook:flex')
-    expect(primaryView?.querySelector('[data-testid="notebook-cells"]')).not.toBeNull()
-    expect(primaryView?.querySelector('[data-testid="kernel-terminal-input"]')).not.toBeNull()
+    expect(primaryView?.querySelector('[data-testid="notebook-cells"]')).toBe(cellsBeforeOpen)
+    expect(primaryView?.querySelector('[data-testid="kernel-terminal-input"]')).toBe(
+      terminalBeforeOpen
+    )
     expect(variablesView?.className).toContain('@min-[55rem]/notebook:basis-[40%]')
     expect(variablesView?.className).toContain('@min-[55rem]/notebook:border-l')
+
+    const closeButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="notebook-variables-close"]'
+    )
+    fireEvent.focus(closeButton as HTMLButtonElement)
+    await screen.findByRole('tooltip')
+    expect(
+      document.body.querySelector<HTMLElement>('[data-slot="tooltip-content"]')?.className
+    ).toContain('z-[70]')
 
     const variablesButton = container.querySelector<HTMLButtonElement>(
       '[data-testid="notebook-variables-button"]'
@@ -581,6 +595,10 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
 
     expect(container.querySelector('[data-testid="notebook-variables-view"]')).toBeNull()
+    expect(container.querySelector('[data-testid="notebook-cells"]')).toBe(cellsBeforeOpen)
+    expect(container.querySelector('[data-testid="kernel-terminal-input"]')).toBe(
+      terminalBeforeOpen
+    )
     expect(
       container
         .querySelector('[data-testid="notebook-variables-button"]')
