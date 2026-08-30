@@ -567,6 +567,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     )
 
     expect(primaryView).not.toBeNull()
+    expect(primaryView?.className).toContain('flex-col')
     expect(primaryView?.className).toContain('hidden')
     expect(primaryView?.className).toContain('@min-[55rem]/notebook:flex')
     expect(primaryView?.querySelector('[data-testid="notebook-cells"]')).toBe(cellsBeforeOpen)

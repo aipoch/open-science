@@ -1409,7 +1409,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       >
         <div
           className={cn(
-            'min-h-0 min-w-0 flex-1 overflow-hidden',
+            'min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
             showVariables && activeDataLanguage ? 'hidden @min-[55rem]/notebook:flex' : 'flex'
           )}
           data-testid="notebook-primary-view"
