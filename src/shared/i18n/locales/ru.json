@@ -1725,7 +1725,6 @@
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_few": "Ссылки: {{count}} / {{limit}}; пакет: {{size}} / {{total}}",
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_many": "Ссылки: {{count}} / {{limit}}; пакет: {{size}} / {{total}}",
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_other": "Ссылки: {{count}} / {{limit}}; пакет: {{size}} / {{total}}",
-    "Back to Notebook": "Вернуться к Notebook",
     "Could not inspect variables.": "Не удалось проверить переменные.",
     "Filter variables": "Фильтровать переменные",
     "Filter variables...": "Фильтровать переменные...",

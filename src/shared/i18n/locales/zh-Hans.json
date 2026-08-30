@@ -1734,7 +1734,6 @@
     "Ref:": "引用：",
     "References": "参考文件",
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_other": "参考文件：{{count}} / {{limit}}；包大小：{{size}} / {{total}}",
-    "Back to Notebook": "返回 Notebook",
     "Could not inspect variables.": "无法检查变量。",
     "Filter variables": "筛选变量",
     "Filter variables...": "筛选变量...",

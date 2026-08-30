@@ -1673,7 +1673,6 @@
     "Ref:": "참조:",
     "References": "참고자료",
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_other": "참고문헌: {{count}} / {{limit}}; 패키지: {{size}} / {{total}}",
-    "Back to Notebook": "Notebook으로 돌아가기",
     "Could not inspect variables.": "변수를 검사할 수 없습니다.",
     "Filter variables": "변수 필터링",
     "Filter variables...": "변수 필터링...",

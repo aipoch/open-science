@@ -1731,7 +1731,6 @@
     "Ref:": "參照：",
     "References": "參考檔案",
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_other": "參考檔案：{{count}} / {{limit}}；套件大小：{{size}} / {{total}}",
-    "Back to Notebook": "返回 Notebook",
     "Could not inspect variables.": "無法檢查變數。",
     "Filter variables": "篩選變數",
     "Filter variables...": "篩選變數...",

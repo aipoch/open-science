@@ -1663,7 +1663,6 @@
     "Ref:": "参照：",
     "References": "参考文献",
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_other": "参照：{{count}} / {{limit}}、パッケージ：{{size}} / {{total}}",
-    "Back to Notebook": "Notebook に戻る",
     "Could not inspect variables.": "変数を検査できませんでした。",
     "Filter variables": "変数を絞り込む",
     "Filter variables...": "変数を絞り込む…",

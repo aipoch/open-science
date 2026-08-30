@@ -1725,7 +1725,6 @@
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_one": "Références : {{count}}/{{limit}} ; paquet : {{size}} / {{total}}",
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_other": "Références : {{count}}/{{limit}} ; paquet : {{size}} / {{total}}",
     "References: {{count}} / {{limit}}; package: {{size}} / {{total}}_many": "Références : {{count}}/{{limit}} ; paquet : {{size}} / {{total}}",
-    "Back to Notebook": "Retour au Notebook",
     "Could not inspect variables.": "Impossible d’inspecter les variables.",
     "Filter variables": "Filtrer les variables",
     "Filter variables...": "Filtrer les variables...",
