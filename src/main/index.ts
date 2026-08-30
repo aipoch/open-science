@@ -141,8 +141,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       orchestrateAppStartup,
       prepareVisibleStartupRuntime,
       waitForStartupShell
-    }
-  ] = await Promise.all([import('./single-instance'), import('./app-startup')])
+    },
+    { parseWebModeOptions }
+  ] = await Promise.all([
+    import('./single-instance'),
+    import('./app-startup'),
+    import('./web-service/options')
+  ])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
   if (
     !allowMultiInstance &&
@@ -152,6 +157,20 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   ) {
     app.quit()
     return
+  }
+  const webMode = parseWebModeOptions(process.argv)
+  let signalSystemShutdown = (): void => {}
+  const systemShutdownWindows = new WeakSet<InstanceType<typeof BrowserWindow>>()
+  const bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
+    if (process.platform !== 'win32' || systemShutdownWindows.has(window)) return
+    systemShutdownWindows.add(window)
+    window.on('query-session-end', (event) => {
+      event.preventDefault()
+      signalSystemShutdown()
+    })
+    // Windows no longer permits delaying shutdown at this point; retain a best-effort fallback for
+    // hosts that skipped query-session-end.
+    window.on('session-end', signalSystemShutdown)
   }
 
   // Initialize the file sink after the primary lock but before assets, the backend graph, and
@@ -251,6 +270,32 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       return true
     },
     quit: () => app.quit(),
+    installSystemShutdownListeners: (requestSystemShutdown) => {
+      signalSystemShutdown = requestSystemShutdown
+
+      if (webMode.headless) {
+        const onSignal = (): void => {
+          process.removeListener('SIGTERM', onSignal)
+          process.removeListener('SIGINT', onSignal)
+          signalSystemShutdown()
+        }
+        process.once('SIGTERM', onSignal)
+        process.once('SIGINT', onSignal)
+      }
+
+      if (process.platform !== 'win32') {
+        // powerMonitor is available only after app ready. Register this continuation before prepare()
+        // awaits the same barrier, so shutdown is covered before database verification/composition.
+        void app.whenReady().then(() => {
+          powerMonitor.on('shutdown', ((event?: { preventDefault?: () => void }) => {
+            // Electron's generated v39 type omits this documented event argument. Keep the bridge
+            // safe if a host also omits it at runtime.
+            event?.preventDefault?.()
+            signalSystemShutdown()
+          }) as () => void)
+        })
+      }
+    },
     prepare: async () => {
       // Start local-only Crashpad after the single-instance lock but before any BrowserWindow can
       // create a renderer. Upload stays disabled: dumps remain local for explicit support collection.
@@ -280,8 +325,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { getProjectDbClient },
         { resolveStorageRoot },
         { SettingsDocumentStore },
-        { SettingsRepository },
-        { parseWebModeOptions }
+        { SettingsRepository }
       ] = await Promise.all([
         import('./managed-preview-protocol'),
         import('./windows'),
@@ -296,8 +340,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./projects/prisma-client'),
         import('./storage-root'),
         import('./settings/document-store'),
-        import('./settings/repository'),
-        import('./web-service/options')
+        import('./settings/repository')
       ])
 
       startupDiagnostics?.phase('electron-ready')
@@ -331,7 +374,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // preventDefault() on Cmd+- and Cmd+= and silently disables zoom out / reset (issue #336).
       installWindowShortcuts(app)
 
-      const webMode = parseWebModeOptions(process.argv)
       const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
       const databaseStartupOwner = createDatabaseStartupOwner({
         reportBlocked: databaseStartupLogging.reportBlocked,
@@ -372,6 +414,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const startupWindow = webMode.headless
         ? undefined
         : createMainWindow(startupWindowCloseOptions, translate)
+      if (startupWindow) bindSystemShutdownWindow(startupWindow)
       // Yield the main-process event loop until Chromium has painted the startup shell. Evaluating the
       // 5 MB backend chunk immediately after BrowserWindow construction can otherwise delay
       // ready-to-show even though the window no longer depends on that chunk.
@@ -693,7 +736,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     // is bound with the live backend handles; the agent teardown latches shutting-down and awaits the
     // process tree so a Windows taskkill /T completes before app.exit.
     installAppLifecycle: (ctx) => {
-      const { showMainWindow, getMainWindow, isMainWindowHidden } = ctx.installAppLifecycle(
+      const lifecycle = ctx.installAppLifecycle(
         withApplicationRuntimeShutdown(
           {
             app,
@@ -732,17 +775,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             quit: () => app.quit(),
             countWindows: () => BrowserWindow.getAllWindows().length,
             createInitialWindow: !ctx.webMode.headless,
-            headlessSignalSource: ctx.webMode.headless ? process : undefined,
-            subscribePowerShutdown:
-              process.platform === 'win32'
-                ? undefined
-                : (listener) =>
-                    powerMonitor.on('shutdown', ((event?: { preventDefault?: () => void }) =>
-                      listener({
-                        // Electron's generated v39 type omits this documented event argument.
-                        // Keep the bridge safe if a host also omits it at runtime.
-                        preventDefault: () => event?.preventDefault?.()
-                      })) as () => void),
+            bindSystemShutdownWindow,
             detectActiveSessions: ctx.detectActiveSessions,
             hasActiveReviewerWork: ctx.hasActiveReviewerWork,
             prepareForQuit: ctx.prepareForQuit,
@@ -773,6 +806,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           }
         )
       )
+      const { showMainWindow, getMainWindow, isMainWindowHidden, onSystemShutdown } = lifecycle
 
       // Window lifecycle now exists: expose it to the restored controller, reapply any Windows
       // overlay to the first window, then attach completion/focus/window-recreation events.
@@ -821,7 +855,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           onError: (error) => ctx.log.error('on-demand web service start failed', error)
         })
       preStartupSecondInstanceRelay.bind(onSecondInstance)
-      return { onSecondInstance }
+      return { onSecondInstance, onSystemShutdown }
     },
     markReady: (ctx) => {
       ctx.databaseStartupOwner.complete()

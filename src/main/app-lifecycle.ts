@@ -89,6 +89,9 @@ export type AppLifecycleDeps = {
   // Native process/power sources are injected so their global event bridges remain unit-testable.
   headlessSignalSource?: HeadlessSignalSource
   subscribePowerShutdown?: (listener: (event: PreventableSystemShutdownEvent) => void) => void
+  // Production binds the startup window before runtime composition and reuses the same idempotent
+  // binder here for later windows. Tests may omit it and exercise the built-in Windows bridge.
+  bindSystemShutdownWindow?: (window: BrowserWindow) => void
   // Overridable for tests; defaults to the host platform.
   platform?: NodeJS.Platform
   // Snapshot of sessions with running work (in-flight agent prompt or a notebook cell mid-execution),
@@ -117,6 +120,7 @@ export const installAppLifecycle = (
   showMainWindow: () => BrowserWindow
   getMainWindow: () => BrowserWindow | undefined
   isMainWindowHidden: () => boolean
+  onSystemShutdown: () => void
 } => {
   const platform = deps.platform ?? process.platform
   const logFlushTimeoutMs = deps.logFlushTimeoutMs ?? 1_000
@@ -246,7 +250,9 @@ export const installAppLifecycle = (
     // taskbar attention can distinguish a legitimate minimized window from one hidden to the tray.
     window.on('hide', () => hiddenWindows.add(window))
     window.on('show', () => hiddenWindows.delete(window))
-    if (platform === 'win32') {
+    if (deps.bindSystemShutdownWindow) {
+      deps.bindSystemShutdownWindow(window)
+    } else if (platform === 'win32') {
       window.on('query-session-end', (event) => {
         event.preventDefault()
         requestSystemShutdown()
@@ -568,6 +574,7 @@ export const installAppLifecycle = (
     showMainWindow,
     // Attention effects may inspect the current window, but must never surface it as a side effect.
     getMainWindow: () => mainWindow,
-    isMainWindowHidden: () => Boolean(mainWindow && hiddenWindows.has(mainWindow))
+    isMainWindowHidden: () => Boolean(mainWindow && hiddenWindows.has(mainWindow)),
+    onSystemShutdown: requestSystemShutdown
   }
 }
