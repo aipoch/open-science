@@ -130,7 +130,8 @@ describe('application database (integration)', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_project_files_index_state'
       ]
     })
 
@@ -744,7 +745,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0018_session_auxiliary_turn_usage.backup`
+    const backupPath = `${databasePath}.before-0019_session_usage_attribution.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -784,7 +785,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0017_agent_memory_project_scope' }])
+      ).resolves.toEqual([{ id: '0018_session_auxiliary_turn_usage' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -1162,7 +1163,8 @@ describe('application database (integration)', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_project_files_index_state'
       ]
     })
 

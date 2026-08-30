@@ -13,6 +13,8 @@ import {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { readProjectFilesIndexComplete } from './index-state'
+import type { ProjectFilesClient } from './mutation-projection'
 import { createManagedFileIndexRepository, ManagedFileIndexRepository } from './repository'
 
 const PROJECT_ID = 'project-a'
@@ -54,6 +56,16 @@ describe('ManagedFileIndexRepository', () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
   }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
+
+  it('accepts numeric SQLite true values when reading completeness', async () => {
+    const numericBooleanClient = {
+      $queryRaw: vi.fn(async () => [{ isIndexComplete: 1 }])
+    } as unknown as ProjectFilesClient
+
+    await expect(readProjectFilesIndexComplete(numericBooleanClient, [PROJECT_ID])).resolves.toBe(
+      true
+    )
+  })
 
   it('indexes uploads and all finalized managed artifacts without requiring a message link', async () => {
     const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
@@ -850,7 +862,7 @@ describe('ManagedFileIndexRepository', () => {
       totalCount: 1,
       artifactCount: 1,
       artifactGroupCount: 1,
-      isIndexComplete: true
+      isIndexComplete: false
     })
     await expect(
       repository.listFiles({
@@ -1181,6 +1193,225 @@ describe('ManagedFileIndexRepository', () => {
     const projectToken = await repository.softDeleteProject(PROJECT_ID)
     await repository.restoreProject(PROJECT_ID, projectToken)
     expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+  })
+
+  it('preserves incomplete state after the repository is recreated', async () => {
+    const missingPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'missing-after-restart.txt'
+    )
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          {
+            id: 'missing-after-restart',
+            kind: 'managed-file',
+            path: missingPath,
+            name: 'missing-after-restart.txt'
+          }
+        ]
+      })
+    )
+    expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+
+    expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+  })
+
+  it('preserves reconciliation incomplete state after the repository is recreated', async () => {
+    await repository.markReconciliationIncomplete()
+    expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+
+    expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+
+    await restartedRepository.reconcileActiveSessions([])
+    expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(true)
+  })
+
+  it('clears a pending Session marker after the same Session retries successfully', async () => {
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+    const session = createSession()
+
+    await expect(transientRepository.syncSession(session)).rejects.toThrow(
+      'database temporarily unavailable'
+    )
+    databaseAvailable = true
+
+    await expect(transientRepository.syncSession(session)).resolves.toEqual([])
+    expect((await transientRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(true)
+  })
+
+  it('does not let a concurrent pending-marker flush overwrite a successful Session retry', async () => {
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+    const session = createSession()
+
+    await expect(transientRepository.syncSession(session)).rejects.toThrow(
+      'database temporarily unavailable'
+    )
+    databaseAvailable = true
+
+    let releaseTransactionReturn: () => void = () => undefined
+    const transactionMayReturn = new Promise<void>((resolve) => {
+      releaseTransactionReturn = resolve
+    })
+    let reportTransactionCommitted: () => void = () => undefined
+    const transactionCommitted = new Promise<void>((resolve) => {
+      reportTransactionCommitted = resolve
+    })
+    const originalTransaction = client.$transaction.bind(client)
+    vi.spyOn(client, '$transaction').mockImplementation((async (...args: unknown[]) => {
+      const result = await Reflect.apply(originalTransaction, client, args)
+      reportTransactionCommitted()
+      await transactionMayReturn
+      return result
+    }) as typeof client.$transaction)
+
+    let releasePendingMarker: () => void = () => undefined
+    const pendingMarkerMayPersist = new Promise<void>((resolve) => {
+      releasePendingMarker = resolve
+    })
+    const originalUpsert = client.managedFileSessionSync.upsert.bind(client.managedFileSessionSync)
+    vi.spyOn(client.managedFileSessionSync, 'upsert').mockImplementation((async (
+      args: Parameters<typeof originalUpsert>[0]
+    ) => {
+      await pendingMarkerMayPersist
+      return originalUpsert(args)
+    }) as unknown as typeof originalUpsert)
+
+    const retry = transientRepository.syncSession(session)
+    await transactionCommitted
+    const overview = transientRepository.getOverview(PROJECT_ID)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    releaseTransactionReturn()
+    await expect(retry).resolves.toEqual([])
+    releasePendingMarker()
+
+    await expect(overview).resolves.toMatchObject({ isIndexComplete: true })
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+    await expect(restartedRepository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      isIndexComplete: true
+    })
+  })
+
+  it('does not revive a deleted Session when flushing its pending incomplete marker', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      PROJECT_ID,
+      SESSION_ID,
+      'message-1',
+      'deleted-pending.txt'
+    )
+    await writeManagedFile(artifactPath, 'indexed')
+    const session = createSession({
+      artifacts: [
+        {
+          id: 'deleted-pending',
+          kind: 'managed-file',
+          path: artifactPath,
+          name: 'deleted-pending.txt'
+        }
+      ]
+    })
+    await repository.syncSession(session)
+
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+    await expect(transientRepository.syncSession(session)).rejects.toThrow(
+      'database temporarily unavailable'
+    )
+    databaseAvailable = true
+    await transientRepository.softDeleteSession(PROJECT_ID, SESSION_ID)
+
+    await expect(
+      transientRepository.listArtifactGroups({ projectId: PROJECT_ID, limit: 10 })
+    ).resolves.toEqual({ items: [], totalCount: 0 })
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+    await expect(
+      restartedRepository.listArtifactGroups({ projectId: PROJECT_ID, limit: 10 })
+    ).resolves.toEqual({ items: [], totalCount: 0 })
+  })
+
+  it('flushes a pending Session marker before listing Artifact groups', async () => {
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+
+    await expect(transientRepository.syncSession(createSession())).rejects.toThrow(
+      'database temporarily unavailable'
+    )
+    databaseAvailable = true
+
+    await expect(
+      transientRepository.listArtifactGroups({ projectId: PROJECT_ID, limit: 10 })
+    ).resolves.toEqual({ items: [], totalCount: 0 })
+
+    const restartedRepository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot
+    )
+    expect((await restartedRepository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
+  })
+
+  it('does not flush another project pending Session marker before a read', async () => {
+    const unrelatedProjectId = 'unrelated-project'
+    let databaseAvailable = false
+    const transientRepository = new ManagedFileIndexRepository(() => {
+      if (!databaseAvailable) return Promise.reject(new Error('database temporarily unavailable'))
+      return Promise.resolve(client)
+    }, storageRoot)
+
+    await expect(
+      transientRepository.syncSession(createSession({ projectId: unrelatedProjectId }))
+    ).rejects.toThrow('database temporarily unavailable')
+    databaseAvailable = true
+
+    const originalUpsert = client.managedFileSessionSync.upsert.bind(client.managedFileSessionSync)
+    vi.spyOn(client.managedFileSessionSync, 'upsert').mockImplementation((async (
+      args: Parameters<typeof originalUpsert>[0]
+    ) => {
+      if (args.where.projectId_sessionId?.projectId === unrelatedProjectId) {
+        throw new Error('unrelated project is locked')
+      }
+      return originalUpsert(args)
+    }) as unknown as typeof originalUpsert)
+
+    await expect(transientRepository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      isIndexComplete: true
+    })
   })
 
   it('does not revive stale file rows when a session deletion is compensated', async () => {

@@ -5069,7 +5069,7 @@ describe('SessionPersistenceCoordinator', () => {
       })
     })
     const fileIndex = createFileIndex({
-      markReconciliationIncomplete: vi.fn(() => {
+      markReconciliationIncomplete: vi.fn(async () => {
         order.push('mark-incomplete')
       }),
       softDeleteProject: vi.fn(async () => {

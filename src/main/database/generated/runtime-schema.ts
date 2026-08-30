@@ -277,6 +277,11 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 
     PRIMARY KEY ("projectId", "sessionId")
 );`,
+  `CREATE TABLE IF NOT EXISTS "ManagedFileIndexState" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "isReconciliationComplete" BOOLEAN NOT NULL DEFAULT true,
+    CONSTRAINT "ManagedFileIndexState_identity_check" CHECK ("id" = 'project-files-index' AND "isReconciliationComplete" IN (false, true))
+);`,
   `CREATE TABLE IF NOT EXISTS "FileOriginSession" (
     "projectId" TEXT NOT NULL,
     "sessionId" TEXT NOT NULL,
@@ -760,6 +765,7 @@ const RUNTIME_SCHEMA_TABLES = [
   'ProjectDeletionIntent',
   'ManagedFile',
   'ManagedFileSessionSync',
+  'ManagedFileIndexState',
   'FileOriginSession',
   'ArtifactLineage',
   'UploadFile',

@@ -25,6 +25,7 @@ import {
 import { describe, expect, it } from 'vitest'
 
 const productionFiles = [
+  'index-state.ts',
   'mutation-owner.ts',
   'mutation-projection.ts',
   'query-owner.ts',
@@ -167,11 +168,13 @@ describe('Project Files repository architecture', () => {
     expect(supportSource).not.toMatch(/from ['"].*\/repository['"]/)
   })
 
-  it('keeps query orchestration read-only and completeness state in the mutation owner', () => {
+  it('keeps query orchestration read-only and reads completeness from durable state', () => {
     const querySource = sources.get('query-owner.ts')!
     expect(querySource).not.toMatch(/\.(?:create|delete|update|updateMany|upsert)\s*\(\s*\{/)
     expect(querySource).not.toContain('incompleteSessions')
     expect(querySource).not.toContain('isReconciliationIncomplete')
+    expect(querySource).toContain('readProjectFilesIndexComplete')
     expect(querySource).not.toMatch(/from ['"].*\/repository['"]/)
+    expect(sources.get('repository.ts')).not.toContain('isIndexComplete(projectId)')
   })
 })

@@ -626,6 +626,7 @@
     },
     "project_files_repository": {
       "ownerPaths": [
+        "src/main/project-files/index-state.ts",
         "src/main/project-files/mutation-owner.ts",
         "src/main/project-files/mutation-projection.ts",
         "src/main/project-files/query-owner.ts",

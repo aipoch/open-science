@@ -12,7 +12,8 @@ import type {
   SearchArtifactsRequest,
   SearchArtifactsResult
 } from '../../shared/project-files'
-import type { ProjectFilesClientProvider } from './mutation-projection'
+import type { ProjectFilesClient, ProjectFilesClientProvider } from './mutation-projection'
+import { readProjectFilesIndexComplete } from './index-state'
 import {
   countMatchingArtifacts,
   decodeFileCursor,
@@ -32,14 +33,15 @@ import {
   toSafeCount
 } from './query-support'
 
-type ProjectFilesIndexCompletenessReader = (projectId: string) => boolean
-
-// Owns the read-model orchestration while completeness remains authoritative in the mutation owner.
+// Owns read-model orchestration, including completeness reads from the durable projection state.
 class ProjectFilesQueryOwner {
   constructor(
     private readonly getClient: ProjectFilesClientProvider,
     private readonly dataRoot: string,
-    private readonly readIndexComplete: ProjectFilesIndexCompletenessReader
+    private readonly beforeRead: (
+      client: ProjectFilesClient,
+      projectIds: readonly string[]
+    ) => Promise<void>
   ) {}
 
   async getOverview(
@@ -50,7 +52,8 @@ class ProjectFilesQueryOwner {
     requireIdentifier(projectId, 'projectId')
     const search = normalizeSearch(rawSearch)
     const client = await this.getClient()
-    const [totalCount, uploadCount, artifactCount, artifactGroupCount] = search
+    await this.beforeRead(client, [projectId])
+    const [totalCount, uploadCount, artifactCount, artifactGroupCount, isIndexComplete] = search
       ? await getMatchingOverviewCounts(client, projectId, search)
       : await Promise.all([
           client.managedFile.count({ where: { projectId, deletedAt: null } }),
@@ -58,7 +61,8 @@ class ProjectFilesQueryOwner {
           client.managedFile.count({ where: { projectId, source: 'artifact', deletedAt: null } }),
           client.managedFileSessionSync.count({
             where: { projectId, deletedAt: null, artifactCount: { gt: 0 } }
-          })
+          }),
+          readProjectFilesIndexComplete(client, [projectId])
         ])
 
     return {
@@ -66,7 +70,7 @@ class ProjectFilesQueryOwner {
       uploadCount,
       artifactCount,
       artifactGroupCount,
-      isIndexComplete: this.readIndexComplete(projectId)
+      isIndexComplete
     }
   }
 
@@ -86,6 +90,7 @@ class ProjectFilesQueryOwner {
     }
     const normalizedRequest = { ...request, collection: normalizedCollection }
     const client = await this.getClient()
+    await this.beforeRead(client, [request.projectId])
     const limit = normalizeLimit(request.limit)
     const search = normalizeSearch(request.search)
     const source =
@@ -191,8 +196,9 @@ class ProjectFilesQueryOwner {
       ? decodeSearchArtifactCursor(request.primaryCursor, request.primaryProjectId, search)
       : undefined
     const client = await this.getClient()
+    await this.beforeRead(client, [request.primaryProjectId, ...otherProjectIds])
     const excludedSessionIds = search?.excludedSessionIds ?? []
-    const [primaryRows, primaryTotalCount, otherRows] = await Promise.all([
+    const [primaryRows, primaryTotalCount, otherRows, isIndexComplete] = await Promise.all([
       listMatchingArtifacts(
         client,
         request.primaryProjectId,
@@ -210,7 +216,8 @@ class ProjectFilesQueryOwner {
             excludedSessionIds,
             request.otherLimit
           )
-        : Promise.resolve([])
+        : Promise.resolve([]),
+      readProjectFilesIndexComplete(client, [request.primaryProjectId, ...otherProjectIds])
     ])
     const primaryPageRows = primaryRows.slice(0, primaryLimit)
     const lastPrimaryRow = primaryPageRows.at(-1)
@@ -252,9 +259,7 @@ class ProjectFilesQueryOwner {
             : undefined
       },
       other: otherRows.map(toItem),
-      isIndexComplete: [request.primaryProjectId, ...otherProjectIds].every((projectId) =>
-        this.readIndexComplete(projectId)
-      )
+      isIndexComplete
     }
   }
 
@@ -452,6 +457,7 @@ class ProjectFilesQueryOwner {
   async listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage> {
     requireIdentifier(request.projectId, 'projectId')
     const client = await this.getClient()
+    await this.beforeRead(client, [request.projectId])
     const limit = normalizeLimit(request.limit)
     const search = normalizeSearch(request.search)
     const cursor = request.cursor ? decodeGroupCursor(request.cursor, request) : undefined
@@ -522,4 +528,3 @@ class ProjectFilesQueryOwner {
 }
 
 export { ProjectFilesQueryOwner }
-export type { ProjectFilesIndexCompletenessReader }
