@@ -206,7 +206,9 @@ const OnboardingWizard = ({
     // steps the user already completed before the restart.
     if (!didResolveStorageResume.current) {
       didResolveStorageResume.current = true
-      if (!info.isDefault && !locationDraftTouched.current) setStep('agent')
+      if (!info.isDefault && !info.dataRootMissing && !locationDraftTouched.current) {
+        setStep('agent')
+      }
     }
   }, [])
   const handleDataRootInfoFailure = useCallback((error: unknown): void => {

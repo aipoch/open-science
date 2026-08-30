@@ -239,6 +239,28 @@ describe('OnboardingWizard flow', () => {
     expect(currentSection('Choose data location')).toBeNull()
   })
 
+  it('keeps a missing non-default data root in the recoverable onboarding flow', async () => {
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'E:\\Research\\OpenScience',
+        dataRootMissing: true,
+        isDefault: false,
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher'
+      })
+    )
+    readyClaudeState()
+
+    await renderWizard()
+
+    expect(currentSection('Prepare environment')).not.toBeNull()
+    await goToLocationStep()
+    expect(currentSection('Choose data location')).not.toBeNull()
+    expect(container.textContent).toContain('E:\\Research\\OpenScience')
+    expect(findButton(/browse/i)).not.toBeNull()
+  })
+
   it('does not probe alternate drives for legacy data after its move prompt was dismissed', async () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
