@@ -94,6 +94,62 @@ describe('TagService', () => {
     expect(events.publish).toHaveBeenNthCalledWith(2, 'tags:changed', { revision: 2 })
   })
 
+  it('keeps a snapshot revision consistent with following mutations', async () => {
+    let releaseInitialSnapshot: (() => void) | undefined
+    let initialSnapshotStarted: (() => void) | undefined
+    const initialSnapshotGate = new Promise<void>((resolve) => {
+      releaseInitialSnapshot = resolve
+    })
+    const initialSnapshotCall = new Promise<void>((resolve) => {
+      initialSnapshotStarted = resolve
+    })
+    const tags: TagSnapshot['tags'] = []
+    const repository = {
+      create: vi.fn(async (request: { name: string; iconKey: 'tag'; colorKey: 'blue' }) => {
+        tags.push({
+          id: 'tag-created',
+          ...request,
+          createdAt: 1,
+          updatedAt: 1
+        })
+      }),
+      pruneStaleAssignments: vi.fn().mockResolvedValue(0),
+      snapshot: vi.fn(async (revision: number) => {
+        if (revision === 0) {
+          initialSnapshotStarted?.()
+          await initialSnapshotGate
+        }
+        return { revision, tags: [...tags], assignments: [] }
+      })
+    }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      { snapshot: vi.fn().mockResolvedValue({}) } as unknown as TagResourceCatalog,
+      { publish: vi.fn() }
+    )
+
+    const beforeMutation = service.snapshot()
+    await initialSnapshotCall
+    const mutation = service.create({ name: 'Created', iconKey: 'tag', colorKey: 'blue' })
+    releaseInitialSnapshot?.()
+
+    await expect(beforeMutation).resolves.toEqual(snapshot(0))
+    await expect(mutation).resolves.toEqual({
+      revision: 1,
+      tags: [
+        {
+          id: 'tag-created',
+          name: 'Created',
+          iconKey: 'tag',
+          colorKey: 'blue',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      assignments: []
+    })
+  })
+
   it('rejects assigning a stale resource without writing', async () => {
     const repository = { setAssignment: vi.fn() }
     const service = new TagService(
