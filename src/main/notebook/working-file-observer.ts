@@ -81,7 +81,12 @@ type RootObservation = {
   finish: () => Promise<RootObservationResult>
 }
 type FileIdentity = { dev: number; ino: number }
-type EvidenceWorkerBeginRequest = {
+type EvidenceWorkerBlobPoolBinding = {
+  blobRoot: string
+  expectedBlobRootIdentity: FileIdentity
+  blobStorageKeyPrefix: string
+}
+type EvidenceWorkerBeginRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'begin'
   expectedRootIdentity: FileIdentity
   receiptName: string
@@ -90,9 +95,6 @@ type EvidenceWorkerBeginRequest = {
   runId: string
   evidenceId: string
   storageKeyPrefix: string
-  blobRoot: string
-  expectedBlobRootIdentity: FileIdentity
-  blobStorageKeyPrefix: string
   initialViewState: NotebookFileEvidenceCoverage
   initialFiles: Array<{
     file: SnapshotEntry
@@ -105,7 +107,7 @@ type EvidenceWorkerBeginRequest = {
   availableBytes: number
   captureCancelled: boolean
 }
-type EvidenceWorkerPersistRequest = {
+type EvidenceWorkerPersistRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'persist'
   expectedRootIdentity: FileIdentity
   receiptName: string
@@ -114,9 +116,6 @@ type EvidenceWorkerPersistRequest = {
   runId: string
   evidenceId: string
   storageKeyPrefix: string
-  blobRoot: string
-  expectedBlobRootIdentity: FileIdentity
-  blobStorageKeyPrefix: string
   rootKinds: Array<'data' | 'handoff'>
   rootsAvailable: boolean
   reasonCodes: NotebookFileEvidenceReason[]
@@ -142,7 +141,7 @@ type EvidenceWorkerCompleteRequest = {
   checksum: string
   storageKey: string
 }
-type EvidenceWorkerReconcileRequest = {
+type EvidenceWorkerReconcileRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'reconcile'
   expectedRootIdentity: FileIdentity
   retained: Array<{
@@ -154,7 +153,7 @@ type EvidenceWorkerReconcileRequest = {
     storageKey: string
   }>
 }
-type EvidenceWorkerCleanupRequest = {
+type EvidenceWorkerCleanupRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'cleanup'
   expectedRootIdentity: FileIdentity
   receiptName: string
@@ -169,6 +168,14 @@ type EvidenceWorkerEnsureProjectRequest = {
   expectedRootIdentity: FileIdentity
   projectName: string
 }
+type EvidenceWorkerRequest =
+  | EvidenceWorkerBeginRequest
+  | EvidenceWorkerPersistRequest
+  | EvidenceWorkerCompleteRequest
+  | EvidenceWorkerReconcileRequest
+  | EvidenceWorkerCleanupRequest
+  | EvidenceWorkerDeleteProjectRequest
+  | EvidenceWorkerEnsureProjectRequest
 type EvidenceWorkerResult =
   | { ok: true; capturedInitialGenerations: number }
   | {
@@ -176,7 +183,12 @@ type EvidenceWorkerResult =
       generations: Array<{ path: string; generationId: string; checksum: string }>
       fileEvidence: NotebookRunFileEvidence
     }
-  | { ok: true; removedStagingEntries: number; removedRunEntries: number }
+  | {
+      ok: true
+      removedStagingEntries: number
+      removedRunEntries: number
+      removedBlobEntries?: number
+    }
   | { ok: true; removedProjectEntries: number }
   | { ok: true; projectOwned: true }
 
@@ -335,14 +347,7 @@ const resolveEvidenceWorkerPath = (): string => {
 
 export const runEvidenceWorker = async (
   evidenceRoot: string,
-  request:
-    | EvidenceWorkerBeginRequest
-    | EvidenceWorkerPersistRequest
-    | EvidenceWorkerCompleteRequest
-    | EvidenceWorkerReconcileRequest
-    | EvidenceWorkerCleanupRequest
-    | EvidenceWorkerDeleteProjectRequest
-    | EvidenceWorkerEnsureProjectRequest,
+  request: EvidenceWorkerRequest,
   signal?: AbortSignal
 ): Promise<EvidenceWorkerResult> =>
   new Promise((resolveResult, rejectResult) => {
@@ -438,9 +443,9 @@ const receiptNameForRun = (runId: string): string => `receipt-${runId}.json`
 const finalNameForRun = (runId: string): string => `run-${runId}`
 
 const ensureProjectPromises = new Map<string, Promise<void>>()
-let blobWorkerTail = Promise.resolve()
+let evidenceMutationTail = Promise.resolve()
 
-const waitForBlobWorkerTurn = async (
+const waitForEvidenceMutationTurn = async (
   previous: Promise<void>,
   signal: AbortSignal | undefined,
   timeoutMs: number
@@ -478,26 +483,26 @@ const waitForBlobWorkerTurn = async (
     previous.catch(() => undefined).then(resolveOnce)
   })
 
-const runSerializedBlobWorker = async (
+const runSerializedEvidenceWorker = async (
   worker: typeof runEvidenceWorker,
   evidenceRoot: string,
-  request: EvidenceWorkerBeginRequest | EvidenceWorkerPersistRequest,
+  request: EvidenceWorkerRequest,
   signal?: AbortSignal,
   timeoutMs = EVIDENCE_QUEUE_TIMEOUT_MS
 ): Promise<EvidenceWorkerResult> => {
-  const previous = blobWorkerTail
+  const previous = evidenceMutationTail
   let release!: () => void
   const turn = new Promise<void>((resolveTurn) => {
     release = resolveTurn
   })
   const tail = previous.catch(() => undefined).then(() => turn)
-  blobWorkerTail = tail
+  evidenceMutationTail = tail
   try {
-    await waitForBlobWorkerTurn(previous, signal, timeoutMs)
+    await waitForEvidenceMutationTurn(previous, signal, timeoutMs)
     return await worker(evidenceRoot, request, signal)
   } finally {
     release()
-    if (blobWorkerTail === tail) blobWorkerTail = Promise.resolve()
+    if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
   }
 }
 
@@ -514,7 +519,7 @@ const ensureWorkingFileEvidenceProject = async (
   const key = `${evidenceRoot.path}\0${projectId}`
   const existing = ensureProjectPromises.get(key)
   if (existing) return existing
-  const ensuring = worker(evidenceRoot.path, {
+  const ensuring = runSerializedEvidenceWorker(worker, evidenceRoot.path, {
     operation: 'ensure-project',
     expectedRootIdentity: evidenceRoot.identity,
     projectName: projectId
@@ -559,11 +564,17 @@ const deleteWorkingFileEvidenceProject = async (
 ): Promise<void> => {
   if (!SAFE_RUN_ID.test(projectId)) throw new Error('Unsafe Notebook file-evidence Project ID.')
   const root = await secureEvidenceRoot(storageRoot, join(storageRoot, NOTEBOOK_FILE_EVIDENCE_DIR))
-  const result = await runEvidenceWorker(root.path, {
-    operation: 'delete-project',
-    expectedRootIdentity: root.identity,
-    projectName: projectId
-  })
+  const result = await runSerializedEvidenceWorker(
+    runEvidenceWorker,
+    root.path,
+    {
+      operation: 'delete-project',
+      expectedRootIdentity: root.identity,
+      projectName: projectId
+    },
+    undefined,
+    EVIDENCE_WORKER_TIMEOUT_MS
+  )
   if (!('removedProjectEntries' in result)) {
     throw new Error('File-evidence Project deletion returned an invalid result.')
   }
@@ -585,7 +596,7 @@ const completeWorkingFileEvidence = async (
   const finalName = finalNameForRun(run.runId)
   if (evidence.storageKey !== `${location.storageKeyPrefix}/${finalName}/evidence.json`) return
   const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
-  const result = await runEvidenceWorker(evidenceRoot.path, {
+  const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
     operation: 'complete',
     expectedRootIdentity: evidenceRoot.identity,
     receiptName: receiptNameForRun(run.runId),
@@ -613,6 +624,12 @@ const reconcileWorkingFileEvidence = async (
     await ensureWorkingFileEvidenceProject(location.storageRoot, projectScope.projectId)
   }
   const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
+  const blobRoot = await secureEvidenceRoot(
+    location.storageRoot,
+    projectScope
+      ? join(projectScope.projectRoot, 'blobs')
+      : join(location.storageRoot, 'file-evidence-blobs')
+  )
   const retained = runs.flatMap((run) => {
     const evidence = run.fileEvidence
     if (
@@ -636,9 +653,12 @@ const reconcileWorkingFileEvidence = async (
       }
     ]
   })
-  const result = await runEvidenceWorker(evidenceRoot.path, {
+  const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
     operation: 'reconcile',
     expectedRootIdentity: evidenceRoot.identity,
+    blobRoot: blobRoot.path,
+    expectedBlobRootIdentity: blobRoot.identity,
+    blobStorageKeyPrefix: projectScope?.blobStorageKeyPrefix ?? 'file-evidence-blobs',
     retained
   })
   if (!('removedStagingEntries' in result)) {
@@ -1077,7 +1097,7 @@ const beginEvidenceCapture = async (
     reservedDiskBytes += plannedBytes
     reservedBytes = plannedBytes
     const capturedAt = new Date((dependencies.now ?? Date.now)()).toISOString()
-    const result = await runSerializedBlobWorker(
+    const result = await runSerializedEvidenceWorker(
       dependencies.runEvidenceWorker ?? runEvidenceWorker,
       capture.evidenceRoot.path,
       {
@@ -1115,11 +1135,18 @@ const beginEvidenceCapture = async (
     }
     return capture
   } catch (error) {
-    await (dependencies.runEvidenceWorker ?? runEvidenceWorker)(capture.evidenceRoot.path, {
-      operation: 'cleanup',
-      expectedRootIdentity: capture.evidenceRoot.identity,
-      receiptName: capture.receiptName
-    }).catch(() => undefined)
+    await runSerializedEvidenceWorker(
+      dependencies.runEvidenceWorker ?? runEvidenceWorker,
+      capture.evidenceRoot.path,
+      {
+        operation: 'cleanup',
+        expectedRootIdentity: capture.evidenceRoot.identity,
+        receiptName: capture.receiptName,
+        blobRoot: capture.blobRoot.path,
+        expectedBlobRootIdentity: capture.blobRoot.identity,
+        blobStorageKeyPrefix: capture.blobStorageKeyPrefix
+      }
+    ).catch(() => undefined)
     throw error
   } finally {
     reservedDiskBytes -= reservedBytes
@@ -1189,7 +1216,7 @@ const persistEvidence = async (
     )
     reservedDiskBytes += plannedBytes
     reservedBytes = plannedBytes
-    const result = await runSerializedBlobWorker(
+    const result = await runSerializedEvidenceWorker(
       dependencies.runEvidenceWorker ?? runEvidenceWorker,
       capture.evidenceRoot.path,
       {
@@ -1244,10 +1271,13 @@ const persistEvidence = async (
     if (process.env.OPEN_SCIENCE_DEBUG_FILE_EVIDENCE === '1') {
       log.error('file-evidence publication failed', diagnosticErrorFields(error))
     }
-    await runEvidenceWorker(capture.evidenceRoot.path, {
+    await runSerializedEvidenceWorker(runEvidenceWorker, capture.evidenceRoot.path, {
       operation: 'cleanup',
       expectedRootIdentity: capture.evidenceRoot.identity,
-      receiptName: capture.receiptName
+      receiptName: capture.receiptName,
+      blobRoot: capture.blobRoot.path,
+      expectedBlobRootIdentity: capture.blobRoot.identity,
+      blobStorageKeyPrefix: capture.blobStorageKeyPrefix
     }).catch(() => undefined)
     return {
       workingFiles: stripUnpublishedGenerations(workingFiles),

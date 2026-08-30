@@ -28,6 +28,7 @@ const MAX_INTERNAL_JSON_BYTES = 64 * 1024 * 1024
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const RECEIPT_NAME = /^receipt-[A-Za-z0-9][A-Za-z0-9._-]*\.json$/u
 const CAPTURE_FILE = 'capture.json'
+const RUN_BLOBS_DIRECTORY = 'blobs'
 const ownershipFile = (token) => `.ownership-${assertSafeName(token)}`
 const projectOwnershipReceipt = (projectName) =>
   `.project-ownership-${assertSafeName(projectName)}.json`
@@ -474,6 +475,71 @@ const blobPoolBytes = (blobPool) => {
   }
   return bytes
 }
+const sweepBlobPool = (blobPool) => {
+  const actual = entryIdentity(blobPool.path)
+  if (!actual || !sameIdentity(actual, blobPool.identity)) {
+    throw new Error('File-evidence blob-pool identity changed before cleanup.')
+  }
+  const orphaned = []
+  for (const entry of readdirSync(blobPool.path, { withFileTypes: true })) {
+    if (!entry.isFile() || entry.isSymbolicLink() || !BLOB_NAME.test(entry.name)) {
+      throw new Error(`Unsafe file-evidence blob-pool entry: ${entry.name}`)
+    }
+    const blobPath = join(blobPool.path, entry.name)
+    const metadata = lstatSync(blobPath)
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      throw new Error(`Unsafe file-evidence blob: ${entry.name}`)
+    }
+    if (metadata.nlink === 1) {
+      orphaned.push({ name: entry.name, fingerprint: fingerprint(metadata) })
+    }
+  }
+  if (!sameIdentity(entryIdentity(blobPool.path), blobPool.identity)) {
+    throw new Error('File-evidence blob-pool identity changed during cleanup scan.')
+  }
+  for (const orphan of orphaned) {
+    const metadata = lstatSync(join(blobPool.path, orphan.name))
+    if (
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      metadata.nlink !== 1 ||
+      fingerprint(metadata) !== orphan.fingerprint
+    ) {
+      throw new Error(`File-evidence orphan changed during cleanup: ${orphan.name}`)
+    }
+  }
+  for (const orphan of orphaned) rmSync(join(blobPool.path, orphan.name))
+  if (orphaned.length > 0) syncDirectoryPath(blobPool.path)
+  return orphaned.length
+}
+const bindRunBlob = (blobPath, contentName, expectedSize, expectedChecksum) => {
+  if (!entryExists(RUN_BLOBS_DIRECTORY)) {
+    mkdirSync(RUN_BLOBS_DIRECTORY, { mode: 0o700 })
+    syncDirectory()
+  }
+  const runBlobDirectory = entryIdentity(RUN_BLOBS_DIRECTORY)
+  if (!runBlobDirectory) throw new Error('File-evidence Run blob directory is unsafe.')
+  const runBlobPath = join(RUN_BLOBS_DIRECTORY, contentName)
+  try {
+    linkSync(blobPath, runBlobPath)
+    syncDirectoryPath(RUN_BLOBS_DIRECTORY)
+  } catch (error) {
+    if (!error || error.code !== 'EEXIST') throw error
+  }
+  verifyBlob(runBlobPath, expectedSize, expectedChecksum)
+  const poolMetadata = lstatSync(blobPath)
+  const runMetadata = lstatSync(runBlobPath)
+  if (
+    poolMetadata.isSymbolicLink() ||
+    runMetadata.isSymbolicLink() ||
+    !poolMetadata.isFile() ||
+    !runMetadata.isFile() ||
+    !sameIdentity(identity(poolMetadata), identity(runMetadata))
+  ) {
+    throw new Error('File-evidence Run blob does not match the Project CAS blob.')
+  }
+  return runBlobPath
+}
 const streamDescriptor = (sourceDescriptor, size, targetDescriptor) => {
   const hash = createHash('sha256')
   let position = 0
@@ -515,6 +581,7 @@ const copyGeneration = (
   const temporaryName = `.incoming-${randomUUID()}`
   let sourceDescriptor
   let targetDescriptor
+  let publishedBlobPath
   try {
     try {
       sourceDescriptor = openSync(
@@ -550,6 +617,7 @@ const copyGeneration = (
     let publishedNewBlob = false
     if (existsSync(blobPath)) {
       verifyBlob(blobPath, before.size, checksum)
+      bindRunBlob(blobPath, contentName, before.size, checksum)
     } else {
       const filesystem = statfsSync(blobPool.path)
       const currentAvailableBytes = Math.min(
@@ -584,12 +652,15 @@ const copyGeneration = (
         linkSync(temporaryName, blobPath)
         syncDirectoryPath(blobPool.path)
         publishedNewBlob = true
+        publishedBlobPath = blobPath
       } catch (error) {
         if (!error || error.code !== 'EEXIST') throw error
         verifyBlob(blobPath, before.size, checksum)
       }
+      bindRunBlob(blobPath, contentName, before.size, checksum)
     }
     rmSync(temporaryName, { force: true })
+    publishedBlobPath = undefined
     return {
       state: 'available',
       newBytes: publishedNewBlob ? before.size : 0,
@@ -598,7 +669,7 @@ const copyGeneration = (
         relativePath,
         checksum,
         sizeBytes: before.size,
-        contentStorageKey: `${blobPool.storageKeyPrefix}/${contentName}`,
+        contentStorageKey: `${request.storageKeyPrefix}/${request.finalName}/${RUN_BLOBS_DIRECTORY}/${contentName}`,
         capturedAt: generation.capturedAt
       }
     }
@@ -606,6 +677,13 @@ const copyGeneration = (
     if (sourceDescriptor !== undefined) closeSync(sourceDescriptor)
     if (targetDescriptor !== undefined) closeSync(targetDescriptor)
     rmSync(temporaryName, { force: true })
+    if (publishedBlobPath) {
+      const metadata = lstatSync(publishedBlobPath)
+      if (metadata.isFile() && !metadata.isSymbolicLink() && metadata.nlink === 1) {
+        rmSync(publishedBlobPath)
+        syncDirectoryPath(blobPool.path)
+      }
+    }
   }
 }
 
@@ -722,6 +800,7 @@ const begin = (request) => {
       assertBoundRoot(request.expectedRootIdentity)
       removeOwnedDirectory(stagingName, stagingIdentity)
       removeReceipt(receiptName)
+      sweepBlobPool(blobPool)
     } catch {
       // Keep the original failure. A durable receipt remains for startup reconciliation if cleanup fails.
     }
@@ -945,6 +1024,7 @@ const complete = (request) => {
 
 const reconcile = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
+  const blobPool = bindBlobPool(request)
   const retained = new Map(request.retained.map((item) => [item.runId, item]))
   let removedStagingEntries = 0
   let removedRunEntries = 0
@@ -972,13 +1052,22 @@ const reconcile = (request) => {
     removedStagingEntries += removed.removedStagingEntries
     removedRunEntries += removed.removedRunEntries
   }
-  return { ok: true, removedStagingEntries, removedRunEntries }
+  return {
+    ok: true,
+    removedStagingEntries,
+    removedRunEntries,
+    removedBlobEntries: sweepBlobPool(blobPool)
+  }
 }
 
 const cleanup = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
-  const receipt = readReceipt(request.receiptName)
-  return { ok: true, ...cleanupReceiptTargets(receipt) }
+  const blobPool = bindBlobPool(request)
+  const receiptName = assertReceiptName(request.receiptName)
+  const removed = entryExists(receiptName)
+    ? cleanupReceiptTargets(readReceipt(receiptName))
+    : { removedStagingEntries: 0, removedRunEntries: 0 }
+  return { ok: true, ...removed, removedBlobEntries: sweepBlobPool(blobPool) }
 }
 
 const deleteProject = (request) => {

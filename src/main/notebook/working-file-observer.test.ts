@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { execFile as execFileCallback } from 'node:child_process'
 import {
   mkdir,
+  link,
   mkdtemp,
   readFile,
   readdir,
@@ -240,7 +241,25 @@ describe('working-file evidence', () => {
     const firstGeneration = await generation(first)
     const secondGeneration = await generation(second)
     expect(firstGeneration.generationId).not.toBe(secondGeneration.generationId)
-    expect(firstGeneration.contentStorageKey).toBe(secondGeneration.contentStorageKey)
+    expect(firstGeneration.contentStorageKey).not.toBe(secondGeneration.contentStorageKey)
+    const contentName = firstGeneration.contentStorageKey.split('/').at(-1)!
+    expect(secondGeneration.contentStorageKey.endsWith(`/${contentName}`)).toBe(true)
+    const [firstBlob, secondBlob, pooledBlob] = await Promise.all([
+      stat(join(storageRoot as string, ...firstGeneration.contentStorageKey.split('/'))),
+      stat(join(storageRoot as string, ...secondGeneration.contentStorageKey.split('/'))),
+      stat(join(storageRoot as string, 'file-evidence-blobs', contentName))
+    ])
+    if (process.platform !== 'win32') {
+      expect({ dev: firstBlob.dev, ino: firstBlob.ino }).toEqual({
+        dev: pooledBlob.dev,
+        ino: pooledBlob.ino
+      })
+      expect({ dev: secondBlob.dev, ino: secondBlob.ino }).toEqual({
+        dev: pooledBlob.dev,
+        ino: pooledBlob.ino
+      })
+    }
+    expect(pooledBlob.nlink).toBeGreaterThanOrEqual(3)
     await expect(readdir(join(storageRoot as string, 'file-evidence-blobs'))).resolves.toHaveLength(
       1
     )
@@ -430,6 +449,62 @@ describe('working-file evidence', () => {
     await first.finish()
   })
 
+  it('serializes startup reconciliation behind an in-flight Project capture mutation', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const projectRoot = join(storageRoot as string, 'notebook-file-evidence', 'project-queue')
+    const evidenceRoot = join(projectRoot, 'session-1')
+    const storageKeyPrefix = 'notebook-file-evidence/project-queue/session-1'
+    await writeFile(join(dataRoot, 'baseline.csv'), 'queued bytes')
+    let releaseBegin!: () => void
+    let markBeginStarted!: () => void
+    const beginGate = new Promise<void>((resolveGate) => {
+      releaseBegin = resolveGate
+    })
+    const beginStarted = new Promise<void>((resolveStarted) => {
+      markBeginStarted = resolveStarted
+    })
+    const worker: typeof runEvidenceWorker = async (root, request, signal) => {
+      const result = await runEvidenceWorker(root, request, signal)
+      if (request.operation === 'begin') {
+        markBeginStarted()
+        await beginGate
+      }
+      return result
+    }
+    const observationPromise = startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        fileEvidenceStorageRoot: storageRoot,
+        fileEvidenceRoot: evidenceRoot,
+        fileEvidenceStoragePrefix: storageKeyPrefix,
+        runId: 'project-queue-run'
+      },
+      { watchDirectory: watcherUnavailable, runEvidenceWorker: worker }
+    )
+    await beginStarted
+    let reconciled = false
+    const reconciliation = reconcileWorkingFileEvidence(
+      { storageRoot: storageRoot as string, root: evidenceRoot, storageKeyPrefix },
+      []
+    ).then(() => {
+      reconciled = true
+    })
+    await new Promise((resolvePending) => setTimeout(resolvePending, 20))
+    expect(reconciled).toBe(false)
+
+    releaseBegin()
+    const observation = await observationPromise
+    await reconciliation
+    expect(reconciled).toBe(true)
+    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toEqual([])
+    const result = await observation.finish()
+    expect(result.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+  })
+
   it('immediately cleans an initial-capture receipt and staging directory after failure', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     await writeFile(join(dataRoot, 'baseline.csv'), 'frozen baseline')
@@ -450,9 +525,7 @@ describe('working-file evidence', () => {
       reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
     })
     await expect(readdir(join(storageRoot as string, 'file-evidence'))).resolves.toEqual([])
-    await expect(readdir(join(storageRoot as string, 'file-evidence-blobs'))).resolves.toHaveLength(
-      1
-    )
+    await expect(readdir(join(storageRoot as string, 'file-evidence-blobs'))).resolves.toEqual([])
   })
 
   it('persists Python/R multi-file scientific outputs without changing member generations', async () => {
@@ -1160,6 +1233,197 @@ describe('working-file evidence', () => {
     )
     expect((await readdir(projectRoot)).some((name) => name.startsWith('.ownership-'))).toBe(true)
     await expect(readdir(join(projectRoot, 'blobs'))).resolves.toHaveLength(1)
+  })
+
+  it('removes a failed capture blob without deleting the same bytes owned by an earlier Run', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const projectRoot = join(storageRoot as string, 'notebook-file-evidence', 'project-reuse')
+    const evidenceRoot = join(projectRoot, 'session-1')
+    const storageKeyPrefix = 'notebook-file-evidence/project-reuse/session-1'
+    const baseline = join(dataRoot, 'baseline.csv')
+    await writeFile(baseline, 'shared immutable bytes')
+    const requestFor = (runId: string): Parameters<typeof startWorkingFileObservation>[0] => ({
+      dataRoot,
+      notebookSessionRoot: sessionRoot,
+      fileEvidenceStorageRoot: storageRoot,
+      fileEvidenceRoot: evidenceRoot,
+      fileEvidenceStoragePrefix: storageKeyPrefix,
+      runId
+    })
+
+    const first = await startWorkingFileObservation(requestFor('project-reuse-first'), {
+      watchDirectory: watcherUnavailable
+    })
+    const firstResult = await first.finish()
+    await completeWorkingFileEvidence(
+      { storageRoot: storageRoot as string, root: evidenceRoot, storageKeyPrefix },
+      { runId: 'project-reuse-first', fileEvidence: firstResult.fileEvidence }
+    )
+    const firstSidecar = JSON.parse(
+      await readFile(
+        join(storageRoot as string, ...firstResult.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
+
+    const worker: typeof runEvidenceWorker = async (root, request, signal) => {
+      const result = await runEvidenceWorker(root, request, signal)
+      if (request.operation === 'begin') throw new Error('simulated failure after capture')
+      return result
+    }
+    const failed = await startWorkingFileObservation(requestFor('project-reuse-failed'), {
+      watchDirectory: watcherUnavailable,
+      runEvidenceWorker: worker
+    })
+    const failedResult = await failed.finish()
+
+    expect(failedResult.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toHaveLength(1)
+    await expect(
+      readFile(
+        join(
+          storageRoot as string,
+          ...firstSidecar.relations[0].generation.contentStorageKey.split('/')
+        ),
+        'utf8'
+      )
+    ).resolves.toBe('shared immutable bytes')
+  })
+
+  it('reclaims an interrupted capture blob after receipt-owned startup cleanup', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const projectRoot = join(storageRoot as string, 'notebook-file-evidence', 'project-crash')
+    const evidenceRoot = join(projectRoot, 'session-1')
+    const storageKeyPrefix = 'notebook-file-evidence/project-crash/session-1'
+    await writeFile(join(dataRoot, 'baseline.csv'), 'interrupted bytes')
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        fileEvidenceStorageRoot: storageRoot,
+        fileEvidenceRoot: evidenceRoot,
+        fileEvidenceStoragePrefix: storageKeyPrefix,
+        runId: 'project-crash-run'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+
+    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toHaveLength(1)
+    await reconcileWorkingFileEvidence(
+      { storageRoot: storageRoot as string, root: evidenceRoot, storageKeyPrefix },
+      []
+    )
+
+    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toEqual([])
+    const result = await observation.finish()
+    expect(result.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+  })
+
+  it('keeps Run-owned evidence readable when copied storage no longer shares CAS hardlinks', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const projectRoot = join(storageRoot as string, 'notebook-file-evidence', 'project-copied')
+    const evidenceRoot = join(projectRoot, 'session-1')
+    const storageKeyPrefix = 'notebook-file-evidence/project-copied/session-1'
+    const content = 'copied immutable bytes'
+    await writeFile(join(dataRoot, 'baseline.csv'), content)
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        fileEvidenceStorageRoot: storageRoot,
+        fileEvidenceRoot: evidenceRoot,
+        fileEvidenceStoragePrefix: storageKeyPrefix,
+        runId: 'project-copied-run'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    const result = await observation.finish()
+    await completeWorkingFileEvidence(
+      { storageRoot: storageRoot as string, root: evidenceRoot, storageKeyPrefix },
+      { runId: 'project-copied-run', fileEvidence: result.fileEvidence }
+    )
+    const sidecar = JSON.parse(
+      await readFile(
+        join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
+    const runBlob = join(
+      storageRoot as string,
+      ...sidecar.relations[0].generation.contentStorageKey.split('/')
+    )
+    const bytes = await readFile(runBlob)
+    await unlink(runBlob)
+    await writeFile(runBlob, bytes)
+
+    await reconcileWorkingFileEvidence(
+      { storageRoot: storageRoot as string, root: evidenceRoot, storageKeyPrefix },
+      [{ runId: 'project-copied-run', fileEvidence: result.fileEvidence }]
+    )
+
+    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toEqual([])
+    await expect(readFile(runBlob, 'utf8')).resolves.toBe(content)
+  })
+
+  it('preserves a CAS blob when an additional hardlink makes ownership uncertain', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const projectRoot = join(storageRoot as string, 'notebook-file-evidence', 'project-held')
+    const evidenceRoot = join(projectRoot, 'session-1')
+    const storageKeyPrefix = 'notebook-file-evidence/project-held/session-1'
+    await writeFile(join(dataRoot, 'baseline.csv'), 'held bytes')
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        fileEvidenceStorageRoot: storageRoot,
+        fileEvidenceRoot: evidenceRoot,
+        fileEvidenceStoragePrefix: storageKeyPrefix,
+        runId: 'project-held-run'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await observation.finish()
+    const [contentName] = await readdir(join(projectRoot, 'blobs'))
+    const heldPath = join(storageRoot as string, 'held-blob')
+    await link(join(projectRoot, 'blobs', contentName), heldPath)
+
+    await reconcileWorkingFileEvidence(
+      { storageRoot: storageRoot as string, root: evidenceRoot, storageKeyPrefix },
+      []
+    )
+
+    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toEqual([contentName])
+    await expect(readFile(heldPath, 'utf8')).resolves.toBe('held bytes')
+  })
+
+  it('deletes no orphan blobs when the Project CAS contains an unknown entry', async () => {
+    await createRoots()
+    const projectRoot = join(storageRoot as string, 'notebook-file-evidence', 'project-unsafe-pool')
+    const evidenceRoot = join(projectRoot, 'session-1')
+    const storageKeyPrefix = 'notebook-file-evidence/project-unsafe-pool/session-1'
+    const location = {
+      storageRoot: storageRoot as string,
+      root: evidenceRoot,
+      storageKeyPrefix
+    }
+    await reconcileWorkingFileEvidence(location, [])
+    const orphanContent = 'otherwise reclaimable'
+    const orphanName = `sha256-${createHash('sha256').update(orphanContent).digest('hex')}`
+    await writeFile(join(projectRoot, 'blobs', orphanName), orphanContent)
+    await writeFile(join(projectRoot, 'blobs', 'unknown-entry'), 'unsafe')
+
+    await expect(reconcileWorkingFileEvidence(location, [])).rejects.toThrow(
+      /Unsafe file-evidence blob-pool entry/
+    )
+    await expect(readFile(join(projectRoot, 'blobs', orphanName), 'utf8')).resolves.toBe(
+      orphanContent
+    )
   })
 
   it('claims the Project before session evidence reconciliation creates its root', async () => {
