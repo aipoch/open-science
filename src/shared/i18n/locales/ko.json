@@ -344,6 +344,7 @@
     "Archiving…": "보관 중…",
     "Args": "인수",
     "Arguments": "인수",
+    "Arguments were truncated for display.": "표시를 위해 인수를 잘랐습니다.",
     "Artifact content is {{reason}}; captured provenance remains available.": "아티팩트 내용은 {{reason}}입니다. 캡처된 출처는 계속 사용 가능합니다.",
     "Artifact file input": "아티팩트 파일 입력",
     "Artifact suggestions": "아티팩트 제안",

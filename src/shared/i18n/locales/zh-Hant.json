@@ -397,6 +397,7 @@
     "Archiving…": "正在封存…",
     "Args": "參數",
     "Arguments": "參數",
+    "Arguments were truncated for display.": "參數已截斷以供顯示。",
     "Artifact content is {{reason}}; captured provenance remains available.": "成品內容{{reason}}；已擷取的來源資訊仍可用。",
     "Artifact file input": "寫入 Artifact 檔案",
     "Artifact suggestions": "Artifact 建議",

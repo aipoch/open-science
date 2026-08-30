@@ -360,6 +360,7 @@
     "Archiving…": "Архивирование…",
     "Args": "Параметры",
     "Arguments": "Аргументы",
+    "Arguments were truncated for display.": "Аргументы обрезаны для отображения.",
     "Artifact content is {{reason}}; captured provenance remains available.": "Содержимое артефакта — {{reason}}; информация о происхождении сохранена.",
     "Artifact file input": "Ввод файла артефакта",
     "Artifact suggestions": "Рекомендации по артефактам",

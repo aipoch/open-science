@@ -356,6 +356,7 @@
     "Archiving…": "Archivando…",
     "Args": "Argumentos",
     "Arguments": "Argumentos",
+    "Arguments were truncated for display.": "Los argumentos se truncaron para mostrarlos.",
     "Artifact content is {{reason}}; captured provenance remains available.": "El contenido del artefacto es {{reason}}; la procedencia capturada sigue estando disponible.",
     "Artifact file input": "Entrada de archivo de artefacto",
     "Artifact suggestions": "Sugerencias de artefactos",

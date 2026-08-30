@@ -67,14 +67,23 @@ type ConnectorApplication = {
   skillImportApprovals: SkillImportApprovalBroker
 }
 
-const serializeArgs = (args: Record<string, unknown>): { preview: string; json: string } => {
+const MAX_APPROVAL_ARGS_JSON_CHARS = 64_000
+
+const serializeArgs = (
+  args: Record<string, unknown>
+): { preview: string; json: string; truncated: boolean } => {
   let json: string
   try {
     json = JSON.stringify(args)
   } catch {
     json = '{…}'
   }
-  return { preview: json.length > 300 ? `${json.slice(0, 300)}…` : json, json }
+  const truncated = json.length > MAX_APPROVAL_ARGS_JSON_CHARS
+  return {
+    preview: json.length > 300 ? `${json.slice(0, 300)}…` : json,
+    json: truncated ? `${json.slice(0, MAX_APPROVAL_ARGS_JSON_CHARS)}…` : json,
+    truncated
+  }
 }
 
 const createConnectorApplication = (
@@ -165,6 +174,7 @@ const createConnectorApplication = (
           method,
           argsPreview: serializedArgs.preview,
           argsJson: serializedArgs.json,
+          ...(serializedArgs.truncated ? { argsJsonTruncated: true } : {}),
           ...(sessionId ? { sessionId } : {}),
           availableScopes
         },

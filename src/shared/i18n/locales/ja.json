@@ -344,6 +344,7 @@
     "Archiving…": "アーカイブ中…",
     "Args": "引数",
     "Arguments": "引数",
+    "Arguments were truncated for display.": "表示用に引数が切り詰められています。",
     "Artifact content is {{reason}}; captured provenance remains available.": "アーティファクトの内容は {{reason}} です。キャプチャされた来歴情報は引き続き利用できます。",
     "Artifact file input": "アーティファクトファイルの入力",
     "Artifact suggestions": "アーティファクトの提案",

@@ -1532,7 +1532,8 @@ export type ConnectorApprovalRequest = {
   target?: string
   method: string
   argsPreview: string // truncated JSON preview of the call arguments
-  argsJson?: string // complete serialized arguments, expandable in the approval dialog
+  argsJson?: string // bounded serialized arguments, expandable in the approval dialog
+  argsJsonTruncated?: boolean
   // The session that triggered the connector call, so a desktop notification can surface and open
   // that conversation. Absent for call paths that don't carry one.
   sessionId?: string

@@ -397,6 +397,7 @@
     "Archiving…": "正在归档…",
     "Args": "参数",
     "Arguments": "参数",
+    "Arguments were truncated for display.": "参数已截断以便显示。",
     "Artifact content is {{reason}}; captured provenance remains available.": "工件内容{{reason}}；已捕获的溯源信息仍可用。",
     "Artifact file input": "写入 Artifact 文件",
     "Artifact suggestions": "Artifact 建议",

@@ -162,10 +162,21 @@ export function ConnectorApprovalDialog({
               </div>
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Args')}</span>
-                <span className="min-w-0 break-all font-mono text-muted-foreground">
+                <span
+                  className={cn(
+                    'min-w-0 break-all font-mono text-muted-foreground',
+                    argsExpanded &&
+                      'max-h-48 flex-1 overflow-y-auto overscroll-contain whitespace-pre-wrap'
+                  )}
+                >
                   {argsExpanded ? request.argsJson : request.argsPreview}
                 </span>
               </div>
+              {argsExpanded && request.argsJsonTruncated ? (
+                <p className="text-xs text-muted-foreground">
+                  {t('Arguments were truncated for display.')}
+                </p>
+              ) : null}
               {request.argsJson && request.argsJson !== request.argsPreview ? (
                 <Button
                   type="button"
