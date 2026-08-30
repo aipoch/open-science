@@ -287,6 +287,8 @@ describe('McpClientManager', () => {
       await manager.authenticate({
         id: 'oauth-1',
         name: 'OAuth server',
+        configurationFingerprint: 'security-fingerprint',
+        oauthClientSecretRef: 'enc:client-secret',
         transport: 'streamable_http',
         url: 'https://mcp.example.test',
         oauth: { redirectUri: 'http://127.0.0.1:8080/callback' }
@@ -299,7 +301,9 @@ describe('McpClientManager', () => {
         'oauth-1',
         expect.objectContaining({
           tokens: { access_token: 'access-1', token_type: 'Bearer' }
-        })
+        }),
+        'security-fingerprint',
+        'enc:client-secret'
       )
     } finally {
       await manager.closeAll()

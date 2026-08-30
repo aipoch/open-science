@@ -230,7 +230,11 @@ export class ConnectorService {
   private readonly customServerGenerations = new Map<string, number>()
   private readonly customServerBarriers = new Map<
     string,
-    { generation: number; expectedFingerprint?: string }
+    {
+      generation: number
+      expectedFingerprint?: string
+      expectedOAuthClientSecretRef?: string
+    }
   >()
   constructor(private readonly deps: ConnectorServiceDeps) {
     this.engine = deps.engine ?? new ParserEngine()
@@ -262,7 +266,8 @@ export class ConnectorService {
         if (barrier?.generation !== generation) return
         this.customServerBarriers.set(serverId, {
           generation,
-          expectedFingerprint: customServerSecurityFingerprint(server)
+          expectedFingerprint: customServerSecurityFingerprint(server),
+          expectedOAuthClientSecretRef: server.oauthClientSecretRef
         })
       },
       rollback: () => {
@@ -662,7 +667,8 @@ export class ConnectorService {
     if (!barrier) return generation
     if (
       barrier.expectedFingerprint === undefined ||
-      barrier.expectedFingerprint !== customServerSecurityFingerprint(custom)
+      barrier.expectedFingerprint !== customServerSecurityFingerprint(custom) ||
+      barrier.expectedOAuthClientSecretRef !== custom.oauthClientSecretRef
     ) {
       throw new ConnectorGateError('connector_configuration_changed')
     }

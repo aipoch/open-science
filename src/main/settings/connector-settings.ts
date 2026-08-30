@@ -657,7 +657,8 @@ class ConnectorSettingsModule {
   async saveCustomServerOAuthState(
     serverId: string,
     state: StoredCustomMcpOAuthState | undefined,
-    expectedConfigurationFingerprint?: string
+    expectedConfigurationFingerprint?: string,
+    expectedOAuthClientSecretRef?: string
   ): Promise<void> {
     const stored = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
       (server) => server.id === serverId
@@ -668,6 +669,9 @@ class ConnectorSettingsModule {
     await this.repository.updateCustomServerOAuthState(
       serverId,
       expectedConfigurationFingerprint ?? customServerSecurityFingerprint(stored),
+      expectedConfigurationFingerprint === undefined
+        ? stored.oauthClientSecretRef
+        : expectedOAuthClientSecretRef,
       state ? encryptKey(JSON.stringify(state)) : undefined
     )
   }

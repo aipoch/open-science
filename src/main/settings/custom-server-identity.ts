@@ -16,10 +16,7 @@ const customServerCredentialFingerprint = (server: StoredCustomMcpServer): strin
         server.args ?? [],
         server.url ?? null,
         stableRecordEntries(server.envRefs ?? server.env),
-        stableRecordEntries(server.headerRefs ?? server.headers),
-        // codeql[js/insufficient-password-hash] -- this is an encrypted reference authenticated
-        // with a random process-local HMAC key for CAS equality, not a stored password verifier.
-        server.oauthClientSecretRef ?? null
+        stableRecordEntries(server.headerRefs ?? server.headers)
       ])
     )
     .digest('hex')

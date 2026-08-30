@@ -209,8 +209,18 @@ export const createConnectorApplicationModule = async (
     deps.mcpClientManager ??
     new McpClientManager({
       openExternal: deps.openExternal,
-      saveOAuthState: (serverId, state, expectedConfigurationFingerprint) =>
-        deps.settings.saveCustomServerOAuthState(serverId, state, expectedConfigurationFingerprint)
+      saveOAuthState: (
+        serverId,
+        state,
+        expectedConfigurationFingerprint,
+        expectedOAuthClientSecretRef
+      ) =>
+        deps.settings.saveCustomServerOAuthState(
+          serverId,
+          state,
+          expectedConfigurationFingerprint,
+          expectedOAuthClientSecretRef
+        )
     })
 
   try {

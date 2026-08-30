@@ -1086,13 +1086,18 @@ describe('ConnectorSettingsModule', () => {
     })
     let intercepted = false
     vi.spyOn(repository, 'updateCustomServerOAuthState').mockImplementation(
-      async (serverId, expectedFingerprint, oauthRef) => {
+      async (serverId, expectedFingerprint, expectedClientSecretRef, oauthRef) => {
         if (!intercepted && oauthRef) {
           intercepted = true
           markStaleSaveStarted()
           await staleSaveReleased
         }
-        return updateCustomServerOAuthState(serverId, expectedFingerprint, oauthRef)
+        return updateCustomServerOAuthState(
+          serverId,
+          expectedFingerprint,
+          expectedClientSecretRef,
+          oauthRef
+        )
       }
     )
 
@@ -1113,6 +1118,66 @@ describe('ConnectorSettingsModule', () => {
     expect(stored?.url).toBe('https://new.example/mcp')
     expect(stored?.oauth?.authorizationServerUrl).toBe('https://new.example/oauth')
     expect(stored?.oauthRef).toBeUndefined()
+  })
+
+  it('discards a stale OAuth save when only the client secret changed', async () => {
+    const added = await addCustomServer({
+      name: 'oauth-client-secret-race',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        clientSecret: 'old-client-secret'
+      }
+    })
+    const id = added.customServers[0].id
+    const updateCustomServerOAuthState = repository.updateCustomServerOAuthState.bind(repository)
+    let releaseStaleSave!: () => void
+    const staleSaveReleased = new Promise<void>((resolve) => {
+      releaseStaleSave = resolve
+    })
+    let markStaleSaveStarted!: () => void
+    const staleSaveStarted = new Promise<void>((resolve) => {
+      markStaleSaveStarted = resolve
+    })
+    vi.spyOn(repository, 'updateCustomServerOAuthState').mockImplementation(
+      async (serverId, expectedFingerprint, expectedClientSecretRef, oauthRef) => {
+        if (oauthRef) {
+          markStaleSaveStarted()
+          await staleSaveReleased
+        }
+        return updateCustomServerOAuthState(
+          serverId,
+          expectedFingerprint,
+          expectedClientSecretRef,
+          oauthRef
+        )
+      }
+    )
+
+    const staleSave = service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'stale-token', token_type: 'Bearer' }
+    })
+    await staleSaveStarted
+    await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        clientSecret: 'new-client-secret'
+      }
+    })
+    releaseStaleSave()
+    await staleSave
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.oauthRef).toBeUndefined()
+    expect((await service.getConnectors())?.customMcpServers?.[0].oauthClientSecret).toBe(
+      'new-client-secret'
+    )
   })
 
   it('stores a pre-registered client secret as an encrypted ref and applies explicit edit semantics', async () => {

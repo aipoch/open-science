@@ -686,13 +686,18 @@ class SettingsRepository {
   async updateCustomServerOAuthState(
     id: string,
     expectedConfigurationFingerprint: string,
+    expectedOAuthClientSecretRef: string | undefined,
     oauthRef: string | undefined
   ): Promise<boolean> {
     let updated = false
     await this.mutateConnectors((connectors) => {
       const server = connectors.customMcpServers?.find((candidate) => candidate.id === id)
       if (!server) throw new Error(`Unknown custom connector: ${id}`)
-      if (customServerSecurityFingerprint(server) !== expectedConfigurationFingerprint) return
+      if (
+        customServerSecurityFingerprint(server) !== expectedConfigurationFingerprint ||
+        server.oauthClientSecretRef !== expectedOAuthClientSecretRef
+      )
+        return
       server.oauthRef = oauthRef
       updated = true
     })

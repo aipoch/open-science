@@ -76,6 +76,7 @@ describe('toCustomMcpConfig', () => {
         authorizationServerUrl: 'https://auth.example.test',
         clientId: 'registered-client'
       },
+      oauthClientSecretRef: 'enc:registered-secret',
       oauthClientSecret: 'registered-secret',
       oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' } },
       enabled: true
@@ -85,6 +86,7 @@ describe('toCustomMcpConfig', () => {
       id: 'srv-oauth',
       name: 'oauth-server',
       configurationFingerprint: expect.any(String),
+      oauthClientSecretRef: 'enc:registered-secret',
       transport: 'streamable_http',
       command: '',
       args: undefined,

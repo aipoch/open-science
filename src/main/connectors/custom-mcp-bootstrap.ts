@@ -30,6 +30,7 @@ export function toCustomMcpConfig(server: StoredCustomMcpServer): CustomMcpServe
     id: server.id,
     name: server.name,
     configurationFingerprint: customServerSecurityFingerprint(server),
+    ...(server.oauthClientSecretRef ? { oauthClientSecretRef: server.oauthClientSecretRef } : {}),
     transport: server.transport,
     command: server.command ?? '',
     args: server.args,

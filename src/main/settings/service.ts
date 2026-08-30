@@ -1015,12 +1015,14 @@ class SettingsService {
   async saveCustomServerOAuthState(
     serverId: string,
     state: StoredCustomMcpOAuthState | undefined,
-    expectedConfigurationFingerprint?: string
+    expectedConfigurationFingerprint?: string,
+    expectedOAuthClientSecretRef?: string
   ): Promise<void> {
     return this.connectors.saveCustomServerOAuthState(
       serverId,
       state,
-      expectedConfigurationFingerprint
+      expectedConfigurationFingerprint,
+      expectedOAuthClientSecretRef
     )
   }
 

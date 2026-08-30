@@ -30,6 +30,7 @@ export type CustomMcpServerConfig = {
   id: string
   name: string
   configurationFingerprint?: string
+  oauthClientSecretRef?: string
   transport: 'stdio' | 'streamable_http' | 'sse'
   // stdio (local command):
   command?: string
@@ -120,7 +121,8 @@ type McpClientManagerDeps = {
   saveOAuthState?: (
     serverId: string,
     state: StoredCustomMcpOAuthState,
-    expectedConfigurationFingerprint?: string
+    expectedConfigurationFingerprint?: string,
+    expectedOAuthClientSecretRef?: string
   ) => Promise<void>
 }
 
@@ -418,7 +420,8 @@ export class McpClientManager {
   private readonly saveOAuthState?: (
     serverId: string,
     state: StoredCustomMcpOAuthState,
-    expectedConfigurationFingerprint?: string
+    expectedConfigurationFingerprint?: string,
+    expectedOAuthClientSecretRef?: string
   ) => Promise<void>
 
   constructor(deps?: McpClientManagerDeps) {
@@ -657,7 +660,12 @@ export class McpClientManager {
         ? (state) =>
             generation === this.generation(config.id)
               ? config.configurationFingerprint
-                ? this.saveOAuthState!(config.id, state, config.configurationFingerprint)
+                ? this.saveOAuthState!(
+                    config.id,
+                    state,
+                    config.configurationFingerprint,
+                    config.oauthClientSecretRef
+                  )
                 : this.saveOAuthState!(config.id, state)
               : Promise.resolve()
         : undefined
