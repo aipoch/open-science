@@ -26,6 +26,25 @@ const DEFAULT_GLOBAL_PERMISSION_CAPABILITIES: readonly PermissionCapability[] = 
   { kind: 'mcp_tool', key: 'mcp:open-science-literature/read_document' }
 ]
 
+const restoreDefaultPermissionGrants = async (
+  registry: PermissionGrantRegistry
+): Promise<number> => {
+  const existing = new Set(
+    (await registry.list())
+      .filter((grant) => grant.scope.kind === 'global' && !grant.capability.qualifier)
+      .map((grant) => `${grant.capability.kind}\0${grant.capability.key}`)
+  )
+  let restoredCount = 0
+
+  for (const capability of DEFAULT_GLOBAL_PERMISSION_CAPABILITIES) {
+    if (existing.has(`${capability.kind}\0${capability.key}`)) continue
+    await registry.remember({ capability, scope: { kind: 'global' } })
+    restoredCount += 1
+  }
+
+  return restoredCount
+}
+
 const seedDefaultPermissionGrants = async (
   registry: PermissionGrantRegistry,
   client: PrismaClient
@@ -50,5 +69,6 @@ const seedDefaultPermissionGrants = async (
 export {
   DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS,
   DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
+  restoreDefaultPermissionGrants,
   seedDefaultPermissionGrants
 }

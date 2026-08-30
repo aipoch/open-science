@@ -29,6 +29,7 @@ type PermissionGrantIpcController = Pick<
 // Registry subscription and revision lifetime application-owned and shareable with command routing.
 const registerPermissionGrantIpcAdapter = (owner: PermissionGrantProjection): void => {
   ipcMainHandle('permissions:list', () => owner.list())
+  ipcMainHandle('permissions:restore-defaults', () => owner.restoreDefaults())
   ipcMainHandle('permissions:revoke', (_event, request: PermissionGrantRevokeRequest) =>
     owner.revoke(request)
   )

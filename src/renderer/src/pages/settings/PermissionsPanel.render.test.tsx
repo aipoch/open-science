@@ -43,6 +43,7 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   usePermissionGrantsStore.setState({
+    version: 0,
     grants: [],
     counts: { all: 0, global: 0, project: 0, session: 0 },
     incompleteStores: [],
@@ -50,7 +51,9 @@ beforeEach(() => {
     error: undefined,
     undo: undefined,
     undoQueue: [],
-    isRestoring: false
+    isRestoring: false,
+    restoreDefaultsState: 'idle',
+    loadedAt: null
   })
   useSettingsStore.setState({ defaultPermissionProfile: 'ask', settingsWriteError: undefined })
   setDefaultPermissionProfile = vi.fn(({ profile }: { profile: 'ask' | 'auto' | 'full' }) =>
@@ -163,6 +166,46 @@ describe('PermissionsPanel', () => {
     expect(emptyStatus?.textContent).toContain('No remembered permissions for this scope.')
     expect(emptyStatus?.classList.contains('sr-only')).toBe(true)
     expect(document.body.querySelector('.border-dashed')).toBeNull()
+  })
+
+  it('restores missing defaults without hiding other remembered permissions', async () => {
+    const defaultGrant: PermissionGrantSnapshot['grants'][number] = {
+      id: 'default-grant',
+      revision: 1,
+      family: 'skills',
+      capabilityKind: 'skill_operation',
+      capabilityLabel: 'Use Skills',
+      scopeKind: 'global',
+      scopeLabel: 'Global'
+    }
+    const restoreDefaults = vi.fn().mockResolvedValue({
+      ...snapshot,
+      version: 2,
+      grants: [...snapshot.grants, defaultGrant],
+      counts: { all: 2, global: 1, project: 0, session: 1 },
+      restoredCount: 1
+    })
+    setPermissionApi({
+      list: vi.fn().mockResolvedValue(snapshot),
+      restoreDefaults
+    })
+
+    await act(async () => root.render(<PermissionsPanel />))
+    expect(document.body.textContent).toContain(
+      'Restore missing default Global permissions without changing other remembered permissions.'
+    )
+
+    const restore = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Restore defaults"]'
+    )
+    await act(async () => restore?.click())
+
+    await vi.waitFor(() => {
+      expect(restoreDefaults).toHaveBeenCalledOnce()
+      expect(document.body.querySelector('[aria-label="Defaults restored"]')).not.toBeNull()
+      expect(document.body.textContent).toContain('Shell')
+      expect(document.body.textContent).toContain('Use Skills')
+    })
   })
 
   it('uses the shared Settings danger banner for load failures', async () => {

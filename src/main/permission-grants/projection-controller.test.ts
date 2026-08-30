@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { PermissionCapability, PermissionGrantRecord } from '../../shared/permission-grants'
 import type { PermissionGrantRegistry } from './registry'
 import { createPermissionGrantProjectionController } from './projection-controller'
 
@@ -200,5 +201,41 @@ describe('Permission Grant projection controller', () => {
       conflicts: []
     })
     expect(restore).toHaveBeenCalledWith({ undoToken: 'undo-1' })
+  })
+
+  it('restores missing defaults and reports the refreshed projection', async () => {
+    let registryChanged: (() => void) | undefined
+    const records: PermissionGrantRecord[] = []
+    const remember = vi.fn(async ({ capability }: { capability: PermissionCapability }) => {
+      const record: PermissionGrantRecord = {
+        id: `grant-${records.length + 1}`,
+        revision: 1,
+        capability,
+        scope: { kind: 'global' as const }
+      }
+      records.push(record)
+      registryChanged?.()
+      return record
+    })
+    const controller = createPermissionGrantProjectionController({
+      registry: {
+        list: vi.fn(async () => records),
+        remember,
+        subscribe: vi.fn((listener: () => void) => {
+          registryChanged = listener
+          return vi.fn()
+        })
+      } as unknown as PermissionGrantRegistry,
+      projects: { list: vi.fn().mockResolvedValue([]) },
+      sessions: { metadataSnapshot: vi.fn().mockResolvedValue({ sessions: [], isComplete: true }) },
+      publishChanged: vi.fn()
+    })
+
+    await expect(controller.restoreDefaults()).resolves.toMatchObject({
+      restoredCount: 10,
+      version: 10,
+      counts: { global: 10 }
+    })
+    expect(remember).toHaveBeenCalledTimes(10)
   })
 })

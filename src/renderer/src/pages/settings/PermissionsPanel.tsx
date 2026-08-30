@@ -25,6 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { cn } from '@/lib/utils'
+import { RestoreDefaultPermissionsButton } from './RestoreDefaultPermissionsButton'
 import { SettingsIconAction, SettingsRow, SettingsSection } from './SettingsLayout'
 
 type ScopeFilter = 'all' | PermissionGrantScope['kind']
@@ -202,6 +203,8 @@ const PermissionsPanel = ({
   const error = usePermissionGrantsStore((state) => state.error)
   const load = usePermissionGrantsStore((state) => state.load)
   const revoke = usePermissionGrantsStore((state) => state.revoke)
+  const restoreDefaults = usePermissionGrantsStore((state) => state.restoreDefaults)
+  const restoreDefaultsState = usePermissionGrantsStore((state) => state.restoreDefaultsState)
   const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
   const setDefaultPermissionProfile = useSettingsStore((state) => state.setDefaultPermissionProfile)
   const [filter, setFilter] = useState<ScopeFilter>('all')
@@ -305,11 +308,24 @@ const PermissionsPanel = ({
       </SettingsSection>
 
       <div className="sticky top-0 z-10 -mx-5 mt-5 mb-2 border-t border-border bg-card px-5 py-5">
-        <div className="mb-3">
-          <h3 className="text-base font-semibold text-foreground">{t('Remembered permissions')}</h3>
-          <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-muted-foreground">
-            {t('Review or revoke approvals saved for tools, projects, and conversations.')}
-          </p>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-foreground">
+              {t('Remembered permissions')}
+            </h3>
+            <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-muted-foreground">
+              {t('Review or revoke approvals saved for tools, projects, and conversations.')}
+            </p>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
+              {t(
+                'Restore missing default Global permissions without changing other remembered permissions.'
+              )}
+            </p>
+          </div>
+          <RestoreDefaultPermissionsButton
+            state={restoreDefaultsState}
+            onRestore={() => void restoreDefaults()}
+          />
         </div>
         <Select value={filter} onValueChange={(value) => setFilter(value as ScopeFilter)}>
           <SelectTrigger

@@ -144,4 +144,8 @@ export type PermissionGrantMutationView = PermissionGrantSnapshot & {
   conflicts: PermissionGrantMutationConflict[]
 }
 
+export type PermissionGrantDefaultsRestoreView = PermissionGrantSnapshot & {
+  restoredCount: number
+}
+
 export type PermissionGrantsChangedEvent = { revision: number }

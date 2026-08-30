@@ -9,6 +9,7 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import {
   DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS,
   DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
+  restoreDefaultPermissionGrants,
   seedDefaultPermissionGrants
 } from './defaults'
 import { PRE_REGISTERED_PERMISSION_IDENTITIES } from './identity-catalog'
@@ -97,6 +98,34 @@ describe('default permission grants', () => {
 
     await expect(reopenedRegistry.list()).resolves.toHaveLength(
       DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.length - 1
+    )
+  })
+
+  it('restores only missing defaults on explicit request', async () => {
+    const fixture = await setup()
+    await seedDefaultPermissionGrants(fixture.registry, fixture.client)
+    const grants = await fixture.registry.list()
+    await fixture.registry.revoke({
+      grants: [
+        { id: grants[0]!.id, revision: grants[0]!.revision },
+        { id: grants[1]!.id, revision: grants[1]!.revision }
+      ]
+    })
+    await fixture.registry.remember({
+      capability: { kind: 'file_operation', key: 'file:read' },
+      scope: { kind: 'global' }
+    })
+
+    await expect(restoreDefaultPermissionGrants(fixture.registry)).resolves.toBe(2)
+    await expect(restoreDefaultPermissionGrants(fixture.registry)).resolves.toBe(0)
+
+    const restored = await fixture.registry.list()
+    expect(restored).toHaveLength(DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.length + 1)
+    expect(restored).toContainEqual(
+      expect.objectContaining({
+        capability: { kind: 'file_operation', key: 'file:read' },
+        scope: { kind: 'global' }
+      })
     )
   })
 })

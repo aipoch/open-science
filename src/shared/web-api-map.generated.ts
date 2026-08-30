@@ -117,6 +117,7 @@ export const WEB_INVOKE_CHANNELS = {
   'permissions.extendUndo': 'permissions:extend-undo',
   'permissions.list': 'permissions:list',
   'permissions.restore': 'permissions:restore',
+  'permissions.restoreDefaults': 'permissions:restore-defaults',
   'permissions.revoke': 'permissions:revoke',
   'preview.delete': 'preview:delete',
   'preview.load': 'preview:load',

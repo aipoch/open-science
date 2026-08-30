@@ -34,7 +34,8 @@ beforeEach(() => {
     error: undefined,
     undo: undefined,
     undoQueue: [],
-    isRestoring: false
+    isRestoring: false,
+    restoreDefaultsState: 'idle'
   })
 })
 
@@ -384,6 +385,39 @@ describe('permission grants store', () => {
     expect(usePermissionGrantsStore.getState()).toMatchObject({
       version: 2,
       grants: snapshot.grants
+    })
+  })
+
+  it('restores missing defaults from the authoritative snapshot', async () => {
+    const restored = {
+      ...snapshot,
+      version: 2,
+      restoredCount: 2
+    }
+    const restoreDefaults = vi.fn().mockResolvedValue(restored)
+    setPermissionApi({ restoreDefaults })
+
+    await usePermissionGrantsStore.getState().restoreDefaults()
+
+    expect(restoreDefaults).toHaveBeenCalledOnce()
+    expect(usePermissionGrantsStore.getState()).toMatchObject({
+      version: 2,
+      grants: snapshot.grants,
+      restoreDefaultsState: 'success'
+    })
+  })
+
+  it('keeps restore defaults retryable after a persistence failure', async () => {
+    setPermissionApi({
+      restoreDefaults: vi.fn().mockRejectedValue(new Error('database locked'))
+    })
+
+    await usePermissionGrantsStore.getState().restoreDefaults()
+
+    expect(usePermissionGrantsStore.getState()).toMatchObject({
+      status: 'error',
+      error: 'database locked',
+      restoreDefaultsState: 'error'
     })
   })
 })

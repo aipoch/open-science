@@ -131,6 +131,7 @@ import type {
   HandoffRetryRequest
 } from './handoff-lifecycle'
 import type {
+  PermissionGrantDefaultsRestoreView,
   PermissionGrantMutationView,
   PermissionGrantRestoreRequest,
   PermissionGrantRevokeRequest,
@@ -1211,6 +1212,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'permissions.list': callable<() => Promise<PermissionGrantSnapshot>>()('permissions', [
     'permissions:list'
   ]),
+  'permissions.restoreDefaults': callable<() => Promise<PermissionGrantDefaultsRestoreView>>()(
+    'permissions',
+    ['permissions:restore-defaults']
+  ),
   'permissions.onChanged': callable<
     (listener: AcpListener<PermissionGrantsChangedEvent>) => RemoveListener
   >()('permissions', ['permissions:changed', EVENT]),
