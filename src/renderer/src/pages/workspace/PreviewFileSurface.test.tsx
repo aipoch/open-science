@@ -1126,6 +1126,100 @@ describe('PreviewFileSurface local file header', () => {
       'Save as artifact'
     )
   })
+
+  it('shows a retryable toast when a local file download fails', async () => {
+    const saveManagedFile = vi.mocked(window.api.saveManagedFile)
+    saveManagedFile.mockRejectedValueOnce(new Error('destination denied'))
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+    await clickMenuItem('Download')
+
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+      ).not.toBeNull()
+    })
+    const toast = document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+    expect(toast?.textContent).toContain('Could not download this file.')
+    expect(toast?.textContent).toContain('destination denied')
+
+    await click(
+      [...(toast?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+        (button) => button.textContent === 'Retry'
+      ) ?? null
+    )
+    expect(saveManagedFile).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows a retryable toast when saving a local file as an artifact fails', async () => {
+    const stageLocalPath = vi.mocked(window.api.uploads.stageLocalPath!)
+    stageLocalPath.mockRejectedValueOnce(new Error('source disappeared'))
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+    await clickMenuItem('Save as artifact')
+
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+      ).not.toBeNull()
+    })
+    const toast = document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+    expect(toast?.textContent).toContain('Could not save this file as an artifact.')
+    expect(toast?.textContent).toContain('source disappeared')
+
+    await click(
+      [...(toast?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+        (button) => button.textContent === 'Retry'
+      ) ?? null
+    )
+    expect(stageLocalPath).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows a retryable toast when copying a local file path fails', async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const writeText = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('clipboard unavailable'))
+      .mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+
+    try {
+      await act(async () => {
+        root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+      })
+      await openMenu(container.querySelector('[aria-label="More actions"]'))
+      await clickMenuItem('Copy path')
+
+      await vi.waitFor(() => {
+        expect(
+          document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+        ).not.toBeNull()
+      })
+      const toast = document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+      expect(toast?.textContent).toContain('Could not copy the file path.')
+      expect(toast?.textContent).toContain('clipboard unavailable')
+
+      await click(
+        [...(toast?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+          (button) => button.textContent === 'Retry'
+        ) ?? null
+      )
+      expect(writeText).toHaveBeenCalledTimes(2)
+    } finally {
+      if (originalClipboard) {
+        Object.defineProperty(navigator, 'clipboard', originalClipboard)
+      } else {
+        Reflect.deleteProperty(navigator, 'clipboard')
+      }
+    }
+  })
 })
 
 const originSession: ChatSession = {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useTranslation } from 'react-i18next'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
@@ -80,6 +80,11 @@ type WorkspacePageProps = {
   canDeleteConversations: boolean
   isPreviewPresentationActive?: boolean
 }
+
+type ManualReviewRequestState = Readonly<{
+  pending: boolean
+  error: string | null
+}>
 
 const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
 const OPEN_DIALOG_SELECTOR =
@@ -197,6 +202,10 @@ const WorkspacePage = ({
   // disabled as the first defense.
   const [isDownloadingProjectArtifacts, setIsDownloadingProjectArtifacts] = useState(false)
   const [isProjectDownloadOpen, setIsProjectDownloadOpen] = useState(false)
+  const [manualReviewRequests, setManualReviewRequests] = useState<
+    Record<string, ManualReviewRequestState>
+  >({})
+  const manualReviewPendingSessionIdsRef = useRef(new Set<string>())
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
   const runtime = useWorkspaceAgentRuntime()
   const {
@@ -468,6 +477,10 @@ const WorkspacePage = ({
     setError: setAttachmentError
   })
   const activeSessionId = activeSession?.id
+  const activeManualReviewRequest = activeSessionId
+    ? manualReviewRequests[activeSessionId]
+    : undefined
+  const isManualReviewRequestPending = activeManualReviewRequest?.pending === true
   const isReviewing = useReviewStore((state) => {
     if (!activeSessionId) return false
     const reviews = selectProjectSessionReviews(
@@ -531,7 +544,7 @@ const WorkspacePage = ({
     if (sessionAwaitsHistoryReplay(activeSession)) return true
     const lastAgentMessage = [...activeSession.messages].reverse().find((m) => m.role === 'agent')
     if (!lastAgentMessage) return true
-    if (isReviewing) return true
+    if (isReviewing || isManualReviewRequestPending) return true
     const reviews = selectProjectSessionReviews(
       state.reviewsBySession,
       activeSession.projectId,
@@ -647,6 +660,7 @@ const WorkspacePage = ({
     : null
   const visibleActionError =
     planProjectionRecoveryError ??
+    activeManualReviewRequest?.error ??
     attachmentError ??
     sessionController.view.exportError ??
     (activeSession ? durablePermissionError : actionError)
@@ -888,8 +902,37 @@ const WorkspacePage = ({
 
     if (!request) return
 
+    const sessionId = activeSession.id
+    if (manualReviewPendingSessionIdsRef.current.has(sessionId)) return
+
+    manualReviewPendingSessionIdsRef.current.add(sessionId)
+    setManualReviewRequests((current) => ({
+      ...current,
+      [sessionId]: { pending: true, error: null }
+    }))
+
     // Explicit user action: bypass main's auto-only per-turn idempotency so a manual review always runs.
-    void window.api.reviewer.run({ ...request, origin: 'manual' })
+    void (async () => {
+      let error: string | null = null
+      try {
+        const result = await window.api.reviewer.run({ ...request, origin: 'manual' })
+        if (!result.started && result.reason !== 'already-in-flight') {
+          error = t('Review could not start. Try again.')
+        }
+      } catch {
+        error = t('Review could not start. Try again.')
+      } finally {
+        manualReviewPendingSessionIdsRef.current.delete(sessionId)
+        setManualReviewRequests((current) => {
+          if (error) {
+            return { ...current, [sessionId]: { pending: false, error } }
+          }
+          const next = { ...current }
+          delete next[sessionId]
+          return next
+        })
+      }
+    })()
   }
 
   const requestSaveAsSkill = (): void => {
@@ -1157,7 +1200,7 @@ const WorkspacePage = ({
             workflows={{
               review: {
                 disabled: isRequestReviewDisabled,
-                running: isReviewing,
+                running: isReviewing || isManualReviewRequestPending,
                 request: requestManualReview
               },
               saveAsSkill: {

@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { FileWarning } from 'lucide-react'
-import { PreviewFallbackCard, PreviewLoadingContent } from './PreviewFallback'
+import {
+  PreviewFallbackCard,
+  PreviewLoadingContent,
+  PreviewUnsupportedContent
+} from './PreviewFallback'
 import { PreviewRuntimeBoundary } from './preview-runtime'
 import { usePreviewRuntime } from './preview-runtime-context'
 
@@ -119,5 +123,41 @@ describe('PreviewFallback', () => {
     })
 
     expect(container.querySelector('[data-testid="retry-attempt"]')?.textContent).toBe('1')
+  })
+
+  it('shows a retryable toast when the operating system cannot open a local file', async () => {
+    const openPath = vi
+      .fn()
+      .mockResolvedValueOnce('No application is associated with this file')
+      .mockResolvedValue('')
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { localFs: { openPath } }
+    })
+    await act(async () => {
+      root.render(
+        <PreviewUnsupportedContent
+          path="/research/results.bin"
+          name="results.bin"
+          source="local"
+        />
+      )
+    })
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button')?.click()
+      await Promise.resolve()
+    })
+
+    const toast = document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+    expect(toast).not.toBeNull()
+    expect(toast?.textContent).toContain('Could not open this file.')
+    expect(toast?.textContent).toContain('No application is associated with this file')
+    const retry = [...(toast?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+      (button) => button.textContent === 'Retry'
+    )
+
+    await act(async () => retry?.click())
+    expect(openPath).toHaveBeenCalledTimes(2)
   })
 })
