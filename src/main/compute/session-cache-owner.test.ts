@@ -197,6 +197,26 @@ describe('SessionCacheOwner', () => {
     await expect(stat(dirname(orphan.path))).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(stat(active.path)).resolves.toMatchObject({ size: 6 })
   })
+
+  it('allows later Sessions under a Project whose orphan cache was reconciled', async () => {
+    const orphan = await owner.createOperationFile('project-1', 'orphan-session', 'orphan.csv')
+    await writeFile(orphan.path, 'orphan')
+    orphan.release()
+
+    await owner.reconcileActiveSessions([])
+
+    await expect(stat(dirname(orphan.path))).rejects.toMatchObject({ code: 'ENOENT' })
+    const later = await owner.createOperationFile('project-1', 'later-session', 'later.csv')
+    expect(relative(storageRoot, later.path).split(sep)).toEqual([
+      'compute',
+      'session-cache',
+      'project-1',
+      'later-session',
+      expect.any(String),
+      'later.csv'
+    ])
+    later.release()
+  })
 })
 
 describe('withSessionCacheDeletion', () => {

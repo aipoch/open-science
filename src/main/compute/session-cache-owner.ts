@@ -115,17 +115,7 @@ export class SessionCacheOwner {
   async removeProject(projectId: string): Promise<void> {
     const safeProjectId = assertSafeSegment(projectId, 'Project id')
     this.closedProjects.add(safeProjectId)
-    const prefix = `${safeProjectId}/`
-    await Promise.all(
-      [...this.activeOperations.entries()]
-        .filter(([key]) => key.startsWith(prefix))
-        .flatMap(([, operations]) => [...operations])
-    )
-    if (!(await this.assertSafePath(safeProjectId))) return
-    await rm(join(this.root, safeProjectId), {
-      recursive: true,
-      force: true
-    })
+    await this.removeProjectDirectory(safeProjectId)
   }
 
   async reconcileActiveSessions(
@@ -149,7 +139,7 @@ export class SessionCacheOwner {
       if (!projectEntry.isDirectory() || !isSafeSegment(projectEntry.name)) continue
       const activeSessions = activeByProject.get(projectEntry.name)
       if (!activeSessions) {
-        await this.removeProject(projectEntry.name)
+        await this.removeProjectDirectory(projectEntry.name)
         continue
       }
 
@@ -190,6 +180,20 @@ export class SessionCacheOwner {
       if (operations.size === 0) this.activeOperations.delete(key)
       settle()
     }
+  }
+
+  private async removeProjectDirectory(projectId: string): Promise<void> {
+    const prefix = `${projectId}/`
+    await Promise.all(
+      [...this.activeOperations.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .flatMap(([, operations]) => [...operations])
+    )
+    if (!(await this.assertSafePath(projectId))) return
+    await rm(join(this.root, projectId), {
+      recursive: true,
+      force: true
+    })
   }
 
   private async assertSafePath(
