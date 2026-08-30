@@ -25,6 +25,9 @@ const SessionCatalogRecoveryAlert = ({
   const { t } = useTranslation()
   const [isOverlayDismissed, setIsOverlayDismissed] = useState(false)
   const [areRecoveryDetailsOpen, setAreRecoveryDetailsOpen] = useState(false)
+  const [recoveryFolderErrorProjectId, setRecoveryFolderErrorProjectId] = useState<string | null>(
+    null
+  )
 
   if (recovery.kind === 'ready') return null
   if (!inline && isOverlayDismissed) return null
@@ -32,6 +35,15 @@ const SessionCatalogRecoveryAlert = ({
   // Overlay dismissal is session-local: archive remains blocked and Settings still shows the
   // inline reminder. Restarting the app re-derives catalog recovery and shows the overlay again.
   const onDismiss = inline ? undefined : () => setIsOverlayDismissed(true)
+  const openRecoveryFolder = async (projectId: string): Promise<void> => {
+    if (!onOpenRecoveryFolder) return
+    setRecoveryFolderErrorProjectId(null)
+    try {
+      await onOpenRecoveryFolder({ projectId })
+    } catch {
+      setRecoveryFolderErrorProjectId(projectId)
+    }
+  }
 
   if (recovery.kind === 'project-deletion-recovery') {
     return (
@@ -120,12 +132,17 @@ const SessionCatalogRecoveryAlert = ({
                           variant="outline"
                           size="sm"
                           className="shrink-0"
-                          onClick={() => void onOpenRecoveryFolder({ projectId })}
+                          onClick={() => void openRecoveryFolder(projectId)}
                         >
                           {t('Open recovery folder')}
                         </Button>
                       ) : null}
                     </div>
+                    {recoveryFolderErrorProjectId === projectId ? (
+                      <p role="alert" className="mt-2 text-xs text-danger-000">
+                        {t('Could not open that folder.')}
+                      </p>
+                    ) : null}
                     <ul className="mt-2 space-y-1">
                       {fileNames.map((fileName) => (
                         <li key={fileName} className="break-all font-mono text-xs text-foreground">
