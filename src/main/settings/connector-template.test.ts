@@ -211,6 +211,10 @@ describe('Connector configuration templates', () => {
     [{ headers: { Authorization: 'Bearer secret' } }, 'Unknown field "headers"'],
     [{ args: ['--api-key=secret'] }, 'appears to contain a credential'],
     [{ args: ['--header', 'Authorization: Bearer secret'] }, 'appears to contain a credential'],
+    [
+      { args: ['--header', 'Authorization:', 'Bearer', 'secret'] },
+      'appears to contain a credential'
+    ],
     [{ args: ['--auth-token', 'secret'] }, 'appears to contain a credential'],
     [
       { args: ['--endpoint', 'https://mcp.example.test/mcp?auth_token=secret'] },
@@ -408,6 +412,29 @@ describe('Connector configuration templates', () => {
     })
     expect(result.preview.mcpClientDigest).toMatch(/^[a-f0-9]{64}$/)
     expect(result.preview.mcpClientSuggestedFileName).toBe('mcp-example-server.json')
+  })
+
+  it('withholds both export formats when historical arguments contain split credentials', () => {
+    const result = buildConnectorTemplateExport({
+      id: 'unsafe-id',
+      name: 'unsafe-server',
+      displayName: 'Unsafe Server',
+      transport: 'stdio',
+      command: 'example-mcp',
+      args: ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']
+    })
+
+    expect(result.preview).toMatchObject({
+      ready: false,
+      connectorId: 'unsafe-id',
+      diagnostics: [expect.objectContaining({ code: 'connector-template.argument-secret' })]
+    })
+    expect(result.preview.digest).toBeUndefined()
+    expect(result.preview.suggestedFileName).toBeUndefined()
+    expect(result.preview.mcpClientDigest).toBeUndefined()
+    expect(result.preview.mcpClientSuggestedFileName).toBeUndefined()
+    expect(result.contents).toBeUndefined()
+    expect(result.mcpClientContents).toBeUndefined()
   })
 
   it('exports remote MCP client transport labels and excludes OAuth state', () => {

@@ -443,6 +443,7 @@ const validateArgs = (
   args: string[] | undefined,
   diagnostics: ConnectorTemplateDiagnostic[]
 ): void => {
+  let credentialReported = false
   for (const [index, arg] of (args ?? []).entries()) {
     if (isLocalPath(arg)) {
       diagnostic(
@@ -463,6 +464,7 @@ const validateArgs = (
       )
     }
     if (argumentContainsCredential(arg)) {
+      credentialReported = true
       diagnostic(
         diagnostics,
         'error',
@@ -471,6 +473,15 @@ const validateArgs = (
         `args[${index}]`
       )
     }
+  }
+  if (args && !credentialReported && argumentsContainCredential(args)) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.argument-secret',
+      'args appears to contain a credential.',
+      'args'
+    )
   }
 }
 
@@ -1011,7 +1022,16 @@ export const buildConnectorTemplateExport = (
   }
   const contents = templateJson(definition)
   const parsed = parseConnectorTemplate(contents)
-  const digest = parsed.ready ? connectorTemplateDigest(contents) : undefined
+  if (!parsed.ready) {
+    return {
+      preview: {
+        ...parsed,
+        connectorId: source.id
+      }
+    }
+  }
+
+  const digest = connectorTemplateDigest(contents)
   const mcpClientContents = mcpClientJson(definition)
   const mcpClientDigest = connectorTemplateDigest(mcpClientContents)
   const mcpClientDiagnostics: ConnectorTemplateDiagnostic[] = source.oauth
@@ -1028,14 +1048,14 @@ export const buildConnectorTemplateExport = (
     preview: {
       ...parsed,
       connectorId: source.id,
-      ...(digest
-        ? { digest, suggestedFileName: `open-science-connector-${source.name}.json` }
-        : {}),
+      digest,
+      suggestedFileName: `open-science-connector-${source.name}.json`,
       mcpClientDigest,
       mcpClientSuggestedFileName: `mcp-${source.name}.json`,
       ...(mcpClientDiagnostics.length ? { mcpClientDiagnostics } : {})
     },
-    ...(parsed.ready ? { contents, mcpClientContents } : {})
+    contents,
+    mcpClientContents
   }
 }
 
