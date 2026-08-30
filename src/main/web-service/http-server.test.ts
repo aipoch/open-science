@@ -1939,6 +1939,52 @@ describe('startWebHttpServer', () => {
     })
   })
 
+  it('does not retain external socket metadata after client capacity rejects an upgrade', async () => {
+    const close = vi.spyOn(WebSocket.prototype, 'close')
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      webClientRetention: { maxClientsPerPrincipal: 1 },
+      rpc: { channels: () => [], invoke: vi.fn() },
+      externalAccess: {
+        authorizeHttp: vi.fn().mockResolvedValue('denied'),
+        authorizeWebSocket: vi.fn().mockResolvedValue({
+          principalId: 'shared-principal',
+          isCurrent: () => true
+        })
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const retained = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=retained-client`)
+    await new Promise<void>((resolve) => retained.once('open', resolve))
+    const rejected = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=rejected-client`)
+
+    await new Promise<void>((resolve) => {
+      rejected.once('close', (code) => {
+        expect(code).toBe(1013)
+        resolve()
+      })
+    })
+    const retainedClosed = new Promise<void>((resolve) => retained.once('close', () => resolve()))
+    server.closeExternalConnections('shared-principal')
+    await retainedClosed
+
+    expect(
+      close.mock.calls.filter(
+        ([code, reason]) => code === 1008 && reason === 'Remote access revoked'
+      )
+    ).toHaveLength(1)
+  })
+
   it('releases an HTTP-only caller when its connection closes during command execution', async () => {
     let markInvocationStarted: (() => void) | undefined
     const invocationStarted = new Promise<void>((resolve) => {

@@ -1465,6 +1465,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       lease = webClientLeases.acquireSocket(clientPrincipalId, clientNonce, clientId)
     } catch (error) {
       if (error instanceof WebClientCapacityExceededError) {
+        externalSockets.delete(socket)
         socket.close(1013, 'Too many active Web clients')
         return
       }
