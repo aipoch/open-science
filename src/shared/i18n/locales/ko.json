@@ -771,6 +771,7 @@
     "Could not test the provider connection.": "모델 제공업체 연결을 테스트할 수 없습니다.",
     "Could not update project pin.": "프로젝트 고정을 업데이트할 수 없습니다.",
     "Could not update the command-line tool.": "명령줄 도구를 업데이트할 수 없습니다.",
+    "Could not check the command-line tool.": "명령줄 도구를 확인할 수 없습니다.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "모델을 가져올 수 없습니다: {{reason}}. 번들 목록을 사용합니다.",
     "Couldn't load hosts.": "호스트를 로드할 수 없습니다.",
     "Create a project to search sessions and artifacts.": "프로젝트를 만들어 세션 및 아티팩트를 검색하세요.",

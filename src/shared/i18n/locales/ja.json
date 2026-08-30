@@ -752,6 +752,7 @@
     "Could not test the provider connection.": "プロバイダー接続をテストできませんでした。",
     "Could not update project pin.": "プロジェクトピンを更新できませんでした。",
     "Could not update the command-line tool.": "コマンドラインツールを更新できませんでした。",
+    "Could not check the command-line tool.": "コマンドラインツールを確認できませんでした。",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "モデルを取得できませんでした：{{reason}}。バンドルリストを使用します。",
     "Couldn't load hosts.": "ホストを読み込めませんでした。",
     "Create a project to search sessions and artifacts.": "セッションとアーティファクトを検索するには、プロジェクトを作成してください。",

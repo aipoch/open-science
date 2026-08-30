@@ -825,6 +825,7 @@
     "Could not test the provider connection.": "無法測試模型服務商連線。",
     "Could not update project pin.": "無法更新專案置頂狀態。",
     "Could not update the command-line tool.": "無法更新命令列工具。",
+    "Could not check the command-line tool.": "無法檢查命令列工具。",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "無法取得模型：{{reason}}。將使用內建清單。",
     "Couldn't load hosts.": "無法載入主機。",
     "Create a project to search sessions and artifacts.": "新增一個專案，即可搜尋會話和產物。",

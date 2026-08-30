@@ -155,6 +155,37 @@ afterEach(() => {
 })
 
 describe('GeneralPanel command line tool', () => {
+  it('recovers when the initial command status check fails', async () => {
+    cliApi.getStatus
+      .mockRejectedValueOnce(new Error('command status unavailable'))
+      .mockResolvedValueOnce({
+        installed: false,
+        target: '/home/u/.local/bin/open-science',
+        onPath: true
+      })
+
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not check the command-line tool.'
+    )
+    const retryButton = findButton(/check again/i)
+    expect(retryButton).toBeDefined()
+    expect(findButton(/install command/i)?.disabled).toBe(true)
+
+    await act(async () => {
+      retryButton?.click()
+    })
+    await flush()
+
+    expect(cliApi.getStatus).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(findButton(/install command/i)?.disabled).toBe(false)
+  })
+
   it('installs the command and surfaces the returned path + PATH hint', async () => {
     await act(async () => {
       root.render(<GeneralPanel />)

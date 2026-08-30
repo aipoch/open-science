@@ -74,7 +74,12 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
   Tooltip: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
-  TooltipTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  TooltipTrigger: ({
+    children,
+    onFocus
+  }: PropsWithChildren<{
+    onFocus?: (event: React.FocusEvent<HTMLElement>) => void
+  }>): React.JSX.Element => (onFocus ? <span onFocus={onFocus}>{children}</span> : <>{children}</>),
   TooltipContent: ({ children }: PropsWithChildren): React.JSX.Element => (
     <span data-testid="tooltip-content">{children}</span>
   )
@@ -2506,7 +2511,7 @@ describe('ConversationPanel composer intake', () => {
     expect(onStartSideChat).toHaveBeenCalledOnce()
   })
 
-  it('keeps Side chat available while the main Session is running', () => {
+  it('keeps Side chat available while running without reopening its tooltip', () => {
     const onStartSideChat = vi.fn()
     renderPanel({
       view: {
@@ -2545,6 +2550,9 @@ describe('ConversationPanel composer intake', () => {
     const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
     expect(trigger.disabled).toBe(false)
     expect(item.disabled).toBe(false)
+    const focusReturn = new FocusEvent('focusin', { bubbles: true, cancelable: true })
+    act(() => trigger.dispatchEvent(focusReturn))
+    expect(focusReturn.defaultPrevented).toBe(true)
     act(() => item.click())
     expect(onStartSideChat).toHaveBeenCalledOnce()
   })

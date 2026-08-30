@@ -795,6 +795,7 @@
     "Could not test the provider connection.": "No se pudo probar la conexión del proveedor.",
     "Could not update project pin.": "No se pudo actualizar el pin del proyecto.",
     "Could not update the command-line tool.": "No se pudo actualizar la herramienta de línea de comandos.",
+    "Could not check the command-line tool.": "No se pudo comprobar la herramienta de línea de comandos.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "No se pudieron obtener los modelos: {{reason}}. Se usará la lista incluida.",
     "Couldn't load hosts.": "No se pudieron cargar los hosts.",
     "Create a project to search sessions and artifacts.": "Cree un proyecto para buscar sesiones y artefactos.",

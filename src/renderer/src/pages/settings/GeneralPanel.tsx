@@ -30,7 +30,7 @@ const socialLinkClassName =
   'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-2 text-xs font-medium text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground'
 
 type GeneralActionError = {
-  action: 'cli' | 'open-log' | 'reveal-log'
+  action: 'cli' | 'cli-status' | 'open-log' | 'reveal-log'
   detail?: string
 }
 
@@ -38,6 +38,8 @@ const generalActionErrorCopy = (error: GeneralActionError, t: TFunction): string
   switch (error.action) {
     case 'cli':
       return t('Could not update the command-line tool.')
+    case 'cli-status':
+      return t('Could not check the command-line tool.')
     case 'open-log':
       return t('Could not open the log file.')
     case 'reveal-log':
@@ -81,9 +83,24 @@ const GeneralPanel = (): React.JSX.Element => {
   const closePreference = useSettingsStore((state) => state.closePreference)
   const setClosePreference = useSettingsStore((state) => state.setClosePreference)
 
+  const checkCliStatus = async (): Promise<void> => {
+    setIsUpdatingCli(true)
+
+    try {
+      setCli(await window.api.cli.getStatus())
+      setCliError(undefined)
+    } catch (error) {
+      setCliError({ action: 'cli-status', detail: errorDetail(error) })
+    } finally {
+      setIsUpdatingCli(false)
+    }
+  }
+
   useEffect(() => {
     void window.api.logs.getStatus().then(setLogStatus, () => setLogStatus(null))
-    void window.api.cli.getStatus().then(setCli)
+    void window.api.cli.getStatus().then(setCli, (error) => {
+      setCliError({ action: 'cli-status', detail: errorDetail(error) })
+    })
     const getAvailability = window.api.notifications.getDesktopAvailability
     if (getAvailability) {
       void getAvailability()
@@ -447,6 +464,18 @@ const GeneralPanel = (): React.JSX.Element => {
               {generalActionErrorCopy(cliError, t)}
             </p>
             <DiagnosticDetails detail={cliError.detail} />
+            {cliError.action === 'cli-status' ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={isUpdatingCli}
+                onClick={() => void checkCliStatus()}
+              >
+                {isUpdatingCli ? t('Checking…') : t('Check again')}
+              </Button>
+            ) : null}
           </div>
         ) : null}
 

@@ -787,6 +787,7 @@
     "Could not test the provider connection.": "Не удалось протестировать соединение с поставщиком.",
     "Could not update project pin.": "Не удалось изменить закрепление проекта.",
     "Could not update the command-line tool.": "Не удалось обновить инструмент командной строки.",
+    "Could not check the command-line tool.": "Не удалось проверить инструмент командной строки.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "Не удалось загрузить модели: {{reason}}. Используется встроенный список.",
     "Couldn't load hosts.": "Не удалось загрузить хосты.",
     "Create a project to search sessions and artifacts.": "Создайте проект, чтобы искать сессии и артефакты.",

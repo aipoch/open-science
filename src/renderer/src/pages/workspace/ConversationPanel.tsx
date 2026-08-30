@@ -2236,7 +2236,17 @@ const ConversationPanel = ({
                             <DropdownMenu>
                               <TooltipProvider delayDuration={200}>
                                 <Tooltip>
-                                  <TooltipTrigger asChild>
+                                  <TooltipTrigger
+                                    asChild
+                                    onFocus={(event) => {
+                                      if (
+                                        !(event.target instanceof Element) ||
+                                        !event.target.matches(':focus-visible')
+                                      ) {
+                                        event.preventDefault()
+                                      }
+                                    }}
+                                  >
                                     <span className="inline-flex">
                                       <DropdownMenuTrigger asChild>
                                         <button
