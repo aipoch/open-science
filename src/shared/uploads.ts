@@ -109,7 +109,7 @@ export type UploadedAttachment = {
   createdAt?: string
 }
 
-export const uploadedAttachmentSchema = z
+const uploadedAttachmentSchema = z
   .object({
     id: z.string(),
     versionId: z.string().optional(),
@@ -249,7 +249,7 @@ const finalizeUploadAttachmentsSchema = z
     'Upload attachment paths must be unique.'
   )
 
-export const finalizeUploadSessionRequestSchema = z
+const finalizeUploadSessionRequestSchema = z
   .object({
     projectId: z.string().optional(),
     sessionId: z.string(),

@@ -1,5 +1,6 @@
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import {
+  MAX_COMPOSER_ATTACHMENTS,
   toPersistedUploadedAttachment,
   toRuntimeUploadedAttachment,
   type UploadedAttachment
@@ -44,11 +45,16 @@ export const reconcileBranchedAttachments = async (
   }
   if (stagedById.size === 0) return
 
-  const finalized = await window.api.uploads.finalizeSession({
-    projectId,
-    sessionId: sourceSessionId,
-    attachments: [...stagedById.values()]
-  })
+  const staged = [...stagedById.values()]
+  const finalized: UploadedAttachment[] = []
+  for (let offset = 0; offset < staged.length; offset += MAX_COMPOSER_ATTACHMENTS) {
+    const batch = await window.api.uploads.finalizeSession({
+      projectId,
+      sessionId: sourceSessionId,
+      attachments: staged.slice(offset, offset + MAX_COMPOSER_ATTACHMENTS)
+    })
+    finalized.push(...batch)
+  }
   const finalizedById = new Map(finalized.map((upload) => [upload.id, upload]))
   for (const stagedId of stagedById.keys()) {
     if (!finalizedById.has(stagedId)) {
