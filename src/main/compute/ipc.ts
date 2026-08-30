@@ -493,6 +493,14 @@ const createComputeHandlers = (
         throw new Error('Compute analysis persistence is unavailable.')
       }
       const jobs = await jobRepository.transitionAnalysis(request)
+      for (const job of jobs) {
+        try {
+          onJobUpdated?.(job)
+        } catch (error) {
+          // The transition is already durable; a broadcast failure must not report it as rejected.
+          log.warn('compute analysis transition broadcast failed', errorLogFields(error))
+        }
+      }
       const hostNameMap = new Map<string, string>()
       try {
         const hosts = await repository.list()

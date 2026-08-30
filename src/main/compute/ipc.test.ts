@@ -2030,6 +2030,37 @@ describe('compute handlers — jobsPendingNotification', () => {
     expect(transitionAnalysis).toHaveBeenCalledWith(request)
   })
 
+  it('publishes persisted analysis transitions through the shared Job update path', async () => {
+    const request = {
+      sessionId: 'sess-1',
+      jobIds: ['job-pending'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    const transitionedJob = makeJob({
+      analysis_state: 'dispatched',
+      analysis_message_id: request.messageId,
+      analysis_updated_at: 2_000
+    })
+    const onJobUpdated = vi.fn()
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn(async () => [sampleHost()]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ transitionAnalysis: vi.fn(async () => [transitionedJob]) }),
+      onJobUpdated,
+      undefined,
+      storageRoot
+    )
+
+    await handlers.jobsTransitionAnalysis(request)
+
+    expect(onJobUpdated).toHaveBeenCalledOnce()
+    expect(onJobUpdated).toHaveBeenCalledWith(transitionedJob)
+  })
+
   it('returns provider fallback summaries when host lookup fails after an analysis transition', async () => {
     const request = {
       sessionId: 'sess-1',
