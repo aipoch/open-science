@@ -127,7 +127,6 @@ export const useJobAnalysisEffect = ({
       },
       onTurnEnd: (sessionId, callback) => {
         // Keep runtime completion listeners inside the same readiness lifecycle as dispatch.
-        let unsubscribe: (() => void) | undefined
         let settled = false
         const settleIfTerminal = (state: ReturnType<typeof useSessionStore.getState>): void => {
           if (settled) return
@@ -140,9 +139,8 @@ export const useJobAnalysisEffect = ({
             session.status !== 'waiting-plan-approval'
           ) {
             settled = true
-            const currentUnsubscribe = unsubscribe
-            currentUnsubscribe?.()
-            if (currentUnsubscribe) turnEndUnsubscribes.delete(currentUnsubscribe)
+            unsubscribe()
+            turnEndUnsubscribes.delete(unsubscribe)
             const outcome: Exclude<ComputeJobAnalysisState, 'dispatched'> =
               session.status === 'idle'
                 ? 'succeeded'
@@ -152,14 +150,9 @@ export const useJobAnalysisEffect = ({
             if (isActive) callback(outcome)
           }
         }
-        const stop = useSessionStore.subscribe(settleIfTerminal)
-        unsubscribe = stop
-        if (settled) {
-          stop()
-          return
-        }
+        const unsubscribe = useSessionStore.subscribe(settleIfTerminal)
         // Close the subscribe/check race when a fast turn ended before listener registration.
-        turnEndUnsubscribes.add(stop)
+        turnEndUnsubscribes.add(unsubscribe)
         settleIfTerminal(useSessionStore.getState())
       },
       log: (tag, message) => {
