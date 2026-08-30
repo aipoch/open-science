@@ -118,6 +118,8 @@ export type PermissionGrantView = {
 export type PermissionGrantSnapshot = {
   version: number
   incompleteStores: Array<'projects' | 'sessions' | 'connector_policy'>
+  // Added as an optional renderer capability so older hosts remain source-compatible.
+  missingDefaultGlobalGrantCount?: number
   grants: PermissionGrantView[]
   counts: {
     all: number

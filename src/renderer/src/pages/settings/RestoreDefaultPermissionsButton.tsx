@@ -16,19 +16,21 @@ type RestoreDefaultPermissionsPreviewState =
 
 type RestoreDefaultPermissionsButtonProps = {
   state: PermissionDefaultsRestoreState
+  disabled?: boolean
   onRestore: () => void
   previewState?: RestoreDefaultPermissionsPreviewState
 }
 
 const RestoreDefaultPermissionsButton = ({
   state,
+  disabled = false,
   onRestore,
   previewState
 }: RestoreDefaultPermissionsButtonProps): React.JSX.Element => {
   const { t } = useTranslation()
   const visualState = previewState ?? (state === 'idle' ? 'default' : state)
   const loading = visualState === 'loading'
-  const disabled = visualState === 'disabled' || loading
+  const isDisabled = disabled || visualState === 'disabled' || loading
   const error = visualState === 'error'
   const success = visualState === 'success'
   const label = loading
@@ -44,7 +46,7 @@ const RestoreDefaultPermissionsButton = ({
     <Button
       type="button"
       variant={error ? 'destructive' : 'outline'}
-      disabled={disabled}
+      disabled={isDisabled}
       aria-invalid={error || undefined}
       aria-label={label}
       className={cn(

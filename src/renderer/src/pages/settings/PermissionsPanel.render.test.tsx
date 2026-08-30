@@ -15,6 +15,7 @@ let setDefaultPermissionProfile: ReturnType<typeof vi.fn>
 const snapshot: PermissionGrantSnapshot = {
   version: 1,
   incompleteStores: [],
+  missingDefaultGlobalGrantCount: 1,
   grants: [
     {
       id: 'grant-1',
@@ -47,6 +48,7 @@ beforeEach(() => {
     grants: [],
     counts: { all: 0, global: 0, project: 0, session: 0 },
     incompleteStores: [],
+    missingDefaultGlobalGrantCount: undefined,
     status: 'idle',
     error: undefined,
     undo: undefined,
@@ -183,6 +185,7 @@ describe('PermissionsPanel', () => {
       version: 2,
       grants: [...snapshot.grants, defaultGrant],
       counts: { all: 2, global: 1, project: 0, session: 1 },
+      missingDefaultGlobalGrantCount: 0,
       restoredCount: 1
     })
     setPermissionApi({
@@ -202,10 +205,29 @@ describe('PermissionsPanel', () => {
 
     await vi.waitFor(() => {
       expect(restoreDefaults).toHaveBeenCalledOnce()
-      expect(document.body.querySelector('[aria-label="Defaults restored"]')).not.toBeNull()
+      expect(
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Defaults restored"]')?.disabled
+      ).toBe(true)
       expect(document.body.textContent).toContain('Shell')
       expect(document.body.textContent).toContain('Use Skills')
     })
+  })
+
+  it('disables restore when every default Global permission is already present', async () => {
+    const restoreDefaults = vi.fn()
+    setPermissionApi({
+      list: vi.fn().mockResolvedValue({ ...snapshot, missingDefaultGlobalGrantCount: 0 }),
+      restoreDefaults
+    })
+
+    await act(async () => root.render(<PermissionsPanel />))
+
+    const restore = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Defaults restored"]'
+    )
+    expect(restore?.disabled).toBe(true)
+    restore?.click()
+    expect(restoreDefaults).not.toHaveBeenCalled()
   })
 
   it('uses the shared Settings danger banner for load failures', async () => {

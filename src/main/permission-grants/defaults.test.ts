@@ -9,6 +9,7 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import {
   DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS,
   DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
+  missingDefaultGlobalPermissionCapabilities,
   restoreDefaultPermissionGrants,
   seedDefaultPermissionGrants
 } from './defaults'
@@ -127,5 +128,26 @@ describe('default permission grants', () => {
         scope: { kind: 'global' }
       })
     )
+  })
+
+  it('treats only unqualified Global grants as installed defaults', () => {
+    const [defaultCapability] = DEFAULT_GLOBAL_PERMISSION_CAPABILITIES
+
+    expect(
+      missingDefaultGlobalPermissionCapabilities([
+        {
+          id: 'qualified',
+          revision: 1,
+          capability: { ...defaultCapability!, qualifier: { mode: 'any' } },
+          scope: { kind: 'global' }
+        },
+        {
+          id: 'project',
+          revision: 1,
+          capability: defaultCapability!,
+          scope: { kind: 'project', projectId: 'project-1' }
+        }
+      ])
+    ).toContainEqual(defaultCapability)
   })
 })

@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client'
 
-import type { PermissionCapability } from '../../shared/permission-grants'
+import type { PermissionCapability, PermissionGrantRecord } from '../../shared/permission-grants'
 import type { PermissionGrantRegistry } from './registry'
 
 // Keep the original marker so extending this list affects new installations only.
@@ -26,23 +26,30 @@ const DEFAULT_GLOBAL_PERMISSION_CAPABILITIES: readonly PermissionCapability[] = 
   { kind: 'mcp_tool', key: 'mcp:open-science-literature/read_document' }
 ]
 
+const missingDefaultGlobalPermissionCapabilities = (
+  grants: readonly PermissionGrantRecord[]
+): readonly PermissionCapability[] =>
+  DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.filter(
+    (defaultCapability) =>
+      !grants.some(
+        (grant) =>
+          grant.scope.kind === 'global' &&
+          !grant.capability.qualifier &&
+          grant.capability.kind === defaultCapability.kind &&
+          grant.capability.key === defaultCapability.key
+      )
+  )
+
 const restoreDefaultPermissionGrants = async (
   registry: PermissionGrantRegistry
 ): Promise<number> => {
-  const existing = new Set(
-    (await registry.list())
-      .filter((grant) => grant.scope.kind === 'global' && !grant.capability.qualifier)
-      .map((grant) => `${grant.capability.kind}\0${grant.capability.key}`)
-  )
-  let restoredCount = 0
+  const missing = missingDefaultGlobalPermissionCapabilities(await registry.list())
 
-  for (const capability of DEFAULT_GLOBAL_PERMISSION_CAPABILITIES) {
-    if (existing.has(`${capability.kind}\0${capability.key}`)) continue
+  for (const capability of missing) {
     await registry.remember({ capability, scope: { kind: 'global' } })
-    restoredCount += 1
   }
 
-  return restoredCount
+  return missing.length
 }
 
 const seedDefaultPermissionGrants = async (
@@ -69,6 +76,7 @@ const seedDefaultPermissionGrants = async (
 export {
   DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS,
   DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
+  missingDefaultGlobalPermissionCapabilities,
   restoreDefaultPermissionGrants,
   seedDefaultPermissionGrants
 }

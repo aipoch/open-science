@@ -103,10 +103,17 @@ const mutationState = (
   result: PermissionGrantMutationView
 ): Pick<
   PermissionGrantsStore,
-  'version' | 'incompleteStores' | 'grants' | 'counts' | 'status' | 'error'
+  | 'version'
+  | 'incompleteStores'
+  | 'missingDefaultGlobalGrantCount'
+  | 'grants'
+  | 'counts'
+  | 'status'
+  | 'error'
 > => ({
   version: result.version ?? 0,
   incompleteStores: result.incompleteStores ?? [],
+  missingDefaultGlobalGrantCount: result.missingDefaultGlobalGrantCount,
   grants: result.grants,
   counts: result.counts,
   status: 'ready',
@@ -116,6 +123,7 @@ const mutationState = (
 const snapshotFromState = (state: PermissionGrantSnapshot): PermissionGrantSnapshot => ({
   version: state.version,
   incompleteStores: state.incompleteStores,
+  missingDefaultGlobalGrantCount: state.missingDefaultGlobalGrantCount,
   grants: state.grants,
   counts: state.counts
 })
@@ -129,6 +137,7 @@ const withoutGrants = (
   return {
     version: snapshot.version,
     incompleteStores: snapshot.incompleteStores,
+    missingDefaultGlobalGrantCount: snapshot.missingDefaultGlobalGrantCount,
     grants,
     counts: {
       all: grants.length,
@@ -151,6 +160,7 @@ const withRestoredGrants = (
   return {
     version: snapshot.version,
     incompleteStores: snapshot.incompleteStores,
+    missingDefaultGlobalGrantCount: snapshot.missingDefaultGlobalGrantCount,
     grants,
     counts: {
       all: grants.length,
@@ -256,6 +266,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
     const previous: PermissionGrantSnapshot = {
       version: get().version,
       incompleteStores: get().incompleteStores,
+      missingDefaultGlobalGrantCount: get().missingDefaultGlobalGrantCount,
       grants: get().grants,
       counts: get().counts
     }
@@ -284,6 +295,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
         const authoritative = applyAuthoritativeSnapshot(state, {
           version: result.version ?? 0,
           incompleteStores: result.incompleteStores ?? [],
+          missingDefaultGlobalGrantCount: result.missingDefaultGlobalGrantCount,
           grants: result.grants,
           counts: result.counts
         })
@@ -320,6 +332,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
         const current: PermissionGrantSnapshot = {
           version: state.version,
           incompleteStores: state.incompleteStores,
+          missingDefaultGlobalGrantCount: state.missingDefaultGlobalGrantCount,
           grants: state.grants,
           counts: state.counts
         }
@@ -424,7 +437,9 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
   },
 
   restoreDefaults: async () => {
-    if (get().restoreDefaultsState === 'loading') return
+    if (get().restoreDefaultsState === 'loading' || get().missingDefaultGlobalGrantCount === 0) {
+      return
+    }
     set({ restoreDefaultsState: 'loading', error: undefined })
     try {
       const result = await window.api.permissions.restoreDefaults()
@@ -432,6 +447,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
         ...applyAuthoritativeSnapshot(state, {
           version: result.version ?? 0,
           incompleteStores: result.incompleteStores ?? [],
+          missingDefaultGlobalGrantCount: result.missingDefaultGlobalGrantCount,
           grants: result.grants,
           counts: result.counts
         }),

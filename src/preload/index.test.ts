@@ -409,6 +409,7 @@ describe('preload bridge — public surface inventory', () => {
       'permissions.list',
       'permissions.onChanged',
       'permissions.restore',
+      'permissions.restoreDefaults',
       'permissions.revoke',
       'preview.delete',
       'preview.load',

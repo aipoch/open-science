@@ -6,6 +6,7 @@ import { usePermissionGrantsStore } from './permission-grants-store'
 const snapshot: PermissionGrantSnapshot = {
   version: 1,
   incompleteStores: [],
+  missingDefaultGlobalGrantCount: 1,
   grants: [
     {
       id: 'grant-1',
@@ -392,6 +393,7 @@ describe('permission grants store', () => {
     const restored = {
       ...snapshot,
       version: 2,
+      missingDefaultGlobalGrantCount: 0,
       restoredCount: 2
     }
     const restoreDefaults = vi.fn().mockResolvedValue(restored)
@@ -403,8 +405,19 @@ describe('permission grants store', () => {
     expect(usePermissionGrantsStore.getState()).toMatchObject({
       version: 2,
       grants: snapshot.grants,
+      missingDefaultGlobalGrantCount: 0,
       restoreDefaultsState: 'success'
     })
+  })
+
+  it('does not request a restore when every default is already present', async () => {
+    const restoreDefaults = vi.fn()
+    usePermissionGrantsStore.setState({ missingDefaultGlobalGrantCount: 0 })
+    setPermissionApi({ restoreDefaults })
+
+    await usePermissionGrantsStore.getState().restoreDefaults()
+
+    expect(restoreDefaults).not.toHaveBeenCalled()
   })
 
   it('keeps restore defaults retryable after a persistence failure', async () => {

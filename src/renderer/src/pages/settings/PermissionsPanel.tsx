@@ -199,6 +199,9 @@ const PermissionsPanel = ({
   const grants = usePermissionGrantsStore((state) => state.grants)
   const counts = usePermissionGrantsStore((state) => state.counts)
   const incompleteStores = usePermissionGrantsStore((state) => state.incompleteStores)
+  const missingDefaultGlobalGrantCount = usePermissionGrantsStore(
+    (state) => state.missingDefaultGlobalGrantCount
+  )
   const status = usePermissionGrantsStore((state) => state.status)
   const error = usePermissionGrantsStore((state) => state.error)
   const load = usePermissionGrantsStore((state) => state.load)
@@ -209,6 +212,7 @@ const PermissionsPanel = ({
   const setDefaultPermissionProfile = useSettingsStore((state) => state.setDefaultPermissionProfile)
   const [filter, setFilter] = useState<ScopeFilter>('all')
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
+  const defaultsComplete = missingDefaultGlobalGrantCount === 0
 
   useEffect(() => {
     void load()
@@ -323,7 +327,8 @@ const PermissionsPanel = ({
             </p>
           </div>
           <RestoreDefaultPermissionsButton
-            state={restoreDefaultsState}
+            state={defaultsComplete ? 'success' : restoreDefaultsState}
+            disabled={defaultsComplete || status === 'loading'}
             onRestore={() => void restoreDefaults()}
           />
         </div>
