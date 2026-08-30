@@ -125,7 +125,8 @@ describe('OnboardingWizard flow', () => {
     ])
     window.api.storage.inspectDataRoot = vi.fn().mockResolvedValueOnce({
       kind: 'move',
-      dataRoot: 'D:\\OpenScience'
+      dataRoot: 'D:\\OpenScience',
+      targetWasAbsent: true
     })
     readyClaudeState()
 
@@ -171,7 +172,8 @@ describe('OnboardingWizard flow', () => {
       })
       .mockResolvedValueOnce({
         kind: 'move',
-        dataRoot: 'F:\\OpenScience'
+        dataRoot: 'F:\\OpenScience',
+        targetWasAbsent: true
       })
     readyClaudeState()
 
@@ -182,6 +184,44 @@ describe('OnboardingWizard flow', () => {
     expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(1, 'D:\\')
     expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(2, 'E:\\')
     expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(3, 'F:\\')
+  })
+
+  it('skips an existing runtime-only target during automatic drive selection', async () => {
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockResolvedValue([
+      { path: 'C:\\', label: 'C:' },
+      { path: 'D:\\', label: 'D:' },
+      { path: 'E:\\', label: 'E:' }
+    ])
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockResolvedValueOnce({
+        kind: 'move',
+        dataRoot: 'D:\\OpenScience',
+        targetWasAbsent: false
+      })
+      .mockResolvedValueOnce({
+        kind: 'move',
+        dataRoot: 'E:\\OpenScience',
+        targetWasAbsent: true
+      })
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(container.textContent).toContain('E:\\OpenScience')
+    expect(container.textContent).not.toContain('D:\\OpenScience')
+    expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(1, 'D:\\')
+    expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(2, 'E:\\')
   })
 
   it('keeps the existing default when Windows has no usable non-system drive', async () => {
@@ -305,7 +345,8 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.inspectDataRoot = vi.fn().mockImplementation((parent: string) => {
       if (parent === 'D:\\') {
         return new Promise((resolve) => {
-          releaseDefaultProbe = () => resolve({ kind: 'move', dataRoot: 'D:\\OpenScience' })
+          releaseDefaultProbe = () =>
+            resolve({ kind: 'move', dataRoot: 'D:\\OpenScience', targetWasAbsent: true })
         })
       }
       return Promise.resolve({ kind: 'move', dataRoot: 'F:\\Research\\OpenScience' })
@@ -342,7 +383,8 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.inspectDataRoot = vi.fn().mockImplementation(
       () =>
         new Promise((resolve) => {
-          releaseDefaultProbe = () => resolve({ kind: 'move', dataRoot: 'D:\\OpenScience' })
+          releaseDefaultProbe = () =>
+            resolve({ kind: 'move', dataRoot: 'D:\\OpenScience', targetWasAbsent: true })
         })
     )
     readyClaudeState()

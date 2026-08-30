@@ -80,7 +80,7 @@ const findWindowsStorageDefault = async (
   for (const { drive } of candidates) {
     try {
       const inspection = await window.api.storage.inspectDataRoot(drive.path)
-      if (inspection.kind === 'move') {
+      if (inspection.kind === 'move' && inspection.targetWasAbsent === true) {
         return {
           chosenParent: drive.path,
           chosenDataRoot: inspection.dataRoot,

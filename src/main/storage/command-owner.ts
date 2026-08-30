@@ -819,6 +819,13 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       if (typeof request?.parent !== 'string') throw new Error('The selected folder is not usable.')
       dataRoot = dataRootForPicked(request.parent)
       const result = await classifyDataRootImpl(request.parent, resolveDataRoot())
+      if (result.kind === 'move') {
+        return {
+          ...result,
+          dataRoot,
+          targetWasAbsent: await isDataRootMissing(dataRoot)
+        }
+      }
       return { ...result, dataRoot }
     } catch (err) {
       logger.warn('data root inspection boundary failed', diagnosticErrorFields(err))

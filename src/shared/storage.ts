@@ -78,7 +78,8 @@ export type DataRootValidationResult = { ok: true } | { ok: false; error: string
 // 'adopt' = already contains our data (pointer switch only, no move). 'recover' = a durable marker
 // from an interrupted copy that Settings can explicitly finish or discard. 'invalid' carries a reason.
 // `dataRoot` is the derived `<parent>/OpenScience` path, always present so the caller can display
-// the final location regardless of kind.
+// the final location regardless of kind. Main also reports whether a move target was proven absent;
+// callers that require a brand-new target must fail closed unless `targetWasAbsent` is true.
 export type DataRootKind = 'move' | 'adopt' | 'recover' | 'invalid'
 export type DataRootRecoveryStatus = 'copying' | 'verified'
 export type DataRootInspection =
@@ -89,7 +90,14 @@ export type DataRootInspection =
       error?: string
     }
   | {
-      kind: Exclude<DataRootKind, 'recover'>
+      kind: 'move'
+      dataRoot: string
+      targetWasAbsent?: boolean
+      recoveryStatus?: never
+      error?: string
+    }
+  | {
+      kind: Exclude<DataRootKind, 'recover' | 'move'>
       dataRoot: string
       recoveryStatus?: never
       error?: string

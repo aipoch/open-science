@@ -1866,7 +1866,20 @@ describe('storage IPC handlers', () => {
 
     await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
       kind: 'move',
-      dataRoot: target
+      dataRoot: target,
+      targetWasAbsent: true
+    })
+  })
+
+  it('inspect-data-root distinguishes an existing runtime-only move target', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'runtime'), { recursive: true })
+    registerStorageIpcHandlers(fakeDeps())
+
+    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+      kind: 'move',
+      dataRoot: target,
+      targetWasAbsent: false
     })
   })
 
@@ -1878,7 +1891,8 @@ describe('storage IPC handlers', () => {
 
     await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
       kind: 'move',
-      dataRoot: target
+      dataRoot: target,
+      targetWasAbsent: true
     })
     await expect(
       invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
