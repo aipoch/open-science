@@ -12,9 +12,12 @@ import type {
   NotebookWorkingFile
 } from '../../shared/notebook'
 import { assertDiskReserve } from '../bounded-file-io'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
 import { analyzeScientificOutputs } from './scientific-output-analysis'
+
+const log = createLogger('notebook:file-evidence')
 
 type WorkingFileObservationRequest = {
   dataRoot: string
@@ -827,7 +830,9 @@ const persistEvidence = async (
       fileEvidence: result.fileEvidence
     }
   } catch (error) {
-    if (process.env.OPEN_SCIENCE_DEBUG_FILE_EVIDENCE === '1') console.error(error)
+    if (process.env.OPEN_SCIENCE_DEBUG_FILE_EVIDENCE === '1') {
+      log.error('file-evidence publication failed', diagnosticErrorFields(error))
+    }
     await runEvidenceWorker(evidenceRoot.path, {
       operation: 'cleanup',
       expectedRootIdentity: evidenceRoot.identity,
