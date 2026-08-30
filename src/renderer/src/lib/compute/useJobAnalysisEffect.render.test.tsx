@@ -40,10 +40,15 @@ describe('useJobAnalysisEffect persistence readiness', () => {
   let root: Root
   type AnalysisSendMessage = Parameters<typeof useJobAnalysisEffect>[0]['sendMessage']
 
-  const sendMessage = vi.fn(async (input: Parameters<AnalysisSendMessage>[0]) => ({
-    sessionId: input.sessionId ?? 'session-1',
-    messageId: input.messageId ?? 'message-1'
-  }))
+  const sendMessage = vi.fn(async (input: Parameters<AnalysisSendMessage>[0]) => {
+    const sessionId = input.sessionId ?? 'session-1'
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId ? { ...session, status: 'running' } : session
+      )
+    }))
+    return { sessionId, messageId: input.messageId ?? 'message-1' }
+  })
   const jobsPendingNotification = vi.fn().mockResolvedValue([makeCompletedJob()])
   const jobsMarkConsumed = vi.fn().mockResolvedValue(undefined)
   const jobsTransitionAnalysis = vi.fn(async (request: ComputeJobAnalysisTransition) => [
@@ -254,6 +259,32 @@ describe('useJobAnalysisEffect persistence readiness', () => {
 
     expect(firstSend).toHaveBeenCalledOnce()
     expect(replacementSend).not.toHaveBeenCalled()
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: 'succeeded' })
+    )
+  })
+
+  it('settles when the analysis turn ends before its completion listener is registered', async () => {
+    jobsPendingNotification.mockResolvedValueOnce([])
+    const immediateSend = vi.fn<AnalysisSendMessage>(async (input) => {
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === 'session-1' ? { ...session, status: 'running' } : session
+        )
+      }))
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === 'session-1' ? { ...session, status: 'idle' } : session
+        )
+      }))
+      return { sessionId: 'session-1', messageId: input.messageId ?? 'message-1' }
+    })
+
+    await act(async () => root.render(<Probe enabled onSendMessage={immediateSend} />))
+    act(() => useSessionJobStore.getState().applyUpdate(makeCompletedJob()))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+
+    expect(immediateSend).toHaveBeenCalledOnce()
     expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
       expect.objectContaining({ state: 'succeeded' })
     )

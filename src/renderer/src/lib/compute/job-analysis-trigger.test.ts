@@ -2,7 +2,7 @@
 // sendPrompt per session, batching same-session done jobs, queuing when a turn is in flight,
 // and marking notificationConsumedAt only on success. Pure renderer logic per design §11.
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { JobSummary } from '../../../../shared/compute'
 import {
@@ -53,6 +53,10 @@ const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 // ── buildAnalysisPrompt ───────────────────────────────────────────────────────
 
@@ -186,6 +190,39 @@ describe('createJobAnalysisTrigger — idempotency', () => {
 
     // sendPrompt called once for the durable dispatch.
     expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a failed durable claim with the same Message ID', async () => {
+    vi.useFakeTimers()
+    const transitionAnalysis = vi
+      .fn<JobAnalysisTriggerDeps['transitionAnalysis']>()
+      .mockRejectedValueOnce(new Error('database temporarily unavailable'))
+      .mockResolvedValue(undefined)
+    const deps = createDeps({ transitionAnalysis })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await flushMicrotasks()
+
+    expect(transitionAnalysis).toHaveBeenNthCalledWith(1, {
+      sessionId: 'sess-1',
+      jobIds: ['job-1'],
+      messageId: 'msg-1',
+      state: 'dispatched'
+    })
+    expect(transitionAnalysis).toHaveBeenNthCalledWith(2, {
+      sessionId: 'sess-1',
+      jobIds: ['job-1'],
+      messageId: 'msg-1',
+      state: 'dispatched'
+    })
+    expect(deps.sendPrompt).toHaveBeenCalledOnce()
   })
 })
 

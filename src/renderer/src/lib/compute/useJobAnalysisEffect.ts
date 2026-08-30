@@ -127,7 +127,10 @@ export const useJobAnalysisEffect = ({
       },
       onTurnEnd: (sessionId, callback) => {
         // Keep runtime completion listeners inside the same readiness lifecycle as dispatch.
-        const unsubscribe = useSessionStore.subscribe((state) => {
+        let unsubscribe: (() => void) | undefined
+        let settled = false
+        const settleIfTerminal = (state: ReturnType<typeof useSessionStore.getState>): void => {
+          if (settled) return
           const session = state.sessions.find((candidate) => candidate.id === sessionId)
           if (!session) return
           if (
@@ -136,8 +139,10 @@ export const useJobAnalysisEffect = ({
             session.status !== 'waiting-permission' &&
             session.status !== 'waiting-plan-approval'
           ) {
-            unsubscribe()
-            turnEndUnsubscribes.delete(unsubscribe)
+            settled = true
+            const currentUnsubscribe = unsubscribe
+            currentUnsubscribe?.()
+            if (currentUnsubscribe) turnEndUnsubscribes.delete(currentUnsubscribe)
             const outcome: Exclude<ComputeJobAnalysisState, 'dispatched'> =
               session.status === 'idle'
                 ? 'succeeded'
@@ -146,8 +151,16 @@ export const useJobAnalysisEffect = ({
                   : 'failed'
             if (isActive) callback(outcome)
           }
-        })
-        turnEndUnsubscribes.add(unsubscribe)
+        }
+        const stop = useSessionStore.subscribe(settleIfTerminal)
+        unsubscribe = stop
+        if (settled) {
+          stop()
+          return
+        }
+        // Close the subscribe/check race when a fast turn ended before listener registration.
+        turnEndUnsubscribes.add(stop)
+        settleIfTerminal(useSessionStore.getState())
       },
       log: (tag, message) => {
         console.log(`[compute] ${tag}: ${message}`)
@@ -195,6 +208,7 @@ export const useJobAnalysisEffect = ({
     return () => {
       isActive = false
       clearTimeout(pendingScanRetry)
+      trigger.dispose()
       unsubscribeJobs()
       for (const unsubscribe of turnEndUnsubscribes) unsubscribe()
       turnEndUnsubscribes.clear()

@@ -91,6 +91,8 @@ export type JobAnalysisTriggerDeps = {
 type PendingBatch = {
   sessionId: string
   messageId?: string
+  // The Message ID is chosen, but its durable dispatched transition may not have committed yet.
+  claimPending?: boolean
   // jobs waiting to be sent once the session is free
   jobs: Map<string, JobSummary>
   // whether we've already registered an onTurnEnd callback for this session
@@ -104,9 +106,13 @@ type InFlightSet = Set<string> // job_id values currently being processed (in an
 export type JobAnalysisTrigger = {
   // Process a new done-state job broadcast.
   onJobDone: (job: JobSummary) => void
+  // Stop delayed claim retries when the owning readiness lifecycle ends.
+  dispose: () => void
 }
 
 export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnalysisTrigger => {
+  const claimRetryDelayMs = 1_000
+  let disposed = false
   // Pending jobs are grouped by a durable dispatch Message ID when recovering, or by Session before
   // the first dispatch is claimed. This prevents a recovered batch from absorbing newer pending Jobs.
   const pendingBatches = new Map<string, PendingBatch>()
@@ -120,6 +126,16 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     string,
     { sessionId: string; messageId: string; jobIds: string[] }
   >()
+  const claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+  const scheduleClaimRetry = (key: string): void => {
+    if (disposed || claimRetryTimers.has(key)) return
+    const timer = setTimeout(() => {
+      claimRetryTimers.delete(key)
+      scheduleFlush(key)
+    }, claimRetryDelayMs)
+    claimRetryTimers.set(key, timer)
+  }
 
   const scheduleNextSessionBatch = (sessionId: string): void => {
     for (const [nextKey, nextBatch] of pendingBatches) {
@@ -185,6 +201,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   }
 
   const flushBatch = async (key: string): Promise<void> => {
+    if (disposed) return
     const batch = pendingBatches.get(key)
     if (!batch || batch.jobs.size === 0) return
 
@@ -217,7 +234,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     pendingBatches.delete(key)
 
     const messageId = batch.messageId ?? deps.createMessageId()
-    if (batch.messageId) {
+    if (batch.messageId && !batch.claimPending) {
       let recoveredState: Awaited<ReturnType<typeof deps.getTurnState>>
       try {
         recoveredState = await deps.getTurnState(sessionId, messageId)
@@ -237,10 +254,15 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     } else {
       try {
         await deps.transitionAnalysis({ sessionId, jobIds, messageId, state: 'dispatched' })
+        batch.claimPending = false
       } catch (err) {
         deps.log('analysis-turn:claim-failed', `session=${sessionId} error=${String(err)}`)
-        for (const id of jobIds) inFlight.delete(id)
-        releaseSessionBatch(key, sessionId)
+        // The transition may have committed before its response was lost. Retain the same Message
+        // ID and retry the idempotent durable claim before sending anything.
+        batch.messageId = messageId
+        batch.claimPending = true
+        pendingBatches.set(key, batch)
+        scheduleClaimRetry(key)
         return
       }
     }
@@ -283,11 +305,13 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   }
 
   const scheduleFlush = (key: string): void => {
+    if (disposed) return
     // Use a microtask to batch multiple synchronous onJobDone calls.
     void Promise.resolve().then(() => flushBatch(key))
   }
 
   const notifyTurnEnd = (key: string): void => {
+    if (disposed) return
     const batch = pendingBatches.get(key)
     if (!batch || batch.jobs.size === 0) return
 
@@ -308,6 +332,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   }
 
   const onJobDone = (job: JobSummary): void => {
+    if (disposed) return
     if (!isDoneState(job)) return
     if (isAlreadyConsumed(job)) return
     if (job.analysis_state === 'succeeded') return
@@ -349,5 +374,15 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     scheduleFlush(key)
   }
 
-  return { onJobDone }
+  const dispose = (): void => {
+    disposed = true
+    for (const timer of claimRetryTimers.values()) clearTimeout(timer)
+    claimRetryTimers.clear()
+    pendingBatches.clear()
+    awaitingTurnEnd.clear()
+    activeBatchBySession.clear()
+    inFlight.clear()
+  }
+
+  return { onJobDone, dispose }
 }
