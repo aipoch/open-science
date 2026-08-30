@@ -131,8 +131,10 @@ describe('buildStartupDiagnostics', () => {
   it('reuses the diagnostic credential policy before diagnostics cross IPC', () => {
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzdGFydHVwIn0.signaturevalue123'
     const signedUrlSecret = 'signed-url-opaque-7319'
+    const quotedSecretParts = ['quoted-left-opaque-7319', 'quoted-right-opaque-7319']
+    const quotedSecret = quotedSecretParts.join(' ')
     const error = new Error(
-      `request failed: Bearer bearer-opaque-7319; apiKey=key-opaque-7319; jwt=${jwt}; ` +
+      `request failed: Bearer bearer-opaque-7319; apiKey=key-opaque-7319; password="${quotedSecret}"; jwt=${jwt}; ` +
         'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&ok=1; ' +
         `https://bucket.example.test/private?X-Amz-Signature=${signedUrlSecret}&version=7`
     )
@@ -146,7 +148,8 @@ describe('buildStartupDiagnostics', () => {
       'alice',
       'password-opaque-7319',
       'query-opaque-7319',
-      signedUrlSecret
+      signedUrlSecret,
+      ...quotedSecretParts
     ]) {
       expect(result).not.toContain(secret)
     }

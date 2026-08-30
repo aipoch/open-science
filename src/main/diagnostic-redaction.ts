@@ -119,13 +119,28 @@ const redactSensitiveText = (value: string): string =>
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
+      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
+      `$1$2$3${REDACTED_MARKER}$3`
+    )
+    .replace(
       /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
       `$1$2${REDACTED_MARKER}`
+    )
+    .replace(
+      /\b([a-z][a-z0-9_-]*)(\s*=\s*)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
+      (match, key: string, separator: string, quote: string) =>
+        isSensitiveDiagnosticKey(key)
+          ? `${key}${separator}${quote}${REDACTED_MARKER}${quote}`
+          : match
     )
     .replace(
       /\b([a-z][a-z0-9_-]*)(\s*=\s*)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
       (match, key: string, separator: string) =>
         isSensitiveDiagnosticKey(key) ? `${key}${separator}${REDACTED_MARKER}` : match
+    )
+    .replace(
+      /(--?(?:access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
+      `$1$2$3${REDACTED_MARKER}$3`
     )
     .replace(
       /(--?(?:access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+/gi,
