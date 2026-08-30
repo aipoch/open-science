@@ -3,9 +3,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { JobSummary } from '../../../shared/compute'
 import { extractJobIdFromActivity, findActivitiesForJob } from './job-binding-utils'
 import type { ToolActivity } from '@/stores/session-store'
+import { makeJob as makeComputeJob } from '@/test-utils/compute-job'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -21,26 +21,21 @@ const makeActivity = (overrides: Partial<ToolActivity> = {}): ToolActivity => ({
   ...overrides
 })
 
-const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
-  job_id: 'job-abc',
-  provider_id: 'ssh:biowulf',
-  display_name: 'biowulf',
-  shape: 'direct_ssh',
-  session_id: 'sess-1',
-  status: 'running',
-  intent: 'Run EDA',
-  created_at: Date.now(),
-  started_at: Date.now(),
-  finished_at: undefined,
-  exit_code: undefined,
-  error_code: undefined,
-  remote_workdir: '/home/user/.openscience/jobs/job-abc',
-  stdout_tail: undefined,
-  stderr_tail: undefined,
-  notified_at: undefined,
-  notification_consumed_at: undefined,
-  ...overrides
-})
+const makeJob = (
+  overrides: Parameters<typeof makeComputeJob>[0] = {}
+): ReturnType<typeof makeComputeJob> => {
+  const now = Date.now()
+  return makeComputeJob({
+    job_id: 'job-abc',
+    session_id: 'sess-1',
+    status: 'running',
+    intent: 'Run EDA',
+    created_at: now,
+    started_at: now,
+    remote_workdir: '/home/user/.openscience/jobs/job-abc',
+    ...overrides
+  })
+}
 
 // ─── extractJobIdFromActivity ────────────────────────────────────────────────
 
@@ -268,14 +263,6 @@ describe('RemoteJobRow', () => {
     })
     expect(container.textContent).toContain('biowulf')
     expect(container.textContent).toContain('Run EDA analysis')
-  })
-
-  it('shows "running" status text for running jobs', () => {
-    const job = makeJob({ status: 'running' })
-    act(() => {
-      root.render(<RemoteJobRow job={job} onOpen={vi.fn()} />)
-    })
-    expect(container.textContent).toContain('Running')
   })
 
   it('distinguishes waiting, submitting, and running states', () => {

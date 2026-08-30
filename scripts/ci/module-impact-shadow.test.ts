@@ -33,7 +33,7 @@ function reportFor(
 }
 
 describe('module impact shadow', () => {
-  it('compares deterministic module evidence with the authoritative plan', () => {
+  it('promotes deterministic module evidence into the resolved plan', () => {
     const report = reportFor([
       { path: 'src/renderer/src/stores/session-store.ts', status: 'modified' }
     ])
@@ -56,8 +56,16 @@ describe('module impact shadow', () => {
     expect(report.shadow.fallbackCapabilities).toEqual(['main_runtime', 'renderer_view'])
     expect(report.comparison.requiredLanes).toContain('typecheck_web')
     expect(report.comparison.selectedLanes).toEqual(report.authoritative.lanes)
-    expect(report.comparison.missingLanes).toEqual([])
-    expect(report.comparison.coverage).toBe('covered')
+    expect(report.comparison.missingLanes).toEqual([
+      'typecheck_node',
+      'interface_contracts',
+      'windows_runtime',
+      'windows_path',
+      'e2e_functional_windows',
+      'e2e_workspace_windows'
+    ])
+    expect(report.comparison.coverage).toBe('gap')
+    expect(report.resolved.lanes).toEqual(report.comparison.requiredLanes)
   })
 
   it('records candidate mode and lane disagreements before blocking resolution', () => {

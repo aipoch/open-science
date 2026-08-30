@@ -137,9 +137,7 @@ export const probeRemoteLaunch = async (
     ? {
         kind: 'running',
         handle: remoteHandleFor(workdir, pid),
-        ...(startedAtSeconds === undefined
-          ? {}
-          : { startedAt: new Date(startedAtSeconds * 1000) })
+        ...(startedAtSeconds === undefined ? {} : { startedAt: new Date(startedAtSeconds * 1000) })
       }
     : { kind: 'vanished', pid }
 }

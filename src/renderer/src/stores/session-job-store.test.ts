@@ -2,28 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { JobSummary } from '../../../shared/compute'
 import { createInitialSessionJobState, useSessionJobStore } from './session-job-store'
+import { makeJob as makeComputeJob } from '@/test-utils/compute-job'
 
-// Builds a minimal JobSummary for testing.
-const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
-  job_id: 'job-1',
-  provider_id: 'ssh:biowulf',
-  display_name: 'biowulf',
-  shape: 'direct_ssh',
-  session_id: 'session-abc',
-  status: 'running',
-  intent: 'Salary analysis',
-  created_at: 1000,
-  started_at: 1000,
-  finished_at: undefined,
-  exit_code: undefined,
-  error_code: undefined,
-  remote_workdir: undefined,
-  stdout_tail: undefined,
-  stderr_tail: undefined,
-  notified_at: undefined,
-  notification_consumed_at: undefined,
-  ...overrides
-})
+const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary =>
+  makeComputeJob({
+    job_id: 'job-1',
+    session_id: 'session-abc',
+    status: 'running',
+    intent: 'Salary analysis',
+    created_at: 1000,
+    started_at: 1000,
+    remote_workdir: undefined,
+    ...overrides
+  })
 
 // Sets up a minimal window.api.compute mock for the store's hydrate action.
 const setJobsApi = (api: Partial<Window['api']['compute']>): void => {

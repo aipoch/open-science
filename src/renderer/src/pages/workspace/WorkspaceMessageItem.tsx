@@ -47,6 +47,7 @@ import type { PersistedRuntimeSegment } from '../../../../shared/conversation-gr
 import type { MessagePart } from '../../../../shared/session-persistence'
 import {
   isComputeJobCompletionAttribution,
+  isComputeJobCompletionPresentation,
   isHumanUserMessage,
   isReviewerCorrectionAttribution
 } from '../../../../shared/session-persistence'
@@ -1250,7 +1251,9 @@ const WorkspaceMessageItemImpl = ({
   const isUserMessage = message.role === 'user'
   const isHumanUser = isHumanUserMessage(message)
   const isReviewerCorrection = isReviewerCorrectionAttribution(message.attribution)
-  const isComputeJobCompletion = isComputeJobCompletionAttribution(message.attribution)
+  const isComputeJobCompletion =
+    isComputeJobCompletionAttribution(message.attribution) ||
+    isComputeJobCompletionPresentation(message)
   const isSideChatAdvisory =
     message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
   const presentsAssistantMessage = !isUserMessage && !isSideChatAdvisory

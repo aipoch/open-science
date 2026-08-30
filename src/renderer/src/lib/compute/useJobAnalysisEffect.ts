@@ -7,7 +7,7 @@
 // Design decisions:
 // - One readiness-scoped effect owns the trigger and every subscription so delayed work cannot cross
 //   a persistence recovery boundary.
-// - `isSessionInFlight` reads from useSessionStore.getState() synchronously — no subscription needed.
+// - The shared application Message queue owns pre-send readiness and in-flight barriers.
 // - The restart-recovery scan covers every persisted Session from the App-lifetime owner.
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
@@ -102,15 +102,6 @@ export const useJobAnalysisEffect = ({
     }
 
     const trigger = createJobAnalysisTrigger({
-      isSessionInFlight: (sessionId) => {
-        const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
-        return (
-          session?.status === 'running' ||
-          session?.status === 'waiting-for-user' ||
-          session?.status === 'waiting-permission' ||
-          session?.status === 'waiting-plan-approval'
-        )
-      },
       sendPrompt: async (sessionId, text, messageId, jobIds) => {
         if (!isActive) return undefined
         const session = await loadAnalysisSession(sessionId)

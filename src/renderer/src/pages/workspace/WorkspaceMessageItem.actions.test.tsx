@@ -156,6 +156,15 @@ const click = async (element: HTMLElement): Promise<void> => {
   })
 }
 
+const expectComputeCompletionEvent = (): void => {
+  expect(container.querySelector('[data-testid="compute-job-completion-event"]')).not.toBeNull()
+  expect(container.textContent).toContain('Remote job completed')
+  expect(container.textContent).toContain('Analysis started automatically')
+  expect(container.textContent).not.toContain('A remote job has finished')
+  expect(container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
+  expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
+}
+
 // Replaces the inline editor's text and lets the editor emit the updated doc, mimicking a typing pass.
 const typeIntoEditor = async (editor: HTMLElement, text: string): Promise<void> => {
   await act(async () => {
@@ -619,12 +628,19 @@ describe('WorkspaceMessageItem user message actions', () => {
       { canEditMessage: true }
     )
 
-    expect(container.querySelector('[data-testid="compute-job-completion-event"]')).not.toBeNull()
-    expect(container.textContent).toContain('Remote job completed')
-    expect(container.textContent).toContain('Analysis started automatically')
-    expect(container.textContent).not.toContain('A remote job has finished')
-    expect(container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
+    expectComputeCompletionEvent()
+  })
+
+  it('keeps a reloaded Compute completion presentation out of the user bubble', async () => {
+    await renderItem(
+      createMessage({
+        content: 'A remote job has finished. Please analyze the results.',
+        presentation: { kind: 'compute-job-completion' }
+      }),
+      { canEditMessage: true }
+    )
+
+    expectComputeCompletionEvent()
   })
   it('keeps the normal Session transcript gutter by default', async () => {
     await renderItem(createMessage())

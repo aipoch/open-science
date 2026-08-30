@@ -206,15 +206,6 @@
       "capabilities": ["renderer_state"]
     },
     {
-      "id": "compute_renderer_state_interface",
-      "role": "overlay",
-      "paths": [
-        "src/renderer/src/stores/session-store.ts",
-        "src/renderer/src/stores/session-job-store.ts"
-      ],
-      "capabilities": ["main_runtime", "windows_sensitive"]
-    },
-    {
       "id": "cli_sdk",
       "role": "owner",
       "paths": ["cli/**", "packages/open-science/**"],

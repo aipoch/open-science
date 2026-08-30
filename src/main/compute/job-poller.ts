@@ -21,14 +21,14 @@ import { parsePollOutput } from './job-poll-output'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { emitJobNotification } from './job-notifier'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
-import { cleanupCommand, validatedRemoteWorkdir } from './job-deletion-owner'
+import { cleanupCommand } from './job-deletion-owner'
 import {
   probeRemoteJobProcessOwnership,
   terminateRemoteJobProcessIfOwned
 } from './remote-job-process'
 import { classifyComputeJobExit } from './remote-launch-recovery'
 import { SubmittedJobRecovery, type SubmittedJobRecoveryResult } from './submitted-job-recovery'
-import { parseRemoteJobHandle } from './remote-job-handle'
+import { parseRemoteJobHandle, parseRemoteJobWorkdir } from './remote-job-handle'
 
 // Polling interval: 15 seconds (design.md §8).
 export const POLL_INTERVAL_MS = 15_000
@@ -391,10 +391,8 @@ export class JobPoller {
     signal: AbortSignal,
     fallbackWorkdir?: string
   ): Promise<ComputeJob | undefined> {
-    let workdir: string
-    try {
-      workdir = validatedRemoteWorkdir(job, fallbackWorkdir)
-    } catch {
+    const workdir = parseRemoteJobWorkdir(job.job_id, job.remote_workdir, fallbackWorkdir)
+    if (!workdir) {
       await this._recordPollError([job], 'dispatch_recovery_required', signal)
       return undefined
     }
@@ -725,21 +723,18 @@ export class JobPoller {
         if (!current || (current.status !== 'submitted' && current.status !== 'running')) return
 
         const handle = parseRemoteJobHandle(current.remote_handle, current.remote_workdir)
-        const workdir = current.remote_workdir
-        if (
-          !handle ||
-          !workdir ||
-          handle.workdir !== workdir ||
-          !Number.isSafeInteger(handle.pid) ||
-          handle.pid <= 1
-        ) {
+        if (!handle) {
           await this._recordTimeoutTerminationUnconfirmed(current)
           return
         }
         // Probe failures are unknown ownership and fail closed. The termination operation repeats
         // the same cwd guard before signalling, closing the probe-to-signal PID reuse window.
         try {
-          const ownership = await probeRemoteJobProcessOwnership(handle.pid, workdir, connection)
+          const ownership = await probeRemoteJobProcessOwnership(
+            handle.pid,
+            handle.workdir,
+            connection
+          )
           if (ownership === 'unknown') {
             if (signal.aborted) return
             await this._recordTimeoutTerminationUnconfirmed(current)
@@ -748,7 +743,7 @@ export class JobPoller {
           if (ownership === 'owned') {
             const terminated = await terminateRemoteJobProcessIfOwned(
               handle.pid,
-              workdir,
+              handle.workdir,
               connection
             )
             if (!terminated) {

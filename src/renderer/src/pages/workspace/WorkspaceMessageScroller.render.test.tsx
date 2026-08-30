@@ -364,6 +364,23 @@ describe('WorkspaceMessageScroller Reviewer Correction lifecycle', () => {
     expect(html).not.toContain('animate-spin')
     expect(html).not.toContain(correction.content)
   })
+
+  it('keeps a reloaded Compute completion as a system event', async () => {
+    const compute = createMessage({
+      id: 'compute-completion-1',
+      content: 'A remote job has finished. Please analyze the results.',
+      presentation: { kind: 'compute-job-completion' }
+    })
+    const html = await renderScroller(
+      createSession({ status: 'idle', activeRun: undefined, messages: [compute] })
+    )
+
+    expect(html).toContain('data-testid="compute-job-completion-event"')
+    expect(html).toContain('Remote job completed')
+    expect(html).toContain('Analysis started automatically')
+    expect(html).not.toContain(compute.content)
+    expect(html).not.toContain('data-slot="user-message-bubble"')
+  })
 })
 
 const planDocument: ActivePlanProjection['document'] = {

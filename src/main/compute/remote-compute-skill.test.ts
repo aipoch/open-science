@@ -70,6 +70,6 @@ describe('remote-compute-ssh immediate failure guidance', () => {
   })
 })
 
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
-  ...args: string[]
-) => (...values: unknown[]) => Promise<void>
+const AsyncFunction = Object.getPrototypeOf(async function () {
+  return undefined
+}).constructor as new (...args: string[]) => (...values: unknown[]) => Promise<void>

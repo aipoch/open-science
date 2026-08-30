@@ -165,11 +165,7 @@ describe('createComputeJobRuntime', () => {
     releaseReconciliation()
     await stopping
 
-    expect(events).toEqual([
-      'reconciliation-stopping',
-      'reconciliation-stopped',
-      'poller-stopped'
-    ])
+    expect(events).toEqual(['reconciliation-stopping', 'reconciliation-stopped', 'poller-stopped'])
   })
 
   it('cancels in-flight polling and harvest work when the runtime stops', async () => {

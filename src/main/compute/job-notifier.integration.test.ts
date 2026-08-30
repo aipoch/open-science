@@ -1,23 +1,17 @@
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
 import { expect, it, vi } from 'vitest'
 
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
+import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { harvestJob } from './harvest-engine'
 import { emitJobNotification } from './job-notifier'
-import { ComputeJobRepository } from './job-repository'
 import { JobPoller } from './job-poller'
 import type { ComputeHostRepository } from './repository'
 
 it('broadcasts once when harvest and recovery notification entrances overlap', async () => {
-  const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notifier-overlap-'))
-  const client = createProjectDbClient(storageRoot)
+  const database = await createMigratedComputeTestDatabase('open-science-notifier-overlap-')
   try {
-    await migrateApplicationDatabase(client)
-    const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
+    const { storageRoot } = database
+    const jobRepository = database.repositories.jobs
     await jobRepository.create({
       allowUnencryptedPersistence: true,
       id: 'job-overlap',
@@ -73,17 +67,15 @@ it('broadcasts once when harvest and recovery notification entrances overlap', a
     expect((await jobRepository.get('job-overlap'))?.notified_at).toBeDefined()
     expect(broadcast).toHaveBeenCalledOnce()
   } finally {
-    await client.$disconnect()
-    await rm(storageRoot, { recursive: true, force: true })
+    await database.dispose()
   }
 })
 
 it('recovers a finalized harvest whose notifier claim was interrupted', async () => {
-  const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notifier-restart-'))
-  const client = createProjectDbClient(storageRoot)
+  const database = await createMigratedComputeTestDatabase('open-science-notifier-restart-')
   try {
-    await migrateApplicationDatabase(client)
-    const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
+    const { storageRoot } = database
+    const jobRepository = database.repositories.jobs
     await jobRepository.create({
       allowUnencryptedPersistence: true,
       id: 'job-restart-notify',
@@ -114,7 +106,6 @@ it('recovers a finalized harvest whose notifier claim was interrupted', async ()
     await vi.waitFor(() => expect(broadcast).toHaveBeenCalledOnce())
     expect((await jobRepository.get('job-restart-notify'))?.notified_at).toBeDefined()
   } finally {
-    await client.$disconnect()
-    await rm(storageRoot, { recursive: true, force: true })
+    await database.dispose()
   }
 })

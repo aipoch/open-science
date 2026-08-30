@@ -1,44 +1,39 @@
 // Tests for the analysis turn trigger: receives done-state job broadcasts and auto-fires a
-// sendPrompt per session, batching same-session done jobs, queuing when a turn is in flight,
+// sendPrompt per session, batching same-session done jobs, delegating readiness to admission,
 // and marking notificationConsumedAt only on success. Pure renderer logic per design §11.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { JobSummary } from '../../../../shared/compute'
 import {
   buildAnalysisPrompt,
   createJobAnalysisTrigger,
   type JobAnalysisTriggerDeps
 } from './job-analysis-trigger'
+import { makeJob as makeComputeJob } from '@/test-utils/compute-job'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
-  job_id: 'job-1',
-  provider_id: 'ssh:biowulf',
-  display_name: 'biowulf',
-  shape: 'direct_ssh',
-  session_id: 'sess-1',
-  status: 'success',
-  intent: 'Salary analysis',
-  created_at: 1000,
-  started_at: 1100,
-  finished_at: 1200,
-  exit_code: 0,
-  error_code: undefined,
-  remote_workdir: undefined,
-  stdout_tail: undefined,
-  stderr_tail: undefined,
-  notified_at: 2000,
-  notification_consumed_at: undefined,
-  featured_files: ['hpc/job-1/featured/result.txt'],
-  featured_file_count: 1,
-  left_on_remote_count: 0,
-  ...overrides
-})
+const makeJob = (
+  overrides: Parameters<typeof makeComputeJob>[0] = {}
+): ReturnType<typeof makeComputeJob> =>
+  makeComputeJob({
+    job_id: 'job-1',
+    session_id: 'sess-1',
+    status: 'success',
+    intent: 'Salary analysis',
+    created_at: 1000,
+    started_at: 1100,
+    finished_at: 1200,
+    exit_code: 0,
+    remote_workdir: undefined,
+    notified_at: 2000,
+    featured_files: ['hpc/job-1/featured/result.txt'],
+    featured_file_count: 1,
+    left_on_remote_count: 0,
+    ...overrides
+  })
 
 const createDeps = (overrides: Partial<JobAnalysisTriggerDeps> = {}): JobAnalysisTriggerDeps => ({
-  isSessionInFlight: vi.fn().mockReturnValue(false),
   sendPrompt: vi.fn(async (sessionId, _text, messageId) => ({ sessionId, messageId })),
   flushPersistence: vi.fn().mockResolvedValue(undefined),
   createMessageId: vi.fn().mockReturnValue('msg-1'),
@@ -523,45 +518,6 @@ describe('createJobAnalysisTrigger — queuing', () => {
     )
   })
 
-  it('waits when a session starts a turn while a pending batch is being claimed', async () => {
-    let sessionInFlight = false
-    let resolveClaim: (() => void) | undefined
-    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
-    const deps = createDeps({
-      isSessionInFlight: vi.fn(() => sessionInFlight),
-      transitionAnalysis: vi.fn((request) =>
-        request.state === 'dispatched'
-          ? new Promise<void>((resolve) => {
-              resolveClaim = resolve
-            })
-          : Promise.resolve()
-      ),
-      onTurnEnd: vi.fn((_sessionId, callback) => {
-        turnEndCallback = callback
-      })
-    })
-    const trigger = createJobAnalysisTrigger(deps)
-
-    trigger.onJobDone(makeJob())
-    await flushMicrotasks()
-    expect(deps.transitionAnalysis).toHaveBeenCalledWith(
-      expect.objectContaining({ state: 'dispatched' })
-    )
-
-    sessionInFlight = true
-    resolveClaim?.()
-    await flushMicrotasks()
-
-    expect(deps.sendPrompt).not.toHaveBeenCalled()
-    expect(deps.onTurnEnd).toHaveBeenCalledWith('sess-1', expect.any(Function))
-
-    sessionInFlight = false
-    turnEndCallback?.('succeeded')
-    await flushMicrotasks()
-
-    expect(deps.sendPrompt).toHaveBeenCalledOnce()
-  })
-
   it('stops after disposal while a durable claim is pending', async () => {
     let resolveClaim: (() => void) | undefined
     const deps = createDeps({
@@ -588,66 +544,6 @@ describe('createJobAnalysisTrigger — queuing', () => {
     expect(deps.sendPrompt).not.toHaveBeenCalled()
     expect(deps.onTurnEnd).not.toHaveBeenCalled()
     expect(deps.transitionAnalysis).toHaveBeenCalledOnce()
-  })
-
-  it('queues when session is in flight and sends after notifyTurnEnd', async () => {
-    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
-    const deps = createDeps({
-      isSessionInFlight: vi.fn().mockReturnValue(true),
-      onTurnEnd: vi.fn((_sessionId, cb) => {
-        turnEndCallback = cb
-      })
-    })
-    const trigger = createJobAnalysisTrigger(deps)
-
-    trigger.onJobDone(makeJob())
-    await flushMicrotasks()
-
-    // Not sent yet — queued
-    expect(deps.sendPrompt).not.toHaveBeenCalled()
-    expect(deps.onTurnEnd).toHaveBeenCalledWith('sess-1', expect.any(Function))
-
-    // Turn ends
-    ;(deps.isSessionInFlight as ReturnType<typeof vi.fn>).mockReturnValue(false)
-    turnEndCallback?.('succeeded')
-    await flushMicrotasks()
-
-    expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not re-queue when a second done broadcast arrives for a queued job', async () => {
-    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
-    const deps = createDeps({
-      isSessionInFlight: vi.fn().mockReturnValue(true),
-      onTurnEnd: vi.fn((_sessionId, cb) => {
-        turnEndCallback = cb
-      })
-    })
-    const trigger = createJobAnalysisTrigger(deps)
-
-    trigger.onJobDone(makeJob())
-    trigger.onJobDone(makeJob()) // same job again
-    await flushMicrotasks()
-
-    ;(deps.isSessionInFlight as ReturnType<typeof vi.fn>).mockReturnValue(false)
-    turnEndCallback?.('succeeded')
-    await flushMicrotasks()
-
-    expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
-    expect(deps.onTurnEnd).toHaveBeenCalledTimes(2)
-  })
-
-  it('logs queued and in-flight job ids for observability', async () => {
-    const deps = createDeps({
-      isSessionInFlight: vi.fn().mockReturnValue(true),
-      onTurnEnd: vi.fn()
-    })
-    const trigger = createJobAnalysisTrigger(deps)
-
-    trigger.onJobDone(makeJob())
-    await flushMicrotasks()
-
-    expect(deps.log).toHaveBeenCalled()
   })
 })
 

@@ -13,6 +13,7 @@ import { ComputeHostUnavailableError } from '../../shared/compute'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
+import { projectJobStatus } from './compute-job-status'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
 import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
@@ -386,21 +387,12 @@ export class ComputeJobWorkflowOwner {
 
   async getJobStatus(jobId: string, scope?: ComputeJobReadScope): Promise<JobStatusResult> {
     const job = await this.getJob(jobId, scope)
-    return {
-      job_id: job.job_id,
-      status: job.status,
-      cancellation_status: job.cancellation_status,
-      exit_code: job.exit_code,
-      stdout_tail: job.stdout_tail,
-      stderr_tail: job.stderr_tail,
-      remote_workdir: job.remote_workdir,
-      harvest_error: job.harvest_error
-    }
+    return projectJobStatus(job, job.cancellation_status)
   }
 
   async getJob(jobId: string, scope?: ComputeJobReadScope): Promise<ComputeJob> {
     if (!this.jobRepository) {
-      throw new Error('ComputeJobRepository is required to call getJobStatus.')
+      throw new Error('ComputeJobRepository is required to read Compute Jobs.')
     }
     const job = await this.jobRepository.get(jobId)
     if (!job) {
@@ -419,22 +411,7 @@ export class ComputeJobWorkflowOwner {
   }
 
   async getJobResult(jobId: string, scope?: ComputeJobReadScope): Promise<JobResult> {
-    if (!this.jobRepository) {
-      throw new Error('ComputeJobRepository is required to call getJobResult.')
-    }
-    const job = await this.jobRepository.get(jobId)
-    if (!job) {
-      if (scope) throw new ComputeHostUnavailableError()
-      throw new Error(`No compute job found with id "${jobId}".`)
-    }
-    if (
-      scope &&
-      (job.project_id !== scope.projectId ||
-        job.session_id !== scope.sessionId ||
-        job.provider_id !== scope.providerId)
-    ) {
-      throw new ComputeHostUnavailableError()
-    }
+    const job = await this.getJob(jobId, scope)
 
     let leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = []
     if (job.left_on_remote) {

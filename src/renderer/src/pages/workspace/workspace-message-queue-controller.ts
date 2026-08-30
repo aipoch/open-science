@@ -161,18 +161,10 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
       useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
     subscribeSessionChanges: useSessionStore.subscribe
   }
-  fallbackOptionsRef.current = runtimeOptions
   useLayoutEffect(() => {
+    fallbackOptionsRef.current = runtimeOptions
     owner.updateRuntime(runtimeOptions)
-  }, [
-    loadSpecialists,
-    openSideChatParentSessionIds,
-    owner,
-    projects,
-    runtime,
-    specialistCatalogLoaded,
-    specialistItems
-  ])
+  })
   useLayoutEffect(() => {
     const drain = (): void => drainQueuedSessions(owner, fallbackOptionsRef)
     owner.setFallbackDrain(drain)

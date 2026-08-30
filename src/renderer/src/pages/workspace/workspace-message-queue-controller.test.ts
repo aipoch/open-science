@@ -1877,6 +1877,52 @@ describe('workspace message queue controller', () => {
     })
   })
 
+  it('holds automatic Compute analysis behind an active turn and admits it once', async () => {
+    let currentSession = session('running')
+    const sendMessage = vi.fn(async () => ({
+      sessionId: 'session-a',
+      messageId: 'compute-message'
+    }))
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    const completion = hook.result.current.lifecycle.enqueueApplication({
+      session: currentSession,
+      text: 'Analyze job-1.',
+      attribution: {
+        kind: 'application',
+        feature: 'compute',
+        purpose: 'job-completion-analysis',
+        deliveryKey: 'compute_done:session-a:job-1',
+        jobIds: ['job-1']
+      }
+    })
+
+    await Promise.resolve()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.hasPendingWork).toBe(true)
+
+    currentSession = session('idle')
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession
+      })
+    )
+
+    await expect(completion).resolves.toEqual({
+      sessionId: 'session-a',
+      messageId: 'compute-message'
+    })
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
   it('rejects an automatic delivery when its bound Message Branch changes before dispatch', async () => {
     let currentSession = session('running')
     const sendMessage = vi.fn(async () => ({

@@ -76,36 +76,22 @@ describe('Compute Job operation migration', () => {
       'updatedAt'
     ])
 
-    await expect(
-      client.$executeRawUnsafe(
-        `UPDATE "ComputeJobOperation" SET "kind" = 'invalid' WHERE "jobId" = 'historical-job'`
-      )
-    ).rejects.toThrow(/constraint/i)
-    await expect(
-      client.$executeRawUnsafe(
-        `UPDATE "ComputeJobOperation" SET "phase" = 'settled' WHERE "jobId" = 'historical-job'`
-      )
-    ).rejects.toThrow(/constraint/i)
-    await expect(
-      client.$executeRawUnsafe(
-        `UPDATE "ComputeJobOperation" SET "attemptCount" = -1 WHERE "jobId" = 'historical-job'`
-      )
-    ).rejects.toThrow(/constraint/i)
-    await expect(
-      client.$executeRawUnsafe(
-        `UPDATE "ComputeJobOperation" SET "revision" = 0 WHERE "jobId" = 'historical-job'`
-      )
-    ).rejects.toThrow(/constraint/i)
-    await expect(
-      client.$executeRawUnsafe(
-        `UPDATE "ComputeJobOperation" SET "outcome" = 'fulfilled' WHERE "jobId" = 'historical-job'`
-      )
-    ).rejects.toThrow(/constraint/i)
-    await expect(
-      client.$executeRawUnsafe(
-        `UPDATE "ComputeJobOperation" SET "claimToken" = 'unpaired' WHERE "jobId" = 'historical-job'`
-      )
-    ).rejects.toThrow(/constraint/i)
+    const rejectedUpdates = [
+      { label: 'invalid kind', update: `"kind" = 'invalid'` },
+      { label: 'settled phase without outcome', update: `"phase" = 'settled'` },
+      { label: 'negative attempt count', update: `"attemptCount" = -1` },
+      { label: 'non-positive revision', update: `"revision" = 0` },
+      { label: 'active outcome', update: `"outcome" = 'fulfilled'` },
+      { label: 'unpaired claim token', update: `"claimToken" = 'unpaired'` }
+    ]
+    for (const { label, update } of rejectedUpdates) {
+      await expect(
+        client.$executeRawUnsafe(
+          `UPDATE "ComputeJobOperation" SET ${update} WHERE "jobId" = 'historical-job'`
+        ),
+        label
+      ).rejects.toThrow(/constraint/i)
+    }
     await expect(
       client.$executeRawUnsafe(
         `UPDATE "ComputeJobOperation" SET "phase" = 'settled', "outcome" = 'fulfilled', "settledAt" = CURRENT_TIMESTAMP, "eligibleAt" = CURRENT_TIMESTAMP WHERE "jobId" = 'historical-job'`

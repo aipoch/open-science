@@ -560,6 +560,63 @@ describe('message attribution persistence', () => {
     ).toEqual(attribution)
   })
 
+  it('preserves a non-authoritative Compute completion presentation through Session JSON', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'compute-presentation-message-1',
+          role: 'user',
+          content: 'Analyze completed remote jobs.',
+          status: 'complete',
+          eventIds: [],
+          presentation: { kind: 'compute-job-completion' },
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]?.presentation).toEqual({ kind: 'compute-job-completion' })
+    expect(
+      session &&
+        materializeSessionConversationGraph(session).conversationGraph?.messages[0]?.presentation
+    ).toEqual({ kind: 'compute-job-completion' })
+  })
+
+  it.each([
+    [
+      'an extended marker',
+      'user',
+      'Analyze completed remote jobs.',
+      { kind: 'compute-job-completion', rendererClaim: true }
+    ],
+    [
+      'a marker from an Agent message',
+      'agent',
+      'Analysis result.',
+      { kind: 'compute-job-completion' }
+    ]
+  ] as const)('drops %s', (_label, role, content, presentation) => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'compute-presentation-message-1',
+          role,
+          content,
+          status: 'complete',
+          eventIds: [],
+          presentation,
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]?.presentation).toBeUndefined()
+  })
+
   it('rejects malformed or extended Compute delivery attribution', () => {
     expect(
       sanitizeMessageAttribution({

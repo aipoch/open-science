@@ -1,12 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ComputeHostUnavailableError } from '../../shared/compute'
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { createProjectDbClient } from '../projects/prisma-client'
 import type { ComputeConnectionBrokerAcquirer, ComputeConnectionLease } from './connection-broker'
+import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import {
   ComputeJobCancellationOwner,
   ComputeJobCancellationReaper
@@ -15,14 +12,11 @@ import { ComputeJobOperationRepository } from './compute-job-operation-repositor
 import { OptionalSecureStorageStringProtection, type SecureStorageCipher } from './credential-vault'
 import { ComputeJobRepository } from './job-repository'
 
-let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
 
 afterEach(async () => {
   await disconnect?.()
   disconnect = undefined
-  if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
-  storageRoot = undefined
 })
 
 const scope = {
@@ -69,15 +63,13 @@ type CancellationTestSetup = Readonly<{
 
 describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
   const setup = async (encrypted = false): Promise<CancellationTestSetup> => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-cancellation-owner-'))
-    const client = createProjectDbClient(storageRoot)
-    disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
-    const jobs = new ComputeJobRepository(
-      () => Promise.resolve(client),
-      encrypted ? encryptedFieldProtection() : undefined
-    )
-    const operations = new ComputeJobOperationRepository(() => Promise.resolve(client))
+    const database = await createMigratedComputeTestDatabase('open-science-cancellation-owner-')
+    const { client } = database
+    disconnect = database.dispose
+    const jobs = encrypted
+      ? new ComputeJobRepository(() => Promise.resolve(client), encryptedFieldProtection())
+      : database.repositories.jobs
+    const operations = database.repositories.operations
     const createJob = async (
       status: 'queued' | 'submitted' | 'running' | 'success',
       handle = status === 'running' ? remoteHandle : undefined

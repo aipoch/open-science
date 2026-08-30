@@ -1455,22 +1455,20 @@ describe('JobPoller', () => {
       findNonTerminal: vi.fn(() => Promise.resolve([current])),
       updateIfStatus
     } as unknown as ComputeJobRepository
-    const run = vi
-      .fn()
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        stdout: [
-          'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
-          'workdir:1',
-          'exit_code:0',
-          'pid:1234',
-          'cwd_match:0',
-          `started_at:${RECOVERED_STARTED_AT_SECONDS}`
-        ].join('\n'),
-        stderr: '',
-        truncated: false,
-        timedOut: false
-      })
+    const run = vi.fn().mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: [
+        'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+        'workdir:1',
+        'exit_code:0',
+        'pid:1234',
+        'cwd_match:0',
+        `started_at:${RECOVERED_STARTED_AT_SECONDS}`
+      ].join('\n'),
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
     const harvestFn = vi.fn(() => Promise.resolve())
 
     await new JobPoller({

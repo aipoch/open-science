@@ -1,14 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
 import { expect, it, vi } from 'vitest'
 
 import type { ComputeJob } from '../../shared/compute'
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ComputeService } from './compute-service'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { ComputeJobRepository } from './job-repository'
+import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { JobPoller } from './job-poller'
 import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
@@ -25,11 +20,9 @@ const remoteHandle = (jobId: string): string =>
   })
 
 it('isolates incomplete poll protocol while another Compute Job completes', async () => {
-  const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-poll-integrity-'))
-  const client = createProjectDbClient(storageRoot)
+  const database = await createMigratedComputeTestDatabase('open-science-poll-integrity-')
   try {
-    await migrateApplicationDatabase(client)
-    const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
+    const jobRepository = database.repositories.jobs
     for (const jobId of ['damaged-job', 'healthy-job']) {
       await jobRepository.create({
         allowUnencryptedPersistence: true,
@@ -106,17 +99,14 @@ it('isolates incomplete poll protocol while another Compute Job completes', asyn
       ])
     )
   } finally {
-    await client.$disconnect()
-    await rm(storageRoot, { recursive: true, force: true })
+    await database.dispose()
   }
 })
 
 it('recovers malformed handles from durable workdirs without blocking a healthy sibling', async () => {
-  const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-handle-recovery-'))
-  const client = createProjectDbClient(storageRoot)
+  const database = await createMigratedComputeTestDatabase('open-science-handle-recovery-')
   try {
-    await migrateApplicationDatabase(client)
-    const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
+    const jobRepository = database.repositories.jobs
     for (const jobId of ['malformed-json', 'invalid-shape', 'healthy-job']) {
       await jobRepository.create({
         allowUnencryptedPersistence: true,
@@ -209,17 +199,14 @@ it('recovers malformed handles from durable workdirs without blocking a healthy 
       stdout_tail: 'healthy output'
     })
   } finally {
-    await client.$disconnect()
-    await rm(storageRoot, { recursive: true, force: true })
+    await database.dispose()
   }
 })
 
 it('safely converges a persistently ambiguous malformed handle across poller restart', async () => {
-  const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-handle-convergence-'))
-  const client = createProjectDbClient(storageRoot)
+  const database = await createMigratedComputeTestDatabase('open-science-handle-convergence-')
   try {
-    await migrateApplicationDatabase(client)
-    const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
+    const jobRepository = database.repositories.jobs
     for (const jobId of ['ambiguous-handle', 'healthy-sibling']) {
       await jobRepository.create({
         allowUnencryptedPersistence: true,
@@ -302,7 +289,6 @@ it('safely converges a persistently ambiguous malformed handle across poller res
       expect.arrayContaining([expect.stringMatching(/kill\s+-(?:TERM|KILL)/)])
     )
   } finally {
-    await client.$disconnect()
-    await rm(storageRoot, { recursive: true, force: true })
+    await database.dispose()
   }
 })

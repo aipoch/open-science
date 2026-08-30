@@ -57,9 +57,7 @@ export class ComputeJobLifecycle {
     startedAt = new Date()
   ): Promise<ComputeJobTransitionResult> {
     return this.apply(jobId, [observedStatus], {
-      ...(observedStatus === 'submitted'
-        ? { status: 'running' as const, startedAt }
-        : {}),
+      ...(observedStatus === 'submitted' ? { status: 'running' as const, startedAt } : {}),
       remoteHandle,
       lastPollError: null,
       retryAfterUserAction: false

@@ -12,6 +12,7 @@ import {
   type ComputeJobOperationRecord,
   type ComputeJobOperationScope
 } from './compute-job-operation-repository'
+import { projectJobStatus } from './compute-job-status'
 import type { ComputeJobRepository } from './job-repository'
 import { parseRemoteJobHandle } from './remote-job-handle'
 import {
@@ -28,24 +29,14 @@ type ReaperOptions = Readonly<{
   onConfirmed?: (jobId: string) => void | Promise<void>
 }>
 
-const toStatus = (
-  job: ComputeJob,
+const cancellationStatus = (
   cancellation: ComputeJobOperationRecord | null
-): JobStatusResult => ({
-  job_id: job.job_id,
-  status: job.status,
-  cancellation_status:
-    cancellation?.phase === 'active'
-      ? 'cancelling'
-      : cancellation?.outcome === 'fulfilled'
-        ? 'cancelled'
-        : undefined,
-  exit_code: job.exit_code,
-  stdout_tail: job.stdout_tail,
-  stderr_tail: job.stderr_tail,
-  remote_workdir: job.remote_workdir,
-  harvest_error: job.harvest_error
-})
+): JobStatusResult['cancellation_status'] =>
+  cancellation?.phase === 'active'
+    ? 'cancelling'
+    : cancellation?.outcome === 'fulfilled'
+      ? 'cancelled'
+      : undefined
 
 class ComputeJobCancellationOwner {
   constructor(
@@ -58,12 +49,12 @@ class ComputeJobCancellationOwner {
     const result = await this.operations.request(jobId, 'cancel', scope, this.now())
     if (!result.found) throw new ComputeHostUnavailableError()
     const job = await this.requireOwnedJob(jobId, scope)
-    return toStatus(job, result.record)
+    return projectJobStatus(job, cancellationStatus(result.record))
   }
 
   async status(jobId: string, scope: ComputeJobOperationScope): Promise<JobStatusResult> {
     const job = await this.requireOwnedJob(jobId, scope)
-    return toStatus(job, await this.operations.get(jobId, 'cancel'))
+    return projectJobStatus(job, cancellationStatus(await this.operations.get(jobId, 'cancel')))
   }
 
   private async requireOwnedJob(
@@ -169,7 +160,7 @@ class ComputeJobCancellationReaper {
     if (!job) return
     const handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
     if (!handle) {
-      await this.scheduleRetry(claim, 'Remote process ownership evidence is unavailable.')
+      await this.scheduleRetry(claim)
       return
     }
 
@@ -183,23 +174,20 @@ class ComputeJobCancellationReaper {
         return
       }
       if (ownership !== 'owned') {
-        await this.scheduleRetry(claim, 'Remote process ownership could not be confirmed.')
+        await this.scheduleRetry(claim)
         return
       }
       if (await terminateRemoteJobProcessIfOwned(handle.pid, handle.workdir, connection)) {
         await this.confirm(claim)
         return
       }
-      await this.scheduleRetry(claim, 'Owned remote process termination was not confirmed.')
-    } catch (error) {
-      await this.scheduleRetry(
-        claim,
-        error instanceof Error ? error.message : 'Remote cancellation failed.'
-      )
+      await this.scheduleRetry(claim)
+    } catch {
+      await this.scheduleRetry(claim)
     }
   }
 
-  private async scheduleRetry(claim: ClaimedComputeJobOperation, _error: string): Promise<void> {
+  private async scheduleRetry(claim: ClaimedComputeJobOperation): Promise<void> {
     const now = this.now()
     await this.operations.retry(
       claim,

@@ -469,11 +469,18 @@ export type PersistedMessageAgentTarget = {
   reasoningEffort: ReasoningEffort
 }
 
+// Non-authoritative UI identity retained when renderer-originated Compute attribution is stripped
+// at the main-process trust boundary. Delivery recovery and authorization must never consume it.
+export type PersistedMessagePresentation = Readonly<{
+  kind: 'compute-job-completion'
+}>
+
 export type PersistedChatMessage = {
   id: string
   role: PersistedMessageRole
   content: string
   attribution?: MessageAttribution
+  presentation?: PersistedMessagePresentation
   agentTarget?: PersistedMessageAgentTarget
   status: PersistedMessageStatus
   streamId?: string
@@ -533,8 +540,9 @@ export const isHiddenControlMessage = (
 ): boolean => message.turnIntent === 'save-as-skill'
 
 export const isHumanUserMessage = (
-  message: Pick<PersistedChatMessage, 'role' | 'attribution' | 'relayedFrom'>
-): boolean => message.role === 'user' && !message.attribution && !message.relayedFrom
+  message: Pick<PersistedChatMessage, 'role' | 'attribution' | 'presentation' | 'relayedFrom'>
+): boolean =>
+  message.role === 'user' && !message.attribution && !message.presentation && !message.relayedFrom
 
 export type PersistedActiveRun = {
   promptMessageId: string
@@ -966,6 +974,23 @@ export const sanitizeMessageAttribution = (value: unknown): MessageAttribution |
   }
   return undefined
 }
+
+export const sanitizeMessagePresentation = (
+  value: unknown
+): PersistedMessagePresentation | undefined => {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((key) => key !== 'kind') ||
+    value.kind !== 'compute-job-completion'
+  ) {
+    return undefined
+  }
+  return { kind: value.kind }
+}
+
+export const isComputeJobCompletionPresentation = (
+  message: Pick<PersistedChatMessage, 'presentation'>
+): boolean => message.presentation?.kind === 'compute-job-completion'
 
 // Keeps only fully-valid send-target snapshots; a partial or unknown target would mark false
 // config changes, so the whole field drops instead of degrading to a torn snapshot.
@@ -3485,6 +3510,8 @@ const sanitizeMessage = (
     updatedAt: asNumber(message.updatedAt) ?? 0
   }
   const attribution = sanitizeMessageAttribution(message.attribution)
+  const presentation =
+    role === 'user' ? sanitizeMessagePresentation(message.presentation) : undefined
   const streamId = asString(message.streamId)
   const responseToMessageId = asString(message.responseToMessageId)
   const artifactIds = asStringArray(message.artifactIds)
@@ -3559,6 +3586,7 @@ const sanitizeMessage = (
 
   if (streamId) sanitized.streamId = streamId
   if (attribution) sanitized.attribution = attribution
+  if (presentation) sanitized.presentation = presentation
   if (responseToMessageId) sanitized.responseToMessageId = responseToMessageId
   if (artifactIds.length > 0) sanitized.artifactIds = artifactIds
   if (delegatedTask) sanitized.delegatedTask = delegatedTask

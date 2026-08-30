@@ -4,8 +4,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { JobSummary } from '../../../shared/compute'
 import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
+import { makeJob as makeComputeJob } from '@/test-utils/compute-job'
 import { useSettingsStore } from '@/stores/settings-store'
 
 // Mock radix Dialog to avoid portal / overlay complexity in jsdom
@@ -91,27 +91,24 @@ vi.mock('@/components/ui/button', () => ({
   )
 }))
 
-const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
-  job_id: 'job-abc',
-  provider_id: 'ssh:biowulf',
-  display_name: 'biowulf',
-  shape: 'direct_ssh',
-  session_id: 'sess-1',
-  project_id: 'project-1',
-  status: 'running',
-  intent: 'Run EDA analysis',
-  created_at: Date.now(),
-  started_at: Date.now(),
-  finished_at: undefined,
-  exit_code: undefined,
-  error_code: undefined,
-  remote_workdir: '/home/user/.openscience/jobs/job-abc',
-  stdout_tail: 'stdout output line 1\nline 2',
-  stderr_tail: 'stderr output line 1',
-  notified_at: undefined,
-  notification_consumed_at: undefined,
-  ...overrides
-})
+const makeJob = (
+  overrides: Parameters<typeof makeComputeJob>[0] = {}
+): ReturnType<typeof makeComputeJob> => {
+  const now = Date.now()
+  return makeComputeJob({
+    job_id: 'job-abc',
+    session_id: 'sess-1',
+    project_id: 'project-1',
+    status: 'running',
+    intent: 'Run EDA analysis',
+    created_at: now,
+    started_at: now,
+    remote_workdir: '/home/user/.openscience/jobs/job-abc',
+    stdout_tail: 'stdout output line 1\nline 2',
+    stderr_tail: 'stderr output line 1',
+    ...overrides
+  })
+}
 
 let container: HTMLDivElement
 let root: Root

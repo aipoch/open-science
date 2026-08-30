@@ -1,4 +1,5 @@
 import type { ComputeJobIntegrityIssue, ComputeJobStatus } from '../../shared/compute'
+import { parseRemoteJobHandle } from './remote-job-handle'
 
 const KNOWN_STATUSES = new Set<ComputeJobStatus>([
   'queued',
@@ -61,27 +62,6 @@ const issue = (
   ...value
 })
 
-const remoteHandleIsComplete = (projection: IntegritySensitiveProjection): boolean => {
-  if (!projection.remoteHandle) return false
-  try {
-    const handle = JSON.parse(projection.remoteHandle) as Record<string, unknown> | null
-    const workdir = projection.remoteWorkdir
-    return Boolean(
-      handle &&
-      Number.isSafeInteger(handle.pid) &&
-      Number(handle.pid) > 1 &&
-      typeof workdir === 'string' &&
-      workdir.length > 0 &&
-      handle.workdir === workdir &&
-      handle.exit_code_path === `${workdir}/exit_code` &&
-      handle.stdout_path === `${workdir}/stdout` &&
-      handle.stderr_path === `${workdir}/stderr`
-    )
-  } catch {
-    return false
-  }
-}
-
 // Classifies raw persisted values before they are projected through the closed runtime status type.
 // This function is deliberately detect-only: submitted/running handle recovery remains owned by the
 // poller, which repairs only after the remote workdir + job.pid + cwd witness proves ownership.
@@ -116,7 +96,10 @@ export const classifyComputeJobIntegrity = (
     knownStatus &&
     (row.status === 'submitted' || row.status === 'running') &&
     !sensitiveProjection.unavailable &&
-    !remoteHandleIsComplete(sensitiveProjection)
+    !parseRemoteJobHandle(
+      sensitiveProjection.remoteHandle ?? undefined,
+      sensitiveProjection.remoteWorkdir ?? undefined
+    )
   ) {
     issues.push(issue(row, { code: 'malformed-remote-handle', disposition: 'recovery-required' }))
   }

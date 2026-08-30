@@ -209,6 +209,19 @@ describe('ComputeJobDeletionOwner', () => {
     expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledOnce()
   })
 
+  it('cleans up a submitted Job without a remote handle or handle-derived PID kill', async () => {
+    const harness = createHarness([job({ status: 'submitted', remote_handle: undefined })])
+
+    await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+    await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+
+    expect(harness.runner.run).toHaveBeenCalledOnce()
+    const cleanup = String(harness.runner.run.mock.calls[0]?.[1])
+    expect(cleanup).not.toContain('kill_job_pid 123')
+    expect(cleanup).toContain('kill_job_pid "$(cat ')
+    expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledOnce()
+  })
+
   it('removes terminal Job directories during Project deletion', async () => {
     const harness = createHarness([
       job({ status: 'success', remote_handle: undefined, notified_at: 10 })
@@ -553,6 +566,19 @@ describe('ComputeJobDeletionOwner', () => {
 
   it('rejects a malformed active remote handle', async () => {
     const harness = createHarness([job({ remote_handle: '{bad json' })])
+    await expect(harness.owner.prepareSessionJobDeletion('project-1', 'session-1')).rejects.toThrow(
+      /invalid remote handle/i
+    )
+    expect(harness.runner.run).not.toHaveBeenCalled()
+    expect(harness.lifecycle.deleteOwnerRows).not.toHaveBeenCalled()
+  })
+
+  it('rejects an active handle whose derived paths escape the durable workdir', async () => {
+    const unsafe = job()
+    const handle = JSON.parse(unsafe.remote_handle ?? '{}') as Record<string, unknown>
+    handle.stderr_path = '/tmp/stderr'
+    const harness = createHarness([job({ remote_handle: JSON.stringify(handle) })])
+
     await expect(harness.owner.prepareSessionJobDeletion('project-1', 'session-1')).rejects.toThrow(
       /invalid remote handle/i
     )

@@ -593,6 +593,25 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
 })
 
 describe('ComputeJobWorkflowOwner.getJobStatus', () => {
+  it.each(['getJobStatus', 'getJobResult'] as const)(
+    '%s reports the shared missing-repository requirement accurately',
+    async (method) => {
+      const runner = makeFakeRunner({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      const { repo } = makeRepo()
+      const service = makeOwner(runner, repo)
+
+      await expect(service[method]('job-42')).rejects.toThrow(
+        'ComputeJobRepository is required to read Compute Jobs.'
+      )
+    }
+  )
+
   it('returns status shape from DB without SSH', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,

@@ -1,5 +1,7 @@
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import {
+  isComputeJobCompletionAttribution,
+  isComputeJobCompletionPresentation,
   isReviewerCorrectionAttribution,
   type MessageAttribution,
   type PersistedChatMessage,
@@ -19,23 +21,40 @@ const sessionAuthorityKey = (projectId: string, sessionId: string): string =>
 const evidenceFromMessage = (
   message: PersistedChatMessage
 ): TrustedAttributionEvidence | undefined =>
-  message.role === 'user' && isReviewerCorrectionAttribution(message.attribution)
+  message.role === 'user' &&
+  (isReviewerCorrectionAttribution(message.attribution) ||
+    isComputeJobCompletionAttribution(message.attribution))
     ? { attribution: message.attribution, content: message.content }
+    : undefined
+
+const presentationEvidenceFromMessage = (message: PersistedChatMessage): string | undefined =>
+  message.role === 'user' && isComputeJobCompletionPresentation(message)
+    ? message.content
     : undefined
 
 const projectMessage = <Message extends PersistedChatMessage>(
   message: Message,
-  evidence: ReadonlyMap<string, TrustedAttributionEvidence>
+  evidence: ReadonlyMap<string, TrustedAttributionEvidence>,
+  presentationEvidence: ReadonlyMap<string, string>
 ): Message => {
-  const messageWithoutAttribution = Object.fromEntries(
-    Object.entries(message).filter(([key]) => key !== 'attribution')
+  const messageWithoutApplicationIdentity = Object.fromEntries(
+    Object.entries(message).filter(([key]) => key !== 'attribution' && key !== 'presentation')
   ) as Message
   const trusted = evidence.get(message.id)
-  return (
-    trusted && message.role === 'user' && message.content === trusted.content
-      ? { ...messageWithoutAttribution, attribution: trusted.attribution }
-      : messageWithoutAttribution
-  ) as Message
+  if (trusted && message.role === 'user' && message.content === trusted.content) {
+    return { ...messageWithoutApplicationIdentity, attribution: trusted.attribution } as Message
+  }
+  const hasDurablePresentation = presentationEvidence.get(message.id) === message.content
+  if (
+    message.role === 'user' &&
+    (isComputeJobCompletionAttribution(message.attribution) || hasDurablePresentation)
+  ) {
+    return {
+      ...messageWithoutApplicationIdentity,
+      presentation: { kind: 'compute-job-completion' }
+    } as Message
+  }
+  return messageWithoutApplicationIdentity
 }
 
 // Renderer Session snapshots are projections, not authority for app-authored message identity.
@@ -51,7 +70,8 @@ export class MainMessageAttributionAuthority {
       !event.sessionId ||
       !event.messageId ||
       typeof event.text !== 'string' ||
-      !isReviewerCorrectionAttribution(event.attribution)
+      (!isReviewerCorrectionAttribution(event.attribution) &&
+        !isComputeJobCompletionAttribution(event.attribution))
     ) {
       return
     }
@@ -79,9 +99,14 @@ export class MainMessageAttributionAuthority {
     durable: PersistedChatSession | undefined
   ): PersistedChatSession {
     const evidence = new Map<string, TrustedAttributionEvidence>()
+    const presentationEvidence = new Map<string, string>()
     for (const message of durable?.messages ?? []) {
       const trusted = evidenceFromMessage(message)
       if (trusted) evidence.set(message.id, trusted)
+      const presentationContent = presentationEvidenceFromMessage(message)
+      if (presentationContent !== undefined) {
+        presentationEvidence.set(message.id, presentationContent)
+      }
     }
     for (const [messageId, trusted] of this.runtimeEvidence.get(
       sessionAuthorityKey(submitted.projectId, submitted.id)
@@ -91,13 +116,15 @@ export class MainMessageAttributionAuthority {
 
     return {
       ...submitted,
-      messages: submitted.messages.map((message) => projectMessage(message, evidence)),
+      messages: submitted.messages.map((message) =>
+        projectMessage(message, evidence, presentationEvidence)
+      ),
       ...(submitted.conversationGraph
         ? {
             conversationGraph: {
               ...submitted.conversationGraph,
               messages: submitted.conversationGraph.messages.map((message) =>
-                projectMessage(message, evidence)
+                projectMessage(message, evidence, presentationEvidence)
               )
             }
           }
