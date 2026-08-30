@@ -1096,7 +1096,6 @@
     "Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.": "Les niveaux supérieurs réfléchissent plus longtemps, tandis que les niveaux inférieurs réagissent plus rapidement. Les choix suivent le modèle sélectionné et préservent la force relative lorsque les modèles changent ; certains frameworks d'agents peuvent se rapprocher de niveaux non pris en charge. S'applique aux demandes ultérieures.",
     "Home": "Accueil",
     "Host": "Hôte",
-    "Host unreachable": "Hôte inaccessible",
     "Hover": "Survolez",
     "How Open Science, ACP agents, notebook runtimes, and installers reach the internet.": "Comment les agents Open Science, les agents ACP, les environnements d'exécution Notebook et les installateurs accèdent à Internet.",
     "How do jobs run here — sbatch, qsub, or just bash? Is it OK to pip/conda install, and where should new envs go? Any partition, account, or module to use?": "Comment les tâches s'exécutent-elles ici : sbatch, qsub ou simplement bash ? Est-il acceptable d'installer pip/conda et où doivent aller les nouveaux environnements ? Une partition, un compte ou un module à utiliser ?",

@@ -1092,7 +1092,6 @@
     "Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.": "Высокие уровни думают дольше, а низкие — быстрее. Варианты соответствуют выбранной модели и сохраняют относительную силу при изменении моделей; некоторые фреймворки агентов могут приближать не поддерживаемые уровни. Применяется к последующим запросам.",
     "Home": "Главная",
     "Host": "Хост",
-    "Host unreachable": "Хост недоступен",
     "Hover": "При наведении",
     "How Open Science, ACP agents, notebook runtimes, and installers reach the internet.": "Как Open Science, агенты ACP, среды выполнения Notebook и установщики подключаются к интернету.",
     "How to fix": "Как исправить",

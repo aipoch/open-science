@@ -1117,7 +1117,6 @@
     "Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.": "强度越高思考越久，越低响应越快。该选择随所选模型变化，并在换模型时保持相对强度；部分智能体框架可能会用近似档位替代不支持的强度。对后续请求生效。",
     "Home": "主目录",
     "Host": "主机",
-    "Host unreachable": "主机不可达",
     "Hover": "悬停",
     "How Open Science, ACP agents, notebook runtimes, and installers reach the internet.": "Open Science、ACP 智能体、Notebook 运行时和安装程序如何连接互联网。",
     "How to fix": "如何修复",
