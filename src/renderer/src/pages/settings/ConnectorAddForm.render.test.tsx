@@ -1052,7 +1052,11 @@ describe('ConnectorAddForm (edit)', () => {
 
   it('clears OAuth state when switching a remote server to static headers', async () => {
     const updateCustomServer = vi.fn().mockResolvedValue(undefined)
-    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      encryptionAvailable: true,
+      updateCustomServer
+    })
     act(() => {
       root.render(
         <ConnectorAddForm

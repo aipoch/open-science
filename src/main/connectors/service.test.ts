@@ -769,6 +769,7 @@ describe('ConnectorService', () => {
         {
           id: 'srv-1',
           name: 'example-oauth-e2e',
+          configurationFingerprint: expect.any(String),
           transport: 'stdio',
           command: 'npx',
           args: ['-y', '@example/server'],
@@ -1144,6 +1145,7 @@ describe('ConnectorService', () => {
         {
           id: 'srv-remote',
           name: 'remoteserver',
+          configurationFingerprint: expect.any(String),
           transport: 'streamable_http',
           command: '',
           args: undefined,
@@ -1264,6 +1266,13 @@ describe('ConnectorService', () => {
 
       expect(requestApproval).toHaveBeenCalledWith({
         connector: 'My server',
+        approvalTarget: {
+          connectorId: 'srv-1',
+          connectorName: 'myserver',
+          displayName: 'My server',
+          transport: 'stdio',
+          target: 'npx'
+        },
         method: 'do_thing',
         args: { x: 1 },
         sessionId: 'session-99',

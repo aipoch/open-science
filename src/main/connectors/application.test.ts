@@ -164,12 +164,9 @@ describe('Connector application composition', () => {
     await module.capability.runtimeSettings.refresh()
     const args = { query: 'x'.repeat(400) }
 
-    await module.capability.connectorService.call(
-      'stable-server',
-      'lookup',
-      args,
-      { origin: 'internal' }
-    )
+    await module.capability.connectorService.call('stable-server', 'lookup', args, {
+      origin: 'internal'
+    })
 
     expect(connectorApprovals.request).toHaveBeenCalledWith(
       expect.objectContaining({
