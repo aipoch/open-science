@@ -74,7 +74,11 @@ export type JobAnalysisTriggerDeps = {
   getTurnState: (
     sessionId: string,
     messageId: string
-  ) => 'missing' | 'running' | Exclude<ComputeJobAnalysisState, 'dispatched'>
+  ) =>
+    | 'missing'
+    | 'running'
+    | Exclude<ComputeJobAnalysisState, 'dispatched'>
+    | Promise<'missing' | 'running' | Exclude<ComputeJobAnalysisState, 'dispatched'>>
   // Registers a one-shot callback for when the given session's turn reaches a terminal state.
   onTurnEnd: (
     sessionId: string,
@@ -214,7 +218,14 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
 
     const messageId = batch.messageId ?? deps.createMessageId()
     if (batch.messageId) {
-      const recoveredState = deps.getTurnState(sessionId, messageId)
+      let recoveredState: Awaited<ReturnType<typeof deps.getTurnState>>
+      try {
+        recoveredState = await deps.getTurnState(sessionId, messageId)
+      } catch (err) {
+        deps.log('analysis-turn:reconcile-failed', `session=${sessionId} error=${String(err)}`)
+        await settle(key, sessionId, messageId, jobIds, 'failed')
+        return
+      }
       if (recoveredState !== 'missing' && recoveredState !== 'running') {
         await settle(key, sessionId, messageId, jobIds, recoveredState)
         return

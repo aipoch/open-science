@@ -466,6 +466,79 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     ).toBeUndefined()
   })
 
+  it('settles recovered analysis from a lazy-loaded Session before attempting to resend', async () => {
+    const messageId = 'analysis-recovered'
+    const persistedBackground: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Background Session',
+      cwd: '/workspace/project-a',
+      status: 'idle',
+      agentFrameworkId: 'claude-code',
+      messages: [
+        {
+          id: messageId,
+          role: 'user',
+          content: 'Analyze the completed remote job',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1400,
+          updatedAt: 1400
+        },
+        {
+          id: 'analysis-response-1',
+          role: 'agent',
+          responseToMessageId: messageId,
+          content: 'Analysis complete',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1500,
+          updatedAt: 1500
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    loadOne.mockResolvedValueOnce(persistedBackground)
+    jobsPendingNotification.mockResolvedValueOnce([
+      makeCompletedJob({
+        analysis_state: 'dispatched',
+        analysis_message_id: messageId,
+        analysis_updated_at: 1400
+      })
+    ])
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-a',
+          title: 'Background Session',
+          cwd: '',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2,
+          contentLoaded: false
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    await act(async () => {
+      root.render(<Probe enabled />)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-a', sessionId: 'session-1' })
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith({
+      sessionId: 'session-1',
+      jobIds: ['job-1'],
+      messageId,
+      state: 'succeeded'
+    })
+  })
+
   it('does not resend an analysis prompt after restart when completion consumption was interrupted', async () => {
     let durableJob = makeCompletedJob()
     jobsPendingNotification.mockResolvedValueOnce([])

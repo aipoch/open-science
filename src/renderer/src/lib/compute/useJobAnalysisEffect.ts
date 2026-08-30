@@ -18,7 +18,7 @@ import {
   loadPersistedSession
 } from '../session-persistence/session-persistence'
 import { useSessionJobStore } from '../../stores/session-job-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
 import type { ComputeJobAnalysisState } from '../../../../shared/compute'
 
@@ -53,6 +53,21 @@ export const useJobAnalysisEffect = ({
     let isActive = true
     let pendingScanRetry: ReturnType<typeof setTimeout> | undefined
     const turnEndUnsubscribes = new Set<() => void>()
+
+    const loadAnalysisSession = async (sessionId: string): Promise<ChatSession | undefined> => {
+      let session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session || session.contentLoaded !== false) return session
+      const persisted = await loadPersistedSession({
+        projectId: session.projectId,
+        sessionId
+      })
+      if (!isActive || !persisted) return undefined
+      session = hydratePersistedSessionIfPresent(persisted)
+      return session
+    }
+
     const trigger = createJobAnalysisTrigger({
       isSessionInFlight: (sessionId) => {
         const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
@@ -65,19 +80,8 @@ export const useJobAnalysisEffect = ({
       },
       sendPrompt: async (sessionId, text, messageId) => {
         if (!isActive) return undefined
-        let session = useSessionStore
-          .getState()
-          .sessions.find((candidate) => candidate.id === sessionId)
-        if (!session) return undefined
-        if (session.contentLoaded === false) {
-          const persisted = await loadPersistedSession({
-            projectId: session.projectId,
-            sessionId
-          })
-          if (!isActive || !persisted) return undefined
-          session = hydratePersistedSessionIfPresent(persisted)
-          if (!session) return undefined
-        }
+        const session = await loadAnalysisSession(sessionId)
+        if (!isActive || !session) return undefined
         return sendLatestMessage({
           sessionId,
           text,
@@ -97,10 +101,8 @@ export const useJobAnalysisEffect = ({
         const jobStore = useSessionJobStore.getState()
         for (const job of jobs) jobStore.applyUpdate(job)
       },
-      getTurnState: (sessionId, messageId) => {
-        const session = useSessionStore
-          .getState()
-          .sessions.find((candidate) => candidate.id === sessionId)
+      getTurnState: async (sessionId, messageId) => {
+        const session = await loadAnalysisSession(sessionId)
         if (!session) return 'missing'
         const prompt = session.messages.find((message) => message.id === messageId)
         if (!prompt) return 'missing'
