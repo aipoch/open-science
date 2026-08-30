@@ -283,19 +283,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         process.once('SIGTERM', onSignal)
         process.once('SIGINT', onSignal)
       }
-
-      if (process.platform !== 'win32') {
-        // powerMonitor is available only after app ready. Register this continuation before prepare()
-        // awaits the same barrier, so shutdown is covered before database verification/composition.
-        void app.whenReady().then(() => {
-          powerMonitor.on('shutdown', ((event?: { preventDefault?: () => void }) => {
-            // Electron's generated v39 type omits this documented event argument. Keep the bridge
-            // safe if a host also omits it at runtime.
-            event?.preventDefault?.()
-            signalSystemShutdown()
-          }) as () => void)
-        })
-      }
     },
     prepare: async () => {
       // Start local-only Crashpad after the single-instance lock but before any BrowserWindow can
@@ -346,6 +333,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
 
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
+      if (process.platform !== 'win32') {
+        powerMonitor.on('shutdown', ((event?: { preventDefault?: () => void }) => {
+          // Electron's generated v39 type omits this documented event argument. Keep the bridge safe
+          // if a host also omits it at runtime.
+          event?.preventDefault?.()
+          signalSystemShutdown()
+        }) as () => void)
+      }
       startupDiagnostics?.phase('prepare-shell')
       // The bridge is lightweight, but its protocol handler must exist before the first BrowserWindow
       // creates the default session. macOS otherwise treats later managed-preview requests as an
