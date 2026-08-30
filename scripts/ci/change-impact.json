@@ -121,6 +121,7 @@
         "src/main/app-lifecycle.ts",
         "src/main/artifacts/durability.ts",
         "src/main/cli-install/launcher.ts",
+        "src/main/connectors/custom-mcp-bootstrap.ts",
         "src/main/compute/connection-adapters.ts",
         "src/main/compute/credential-vault.ts",
         "src/main/compute/scp-runner.ts",
