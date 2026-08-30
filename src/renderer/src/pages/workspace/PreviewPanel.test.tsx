@@ -329,9 +329,6 @@ describe('PreviewPanel', () => {
     expect(sourceHeaderClose?.className).toContain('hover:text-text-000')
     expect(sourceHeaderExternal?.nextElementSibling).toBe(sourceHeaderClose)
     expect(iframe?.getAttribute('src')).toBe('https://example.com/paper')
-    expect(iframe?.getAttribute('sandbox')).toBe(
-      'allow-same-origin allow-scripts allow-forms allow-popups'
-    )
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
     expect(iframe?.getAttribute('title')).toBe('Source preview: Genome study')
     expect(container.querySelector('[aria-label="Open source in browser"]')).not.toBeNull()
@@ -356,6 +353,19 @@ describe('PreviewPanel', () => {
 
     expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
     expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
+  })
+
+  it('does not grant remote source previews permission to open popup windows', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+
+    await renderPanel()
+
+    const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+    expect(iframe?.getAttribute('sandbox')?.split(/\s+/u)).toEqual([
+      'allow-same-origin',
+      'allow-scripts',
+      'allow-forms'
+    ])
   })
 
   it('closes a source preview from the header action', async () => {

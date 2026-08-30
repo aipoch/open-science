@@ -433,12 +433,24 @@ describe('default upload repository', () => {
     const sender = createIpcEvent()
 
     await begin(sender.event, { transferId: 'transfer-4', name: 'data.csv', size: 10 })
-    sender.emit('did-start-navigation', {}, 'http://localhost/', false, false)
+    sender.emit(
+      'did-start-navigation',
+      { isMainFrame: false, isSameDocument: false },
+      'http://localhost/',
+      false,
+      false
+    )
     expect(repository.abortTransfer).not.toHaveBeenCalled()
 
     beginMigration()
     const drainPromise = waitForDataRootWriters()
-    sender.emit('did-start-navigation', {}, 'http://localhost/', false, true)
+    sender.emit(
+      'did-start-navigation',
+      { isMainFrame: true, isSameDocument: false },
+      'http://localhost/',
+      false,
+      true
+    )
     await drainPromise
     expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'transfer-4' })
   })
@@ -517,10 +529,22 @@ describe('default upload repository', () => {
       })
     )
     await Promise.resolve()
-    sender.emit('did-start-navigation', {}, 'http://localhost/', false, false)
+    sender.emit(
+      'did-start-navigation',
+      { isMainFrame: false, isSameDocument: false },
+      'http://localhost/',
+      false,
+      false
+    )
     expect(repository.abortTransfer).not.toHaveBeenCalled()
 
-    sender.emit('did-start-navigation', {}, 'http://localhost/', false, true)
+    sender.emit(
+      'did-start-navigation',
+      { isMainFrame: true, isSameDocument: false },
+      'http://localhost/',
+      false,
+      true
+    )
     finishStage?.(attachment)
 
     await expect(stagePromise).rejects.toThrow(/renderer is no longer available/i)
