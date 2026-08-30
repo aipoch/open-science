@@ -13,6 +13,7 @@ import {
 } from '../artifacts/mcp-server'
 import { getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { createLogger, diagnosticErrorFields } from '../logger'
+import { LITERATURE_MCP_SERVER_NAME, type LiteratureMcpHandler } from '../literature/mcp-server'
 import {
   NOTEBOOK_MCP_SERVER_NAME,
   createNotebookMcpServerConfig,
@@ -40,6 +41,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'notebook',
   'skill-import',
   'plan',
+  'literature',
   'host-agents',
   'host-skills',
   'host-frames',
@@ -112,6 +114,7 @@ type SessionCapabilityRoutingIds = Readonly<{
   skillImport: string
   plan: string
   sideChat: string
+  literature: string
 }>
 
 export type SessionCapabilityArtifactOptions = {
@@ -170,6 +173,7 @@ type BuildSessionCapabilitiesRequest = {
   sessionCwd: string
   projectId: string
   memoryEnabled?: boolean
+  literatureEnabled: boolean
   onNotebookConnection?: (connection: NotebookRpcConnection) => void
   onSkillImportConnection?: (connection: SkillImportRpcConnection) => void
   onPlanConnection?: (connection: NotebookRpcConnection) => void
@@ -188,8 +192,10 @@ export type ProvisionSessionCapabilitiesRequest = Omit<
   | 'onNotebookConnection'
   | 'onSkillImportConnection'
   | 'onPlanConnection'
+  | 'literatureEnabled'
 > & {
   stableAppSessionId?: string
+  literatureEnabled?: boolean
 }
 
 export type SessionCapabilityOwnershipFacts = Readonly<{
@@ -235,6 +241,10 @@ type SessionCapabilityOwnerOptions = {
       request: SideChatSendMessageRequest
     ) => Promise<SideChatSendMessageResult>
   }>
+  literature?: Readonly<{
+    isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
+    handlerFor: (appSessionId: string, projectId: string) => LiteratureMcpHandler
+  }>
   mcpHttpHost?: AgentMcpHttpHost
 }
 
@@ -275,6 +285,8 @@ export class AcpSessionCapabilityOwner {
   private readonly planCapabilityReleases = new Map<string, () => void>()
   private readonly sideChatRoutingIds = new Map<string, string>()
   private readonly mcpServers = new Map<string, readonly McpServer[]>()
+  private readonly literatureRoutingIds = new Map<string, string>()
+  private readonly literatureEnabledSessionIds = new Set<string>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
   private readonly committedSessionIds = new Set<string>()
   private readonly provisionalRoutingOwners = new Map<string, object>()
@@ -284,6 +296,7 @@ export class AcpSessionCapabilityOwner {
   private skillImportSessionSequence = 0
   private planSessionSequence = 0
   private sideChatSessionSequence = 0
+  private literatureSessionSequence = 0
   private skillImportEnabled = true
 
   constructor(private readonly options: SessionCapabilityOwnerOptions) {}
@@ -310,6 +323,7 @@ export class AcpSessionCapabilityOwner {
         sessionCwd: request.sessionCwd,
         projectId: request.projectId,
         memoryEnabled: request.memoryEnabled,
+        literatureEnabled: request.literatureEnabled === true,
         onNotebookConnection: (connection) => {
           notebookRelease = connection.release
         },
@@ -328,17 +342,23 @@ export class AcpSessionCapabilityOwner {
           routingIds.notebook,
           routingIds.skillImport,
           routingIds.plan,
-          routingIds.sideChat
+          routingIds.sideChat,
+          routingIds.literature
         ],
         usedHttpTransport:
           ownsStableIdentity &&
-          (request.policy.role === 'side-chat' || !request.framework.acceptsStdioMcp),
+          (request.policy.role === 'side-chat' ||
+            !request.framework.acceptsStdioMcp ||
+            Boolean(this.options.literature && this.options.mcpHttpHost)),
         notebookSessionId: routingIds.notebook || undefined,
         notebookRelease,
         skillImportRelease,
         planRelease,
         ownsStableIdentity
       })
+      if (ownsStableIdentity && request.stableAppSessionId) {
+        this.restoreCommittedLiteratureRoute(request.stableAppSessionId, request.projectId)
+      }
       this.finishProvisionalRoutingOwner(routingIds, routingOwner)
       throw error
     }
@@ -401,17 +421,23 @@ export class AcpSessionCapabilityOwner {
               routingIds.notebook,
               routingIds.skillImport,
               routingIds.plan,
-              routingIds.sideChat
+              routingIds.sideChat,
+              routingIds.literature
             ],
             usedHttpTransport:
               ownsRoutingIds &&
-              (request.policy.role === 'side-chat' || !request.framework.acceptsStdioMcp),
+              (request.policy.role === 'side-chat' ||
+                !request.framework.acceptsStdioMcp ||
+                Boolean(this.options.literature && this.options.mcpHttpHost)),
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease,
             skillImportRelease,
             planRelease,
             ownsStableIdentity: ownsRoutingIds
           })
+          if (ownsRoutingIds && request.stableAppSessionId) {
+            this.restoreCommittedLiteratureRoute(request.stableAppSessionId, request.projectId)
+          }
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
           throw new Error('ACP session capability provision was superseded.')
         }
@@ -427,6 +453,18 @@ export class AcpSessionCapabilityOwner {
           })
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
           throw new Error('ACP session capability provision was superseded.')
+        }
+        if (
+          built.descriptor.capabilities.includes('literature') &&
+          routingIds.literature &&
+          routingIds.literature !== appSessionId &&
+          this.options.literature &&
+          this.options.mcpHttpHost
+        ) {
+          this.options.mcpHttpHost.registerLiterature(
+            routingIds.literature,
+            this.options.literature.handlerFor(appSessionId, request.projectId)
+          )
         }
         this.commit({
           appSessionId,
@@ -451,17 +489,23 @@ export class AcpSessionCapabilityOwner {
             routingIds.notebook,
             routingIds.skillImport,
             routingIds.plan,
-            routingIds.sideChat
+            routingIds.sideChat,
+            routingIds.literature
           ],
           usedHttpTransport:
             ownsStableIdentity &&
-            (request.policy.role === 'side-chat' || !request.framework.acceptsStdioMcp),
+            (request.policy.role === 'side-chat' ||
+              !request.framework.acceptsStdioMcp ||
+              Boolean(this.options.literature && this.options.mcpHttpHost)),
           notebookSessionId: routingIds.notebook || undefined,
           notebookRelease,
           skillImportRelease,
           planRelease,
           ownsStableIdentity
         })
+        if (ownsStableIdentity && request.stableAppSessionId) {
+          this.restoreCommittedLiteratureRoute(request.stableAppSessionId, request.projectId)
+        }
         this.finishProvisionalRoutingOwner(routingIds, routingOwner)
       }
     })
@@ -474,7 +518,8 @@ export class AcpSessionCapabilityOwner {
         notebook: this.options.notebook ? stableAppSessionId : '',
         skillImport: this.options.skillImport ? stableAppSessionId : '',
         plan: this.options.plan ? stableAppSessionId : '',
-        sideChat: this.options.sideChat ? stableAppSessionId : ''
+        sideChat: this.options.sideChat ? stableAppSessionId : '',
+        literature: this.options.literature ? stableAppSessionId : ''
       })
     }
 
@@ -484,6 +529,7 @@ export class AcpSessionCapabilityOwner {
     if (this.options.skillImport) this.skillImportSessionSequence += 1
     if (this.options.plan) this.planSessionSequence += 1
     if (this.options.sideChat) this.sideChatSessionSequence += 1
+    if (this.options.literature) this.literatureSessionSequence += 1
 
     return Object.freeze({
       artifact: this.options.artifacts
@@ -498,6 +544,9 @@ export class AcpSessionCapabilityOwner {
       plan: this.options.plan ? `plan-session-${timestamp}-${this.planSessionSequence}` : '',
       sideChat: this.options.sideChat
         ? `side-chat-session-${timestamp}-${this.sideChatSessionSequence}`
+        : '',
+      literature: this.options.literature
+        ? `literature-session-${timestamp}-${this.literatureSessionSequence}`
         : ''
     })
   }
@@ -528,6 +577,16 @@ export class AcpSessionCapabilityOwner {
         safeLogError('Memory capability gate read failed', diagnosticErrorFields(error))
       }
     }
+    const literatureAllowed =
+      policyAllowsSessionCapability(request.policy, 'literature') &&
+      Boolean(this.options.literature) &&
+      Boolean(this.options.mcpHttpHost) &&
+      (request.literatureEnabled ||
+        this.literatureEnabledSessionIds.has(request.routingIds.literature) ||
+        (await this.options.literature?.isEnabled(
+          request.routingIds.literature,
+          request.projectId
+        )))
 
     const servers =
       transport === 'stdio'
@@ -549,6 +608,26 @@ export class AcpSessionCapabilityOwner {
               memoryTools: memoryToolsEnabled
             })
           : []
+    if (
+      literatureAllowed &&
+      this.options.literature &&
+      this.options.mcpHttpHost &&
+      this.canPublishHttpRoute(request)
+    ) {
+      const host = this.options.mcpHttpHost
+      const { token } = await host.ensureStarted()
+      const routingId = request.routingIds.literature
+      host.registerLiterature(
+        routingId,
+        this.options.literature.handlerFor(routingId, request.projectId)
+      )
+      servers.push({
+        type: 'http',
+        name: LITERATURE_MCP_SERVER_NAME,
+        url: host.urlFor('literature', routingId),
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      })
+    }
     const modelFacingServers = servers.map((server) => {
       const name = (server as { name?: unknown }).name
       if (typeof name !== 'string') return server
@@ -567,6 +646,9 @@ export class AcpSessionCapabilityOwner {
       capabilities.push('skill-import')
     }
     if (canonicalMcpServerNames.includes(PLAN_MCP_SERVER_NAME)) capabilities.push('plan')
+    if (canonicalMcpServerNames.includes(LITERATURE_MCP_SERVER_NAME)) {
+      capabilities.push('literature')
+    }
     if (canonicalMcpServerNames.includes(HOST_MESSAGE_MCP_SERVER_NAME)) {
       capabilities.push('host-message')
     }
@@ -622,7 +704,9 @@ export class AcpSessionCapabilityOwner {
       framework: request.framework.id,
       role: request.policy.role,
       transport: descriptor.transport,
-      count: modelFacingServers.length
+      count: modelFacingServers.length,
+      literatureMounted: descriptor.capabilities.includes('literature'),
+      literatureProvisionedWithSessionNew: request.literatureEnabled
     })
 
     return Object.freeze({ mcpServers: modelFacingServers, descriptor })
@@ -660,11 +744,32 @@ export class AcpSessionCapabilityOwner {
     }
     if (routingIds.sideChat) this.sideChatRoutingIds.set(appSessionId, routingIds.sideChat)
     this.mcpServers.set(appSessionId, Object.freeze([...request.mcpServers]))
+    if (routingIds.literature) {
+      this.literatureRoutingIds.set(appSessionId, routingIds.literature)
+    }
     this.descriptors.set(appSessionId, descriptor)
     this.committedSessionIds.add(appSessionId)
     this.commitNotebookRelease(appSessionId, request.notebookRelease)
     this.commitSkillImportRelease(appSessionId, request.skillImportRelease)
     this.commitPlanRelease(appSessionId, request.planRelease)
+  }
+
+  private restoreCommittedLiteratureRoute(appSessionId: string, projectId: string): void {
+    if (!this.descriptors.get(appSessionId)?.capabilities.includes('literature')) return
+    const routingId = this.literatureRoutingIds.get(appSessionId)
+    if (!routingId || !this.options.literature || !this.options.mcpHttpHost) return
+    try {
+      this.options.mcpHttpHost.registerLiterature(
+        routingId,
+        this.options.literature.handlerFor(appSessionId, projectId)
+      )
+    } catch (error) {
+      safeLogError('committed Literature route restoration failed', {
+        ...diagnosticErrorFields(error),
+        sessionId: appSessionId,
+        routingId
+      })
+    }
   }
 
   private revokeProvisional(request: RevokeProvisionalSessionCapabilitiesRequest): void {
@@ -724,7 +829,8 @@ export class AcpSessionCapabilityOwner {
         this.notebookRoutingIds.get(appSessionId),
         this.skillImportRoutingIds.get(appSessionId),
         this.planRoutingIds.get(appSessionId),
-        this.sideChatRoutingIds.get(appSessionId)
+        this.sideChatRoutingIds.get(appSessionId),
+        this.literatureRoutingIds.get(appSessionId)
       ]
       for (const routingId of routingIds) {
         if (!routingId) continue
@@ -746,6 +852,8 @@ export class AcpSessionCapabilityOwner {
     this.planRoutingIds.delete(appSessionId)
     this.sideChatRoutingIds.delete(appSessionId)
     this.mcpServers.delete(appSessionId)
+    this.literatureRoutingIds.delete(appSessionId)
+    this.literatureEnabledSessionIds.delete(appSessionId)
     this.descriptors.delete(appSessionId)
     this.committedSessionIds.delete(appSessionId)
     this.releaseCommittedNotebookCapability(appSessionId)
@@ -763,6 +871,7 @@ export class AcpSessionCapabilityOwner {
       ...this.skillImportRoutingIds.keys(),
       ...this.planRoutingIds.keys(),
       ...this.sideChatRoutingIds.keys(),
+      ...this.literatureRoutingIds.keys(),
       ...this.notebookCapabilityReleases.keys(),
       ...this.skillImportCapabilityReleases.keys(),
       ...this.planCapabilityReleases.keys(),
@@ -781,10 +890,12 @@ export class AcpSessionCapabilityOwner {
     this.skillImportRoutingIds.clear()
     this.planRoutingIds.clear()
     this.sideChatRoutingIds.clear()
+    this.literatureRoutingIds.clear()
     this.notebookCapabilityReleases.clear()
     this.skillImportCapabilityReleases.clear()
     this.planCapabilityReleases.clear()
     this.mcpServers.clear()
+    this.literatureEnabledSessionIds.clear()
     this.descriptors.clear()
     this.committedSessionIds.clear()
     // In-flight provisions retain terminal cleanup ownership across teardown. A same-id successor
@@ -805,6 +916,24 @@ export class AcpSessionCapabilityOwner {
 
   mcpServersFor(appSessionId: string): readonly McpServer[] {
     return this.mcpServers.get(appSessionId) ?? []
+  }
+
+  enableLiterature(appSessionId: string): boolean {
+    if (!this.options.literature || this.literatureEnabledSessionIds.has(appSessionId)) return false
+    this.literatureEnabledSessionIds.add(appSessionId)
+    return true
+  }
+
+  rollbackLiteratureEnable(appSessionId: string): void {
+    if (this.descriptors.get(appSessionId)?.capabilities.includes('literature')) return
+    this.literatureEnabledSessionIds.delete(appSessionId)
+  }
+
+  disableLiterature(appSessionId: string): boolean {
+    const wasEnabled = this.literatureEnabledSessionIds.delete(appSessionId)
+    return (
+      wasEnabled || this.descriptors.get(appSessionId)?.capabilities.includes('literature') === true
+    )
   }
 
   isSkillImportEnabled(): boolean {

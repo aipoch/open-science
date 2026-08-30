@@ -21,7 +21,8 @@ import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
   SESSION_MANIFEST_VERSION,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type SessionPdfContext
 } from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
@@ -35,6 +36,7 @@ import {
   type ChatSession,
   type ToolActivity
 } from './session-store'
+import { mergePersistedRuntimeIdentityProjection } from './session-store-persistence-merge'
 
 const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   id: 'artifact-session-1:run-1:result.txt',
@@ -61,6 +63,25 @@ const createUploadAttachment = (
   mimeType: 'image/png',
   size: 1234,
   ...overrides
+})
+
+const createPdfContext = (): SessionPdfContext => ({
+  version: 1,
+  bindings: [
+    {
+      version: 1,
+      bindingId: 'binding-1',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
+      sourceVersionId: 'version-1',
+      sourceSessionId: 'source-session-1',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 1
+    }
+  ]
 })
 
 const createPlanProjection = (artifactVersionId: string): ActivePlanProjection => ({
@@ -99,6 +120,27 @@ describe('session store', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     useSessionStore.setState(createInitialSessionState())
+  })
+
+  it('keeps a newer runtime revision authoritative when Reading context was removed', () => {
+    const merged = mergePersistedRuntimeIdentityProjection(
+      {
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          pdfContext: createPdfContext()
+        }
+      },
+      {
+        runtimeContext: {
+          version: 1,
+          revision: 2
+        }
+      },
+      { incomingOwnsFrameConflicts: true }
+    )
+
+    expect(merged.runtimeContext).toEqual({ version: 1, revision: 2 })
   })
 
   it('starts empty so New can stay outside store state', () => {
@@ -1679,7 +1721,12 @@ describe('session store', () => {
       filesRevision: 1,
       createdAt: 1,
       updatedAt: 20,
-      runtimeContext: { version: 1, revision: 1, delegatedWork: { records: [] } },
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: { records: [] },
+        pdfContext: createPdfContext()
+      },
       conversationGraph: createLinearConversationGraph({
         sessionId: 'session-1',
         messages: [rootMessage],
@@ -1829,7 +1876,7 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       agentPromptInFlight: true,
       awaitingFirstAgentOutput: true,
-      runtimeContext: { revision: 2 },
+      runtimeContext: { revision: 2, pdfContext: createPdfContext() },
       filesRevision: 2,
       artifacts: [{ id: 'version-1' }]
     })
@@ -1842,6 +1889,49 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].conversationGraph?.activities).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'root-live-tool' })])
     )
+  })
+
+  it('preserves PDF context when delegated authority advances', () => {
+    const pdfContext = createPdfContext()
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Delegated work',
+        cwd: '/workspace',
+        status: 'running',
+        messages: [],
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: { records: [] },
+          pdfContext
+        },
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          delegatedWork: { records: [{ agentFrameId: 'child-frame', attempts: [] }] }
+        },
+        updatedAt: 3
+      },
+      mode: 'delegated-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0].runtimeContext).toMatchObject({
+      revision: 2,
+      delegatedWork: { records: [{ agentFrameId: 'child-frame' }] },
+      pdfContext
+    })
   })
 
   it('merges equal-timestamp higher runtime and files revisions without replacing another owner plan', () => {
@@ -1943,7 +2033,11 @@ describe('session store', () => {
       title: 'local',
       status: 'running',
       agentPromptInFlight: true,
-      runtimeContext: { revision: 2, plan: persistedPlan, delegatedWork: { records: [{}] } },
+      runtimeContext: {
+        revision: 2,
+        plan: persistedPlan,
+        delegatedWork: { records: [{}] }
+      },
       filesRevision: 2,
       artifacts: [{ id: 'old-version' }, { id: 'child-version' }]
     })
@@ -5460,6 +5554,7 @@ describe('session store public contract', () => {
         'removeSessionsForProject',
         'renameSession',
         'replaceMessageArtifacts',
+        'replaceMessagePdfContext',
         'replaceMessageUploads',
         'reviseSessionFromElicitation',
         'selectSession',
@@ -5559,6 +5654,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',
       'src/renderer/src/pages/workspace/preview-file-item.ts',
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
+      'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
@@ -5569,6 +5665,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
       'src/renderer/src/pages/workspace/session-wait-reason.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
+      'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
       'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts',

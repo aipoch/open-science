@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { Annotation } from '../../../../shared/annotations'
+import type { SessionPdfContextSource } from '../../../../shared/session-persistence'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import {
@@ -27,6 +28,7 @@ export type ComposerDraft = {
   annotations: Annotation[]
   attachments: UploadedAttachment[]
   attachmentTransfers: ComposerUploadTransfer[]
+  automaticReadingEnabled: boolean
 }
 
 type ComposerDeletionCleanup = Pick<ComposerDraft, 'attachments' | 'attachmentTransfers'>
@@ -37,10 +39,17 @@ type PastedTextUndoReceipt = {
   attachmentDoc?: ComposerDoc
 }
 
-type ComposerHistorySnapshot = Omit<ComposerDraft, 'annotations'> & {
+type ComposerHistorySnapshot = ComposerDraft & {
   caret?: ComposerCaretPosition
+  readingContextSources: SessionPdfContextSource[]
+  historySequence: number
 }
 type ComposerHistoryRef = { current: Record<string, ComposerHistorySnapshot[]> }
+
+type ComposerUndoTransaction = {
+  commit: () => void
+  rollback: (readingContextSources: SessionPdfContextSource[]) => void
+}
 
 export type ComposerUploadApi = UploadStagingApi & {
   claimLocalFile?: (request: { transferId: string }) => Promise<void>
@@ -49,14 +58,20 @@ export type ComposerUploadApi = UploadStagingApi & {
 type WorkspaceComposerUploadControllerInput = {
   activeDraftKeyRef: { current: string }
   docRef: { current: ComposerDoc }
+  annotationsRef: { current: Annotation[] }
   draftsRef: { current: Record<string, ComposerDraft> }
   setActiveDoc: (doc: ComposerDoc) => void
+  setActiveAnnotations: (annotations: Annotation[]) => void
   clearHistory: (draftKey: string) => void
   markChanged: (draftKey?: string) => void
   requestCaret: (position: ComposerCaretPosition) => void
   canStageAttachments: boolean
   supportsImageInput: boolean | undefined
   uploads: ComposerUploadApi
+  readingContextSourcesRef: { current: SessionPdfContextSource[] }
+  restoreReadingContextSources: (sources: SessionPdfContextSource[]) => void
+  automaticReadingEnabledRef: { current: boolean }
+  setActiveAutomaticReadingEnabled: (enabled: boolean) => void
 }
 
 type WorkspaceComposerUploadController = {
@@ -82,6 +97,11 @@ type WorkspaceComposerUploadController = {
     setError: (error: string | null) => void
     clearPastedTextUndo: (draftKey?: string) => void
     clearUndo: (draftKey?: string) => void
+    captureUndo: (draftKey?: string, caret?: ComposerCaretPosition) => void
+    beginUndoTransaction: (
+      draftKey?: string,
+      caret?: ComposerCaretPosition
+    ) => ComposerUndoTransaction
   }
   lifecycle: {
     activateDraftAttachments: (draft: ComposerDraft) => void
@@ -122,14 +142,20 @@ export const unfinishedComposerUpload = (transfer: ComposerUploadTransfer): bool
 export const useWorkspaceComposerUploadController = ({
   activeDraftKeyRef,
   docRef,
+  annotationsRef,
   draftsRef,
   setActiveDoc,
+  setActiveAnnotations,
   clearHistory,
   markChanged,
   requestCaret,
   canStageAttachments,
   supportsImageInput,
-  uploads
+  uploads,
+  readingContextSourcesRef,
+  restoreReadingContextSources,
+  automaticReadingEnabledRef,
+  setActiveAutomaticReadingEnabled
 }: WorkspaceComposerUploadControllerInput): WorkspaceComposerUploadController => {
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
   const [transfers, setTransfers] = useState<ComposerUploadTransfer[]>([])
@@ -143,6 +169,7 @@ export const useWorkspaceComposerUploadController = ({
   const preferSnapshotUndoRef = useRef(new Set<string>())
   const undoRef = useRef<Record<string, ComposerHistorySnapshot[]>>({})
   const redoRef = useRef<Record<string, ComposerHistorySnapshot[]>>({})
+  const historySequenceRef = useRef(0)
   const transferFilesRef = useRef<Record<string, File>>({})
   const setActiveAttachments = useCallback((next: UploadedAttachment[]): void => {
     attachmentsRef.current = next
@@ -218,13 +245,20 @@ export const useWorkspaceComposerUploadController = ({
     [uploads]
   )
   const currentSnapshot = useCallback(
-    (caret?: ComposerCaretPosition): ComposerHistorySnapshot => ({
-      doc: docRef.current,
-      attachments: [...attachmentsRef.current],
-      attachmentTransfers: [...transfersRef.current],
-      caret
-    }),
-    [docRef]
+    (caret?: ComposerCaretPosition): ComposerHistorySnapshot => {
+      historySequenceRef.current += 1
+      return {
+        doc: docRef.current,
+        annotations: [...annotationsRef.current],
+        attachments: [...attachmentsRef.current],
+        attachmentTransfers: [...transfersRef.current],
+        automaticReadingEnabled: automaticReadingEnabledRef.current,
+        readingContextSources: [...readingContextSourcesRef.current],
+        caret,
+        historySequence: historySequenceRef.current
+      }
+    },
+    [annotationsRef, automaticReadingEnabledRef, docRef, readingContextSourcesRef]
   )
   const releaseHistoryResources = useCallback(
     (snapshots: readonly ComposerHistorySnapshot[]): void => {
@@ -302,6 +336,98 @@ export const useWorkspaceComposerUploadController = ({
       pushSnapshot(undoRef, draftKey, currentSnapshot(caret))
     },
     [activeDraftKeyRef, clearRedo, currentSnapshot, pushSnapshot]
+  )
+  const beginUndoTransaction = useCallback(
+    (
+      draftKey = activeDraftKeyRef.current,
+      caret?: ComposerCaretPosition
+    ): ComposerUndoTransaction => {
+      const snapshot = currentSnapshot(caret)
+      const previousRedo = redoRef.current[draftKey] ?? []
+      delete redoRef.current[draftKey]
+      pushSnapshot(undoRef, draftKey, snapshot)
+      let settled = false
+
+      const sameItems = <Value>(left: readonly Value[], right: readonly Value[]): boolean =>
+        left.length === right.length && left.every((item, index) => item === right[index])
+      const sameSources = (
+        left: readonly SessionPdfContextSource[],
+        right: readonly SessionPdfContextSource[]
+      ): boolean =>
+        left.length === right.length &&
+        left.every(
+          (source, index) =>
+            source.sourceKind === right[index]?.sourceKind &&
+            source.sourceVersionId === right[index]?.sourceVersionId
+        )
+      const sameContent = (
+        left: ComposerHistorySnapshot,
+        right: ComposerHistorySnapshot
+      ): boolean =>
+        left.doc === right.doc &&
+        sameItems(left.annotations, right.annotations) &&
+        sameItems(left.attachments, right.attachments) &&
+        sameItems(left.attachmentTransfers, right.attachmentTransfers) &&
+        sameSources(left.readingContextSources, right.readingContextSources)
+      const sameNonReadingContent = (candidate: ComposerHistorySnapshot): boolean =>
+        candidate.doc === snapshot.doc &&
+        sameItems(candidate.annotations, snapshot.annotations) &&
+        sameItems(candidate.attachments, snapshot.attachments) &&
+        sameItems(candidate.attachmentTransfers, snapshot.attachmentTransfers)
+
+      return {
+        commit: (): void => {
+          if (settled) return
+          settled = true
+          releaseHistoryResources(previousRedo)
+        },
+        rollback: (durableSources): void => {
+          if (settled) return
+          settled = true
+          const newSnapshots = [
+            ...(undoRef.current[draftKey] ?? []),
+            ...(redoRef.current[draftKey] ?? [])
+          ].filter((candidate) => candidate.historySequence >= snapshot.historySequence)
+          const preservePreviousRedo = newSnapshots.every(sameNonReadingContent)
+          const current = currentSnapshot()
+          current.readingContextSources = [...durableSources]
+          const discarded: ComposerHistorySnapshot[] = []
+
+          const normalize = (stack: ComposerHistorySnapshot[]): ComposerHistorySnapshot[] => {
+            const compacted: ComposerHistorySnapshot[] = []
+            for (const candidate of stack) {
+              const normalized =
+                candidate.historySequence >= snapshot.historySequence
+                  ? { ...candidate, readingContextSources: [...durableSources] }
+                  : candidate
+              const previous = compacted.at(-1)
+              if (previous && sameContent(previous, normalized)) discarded.push(candidate)
+              else compacted.push(normalized)
+            }
+            while (compacted.at(-1) && sameContent(compacted.at(-1)!, current)) {
+              discarded.push(compacted.pop()!)
+            }
+            return compacted
+          }
+
+          const undo = normalize(undoRef.current[draftKey] ?? [])
+          const redo = normalize(redoRef.current[draftKey] ?? [])
+          if (undo.length > 0) undoRef.current[draftKey] = undo
+          else delete undoRef.current[draftKey]
+          if (preservePreviousRedo) {
+            discarded.push(...redo)
+            if (previousRedo.length > 0) redoRef.current[draftKey] = previousRedo
+            else delete redoRef.current[draftKey]
+          } else {
+            discarded.push(...previousRedo)
+            if (redo.length > 0) redoRef.current[draftKey] = redo
+            else delete redoRef.current[draftKey]
+          }
+          releaseHistoryResources(discarded)
+        }
+      }
+    },
+    [activeDraftKeyRef, currentSnapshot, pushSnapshot, releaseHistoryResources]
   )
   const reconcileHistorySnapshots = useCallback(
     (
@@ -481,12 +607,15 @@ export const useWorkspaceComposerUploadController = ({
               ])
               continue
             }
+            try {
+              await uploads.claimLocalFile?.({ transferId: transfer.transferId })
+            } catch (claimError) {
+              await uploads
+                .abortTransfer({ transferId: transfer.transferId })
+                .catch(() => undefined)
+              throw claimError
+            }
             commitDraftAttachment(draftKey, transfer.transferId, attachment, transfer.pastedTextId)
-            await uploads
-              .claimLocalFile?.({ transferId: transfer.transferId })
-              .catch((claimError) =>
-                console.warn('Failed to claim staged local upload', claimError)
-              )
           } catch (uploadError) {
             if (controller.signal.aborted) {
               updateTransfer({ remove: true })
@@ -905,6 +1034,8 @@ export const useWorkspaceComposerUploadController = ({
       )
       setActiveAttachments(targetAttachments)
       setActiveTransfers(targetTransfers)
+      setActiveAnnotations([...snapshot.annotations])
+      setActiveAutomaticReadingEnabled(snapshot.automaticReadingEnabled)
       if (pastedTextToRestage.length > 0) {
         const restagedIds = new Set(pastedTextToRestage.map(({ id }) => id))
         stagePastedText(
@@ -926,6 +1057,7 @@ export const useWorkspaceComposerUploadController = ({
         setActiveDoc(targetDoc)
       }
       if (pending.length > 0) runPendingUploads(draftKey, pending)
+      restoreReadingContextSources(snapshot.readingContextSources)
       releaseHistoryResources(resourcesToRelease)
       requestCaret(snapshot.caret ?? { nodeIndex: targetDoc.nodes.length, offset: 0 })
     },
@@ -939,9 +1071,12 @@ export const useWorkspaceComposerUploadController = ({
       requestCaret,
       runPendingUploads,
       setActiveAttachments,
+      setActiveAnnotations,
       setActiveDoc,
       setActiveTransfers,
+      setActiveAutomaticReadingEnabled,
       stagePastedText,
+      restoreReadingContextSources,
       uploads
     ]
   )
@@ -1153,7 +1288,9 @@ export const useWorkspaceComposerUploadController = ({
       redo,
       setError,
       clearPastedTextUndo,
-      clearUndo
+      clearUndo,
+      captureUndo,
+      beginUndoTransaction
     },
     lifecycle: {
       activateDraftAttachments,

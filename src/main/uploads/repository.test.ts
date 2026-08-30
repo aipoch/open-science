@@ -241,6 +241,38 @@ describe('upload repository', () => {
     await expect(readFile(attachment.path, 'utf8')).resolves.toBe('png-bytes')
   })
 
+  it('resolves a pending upload for send-time inspection', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client)
+    })
+    const [attachment] = await stageUploadFixtures(repository, {
+      files: [
+        {
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          content: Buffer.from('pending-pdf').toString('base64')
+        }
+      ]
+    })
+
+    await expect(
+      repository.resolveManagedUploadPath(
+        { path: attachment.path },
+        { projectId: 'project-1', sessionId: PENDING_UPLOAD_SESSION_ID }
+      )
+    ).resolves.toBe(await realpath(attachment.path))
+    await expect(
+      repository.resolveManagedUploadPath(
+        { path: attachment.path },
+        { projectId: 'project-1', sessionId: '.other-temporary-scope' }
+      )
+    ).rejects.toThrow('Invalid upload path segment')
+  })
+
   it('removes unindexed pending drafts during restart recovery without touching finalized uploads', async () => {
     const root = await createStorageRoot()
     const beforeRestart = new UploadRepository(root)

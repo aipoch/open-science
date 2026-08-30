@@ -7,7 +7,16 @@
 // download, full screen) are deliberately absent: they are owned by the surfaces themselves. This
 // module only exposes actions that can run without mounting the tab's content.
 
-import { CircleX, ClipboardCopy, Download, PackagePlus, X, type LucideIcon } from 'lucide-react'
+import {
+  BookOpen,
+  CircleX,
+  ClipboardCopy,
+  Download,
+  Link2Off,
+  PackagePlus,
+  X,
+  type LucideIcon
+} from 'lucide-react'
 
 import type {
   PreviewFileItem,
@@ -15,8 +24,10 @@ import type {
   PreviewFileSource
 } from '@/stores/preview-workbench-store'
 
+import type { PdfContextLinkState } from './use-pdf-context-action'
+
 export type PreviewTabActionCommand =
-  'close' | 'close-others' | 'download' | 'copy-path' | 'save-as-artifact'
+  'toggle-pdf-context' | 'close' | 'close-others' | 'download' | 'copy-path' | 'save-as-artifact'
 
 export type PreviewTabAction = {
   command: PreviewTabActionCommand
@@ -31,12 +42,17 @@ export type PreviewTabAction = {
 
 export type PreviewTabActionContext = {
   tabCount: number
+  // Set by the host (which owns the stores) for linkable PDF file tabs; drives the leading
+  // Read-with-agent command's label.
+  pdfContext?: PdfContextLinkState
 }
 
 // Shared actions appear for every tab; specific actions follow them below a separator. Returning
 // groups (not a flat list) lets the menu render the divider without knowing which commands are
-// shared.
+// shared. The optional pdfContext group leads the menu: reading-context entry points sit above
+// window management.
 export type PreviewTabActionGroups = {
+  pdfContext: PreviewTabAction[]
   shared: PreviewTabAction[]
   specific: PreviewTabAction[]
 }
@@ -60,6 +76,9 @@ export type PreviewTabActionDeps = {
         projectId?: string
       }) => Promise<unknown>)
     | undefined
+  // Runs the shared link/unlink/replace command for the tab's PDF; absent when the tab is not
+  // linkable (the menu then never offers the command).
+  togglePdfContext?: (item: PreviewFileItem) => void
   activeProjectId: string | undefined
 }
 
@@ -106,10 +125,30 @@ const fileSpecificActions = (item: PreviewFileItem): PreviewTabAction[] =>
       ]
     : [{ command: 'download', label: 'Download', icon: Download, danger: false, disabled: false }]
 
+// Unlink is reversible, so the remove label deliberately stays out of the danger styling.
+const pdfContextActions: Record<PdfContextLinkState, PreviewTabAction> = {
+  link: {
+    command: 'toggle-pdf-context',
+    label: 'Read with agent',
+    icon: BookOpen,
+    danger: false,
+    disabled: false
+  },
+  remove: {
+    command: 'toggle-pdf-context',
+    label: 'Remove PDF from context',
+    icon: Link2Off,
+    danger: false,
+    disabled: false
+  }
+}
+
 export const getPreviewTabActionGroups = (
   item: PreviewItem,
   context: PreviewTabActionContext
 ): PreviewTabActionGroups => ({
+  pdfContext:
+    item.type === 'file' && context.pdfContext ? [pdfContextActions[context.pdfContext]] : [],
   shared: sharedActions(context.tabCount),
   specific: item.type === 'file' ? fileSpecificActions(item) : []
 })
@@ -142,6 +181,11 @@ export const runPreviewTabAction = (
   }
 
   if (item.type !== 'file') return
+
+  if (command === 'toggle-pdf-context') {
+    deps.togglePdfContext?.(item)
+    return
+  }
 
   if (command === 'download') {
     void downloadManagedFile(item, deps).catch((error: unknown) => {

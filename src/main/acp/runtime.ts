@@ -62,7 +62,7 @@ import { ConversationPermissionGrantStore } from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { AcpPermissionContext } from './permission-context'
 import { AgentMcpHttpHost } from './mcp-http-host'
-import type { SessionCapabilityPolicy } from './session-capability-owner'
+import type { AcpSessionCapabilityOwner, SessionCapabilityPolicy } from './session-capability-owner'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
@@ -75,6 +75,10 @@ import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { UploadRepository } from '../uploads/repository'
+import {
+  LITERATURE_MCP_SERVER_NAME,
+  type LiteratureReadDocumentRequest
+} from '../literature/mcp-server'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type {
@@ -231,6 +235,15 @@ type AcpRuntimeOptions = {
       routingId: string,
       request: SideChatSendMessageRequest
     ) => Promise<SideChatSendMessageResult>
+  }>
+  literature?: Readonly<{
+    isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
+    readDocument: (request: {
+      projectId: string
+      sessionId: string
+      promptMessageId: string
+      input: LiteratureReadDocumentRequest
+    }) => Promise<unknown>
   }>
   sideChatRelays?: Readonly<{
     claim: (parentSessionId: string) =>
@@ -407,6 +420,7 @@ const errorMessage = (error: unknown): string => {
 }
 
 const log = createLogger('acp')
+const literatureLog = createLogger('literature-reading-context')
 
 const PERMISSION_DENIED_CONTINUATION_TEXT =
   'The user explicitly denied this operation. You do not have authorization to perform it. ' +
@@ -542,6 +556,7 @@ class AcpRuntime {
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
+  private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly sessionUpdateProjector: AcpSessionUpdateProjector
   private readonly providerPromptExecutor: AcpProviderPromptExecutor
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
@@ -583,6 +598,7 @@ class AcpRuntime {
     this.connectionTransitions = base.connectionTransitions
     this.turnSkills = base.turnSkills
     this.sessionConfigurator = base.sessionConfigurator
+    this.sessionCapabilities = base.sessionCapabilities
     this.sessionRegistry = session.sessionRegistry
     this.sessionEnvironment = session.sessionEnvironment
     this.publication = session.publication
@@ -904,6 +920,90 @@ class AcpRuntime {
       )
       return resumed
     })
+  }
+
+  async enableLiteratureContext(sessionId: string): Promise<void> {
+    if (!this.options.literature) return
+    this.sessionCapabilities.enableLiterature(sessionId)
+    if (
+      this.sessionCapabilities.mcpServerNamesFor(sessionId).includes(LITERATURE_MCP_SERVER_NAME)
+    ) {
+      return
+    }
+    const snapshot = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
+    if (!snapshot || !this.activeSessionFor(sessionId)) {
+      literatureLog.info('Literature MCP mount deferred until provider Session creation', {
+        sessionId
+      })
+      return
+    }
+    if (this.sessionInteractions.current(sessionId)) {
+      throw new Error('Cannot prepare Literature tools while the Agent is running.')
+    }
+    try {
+      await this.withOperationLease(() =>
+        this.providerSessionResumer.reconfigure({
+          sessionId,
+          cwd: snapshot.cwd ?? this.options.defaultCwd,
+          projectId: snapshot.projectId,
+          memoryEnabled: snapshot.memoryEnabled,
+          ...(snapshot.permissionProfile?.selectedProfile
+            ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
+            : {})
+        })
+      )
+      literatureLog.info('Literature MCP mounted with compatible provider resume', {
+        sessionId,
+        framework: this.framework.id,
+        replayedHistory: false
+      })
+    } catch (error) {
+      this.sessionCapabilities.rollbackLiteratureEnable(sessionId)
+      literatureLog.warn('Literature MCP mount failed', {
+        sessionId,
+        ...errorLogFields(error)
+      })
+      throw error
+    }
+  }
+
+  async disableLiteratureContext(sessionId: string): Promise<void> {
+    if (!this.options.literature || !this.sessionCapabilities.disableLiterature(sessionId)) return
+    if (
+      !this.sessionCapabilities.mcpServerNamesFor(sessionId).includes(LITERATURE_MCP_SERVER_NAME)
+    ) {
+      return
+    }
+    const snapshot = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
+    if (!snapshot || !this.activeSessionFor(sessionId)) return
+    if (this.sessionInteractions.current(sessionId)) {
+      literatureLog.info('Literature MCP unmount deferred until the Agent is idle', { sessionId })
+      return
+    }
+    try {
+      await this.withOperationLease(() =>
+        this.providerSessionResumer.reconfigure({
+          sessionId,
+          cwd: snapshot.cwd ?? this.options.defaultCwd,
+          projectId: snapshot.projectId,
+          memoryEnabled: snapshot.memoryEnabled,
+          ...(snapshot.permissionProfile?.selectedProfile
+            ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
+            : {})
+        })
+      )
+      literatureLog.info('Literature MCP disabled with compatible provider resume', {
+        sessionId,
+        framework: this.framework.id,
+        replayedHistory: false
+      })
+    } catch (error) {
+      literatureLog.warn('Literature MCP disable failed; message context remains authoritative', {
+        sessionId,
+        ...errorLogFields(error)
+      })
+      throw error
+    }
   }
 
   // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
@@ -1323,6 +1423,14 @@ class AcpRuntime {
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
+    if (
+      request.referencedArtifacts?.some(
+        (reference) =>
+          'pdfReadingPosition' in reference && reference.pdfReadingPosition !== undefined
+      )
+    ) {
+      await this.enableLiteratureContext(request.sessionId)
+    }
     return this.withOperationLease(() =>
       this.runPromptTurn(request, {
         kind: 'user',

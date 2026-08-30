@@ -64,6 +64,15 @@ const ddl = \`ALTER TABLE "Legacy" ADD COLUMN "value" TEXT\`
         }
       ])
     ).not.toThrow()
+
+    expect(() =>
+      assertRuntimeDdlLocality([
+        {
+          path: 'src/main/literature/migrations/index-0001.ts',
+          source: 'const ddl = `CREATE TABLE "LiteratureIndex" ("id" TEXT)`'
+        }
+      ])
+    ).not.toThrow()
   })
 
   it('keeps unsafe migration SQL behind the private executor', () => {

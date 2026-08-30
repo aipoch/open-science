@@ -9,11 +9,12 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { PreviewFileSurface } from './PreviewFileSurface'
-import type { PreviewAnnotationPort } from './previews/preview-types'
+import type { PreviewInteractionPort } from './previews/preview-types'
 
-type FilePreviewDialogProps = PreviewAnnotationPort & {
+type FilePreviewDialogProps = PreviewInteractionPort & {
   item: PreviewFileItem | undefined
   onClose: () => void
+  onPdfContextError?: (message: string | null) => void
 }
 
 const hasStreamdownFullscreen = (): boolean =>
@@ -50,6 +51,7 @@ const setBackgroundIsolation = (isolated: boolean): void => {
 const FilePreviewDialog = ({
   item,
   onClose,
+  onPdfContextError,
   ...annotationPort
 }: FilePreviewDialogProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -124,6 +126,7 @@ const FilePreviewDialog = ({
                   // The modal overlays the conversation panel, so a View in context navigation must
                   // also close the dialog for the switched session to become visible.
                   onViewInContextNavigate={onClose}
+                  onPdfContextError={onPdfContextError}
                   tooltipClassName="z-[70]"
                   {...annotationPort}
                 />

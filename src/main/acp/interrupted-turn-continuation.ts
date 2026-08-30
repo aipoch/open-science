@@ -5,11 +5,13 @@ import type {
   AcpPromptRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
+import { prepareAnnotationsForAgent } from '../../shared/annotations'
 import {
   getActiveConversationContext,
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
 import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
+import { sessionPdfContextToFileReferences } from '../../shared/session-pdf-context'
 import {
   isHiddenControlMessage,
   sanitizeSessionReferences,
@@ -116,7 +118,7 @@ const buildContinuationRequest = (
   livePrompt: AcpPromptRequest | undefined
 ): AcpPromptRequest => {
   const skillIds = prompt.parts?.flatMap((part) => (part.type === 'skill' ? [part.id] : []))
-  const referencedArtifacts = prompt.parts?.reduce<
+  const referencedArtifacts = (prompt.parts ?? []).reduce<
     NonNullable<AcpPromptRequest['referencedArtifacts']>
   >((references, part) => {
     if (part.type !== 'artifact') return references
@@ -141,6 +143,29 @@ const buildContinuationRequest = (
     )
     return references
   }, [])
+  if (prompt.pdfContext) {
+    for (const pdfReference of sessionPdfContextToFileReferences(
+      session.projectId,
+      prompt.pdfContext
+    )) {
+      if (
+        !referencedArtifacts.some(
+          (reference) =>
+            reference.source !== 'linked-folder' &&
+            pdfReference.source !== 'linked-folder' &&
+            reference.source === pdfReference.source &&
+            reference.versionId === pdfReference.versionId
+        )
+      ) {
+        referencedArtifacts.push(pdfReference)
+      }
+    }
+  }
+  const preparedAnnotations = prepareAnnotationsForAgent(
+    buildContinuationPrompt(prompt, Boolean(request.contextReset)),
+    prompt.annotations ?? [],
+    livePrompt?.referencedArtifacts?.length ? livePrompt.referencedArtifacts : referencedArtifacts
+  )
   const referencedSessions = sanitizeSessionReferences(prompt.parts)
   const provenanceContext = resolveProvenanceContext(session, request)
   const contextReset = request.contextReset
@@ -182,7 +207,7 @@ const buildContinuationRequest = (
 
   return {
     sessionId: request.sessionId,
-    text: buildContinuationPrompt(prompt, Boolean(contextReset)),
+    text: preparedAnnotations.promptText,
     memoryEnabled: session.memoryEnabled !== false,
     suppressUserMessage: true,
     provenanceContext,
@@ -196,17 +221,16 @@ const buildContinuationRequest = (
         : skillIds?.length
           ? { forcedSkillIds: skillIds }
           : {}),
-    ...(livePrompt?.referencedArtifacts?.length
-      ? { referencedArtifacts: livePrompt.referencedArtifacts }
-      : referencedArtifacts?.length
-        ? { referencedArtifacts }
-        : {}),
+    ...(preparedAnnotations.referencedArtifacts?.length
+      ? { referencedArtifacts: preparedAnnotations.referencedArtifacts }
+      : {}),
     ...(livePrompt?.referencedSessions?.length
       ? { referencedSessions: livePrompt.referencedSessions }
       : referencedSessions.length
         ? { referencedSessions }
         : {}),
     ...(attachments?.length ? { attachments } : {}),
+    ...(preparedAnnotations.images?.length ? { currentImages: preparedAnnotations.images } : {}),
     ...(replay?.historyPreamble ? { historyPreamble: replay.historyPreamble } : {}),
     ...(replay?.historyAttachments.length ? { historyAttachments: replay.historyAttachments } : {}),
     ...(replay?.historyImages.length

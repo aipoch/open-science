@@ -64,7 +64,8 @@ const useAcpRuntime = (): {
     permissionProfile?: PermissionProfileId,
     specialistId?: string,
     agentTarget?: AcpSessionAgentTarget,
-    memoryEnabled?: boolean
+    memoryEnabled?: boolean,
+    literatureContext?: true
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -110,7 +111,8 @@ const useAcpRuntime = (): {
     planContinuation?: AcpPromptRequest['planContinuation'],
     turnIntent?: AcpPromptRequest['turnIntent'],
     memoryEnabled?: boolean,
-    referencedSessions?: AcpPromptRequest['referencedSessions']
+    referencedSessions?: AcpPromptRequest['referencedSessions'],
+    currentImages?: AcpPromptRequest['currentImages']
   ) => Promise<AcpStateSnapshot>
   respondToPermission: (
     requestId: string,
@@ -284,7 +286,8 @@ const useAcpRuntime = (): {
       permissionProfile?: PermissionProfileId,
       specialistId?: string,
       agentTarget?: AcpSessionAgentTarget,
-      memoryEnabled = true
+      memoryEnabled = true,
+      literatureContext?: true
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.createSession({
@@ -293,6 +296,7 @@ const useAcpRuntime = (): {
           permissionProfile,
           memoryEnabled,
           specialistId,
+          ...(literatureContext ? { literatureContext } : {}),
           ...(agentTarget ? { agentTarget } : {})
         })
       ),
@@ -406,7 +410,8 @@ const useAcpRuntime = (): {
       planContinuation?: AcpPromptRequest['planContinuation'],
       turnIntent?: AcpPromptRequest['turnIntent'],
       memoryEnabled = true,
-      referencedSessions?: AcpPromptRequest['referencedSessions']
+      referencedSessions?: AcpPromptRequest['referencedSessions'],
+      currentImages?: AcpPromptRequest['currentImages']
     ) =>
       runSendPromptAction(() =>
         window.api.acp.sendPrompt({
@@ -423,6 +428,7 @@ const useAcpRuntime = (): {
           ...(historyPreamble ? { historyPreamble } : {}),
           ...(historyAttachments && historyAttachments.length > 0 ? { historyAttachments } : {}),
           ...(historyImages && historyImages.length > 0 ? { historyImages } : {}),
+          ...(currentImages && currentImages.length > 0 ? { currentImages } : {}),
           ...(resumeFallback ? { resumeFallback } : {}),
           ...(provenanceContext ? { provenanceContext } : {}),
           ...(contextReset ? { contextReset: true } : {}),

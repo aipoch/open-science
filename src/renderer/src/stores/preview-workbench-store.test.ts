@@ -273,6 +273,34 @@ describe('preview workbench store', () => {
     ).toBe(false)
   })
 
+  it('keeps a staged PDF selection until its Session context link succeeds', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.setPendingPdfContext('project-a', {
+      kind: 'staged-upload',
+      attachmentId: 'upload-a',
+      previewItemId: 'upload:upload-a'
+    })
+
+    store.reconcileFinalizedUploads([
+      {
+        id: 'upload-a',
+        versionId: 'version-a',
+        sessionId: 'session-a',
+        name: 'paper.pdf',
+        originalName: 'paper.pdf',
+        path: '/uploads/project-a/session-a/paper.pdf',
+        mimeType: 'application/pdf',
+        size: 12
+      }
+    ])
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-a']).toEqual({
+      kind: 'staged-upload',
+      attachmentId: 'upload-a',
+      previewItemId: 'upload:upload-a'
+    })
+  })
+
   it('owns preview item timestamps instead of trusting caller input', () => {
     const itemWithCallerTimestamps = {
       id: 'file:session-1:/workspace/project/report.md',

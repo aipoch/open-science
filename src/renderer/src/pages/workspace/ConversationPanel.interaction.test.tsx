@@ -5,6 +5,7 @@ import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConversationPanel } from './ConversationPanel'
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { subscribeAnnotationReveal } from './annotations/annotation-reveal'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
@@ -454,7 +455,13 @@ const createPanelDefaults = (): PanelProps => ({
       historyStatus: '',
       isHistoryBrowsing: false,
       isUploading: false,
-      caretRequest: undefined
+      caretRequest: undefined,
+      readingContext: {
+        bindings: [],
+        pendingBindingId: undefined,
+        isPending: false,
+        automaticAttachmentCount: 0
+      }
     },
     actions: {
       changeDoc: vi.fn(),
@@ -469,7 +476,11 @@ const createPanelDefaults = (): PanelProps => ({
       restorePastedText: vi.fn(),
       undo: vi.fn(() => false),
       redo: vi.fn(() => false),
-      setError: vi.fn()
+      setError: vi.fn(),
+      linkReadingContext: vi.fn().mockResolvedValue(undefined),
+      openReadingContext: vi.fn(),
+      unlinkReadingContext: vi.fn(),
+      dismissAutomaticReading: vi.fn()
     }
   },
   conversation: {
@@ -857,6 +868,170 @@ describe('ConversationPanel Specialist reconfigure recovery', () => {
 })
 
 describe('ConversationPanel composer intake', () => {
+  it('previews automatic Reading before send and keeps the PDF attached when dismissed', () => {
+    const dismissAutomaticReading = vi.fn()
+    renderPanel({
+      composer: {
+        view: {
+          attachments: [
+            {
+              id: 'upload-1',
+              sessionId: '.pending',
+              name: 'paper.pdf',
+              originalName: 'paper.pdf',
+              path: '/uploads/.pending/paper.pdf',
+              mimeType: 'application/pdf',
+              size: 42
+            }
+          ],
+          readingContext: { automaticAttachmentCount: 1 }
+        },
+        actions: { dismissAutomaticReading }
+      }
+    })
+
+    const suggestion = container.querySelector('[data-testid="automatic-reading-suggestion"]')
+    expect(suggestion?.textContent).toContain('Reading')
+    expect(suggestion?.textContent).toContain('1 PDF will be linked when sent')
+    expect(container.textContent).toContain('paper.pdf')
+
+    act(() =>
+      suggestion?.querySelector<HTMLButtonElement>('[aria-label="Keep as attachments"]')?.click()
+    )
+    expect(dismissAutomaticReading).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('paper.pdf')
+  })
+
+  it('shows linked PDF context as a single-line chip that opens its preview', () => {
+    const open = vi.fn()
+    const unlink = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Reading session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      composer: {
+        view: {
+          readingContext: {
+            bindings: [
+              {
+                version: 1,
+                bindingId: 'binding-1',
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-1',
+                sourceVersionId: 'version-1',
+                sourceSessionId: 'source-session',
+                name: 'paper.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 12,
+                checksum: 'checksum-1',
+                linkedAt: 1
+              },
+              {
+                version: 1,
+                bindingId: 'binding-2',
+                sourceKind: 'upload-version',
+                sourceFileId: 'upload-2',
+                sourceVersionId: 'version-2',
+                sourceSessionId: 'source-session',
+                name: 'second.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 13,
+                checksum: 'checksum-2',
+                linkedAt: 2
+              },
+              {
+                version: 1,
+                bindingId: 'binding-3',
+                sourceKind: 'upload-version',
+                sourceFileId: 'upload-3',
+                sourceVersionId: 'version-3',
+                sourceSessionId: 'source-session',
+                name: 'third.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 14,
+                checksum: 'checksum-3',
+                linkedAt: 3
+              }
+            ],
+            pendingBindingId: undefined,
+            isPending: false
+          }
+        },
+        actions: { openReadingContext: open, unlinkReadingContext: unlink }
+      }
+    })
+
+    const bar = container.querySelector('[data-testid="pdf-context-bar"]')
+    expect(bar?.className.split(/\s+/)).toContain('rounded-t-2xl')
+    expect(bar?.textContent).toContain('Reading')
+    expect(bar?.textContent).toContain('paper.pdf')
+    expect(bar?.textContent).toContain('second.pdf')
+    expect(bar?.textContent).toContain('third.pdf')
+    expect(bar?.querySelector('[aria-label="Choose PDFs for Reading"]')).not.toBeNull()
+    expect(bar?.querySelectorAll('[aria-label^="Open PDF context "]')).toHaveLength(3)
+    // The page-position line is gone: the disclosure moved to the chip's tooltip.
+    expect(bar?.textContent).not.toContain('Page')
+    expect(bar?.textContent).not.toContain('Open the PDF')
+    expect(bar?.textContent).toContain(
+      'Linked to this conversation. The Agent reads only the pages needed for your question.'
+    )
+    const openButton = bar?.querySelector<HTMLButtonElement>(
+      '[aria-label="Open PDF context paper.pdf"]'
+    )
+    act(() => openButton?.click())
+    expect(open).toHaveBeenCalledWith('binding-1')
+
+    const remove = bar?.querySelector<HTMLButtonElement>(
+      '[aria-label="Remove PDF context paper.pdf"]'
+    )
+    expect(remove?.disabled).toBe(false)
+    act(() => remove?.click())
+    expect(unlink).toHaveBeenCalledWith('binding-1')
+  })
+
+  it('disables PDF context removal while the command is pending', () => {
+    renderPanel({
+      composer: {
+        view: {
+          readingContext: {
+            bindings: [
+              {
+                version: 1,
+                bindingId: 'binding-1',
+                sourceKind: 'upload-version',
+                sourceFileId: 'upload-1',
+                sourceVersionId: 'version-1',
+                sourceSessionId: 'source-session',
+                name: 'paper.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 12,
+                checksum: 'checksum-1',
+                linkedAt: 1
+              }
+            ],
+            pendingBindingId: 'binding-1',
+            isPending: true
+          }
+        },
+        actions: { openReadingContext: vi.fn() }
+      }
+    })
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Remove PDF context paper.pdf"]')
+        ?.disabled
+    ).toBe(true)
+  })
+
   it('focuses the ordinary composer when the draft context changes', () => {
     renderPanel({
       view: {
@@ -875,6 +1050,26 @@ describe('ConversationPanel composer intake', () => {
       view: {
         composerFocusKey: 'session-b'
       }
+    })
+    expect(document.activeElement).toBe(getComposerEditor())
+  })
+
+  it('focuses the composer when a preview surface requests it', () => {
+    renderPanel({
+      view: {
+        composerFocusKey: 'session-a'
+      }
+    })
+    expect(document.activeElement).toBe(getComposerEditor())
+
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+    expect(document.activeElement).toBe(navigationButton)
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
     })
     expect(document.activeElement).toBe(getComposerEditor())
   })

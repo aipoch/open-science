@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { UploadedAttachment } from '../../shared/uploads'
-import type { FileReference } from '../../shared/artifacts'
+import type { ArtifactReference, FileReference } from '../../shared/artifacts'
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
 import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework'
@@ -121,6 +121,35 @@ const notebookHandoffPrompt = (context: NotebookHandoffContext): string =>
     JSON.stringify(context),
     '</open_science_notebook_continuity>'
   ].join('\n')
+
+const isPdfUpload = (upload: UploadedAttachment): boolean =>
+  upload.mimeType?.split(';', 1)[0]?.trim().toLowerCase() === 'application/pdf' ||
+  upload.name.toLowerCase().endsWith('.pdf')
+
+const filterUnlinkedPdfHistory = (
+  historyUploads: UploadedAttachment[],
+  references: FileReference[]
+): UploadedAttachment[] => {
+  if (
+    !references.some(
+      (reference) => 'pdfContextDocumentId' in reference && reference.pdfContextDocumentId
+    )
+  ) {
+    return historyUploads
+  }
+  const uploadReferences = references.filter(
+    (reference): reference is ArtifactReference => reference.source === 'upload'
+  )
+
+  return historyUploads.filter((upload) => {
+    if (!isPdfUpload(upload)) return true
+
+    return uploadReferences.some((reference) =>
+      upload.versionId ? reference.versionId === upload.versionId : reference.id === upload.id
+    )
+  })
+}
+
 class AcpPromptPreparationOwner {
   constructor(private readonly options: AcpPromptPreparationOwnerOptions) {}
 
@@ -270,15 +299,27 @@ class AcpPromptPreparationOwner {
         if (await cancelled()) return cancelPrepared()
       }
 
+      const references = input.request.referencedArtifacts ?? []
+      const requestedHistoryUploads = input.request.historyAttachments ?? []
+      const historyUploads = filterUnlinkedPdfHistory(requestedHistoryUploads, references)
+      if (historyUploads.length < requestedHistoryUploads.length) {
+        log.info('Unlinked PDF history replay attachments filtered', {
+          sessionId: input.request.sessionId,
+          historyPdfCount: requestedHistoryUploads.filter(isPdfUpload).length,
+          filteredCount: requestedHistoryUploads.length - historyUploads.length
+        })
+      }
+
       const prepared = await this.options.promptContent.prepare({
         appSessionId: input.request.sessionId,
         projectId: input.projectId,
         connectionGeneration: input.connectionGeneration,
         text: promptText,
         historyImages: input.request.historyImages ?? [],
-        historyUploads: input.request.historyAttachments ?? [],
+        currentImages: input.request.currentImages ?? [],
+        historyUploads,
         currentUploads: input.request.attachments ?? [],
-        references: input.request.referencedArtifacts ?? [],
+        references,
         codexSkillInputs,
         skillImportEnabled: input.skillImportEnabled,
         imageCompatibilityRelay:

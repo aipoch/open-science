@@ -60,6 +60,102 @@ const session = (messages: PersistedChatMessage[]): PersistedChatSession => ({
 })
 
 describe('continueInterruptedTurn', () => {
+  it('replays the immutable PDF snapshot from the interrupted user turn', async () => {
+    const durable = session([
+      message('prompt-1', 'user', 'Read the paper', {
+        pdfContext: {
+          version: 1,
+          bindings: [
+            {
+              version: 1,
+              bindingId: 'binding-1',
+              sourceKind: 'upload-version',
+              sourceFileId: 'upload-1',
+              sourceVersionId: 'version-1',
+              sourceSessionId: 'source-session-1',
+              name: 'paper.pdf',
+              mimeType: 'application/pdf',
+              sizeBytes: 42,
+              checksum: 'a'.repeat(64),
+              linkedAt: 1
+            }
+          ],
+          activeBindingId: 'binding-1'
+        }
+      })
+    ])
+    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+
+    await continueInterruptedTurn(
+      {
+        runtime: {
+          getSnapshot: vi.fn(() => snapshot()),
+          getLatestUserPrompt: vi.fn(() => undefined),
+          startContinuation
+        },
+        loadSession: vi.fn(async () => durable)
+      },
+      { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+    )
+
+    expect(startContinuation.mock.calls[0][0].referencedArtifacts).toEqual([
+      expect.objectContaining({
+        id: 'upload-1',
+        source: 'upload',
+        versionId: 'version-1',
+        mimeType: 'application/pdf'
+      })
+    ])
+  })
+
+  it('rebuilds current PDF region Evidence from the interrupted user turn', async () => {
+    const durable = session([
+      message('prompt-1', 'user', 'Explain this figure', {
+        annotations: [
+          {
+            id: 'pdf-region-1',
+            kind: 'pdf',
+            target: 'agent',
+            source: {
+              kind: 'upload-version',
+              projectId: 'project-1',
+              sessionId: 'session-1',
+              versionId: 'version-1',
+              name: 'paper.pdf',
+              path: 'upload-version:project-1/session-1/version-1',
+              checksum: 'a'.repeat(64)
+            },
+            selector: {
+              kind: 'region',
+              pageNumber: 2,
+              rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
+              pageRotation: 0,
+              image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+            }
+          }
+        ]
+      })
+    ])
+    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+
+    await continueInterruptedTurn(
+      {
+        runtime: {
+          getSnapshot: vi.fn(() => snapshot()),
+          getLatestUserPrompt: vi.fn(() => undefined),
+          startContinuation
+        },
+        loadSession: vi.fn(async () => durable)
+      },
+      { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+    )
+
+    const request = startContinuation.mock.calls[0][0]
+    expect(request.text).toContain('"type":"pdf-region"')
+    expect(request.currentImages).toEqual([{ mimeType: 'image/png', data: 'AQID', byteLength: 3 }])
+    expect(request.historyImages).toBeUndefined()
+  })
+
   it('reconstructs the hidden Save as skill turn after restart', async () => {
     const durable = session([
       message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })

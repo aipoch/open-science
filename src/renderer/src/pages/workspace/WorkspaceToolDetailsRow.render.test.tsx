@@ -121,6 +121,57 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(formatNotebookRunOutputLineMeta(failedRun, i18next.t)).toBe('2 lines of output')
   })
 
+  it('renders one framework-neutral Literature result summary', async () => {
+    const activity = createActivity({
+      title: 'open_science_literature_read_document',
+      rawInput: { query: 'CRAG comparison scores' },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                retrievalMode: 'bm25',
+                documentNames: ['paper.pdf'],
+                passageCount: 4,
+                pageStart: 4,
+                pageEnd: 13
+              }
+            })
+          }
+        },
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: '{"passages":[{"documentId":"private-binding-id","content":"truncated…'
+          }
+        }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('BM25')
+    expect(container.textContent).toContain('4 passages')
+    expect(container.textContent).toContain('Sources')
+    expect(container.textContent).toContain('paper.pdf')
+    expect(container.textContent).toContain('CRAG comparison scores')
+    expect(container.textContent).not.toContain('private-binding-id')
+  })
+
   it('renders an image artifact-write result as an inline image preview', async () => {
     const readPreview = vi.fn().mockResolvedValue({
       content: 'aGVsbG8=',
@@ -436,7 +487,7 @@ describe('WorkspaceToolDetailsRow', () => {
 
     await act(async () => {
       intersectionCallback?.(
-        [{ isIntersecting: true } as IntersectionObserverEntry],
+        [{ isIntersecting: true, target: figureButton } as unknown as IntersectionObserverEntry],
         {} as IntersectionObserver
       )
     })
@@ -446,7 +497,7 @@ describe('WorkspaceToolDetailsRow', () => {
 
     await act(async () => {
       intersectionCallback?.(
-        [{ isIntersecting: false } as IntersectionObserverEntry],
+        [{ isIntersecting: false, target: figureButton } as unknown as IntersectionObserverEntry],
         {} as IntersectionObserver
       )
     })

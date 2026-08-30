@@ -436,10 +436,12 @@ const recoverContextOverflowWorkspaceSession = async (
   const retried = await sendWorkspaceMessage(retryRuntime, {
     sessionId,
     text: interruptedTurn.content,
+    annotations: interruptedTurn.annotations,
     attachments: (interruptedTurn.uploads ?? []).map((upload) =>
       toRuntimeUploadedAttachment(upload, session.projectId)
     ),
     parts: interruptedTurn.parts,
+    pdfContext: interruptedTurn.pdfContext,
     cwd: resumeCwd,
     projectId: session.projectId,
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,

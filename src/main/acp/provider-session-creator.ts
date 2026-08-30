@@ -86,7 +86,8 @@ export class AcpProviderSessionCreator {
         policy: this.deps.capabilityPolicy,
         sessionCwd: cwd,
         projectId,
-        memoryEnabled: request.memoryEnabled
+        memoryEnabled: request.memoryEnabled,
+        literatureEnabled: request.literatureContext === true
       })
       const setup = this.presentation.buildSessionSetup({
         framework: startupBackend.framework,

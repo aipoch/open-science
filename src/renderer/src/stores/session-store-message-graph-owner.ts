@@ -200,6 +200,7 @@ export const createSessionMessageGraphOwner = <
     attachments = [],
     parts,
     annotations,
+    pdfContext,
     turnIntent,
     cwd,
     projectId,
@@ -235,6 +236,7 @@ export const createSessionMessageGraphOwner = <
         uploads,
         parts,
         annotations,
+        pdfContext,
         turnIntent,
         sortIndex: createSortIndex()
       }),

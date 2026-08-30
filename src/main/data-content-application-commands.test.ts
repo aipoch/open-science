@@ -142,6 +142,12 @@ const createDependencies = () => {
   }
   const sessions = {
     editDetails: vi.fn(async () => session),
+    filterPdfContextCandidates: vi.fn(async () => ({
+      sources: [],
+      pendingAttachmentIds: []
+    })),
+    linkPdfContext: vi.fn(async () => ({ version: 1 as const, revision: 1 })),
+    unlinkPdfContext: vi.fn(async () => ({ version: 1 as const, revision: 1 })),
     list: vi.fn(),
     loadAll: vi.fn(),
     loadOne: vi.fn(),
@@ -221,6 +227,8 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
+  'sessionFilterPdfContextCandidates',
+  'sessionLinkPdfContext',
   'sessionList',
   'sessionLoadAll',
   'sessionLoadOne',
@@ -228,6 +236,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionSaveManifest',
   'sessionSave',
   'sessionSetDelegationPolicy',
+  'sessionUnlinkPdfContext',
   'uploadStageLocalFile',
   'uploadStageLocalPath'
 ] as const satisfies readonly DataContentCommandKey[]
@@ -254,7 +263,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 53 current data and content invoke channels', () => {
+  it('owns exactly the 56 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -291,12 +300,15 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:filter-pdf-context-candidates',
+        'sessions:link-pdf-context',
         'sessions:list',
         'sessions:load-all',
         'sessions:load-one',
         'sessions:load-usage',
         'sessions:save-manifest',
         'sessions:update-archive',
+        'sessions:unlink-pdf-context',
         'sessions:save-session',
         'sessions:set-delegation-policy',
         'uploads:abort-transfer',

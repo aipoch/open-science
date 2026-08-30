@@ -971,6 +971,7 @@ describe('Session Store architecture', () => {
       'prepareInterruptedTurnContinuation',
       'recordArtifactError',
       'replaceMessageArtifacts',
+      'replaceMessagePdfContext',
       'replaceMessageUploads',
       'setActivePlanProjection',
       'setAgentPromptInFlight',

@@ -294,6 +294,25 @@ describe('AgentMcpHttpHost', () => {
     expect(removed.status).toBe(404)
   })
 
+  it('serves the linked Literature reader over its bound route', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const readDocument = vi.fn(async () => ({ content: 'page text', nextCursor: null }))
+    host.registerLiterature('literature-session-1', { readDocument })
+    const client = new Client({ name: 'literature-http-test', version: '1.0.0' })
+    await client.connect(
+      new StreamableHTTPClientTransport(
+        new URL(host.urlFor('literature', 'literature-session-1')),
+        { requestInit: { headers: { authorization: `Bearer ${token}` } } }
+      )
+    )
+
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(['read_document'])
+    await client.callTool({ name: 'read_document', arguments: {} })
+    expect(readDocument).toHaveBeenCalledWith({})
+    await client.close()
+  })
+
   it('rejects requests without the bearer token', async () => {
     host = new AgentMcpHttpHost()
     const { endpoint } = await host.ensureStarted()

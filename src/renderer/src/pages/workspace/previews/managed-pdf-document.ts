@@ -4,6 +4,20 @@ import { pdfjsLib } from './pdfjs'
 const PDF_RANGE_CHUNK_SIZE = 64 * 1024
 const PDF_IPC_CHUNK_SIZE = 1024 * 1024
 
+const rangeBytes = (value: unknown, expectedLength: number): Uint8Array | undefined => {
+  if (value instanceof Uint8Array) return value
+  if (typeof value !== 'object' || value === null) return undefined
+
+  const serialized = value as Record<number, unknown>
+  const bytes = new Uint8Array(expectedLength)
+  for (let index = 0; index < expectedLength; index += 1) {
+    const byte = serialized[index]
+    if (!Number.isInteger(byte) || (byte as number) < 0 || (byte as number) > 255) return undefined
+    bytes[index] = byte as number
+  }
+  return Object.keys(serialized).length === expectedLength ? bytes : undefined
+}
+
 const readRangeInChunks = async (
   resourceId: string,
   begin: number,
@@ -22,16 +36,13 @@ const readRangeInChunks = async (
       begin: chunkBegin,
       end: chunkEnd
     })
+    const rangeData = rangeBytes(range.data, chunkEnd - chunkBegin)
 
     if (isAborted()) throw new Error('Managed PDF range read aborted.')
-    if (
-      range.begin !== chunkBegin ||
-      range.end !== chunkEnd ||
-      range.data.byteLength !== chunkEnd - chunkBegin
-    ) {
+    if (range.begin !== chunkBegin || range.end !== chunkEnd || !rangeData) {
       throw new Error('Managed PDF range response did not match the requested chunk.')
     }
-    data.set(range.data, chunkBegin - begin)
+    data.set(rangeData, chunkBegin - begin)
   }
 
   return data

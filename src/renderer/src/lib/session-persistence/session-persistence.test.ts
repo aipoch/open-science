@@ -2828,6 +2828,79 @@ describe('renderer session persistence bridge', () => {
       title: 'Later queued save'
     })
   })
+
+  it('rebases an explicit PDF message save across successive main-owned revisions', async () => {
+    const pdfContext = {
+      version: 1 as const,
+      bindings: [
+        {
+          version: 1 as const,
+          bindingId: 'binding-1',
+          sourceKind: 'upload-version' as const,
+          sourceFileId: 'upload-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf' as const,
+          sizeBytes: 12,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+    const message = {
+      id: 'message-1',
+      role: 'user' as const,
+      content: 'Explain this page',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = createPersistedSession({ revision: 1, messages: [message] })
+    const submitted = createPersistedSession({
+      revision: 1,
+      messages: [{ ...message, pdfContext }]
+    })
+    const linked = createPersistedSession({
+      revision: 2,
+      messages: [message],
+      runtimeContext: { version: 1, revision: 1, pdfContext }
+    })
+    const generatedDetails = createPersistedSession({
+      ...linked,
+      revision: 3,
+      title: 'Generated title',
+      description: 'Generated description',
+      sessionDetailsSource: 'generated'
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
+      .mockRejectedValueOnce(new SessionRevisionConflictError(2, 3))
+      .mockImplementationOnce(async (session) => ({ ...session, revision: 4 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(linked).mockResolvedValueOnce(generatedDetails),
+      saveSession
+    })
+    const persistence = createOrderedSessionPersistence(api)
+    persistence.seedAcknowledgedSessions([base])
+
+    await expect(saveSessionInOrder(submitted, persistence, api)).resolves.toMatchObject({
+      revision: 4,
+      title: generatedDetails.title,
+      runtimeContext: linked.runtimeContext,
+      messages: [{ pdfContext }]
+    })
+    expect(api.loadOne).toHaveBeenCalledTimes(2)
+    expect(saveSession).toHaveBeenCalledTimes(3)
+    expect(saveSession.mock.calls[2][0]).toMatchObject({
+      revision: 3,
+      title: generatedDetails.title,
+      runtimeContext: linked.runtimeContext,
+      messages: [{ pdfContext }]
+    })
+  })
 })
 
 type Deferred<T> = {

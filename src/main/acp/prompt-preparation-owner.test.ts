@@ -153,6 +153,213 @@ const setup = (
 }
 
 describe('AcpPromptPreparationOwner', () => {
+  it('filters unlinked PDF uploads from history replay while keeping linked PDFs and non-PDF files', async () => {
+    const fixture = setup()
+
+    await fixture.prepare({
+      request: request({
+        contextReset: true,
+        historyPreamble: 'replayed history',
+        historyAttachments: [
+          {
+            id: 'linked-upload',
+            versionId: 'linked-version',
+            sessionId: 'session-1',
+            name: 'linked.pdf',
+            originalName: 'linked.pdf',
+            path: 'upload-version:linked-version',
+            mimeType: 'application/pdf',
+            size: 100
+          },
+          {
+            id: 'unlinked-upload',
+            versionId: 'unlinked-version',
+            sessionId: 'session-1',
+            name: 'unlinked.pdf',
+            originalName: 'unlinked.pdf',
+            path: 'upload-version:unlinked-version',
+            mimeType: 'application/pdf',
+            size: 100
+          },
+          {
+            id: 'notes-upload',
+            versionId: 'notes-version',
+            sessionId: 'session-1',
+            name: 'notes.txt',
+            originalName: 'notes.txt',
+            path: 'upload-version:notes-version',
+            mimeType: 'text/plain',
+            size: 100
+          }
+        ],
+        referencedArtifacts: [
+          {
+            id: 'linked-upload',
+            versionId: 'linked-version',
+            source: 'upload',
+            name: 'linked.pdf',
+            path: 'upload-version:linked-version',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1',
+            pdfContextDocumentCount: 1,
+            pdfContextActive: true
+          }
+        ]
+      })
+    })
+
+    expect(fixture.promptContent.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        historyUploads: [
+          expect.objectContaining({ versionId: 'linked-version' }),
+          expect.objectContaining({ versionId: 'notes-version' })
+        ]
+      })
+    )
+  })
+
+  it('keeps an explicitly referenced PDF in history replay alongside linked reading context', async () => {
+    const fixture = setup()
+
+    await fixture.prepare({
+      request: request({
+        contextReset: true,
+        historyPreamble: 'replayed history',
+        historyAttachments: [
+          {
+            id: 'linked-upload',
+            versionId: 'linked-version',
+            sessionId: 'session-1',
+            name: 'linked.pdf',
+            originalName: 'linked.pdf',
+            path: 'upload-version:linked-version',
+            mimeType: 'application/pdf',
+            size: 100
+          },
+          {
+            id: 'explicit-upload',
+            versionId: 'explicit-version',
+            sessionId: 'session-1',
+            name: 'explicit.pdf',
+            originalName: 'explicit.pdf',
+            path: 'upload-version:explicit-version',
+            mimeType: 'application/pdf',
+            size: 100
+          }
+        ],
+        referencedArtifacts: [
+          {
+            id: 'linked-upload',
+            versionId: 'linked-version',
+            source: 'upload',
+            name: 'linked.pdf',
+            path: 'upload-version:linked-version',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1'
+          },
+          {
+            id: 'explicit-upload',
+            versionId: 'explicit-version',
+            source: 'upload',
+            name: 'explicit.pdf',
+            path: 'upload-version:explicit-version',
+            mimeType: 'application/pdf'
+          }
+        ]
+      })
+    })
+
+    expect(fixture.promptContent.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        historyUploads: [
+          expect.objectContaining({ versionId: 'linked-version' }),
+          expect.objectContaining({ versionId: 'explicit-version' })
+        ]
+      })
+    )
+  })
+
+  it('keeps historical PDFs when no PDF reading context is linked', async () => {
+    const fixture = setup()
+
+    await fixture.prepare({
+      request: request({
+        contextReset: true,
+        historyPreamble: 'replayed history',
+        historyAttachments: [
+          {
+            id: 'history-upload',
+            versionId: 'history-version',
+            sessionId: 'session-1',
+            name: 'history.pdf',
+            originalName: 'history.pdf',
+            path: 'upload-version:history-version',
+            mimeType: 'application/pdf',
+            size: 100
+          }
+        ]
+      })
+    })
+
+    expect(fixture.promptContent.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        historyUploads: [expect.objectContaining({ versionId: 'history-version' })]
+      })
+    )
+  })
+
+  it('filters historical PDF uploads when Reading is linked through an artifact version', async () => {
+    const fixture = setup()
+
+    await fixture.prepare({
+      request: request({
+        contextReset: true,
+        historyPreamble: 'replayed history',
+        historyAttachments: [
+          {
+            id: 'history-upload',
+            versionId: 'history-version',
+            sessionId: 'session-1',
+            name: 'history.pdf',
+            originalName: 'history.pdf',
+            path: 'upload-version:history-version',
+            mimeType: 'application/pdf',
+            size: 100
+          },
+          {
+            id: 'notes-upload',
+            versionId: 'notes-version',
+            sessionId: 'session-1',
+            name: 'notes.txt',
+            originalName: 'notes.txt',
+            path: 'upload-version:notes-version',
+            mimeType: 'text/plain',
+            size: 100
+          }
+        ],
+        referencedArtifacts: [
+          {
+            id: 'artifact-version-1',
+            versionId: 'artifact-version-1',
+            source: 'artifact',
+            name: 'generated-paper.pdf',
+            path: 'artifact-version:artifact-version-1',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1',
+            pdfContextDocumentCount: 1,
+            pdfContextActive: true
+          }
+        ]
+      })
+    })
+
+    expect(fixture.promptContent.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        historyUploads: [expect.objectContaining({ versionId: 'notes-version' })]
+      })
+    )
+  })
+
   it('keeps unbound Notebook input registrations distinct across prompt turns', async () => {
     const fixture = setup()
     const registrations = new Map<string, string>()

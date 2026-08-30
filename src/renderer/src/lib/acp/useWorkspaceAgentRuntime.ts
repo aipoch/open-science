@@ -24,7 +24,12 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
+import type { MessagePdfContextSnapshot } from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import {
+  usePreviewWorkbenchStore,
+  type PendingPdfContextSelection
+} from '../../stores/preview-workbench-store'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import {
@@ -52,6 +57,7 @@ import {
 } from './workspace-runtime-command-owner'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
 import { useSubagentRuntimePresentation } from './workspace-subagent-runtime-presentation'
+import { createPreviewFileItemFromPdfContext } from '../../pages/workspace/preview-file-item'
 import {
   createPermissionResponseAttemptOwner,
   pendingWorkspacePermissions
@@ -69,6 +75,33 @@ type WorkspacePermissionProfileRuntime = Pick<
 type SubagentRuntimeListener = (update: AcpAgentRuntimeUpdate) => void
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+export const revealLinkedPdfContext = (
+  projectId: string,
+  pdfContext: MessagePdfContextSnapshot
+): void => {
+  const binding =
+    pdfContext.bindings.find(({ bindingId }) => bindingId === pdfContext.activeBindingId) ??
+    pdfContext.bindings[0]
+  if (!binding) return
+  usePreviewWorkbenchStore
+    .getState()
+    .upsertAndActivateItem(createPreviewFileItemFromPdfContext(binding, projectId))
+}
+export const clearLinkedPendingPdfContext = (
+  projectId: string,
+  selection: PendingPdfContextSelection | undefined,
+  pdfContext: MessagePdfContextSnapshot
+): void => {
+  if (!selection) return
+  const linked = pdfContext.bindings.some((binding) =>
+    selection.kind === 'staged-upload'
+      ? binding.sourceKind === 'upload-version' && binding.sourceFileId === selection.attachmentId
+      : binding.sourceKind === selection.sourceKind &&
+        binding.sourceVersionId === selection.sourceVersionId
+  )
+  if (!linked) return
+  usePreviewWorkbenchStore.getState().clearPendingPdfContext(projectId, selection)
+}
 const setWorkspacePermissionProfile = async (
   runtime: WorkspacePermissionProfileRuntime,
   sessionId: string,
@@ -318,6 +351,9 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         })
       }
       rememberAdmittedTarget(resolvedInput.sessionId)
+      const pendingPdfContextSelection = resolvedInput.projectId
+        ? usePreviewWorkbenchStore.getState().pendingPdfContextByProject[resolvedInput.projectId]
+        : undefined
       return sendWorkspaceMessage(
         runtime,
         {
@@ -332,7 +368,18 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         {
           onSendPreparationStateChange: handleSendPreparationStateChange,
           drainRuntimeEvents,
-          onSessionBound: (_pendingSessionId, sessionId) => rememberAdmittedTarget(sessionId)
+          onSessionBound: (_pendingSessionId, sessionId) => {
+            rememberAdmittedTarget(sessionId)
+          },
+          onPdfContextLinked: (_sessionId, pdfContext) => {
+            if (!resolvedInput.projectId) return
+            revealLinkedPdfContext(resolvedInput.projectId, pdfContext)
+            clearLinkedPendingPdfContext(
+              resolvedInput.projectId,
+              pendingPdfContextSelection,
+              pdfContext
+            )
+          }
         }
       )
     },

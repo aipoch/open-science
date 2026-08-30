@@ -32,22 +32,25 @@ import {
 } from './preview-tab-actions'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { SourceWebPreview } from './previews/SourceWebPreview'
-import type { PreviewAnnotationPort } from './previews/preview-types'
+import type { PreviewAnnotationPort, PreviewInteractionPort } from './previews/preview-types'
 import { PreviewToolContent } from './previews/PreviewToolContent'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
+import { usePdfContextAction, type PdfContextLinkState } from './use-pdf-context-action'
 
-type PreviewPanelProps = PreviewAnnotationPort & {
+type PreviewPanelProps = PreviewInteractionPort & {
   panelRef: React.Ref<PanelImperativeHandle>
   defaultSize: string
   minSize: string
   onResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
   restoredPlanResponder?: RestoredPlanResponder
+  onPdfContextError?: (message: string | null) => void
 }
 
-type PreviewPanelSurfaceProps = PreviewAnnotationPort & {
+type PreviewPanelSurfaceProps = PreviewInteractionPort & {
   className?: string
   restoredPlanResponder?: RestoredPlanResponder
+  onPdfContextError?: (message: string | null) => void
 }
 
 // Renders the active tab's content, or an empty state when nothing is previewed yet.
@@ -320,17 +323,26 @@ const PreviewTabContextMenu = ({
   item,
   tabCount,
   pointer,
+  pdfContextState,
+  composerFocusRequestedRef,
   onSelect,
   onClose
 }: {
   item: PreviewItem
   tabCount: number
   pointer: { x: number; y: number }
+  pdfContextState?: PdfContextLinkState
+  // Set by the host when the executed command asked the composer to take focus (Read with
+  // agent); the menu's focus return must not override that request.
+  composerFocusRequestedRef: React.RefObject<boolean>
   onSelect: (command: PreviewTabActionCommand) => void
   onClose: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { shared, specific } = getPreviewTabActionGroups(item, { tabCount })
+  const { pdfContext, shared, specific } = getPreviewTabActionGroups(item, {
+    tabCount,
+    pdfContext: pdfContextState
+  })
 
   const renderItem = (action: PreviewTabAction): React.JSX.Element => {
     const Icon = action.icon
@@ -376,11 +388,15 @@ const PreviewTabContextMenu = ({
         className="min-w-[9.5rem] p-1"
         data-testid="preview-tab-context-menu"
         onCloseAutoFocus={(event) => {
-          // Focus returns to the tab that opened the menu instead of the hidden anchor.
+          // Focus returns to the tab that opened the menu instead of the hidden anchor — unless
+          // the executed command handed focus to the composer.
           event.preventDefault()
+          if (composerFocusRequestedRef.current) return
           document.getElementById(getPreviewTabId(item.id))?.focus()
         }}
       >
+        {pdfContext.map(renderItem)}
+        {pdfContext.length > 0 ? <DropdownMenuSeparator /> : null}
         {shared.map(renderItem)}
         {specific.length > 0 ? <DropdownMenuSeparator /> : null}
         {specific.map(renderItem)}
@@ -461,12 +477,14 @@ const PreviewFilePanel = ({
   item,
   contentKey,
   onClose,
+  onPdfContextError,
   ...annotationPort
 }: {
   item: PreviewFileItem
   contentKey: string
   onClose: (id: string) => void
-} & PreviewAnnotationPort): React.JSX.Element => {
+  onPdfContextError?: (message: string | null) => void
+} & PreviewInteractionPort): React.JSX.Element => {
   const { t } = useTranslation()
   const [isFullScreenOpen, setIsFullScreenOpen] = useState(false)
   const surfaceRef = useRef<HTMLElement | null>(null)
@@ -527,6 +545,7 @@ const PreviewFilePanel = ({
           // must collapse it for the switched session to become visible. The inline panel keeps
           // its place in the workbench and needs no exit.
           onViewInContextNavigate={isFullScreenOpen ? closeFullScreen : undefined}
+          onPdfContextError={onPdfContextError}
           provenanceEntry={isFullScreenOpen ? 'trailing' : 'menu'}
           {...annotationPort}
         />
@@ -628,6 +647,9 @@ const PreviewSourcePanel = ({
 const PreviewPanelSurface = ({
   className,
   restoredPlanResponder,
+  onPdfContextError,
+  onLinkReadingContext,
+  onUnlinkReadingContext,
   ...annotationPort
 }: PreviewPanelSurfaceProps): React.JSX.Element => {
   const items = usePreviewWorkbenchStore((state) => state.items)
@@ -642,10 +664,19 @@ const PreviewPanelSurface = ({
     x: number
     y: number
   } | null>(null)
+  // Records that the just-executed menu command requested composer focus, so the menu's close
+  // does not pull focus back to the tab.
+  const composerFocusRequestedRef = useRef(false)
   const activeItem = items.find((item) => item.id === activeItemId)
   const contextMenuItem = contextMenu
     ? (items.find((item) => item.id === contextMenu.itemId) ?? undefined)
     : undefined
+  // The tab menu's PDF link command shares the header pill's state machine and run logic.
+  const { action: contextMenuPdfAction } = usePdfContextAction(
+    contextMenuItem?.type === 'file' ? contextMenuItem : undefined,
+    onPdfContextError,
+    { link: onLinkReadingContext, unlink: onUnlinkReadingContext }
+  )
   // Remount replaced file previews and release their renderer-owned resources while collapsed.
   const activeContentKey =
     activeItem?.type === 'file'
@@ -666,6 +697,7 @@ const PreviewPanelSurface = ({
     itemId: string
   ): void => {
     event.preventDefault()
+    composerFocusRequestedRef.current = false
     setContextMenu({ itemId, x: event.clientX, y: event.clientY })
   }
 
@@ -675,6 +707,12 @@ const PreviewPanelSurface = ({
 
   const handleContextMenuSelect = (command: PreviewTabActionCommand): void => {
     const item = contextMenuItem
+    // Capture before the menu closes: clearing contextMenu unmounts the item's action.
+    const pdfAction = contextMenuPdfAction
+    // Linking through "Read with agent" ends with a composer focus request; unlinking leaves
+    // the menu's usual tab focus return in place.
+    composerFocusRequestedRef.current =
+      command === 'toggle-pdf-context' && pdfAction !== undefined && pdfAction.state !== 'remove'
     setContextMenu(null)
     if (!item) return
 
@@ -687,6 +725,14 @@ const PreviewPanelSurface = ({
       saveManagedFile: (request) => window.api.saveManagedFile(request),
       copyText: (text) => navigator.clipboard.writeText(text),
       stageLocalPath: stageLocalPath ? (request) => stageLocalPath(request) : undefined,
+      togglePdfContext:
+        pdfAction && !pdfAction.disabled && item.type === 'file'
+          ? () => {
+              // The command also enters the reading view: activate the tab, then link.
+              activateItem(item.id)
+              pdfAction.run()
+            }
+          : undefined,
       activeProjectId
     })
   }
@@ -762,6 +808,9 @@ const PreviewPanelSurface = ({
               contentKey={activeContentKey}
               onClose={removeItem}
               {...annotationPort}
+              onLinkReadingContext={onLinkReadingContext}
+              onUnlinkReadingContext={onUnlinkReadingContext}
+              onPdfContextError={onPdfContextError}
             />
           ) : (
             <section
@@ -779,6 +828,12 @@ const PreviewPanelSurface = ({
           item={contextMenuItem}
           tabCount={items.length}
           pointer={{ x: contextMenu.x, y: contextMenu.y }}
+          pdfContextState={
+            contextMenuPdfAction && !contextMenuPdfAction.disabled
+              ? contextMenuPdfAction.state
+              : undefined
+          }
+          composerFocusRequestedRef={composerFocusRequestedRef}
           onSelect={handleContextMenuSelect}
           onClose={closeContextMenu}
         />
@@ -794,6 +849,9 @@ const PreviewPanel = ({
   minSize,
   onResize,
   restoredPlanResponder,
+  onPdfContextError,
+  onLinkReadingContext,
+  onUnlinkReadingContext,
   ...annotationPort
 }: PreviewPanelProps): React.JSX.Element => {
   const handleResize = (
@@ -815,7 +873,13 @@ const PreviewPanel = ({
       collapsedSize="0%"
       onResize={handleResize}
     >
-      <PreviewPanelSurface restoredPlanResponder={restoredPlanResponder} {...annotationPort} />
+      <PreviewPanelSurface
+        restoredPlanResponder={restoredPlanResponder}
+        onPdfContextError={onPdfContextError}
+        onLinkReadingContext={onLinkReadingContext}
+        onUnlinkReadingContext={onUnlinkReadingContext}
+        {...annotationPort}
+      />
     </ResizablePanel>
   )
 }

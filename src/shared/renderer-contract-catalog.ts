@@ -230,6 +230,9 @@ import type {
 import type {
   DeleteSessionRequest,
   EditSessionDetailsRequest,
+  FilterSessionPdfContextCandidatesRequest,
+  FilterSessionPdfContextCandidatesResult,
+  LinkSessionPdfContextRequest,
   SessionDeletionResult,
   LoadAllSessionsResult,
   ListSessionSummariesResult,
@@ -238,7 +241,9 @@ import type {
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
+  SessionRuntimeContext,
   SessionUsageProjection,
+  UnlinkSessionPdfContextRequest,
   UpdateSessionArchiveRequest
 } from './session-persistence'
 import type {
@@ -1416,6 +1421,20 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.list': callable<() => Promise<ListSessionSummariesResult>>()('sessions', [
     'sessions:list'
   ]),
+  'sessions.filterPdfContextCandidates': callable<
+    (
+      request: FilterSessionPdfContextCandidatesRequest
+    ) => Promise<FilterSessionPdfContextCandidatesResult>
+  >()('sessions', [
+    'sessions:filter-pdf-context-candidates',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.linkPdfContext': callable<
+    (request: LinkSessionPdfContextRequest) => Promise<SessionRuntimeContext>
+  >()('sessions', ['sessions:link-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.loadAll': callable<() => Promise<LoadAllSessionsResult>>()('sessions', [
     'sessions:load-all'
   ]),
@@ -1461,6 +1480,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.updateArchive': callable<
     (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
   >()('sessions', ['sessions:update-archive']),
+  'sessions.unlinkPdfContext': callable<
+    (request: UnlinkSessionPdfContextRequest) => Promise<SessionRuntimeContext>
+  >()('sessions', ['sessions:unlink-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'settings.addCustomServer': callable<
     (request: AddCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:add-custom-server']),

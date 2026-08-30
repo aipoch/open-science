@@ -87,6 +87,7 @@ const createFakeRuntime = (options: {
   setPermissionProfile: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   requestUserInput: ReturnType<typeof vi.fn>
+  disableLiteratureContext: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
@@ -164,6 +165,7 @@ const createFakeRuntime = (options: {
     return snapshot
   })
   const requestUserInput = vi.fn(async () => ({ action: 'answered', answer: 'Minimal' }))
+  const disableLiteratureContext = vi.fn(async () => undefined)
   const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
@@ -290,6 +292,7 @@ const createFakeRuntime = (options: {
     setPermissionProfile,
     respondToPermission,
     requestUserInput,
+    disableLiteratureContext,
     shutdown,
     shutdownForQuit,
     shutdownForUpdateGate
@@ -320,6 +323,7 @@ const createFakeRuntime = (options: {
     setPermissionProfile,
     respondToPermission,
     requestUserInput,
+    disableLiteratureContext,
     emitEvent: (event) => {
       snapshot = { ...snapshot, events: [...snapshot.events, event] }
       options.callbacks.onEvent?.(event)
@@ -1874,6 +1878,32 @@ describe('AcpRuntimeCoordinator', () => {
     await running
     await release
     expect(released).toBe(true)
+  })
+
+  it('waits for the active turn before disabling Literature context', async () => {
+    const prompt = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => prompt.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession({ projectId: 'project-1' })
+    const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'read' })
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+
+    const disabling = coordinator.disableLiteratureContext(session.sessionId)
+    await Promise.resolve()
+    expect(created.disableLiteratureContext).not.toHaveBeenCalled()
+
+    prompt.resolve({ stopReason: 'end_turn' })
+    await running
+    await disabling
+    expect(created.disableLiteratureContext).toHaveBeenCalledWith(session.sessionId)
   })
 
   it('cancels active prompts and waits for their terminal responses before quit teardown', async () => {

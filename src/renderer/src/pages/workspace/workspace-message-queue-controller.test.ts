@@ -390,6 +390,35 @@ describe('workspace message queue controller', () => {
     )
   })
 
+  it('dispatches pending Reading PDF selections captured when the message was queued', async () => {
+    let currentSession = session()
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      getSession: () => currentSession
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const queued = admission('queued with new Reading PDFs')
+    queued.snapshot.pendingPdfContextAttachmentIds = ['upload-1']
+    queued.snapshot.pendingPdfContextVersions = [
+      { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+    ]
+
+    act(() => hook.result.current.lifecycle.enqueue(queued))
+    currentSession = session('idle')
+    hook.rerender({ ...input, activeSession: currentSession, getSession: () => currentSession })
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pendingPdfContextAttachmentIds: ['upload-1'],
+        pendingPdfContextVersions: [
+          { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+        ]
+      })
+    )
+  })
+
   it('dispatches a queued revision through the unified edited-message runtime seam', async () => {
     let currentSession = session()
     const resendEditedMessage = vi.fn(async () => true)
@@ -1474,6 +1503,107 @@ describe('workspace message queue controller', () => {
     expect(hook.result.current.items).toEqual([
       expect.objectContaining({ phase: 'queued', deferredUntilIdle: true })
     ])
+  })
+
+  it('defers a queued PDF snapshot until idle instead of steering mutable context mid-turn', async () => {
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'message-steer'
+    }))
+    const input = options(session(), {
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage: vi.fn(),
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const queued = admission('read this paper')
+    queued.snapshot.pdfContext = {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'source-session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+    act(() => hook.result.current.lifecycle.enqueue(queued))
+
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+
+    expect(steerFollowUp).not.toHaveBeenCalled()
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({
+      phase: 'queued',
+      deferredUntilIdle: true
+    })
+  })
+
+  it('defers pending Reading PDF selections until their normal send path can link them', async () => {
+    let currentSession = session()
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'message-steer'
+    }))
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage: vi.fn(async () => ({
+          sessionId: 'session-a',
+          messageId: 'message-sent'
+        })),
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const queued = admission('read these papers')
+    queued.snapshot.pendingPdfContextAttachmentIds = ['upload-1']
+    queued.snapshot.pendingPdfContextVersions = [
+      { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+    ]
+    act(() => hook.result.current.lifecycle.enqueue(queued))
+
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+
+    expect(steerFollowUp).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({
+      phase: 'queued',
+      deferredUntilIdle: true
+    })
+
+    currentSession = session('idle')
+    hook.rerender({
+      ...input,
+      activeSession: currentSession,
+      getSession: () => currentSession,
+      promptInFlightSessionIds: []
+    })
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pendingPdfContextAttachmentIds: ['upload-1'],
+        pendingPdfContextVersions: [
+          { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+        ]
+      })
+    )
   })
 
   it('requeues when native follow-up is refused instead of interrupting', async () => {

@@ -125,4 +125,90 @@ describe('branchWorkspaceSessionFromMessage', () => {
       1
     ])
   })
+
+  it('relinks the immutable PDF snapshot when branching from a message', async () => {
+    const pdfContext = {
+      version: 1 as const,
+      bindings: [
+        {
+          version: 1 as const,
+          bindingId: 'source-binding',
+          sourceKind: 'upload-version' as const,
+          sourceFileId: 'file-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'source-session',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf' as const,
+          sizeBytes: 1024,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ],
+      activeBindingId: 'source-binding',
+      readingPosition: { pageNumber: 17, pageCount: 40 }
+    }
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Summarize the linked paper',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      pdfContext
+    })
+    const answer = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'answer-stream',
+      eventId: 'answer-event',
+      content: 'The paper discusses reproducibility.'
+    })
+    useSessionStore.getState().finishRun('source-session')
+
+    const linkedRuntimeContext = {
+      version: 1 as const,
+      revision: 1,
+      pdfContext: {
+        version: 1 as const,
+        bindings: [{ ...pdfContext.bindings[0], bindingId: 'child-binding' }]
+      }
+    }
+    const saveSession = vi.fn(async (session) => session)
+    const linkPdfContext = vi.fn().mockResolvedValue(linkedRuntimeContext)
+    vi.stubGlobal('window', { api: { sessions: { saveSession, linkPdfContext } } })
+    const createSession = vi.fn().mockResolvedValue({
+      sessionId: 'branched-session',
+      cwd: '/workspace/project'
+    })
+
+    await expect(
+      branchWorkspaceSessionFromMessage(
+        { createSession },
+        {
+          sourceSessionId: 'source-session',
+          sourceMessageId: answer?.messageId ?? ''
+        }
+      )
+    ).resolves.toEqual({
+      sessionId: 'branched-session',
+      messageId: answer?.messageId
+    })
+
+    expect(createSession).toHaveBeenCalledWith(
+      '/workspace/project',
+      'project-1',
+      'ask',
+      undefined,
+      undefined,
+      true,
+      true
+    )
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'branched-session',
+      expectedRevision: 0,
+      sources: [{ sourceKind: 'upload-version', sourceVersionId: 'version-1' }]
+    })
+    expect(
+      useSessionStore.getState().sessions.find((session) => session.id === 'branched-session')
+        ?.runtimeContext
+    ).toEqual(linkedRuntimeContext)
+  })
 })
