@@ -182,9 +182,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
             message={sessions.loadError}
             onRetry={sessions.retryLoad}
           />
-        ) : quitPersistenceAlert ? (
-          quitPersistenceAlert
-        ) : writeErrorAlert ? (
+        ) : startup.quitPersistence.notice ? null : writeErrorAlert ? (
           writeErrorAlert
         ) : sessions.loadWarning ? (
           <SessionPersistenceAlert
@@ -194,8 +192,8 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
             onDismiss={sessions.dismissLoadWarning}
           />
         ) : null}
-        {sessions.catalogRecovery.kind !== 'ready'
-          ? (quitPersistenceAlert ?? writeErrorAlert)
+        {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
+          ? writeErrorAlert
           : null}
         <WorkspaceAgentRuntimeProvider>
           <JobAnalysisRuntimeBridge enabled={sessions.isReady} />
@@ -239,6 +237,9 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           />
         ) : null}
       </div>
+      {sessions.catalogRecovery.kind === 'ready' && sessions.loadError
+        ? null
+        : quitPersistenceAlert}
       <WebEventRecoveryDialog
         active={activePresentation === 'webEventRecovery'}
         phase={events.webEventConnectionPhase}

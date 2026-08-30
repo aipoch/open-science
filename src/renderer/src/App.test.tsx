@@ -1670,6 +1670,36 @@ describe('App startup routing', () => {
     expect(container.textContent).not.toContain('Quit was canceled')
   })
 
+  it('keeps quit recovery controls interactive while Settings covers the base presentation', async () => {
+    let notifyFlushAborted: (event: { reason: 'renderer-failed' }) => void = () => undefined
+    ;(
+      window.api as unknown as {
+        sessions: {
+          onFlushAborted: (listener: typeof notifyFlushAborted) => () => void
+          onFlushRequest: (listener: (request: { requestId: string }) => void) => () => void
+          sendFlushResponse: (response: { requestId: string; status: string }) => void
+        }
+      }
+    ).sessions = {
+      onFlushAborted: (listener) => {
+        notifyFlushAborted = listener
+        return () => undefined
+      },
+      onFlushRequest: () => () => undefined,
+      sendFlushResponse: vi.fn()
+    }
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+
+    await render()
+    act(() => notifyFlushAborted({ reason: 'renderer-failed' }))
+
+    const alert = container.querySelector('[data-testid="session-persistence-alert"]')
+    expect(alert?.textContent).toContain('Quit was canceled')
+    expect(alert?.closest('[inert]')).toBeNull()
+    expect(alert?.closest('[aria-hidden="true"]')).toBeNull()
+  })
+
   it('does not let a later notification peek override navigation while an earlier peek is pending', async () => {
     const target = { sessionId: 's-3', token: 3 }
     let pending: typeof target | null = target
