@@ -774,6 +774,10 @@ colors communicate a successful or failed probe/migration result.
 - Composer: fixed to the bottom of the activity stream and constrained to `max-w-4xl`, with the composer text track aligned to the message content.
 - Right viewer area: `border-l border-border/20`.
 - Right card: `m-2 rounded-lg bg-card shadow-sm`.
+- An open Notebook Variables view shares the Preview with the Notebook and manual kernel terminal
+  when the Notebook surface is at least `55rem` wide, using a fixed 40% right column. Below that
+  container width it collapses to the focused Variables view; resizing back preserves the user's
+  open intent. The outer Preview remains the only horizontal resize control.
 - Conversation panel shell: `bg-bg-10 p-2 pl-4`.
 - Composer area uses a top fade `bg-gradient-to-t from-bg-10 to-bg-10/0`.
 - Message scroller and preview panel both use `bg-bg-10`.

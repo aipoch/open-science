@@ -8,7 +8,7 @@ import {
   type RefObject
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, RefreshCw, Variable } from 'lucide-react'
+import { RefreshCw, Variable, X } from 'lucide-react'
 
 import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -998,17 +998,27 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     </div>
   )
   const namespaceView = (
-    <div className="flex min-h-0 flex-1 flex-col" data-testid="notebook-variables-view">
+    <div
+      className="flex min-h-0 min-w-0 flex-1 flex-col @min-[55rem]/notebook:basis-[40%] @min-[55rem]/notebook:grow-0 @min-[55rem]/notebook:border-l @min-[55rem]/notebook:border-border-200"
+      data-testid="notebook-variables-view"
+    >
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-100 px-3 py-2">
-        <button
-          type="button"
-          aria-label={t('Back to Notebook')}
-          onClick={() => setShowVariables(false)}
-          className="inline-flex size-7 items-center justify-center rounded-md text-text-300 transition-colors hover:bg-bg-200 hover:text-text-100"
-          data-testid="notebook-variables-back"
-        >
-          <ArrowLeft className="size-4" aria-hidden="true" />
-        </button>
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={t('Close')}
+                onClick={() => setShowVariables(false)}
+                className="inline-flex size-7 items-center justify-center rounded-md text-text-300 transition-colors hover:bg-bg-200 hover:text-text-100"
+                data-testid="notebook-variables-close"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('Close')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         <div className="mr-auto min-w-0">
           <div className="text-xs font-medium text-text-100">{t('Variables')}</div>
           <div className="text-[11px] text-text-300">
@@ -1129,10 +1139,73 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       </div>
     </div>
   )
+  const notebookView =
+    !activeDataLanguage || isNamespaceLost || isHistoricalEnvironmentView ? (
+      <div className="min-h-0 flex-1 overflow-hidden">{notebookCells}</div>
+    ) : (
+      <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
+        <ResizablePanel
+          id="notebook-cells-panel"
+          defaultSize="80%"
+          minSize="35%"
+          className="min-h-0 overflow-hidden"
+        >
+          {notebookCells}
+        </ResizablePanel>
+
+        <ResizableHandle
+          aria-label={t('Resize notebook and terminal')}
+          className="z-10 shrink-0 border-y border-border-200 bg-bg-200/70 aria-[orientation=horizontal]:h-7 aria-[orientation=horizontal]:before:h-1 aria-[orientation=horizontal]:before:w-10 before:opacity-60 hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100"
+        >
+          <div
+            className="pointer-events-none absolute inset-0 flex items-center justify-between gap-2 px-3 text-[11px] text-text-300"
+            data-testid="notebook-terminal-header"
+          >
+            <span>
+              {activeDataLanguage === 'r'
+                ? t('R kernel · shared with the agent')
+                : t('Python kernel · shared with the agent')}
+            </span>
+            <span>{isSelectedKernelRunning ? t('running') : t('idle')}</span>
+          </div>
+        </ResizableHandle>
+
+        <ResizablePanel
+          id="notebook-terminal-panel"
+          defaultSize="20%"
+          minSize="15%"
+          className="min-h-0 overflow-hidden"
+        >
+          <div className="flex h-full min-h-0 flex-col bg-bg-000" data-testid="kernel-terminal">
+            {actionError ? (
+              <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">
+                {actionError}
+              </div>
+            ) : null}
+            <TerminalScrollback
+              runs={visibleRuns}
+              language={activeDataLanguage}
+              viewportRef={terminalViewportRef}
+            />
+            <TerminalInput
+              code={terminalCode}
+              disabled={isTerminalLocked}
+              language={activeDataLanguage}
+              variables={suggestionVariables}
+              onChange={setTerminalCode}
+              onFocusChange={setTerminalInputFocused}
+              onSubmit={() => {
+                void submitTerminalCode()
+              }}
+            />
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    )
 
   return (
     <section
-      className="relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-000"
+      className="@container/notebook relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-000"
       data-testid="kernel-notebook-pane"
     >
       {gated ? (
@@ -1228,9 +1301,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                 <button
                   type="button"
                   aria-label={t('Inspect variables')}
+                  aria-pressed={showVariables}
                   aria-disabled={namespaceButtonDisabled}
                   onClick={() => {
-                    if (!namespaceButtonDisabled) setShowVariables(true)
+                    if (!namespaceButtonDisabled) setShowVariables((current) => !current)
                   }}
                   className={cn(
                     'ml-2 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-300 transition-colors',
@@ -1326,68 +1400,17 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       ) : null}
 
       {showVariables && activeDataLanguage ? (
-        namespaceView
-      ) : !activeDataLanguage || isNamespaceLost || isHistoricalEnvironmentView ? (
-        <div className="min-h-0 flex-1 overflow-hidden">{notebookCells}</div>
+        <div className="flex min-h-0 flex-1" data-testid="notebook-responsive-variables-layout">
+          <div
+            className="hidden min-h-0 min-w-0 flex-1 overflow-hidden @min-[55rem]/notebook:flex"
+            data-testid="notebook-primary-view"
+          >
+            {notebookView}
+          </div>
+          {namespaceView}
+        </div>
       ) : (
-        <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
-          <ResizablePanel
-            id="notebook-cells-panel"
-            defaultSize="80%"
-            minSize="35%"
-            className="min-h-0 overflow-hidden"
-          >
-            {notebookCells}
-          </ResizablePanel>
-
-          <ResizableHandle
-            aria-label={t('Resize notebook and terminal')}
-            className="z-10 shrink-0 border-y border-border-200 bg-bg-200/70 aria-[orientation=horizontal]:h-7 aria-[orientation=horizontal]:before:h-1 aria-[orientation=horizontal]:before:w-10 before:opacity-60 hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100"
-          >
-            <div
-              className="pointer-events-none absolute inset-0 flex items-center justify-between gap-2 px-3 text-[11px] text-text-300"
-              data-testid="notebook-terminal-header"
-            >
-              <span>
-                {activeDataLanguage === 'r'
-                  ? t('R kernel · shared with the agent')
-                  : t('Python kernel · shared with the agent')}
-              </span>
-              <span>{isSelectedKernelRunning ? t('running') : t('idle')}</span>
-            </div>
-          </ResizableHandle>
-
-          <ResizablePanel
-            id="notebook-terminal-panel"
-            defaultSize="20%"
-            minSize="15%"
-            className="min-h-0 overflow-hidden"
-          >
-            <div className="flex h-full min-h-0 flex-col bg-bg-000" data-testid="kernel-terminal">
-              {actionError ? (
-                <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">
-                  {actionError}
-                </div>
-              ) : null}
-              <TerminalScrollback
-                runs={visibleRuns}
-                language={activeDataLanguage}
-                viewportRef={terminalViewportRef}
-              />
-              <TerminalInput
-                code={terminalCode}
-                disabled={isTerminalLocked}
-                language={activeDataLanguage}
-                variables={suggestionVariables}
-                onChange={setTerminalCode}
-                onFocusChange={setTerminalInputFocused}
-                onSubmit={() => {
-                  void submitTerminalCode()
-                }}
-              />
-            </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
+        notebookView
       )}
 
       {!showVariables && (isNamespaceLost || isHistoricalEnvironmentView) ? (
