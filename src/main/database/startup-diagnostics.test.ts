@@ -104,6 +104,27 @@ describe('buildStartupDiagnostics', () => {
   })
 
   it.each([
+    ['POSIX', 'relative.db,/srv/customer/secret.db', '/srv/customer/secret.db'],
+    [
+      'drive-letter',
+      String.raw`relative.db,D:\Clients\Acme\secret.db`,
+      String.raw`D:\Clients\Acme\secret.db`
+    ],
+    [
+      'forward-slash UNC',
+      'relative.db,//fileserver/research-share/secret.db',
+      '//fileserver/research-share/secret.db'
+    ]
+  ])('redacts a comma-delimited %s path', (_kind, message, path) => {
+    const result = buildStartupDiagnostics(new Error(`cannot open ${message}`), {
+      home: '/Users/alice'
+    })
+
+    expect(result).toContain('cannot open relative.db,<absolute-path>')
+    expect(result).not.toContain(path)
+  })
+
+  it.each([
     '/srv/customer/Private Study/patient.db',
     String.raw`D:\Clients\Private Study\patient.db`,
     String.raw`\\fileserver\Private Study\patient.db`,
