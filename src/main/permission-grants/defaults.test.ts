@@ -6,7 +6,11 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS, seedDefaultPermissionGrants } from './defaults'
+import {
+  DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS,
+  DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
+  seedDefaultPermissionGrants
+} from './defaults'
 import { PRE_REGISTERED_PERMISSION_IDENTITIES } from './identity-catalog'
 import { createPermissionGrantRegistry, type PermissionGrantRegistry } from './registry'
 
@@ -29,7 +33,7 @@ const setup = async (): Promise<{ client: PrismaClient; registry: PermissionGran
 }
 
 describe('default permission grants', () => {
-  it('seeds the registered customization permissions globally', async () => {
+  it('seeds the registered new-install defaults globally', async () => {
     const fixture = await setup()
 
     await seedDefaultPermissionGrants(fixture.registry, fixture.client)
@@ -37,15 +41,25 @@ describe('default permission grants', () => {
     expect(DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS).toEqual(
       PRE_REGISTERED_PERMISSION_IDENTITIES.customize_mutation
     )
-    const grants = await fixture.registry.list()
-    expect(grants.map((grant) => grant.capability.key)).toEqual(
-      [...DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS].sort()
+    expect(DEFAULT_GLOBAL_PERMISSION_CAPABILITIES).toEqual([
+      ...DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS.map((key) => ({
+        kind: 'customize_mutation',
+        key
+      })),
+      { kind: 'skill_operation', key: 'skill:invoke' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-literature/read_document' }
+    ])
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.skill_operation).toContain('skill:invoke')
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
+      'mcp:open-science-literature/read_document'
     )
+    const grants = await fixture.registry.list()
+    expect(grants).toHaveLength(DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.length)
     expect(grants).toEqual(
       expect.arrayContaining(
-        DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS.map((key) =>
+        DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.map((capability) =>
           expect.objectContaining({
-            capability: { kind: 'customize_mutation', key },
+            capability,
             scope: { kind: 'global' }
           })
         )
@@ -57,6 +71,17 @@ describe('default permission grants', () => {
         select: { id: true }
       })
     ).resolves.toEqual({ id: 'global-customize-v1' })
+  })
+
+  it('does not backfill new defaults after the v1 seed was applied', async () => {
+    const fixture = await setup()
+    await fixture.client.permissionGrantSeed.create({
+      data: { id: 'global-customize-v1', appliedAt: new Date() }
+    })
+
+    await seedDefaultPermissionGrants(fixture.registry, fixture.client)
+
+    await expect(fixture.registry.list()).resolves.toEqual([])
   })
 
   it('does not recreate a revoked default on a later startup', async () => {
@@ -71,7 +96,7 @@ describe('default permission grants', () => {
     await seedDefaultPermissionGrants(reopenedRegistry, fixture.client)
 
     await expect(reopenedRegistry.list()).resolves.toHaveLength(
-      DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS.length - 1
+      DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.length - 1
     )
   })
 })

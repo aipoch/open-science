@@ -931,7 +931,7 @@ describe('ACP permission broker with durable grants', () => {
     )
   })
 
-  it('uses a default Global customization grant without prompting', async () => {
+  it('uses default Global grants without prompting', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-default-grant-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
@@ -946,6 +946,22 @@ describe('ACP permission broker with durable grants', () => {
         profile: 'ask',
         projectId: 'project-1'
       })
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
+    await expect(
+      broker.requestPermission(registeredToolRequest('skill'), {
+        profile: 'ask',
+        projectId: 'project-1'
+      })
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
+    await expect(
+      broker.requestPermission(
+        mcpRequest('session-literature', 'mcp__open_science_literature__read_document'),
+        {
+          profile: 'ask',
+          projectId: 'project-1',
+          mcpServerNames: ['open-science-literature']
+        }
+      )
     ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
     expect(emitted).toEqual([])
   })
