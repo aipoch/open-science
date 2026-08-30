@@ -163,6 +163,10 @@ export const installAppLifecycle = (
       : confirmClose(variant, sessions)
   const detectDelegatedWork = (): ActiveSessionInfo[] =>
     deps.detectActiveSessions().filter((session) => session.kind === 'delegated')
+  const requestConfirmedQuit = (): void => {
+    quitConfirmed = true
+    deps.quit()
+  }
 
   // Synchronous close classification, evaluated at close time. A mid-quit close is held so the
   // renderer survives persistence flushing; otherwise darwin keeps its dock convention (real close),
@@ -196,7 +200,9 @@ export const installAppLifecycle = (
     classifyClose,
     resolveCloseAction,
     requestQuit: (confirmed = true) => {
-      quitConfirmed = confirmed
+      // A caller's earlier confirmation cannot authorize delegated work that is already live at the
+      // final boundary. Leave that case unconfirmed so before-quit performs the delegated-work recheck.
+      quitConfirmed = confirmed && detectDelegatedWork().length === 0
       deps.quit()
     },
     ...(deps.onAppearanceChanged ? { onAppearanceChanged: deps.onAppearanceChanged } : {})
@@ -278,15 +284,19 @@ export const installAppLifecycle = (
     // quitAndInstall. Once either committed handoff invokes app.quit(), it must continue; cancelling
     // there would strand the already-started installer or a process cached on the old data root.
     const delegatedAtShutdownBoundary = detectDelegatedWork()
-    if (delegatedWorkBlocksShutdown && delegatedAtShutdownBoundary.length > 0) {
+    if (!quitConfirmed && delegatedWorkBlocksShutdown && delegatedAtShutdownBoundary.length > 0) {
       event.preventDefault()
       quitConfirmed = false
       clearApplicationShutdownTrigger()
       if (confirmInFlight) return
       confirmInFlight = true
-      void confirmResearchClose('quit', delegatedAtShutdownBoundary).finally(() => {
-        confirmInFlight = false
-      })
+      void confirmResearchClose('quit', delegatedAtShutdownBoundary)
+        .then((choice) => {
+          if (choice === 'quit') requestConfirmedQuit()
+        })
+        .finally(() => {
+          confirmInFlight = false
+        })
       return
     }
 
@@ -302,11 +312,11 @@ export const installAppLifecycle = (
             const delegated = detectDelegatedWork()
             if (delegated.length > 0) {
               quitConfirmed = false
-              await confirmResearchClose('quit', delegated)
+              const delegatedChoice = await confirmResearchClose('quit', delegated)
+              if (delegatedChoice === 'quit') requestConfirmedQuit()
               return
             }
-            quitConfirmed = true
-            deps.quit()
+            requestConfirmedQuit()
             return
           }
           // Cancel with no tray and no surviving window would strand the app with no UI (no-tray

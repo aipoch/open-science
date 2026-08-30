@@ -79,13 +79,12 @@ const clearSourcePreviewState = (window: BrowserWindow): void => {
   sourcePreviewNavigationGuards.get(window)?.clearAll()
 }
 
-const loadRenderer = (window: BrowserWindow): void => {
+const loadRenderer = (window: BrowserWindow): Promise<void> => {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    void window.loadURL(process.env['ELECTRON_RENDERER_URL'])
-    return
+    return window.loadURL(process.env['ELECTRON_RENDERER_URL'])
   }
 
-  void window.loadFile(rendererEntry)
+  return window.loadFile(rendererEntry)
 }
 
 const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindow => {
@@ -282,9 +281,95 @@ const createMainWindow = (
   let rendererUnresponsiveAt: number | undefined
   let rendererRecoveryTimes: number[] = []
   let rendererRecoveryDialogOpen = false
+  let rendererLoadsInFlight = 0
   const clearRendererHangState = (): void => {
     rendererResponsive = true
     rendererUnresponsiveAt = undefined
+  }
+  const rendererLoadErrorName = (error: unknown): string =>
+    error instanceof Error ? error.name : 'UnknownError'
+  function observeRendererLoad(initial: boolean): void {
+    rendererLoadsInFlight += 1
+    void loadRenderer(window).then(
+      () => {
+        rendererLoadsInFlight -= 1
+      },
+      (error) => {
+        rendererLoadsInFlight -= 1
+        log.error('renderer document load rejected', { errorName: rendererLoadErrorName(error) })
+        if (window.isDestroyed()) return
+        if (initial) {
+          // The startup shell waits for the resulting closed event and then lets the lifecycle create a
+          // fresh window. A rejected load Promise is not guaranteed to reach its did-fail-load listener.
+          window.destroy()
+          return
+        }
+        recoverRenderer('load-failed', true)
+      }
+    )
+  }
+  function recoverRenderer(reason: string, loadFailed = false): void {
+    if (window.isDestroyed()) return
+
+    const now = Date.now()
+    rendererRecoveryTimes = rendererRecoveryTimes.filter(
+      (recoveryAt) => now - recoveryAt < RENDERER_RECOVERY_WINDOW_MS
+    )
+    if (rendererRecoveryTimes.length < MAX_AUTOMATIC_RENDERER_RECOVERIES) {
+      rendererRecoveryTimes.push(now)
+      if (loadFailed) {
+        log.warn('reloading renderer after document load failure', {
+          automaticRecoveryAttempt: rendererRecoveryTimes.length
+        })
+      } else {
+        log.warn('reloading renderer after process exit', {
+          reason,
+          automaticRecoveryAttempt: rendererRecoveryTimes.length
+        })
+      }
+      observeRendererLoad(false)
+      return
+    }
+
+    if (rendererRecoveryDialogOpen) return
+    rendererRecoveryDialogOpen = true
+    log.error('renderer automatic recovery paused after repeated exits', {
+      reason,
+      automaticRecoveries: rendererRecoveryTimes.length,
+      recoveryWindowMs: RENDERER_RECOVERY_WINDOW_MS
+    })
+    void dialog
+      .showMessageBox(window, {
+        type: 'error',
+        buttons: [translate('Reload', { context: 'window' }), translate('Close window')],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Open Science',
+        message: translate('The app window stopped responding repeatedly.'),
+        detail: translate(
+          'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.'
+        )
+      })
+      .then(
+        ({ response }) => {
+          rendererRecoveryDialogOpen = false
+          if (window.isDestroyed()) return
+          if (response === 0) {
+            rendererRecoveryTimes = []
+            log.warn('reloading renderer after user confirmation')
+            observeRendererLoad(false)
+            return
+          }
+          // Bypass the normal Windows close-to-tray interception: the user explicitly chose to close
+          // this unrecoverable blank window, not leave it hidden and alive in the tray.
+          window.destroy()
+        },
+        () => {
+          rendererRecoveryDialogOpen = false
+          log.error('renderer recovery dialog failed')
+          if (!window.isDestroyed()) window.destroy()
+        }
+      )
   }
   const onListenerReady = (event: IpcMainEvent): void => {
     if (event.sender !== window.webContents) return
@@ -382,6 +467,10 @@ const createMainWindow = (
       )
       if (!isMainFrame) return
       log.error('renderer document failed to load', { errorCode, errorDescription })
+      // Explicit loadRenderer attempts are observed through their Promise so one Chromium failure only
+      // consumes one recovery slot. A later top-level navigation has no pending Promise owner, so route
+      // its failure through the same bounded recovery used for renderer process exits.
+      if (rendererLoadsInFlight === 0) recoverRenderer('load-failed', true)
     }
   )
   window.webContents.on('preload-error', (_event, _preloadPath, error) => {
@@ -408,59 +497,7 @@ const createMainWindow = (
 
     if (!RECOVERABLE_RENDERER_EXIT_REASONS.has(details.reason) || window.isDestroyed()) return
 
-    const now = Date.now()
-    rendererRecoveryTimes = rendererRecoveryTimes.filter(
-      (recoveryAt) => now - recoveryAt < RENDERER_RECOVERY_WINDOW_MS
-    )
-    if (rendererRecoveryTimes.length < MAX_AUTOMATIC_RENDERER_RECOVERIES) {
-      rendererRecoveryTimes.push(now)
-      log.warn('reloading renderer after process exit', {
-        reason: details.reason,
-        automaticRecoveryAttempt: rendererRecoveryTimes.length
-      })
-      loadRenderer(window)
-      return
-    }
-
-    if (rendererRecoveryDialogOpen) return
-    rendererRecoveryDialogOpen = true
-    log.error('renderer automatic recovery paused after repeated exits', {
-      reason: details.reason,
-      automaticRecoveries: rendererRecoveryTimes.length,
-      recoveryWindowMs: RENDERER_RECOVERY_WINDOW_MS
-    })
-    void dialog
-      .showMessageBox(window, {
-        type: 'error',
-        buttons: [translate('Reload', { context: 'window' }), translate('Close window')],
-        defaultId: 0,
-        cancelId: 1,
-        title: 'Open Science',
-        message: translate('The app window stopped responding repeatedly.'),
-        detail: translate(
-          'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.'
-        )
-      })
-      .then(
-        ({ response }) => {
-          rendererRecoveryDialogOpen = false
-          if (window.isDestroyed()) return
-          if (response === 0) {
-            rendererRecoveryTimes = []
-            log.warn('reloading renderer after user confirmation')
-            loadRenderer(window)
-            return
-          }
-          // Bypass the normal Windows close-to-tray interception: the user explicitly chose to close
-          // this unrecoverable blank window, not leave it hidden and alive in the tray.
-          window.destroy()
-        },
-        () => {
-          rendererRecoveryDialogOpen = false
-          log.error('renderer recovery dialog failed')
-          if (!window.isDestroyed()) window.destroy()
-        }
-      )
+    recoverRenderer(details.reason)
   })
   window.webContents.on('unresponsive', () => {
     if (rendererResponsive) {
@@ -591,7 +628,7 @@ const createMainWindow = (
     })
   }
 
-  loadRenderer(window)
+  observeRendererLoad(true)
   return window
 }
 

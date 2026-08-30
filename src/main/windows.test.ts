@@ -101,11 +101,12 @@ type CloseEvent = { preventDefault: () => void; defaultPrevented: boolean }
 // currentWindow and lastWindow both point at the latest window; two describe blocks, one shared fake.
 let currentWindow: FakeBrowserWindow | undefined
 let lastWindow: FakeBrowserWindow | undefined
+let loadRendererDocument = (): Promise<void> => Promise.resolve()
 
 class FakeBrowserWindow {
   closeMock = vi.fn()
   destroyMock = vi.fn()
-  loadFileMock = vi.fn(() => Promise.resolve())
+  loadFileMock = vi.fn(() => loadRendererDocument())
   sendMock = vi.fn()
   showMock = vi.fn()
   webContentsHandlers = new Map<string, WebContentsHandler>()
@@ -1020,6 +1021,7 @@ describe('window-open external handler', () => {
 describe('close chord interception', () => {
   beforeEach(() => {
     currentWindow = undefined
+    loadRendererDocument = () => Promise.resolve()
     ipcMainOnMock.mockReset()
     ipcMainRemoveListenerMock.mockReset()
     findOverlayMock.open.mockClear()
@@ -1332,6 +1334,38 @@ describe('close chord interception', () => {
     expect(JSON.stringify(windowLogSpies.error.mock.calls)).not.toContain('session-content')
   })
 
+  it('destroys an unusable window when the initial renderer load promise rejects', async () => {
+    loadRendererDocument = () => Promise.reject(new Error('renderer entry unavailable'))
+
+    createMainWindow()
+    const window = currentWindow!
+
+    await vi.waitFor(() => expect(window.destroyMock).toHaveBeenCalledTimes(1))
+  })
+
+  it('recovers a main-frame document load failure within the renderer retry budget', async () => {
+    showMessageBoxMock.mockReturnValueOnce(new Promise(() => undefined))
+    createMainWindow()
+    const window = currentWindow!
+    await Promise.resolve()
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      fireWebContentsEvent(
+        window,
+        'did-fail-load',
+        {},
+        -105,
+        'NAME_NOT_RESOLVED',
+        'file:///app/index.html',
+        true
+      )
+      await Promise.resolve()
+    }
+
+    expect(window.loadFileMock).toHaveBeenCalledTimes(3)
+    expect(showMessageBoxMock).toHaveBeenCalledTimes(1)
+  })
+
   it('records a preload failure without logging its path or error text', () => {
     createMainWindow()
     const window = currentWindow!
@@ -1395,6 +1429,19 @@ describe('close chord interception', () => {
       })
     )
     await vi.waitFor(() => expect(window.loadFileMock).toHaveBeenCalledTimes(4))
+  })
+
+  it('counts rejected renderer recovery loads toward the retry dialog', async () => {
+    createMainWindow()
+    const window = currentWindow!
+    await Promise.resolve()
+    loadRendererDocument = () => Promise.reject(new Error('renderer entry unavailable'))
+    showMessageBoxMock.mockReturnValueOnce(new Promise(() => undefined))
+
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
+
+    await vi.waitFor(() => expect(showMessageBoxMock).toHaveBeenCalledTimes(1))
+    expect(window.loadFileMock).toHaveBeenCalledTimes(3)
   })
 
   it('destroys the blank window when the user closes a renderer crash-loop prompt', async () => {
