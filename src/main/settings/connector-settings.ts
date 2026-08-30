@@ -48,7 +48,10 @@ import {
   hasEmbeddedConnectorCredentials,
   parseConnectorTemplate
 } from './connector-template'
-import { CustomServerIdConflictError } from './custom-server-identity'
+import {
+  CustomServerIdConflictError,
+  customServerSecurityFingerprint
+} from './custom-server-identity'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
@@ -629,7 +632,8 @@ class ConnectorSettingsModule {
 
   async saveCustomServerOAuthState(
     serverId: string,
-    state: StoredCustomMcpOAuthState | undefined
+    state: StoredCustomMcpOAuthState | undefined,
+    expectedConfigurationFingerprint?: string
   ): Promise<void> {
     const stored = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
       (server) => server.id === serverId
@@ -637,10 +641,11 @@ class ConnectorSettingsModule {
     if (!stored) throw new Error(`Unknown custom connector: ${serverId}`)
     if (!stored.oauth) throw new Error(`Custom connector "${serverId}" is not configured for OAuth`)
 
-    await this.repository.updateCustomServer(serverId, {
-      ...stored,
-      ...(state ? { oauthRef: encryptKey(JSON.stringify(state)) } : { oauthRef: undefined })
-    })
+    await this.repository.updateCustomServerOAuthState(
+      serverId,
+      expectedConfigurationFingerprint ?? customServerSecurityFingerprint(stored),
+      state ? encryptKey(JSON.stringify(state)) : undefined
+    )
   }
 
   async disconnectCustomServer(serverId: string): Promise<ConnectorsSnapshot> {

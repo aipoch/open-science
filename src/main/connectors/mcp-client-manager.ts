@@ -26,6 +26,7 @@ const STDERR_TRUNCATION_MARKER = '…[truncated]'
 export type CustomMcpServerConfig = {
   id: string
   name: string
+  configurationFingerprint?: string
   transport: 'stdio' | 'streamable_http' | 'sse'
   // stdio (local command):
   command?: string
@@ -67,7 +68,11 @@ type McpClientManagerDeps = {
     signal?: AbortSignal
   ) => Promise<Client>
   openExternal?: (url: string) => Promise<void> | void
-  saveOAuthState?: (serverId: string, state: StoredCustomMcpOAuthState) => Promise<void>
+  saveOAuthState?: (
+    serverId: string,
+    state: StoredCustomMcpOAuthState,
+    expectedConfigurationFingerprint?: string
+  ) => Promise<void>
 }
 
 type ConnectionAttempt = {
@@ -359,7 +364,8 @@ export class McpClientManager {
   private readonly openExternal: (url: string) => Promise<void> | void
   private readonly saveOAuthState?: (
     serverId: string,
-    state: StoredCustomMcpOAuthState
+    state: StoredCustomMcpOAuthState,
+    expectedConfigurationFingerprint?: string
   ) => Promise<void>
 
   constructor(deps?: McpClientManagerDeps) {
@@ -597,7 +603,9 @@ export class McpClientManager {
       saveState: this.saveOAuthState
         ? (state) =>
             generation === this.generation(config.id)
-              ? this.saveOAuthState!(config.id, state)
+              ? config.configurationFingerprint
+                ? this.saveOAuthState!(config.id, state, config.configurationFingerprint)
+                : this.saveOAuthState!(config.id, state)
               : Promise.resolve()
         : undefined
     })

@@ -994,7 +994,7 @@ describe('ConnectorSettingsModule', () => {
       oauth: { authorizationServerUrl: 'https://old.example/oauth' }
     })
     const id = added.customServers[0].id
-    const updateCustomServer = repository.updateCustomServer.bind(repository)
+    const updateCustomServerOAuthState = repository.updateCustomServerOAuthState.bind(repository)
     let releaseStaleSave!: () => void
     const staleSaveReleased = new Promise<void>((resolve) => {
       releaseStaleSave = resolve
@@ -1004,14 +1004,14 @@ describe('ConnectorSettingsModule', () => {
       markStaleSaveStarted = resolve
     })
     let intercepted = false
-    vi.spyOn(repository, 'updateCustomServer').mockImplementation(
-      async (serverId, server, allowMissing) => {
-        if (!intercepted && server.oauthRef) {
+    vi.spyOn(repository, 'updateCustomServerOAuthState').mockImplementation(
+      async (serverId, expectedFingerprint, oauthRef) => {
+        if (!intercepted && oauthRef) {
           intercepted = true
           markStaleSaveStarted()
           await staleSaveReleased
         }
-        return updateCustomServer(serverId, server, allowMissing)
+        return updateCustomServerOAuthState(serverId, expectedFingerprint, oauthRef)
       }
     )
 

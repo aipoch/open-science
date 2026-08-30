@@ -1,4 +1,31 @@
+import { createHmac, randomBytes } from 'node:crypto'
+
 import type { StoredConnectors, StoredCustomMcpServer } from './types'
+
+const stableRecordEntries = (record: Record<string, string> | undefined): [string, string][] =>
+  Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))
+
+const customServerSecurityFingerprintKey = randomBytes(32)
+
+const customServerCredentialFingerprint = (server: StoredCustomMcpServer): string =>
+  createHmac('sha256', customServerSecurityFingerprintKey)
+    .update(
+      JSON.stringify([
+        server.transport,
+        server.command ?? null,
+        server.args ?? [],
+        server.url ?? null,
+        stableRecordEntries(server.envRefs ?? server.env),
+        stableRecordEntries(server.headerRefs ?? server.headers),
+        server.oauthClientSecretRef ?? null
+      ])
+    )
+    .digest('hex')
+
+// Process-local fingerprint for compare-and-set writes and live dispatch generations. Secret values
+// are authenticated with an ephemeral key instead of being retained in an enumerable digest.
+export const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
+  JSON.stringify([server.oauth ?? null, customServerCredentialFingerprint(server)])
 
 export class CustomServerIdConflictError extends Error {
   constructor() {

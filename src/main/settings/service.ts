@@ -1014,9 +1014,14 @@ class SettingsService {
   // intentionally main-process-only; renderer settings never receive the token-bearing state.
   async saveCustomServerOAuthState(
     serverId: string,
-    state: StoredCustomMcpOAuthState | undefined
+    state: StoredCustomMcpOAuthState | undefined,
+    expectedConfigurationFingerprint?: string
   ): Promise<void> {
-    return this.connectors.saveCustomServerOAuthState(serverId, state)
+    return this.connectors.saveCustomServerOAuthState(
+      serverId,
+      state,
+      expectedConfigurationFingerprint
+    )
   }
 
   setCustomServerAuthenticator(

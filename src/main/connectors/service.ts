@@ -1,5 +1,3 @@
-import { createHmac, randomBytes } from 'node:crypto'
-
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
 import {
@@ -12,6 +10,7 @@ import {
 import { McpToolCallError, type CustomMcpServerConfig } from './mcp-client-manager'
 import type { ConnectorCredentialId, ConnectorCredentials, ToolDescriptor } from './types'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
+import { customServerSecurityFingerprint } from '../settings/custom-server-identity'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { ConnectorPermissionBroker } from '../permission-grants/connector-broker'
 import type { ConnectorPermissionRequest } from '../permission-grants/connector-broker'
@@ -158,32 +157,6 @@ type CustomMcpFailureState = {
   retryAt?: number
   probing: boolean
 }
-
-const stableRecordEntries = (record: Record<string, string> | undefined): [string, string][] =>
-  Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))
-
-const customServerSecurityFingerprintKey = randomBytes(32)
-
-// Authenticates fields that can contain credentials. The process-local key lets the barrier compare
-// a configuration generation without retaining another plaintext copy or exposing an enumerable
-// digest. OAuth configuration contains only public metadata, so it remains outside the keyed digest.
-const customServerCredentialFingerprint = (server: StoredCustomMcpServer): string =>
-  createHmac('sha256', customServerSecurityFingerprintKey)
-    .update(
-      JSON.stringify([
-        server.transport,
-        server.command ?? null,
-        server.args ?? [],
-        server.url ?? null,
-        stableRecordEntries(server.envRefs ?? server.env),
-        stableRecordEntries(server.headerRefs ?? server.headers),
-        server.oauthClientSecretRef ?? null
-      ])
-    )
-    .digest('hex')
-
-const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
-  JSON.stringify([server.oauth ?? null, customServerCredentialFingerprint(server)])
 
 const unavailableConnectorMessage = (connector: string): string =>
   `Connector ${JSON.stringify(connector)} is unavailable. ` +

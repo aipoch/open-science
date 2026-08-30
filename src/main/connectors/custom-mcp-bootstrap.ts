@@ -3,6 +3,7 @@ import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 import { hasEmbeddedConnectorCredentials } from '../settings/connector-template'
 import { ALL_CONNECTOR_IDS } from './registry'
 import { validateResourceId } from '../../shared/resource-id'
+import { customServerSecurityFingerprint } from '../settings/custom-server-identity'
 
 export type CustomMcpFailureAvailability = 'unavailable' | 'unauthenticated'
 
@@ -26,6 +27,7 @@ export function toCustomMcpConfig(server: StoredCustomMcpServer): CustomMcpServe
   return {
     id: server.id,
     name: server.name,
+    configurationFingerprint: customServerSecurityFingerprint(server),
     transport: server.transport,
     command: server.command ?? '',
     args: server.args,

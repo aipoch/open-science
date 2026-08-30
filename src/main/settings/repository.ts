@@ -40,7 +40,8 @@ import { assertCustomServerCapacity } from './connector-resource-limits'
 import {
   appendCustomServer,
   beginCustomServerDeletion,
-  completeCustomServerDeletion
+  completeCustomServerDeletion,
+  customServerSecurityFingerprint
 } from './custom-server-identity'
 import {
   buildReviewerModelMutation,
@@ -680,6 +681,22 @@ class SettingsRepository {
         throw new Error(`Unknown custom connector: ${id}`)
       connectors.customMcpServers = servers?.map((stored) => (stored.id === id ? server : stored))
     })
+  }
+
+  async updateCustomServerOAuthState(
+    id: string,
+    expectedConfigurationFingerprint: string,
+    oauthRef: string | undefined
+  ): Promise<boolean> {
+    let updated = false
+    await this.mutateConnectors((connectors) => {
+      const server = connectors.customMcpServers?.find((candidate) => candidate.id === id)
+      if (!server) throw new Error(`Unknown custom connector: ${id}`)
+      if (customServerSecurityFingerprint(server) !== expectedConfigurationFingerprint) return
+      server.oauthRef = oauthRef
+      updated = true
+    })
+    return updated
   }
 
   // Sets the bookmark folders for a provider_id in settings.computeBookmarks. Replaces the full
