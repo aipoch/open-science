@@ -31,6 +31,7 @@ import { isProductionDelegatedWorkFramework } from '../delegation/production-rea
 import { isCodexSubscriptionProvider } from '../../shared/settings'
 import { CODEX_VERSION } from '../settings/managed-codex'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
+import { registerOwnedPosixProcessGroup } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 
 const CODEX_PROVIDER_ID = 'open-science'
@@ -404,12 +405,20 @@ export const createCodexFramework = ({
         : input.executablePath
     const args = isJavaScript ? [input.executablePath, ...input.args] : input.args
 
-    return spawnProcess(command, args, {
+    const child = spawnProcess(command, args, {
       env: buildSpawnEnvironment(input, sourceEnv),
       stdio: 'pipe',
+      // Keep a terminal/dev-runner SIGINT aimed at the Electron application's foreground process
+      // group from killing Codex before the app's awaited ACP teardown can mark and reap it. Piped
+      // stdio remains referenced (we never unref the child), and the resource owner still performs
+      // explicit cross-platform tree teardown. Node's detached process-group behavior is POSIX-only;
+      // creating an independent Windows console/process group here would change packaged startup.
+      detached: platform !== 'win32',
       windowsHide: true,
       shell: needsShell
     })
+    if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
+    return child
   },
 
   prepareModelConfig(provider, ctx: ModelConfigContext): AgentModelConfig {

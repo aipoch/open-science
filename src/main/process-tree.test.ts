@@ -9,7 +9,7 @@ const { spawnMock } = vi.hoisted(() => ({
 
 vi.mock('node:child_process', () => ({ spawn: spawnMock }))
 
-const { terminateProcessTree } = await import('./process-tree')
+const { registerOwnedPosixProcessGroup, terminateProcessTree } = await import('./process-tree')
 
 // Minimal ChildProcess stand-in: an EventEmitter (so waitForExit's once('exit') resolves) exposing the
 // pid/kill/killed/exitCode surface the code under test touches. kill() flips killed like Node does.
@@ -172,6 +172,47 @@ describe('terminateProcessTree (win32)', () => {
 })
 
 describe('terminateProcessTree (posix)', () => {
+  it('escalates an explicitly owned process group after snapshotting its descendants', async () => {
+    vi.useFakeTimers()
+    setPlatform('linux')
+    const ps = new FakePs()
+    spawnMock.mockReturnValueOnce(ps)
+    let groupAlive = true
+    let detachedDescendantAlive = true
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -1000) {
+        if (signal === 0 && !groupAlive) throw esrch()
+        if (signal === 'SIGKILL') groupAlive = false
+        return true
+      }
+      expect(pid).toBe(1001)
+      if (signal === 0 && !detachedDescendantAlive) throw esrch()
+      if (signal === 'SIGKILL') detachedDescendantAlive = false
+      return true
+    })
+    const child = new FakeChild(1000)
+    registerOwnedPosixProcessGroup(child as never)
+
+    const pending = terminateProcessTree(child as never)
+
+    ps.stdout.emit('data', Buffer.from('1000 1\n1001 1000\n'))
+    ps.emit('close', 0)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(killSpy).toHaveBeenCalledWith(-1000, 'SIGTERM')
+    expect(killSpy).toHaveBeenCalledWith(1001, 'SIGTERM')
+    await vi.advanceTimersByTimeAsync(3_000)
+    await expect(pending).resolves.toEqual({ reaped: true })
+    expect(killSpy).toHaveBeenCalledWith(-1000, 'SIGKILL')
+    expect(killSpy).toHaveBeenCalledWith(1001, 'SIGKILL')
+    expect(child.kill).not.toHaveBeenCalled()
+    expect(spawnMock).toHaveBeenCalledWith(
+      'ps',
+      ['-A', '-o', 'pid=,ppid='],
+      expect.objectContaining({ windowsHide: true })
+    )
+  })
+
   it('signals descendants and the child, and returns without escalating when everything exits', async () => {
     setPlatform('linux')
     const ps = new FakePs()
