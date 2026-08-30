@@ -1,5 +1,6 @@
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
+import { hasEmbeddedConnectorCredentials } from '../settings/connector-template'
 import { ALL_CONNECTOR_IDS } from './registry'
 
 export type CustomMcpFailureAvailability = 'unavailable' | 'unauthenticated'
@@ -62,6 +63,18 @@ export const isCustomMcpServerRouteSafe = (
   return allServers.every((candidate) => candidate === server || candidate.name !== server.name)
 }
 
+const hasResolvedSecretRecord = (
+  refs: Record<string, string> | undefined,
+  values: Record<string, string> | undefined
+): boolean => !refs || Object.keys(refs).every((name) => Object.hasOwn(values ?? {}, name))
+
+const hasCompleteCustomMcpCredentials = (server: StoredCustomMcpServer): boolean =>
+  hasResolvedSecretRecord(server.envRefs, server.env) &&
+  hasResolvedSecretRecord(server.headerRefs, server.headers)
+
+export const hasUsableCustomMcpCredentials = (server: StoredCustomMcpServer): boolean =>
+  hasCompleteCustomMcpCredentials(server) && !hasEmbeddedConnectorCredentials(server)
+
 // Selects runnable custom servers for discovery and skill-doc sync. OAuth Connectors remain absent
 // until sign-in has produced an access token, even if an older settings record says enabled.
 export function selectEnabledCustomServers(
@@ -72,6 +85,7 @@ export function selectEnabledCustomServers(
     (server) =>
       server.enabled &&
       isCustomMcpServerRouteSafe(server, servers) &&
+      hasUsableCustomMcpCredentials(server) &&
       SUPPORTED_CUSTOM_MCP_TRANSPORTS.has(server.transport) &&
       (!server.oauth || Boolean(server.oauthState?.tokens?.access_token))
   )

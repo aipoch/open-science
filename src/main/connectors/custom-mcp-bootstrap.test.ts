@@ -219,4 +219,62 @@ describe('selectEnabledCustomServers', () => {
       })
     ).toEqual([])
   })
+
+  it('fails closed when encrypted credential records are only partially resolved', () => {
+    const partialEnvironment: StoredCustomMcpServer = {
+      ...stdioServer,
+      id: 'partial-environment',
+      name: 'partial-environment',
+      displayName: 'Partial environment',
+      envRefs: {
+        API_TOKEN: 'enc:resolved',
+        OPTIONAL_HOST_TOKEN: 'enc:unavailable'
+      },
+      env: { API_TOKEN: 'resolved-value' }
+    }
+    const partialHeaders: StoredCustomMcpServer = {
+      ...remoteServer,
+      id: 'partial-headers',
+      name: 'partial-headers',
+      displayName: 'Partial headers',
+      headerRefs: {
+        Authorization: 'enc:resolved',
+        'X-API-Key': 'enc:unavailable'
+      },
+      headers: { Authorization: 'Bearer resolved-value' }
+    }
+
+    expect(
+      selectEnabledCustomServers({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [partialEnvironment, partialHeaders]
+      })
+    ).toEqual([])
+  })
+
+  it('fails closed for historical servers with credentials embedded in args or URLs', () => {
+    const unsafeArguments: StoredCustomMcpServer = {
+      ...stdioServer,
+      id: 'unsafe-arguments',
+      name: 'unsafe-arguments',
+      displayName: 'Unsafe arguments',
+      args: ['--api-key=legacy-plaintext-secret']
+    }
+    const unsafeUrl: StoredCustomMcpServer = {
+      ...remoteServer,
+      id: 'unsafe-url',
+      name: 'unsafe-url',
+      displayName: 'Unsafe URL',
+      url: 'https://mcp.example.test?token=legacy-plaintext-secret'
+    }
+
+    expect(
+      selectEnabledCustomServers({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [unsafeArguments, unsafeUrl]
+      })
+    ).toEqual([])
+  })
 })

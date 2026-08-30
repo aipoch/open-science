@@ -3637,6 +3637,8 @@
     "A password must be configured before this Compute Host can connect.": "Перед подключением этого вычислительного узла настройте пароль.",
     "The saved credential is unavailable on this device.": "Сохранённые учётные данные недоступны на данном устройстве.",
     "Secure credential storage is unavailable. Unlock the system keychain and retry.": "Защищённое хранилище учётных данных недоступно. Разблокируйте системную связку ключей и повторите попытку.",
+    "Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.": "Учётные данные нельзя указывать в аргументах или URL. Используйте зашифрованные поля переменных окружения или заголовков.",
+    "Credentials unavailable": "Учётные данные недоступны",
     "Authentication failed. Verify the username and password.": "Ошибка аутентификации. Убедитесь, что имя пользователя и пароль верны.",
     "The SSH host key is unknown. Verify it in a terminal before connecting.": "Ключ узла SSH неизвестен. Перед подключением подтвердите его в командной строке.",
     "The SSH host key changed. Verify known hosts in a terminal before connecting.": "Ключ узла SSH изменился. Перед подключением проверьте запись в known_hosts из командной строки.",

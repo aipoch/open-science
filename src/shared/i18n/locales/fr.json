@@ -3533,6 +3533,8 @@
     "A password must be configured before this Compute Host can connect.": "Un mot de passe doit être configuré avant que cet hôte de calcul puisse se connecter.",
     "The saved credential is unavailable on this device.": "Les informations d'identification enregistrées ne sont pas disponibles sur cet appareil.",
     "Secure credential storage is unavailable. Unlock the system keychain and retry.": "Le stockage sécurisé des informations d’identification n’est pas disponible. Déverrouillez le trousseau du système et réessayez.",
+    "Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.": "Les identifiants ne sont pas autorisés dans les arguments ni les URL. Utilisez plutôt des champs d’environnement ou d’en-tête chiffrés.",
+    "Credentials unavailable": "Identifiants indisponibles",
     "Authentication failed. Verify the username and password.": "L'authentification a échoué. Vérifiez le nom d'utilisateur et le mot de passe.",
     "The SSH host key is unknown. Verify it in a terminal before connecting.": "La clé d'hôte SSH est inconnue. Vérifiez-le dans un terminal avant de vous connecter.",
     "The SSH host key changed. Verify known hosts in a terminal before connecting.": "La clé d'hôte SSH a été modifiée. Vérifiez les hôtes connus dans un terminal avant de vous connecter.",

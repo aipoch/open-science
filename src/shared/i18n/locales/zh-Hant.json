@@ -424,6 +424,8 @@
     "A password must be configured before this Compute Host can connect.": "必須先為此運算主機設定密碼，才能連線。",
     "The saved credential is unavailable on this device.": "儲存的憑證在此裝置上無法使用。",
     "Secure credential storage is unavailable. Unlock the system keychain and retry.": "安全憑證儲存無法使用。請解鎖系統鑰匙圈後重試。",
+    "Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.": "參數或 URL 中不允許包含憑證。請改用加密的環境變數或標頭欄位。",
+    "Credentials unavailable": "憑證無法使用",
     "Authentication failed. Verify the username and password.": "認證失敗。請確認使用者名稱和密碼。",
     "The SSH host key is unknown. Verify it in a terminal before connecting.": "SSH 主機金鑰未知。請先在終端機中驗證，再進行連線。",
     "The SSH host key changed. Verify known hosts in a terminal before connecting.": "SSH 主機金鑰已變更。請先在終端機中驗證已知主機記錄，再進行連線。",

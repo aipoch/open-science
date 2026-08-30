@@ -87,6 +87,30 @@ const SECRET_FLAG = /^--?(?:api[-_]?key|token|secret|password|credential|authori
 const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SAFE_HEADER_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
 const CONNECTOR_TEMPLATE_DIGEST_CACHE_LIMIT = 64
+
+const argumentContainsCredential = (argument: string): boolean =>
+  JWT.test(argument) || /^Bearer\s+/i.test(argument) || SECRET_FLAG.test(argument)
+
+const hasSuspiciousQueryKey = (url: URL): boolean =>
+  [...url.searchParams.keys()].some((key) =>
+    SUSPICIOUS_QUERY_KEYS.has(key.toLowerCase().replace(/[^a-z0-9]/g, ''))
+  )
+
+export const hasEmbeddedConnectorCredentials = (fields: {
+  args?: readonly string[]
+  url?: string
+}): boolean => {
+  if (fields.args?.some(argumentContainsCredential)) return true
+  if (!fields.url) return false
+
+  try {
+    const url = new URL(fields.url)
+    return Boolean(url.username || url.password || hasSuspiciousQueryKey(url))
+  } catch {
+    return false
+  }
+}
+
 // Keeps preview digests opaque to the renderer without persisting exported connector metadata.
 const connectorTemplateDigests = new Map<string, string>()
 
@@ -243,18 +267,14 @@ const readHttpUrl = (
       path
     )
   }
-  for (const key of url.searchParams.keys()) {
-    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '')
-    if (SUSPICIOUS_QUERY_KEYS.has(normalizedKey)) {
-      diagnostic(
-        diagnostics,
-        'error',
-        'connector-template.url-secret',
-        `${path} contains a credential-like query parameter.`,
-        path
-      )
-      break
-    }
+  if (hasSuspiciousQueryKey(url)) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.url-secret',
+      `${path} contains a credential-like query parameter.`,
+      path
+    )
   }
   return raw
 }
@@ -399,7 +419,7 @@ const validateArgs = (
         `args[${index}]`
       )
     }
-    if (JWT.test(arg) || /^Bearer\s+/i.test(arg) || SECRET_FLAG.test(arg)) {
+    if (argumentContainsCredential(arg)) {
       diagnostic(
         diagnostics,
         'error',

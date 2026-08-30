@@ -44,6 +44,10 @@ export const localizeConnectorError = (message: string, t: TFunction): string =>
       return t('OAuth redirect URI requires a pre-registered client ID.')
     case 'Secure credential storage is unavailable. Unlock the system keychain and retry.':
       return t('Secure credential storage is unavailable. Unlock the system keychain and retry.')
+    case 'Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.':
+      return t(
+        'Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.'
+      )
     default:
       return message
   }

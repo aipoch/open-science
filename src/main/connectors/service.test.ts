@@ -781,6 +781,69 @@ describe('ConnectorService', () => {
       )
     })
 
+    it('rejects a custom server when encrypted credentials are only partially resolved', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-partial-credentials',
+              name: 'partial-credentials',
+              displayName: 'Partial credentials',
+              transport: 'stdio',
+              command: 'example-mcp',
+              envRefs: {
+                API_TOKEN: 'enc:resolved',
+                OPTIONAL_HOST_TOKEN: 'enc:unavailable'
+              },
+              env: { API_TOKEN: 'resolved-value' },
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('partial-credentials', 'do_thing', {}, internal)).rejects.toThrow(
+        /credential_unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('rejects a historical custom server with credentials embedded in its URL', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-embedded-credential',
+              name: 'embedded-credential',
+              displayName: 'Embedded credential',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test?api_key=legacy-plaintext-secret',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('embedded-credential', 'do_thing', {}, internal)).rejects.toThrow(
+        /credential_unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
     it('does not dispatch a custom name that collides with a bundled connector', async () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)

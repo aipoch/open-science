@@ -30,12 +30,19 @@ import {
   isCustomConnectorName
 } from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import { isCustomMcpServerRouteSafe } from '../connectors/custom-mcp-bootstrap'
+import {
+  hasUsableCustomMcpCredentials,
+  isCustomMcpServerRouteSafe
+} from '../connectors/custom-mcp-bootstrap'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredCustomMcpServer } from './types'
-import { buildConnectorTemplateExport, parseConnectorTemplate } from './connector-template'
+import {
+  buildConnectorTemplateExport,
+  hasEmbeddedConnectorCredentials,
+  parseConnectorTemplate
+} from './connector-template'
 import { CustomServerIdConflictError } from './custom-server-identity'
 
 type CustomServerSecurityChangeGuard = {
@@ -91,6 +98,17 @@ const hasResolvedSecretRecord = (
 ): boolean => {
   const names = Object.keys(refs ?? values ?? {})
   return names.length > 0 && names.every((name) => Object.hasOwn(values ?? {}, name))
+}
+
+const assertCredentialFieldsAreEncrypted = (fields: {
+  args?: readonly string[]
+  url?: string
+}): void => {
+  if (hasEmbeddedConnectorCredentials(fields)) {
+    throw new Error(
+      'Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.'
+    )
+  }
 }
 
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
@@ -348,6 +366,7 @@ class ConnectorSettingsModule {
   }
 
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
+    assertCredentialFieldsAreEncrypted(request)
     const name = request.name.trim()
     const displayName = request.displayName.trim()
     const connectors = (await this.repository.getSettings()).connectors
@@ -462,6 +481,7 @@ class ConnectorSettingsModule {
       serverId: string
     ) => Promise<CustomServerSecurityChangeGuard | void>
   ): Promise<ConnectorsSnapshot> {
+    assertCredentialFieldsAreEncrypted(request)
     const existing = (await this.getConnectors())?.customMcpServers?.find(
       (server) => server.id === request.id
     )
@@ -645,6 +665,9 @@ class ConnectorSettingsModule {
     return customServers
       .map((server) => {
         const routeUnavailable = !isCustomMcpServerRouteSafe(server, customServers)
+        const argsContainCredentials = hasEmbeddedConnectorCredentials({ args: server.args })
+        const urlContainsCredentials = hasEmbeddedConnectorCredentials({ url: server.url })
+        const credentialUnavailable = !hasUsableCustomMcpCredentials(server)
         const unavailable =
           routeUnavailable ||
           (server.transport === 'stdio' && !server.command) ||
@@ -652,9 +675,11 @@ class ConnectorSettingsModule {
         const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
         const configurationAvailability = unavailable
           ? ('unavailable' as const)
-          : unauthenticated
-            ? ('unauthenticated' as const)
-            : undefined
+          : credentialUnavailable
+            ? ('credential_unavailable' as const)
+            : unauthenticated
+              ? ('unauthenticated' as const)
+              : undefined
         const runtimeAvailability = server.enabled
           ? this.customServerRuntimeProjectionProvider.availability(server.id)
           : undefined
@@ -671,10 +696,10 @@ class ConnectorSettingsModule {
           displayName: server.displayName,
           description: server.description,
           transport: server.transport,
-          enabled: server.enabled && !unavailable && !unauthenticated,
+          enabled: server.enabled && !configurationAvailability,
           command: server.command,
-          args: server.args,
-          url: server.url,
+          args: argsContainCredentials ? undefined : server.args,
+          url: urlContainsCredentials ? undefined : server.url,
           ...(server.transport !== 'stdio'
             ? {
                 hasHeaders: hasResolvedSecretRecord(server.headerRefs, server.headers)

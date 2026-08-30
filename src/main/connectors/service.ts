@@ -4,6 +4,7 @@ import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
 import {
   classifyCustomMcpFailure,
+  hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
   toCustomMcpConfig,
   type CustomMcpFailureAvailability
@@ -186,6 +187,8 @@ const connectorGateGuidance: Readonly<Record<string, string>> = {
     'The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open Science before retrying.',
   connector_configuration_changed:
     'The Connector configuration changed before the external tool was called. Retry the exact same call once.',
+  credential_unavailable:
+    'One or more encrypted Connector credentials could not be read. Do not retry until the user re-enters them in Settings > Connectors.',
   credential_required:
     'A required credential was not configured. Do not retry until the user adds it in Settings > Credentials.'
 }
@@ -452,6 +455,9 @@ export class ConnectorService {
         disabledConnectorMessage(custom.displayName)
       )
     }
+    if (!hasUsableCustomMcpCredentials(custom)) {
+      throw new ConnectorGateError('credential_unavailable')
+    }
     if (!this.isCustomConfigRunnable(custom, customServers)) {
       throw new ConnectorGateError('connector_unavailable')
     }
@@ -710,6 +716,9 @@ export class ConnectorService {
           'connector_disabled',
           disabledConnectorMessage(current.displayName)
         )
+      }
+      if (!hasUsableCustomMcpCredentials(current)) {
+        throw new ConnectorGateError('credential_unavailable')
       }
       if (!this.isCustomConfigRunnable(current, customServers)) {
         throw new ConnectorGateError('connector_unavailable')
