@@ -34,7 +34,8 @@ describe('buildStartupDiagnostics', () => {
         'other=/srv/customer/private.db',
         'file=file:///Volumes/External/private.db',
         String.raw`windows=D:\Clients\Acme\private.db`,
-        String.raw`network=\\fileserver\research-share\private.db`
+        String.raw`network=\\fileserver\research-share\private.db`,
+        'forwardNetwork=//forward-fileserver/research-share/private.db'
       ].join(' ')
     )
 
@@ -54,6 +55,7 @@ describe('buildStartupDiagnostics', () => {
     expect(result).not.toContain('/Volumes/External')
     expect(result).not.toContain('D:\\Clients')
     expect(result).not.toContain('fileserver')
+    expect(result).not.toContain('forward-fileserver')
     expect(result).not.toContain('research-share')
   })
 

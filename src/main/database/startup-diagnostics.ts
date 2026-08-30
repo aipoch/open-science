@@ -61,6 +61,11 @@ const redactRemainingAbsolutePaths = (text: string): string =>
     // conservatively rather than keeping a suffix that may still contain a mount/share/folder name.
     .replace(/\bfile:\/\/[^\r\n"'<>()[\]{}]+/gi, '<absolute-path>')
     .replace(/\\\\[^\r\n"'<>()[\]{}]+/g, '<absolute-path>')
+    // Excluding ':' from the boundary keeps URI schemes such as https:// intact.
+    .replace(
+      /(^|[\s("'=[{])\/\/(?!\/)[^\r\n"'<>()[\]{}]*/gm,
+      (_match, boundary: string) => `${boundary}<absolute-path>`
+    )
     .replace(
       /(^|[\s("'=:[{])([A-Za-z]:[\\/][^\r\n"'<>()[\]{}]*)/gm,
       (_match, boundary: string) => `${boundary}<absolute-path>`
