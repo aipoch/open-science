@@ -180,7 +180,9 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       currentJobs = (await deps.getJobsForSession(sessionId)).filter((job) =>
         jobIdSet.has(job.job_id)
       )
+      if (disposed) return true
     } catch (err) {
+      if (disposed) return true
       deps.log('analysis-turn:claim-reconcile-failed', `session=${sessionId} error=${String(err)}`)
       return false
     }
@@ -228,8 +230,10 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   ): Promise<void> => {
     try {
       await deps.transitionAnalysis({ sessionId, jobIds, messageId, state })
+      if (disposed) return
       deps.log('analysis-turn:settled', `session=${sessionId} state=${state}`)
     } catch (err) {
+      if (disposed) return
       deps.log('analysis-turn:settle-failed', `session=${sessionId} error=${String(err)}`)
       let retryJobIds = jobIds
       try {
@@ -237,6 +241,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
         const currentJobs = (await deps.getJobsForSession(sessionId)).filter((job) =>
           jobIdSet.has(job.job_id)
         )
+        if (disposed) return
         retryJobIds = currentJobs
           .filter(
             (job) => job.analysis_state === 'dispatched' && job.analysis_message_id === messageId
@@ -247,6 +252,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
           if (!retryJobIdSet.has(jobId)) inFlight.delete(jobId)
         }
       } catch (reconcileErr) {
+        if (disposed) return
         deps.log(
           'analysis-turn:settle-reconcile-failed',
           `session=${sessionId} error=${String(reconcileErr)}`
@@ -272,6 +278,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     key: string,
     outcome: Exclude<ComputeJobAnalysisState, 'dispatched'>
   ): Promise<void> => {
+    if (disposed) return
     const awaiting = awaitingTurnEnd.get(key)
     if (!awaiting) return
     if (deps.isSessionInFlight(awaiting.sessionId)) {
@@ -295,6 +302,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     messageId: string,
     jobIds: string[]
   ): void => {
+    if (disposed) return
     awaitingTurnEnd.set(key, { batch, sessionId, messageId, jobIds })
     deps.onTurnEnd(sessionId, (outcome) => void onTurnEndCallback(key, outcome))
   }
@@ -337,7 +345,9 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       let recoveredState: Awaited<ReturnType<typeof deps.getTurnState>>
       try {
         recoveredState = await deps.getTurnState(sessionId, messageId)
+        if (disposed) return
       } catch (err) {
+        if (disposed) return
         deps.log('analysis-turn:reconcile-failed', `session=${sessionId} error=${String(err)}`)
         await settle(key, batch, sessionId, messageId, jobIds, 'failed')
         return
@@ -353,8 +363,10 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     } else {
       try {
         await deps.transitionAnalysis({ sessionId, jobIds, messageId, state: 'dispatched' })
+        if (disposed) return
         batch.claimPending = false
       } catch (err) {
+        if (disposed) return
         deps.log('analysis-turn:claim-failed', `session=${sessionId} error=${String(err)}`)
         if (await reconcileClaimFailure(key, batch, sessionId, jobIds)) return
         // The transition may have committed before its response was lost. Retain the same Message
@@ -388,7 +400,9 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
 
     try {
       result = await deps.sendPrompt(sessionId, prompt, messageId)
+      if (disposed) return
     } catch (err) {
+      if (disposed) return
       deps.log('analysis-turn:send-failed', `session=${sessionId} error=${String(err)}`)
       await settle(key, batch, sessionId, messageId, jobIds, 'failed')
       return

@@ -556,6 +556,34 @@ describe('createJobAnalysisTrigger — queuing', () => {
     expect(deps.sendPrompt).toHaveBeenCalledOnce()
   })
 
+  it('stops after disposal while a durable claim is pending', async () => {
+    let resolveClaim: (() => void) | undefined
+    const deps = createDeps({
+      transitionAnalysis: vi.fn((request) =>
+        request.state === 'dispatched'
+          ? new Promise<void>((resolve) => {
+              resolveClaim = resolve
+            })
+          : Promise.resolve()
+      )
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    expect(deps.transitionAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'dispatched' })
+    )
+
+    trigger.dispose()
+    resolveClaim?.()
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    expect(deps.onTurnEnd).not.toHaveBeenCalled()
+    expect(deps.transitionAnalysis).toHaveBeenCalledOnce()
+  })
+
   it('queues when session is in flight and sends after notifyTurnEnd', async () => {
     let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
     const deps = createDeps({
