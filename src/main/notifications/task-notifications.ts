@@ -154,21 +154,12 @@ const AUTHORIZATION_INBOX_SUMMARY = {
 
 const AGENT_QUESTION_INBOX_SUMMARY = 'The agent is waiting for your response.'
 
-const GENERIC_NATIVE_BODY_BY_TITLE: Readonly<Record<string, string>> = {
-  'Task completed': 'A task completed. Open the app to view it.',
-  'Task needs attention': 'A task needs attention. Open the app for details.',
-  'Task failed': 'A task failed. Open the app for details.',
-  'Approval needed': 'A task needs your approval. Open the app to review it.',
-  'Response needed': 'A task needs your response. Open the app to continue.',
-  'Plan approval needed': 'A plan is ready for approval. Open the app to review it.'
-}
-
-const genericNativeNotification = (notification: TaskNotification): TaskNotification => ({
+const genericNativeNotification = (
+  notification: TaskNotification,
+  translate: NativeTranslator
+): TaskNotification => ({
   ...notification,
-  body:
-    notification.genericBody ??
-    GENERIC_NATIVE_BODY_BY_TITLE[notification.title] ??
-    'Open the app for details.'
+  body: notification.genericBody ?? translate('Open the app for details.')
 })
 
 const connectorCredentialDedupeKey = (originId: string): string =>
@@ -216,6 +207,7 @@ export const describeTaskNotification = (
     if (reason === 'max_tokens' || reason === 'max_turn_requests' || reason === 'refusal') {
       return {
         title: translate('Task needs attention'),
+        genericBody: translate('A task needs attention. Open the app for details.'),
         body: truncate(EARLY_STOP_BODY[reason](translate, taskName), MAX_BODY_LENGTH)
       }
     }
@@ -240,12 +232,14 @@ export const describeTaskNotification = (
 
       return {
         title: translate('Task needs attention'),
+        genericBody: translate('A task needs attention. Open the app for details.'),
         body: truncate(body, MAX_BODY_LENGTH)
       }
     }
 
     return {
       title: translate('Task completed'),
+      genericBody: translate('A task completed. Open the app to view it.'),
       body: truncate(
         taskName
           ? translate('The agent finished responding to {{taskName}}.', { taskName })
@@ -285,6 +279,7 @@ const describeApprovalNotification = (
 
   return {
     title: translate('Approval needed'),
+    genericBody: translate('A task needs your approval. Open the app to review it.'),
     body: truncate(
       taskName
         ? translate('{{taskName}} needs your approval: {{detail}}', { taskName, detail })
@@ -308,6 +303,7 @@ const describeAgentQuestionNotification = (
   translate: NativeTranslator = englishNativeTranslator
 ): TaskNotification => ({
   title: translate('Response needed'),
+  genericBody: translate('A task needs your response. Open the app to continue.'),
   body: promptSnippet
     ? translate('{{taskName}} needs your response.', { taskName: quoteSnippet(promptSnippet) })
     : translate('The agent needs your response.'),
@@ -744,6 +740,7 @@ export class TaskNotificationService {
     if (!tracked) return
     const notification: TaskNotification = {
       title: this.deps.translate('Plan approval needed'),
+      genericBody: this.deps.translate('A plan is ready for approval. Open the app to review it.'),
       body: truncate(
         tracked.snippet
           ? this.deps.translate('{{taskName}} has a plan ready for review.', {
@@ -854,7 +851,7 @@ export class TaskNotificationService {
       this.deps.show({
         ...(showContent && !notification.alwaysGeneric
           ? notification
-          : genericNativeNotification(notification)),
+          : genericNativeNotification(notification, this.deps.translate)),
         // Clicks always surface the window; the handler opens the conversation when there is one.
         onClick
       })
