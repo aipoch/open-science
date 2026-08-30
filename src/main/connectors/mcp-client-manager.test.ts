@@ -653,6 +653,25 @@ describe('buildTransport', () => {
     ).toBe(true)
   })
 
+  it('redacts configured multiline values before logging stdio stderr lines', () => {
+    const configuredSecret = 'alpha-private-material\nomega-private-material'
+    const transport = buildTransport({
+      id: 'srv-stdio',
+      name: 'stdio-server',
+      transport: 'stdio',
+      command: 'npx',
+      env: { PRIVATE_MATERIAL: configuredSecret }
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    stderr?.write('alpha-private-material\n')
+    stderr?.write('omega-private-material\n')
+
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain('alpha-private-material')
+    expect(serialized).not.toContain('omega-private-material')
+  })
+
   it('keeps an explicitly configured stdio PATH ahead of the augmented directories', () => {
     const customPath = '/custom/bin'
     const pathDirs = stdioTransportEnvironment({ PATH: customPath }).PATH?.split(delimiter) ?? []

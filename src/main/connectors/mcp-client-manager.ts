@@ -101,14 +101,8 @@ function waitForConnection(promise: Promise<Client>, signal?: AbortSignal): Prom
   })
 }
 
-const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-
-const knownValuePattern = (values: readonly string[]): RegExp | undefined => {
-  const alternatives = [...new Set(values.filter(Boolean))]
-    .sort((a, b) => b.length - a.length)
-    .map(escapeRegExp)
-  return alternatives.length > 0 ? new RegExp(alternatives.join('|'), 'gu') : undefined
-}
+const uniqueKnownValues = (values: readonly string[]): string[] =>
+  [...new Set(values.filter(Boolean))].sort((a, b) => b.length - a.length)
 
 const truncateUtf8 = (value: string, maxBytes: number): string => {
   if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
@@ -131,19 +125,82 @@ const captureStdioStderr = (
   if (!stderr) return
   const readable = stderr as unknown as NodeJS.ReadableStream
 
-  const knownValues = knownValuePattern(Object.values(config.env ?? {}))
-  let pending = ''
+  const knownValues = uniqueKnownValues(Object.values(config.env ?? {}))
+  const knownValuesByInitial = new Map<string, string[]>()
+  for (const value of knownValues) {
+    const initial = value[0]
+    if (!initial) continue
+    const matches = knownValuesByInitial.get(initial) ?? []
+    matches.push(value)
+    knownValuesByInitial.set(initial, matches)
+  }
+  let redactionPending = ''
+  let linePending = ''
   let receivedBytes = 0
   let totalTruncationLogged = false
 
   const writeLine = (rawLine: string): void => {
-    const exactRedacted = knownValues
-      ? rawLine.replace(/\r$/u, '').replace(knownValues, '[REDACTED]')
-      : rawLine.replace(/\r$/u, '')
-    const redacted = redactSensitiveText(exactRedacted)
+    const redacted = redactSensitiveText(rawLine.replace(/\r$/u, ''))
     if (!redacted) return
     const line = truncateUtf8(redacted, STDERR_LINE_LIMIT)
     log.warn('custom MCP server stderr', { serverId: config.id, line })
+  }
+
+  const appendRedactedText = (text: string): void => {
+    linePending += text
+    const lines = linePending.split('\n')
+    linePending = lines.pop() ?? ''
+    for (const line of lines) writeLine(line)
+  }
+
+  const drainKnownValues = (): void => {
+    if (knownValues.length === 0) {
+      appendRedactedText(redactionPending)
+      redactionPending = ''
+      return
+    }
+
+    let ready = ''
+    let cursor = 0
+    let emittedStart = 0
+    while (cursor < redactionPending.length) {
+      const candidates = knownValuesByInitial.get(redactionPending[cursor] ?? '') ?? []
+      if (candidates.length === 0) {
+        cursor += 1
+        continue
+      }
+      const remaining = redactionPending.slice(cursor)
+      const complete = candidates.find((value) => remaining.startsWith(value))
+      const mayCompleteLongerValue = candidates.some(
+        (value) => value.length > remaining.length && value.startsWith(remaining)
+      )
+      if (mayCompleteLongerValue) {
+        ready += redactionPending.slice(emittedStart, cursor)
+        redactionPending = remaining
+        if (ready) appendRedactedText(ready)
+        return
+      }
+      if (complete) {
+        ready += `${redactionPending.slice(emittedStart, cursor)}[REDACTED]`
+        cursor += complete.length
+        emittedStart = cursor
+        continue
+      }
+      cursor += 1
+    }
+    ready += redactionPending.slice(emittedStart)
+    redactionPending = ''
+    if (ready) appendRedactedText(ready)
+  }
+
+  const flushPending = (): void => {
+    drainKnownValues()
+    if (redactionPending) {
+      appendRedactedText('[REDACTED]')
+      redactionPending = ''
+    }
+    if (linePending) writeLine(linePending)
+    linePending = ''
   }
 
   readable.setEncoding?.('utf8')
@@ -162,15 +219,11 @@ const captureStdioStderr = (
     const remaining = STDERR_TOTAL_LIMIT - receivedBytes
     const accepted = Buffer.from(text, 'utf8').subarray(0, remaining).toString('utf8')
     receivedBytes += Buffer.byteLength(accepted, 'utf8')
-    pending += accepted
-
-    const lines = pending.split('\n')
-    pending = lines.pop() ?? ''
-    for (const line of lines) writeLine(line)
+    redactionPending += accepted
+    drainKnownValues()
 
     if (Buffer.byteLength(text, 'utf8') > remaining && !totalTruncationLogged) {
-      if (pending) writeLine(pending)
-      pending = ''
+      flushPending()
       totalTruncationLogged = true
       log.warn('custom MCP server stderr truncated', {
         serverId: config.id,
@@ -179,8 +232,7 @@ const captureStdioStderr = (
     }
   })
   readable.on('end', () => {
-    if (pending) writeLine(pending)
-    pending = ''
+    flushPending()
   })
 }
 
