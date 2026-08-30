@@ -252,7 +252,10 @@ describe('createJobAnalysisTrigger — idempotency', () => {
       .fn<JobAnalysisTriggerDeps['transitionAnalysis']>()
       .mockRejectedValueOnce(new Error('database temporarily unavailable'))
       .mockResolvedValue(undefined)
-    const deps = createDeps({ transitionAnalysis })
+    const deps = createDeps({
+      transitionAnalysis,
+      getJobsForSession: vi.fn().mockResolvedValue([makeJob()])
+    })
     const trigger = createJobAnalysisTrigger(deps)
 
     trigger.onJobDone(makeJob())
@@ -277,6 +280,31 @@ describe('createJobAnalysisTrigger — idempotency', () => {
       state: 'dispatched'
     })
     expect(deps.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('stops retrying a failed durable claim after the job is deleted', async () => {
+    vi.useFakeTimers()
+    const transitionAnalysis = vi
+      .fn<JobAnalysisTriggerDeps['transitionAnalysis']>()
+      .mockRejectedValue(new Error('analysis transition conflict'))
+    const deps = createDeps({
+      transitionAnalysis,
+      getJobsForSession: vi.fn().mockResolvedValue([])
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    expect(deps.getJobsForSession).toHaveBeenCalledWith('sess-1')
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    await flushMicrotasks()
+
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('adopts a competing renderer claim after its broadcast arrives before the local conflict', async () => {

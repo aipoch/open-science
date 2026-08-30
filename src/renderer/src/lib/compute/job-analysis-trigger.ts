@@ -184,7 +184,20 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       deps.log('analysis-turn:claim-reconcile-failed', `session=${sessionId} error=${String(err)}`)
       return false
     }
-    if (currentJobs.length !== jobIds.length) return false
+    const releaseClaim = (): void => {
+      const retryTimer = claimRetryTimers.get(key)
+      if (retryTimer) clearTimeout(retryTimer)
+      claimRetryTimers.delete(key)
+      if (pendingBatches.get(key) === batch) pendingBatches.delete(key)
+      for (const jobId of jobIds) inFlight.delete(jobId)
+      releaseSessionBatch(batch, sessionId)
+    }
+    if (currentJobs.length !== jobIds.length) {
+      releaseClaim()
+      for (const job of currentJobs) onJobDone(job)
+      deps.log('analysis-turn:claim-deleted', `session=${sessionId}`)
+      return true
+    }
     const durableStateChanged = currentJobs.some(
       (job) =>
         job.notification_consumed_at !== undefined ||
@@ -192,9 +205,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     )
     if (!durableStateChanged) return false
 
-    pendingBatches.delete(key)
-    for (const jobId of jobIds) inFlight.delete(jobId)
-    releaseSessionBatch(batch, sessionId)
+    releaseClaim()
     for (const job of currentJobs) onJobDone(job)
     deps.log('analysis-turn:claim-reconciled', `session=${sessionId}`)
     return true
