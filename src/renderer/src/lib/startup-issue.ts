@@ -50,8 +50,8 @@ const buildStartupIssueBody = (
 const toIssueUrl = (error: DatabaseStartupError, diagnostics: string | undefined): string =>
   `${ISSUE_BASE_URL}?title=${encodeURIComponent(buildStartupIssueTitle(error))}&body=${encodeURIComponent(buildStartupIssueBody(error, diagnostics))}`
 
-const withTruncationNote = (diagnostics: string, end: number): string =>
-  `${diagnostics.slice(0, end).trimEnd()}\n${STACK_TRUNCATION_NOTE}`
+const withTruncationNote = (diagnostics: readonly string[], end: number): string =>
+  `${diagnostics.slice(0, end).join('').trimEnd()}\n${STACK_TRUNCATION_NOTE}`
 
 const fitDiagnosticsToUrl = (
   error: DatabaseStartupError,
@@ -59,19 +59,21 @@ const fitDiagnosticsToUrl = (
 ): string | undefined => {
   if (!diagnostics) return undefined
   if (toIssueUrl(error, diagnostics).length <= MAX_URL_LENGTH) return diagnostics
+  const codePoints = [...diagnostics]
   // Binary search the longest prefix whose encoded URL still fits. Encoded length is not linear in
-  // the raw length (multibyte characters expand), so measure the real URL at each step.
+  // the raw length (multibyte characters expand), so measure the real URL at each step. Search code
+  // points rather than UTF-16 indexes so an edited emoji can never be sliced into a lone surrogate.
   let low = 0
-  let high = diagnostics.length
+  let high = codePoints.length
   while (low < high) {
     const mid = Math.ceil((low + high) / 2)
-    if (toIssueUrl(error, withTruncationNote(diagnostics, mid)).length <= MAX_URL_LENGTH) {
+    if (toIssueUrl(error, withTruncationNote(codePoints, mid)).length <= MAX_URL_LENGTH) {
       low = mid
     } else {
       high = mid - 1
     }
   }
-  return low > 0 ? withTruncationNote(diagnostics, low) : undefined
+  return low > 0 ? withTruncationNote(codePoints, low) : undefined
 }
 
 const buildStartupIssueUrl = (

@@ -46,7 +46,8 @@ describe('buildStartupDiagnostics', () => {
 
     expect(result).toContain('<config-root>/open-science.db')
     expect(result).toContain('<data-root>/notebook/run.json')
-    expect(result).toContain('<absolute-path>/private.db')
+    expect(result).toContain('other=<absolute-path>')
+    expect(result).not.toContain('<absolute-path><absolute-path>')
     expect(result).not.toContain('/Volumes/Config Space')
     expect(result).not.toContain('/mnt/research')
     expect(result).not.toContain('/srv/customer')
@@ -54,6 +55,33 @@ describe('buildStartupDiagnostics', () => {
     expect(result).not.toContain('D:\\Clients')
     expect(result).not.toContain('fileserver')
     expect(result).not.toContain('research-share')
+  })
+
+  it.each([
+    '/srv/customer/Private Study/patient.db',
+    String.raw`D:\Clients\Private Study\patient.db`,
+    String.raw`\\fileserver\Private Study\patient.db`,
+    'file://fileserver/Private%20Study/patient.db'
+  ])('fully redacts an unquoted path containing spaces: %s', (path) => {
+    const error = new Error(`cannot open ${path} because the file is locked`)
+
+    const result = buildStartupDiagnostics(error, { home: '/Users/alice' })
+
+    expect(result).toContain('<absolute-path>')
+    expect(result).not.toContain('Private Study')
+    expect(result).not.toContain('Private%20Study')
+    expect(result).not.toContain('patient.db')
+    expect(result).not.toContain('fileserver')
+  })
+
+  it('keeps a useful file suffix for a delimited stack path containing spaces', () => {
+    const error = new Error('failed')
+    error.stack = 'Error: failed\n    at open (/srv/customer/Private Study/patient.db:10:5)'
+
+    const result = buildStartupDiagnostics(error, { home: '/Users/alice' })
+
+    expect(result).toContain('at open (<absolute-path>/patient.db:10:5)')
+    expect(result).not.toContain('Private Study')
   })
 
   it('reuses the diagnostic credential policy before diagnostics cross IPC', () => {

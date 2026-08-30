@@ -37,21 +37,38 @@ const replaceRoot = (text: string, root: string | undefined, marker: string): st
 }
 
 const absolutePathMarker = (path: string): string => {
-  const withoutFileScheme = path.replace(/^file:\/\/\//i, '')
+  const withoutFileScheme = path.replace(/^file:\/\//i, '')
   const tail = withoutFileScheme.split(/[\\/]/).at(-1)
   return tail ? `<absolute-path>/${tail}` : '<absolute-path>'
 }
 
 const redactRemainingAbsolutePaths = (text: string): string =>
   text
-    .replace(/\bfile:\/\/\/[^\s"'<>()[\]{}]+/gi, absolutePathMarker)
-    .replace(/\\\\[^\s"'<>()[\]{}]+(?:[\\/][^\s"'<>()[\]{}]+)+/g, absolutePathMarker)
-    .replace(/\b[A-Za-z]:[\\/][^\s"'<>()[\]{}]+/g, absolutePathMarker)
+    // Delimiters let us retain a useful filename/line suffix even when the path contains spaces.
+    .replace(
+      /(["'`])((?:file:\/\/|[A-Za-z]:[\\/]|\\\\|\/)[^\r\n]*?)\1/g,
+      (_match, quote: string, path: string) => `${quote}${absolutePathMarker(path)}${quote}`
+    )
+    .replace(
+      /\(((?:file:\/\/|[A-Za-z]:[\\/]|\\\\|\/)[^)\r\n]+)\)/g,
+      (_match, path: string) => `(${absolutePathMarker(path)})`
+    )
+    // Unquoted paths have no reliable end when a segment contains spaces. Redact the remaining line
+    // conservatively rather than keeping a suffix that may still contain a mount/share/folder name.
+    .replace(/\bfile:\/\/[^\r\n"'<>()[\]{}]+/gi, '<absolute-path>')
+    .replace(/\\\\[^\r\n"'<>()[\]{}]+/g, '<absolute-path>')
+    .replace(
+      /(^|[\s("'=])([A-Za-z]:[\\/][^\r\n"'<>()[\]{}]*)/gm,
+      (_match, boundary: string) => `${boundary}<absolute-path>`
+    )
     // A leading boundary avoids URL paths, `I/O`, and suffixes below already-redacted named roots.
     .replace(
-      /(^|[\s("'=])\/(?!\/)([^\s"'<>()[\]{}]+)/gm,
-      (_match, boundary: string, path: string) => `${boundary}${absolutePathMarker(`/${path}`)}`
+      /(^|[\s("'=])\/(?!\/)([^\r\n"'<>()[\]{}]*)/gm,
+      (_match, boundary: string) => `${boundary}<absolute-path>`
     )
+    // Multiple unquoted paths on one line can leave adjacent markers as each conservative matcher
+    // stops at an earlier replacement. One marker communicates the same redaction more clearly.
+    .replace(/(?:<absolute-path>){2,}/g, '<absolute-path>')
 
 const redactPublicDiagnostics = (text: string, options: StartupDiagnosticsOptions): string => {
   const roots = [

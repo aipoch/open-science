@@ -116,4 +116,12 @@ describe('buildStartupIssueUrl', () => {
     expect(decodeURIComponent(url)).toContain('Error: edited by the user')
     expect(decodeURIComponent(url)).not.toContain('Error: boom')
   })
+
+  it('truncates long emoji diagnostics without splitting a surrogate pair', () => {
+    const url = buildStartupIssueUrl(baseError, `Error: boom\n${'🚀'.repeat(5000)}`)
+
+    expect(url.length).toBeLessThanOrEqual(7800)
+    expect(decodeURIComponent(url)).toContain('stack truncated')
+    expect(() => new URL(url)).not.toThrow()
+  })
 })
