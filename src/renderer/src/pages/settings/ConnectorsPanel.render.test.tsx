@@ -763,6 +763,33 @@ describe('ConnectorsPanel (groups)', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'credential-unavailable-mcp' })
   })
 
+  it('allows a durably enabled Connector with unavailable credentials to be disabled', () => {
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'enabled-credential-unavailable-mcp',
+          name: 'enabled-credential-unavailable-mcp',
+          displayName: 'Enabled credential unavailable MCP',
+          transport: 'stdio',
+          enabled: true,
+          availability: 'credential_unavailable'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    const toggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle Enabled credential unavailable MCP"]'
+    )
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+    expect(toggle?.getAttribute('aria-disabled')).toBeNull()
+    act(() => toggle?.click())
+    expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledWith(
+      'enabled-credential-unavailable-mcp',
+      false
+    )
+  })
+
   it('shows checking while background discovery is still pending', () => {
     useSettingsStore.setState({
       customServers: [

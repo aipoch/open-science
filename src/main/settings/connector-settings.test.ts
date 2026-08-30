@@ -176,7 +176,7 @@ describe('ConnectorSettingsModule', () => {
     })
     expect(
       (await service.listConnectors()).customServers.find(({ name }) => name === 'local-secrets')
-    ).toMatchObject({ hasEnv: false, enabled: false, availability: 'credential_unavailable' })
+    ).toMatchObject({ hasEnv: false, enabled: true, availability: 'credential_unavailable' })
 
     keychain.available = false
     const snapshot = await service.listConnectors()
@@ -687,7 +687,7 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers[0]).toMatchObject({
       name: 'chemistry',
       displayName: 'Chemistry!',
-      enabled: false,
+      enabled: true,
       availability: 'unavailable'
     })
   })
@@ -712,8 +712,8 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers).toHaveLength(2)
     expect(snapshot.customServers).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ enabled: false, availability: 'unavailable' }),
-        expect.objectContaining({ enabled: false, availability: 'unavailable' })
+        expect.objectContaining({ enabled: true, availability: 'unavailable' }),
+        expect.objectContaining({ enabled: true, availability: 'unavailable' })
       ])
     )
   })
@@ -1211,13 +1211,13 @@ describe('ConnectorSettingsModule', () => {
       expect.objectContaining({
         name: 'legacy-args-secret',
         args: undefined,
-        enabled: false,
+        enabled: true,
         availability: 'credential_unavailable'
       }),
       expect.objectContaining({
         name: 'legacy-url-secret',
         url: undefined,
-        enabled: false,
+        enabled: true,
         availability: 'credential_unavailable'
       })
     ])
@@ -1246,7 +1246,7 @@ describe('ConnectorSettingsModule', () => {
     const [server] = (await service.listConnectors()).customServers
     expect(server).toMatchObject({
       name: 'legacy-oauth-url-secret',
-      enabled: false,
+      enabled: true,
       availability: 'credential_unavailable'
     })
     expect(server.oauth).not.toHaveProperty('clientMetadataUrl')
@@ -1273,7 +1273,7 @@ describe('ConnectorSettingsModule', () => {
     expect(server).toMatchObject({
       name: 'legacy-user-credentials',
       args: undefined,
-      enabled: false,
+      enabled: true,
       availability: 'credential_unavailable'
     })
     expect(JSON.stringify(server)).not.toContain('legacy-password')

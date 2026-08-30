@@ -106,7 +106,8 @@ const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
   )
 
 const cannotEnableCustomServer = (server: CustomServerView): boolean =>
-  requiresSignInBeforeEnable(server) || server.availability === 'credential_unavailable'
+  requiresSignInBeforeEnable(server) ||
+  (!server.enabled && server.availability === 'credential_unavailable')
 
 type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void

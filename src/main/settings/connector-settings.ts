@@ -721,7 +721,7 @@ class ConnectorSettingsModule {
           displayName: server.displayName,
           description: server.description,
           transport: server.transport,
-          enabled: server.enabled && !configurationAvailability,
+          enabled: server.enabled,
           command: server.command,
           args: argsContainCredentials ? undefined : server.args,
           url: urlContainsCredentials ? undefined : server.url,
