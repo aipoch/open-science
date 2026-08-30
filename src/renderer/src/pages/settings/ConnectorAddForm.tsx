@@ -51,7 +51,7 @@ type ParsedNamedValues = {
 type EnvironmentUpdateMode = 'keep' | 'replace' | 'clear'
 
 // Parses one KEY=VALUE per line and preserves line numbers for actionable validation feedback.
-const parseEnv = (raw: string): ParsedNamedValues => {
+const parseEnv = (raw: string, caseInsensitiveNames: boolean): ParsedNamedValues => {
   const env: Record<string, string> = {}
   const invalidLines: number[] = []
   const duplicateLines: ParsedNamedValues['duplicateLines'] = []
@@ -65,7 +65,7 @@ const parseEnv = (raw: string): ParsedNamedValues => {
       continue
     }
     const name = trimmed.slice(0, eq).trim()
-    const normalizedName = name.toLowerCase()
+    const normalizedName = caseInsensitiveNames ? name.toLowerCase() : name
     if (environmentNames.has(normalizedName)) duplicateLines.push({ line: index + 1, name })
     else environmentNames.add(normalizedName)
     env[name] = trimmed.slice(eq + 1).trim()
@@ -324,7 +324,7 @@ export function ConnectorAddForm({
     advancedOpen || Boolean(displayName.trim() && nameError) || Boolean(idError)
 
   const parsedArgs = parseArgs(argsText, initialTemplate !== undefined)
-  const parsedEnvironment = parseEnv(envText)
+  const parsedEnvironment = parseEnv(envText, window.api?.platform === 'win32')
   const parsedEnv = parsedEnvironment.values
   const environmentErrors =
     environmentUpdateMode === 'replace' ? parsedEnvironment.invalidLines : []

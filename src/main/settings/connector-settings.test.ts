@@ -375,6 +375,87 @@ describe('ConnectorSettingsModule', () => {
     expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
   })
 
+  it.each([
+    {
+      label: 'Windows environment variables',
+      platform: 'win32',
+      request: {
+        name: 'ambiguous-add-env',
+        transport: 'stdio' as const,
+        command: 'npx',
+        env: { API_TOKEN: 'first', api_token: 'second' }
+      }
+    },
+    {
+      label: 'HTTP headers',
+      platform: 'darwin',
+      request: {
+        name: 'ambiguous-add-headers',
+        transport: 'streamable_http' as const,
+        url: 'https://mcp.example.test',
+        headers: { Authorization: 'first', authorization: 'second' }
+      }
+    }
+  ])('rejects case-colliding $label before add persistence', async ({ platform, request }) => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: platform })
+    try {
+      await expect(addCustomServer(request)).rejects.toThrow(/duplicate credential name/i)
+      expect(keychain.encryptedValues).toEqual([])
+      expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+    }
+  })
+
+  it.each([
+    {
+      label: 'Windows environment variables',
+      platform: 'win32',
+      transport: 'stdio' as const,
+      replacement: { env: { API_TOKEN: 'first', api_token: 'second' } }
+    },
+    {
+      label: 'HTTP headers',
+      platform: 'darwin',
+      transport: 'streamable_http' as const,
+      replacement: { headers: { Authorization: 'first', authorization: 'second' } }
+    }
+  ])('rejects case-colliding $label before update persistence', async (testCase) => {
+    const added = await addCustomServer({
+      name: `ambiguous-update-${testCase.transport.replaceAll('_', '-')}`,
+      transport: testCase.transport,
+      ...(testCase.transport === 'stdio' ? { command: 'npx' } : { url: 'https://mcp.example.test' })
+    })
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: testCase.platform
+    })
+    keychain.encryptedValues.length = 0
+    try {
+      await expect(
+        service.updateCustomServer({
+          id: added.customServers[0].id,
+          transport: testCase.transport,
+          ...(testCase.transport === 'stdio'
+            ? { command: 'npx' }
+            : { url: 'https://mcp.example.test' }),
+          ...testCase.replacement
+        })
+      ).rejects.toThrow(/duplicate credential name/i)
+      expect(keychain.encryptedValues).toEqual([])
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+    }
+  })
+
   it('includes retained secrets when validating an updated Connector total', async () => {
     const retainedEnvironment = Object.fromEntries(
       Array.from({ length: 15 }, (_, index) => [`TOKEN_${index}`, 'x'.repeat(16_384)])

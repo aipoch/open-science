@@ -909,6 +909,8 @@ describe('ConnectorAddForm (edit)', () => {
   })
 
   it('reports environment names that collide case-insensitively on Windows', () => {
+    const originalApi = window.api
+    window.api = { ...originalApi, platform: 'win32' } as Window['api']
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
     })
@@ -920,6 +922,24 @@ describe('ConnectorAddForm (edit)', () => {
 
     expect(document.body.textContent).toContain('Line 2: api_token is duplicated.')
     expect(addButton()?.disabled).toBe(true)
+    window.api = originalApi
+  })
+
+  it('keeps case-distinct environment names valid on Unix', () => {
+    const originalApi = window.api
+    window.api = { ...originalApi, platform: 'darwin' } as Window['api']
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'API_TOKEN=first\napi_token=second')
+    checkTrust()
+
+    expect(document.body.textContent).not.toContain('Line 2: api_token is duplicated.')
+    expect(addButton()?.disabled).toBe(false)
+    window.api = originalApi
   })
 
   it('reports duplicate header names instead of overwriting them', () => {

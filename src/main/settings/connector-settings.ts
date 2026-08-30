@@ -36,6 +36,7 @@ import {
 } from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import {
+  hasAmbiguousCustomMcpCredentialNames,
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe
 } from '../connectors/custom-mcp-bootstrap'
@@ -391,6 +392,9 @@ class ConnectorSettingsModule {
 
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
     assertCredentialFieldsAreEncrypted(request)
+    if (hasAmbiguousCustomMcpCredentialNames(request)) {
+      throw new Error('Duplicate credential names are not allowed on this platform.')
+    }
     if (request.transport !== 'stdio' && request.url) {
       assertSecureCustomMcpUrl(request.url.trim())
     }
@@ -516,6 +520,9 @@ class ConnectorSettingsModule {
     ) => Promise<CustomServerSecurityChangeGuard | void>
   ): Promise<ConnectorsSnapshot> {
     assertCredentialFieldsAreEncrypted(request)
+    if (hasAmbiguousCustomMcpCredentialNames(request)) {
+      throw new Error('Duplicate credential names are not allowed on this platform.')
+    }
     if (request.transport !== 'stdio' && request.url) {
       assertSecureCustomMcpUrl(request.url.trim())
     }

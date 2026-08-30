@@ -279,6 +279,64 @@ describe('selectEnabledCustomServers', () => {
     ).toEqual([])
   })
 
+  it('fails closed for historical credential names that collide on the active platform', () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    try {
+      const ambiguousEnvironment: StoredCustomMcpServer = {
+        ...stdioServer,
+        id: 'ambiguous-environment',
+        name: 'ambiguous-environment',
+        env: { API_TOKEN: 'first', api_token: 'second' }
+      }
+      const ambiguousHeaders: StoredCustomMcpServer = {
+        ...remoteServer,
+        id: 'ambiguous-headers',
+        name: 'ambiguous-headers',
+        headers: { Authorization: 'first', authorization: 'second' }
+      }
+
+      expect(
+        selectEnabledCustomServers({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [ambiguousEnvironment, ambiguousHeaders]
+        })
+      ).toEqual([])
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+    }
+  })
+
+  it('keeps case-distinct historical environment variables runnable on Unix', () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    try {
+      const caseDistinctEnvironment: StoredCustomMcpServer = {
+        ...stdioServer,
+        id: 'case-distinct-environment',
+        name: 'case-distinct-environment',
+        env: { API_TOKEN: 'first', api_token: 'second' }
+      }
+
+      expect(
+        selectEnabledCustomServers({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [caseDistinctEnvironment]
+        })
+      ).toEqual([caseDistinctEnvironment])
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+    }
+  })
+
   it('ignores unresolved credential maps that are unused by the active transport', () => {
     const stdioWithStaleHeaders: StoredCustomMcpServer = {
       ...stdioServer,
