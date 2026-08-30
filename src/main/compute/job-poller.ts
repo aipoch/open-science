@@ -11,6 +11,7 @@ import {
   type ComputeConnectionLease
 } from './connection-broker'
 import {
+  computeRemoteWorkdir,
   quoteRemotePath,
   REMOTE_PROCESS_OWNERSHIP_FUNCTION,
   type RemoteHandle
@@ -63,6 +64,7 @@ const buildDispatchRecoveryCommand = (workdir: string): string => {
   const quotedWorkdirSuffix = quoteRemotePath(workdirSuffix)
   const quotedWorkdir = quoteRemotePath(workdir)
   const quotedPidFile = quoteRemotePath(`${workdir}/job.pid`)
+  const quotedExitCodeFile = quoteRemotePath(`${workdir}/exit_code`)
 
   return [
     `[ ! -L ${quotedWorkdir} ] || exit 3`,
@@ -72,7 +74,11 @@ const buildDispatchRecoveryCommand = (workdir: string): string => {
     '[ -n "$workdir" ] && [ -n "$scratch_root" ] && [ "$workdir" = "$expected_workdir" ] || exit 3',
     `pid=$(cat ${quotedPidFile} 2>/dev/null || true)`,
     `case "$pid" in ''|*[!0-9]*) exit 2 ;; esac`,
-    `printf '%s\n' "$pid"`
+    REMOTE_PROCESS_OWNERSHIP_FUNCTION,
+    `if [ ! -f ${quotedExitCodeFile} ]; then process_owned_by_workdir "$pid" "$workdir" || exit 2; fi`,
+    `started_at=$(stat -c %Y ${quotedPidFile} 2>/dev/null || stat -f %m ${quotedPidFile} 2>/dev/null || true)`,
+    `case "$started_at" in ''|*[!0-9]*) exit 2 ;; esac`,
+    `printf '%s\n%s\n' "$pid" "$started_at"`
   ].join('\n')
 }
 
@@ -345,6 +351,17 @@ export class JobPoller {
 
     if (withHandle.length === 0 && noHandle.length === 0) return
 
+    let recoveryFallbackRoot: string | undefined
+    let hasRecoveryFallback = false
+    if (noHandle.some((job) => !job.remote_workdir)) {
+      const host = await this.deps.hostRepository.get(providerId)
+      if (signal.aborted) return
+      if (host) {
+        recoveryFallbackRoot = host.scratchRoot
+        hasRecoveryFallback = true
+      }
+    }
+
     let connection: ComputeConnectionLease
     try {
       connection = await this.deps.connectionBroker.acquire(providerId, {
@@ -360,7 +377,11 @@ export class JobPoller {
 
     for (const job of noHandle) {
       if (signal.aborted) return
-      const recovered = await this._recoverSubmittedJob(job, connection, signal)
+      const fallbackWorkdir =
+        !job.remote_workdir && hasRecoveryFallback
+          ? computeRemoteWorkdir(recoveryFallbackRoot, job.job_id)
+          : undefined
+      const recovered = await this._recoverSubmittedJob(job, connection, signal, fallbackWorkdir)
       if (recovered) withHandle.push(recovered)
     }
 
@@ -377,11 +398,12 @@ export class JobPoller {
   private async _recoverSubmittedJob(
     job: ComputeJob,
     connection: ComputeConnectionLease,
-    signal: AbortSignal
+    signal: AbortSignal,
+    fallbackWorkdir?: string
   ): Promise<ComputeJob | undefined> {
     let workdir: string
     try {
-      workdir = validatedRemoteWorkdir(job)
+      workdir = validatedRemoteWorkdir(job, fallbackWorkdir)
     } catch {
       await this._recordPollError([job], 'dispatch_recovery_required', signal)
       return undefined
@@ -409,9 +431,20 @@ export class JobPoller {
       return undefined
     }
 
-    const pidText = recoveryResult.stdout.trim()
+    const recoveryLines = recoveryResult.stdout.trim().split(/\r?\n/)
+    const [pidText = '', startedAtText = ''] = recoveryLines
     const pid = /^[1-9][0-9]*$/.test(pidText) ? Number(pidText) : Number.NaN
-    if (recoveryResult.exitCode === 0 && Number.isSafeInteger(pid)) {
+    const startedAtSeconds = /^[1-9][0-9]*$/.test(startedAtText)
+      ? Number(startedAtText)
+      : Number.NaN
+    const startedAt = new Date(startedAtSeconds * 1000)
+    if (
+      recoveryResult.exitCode === 0 &&
+      recoveryLines.length === 2 &&
+      Number.isSafeInteger(pid) &&
+      Number.isSafeInteger(startedAtSeconds) &&
+      Number.isFinite(startedAt.getTime())
+    ) {
       const remoteHandle: RemoteHandle = {
         pid,
         exit_code_path: `${workdir}/exit_code`,
@@ -421,7 +454,8 @@ export class JobPoller {
       }
       const transition = await this.lifecycle.dispatchRunning(
         job.job_id,
-        JSON.stringify(remoteHandle)
+        JSON.stringify(remoteHandle),
+        startedAt
       )
       return transition.kind === 'applied' ? transition.job : undefined
     }

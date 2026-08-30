@@ -38,6 +38,8 @@ vi.mock('./ssh-runner', async (importOriginal) => {
 // Fixed nonce injected into the poller under test so fixtures can mirror the marker format the
 // poller emits. Production uses a random per-tick nonce (see JobPoller#makeNonce default).
 const NONCE = 'NONCE123_'
+const RECOVERED_STARTED_AT_SECONDS = 1_700_000_000
+const RECOVERED_STARTED_AT = new Date(RECOVERED_STARTED_AT_SECONDS * 1000)
 
 // Prefixes structural marker lines with the fixed nonce, mirroring what the poller emits/parses.
 const withNonce = (lines: string[]): string =>
@@ -1079,7 +1081,7 @@ describe('JobPoller', () => {
     } as unknown as ComputeJobRepository
     const runner = makeSshRunner({
       exitCode: 0,
-      stdout: '1234\n',
+      stdout: `1234\n${RECOVERED_STARTED_AT_SECONDS}\n`,
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1096,19 +1098,70 @@ describe('JobPoller', () => {
 
     expect(runner.run).toHaveBeenCalledWith(
       expect.anything(),
-      expect.stringContaining('job.pid'),
+      expect.stringContaining('process_owned_by_workdir "$pid" "$workdir" || exit 2'),
+      expect.anything()
+    )
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('/exit_code'),
       expect.anything()
     )
     expect(update).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({
         status: 'running',
-        remoteHandle: expect.stringContaining('"pid":1234')
+        remoteHandle: expect.stringContaining('"pid":1234'),
+        startedAt: RECOVERED_STARTED_AT
       })
     )
     expect(update).not.toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
+    )
+  })
+
+  it('recovers a legacy submitted job by deriving its workdir from the host', async () => {
+    const job = makeJob({
+      status: 'submitted',
+      remote_workdir: undefined,
+      remote_handle: undefined
+    })
+    const update = vi.fn((_id: string, updates: unknown) =>
+      Promise.resolve({ ...job, ...(updates as object) })
+    )
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update,
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: `1234\n${RECOVERED_STARTED_AT_SECONDS}\n`,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    await new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve({ ...sampleHost(), scratchRoot: '/scratch' }))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker()
+    }).tick()
+
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('/scratch/.openscience/jobs/job-1/job.pid'),
+      expect.anything()
+    )
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        status: 'running',
+        remoteHandle: expect.stringContaining('/scratch/.openscience/jobs/job-1')
+      })
     )
   })
 
@@ -1139,7 +1192,7 @@ describe('JobPoller', () => {
       .fn()
       .mockResolvedValueOnce({
         exitCode: 0,
-        stdout: '1234\n',
+        stdout: `1234\n${RECOVERED_STARTED_AT_SECONDS}\n`,
         stderr: '',
         truncated: false,
         timedOut: false
@@ -1177,7 +1230,11 @@ describe('JobPoller', () => {
       1,
       'job-1',
       ['submitted'],
-      expect.objectContaining({ status: 'running', remoteHandle: expect.any(String) })
+      expect.objectContaining({
+        status: 'running',
+        remoteHandle: expect.any(String),
+        startedAt: RECOVERED_STARTED_AT
+      })
     )
     expect(updateIfStatus).toHaveBeenNthCalledWith(
       2,
