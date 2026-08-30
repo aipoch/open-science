@@ -39,6 +39,8 @@ import {
 import { sessionAuxiliaryTurnUsageMigration } from './migrations/0018-session-auxiliary-turn-usage'
 import { sessionUsageAttributionMigration } from './migrations/0019-session-usage-attribution'
 import { computeJobAnalysisStateMigration } from './migrations/0020-compute-job-analysis-state'
+import { computeJobAnalysisConstraintsMigration } from './migrations/0021-compute-job-analysis-constraints'
+import { memoryGlobalContentUniqueMigration } from './migrations/0022-memory-global-content-unique'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -300,6 +302,18 @@ const COMPUTE_JOB_ANALYSIS_STATE_CHECKSUM = checksumMigrationPayload(
   computeJobAnalysisStateMigration.verifiers,
   computeJobAnalysisStateMigration.operations
 )
+const COMPUTE_JOB_ANALYSIS_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
+  computeJobAnalysisConstraintsMigration.id,
+  computeJobAnalysisConstraintsMigration.statements,
+  computeJobAnalysisConstraintsMigration.verifiers,
+  computeJobAnalysisConstraintsMigration.operations
+)
+const MEMORY_GLOBAL_CONTENT_UNIQUE_CHECKSUM = checksumMigrationPayload(
+  memoryGlobalContentUniqueMigration.id,
+  memoryGlobalContentUniqueMigration.statements,
+  memoryGlobalContentUniqueMigration.verifiers,
+  memoryGlobalContentUniqueMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
@@ -508,6 +522,18 @@ const MIGRATION_MANIFEST = [
   {
     ...computeJobAnalysisStateMigration,
     checksum: COMPUTE_JOB_ANALYSIS_STATE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeJobAnalysisConstraintsMigration,
+    checksum: COMPUTE_JOB_ANALYSIS_CONSTRAINTS_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...memoryGlobalContentUniqueMigration,
+    checksum: MEMORY_GLOBAL_CONTENT_UNIQUE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -776,6 +802,8 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(client, sessionAuxiliaryTurnUsageMigration.verifiers)
   await runMigrationVerifiers(client, sessionUsageAttributionMigration.verifiers)
   await runMigrationVerifiers(client, computeJobAnalysisStateMigration.verifiers)
+  await runMigrationVerifiers(client, computeJobAnalysisConstraintsMigration.verifiers)
+  await runMigrationVerifiers(client, memoryGlobalContentUniqueMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1491,6 +1519,8 @@ export {
   TAG_ORDERING_CHECKSUM,
   REVIEW_QUERY_INDEXES_CHECKSUM,
   AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
+  COMPUTE_JOB_ANALYSIS_CONSTRAINTS_CHECKSUM,
+  MEMORY_GLOBAL_CONTENT_UNIQUE_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

@@ -90,6 +90,19 @@ describe('MemoryService', () => {
     expect((await service.snapshot()).categories[0]?.entries).toHaveLength(1)
   })
 
+  it('rejects duplicate global Memory content within the same scope', async () => {
+    const service = createService()
+    const request = {
+      categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+      content: 'Prefers concise answers.'
+    }
+
+    await service.createEntry(request)
+
+    await expect(service.createEntry(request)).rejects.toThrow()
+    await expect(client.memoryEntry.count()).resolves.toBe(1)
+  })
+
   it('persists categories and entries across database reopen and hard-deletes category entries', async () => {
     const service = createService()
     const created = await service.createCategory({
@@ -413,6 +426,7 @@ describe('MemoryService', () => {
         {
           id: 'duplicate-cross-category',
           categoryId: duplicateCategory.id,
+          projectId: 'project-1',
           content: '  ALPHA BETA  ',
           contentKey: 'alpha beta',
           origin: 'user'
@@ -432,37 +446,44 @@ describe('MemoryService', () => {
     ).toHaveLength(1)
   })
 
-  it('deduplicates before the five-record recall cap and backfills distinct facts', async () => {
+  it('deduplicates global and project facts before the recall cap', async () => {
     const service = createService()
-    const categoryIds: string[] = [ABOUT_YOU_MEMORY_CATEGORY_ID]
-    for (let index = 0; index < 4; index += 1) {
-      const snapshot = await service.createCategory({
-        name: `Recall ${index}`,
-        guidance: '',
-        autoRecall: true
-      })
-      categoryIds.push(
-        snapshot.categories.find(
-          (category) => 'name' in category && category.name === `Recall ${index}`
-        )!.id
-      )
-    }
-    for (const categoryId of categoryIds) {
-      await service.createEntry({ categoryId, content: 'microscope recall' })
-    }
-    await service.createEntry({
-      categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
-      content: 'microscope recall unique calibration detail'
+    await client.memoryEntry.createMany({
+      data: [
+        {
+          id: 'global-duplicate',
+          categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+          content: 'microscope recall',
+          contentKey: 'microscope recall',
+          origin: 'user'
+        },
+        {
+          id: 'project-duplicate',
+          projectId: 'project-1',
+          content: '  MICROSCOPE RECALL  ',
+          contentKey: 'microscope recall',
+          origin: 'user'
+        },
+        ...Array.from({ length: 4 }, (_, index) => ({
+          id: `distinct-${index}`,
+          categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+          content: `microscope recall unique calibration detail ${index}`,
+          contentKey: `microscope recall unique calibration detail ${index}`,
+          origin: 'user' as const
+        }))
+      ]
     })
     await service.setEnabled({ enabled: true })
 
     const recalled = await service.recallForPrompt('microscope recall', agentContext)
     const encodedRecords = recalled?.match(/<memory_records>(.*)<\/memory_records>/u)?.[1]
     const records = JSON.parse(encodedRecords ?? '[]') as Array<{ content: string }>
-    expect(records.filter(({ content }) => content === 'microscope recall')).toHaveLength(1)
+    expect(
+      records.filter(({ content }) => content.trim().toLowerCase() === 'microscope recall')
+    ).toHaveLength(1)
     expect(records).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ content: 'microscope recall unique calibration detail' })
+        expect.objectContaining({ content: 'microscope recall unique calibration detail 0' })
       ])
     )
   })

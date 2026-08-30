@@ -117,7 +117,9 @@ describe('database startup logging', () => {
               '0017_agent_memory_project_scope',
               '0018_session_auxiliary_turn_usage',
               '0019_session_usage_attribution',
-              '0020_compute_job_analysis_state'
+              '0020_compute_job_analysis_state',
+              '0021_compute_job_analysis_constraints',
+              '0022_memory_global_content_unique'
             ],
             adoptedLegacy: true
           })

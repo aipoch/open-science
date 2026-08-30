@@ -86,7 +86,7 @@ const injectCheckConstraints = (ddl, constraints) => {
   return `${ddl.slice(0, -3)},\n${suffix}\n);`
 }
 
-const validateCheckContract = (checkContract, tableNames) => {
+const validateSqliteContract = (checkContract, tableNames) => {
   if (!Array.isArray(checkContract.constraints)) {
     throw new Error('SQLite CHECK contract must declare a constraints array.')
   }
@@ -100,6 +100,21 @@ const validateCheckContract = (checkContract, tableNames) => {
     }
     constraintNames.add(constraint.name)
   }
+  if (!Array.isArray(checkContract.indexes)) {
+    throw new Error('SQLite schema contract must declare an indexes array.')
+  }
+  const indexNames = new Set()
+  for (const index of checkContract.indexes) {
+    if (
+      !tableNames.has(index.tableName) ||
+      indexNameFromDdl(index.sql) !== index.name ||
+      !index.sql.includes(` ON "${index.tableName}"`) ||
+      indexNames.has(index.name)
+    ) {
+      throw new Error(`SQLite schema contract has an invalid or duplicate index ${index.name}.`)
+    }
+    indexNames.add(index.name)
+  }
 }
 
 const renderTemplateArray = (name, values) => `const ${name} = [
@@ -110,13 +125,14 @@ ${values.map((value) => `  \`${value.replaceAll('`', '\\`').replaceAll('${', '\\
 const buildRuntimeSchemaModule = async (prismaSql, checkContract) => {
   const statements = parsePrismaStatements(prismaSql)
   const rawTables = statements.filter((statement) => tableNameFromDdl(statement))
-  const rawIndexes = statements.filter((statement) => indexNameFromDdl(statement))
-  if (rawTables.length === 0 || rawTables.length + rawIndexes.length !== statements.length) {
+  const prismaIndexes = statements.filter((statement) => indexNameFromDdl(statement))
+  if (rawTables.length === 0 || rawTables.length + prismaIndexes.length !== statements.length) {
     throw new Error('Prisma emitted an unsupported database schema statement.')
   }
+  const rawIndexes = [...prismaIndexes, ...checkContract.indexes.map(({ sql }) => sql)]
 
   const tableNames = new Set(rawTables.map(tableNameFromDdl))
-  validateCheckContract(checkContract, tableNames)
+  validateSqliteContract(checkContract, tableNames)
   const tables = rawTables.map((ddl) => {
     const tableName = tableNameFromDdl(ddl)
     const constraints = checkContract.constraints.filter(

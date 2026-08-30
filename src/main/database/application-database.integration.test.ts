@@ -30,6 +30,47 @@ const removeAgentMemoryTriggers = async (client: PrismaClient): Promise<void> =>
   await client.$executeRawUnsafe('DROP TABLE "MemoryEntryFts"')
 }
 
+const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> => {
+  const [{ sql }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
+    `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
+  )
+  const removedLines = [
+    'CONSTRAINT "ComputeJob_analysisState_check"',
+    'CONSTRAINT "ComputeJob_analysisBundle_check"',
+    'CONSTRAINT "ComputeJob_analysisConsumption_check"',
+    '"analysisState" TEXT',
+    '"analysisMessageId" TEXT',
+    '"analysisUpdatedAt" DATETIME'
+  ]
+  const legacyDdl = sql
+    .split('\n')
+    .filter((line) => removedLines.every((removed) => !line.includes(removed)))
+    .join('\n')
+    .replace(/CREATE TABLE (?:IF NOT EXISTS )?"ComputeJob"/u, 'CREATE TABLE "__legacy_ComputeJob"')
+  const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+    `PRAGMA table_info('ComputeJob')`
+  )
+  const copiedColumns = columns
+    .map(({ name }) => name)
+    .filter((name) => !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name))
+    .map((name) => `"${name}"`)
+    .join(', ')
+
+  await client.$executeRawUnsafe(legacyDdl)
+  await client.$executeRawUnsafe(
+    `INSERT INTO "__legacy_ComputeJob" (${copiedColumns}) SELECT ${copiedColumns} FROM "ComputeJob"`
+  )
+  await client.$executeRawUnsafe('DROP TABLE "ComputeJob"')
+  await client.$executeRawUnsafe('ALTER TABLE "__legacy_ComputeJob" RENAME TO "ComputeJob"')
+  await client.$executeRawUnsafe(
+    'CREATE INDEX "ComputeJob_providerId_idx" ON "ComputeJob"("providerId")'
+  )
+  await client.$executeRawUnsafe(
+    'CREATE INDEX "ComputeJob_sessionId_idx" ON "ComputeJob"("sessionId")'
+  )
+  await client.$executeRawUnsafe('CREATE INDEX "ComputeJob_status_idx" ON "ComputeJob"("status")')
+}
+
 afterEach(async () => {
   await disconnect?.()
   disconnect = undefined
@@ -131,7 +172,9 @@ describe('application database (integration)', () => {
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
         '0019_session_usage_attribution',
-        '0020_compute_job_analysis_state'
+        '0020_compute_job_analysis_state',
+        '0021_compute_job_analysis_constraints',
+        '0022_memory_global_content_unique'
       ]
     })
 
@@ -609,9 +652,7 @@ describe('application database (integration)', () => {
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisState"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisUpdatedAt"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisMessageId"')
+    await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
 
     await migrateApplicationDatabase(client)
@@ -695,9 +736,7 @@ describe('application database (integration)', () => {
     // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisState"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisUpdatedAt"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisMessageId"')
+    await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
 
     await migrateApplicationDatabase(client)
@@ -751,7 +790,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0019_session_usage_attribution.backup`
+    const backupPath = `${databasePath}.before-0022_memory_global_content_unique.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -791,7 +830,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0018_session_auxiliary_turn_usage' }])
+      ).resolves.toEqual([{ id: '0021_compute_job_analysis_constraints' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -1170,7 +1209,9 @@ describe('application database (integration)', () => {
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
         '0019_session_usage_attribution',
-        '0020_compute_job_analysis_state'
+        '0020_compute_job_analysis_state',
+        '0021_compute_job_analysis_constraints',
+        '0022_memory_global_content_unique'
       ]
     })
 

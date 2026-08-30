@@ -67,10 +67,12 @@ describe('Compute Job sensitive data encryption migration', () => {
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
         '0019_session_usage_attribution',
-        '0020_compute_job_analysis_state'
+        '0020_compute_job_analysis_state',
+        '0021_compute_job_analysis_constraints',
+        '0022_memory_global_content_unique'
       ],
       from: '0015_session_model_call_usage',
-      to: '0020_compute_job_analysis_state'
+      to: '0022_memory_global_content_unique'
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
@@ -82,10 +84,10 @@ describe('Compute Job sensitive data encryption migration', () => {
       access(`${databasePath}.before-0018_session_auxiliary_turn_usage.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
-      access(`${databasePath}.before-0019_session_usage_attribution.backup`)
+      access(`${databasePath}.before-0021_compute_job_analysis_constraints.backup`)
     ).resolves.toBeUndefined()
     await expect(
-      access(`${databasePath}.before-0020_compute_job_analysis_state.backup`)
+      access(`${databasePath}.before-0022_memory_global_content_unique.backup`)
     ).resolves.toBeUndefined()
     await expect(
       client.$queryRaw<

@@ -372,6 +372,21 @@
     },
     {
       "tableName": "ComputeJob",
+      "name": "ComputeJob_analysisState_check",
+      "expression": "\"analysisState\" IS NULL OR \"analysisState\" IN ('dispatched', 'succeeded', 'failed', 'cancelled')"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_analysisBundle_check",
+      "expression": "((\"analysisState\" IS NULL AND \"analysisMessageId\" IS NULL AND \"analysisUpdatedAt\" IS NULL) OR (\"analysisState\" IS NOT NULL AND \"analysisMessageId\" IS NOT NULL AND length(trim(\"analysisMessageId\")) > 0 AND \"analysisUpdatedAt\" IS NOT NULL))"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_analysisConsumption_check",
+      "expression": "\"analysisState\" IS NULL OR \"analysisState\" <> 'succeeded' OR \"notificationConsumedAt\" IS NOT NULL"
+    },
+    {
+      "tableName": "ComputeJob",
       "name": "ComputeJob_harvestPayload_check",
       "expression": "(\"harvestError\" IS NULL AND \"leftOnRemote\" IS NULL) OR \"harvestedAt\" IS NOT NULL"
     },
@@ -589,6 +604,13 @@
       "tableName": "MemoryEntry",
       "name": "MemoryEntry_revision_check",
       "expression": "\"revision\" >= 1"
+    }
+  ],
+  "indexes": [
+    {
+      "tableName": "MemoryEntry",
+      "name": "MemoryEntry_global_contentKey_key",
+      "sql": "CREATE UNIQUE INDEX \"MemoryEntry_global_contentKey_key\" ON \"MemoryEntry\"(\"contentKey\") WHERE \"projectId\" IS NULL"
     }
   ]
 }

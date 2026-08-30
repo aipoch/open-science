@@ -518,6 +518,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeJob_errorCode_check" CHECK ("errorCode" IS NULL OR "errorCode" IN ('approval_denied', 'credential_required', 'credential_conflict', 'credential_unavailable', 'secure_storage_unavailable', 'authentication_failed', 'host_key_unknown', 'host_key_changed', 'host_unreachable', 'unsupported_auth_configuration', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')),
     CONSTRAINT "ComputeJob_timeoutSeconds_check" CHECK ("timeoutSeconds" IS NULL OR "timeoutSeconds" BETWEEN 1 AND 604800),
     CONSTRAINT "ComputeJob_notification_check" CHECK ("notificationConsumedAt" IS NULL OR "notifiedAt" IS NOT NULL),
+    CONSTRAINT "ComputeJob_analysisState_check" CHECK ("analysisState" IS NULL OR "analysisState" IN ('dispatched', 'succeeded', 'failed', 'cancelled')),
+    CONSTRAINT "ComputeJob_analysisBundle_check" CHECK ((("analysisState" IS NULL AND "analysisMessageId" IS NULL AND "analysisUpdatedAt" IS NULL) OR ("analysisState" IS NOT NULL AND "analysisMessageId" IS NOT NULL AND length(trim("analysisMessageId")) > 0 AND "analysisUpdatedAt" IS NOT NULL))),
+    CONSTRAINT "ComputeJob_analysisConsumption_check" CHECK ("analysisState" IS NULL OR "analysisState" <> 'succeeded' OR "notificationConsumedAt" IS NOT NULL),
     CONSTRAINT "ComputeJob_harvestPayload_check" CHECK (("harvestError" IS NULL AND "leftOnRemote" IS NULL) OR "harvestedAt" IS NOT NULL),
     CONSTRAINT "ComputeJob_harvestState_check" CHECK ("harvestedAt" IS NULL OR "status" IN ('success', 'failed', 'timeout')),
     CONSTRAINT "ComputeJob_errorState_check" CHECK ((("errorCode" IS NULL OR "status" IN ('failed', 'timeout', 'error')) AND ("status" <> 'error' OR "errorCode" IS NOT NULL))),
@@ -734,7 +737,8 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_nameKey_key" ON "MemoryCategory"("nameKey");`,
   `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt");`,
   `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt");`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey");`
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [
