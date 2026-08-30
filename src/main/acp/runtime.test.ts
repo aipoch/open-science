@@ -226,7 +226,11 @@ const startFakeAgent = (
     rejectModeChange?: boolean
     newSessionError?: unknown
     onNewSession?: (context: { sessionId: string; index: number }) => Promise<void> | void
-    onResumeRequest?: (context: { sessionId: string; index: number }) => Promise<void> | void
+    onResumeRequest?: (context: {
+      sessionId: string
+      index: number
+      signal: AbortSignal
+    }) => Promise<void> | void
     onResume?: (sessionId: string) => Promise<void> | void
     onSetMode?: (context: { sessionId: string; modeId: string }) => Promise<void> | void
     onClose?: (sessionId: string) => Promise<void> | void
@@ -337,7 +341,11 @@ const startFakeAgent = (
     .onRequest(acp.methods.agent.session.resume, async (ctx) => {
       const index = resumeIndex
       resumeIndex += 1
-      await options.onResumeRequest?.({ sessionId: ctx.params.sessionId, index })
+      await options.onResumeRequest?.({
+        sessionId: ctx.params.sessionId,
+        index,
+        signal: ctx.signal
+      })
 
       if (options.resumeNotFound) {
         throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
@@ -16559,6 +16567,48 @@ describe('ACP runtime session management', () => {
     await expect(resume).rejects.toThrow(/timed out/i)
     // The half-open connection is torn down so a retry reconnects cleanly.
     expect(process.killed).toBe(true)
+  })
+
+  it('keeps other Sessions on a shared connection alive when one resume times out', async () => {
+    const process = new FakeAgentProcess()
+    const resumeReceived = createDeferred()
+    const resumeCancelled = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['active-session'], {
+      onResumeRequest: ({ signal }) => {
+        resumeReceived.resolve(undefined)
+        signal.addEventListener('abort', () => resumeCancelled.resolve(undefined), { once: true })
+        return new Promise<never>(() => {})
+      }
+    })
+
+    let fireResumeTimeout: (() => void) | undefined
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      resumeTimeoutMs: 1000,
+      setTimer: (fn) => {
+        fireResumeTimeout = fn
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: () => {}
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const resume = runtime.resumeSession({ sessionId: 'stuck-session', cwd: '/workspace' })
+    await resumeReceived.promise
+    fireResumeTimeout?.()
+
+    await expect(resume).rejects.toThrow(/timed out/i)
+    await resumeCancelled.promise
+    await expect(
+      runtime.sendPrompt({ sessionId: 'active-session', text: 'keep working' })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+    expect(fakeAgent.prompts).toContainEqual({
+      sessionId: 'active-session',
+      text: 'keep working'
+    })
+    expect(process.killed).toBe(false)
   })
 
   it.each(['session-update', 'claude-sdk-message'] as const)(

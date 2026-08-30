@@ -176,7 +176,16 @@ export class AcpProviderSessionResumer {
       this.deps.assertCurrentConnection(connection)
       identity.renew()
       return await this.withTimeout(
-        () => this.resumeConnected(request, connection, cwd, projectId, identity, compatibleOnly),
+        (cancellationSignal) =>
+          this.resumeConnected(
+            request,
+            connection,
+            cwd,
+            projectId,
+            identity,
+            compatibleOnly,
+            cancellationSignal
+          ),
         this.progressSessionIds(request)
       )
     } finally {
@@ -241,9 +250,10 @@ export class AcpProviderSessionResumer {
   }
 
   private async withTimeout<Result>(
-    operation: () => Promise<Result>,
+    operation: (cancellationSignal: AbortSignal) => Promise<Result>,
     progressSessionIds: readonly string[] = []
   ): Promise<Result> {
+    const cancellation = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
     let settled = false
@@ -256,14 +266,16 @@ export class AcpProviderSessionResumer {
       if (timer !== undefined) this.deps.clearTimer(timer)
       timer = this.deps.setTimer(() => {
         timedOut = true
-        rejectTimeout(new Error('ACP session resume timed out.'))
+        const error = new Error('ACP session resume timed out.')
+        cancellation.abort(error)
+        rejectTimeout(error)
       }, this.deps.resumeTimeoutMs)
     }
     const unsubscribe = this.subscribeToProgress(progressSessionIds, renewTimeout)
     renewTimeout()
 
     try {
-      return await Promise.race([operation(), timeout])
+      return await Promise.race([operation(cancellation.signal), timeout])
     } catch (error) {
       if (timedOut) await this.deps.disconnectTimedOutConnection()
       throw error
@@ -306,7 +318,8 @@ export class AcpProviderSessionResumer {
     cwd: string,
     projectId: string,
     identity: AcpPrimarySessionIdentityReservation,
-    compatibleOnly: boolean
+    compatibleOnly: boolean,
+    cancellationSignal: AbortSignal
   ): Promise<AcpCreateSessionResponse> {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
@@ -330,7 +343,8 @@ export class AcpProviderSessionResumer {
         identity,
         persistedProviderSessionId,
         true,
-        true
+        true,
+        cancellationSignal
       )
     }
     const decision = this.policy.decide({
@@ -367,7 +381,8 @@ export class AcpProviderSessionResumer {
       identity,
       decision.providerSessionId,
       persistedProviderSessionId !== undefined,
-      compatibleOnly
+      compatibleOnly,
+      cancellationSignal
     )
   }
 
@@ -379,7 +394,8 @@ export class AcpProviderSessionResumer {
     identity: AcpPrimarySessionIdentityReservation,
     providerSessionId: string,
     providerSessionIdPersisted: boolean,
-    compatibleOnly: boolean
+    compatibleOnly: boolean,
+    cancellationSignal: AbortSignal
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
@@ -438,12 +454,16 @@ export class AcpProviderSessionResumer {
 
       let resumeResponse: unknown
       try {
-        resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
-          sessionId: providerSessionId,
-          cwd,
-          mcpServers: sessionCapabilities.mcpServers,
-          ...specialistProjection.setup.metaArg
-        })
+        resumeResponse = await connection.agent.request(
+          acp.methods.agent.session.resume,
+          {
+            sessionId: providerSessionId,
+            cwd,
+            mcpServers: sessionCapabilities.mcpServers,
+            ...specialistProjection.setup.metaArg
+          },
+          { cancellationSignal }
+        )
       } catch (error) {
         const failure = this.policy.classifyFailure(error, {
           currentFrameworkId: backend.framework.id,
