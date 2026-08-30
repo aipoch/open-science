@@ -223,6 +223,9 @@ const verifyOwnershipMarker = (directoryName, ownershipToken, ownerLabel) => {
   }
 }
 const removeOwnedDirectory = (name, expectedIdentity) => {
+  if (!validIdentity(expectedIdentity)) {
+    throw new Error(`File-evidence owned directory identity is missing: ${name}`)
+  }
   const actual = entryIdentity(name)
   if (!actual) {
     if (entryExists(name)) throw new Error(`File-evidence owned directory is unsafe: ${name}`)

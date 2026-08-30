@@ -1147,6 +1147,41 @@ describe('working-file evidence', () => {
     await expect(readdir(evidenceRoot)).resolves.toEqual([])
   })
 
+  it('preserves a pre-existing staging directory when allocation collides', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'file-evidence')
+    const stagingRoot = join(evidenceRoot, 'staging-allocation-collision')
+    await mkdir(stagingRoot, { recursive: true })
+    await writeFile(join(stagingRoot, 'keep.txt'), 'pre-existing data')
+    const root = await stat(evidenceRoot)
+    const blobPool = await createWorkerBlobPool()
+
+    await expect(
+      runEvidenceWorker(evidenceRoot, {
+        operation: 'begin',
+        expectedRootIdentity: { dev: root.dev, ino: root.ino },
+        receiptName: 'receipt-allocation-collision.json',
+        stagingName: 'staging-allocation-collision',
+        finalName: 'run-allocation-collision',
+        runId: 'allocation-collision',
+        evidenceId: 'notebook-file-evidence-allocation-collision',
+        storageKeyPrefix: 'file-evidence',
+        ...blobPool,
+        initialViewState: 'complete',
+        initialFiles: [],
+        maxGenerationBytes: 1024,
+        maxRunBytes: 64 * 1024,
+        diskReserveBytes: 0,
+        availableBytes: 1024 * 1024,
+        captureCancelled: false
+      })
+    ).rejects.toThrow()
+    await expect(readFile(join(stagingRoot, 'keep.txt'), 'utf8')).resolves.toBe('pre-existing data')
+    await expect(
+      readFile(join(evidenceRoot, 'receipt-allocation-collision.json'), 'utf8')
+    ).resolves.toContain('allocation-collision')
+  })
+
   it('recovers a final directory renamed before its capturing receipt was published', async () => {
     await createRoots()
     const evidenceRoot = join(storageRoot as string, 'file-evidence')
