@@ -1339,6 +1339,11 @@ describe('close chord interception', () => {
 
     createMainWindow()
     const window = currentWindow!
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/index.html',
+      frame: window.mainFrame
+    })
 
     await vi.waitFor(() => expect(window.destroyMock).toHaveBeenCalledTimes(1))
   })
@@ -1361,6 +1366,36 @@ describe('close chord interception', () => {
     fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
     expect(window.loadFileMock).toHaveBeenCalledTimes(2)
     await Promise.resolve()
+
+    rejectInitial(new Error('superseded initial load'))
+    await vi.waitFor(() =>
+      expect(windowLogSpies.error).toHaveBeenCalledWith('renderer document load rejected', {
+        errorName: 'Error'
+      })
+    )
+
+    expect(window.destroyMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps the window when a newer top-level reload supersedes the initial load', async () => {
+    let rejectInitial!: (error: Error) => void
+    loadRendererDocument = () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectInitial = reject
+      })
+
+    createMainWindow()
+    const window = currentWindow!
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/index.html',
+      frame: window.mainFrame
+    })
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/index.html',
+      frame: window.mainFrame
+    })
 
     rejectInitial(new Error('superseded initial load'))
     await vi.waitFor(() =>

@@ -282,6 +282,7 @@ const createMainWindow = (
   let rendererRecoveryTimes: number[] = []
   let rendererRecoveryDialogOpen = false
   let rendererLoadsInFlight = 0
+  let mainFrameNavigationGeneration = 0
   const clearRendererHangState = (): void => {
     rendererResponsive = true
     rendererUnresponsiveAt = undefined
@@ -289,6 +290,9 @@ const createMainWindow = (
   const rendererLoadErrorName = (error: unknown): string =>
     error instanceof Error ? error.name : 'UnknownError'
   function observeRendererLoad(initial: boolean): void {
+    // The explicit load is expected to start one top-level navigation. Any later generation means a
+    // reload or replacement navigation superseded this Promise before it settled.
+    const ownedNavigationGeneration = mainFrameNavigationGeneration + 1
     rendererLoadsInFlight += 1
     void loadRenderer(window).then(
       () => {
@@ -298,6 +302,7 @@ const createMainWindow = (
         rendererLoadsInFlight -= 1
         log.error('renderer document load rejected', { errorName: rendererLoadErrorName(error) })
         if (window.isDestroyed()) return
+        if (mainFrameNavigationGeneration > ownedNavigationGeneration) return
         if (initial) {
           // The startup shell waits for the resulting closed event and then lets the lifecycle create a
           // fresh window. A rejected load Promise is not guaranteed to reach its did-fail-load listener.
@@ -438,6 +443,7 @@ const createMainWindow = (
       .get(window)
       ?.startNavigation(details.frame, details.url, details.isSameDocument)
     if (details.isMainFrame && !details.isSameDocument) {
+      mainFrameNavigationGeneration += 1
       clearSourcePreviewState(window)
       rendererListenerReady = false
       windowFindListenerReady = false
