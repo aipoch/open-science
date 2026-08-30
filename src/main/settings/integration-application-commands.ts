@@ -42,6 +42,7 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'disconnectCustomServer'
   | 'retryCustomServer'
 >
 
@@ -169,6 +170,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>
   >('settings:cancel-custom-server-authentication'),
+  disconnectCustomServer: defineApplicationCommand<
+    'settings:disconnect-custom-server',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'disconnectCustomServer'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'disconnectCustomServer'>
+  >('settings:disconnect-custom-server'),
   retryCustomServer: defineApplicationCommand<
     'settings:retry-custom-server',
     OwnerArgs<ConnectorIntegrationWorkflows, 'retryCustomServer'>,
@@ -228,6 +234,7 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.updateCustomServer,
     settingsIntegrationApplicationCommands.authenticateCustomServer,
     settingsIntegrationApplicationCommands.cancelCustomServerAuthentication,
+    settingsIntegrationApplicationCommands.disconnectCustomServer,
     settingsIntegrationApplicationCommands.retryCustomServer
   ] as const
 )
@@ -303,6 +310,10 @@ const registerIntegrationSettingsApplicationCommands = (
       'settings:cancel-custom-server-authentication': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:cancel-custom-server-authentication')
         return dependencies.connectors.cancelCustomServerAuthentication(args[0])
+      },
+      'settings:disconnect-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:disconnect-custom-server')
+        return dependencies.connectors.disconnectCustomServer(args[0])
       },
       'settings:retry-custom-server': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:retry-custom-server')

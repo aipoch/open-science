@@ -146,7 +146,7 @@ describe('ProviderAccountsModule', () => {
       id: stored.id,
       name: 'Lab gateway',
       models: ['lab-model'],
-      maskedKey: 'secr…-key',
+      maskedKey: '••••-key',
       hasKey: true,
       needsKey: false
     })

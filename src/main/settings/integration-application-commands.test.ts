@@ -52,6 +52,7 @@ const expectedConnectorChannels = [
   'settings:update-custom-server',
   'settings:authenticate-custom-server',
   'settings:cancel-custom-server-authentication',
+  'settings:disconnect-custom-server',
   'settings:retry-custom-server'
 ] as const
 
@@ -135,7 +136,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 27-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 28-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -169,7 +170,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(27)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(28)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -178,13 +179,14 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(27)
+    expect(integrationContracts).toHaveLength(28)
     expect(
       integrationContracts
         ?.filter(
           (contract) =>
             contract.channel !== 'settings:authenticate-custom-server' &&
             contract.channel !== 'settings:cancel-custom-server-authentication' &&
+            contract.channel !== 'settings:disconnect-custom-server' &&
             contract.channel !== 'settings:retry-custom-server' &&
             contract.channel !== 'settings:set-openalex-credential' &&
             contract.channel !== 'settings:validate-openalex-credential'
@@ -202,6 +204,7 @@ describe('Settings integration application commands', () => {
           (contract) =>
             contract.channel === 'settings:authenticate-custom-server' ||
             contract.channel === 'settings:cancel-custom-server-authentication' ||
+            contract.channel === 'settings:disconnect-custom-server' ||
             contract.channel === 'settings:retry-custom-server' ||
             contract.channel === 'settings:set-openalex-credential' ||
             contract.channel === 'settings:validate-openalex-credential'
@@ -416,6 +419,12 @@ describe('Settings integration application commands', () => {
     })
 
     await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.disconnectCustomServer,
+      invocation([{ id: 'server-1' }] as const, createWebCallerContext('local-human'))
+    )
+    expect(connectorMethod('disconnectCustomServer')).toHaveBeenCalledWith({ id: 'server-1' })
+
+    await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.retryCustomServer,
       invocation([{ id: 'server-1' }] as const, createWebCallerContext('local-human'))
     )
@@ -459,6 +468,18 @@ describe('Settings integration application commands', () => {
       )
     ).rejects.toThrow(
       'Channel only available from the local app: settings:cancel-custom-server-authentication'
+    )
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.disconnectCustomServer,
+        invocation(
+          [{ id: 'server-1' }] as const,
+          createWebCallerContext('remote-human', { location: 'remote' })
+        )
+      )
+    ).rejects.toThrow(
+      'Channel only available from the local app: settings:disconnect-custom-server'
     )
 
     await expect(
