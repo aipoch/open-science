@@ -62,13 +62,13 @@ const redactRemainingAbsolutePaths = (text: string): string =>
     .replace(/\bfile:\/\/[^\r\n"'<>()[\]{}]+/gi, '<absolute-path>')
     .replace(/\\\\[^\r\n"'<>()[\]{}]+/g, '<absolute-path>')
     .replace(
-      /(^|[\s("'=:])([A-Za-z]:[\\/][^\r\n"'<>()[\]{}]*)/gm,
+      /(^|[\s("'=:[{])([A-Za-z]:[\\/][^\r\n"'<>()[\]{}]*)/gm,
       (_match, boundary: string) => `${boundary}<absolute-path>`
     )
     // The double-slash guard excludes URL schemes even when ':' is accepted as a path boundary.
     // Other leading boundaries avoid `I/O` and suffixes below already-redacted named roots.
     .replace(
-      /(^|[\s("'=:])\/(?!\/)([^\r\n"'<>()[\]{}]*)/gm,
+      /(^|[\s("'=:[{])\/(?!\/)([^\r\n"'<>()[\]{}]*)/gm,
       (_match, boundary: string) => `${boundary}<absolute-path>`
     )
     // Multiple unquoted paths on one line can leave adjacent markers as each conservative matcher

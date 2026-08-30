@@ -90,6 +90,18 @@ describe('buildStartupDiagnostics', () => {
   )
 
   it.each([
+    ['POSIX', '[/srv/customer/secret.db]', '/srv/customer/secret.db'],
+    ['drive-letter', String.raw`[D:\Clients\Acme\secret.db]`, String.raw`D:\Clients\Acme\secret.db`]
+  ])('redacts a bracket-delimited %s path', (_kind, message, path) => {
+    const result = buildStartupDiagnostics(new Error(`cannot open ${message}`), {
+      home: '/Users/alice'
+    })
+
+    expect(result).toContain('cannot open [<absolute-path>]')
+    expect(result).not.toContain(path)
+  })
+
+  it.each([
     '/srv/customer/Private Study/patient.db',
     String.raw`D:\Clients\Private Study\patient.db`,
     String.raw`\\fileserver\Private Study\patient.db`,
