@@ -844,6 +844,36 @@ describe('ConnectorService', () => {
       expect(call).not.toHaveBeenCalled()
     })
 
+    it('rejects a historical custom server with curl-style user credentials', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-user-credential',
+              name: 'user-credential',
+              displayName: 'User credential',
+              transport: 'stdio',
+              command: 'example-mcp',
+              args: ['-u', 'legacy-user:legacy-password'],
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('user-credential', 'do_thing', {}, internal)).rejects.toThrow(
+        /credential_unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
     it('does not dispatch a custom name that collides with a bundled connector', async () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)

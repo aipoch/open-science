@@ -1024,6 +1024,9 @@ describe('ConnectorSettingsModule', () => {
 
   it.each([
     ['split credential flag', ['--auth-token', 'plaintext-secret']],
+    ['split curl user credentials', ['--user', 'researcher:plaintext-secret']],
+    ['inline curl user credentials', ['--user=researcher:plaintext-secret']],
+    ['short curl user credentials', ['-uresearcher:plaintext-secret']],
     [
       'credential-bearing URL argument',
       ['--endpoint', 'https://mcp.example.test?auth_token=plaintext-secret']
@@ -1123,6 +1126,30 @@ describe('ConnectorSettingsModule', () => {
 
     const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
     expect(storedJson).toContain('legacy-plaintext-secret')
+  })
+
+  it('redacts curl-style user credentials from historical custom-server views', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-user-credentials',
+      name: 'legacy-user-credentials',
+      displayName: 'Legacy user credentials',
+      transport: 'stdio',
+      command: 'example-mcp',
+      args: ['--user', 'legacy-user:legacy-password'],
+      enabled: true
+    })
+
+    const [server] = (await service.listConnectors()).customServers
+    expect(server).toMatchObject({
+      name: 'legacy-user-credentials',
+      args: undefined,
+      enabled: false,
+      availability: 'credential_unavailable'
+    })
+    expect(JSON.stringify(server)).not.toContain('legacy-password')
+
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).toContain('legacy-password')
   })
 
   it('migrates legacy plaintext custom-server secrets when secure storage is available', async () => {

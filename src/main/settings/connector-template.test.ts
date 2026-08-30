@@ -215,6 +215,9 @@ describe('Connector configuration templates', () => {
       { args: ['--header', 'Authorization:', 'Bearer', 'secret'] },
       'appears to contain a credential'
     ],
+    [{ args: ['--user=researcher:secret'] }, 'appears to contain a credential'],
+    [{ args: ['-u', 'researcher:secret'] }, 'appears to contain a credential'],
+    [{ args: ['-uresearcher:secret'] }, 'appears to contain a credential'],
     [{ args: ['--auth-token', 'secret'] }, 'appears to contain a credential'],
     [
       { args: ['--endpoint', 'https://mcp.example.test/mcp?auth_token=secret'] },
@@ -414,14 +417,17 @@ describe('Connector configuration templates', () => {
     expect(result.preview.mcpClientSuggestedFileName).toBe('mcp-example-server.json')
   })
 
-  it('withholds both export formats when historical arguments contain split credentials', () => {
+  it.each([
+    ['split header credentials', ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']],
+    ['curl-style user credentials', ['--user', 'researcher:plaintext-secret']]
+  ])('withholds both export formats for historical %s', (_description, args) => {
     const result = buildConnectorTemplateExport({
       id: 'unsafe-id',
       name: 'unsafe-server',
       displayName: 'Unsafe Server',
       transport: 'stdio',
       command: 'example-mcp',
-      args: ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']
+      args
     })
 
     expect(result.preview).toMatchObject({

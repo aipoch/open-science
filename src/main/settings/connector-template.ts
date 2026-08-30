@@ -92,7 +92,8 @@ const SUSPICIOUS_QUERY_KEYS = new Set([
 ])
 const JWT = /(?:^|[=:\s])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|\s)/
 const SECRET_FLAG =
-  /^--?(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?(?:key|token)|auth(?:entication)?[-_]?(?:key|token)|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|refresh[-_]?token|secret(?:[-_]?access[-_]?key)?|security[-_]?token|session[-_]?token|tokens?)(?:[-_]?(?:file|path))?(?:=|:|$)/i
+  /^--?(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?(?:key|token)|auth(?:entication)?[-_]?(?:key|token)|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|refresh[-_]?token|secret(?:[-_]?access[-_]?key)?|security[-_]?token|session[-_]?token|tokens?|user)(?:[-_]?(?:file|path))?(?:=|:|$)/i
+const CREDENTIAL_USER_FLAG = /^-[uU](?:$|[=:]|[^-]*:)/
 const CREDENTIAL_HEADER =
   /^(?:authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token|x-access-token)\s*:\s*\S/i
 const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -134,6 +135,7 @@ const argumentContainsCredential = (argument: string): boolean =>
   JWT.test(argument) ||
   /^Bearer\s+/i.test(argument) ||
   SECRET_FLAG.test(argument) ||
+  CREDENTIAL_USER_FLAG.test(argument) ||
   CREDENTIAL_HEADER.test(headerArgumentValue(argument)) ||
   argumentUrlContainsCredential(argument)
 
