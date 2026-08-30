@@ -830,6 +830,8 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(window.api.reviewer.run).toHaveBeenCalledTimes(1)
     expect(conversationProps.workflows.review.disabled).toBe(true)
     expect(conversationProps.workflows.review.running).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
+    expect(useSessionStore.getState().sessions[0]?.branchSwitchBlocked).toBe(true)
 
     await act(async () => {
       resolveReview({ started: true })

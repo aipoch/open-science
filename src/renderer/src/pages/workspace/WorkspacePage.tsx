@@ -490,6 +490,7 @@ const WorkspacePage = ({
     )
     return reviews.some((review) => review.lifecycle === 'running')
   })
+  const isReviewBusy = isReviewing || isManualReviewRequestPending
   const conversation = useWorkspaceConversationController({
     activeSession,
     projectId: scopedProjectId,
@@ -499,7 +500,7 @@ const WorkspacePage = ({
     agentConfiguration: activeAgentConfiguration,
     agentConfigurationReady: !agentConfigurationUnavailable,
     permissionProfile: activePermissionProfile,
-    isReviewing,
+    isReviewing: isReviewBusy,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
@@ -544,7 +545,7 @@ const WorkspacePage = ({
     if (sessionAwaitsHistoryReplay(activeSession)) return true
     const lastAgentMessage = [...activeSession.messages].reverse().find((m) => m.role === 'agent')
     if (!lastAgentMessage) return true
-    if (isReviewing || isManualReviewRequestPending) return true
+    if (isReviewBusy) return true
     const reviews = selectProjectSessionReviews(
       state.reviewsBySession,
       activeSession.projectId,
@@ -1200,7 +1201,7 @@ const WorkspacePage = ({
             workflows={{
               review: {
                 disabled: isRequestReviewDisabled,
-                running: isReviewing || isManualReviewRequestPending,
+                running: isReviewBusy,
                 request: requestManualReview
               },
               saveAsSkill: {
