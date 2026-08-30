@@ -618,6 +618,60 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     )
   })
 
+  it('rearms an app-restart recovery without a matching response', async () => {
+    const messageId = 'analysis-interrupted-by-restart'
+    jobsPendingNotification.mockResolvedValueOnce([
+      makeCompletedJob({
+        analysis_state: 'dispatched',
+        analysis_message_id: messageId,
+        analysis_updated_at: 1400
+      })
+    ])
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-a',
+          title: 'Restarted Session',
+          cwd: '/workspace/project-a',
+          status: 'error',
+          messages: [
+            {
+              id: messageId,
+              role: 'user',
+              content: 'Analyze the completed remote job',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1400,
+              updatedAt: 1400
+            }
+          ],
+          resumeRecovery: {
+            kind: 'resume-required',
+            cause: 'app-restart',
+            promptMessageId: messageId
+          },
+          error: 'The app exited while this turn was running.',
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    await act(async () => {
+      root.render(<Probe enabled />)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-1', messageId })
+    )
+    expect(jobsTransitionAnalysis).not.toHaveBeenCalledWith(
+      expect.objectContaining({ messageId, state: 'failed' })
+    )
+  })
+
   it('does not resend an analysis prompt after restart when completion consumption was interrupted', async () => {
     let durableJob = makeCompletedJob()
     jobsPendingNotification.mockResolvedValueOnce([])

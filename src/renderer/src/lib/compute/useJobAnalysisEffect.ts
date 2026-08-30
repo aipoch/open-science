@@ -122,7 +122,9 @@ export const useJobAnalysisEffect = ({
         if (response?.status === 'complete') return 'succeeded'
         if (response?.status === 'error') return 'failed'
         if (session.resumeRecovery?.promptMessageId === messageId) {
-          return session.resumeRecovery.cause === 'cancelled' ? 'cancelled' : 'failed'
+          if (session.resumeRecovery.cause === 'cancelled') return 'cancelled'
+          if (session.resumeRecovery.cause === 'app-restart') return 'missing'
+          return 'failed'
         }
         if (session.activeRun?.promptMessageId === messageId) return 'running'
         return 'missing'
