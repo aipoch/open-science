@@ -3412,7 +3412,7 @@
     "All resources": "所有资源",
     "Could not save Tag.": "无法保存标签。",
     "Tags": "标签",
-    "Organize Skills, Connectors, and Specialists across one shared catalog.": "在一个共享目录中整理技能、连接器和专家。",
+    "tags": "标签",
     "New Tag": "新建标签",
     "Edit Tag": "编辑标签",
     "Delete Tag": "删除标签",

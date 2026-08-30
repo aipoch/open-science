@@ -76,6 +76,7 @@ import { ConnectorsNavIcon } from './connector-icons'
 import type { ComputeView } from './ComputePanel'
 import type { ArchivedView } from './ArchivedPanel'
 import type { MemoryView } from './MemoryPanel'
+import type { TagsView } from './TagsPanel'
 import type { CredentialsView } from './CredentialsPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
@@ -281,6 +282,7 @@ const PANEL_NAME_LOWER = {
   Compute: 'compute',
   Specialists: 'specialists',
   Memory: 'memory',
+  Tags: 'tags',
   Credentials: 'credentials',
   Archived: 'archived'
 } as const
@@ -556,9 +558,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     currentRoute.panel === 'archived' ? currentRoute.view : { kind: 'list' }
   const memoryView: MemoryView =
     currentRoute.panel === 'memory' ? currentRoute.view : { kind: 'list' }
+  const tagsView: TagsView = currentRoute.panel === 'tags' ? currentRoute.view : { kind: 'list' }
   const credentialsView: CredentialsView =
     currentRoute.panel === 'credentials' ? currentRoute.view : { kind: 'list' }
-  const activeTagId = currentRoute.panel === 'tags' ? currentRoute.tagId : undefined
+  const activeTagId =
+    tagsView.kind === 'list'
+      ? tagsView.tagId
+      : tagsView.kind === 'edit'
+        ? tagsView.tagId
+        : undefined
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
@@ -578,7 +586,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // entry point, so Back returns to the recovery panel the user just completed.
   const navigatePanel = (panel: SettingsPanelId): void => {
     if (panel === 'tags') {
-      navigate({ panel, tagId: browserSelectedTagId })
+      navigate({ panel, view: { kind: 'list', tagId: browserSelectedTagId } })
       return
     }
     navigate(settingsPanelRoute(panel))
@@ -586,16 +594,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const navigateTag = (tagId: string): void => {
     setSelectedTagId(tagId)
-    navigate({ panel: 'tags', tagId })
+    navigate({ panel: 'tags', view: { kind: 'list', tagId } })
   }
 
   const recordSelectedTag = useCallback(
     (tagId: string): void => {
       setHistory((entries) => {
         const entry = entries[historyIndex]
-        if (entry?.panel !== 'tags' || entry.tagId === tagId) return entries
+        if (entry?.panel !== 'tags' || entry.view.kind !== 'list' || entry.view.tagId === tagId) {
+          return entries
+        }
         return entries.map((candidate, index) =>
-          index === historyIndex ? { ...candidate, tagId } : candidate
+          index === historyIndex && candidate.panel === 'tags' && candidate.view.kind === 'list'
+            ? { ...candidate, view: { ...candidate.view, tagId } }
+            : candidate
         )
       })
     },
@@ -626,6 +638,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     navigate({ panel: 'archived', view: archived })
 
   const navigateMemory = (memory: MemoryView): void => navigate({ panel: 'memory', view: memory })
+
+  const navigateTags = (tags: TagsView): void => navigate({ panel: 'tags', view: tags })
 
   const navigateCredentials = (credentials: CredentialsView): void =>
     navigate({ panel: 'credentials', view: credentials })
@@ -762,6 +776,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         rootLabelKey: 'Memory',
         rootTo: { panel: 'memory', view: { kind: 'list' } },
         leaf: memoryView.kind === 'create' ? t('New category') : t('Edit category')
+      }
+    }
+    if (activePanel === 'tags' && tagsView.kind !== 'list') {
+      return {
+        rootLabelKey: 'Tags',
+        rootTo: {
+          panel: 'tags',
+          view: {
+            kind: 'list',
+            tagId: tagsView.kind === 'edit' ? tagsView.tagId : browserSelectedTagId
+          }
+        },
+        leaf: tagsView.kind === 'create' ? t('New Tag') : t('Edit Tag')
       }
     }
     if (activePanel === 'credentials' && credentialsView.kind === 'service') {
@@ -1293,7 +1320,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               <div
                 className={cn(
                   'mx-auto w-full max-w-[880px]',
-                  activePanel === 'memory' ? 'h-full' : 'min-h-full'
+                  activePanel === 'memory' || activePanel === 'tags' ? 'h-full' : 'min-h-full'
                 )}
               >
                 <SettingsPanelLoadingBoundary
@@ -1344,6 +1371,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     />
                   ) : activePanel === 'tags' ? (
                     <TagsPanel
+                      view={tagsView}
+                      onNavigate={navigateTags}
                       onSelectedTagChange={recordSelectedTag}
                       onOpenResource={(reference) => {
                         if (reference.resourceType === 'catalog.skill') {

@@ -634,6 +634,40 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('opens Tag creation as a breadcrumb-backed Settings sub-view', async () => {
+    vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+      revision: 1,
+      tags: [{ id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 }],
+      assignments: []
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Tags')?.click())
+    await waitFor(() =>
+      expect(document.body.querySelector('[data-slot="tags-panel"]')).not.toBeNull()
+    )
+
+    const panel = document.body.querySelector<HTMLElement>('[data-slot="tags-panel"]')
+    expect(panel?.parentElement?.className.split(/\s+/)).toContain('h-full')
+
+    const newTag = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'New Tag'
+    )
+    await act(async () => newTag?.click())
+
+    expect(document.body.querySelector('[data-slot="tag-form"]')).not.toBeNull()
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back to tags"]')
+    ).not.toBeNull()
+    expect(document.body.textContent).toContain('New Tag')
+
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+    expect(document.body.querySelector('[data-slot="tags-panel"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-slot="tag-form"]')).toBeNull()
+  })
+
   it('restores the Tag selected by a Settings history entry', async () => {
     vi.mocked(window.api.tags.snapshot).mockResolvedValue({
       revision: 2,

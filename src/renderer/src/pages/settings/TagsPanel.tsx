@@ -3,7 +3,7 @@
  * states: default · hover · focus · active · disabled · loading · error · success
  * theme: project tokens · contrast: pass · slop: pass
  */
-import { AlertDialog, Dialog } from 'radix-ui'
+import { AlertDialog } from 'radix-ui'
 import {
   ChevronDown,
   GripVertical,
@@ -39,12 +39,8 @@ import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
-  dialogFormInputClassName,
-  dialogFormLabelClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -68,6 +64,8 @@ type TagResourceRow = TagResourceRef & {
 
 type TagDraft = { name: string; iconKey: TagIconKey; colorKey: TagColorKey }
 type CustomTagView = Extract<TagView, { name: string }>
+export type TagsView =
+  { kind: 'list'; tagId?: string } | { kind: 'create' } | { kind: 'edit'; tagId: string }
 type TagDropTarget = { tagId: string; edge: 'before' | 'after' }
 type TagDropZone = { tagId: string; top: number; bottom: number }
 type TagPointerDrag = {
@@ -79,6 +77,12 @@ type TagPointerDrag = {
   target?: TagDropTarget
 }
 const EMPTY_DRAFT: TagDraft = { name: '', iconKey: 'tag', colorKey: 'blue' }
+
+const RequiredMark = (): React.JSX.Element => (
+  <span aria-hidden="true" className="ml-0.5 text-destructive">
+    *
+  </span>
+)
 
 const resourceTypeLabel = (
   t: ReturnType<typeof useTranslation>['t'],
@@ -112,20 +116,149 @@ const colorLabel = (t: ReturnType<typeof useTranslation>['t'], key: TagColorKey)
   return t('Pink')
 }
 
-const TagsPanel = ({
+const TagForm = ({
+  tag,
+  onCancel,
+  onSaved
+}: {
+  tag?: CustomTagView
+  onCancel(): void
+  onSaved(tagId: string): void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const createTag = useTagStore((state) => state.create)
+  const updateTag = useTagStore((state) => state.update)
+  const [draft, setDraft] = useState<TagDraft>(
+    tag ? { name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey } : EMPTY_DRAFT
+  )
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState<string>()
+  const canSubmit = Boolean(draft.name.trim()) && !saving
+
+  const save = async (): Promise<void> => {
+    if (!canSubmit) return
+    setSaving(true)
+    setFormError(undefined)
+    try {
+      if (tag) {
+        await updateTag({ id: tag.id, expectedUpdatedAt: tag.updatedAt, ...draft })
+        onSaved(tag.id)
+      } else {
+        onSaved(await createTag(draft))
+      }
+    } catch {
+      setFormError(t('Could not save Tag.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form
+      data-slot="tag-form"
+      className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col gap-5 px-4 py-4 md:px-6"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void save()
+      }}
+    >
+      <p className="text-sm text-muted-foreground">
+        {t('Choose a name, icon, and color. Names are unique regardless of case.')}
+      </p>
+      <label className="space-y-1.5 text-sm font-medium" htmlFor="tag-form-name">
+        <span>
+          {t('Name')}
+          <RequiredMark />
+        </span>
+        <Input
+          id="tag-form-name"
+          name="tag-name"
+          autoFocus
+          required
+          value={draft.name}
+          maxLength={64}
+          aria-invalid={formError ? true : undefined}
+          onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))}
+        />
+      </label>
+      <fieldset className="space-y-1.5">
+        <legend className="text-sm font-medium">{t('Icon')}</legend>
+        <div className="flex flex-wrap gap-2">
+          {TAG_ICON_KEYS.map((key) => {
+            const Icon = TAG_ICONS[key]
+            return (
+              <Button
+                key={key}
+                type="button"
+                variant="outline"
+                size="icon-lg"
+                aria-label={iconLabel(t, key)}
+                aria-pressed={draft.iconKey === key}
+                onClick={() => setDraft((value) => ({ ...value, iconKey: key }))}
+                className={cn(
+                  'active:translate-y-px [@media(pointer:coarse)]:size-11',
+                  draft.iconKey === key &&
+                    'border-primary bg-primary/10 text-primary hover:bg-primary/10'
+                )}
+              >
+                <Icon className="size-4" aria-hidden="true" />
+              </Button>
+            )
+          })}
+        </div>
+      </fieldset>
+      <fieldset className="space-y-1.5">
+        <legend className="text-sm font-medium">{t('Color')}</legend>
+        <div className="flex flex-wrap gap-2">
+          {TAG_COLOR_KEYS.map((key) => (
+            <button
+              key={key}
+              type="button"
+              aria-label={colorLabel(t, key)}
+              aria-pressed={draft.colorKey === key}
+              onClick={() => setDraft((value) => ({ ...value, colorKey: key }))}
+              className={cn(
+                'size-8 rounded-full border-2 outline-none transition-transform active:translate-y-px focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:size-11',
+                TAG_COLORS[key],
+                draft.colorKey === key ? 'ring-2 ring-primary ring-offset-2' : 'border-transparent'
+              )}
+            />
+          ))}
+        </div>
+      </fieldset>
+      {formError ? (
+        <p role="alert" className="text-xs text-destructive">
+          {formError}
+        </p>
+      ) : null}
+      <div className="mt-auto flex justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          {t('Cancel')}
+        </Button>
+        <Button type="submit" disabled={!canSubmit}>
+          {saving ? t('Saving…') : tag ? t('Save') : t('Create')}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+const TagsList = ({
   onOpenResource,
-  onSelectedTagChange
+  onSelectedTagChange,
+  onCreate,
+  onEdit
 }: {
   onOpenResource(reference: TagResourceRef): void
   onSelectedTagChange?(tagId: string): void
+  onCreate(): void
+  onEdit(tag: CustomTagView): void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const tags = useTagStore((state) => state.tags)
   const assignments = useTagStore((state) => state.assignments)
   const status = useTagStore((state) => state.status)
   const error = useTagStore((state) => state.error)
-  const createTag = useTagStore((state) => state.create)
-  const updateTag = useTagStore((state) => state.update)
   const deleteTag = useTagStore((state) => state.delete)
   const reorderTags = useTagStore((state) => state.reorder)
   const setAssignment = useTagStore((state) => state.setAssignment)
@@ -146,10 +279,6 @@ const TagsPanel = ({
   const scrollTop = useTagStore((state) => state.browserScrollTop)
   const setScrollTop = useTagStore((state) => state.setBrowserScrollTop)
   const resourceListRef = useRef<HTMLElement>(null)
-  const [editing, setEditing] = useState<TagView | 'new'>()
-  const [draft, setDraft] = useState<TagDraft>(EMPTY_DRAFT)
-  const [saving, setSaving] = useState(false)
-  const [formError, setFormError] = useState<string>()
   const [deleting, setDeleting] = useState<TagView>()
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string>()
@@ -253,29 +382,6 @@ const TagsPanel = ({
     }))
     .filter(({ resources }) => resources.length > 0)
 
-  const openEditor = (tag?: TagView): void => {
-    setFormError(undefined)
-    setEditing(tag ?? 'new')
-    setDraft(
-      tag && !('systemKey' in tag)
-        ? { name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey }
-        : EMPTY_DRAFT
-    )
-  }
-  const save = async (): Promise<void> => {
-    if (!editing || saving) return
-    setSaving(true)
-    setFormError(undefined)
-    try {
-      if (editing === 'new') await createTag(draft)
-      else await updateTag({ id: editing.id, expectedUpdatedAt: editing.updatedAt, ...draft })
-      setEditing(undefined)
-    } catch {
-      setFormError(t('Could not save Tag.'))
-    } finally {
-      setSaving(false)
-    }
-  }
   const confirmDelete = async (): Promise<void> => {
     if (!deleting || deleteBusy) return
     setDeleteBusy(true)
@@ -396,20 +502,7 @@ const TagsPanel = ({
   }
 
   return (
-    <div className="flex min-h-full flex-col p-5">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <h3 className="text-base font-semibold">{t('Tags')}</h3>
-          <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
-            {t('Organize Skills, Connectors, and Specialists across one shared catalog.')}
-          </p>
-        </div>
-        <Button type="button" variant="outline" onClick={() => openEditor()}>
-          <Plus data-icon="inline-start" aria-hidden="true" />
-          {t('New Tag')}
-        </Button>
-      </div>
-
+    <div data-slot="tags-panel" className="flex h-full min-h-0 flex-col px-3 py-3 md:px-4">
       {error ? (
         <p role="alert" className="mb-3 text-xs text-destructive">
           {t('Tags could not be loaded.')}
@@ -417,10 +510,10 @@ const TagsPanel = ({
       ) : null}
       <div
         data-slot="tag-master-detail"
-        className="grid min-h-[420px] flex-1 grid-cols-1 overflow-hidden rounded-lg border border-border md:grid-cols-[15rem_minmax(0,1fr)]"
+        className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-lg border border-border md:grid-cols-[220px_minmax(0,1fr)]"
       >
         <aside
-          className="border-b border-border bg-background p-2 md:border-r md:border-b-0"
+          className="min-h-0 overflow-y-auto border-b border-border bg-muted/20 p-2 md:border-r md:border-b-0"
           aria-busy={reorderBusy || undefined}
         >
           {reorderError ? (
@@ -431,7 +524,7 @@ const TagsPanel = ({
           <p className="sr-only" aria-live="polite" aria-atomic="true">
             {reorderAnnouncement}
           </p>
-          <ol>
+          <ol className="space-y-1">
             {tags.map((tag) => {
               const customIndex = customTags.findIndex((candidate) => candidate.id === tag.id)
               const dropBefore = tagDropTarget?.tagId === tag.id && tagDropTarget.edge === 'before'
@@ -538,12 +631,22 @@ const TagsPanel = ({
                 </li>
               )
             })}
+            <li>
+              <button
+                type="button"
+                onClick={onCreate}
+                className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [@media(pointer:coarse)]:min-h-11"
+              >
+                <Plus className="size-4 shrink-0" aria-hidden="true" />
+                <span className="truncate">{t('New Tag')}</span>
+              </button>
+            </li>
           </ol>
         </aside>
 
         <section
           ref={resourceListRef}
-          className="min-w-0 overflow-y-auto p-4"
+          className="min-h-0 min-w-0 overflow-y-auto bg-card p-4"
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         >
           {selectedTag ? (
@@ -566,7 +669,7 @@ const TagsPanel = ({
                     <SettingsIconAction
                       label={t('Edit Tag')}
                       icon={Pencil}
-                      onClick={() => openEditor(selectedTag)}
+                      onClick={() => onEdit(selectedTag)}
                     />
                     <SettingsIconAction
                       label={t('Delete Tag')}
@@ -719,125 +822,6 @@ const TagsPanel = ({
         </section>
       </div>
 
-      <Dialog.Root
-        open={editing !== undefined}
-        onOpenChange={(open) => !open && setEditing(undefined)}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
-          <Dialog.Content
-            className={dialogPanelClassName('z-[60] w-[min(460px,calc(100vw-2rem))] p-0')}
-          >
-            <div>
-              <div className={dialogHeaderClassName}>
-                <Dialog.Title className={dialogTitleClassName}>
-                  {editing === 'new' ? t('New Tag') : t('Edit Tag')}
-                </Dialog.Title>
-                <Dialog.Close asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className={dialogCloseButtonClassName}
-                    aria-label={t('Close')}
-                  >
-                    <X className="size-4" aria-hidden="true" />
-                  </Button>
-                </Dialog.Close>
-              </div>
-              <div className={`${dialogBodyClassName} space-y-4`}>
-                <Dialog.Description className={dialogDescriptionClassName}>
-                  {t('Choose a name, icon, and color. Names are unique regardless of case.')}
-                </Dialog.Description>
-                <div>
-                  <label className={dialogFormLabelClassName} htmlFor="tag-form-name">
-                    {t('Name')}
-                  </label>
-                  <Input
-                    id="tag-form-name"
-                    autoFocus
-                    value={draft.name}
-                    maxLength={64}
-                    className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
-                    onChange={(event) =>
-                      setDraft((value) => ({ ...value, name: event.target.value }))
-                    }
-                  />
-                </div>
-                <fieldset>
-                  <legend className={dialogFormLabelClassName}>{t('Icon')}</legend>
-                  <div className="flex flex-wrap gap-2">
-                    {TAG_ICON_KEYS.map((key) => {
-                      const Icon = TAG_ICONS[key]
-                      return (
-                        <Button
-                          key={key}
-                          type="button"
-                          variant="outline"
-                          size="icon-lg"
-                          aria-label={iconLabel(t, key)}
-                          aria-pressed={draft.iconKey === key}
-                          onClick={() => setDraft((value) => ({ ...value, iconKey: key }))}
-                          className={cn(
-                            draft.iconKey === key &&
-                              'border-primary bg-primary/10 text-primary hover:bg-primary/10'
-                          )}
-                        >
-                          <Icon className="size-4" aria-hidden="true" />
-                        </Button>
-                      )
-                    })}
-                  </div>
-                </fieldset>
-                <fieldset>
-                  <legend className={dialogFormLabelClassName}>{t('Color')}</legend>
-                  <div className="flex flex-wrap gap-2">
-                    {TAG_COLOR_KEYS.map((key) => (
-                      <button
-                        key={key}
-                        type="button"
-                        aria-label={colorLabel(t, key)}
-                        aria-pressed={draft.colorKey === key}
-                        onClick={() => setDraft((value) => ({ ...value, colorKey: key }))}
-                        className={cn(
-                          'size-8 rounded-full border-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
-                          TAG_COLORS[key],
-                          draft.colorKey === key
-                            ? 'ring-2 ring-primary ring-offset-2'
-                            : 'border-transparent'
-                        )}
-                      />
-                    ))}
-                  </div>
-                </fieldset>
-                {formError ? (
-                  <p role="alert" className="text-xs text-destructive">
-                    {formError}
-                  </p>
-                ) : null}
-              </div>
-              <div className={dialogFooterClassName}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className={dialogCancelButtonClassName}
-                  onClick={() => setEditing(undefined)}
-                >
-                  {t('Cancel')}
-                </Button>
-                <Button
-                  type="button"
-                  disabled={saving || !draft.name.trim()}
-                  onClick={() => void save()}
-                >
-                  {saving ? t('Saving…') : t('Save')}
-                </Button>
-              </div>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-
       <AlertDialog.Root
         open={deleting !== undefined}
         onOpenChange={(open) => !open && !deleteBusy && setDeleting(undefined)}
@@ -892,6 +876,62 @@ const TagsPanel = ({
         </AlertDialog.Portal>
       </AlertDialog.Root>
     </div>
+  )
+}
+
+const TagsPanel = ({
+  view,
+  onNavigate,
+  onOpenResource,
+  onSelectedTagChange
+}: {
+  view: TagsView
+  onNavigate(view: TagsView): void
+  onOpenResource(reference: TagResourceRef): void
+  onSelectedTagChange?(tagId: string): void
+}): React.JSX.Element => {
+  const tags = useTagStore((state) => state.tags)
+  const status = useTagStore((state) => state.status)
+  const editTag =
+    view.kind === 'edit'
+      ? tags.find((tag): tag is CustomTagView => tag.id === view.tagId && !('systemKey' in tag))
+      : undefined
+
+  useEffect(() => {
+    if (view.kind === 'edit' && status === 'ready' && !editTag) {
+      onNavigate({ kind: 'list' })
+    }
+  }, [editTag, onNavigate, status, view.kind])
+
+  if (view.kind === 'create') {
+    return (
+      <TagForm
+        onCancel={() => onNavigate({ kind: 'list' })}
+        onSaved={(tagId) => onNavigate({ kind: 'list', tagId })}
+      />
+    )
+  }
+
+  if (view.kind === 'edit' && editTag) {
+    return (
+      <TagForm
+        key={`${editTag.id}:${editTag.updatedAt}`}
+        tag={editTag}
+        onCancel={() => onNavigate({ kind: 'list', tagId: editTag.id })}
+        onSaved={(tagId) => onNavigate({ kind: 'list', tagId })}
+      />
+    )
+  }
+
+  if (view.kind === 'edit') return <div className="h-full" />
+
+  return (
+    <TagsList
+      onCreate={() => onNavigate({ kind: 'create' })}
+      onEdit={(tag) => onNavigate({ kind: 'edit', tagId: tag.id })}
+      onOpenResource={onOpenResource}
+      onSelectedTagChange={onSelectedTagChange}
+    />
   )
 }
 

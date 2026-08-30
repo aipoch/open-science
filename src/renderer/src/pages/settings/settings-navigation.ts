@@ -6,6 +6,7 @@ import type { ConnectorsView } from './ConnectorsPanel'
 import type { MemoryView } from './MemoryPanel'
 import type { SkillsView } from './SkillsPanel'
 import type { SpecialistsView } from './SpecialistsPanel'
+import type { TagsView } from './TagsPanel'
 
 export type SettingsPanelId =
   | 'model'
@@ -52,7 +53,7 @@ export type SettingsRoute = {
                   : Panel extends 'memory'
                     ? { panel: Panel; view: MemoryView }
                     : Panel extends 'tags'
-                      ? { panel: Panel; tagId?: string }
+                      ? { panel: Panel; view: TagsView }
                       : { panel: Panel }
 }[SettingsPanelId]
 
@@ -72,6 +73,7 @@ export const settingsPanelRoute = (panel: SettingsPanelId): SettingsRoute => {
     case 'specialists':
     case 'archived':
     case 'memory':
+    case 'tags':
       return { panel, view: { kind: 'list' } }
     default:
       return { panel }

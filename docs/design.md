@@ -826,14 +826,19 @@ colors communicate a successful or failed probe/migration result.
 
 - Settings -> Capabilities -> Tags is the shared organization surface for catalog resources. V1
   adapters cover Skills, Connectors, and runnable Specialists; the Reviewer placeholder is excluded.
-  The left column manages Tags and the right column aggregates assigned resources with resource-type
-  and text filters. Selecting a result navigates through the existing Settings history to that
-  resource's detail or editor.
+  The bordered master-detail frame owns the available content height: its independently scrolling
+  left column uses the shared muted panel background, while the right detail column uses the shared
+  card background. The left column manages Tags and the right column aggregates assigned resources
+  with resource-type and text filters. Selecting a result navigates through the existing Settings
+  history to that resource's detail or editor.
 - The Tag list is a single-action selector: every row keeps its resource count in one right-aligned
   trailing column. Persistent edit and delete icon actions belong to the selected custom Tag's detail
   header instead of individual list rows; the protected Favorites Tag exposes neither action. A
   leading handle reorders custom Tags by pointer or keyboard. Favorites instead shows a fixed lock
-  affordance and always remains first.
+  affordance and always remains first. **New Tag** is the final left-column action. Create and edit
+  open as breadcrumb-backed Settings second-level pages with the same stacked form rhythm and
+  bottom-aligned Cancel / Create or Save actions used by other Settings editors; Back and Forward
+  restore the corresponding list or form history entry.
 - A Tag may belong to any number of resources and a resource may have any number of Tags. The same
   Tag filter is available in the three catalog panels and in the Specialist capability picker, but
   Specialist persistence continues to store concrete Skill and Connector IDs rather than a dynamic

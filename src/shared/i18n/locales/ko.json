@@ -3412,7 +3412,7 @@
     "All resources": "모든 리소스",
     "Could not save Tag.": "태그를 저장할 수 없습니다.",
     "Tags": "태그",
-    "Organize Skills, Connectors, and Specialists across one shared catalog.": "하나의 공유 카탈로그에서 스킬, 커넥터 및 스페셜리스트를 구성합니다.",
+    "tags": "태그",
     "New Tag": "새 태그",
     "Edit Tag": "태그 편집",
     "Delete Tag": "태그 삭제",

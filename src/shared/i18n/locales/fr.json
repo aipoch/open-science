@@ -3684,7 +3684,7 @@
     "All resources": "Toutes les ressources",
     "Could not save Tag.": "Impossible d'enregistrer la balise.",
     "Tags": "Balises",
-    "Organize Skills, Connectors, and Specialists across one shared catalog.": "Organisez les compétences, les connecteurs et les spécialistes dans un catalogue partagé.",
+    "tags": "balises",
     "New Tag": "Nouvelle balise",
     "Edit Tag": "Modifier la balise",
     "Delete Tag": "Supprimer la balise",
