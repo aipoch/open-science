@@ -38,6 +38,58 @@ const STEP_LABELS = {
 }
 const loadStorageInfoFromBridge = (): Promise<StorageInfo> => window.api.storage.getInfo()
 
+const windowsDriveLetter = (path: string): string | undefined => {
+  const match = /^([a-z]):[\\/]/i.exec(path)
+  return match?.[1].toUpperCase()
+}
+
+// On a fresh Windows setup, prefer the first usable data drive (D:, E:, F:, ...). Existing
+// OpenScience folders are deliberately skipped: adopting historical data remains an explicit user
+// choice through Browse rather than a silent onboarding default.
+const findWindowsStorageDefault = async (
+  storageInfo: StorageInfo
+): Promise<LocationDraft | null> => {
+  if (window.api.platform !== 'win32' || !storageInfo.isDefault) return null
+
+  const defaultDrive = windowsDriveLetter(storageInfo.defaultDataRoot)
+  if (!defaultDrive) return null
+
+  let drives: Awaited<ReturnType<typeof window.api.localFs.listDrives>>
+  try {
+    drives = await window.api.localFs.listDrives()
+  } catch {
+    return null
+  }
+
+  const candidates = drives
+    .map((drive) => ({ drive, letter: windowsDriveLetter(drive.path) }))
+    .filter(
+      (candidate): candidate is { drive: (typeof drives)[number]; letter: string } =>
+        candidate.letter !== undefined &&
+        candidate.letter >= 'D' &&
+        candidate.letter !== defaultDrive
+    )
+    .sort((left, right) => left.letter.localeCompare(right.letter))
+
+  for (const { drive } of candidates) {
+    try {
+      const inspection = await window.api.storage.inspectDataRoot(drive.path)
+      if (inspection.kind === 'move') {
+        return {
+          chosenParent: drive.path,
+          chosenDataRoot: inspection.dataRoot,
+          chosenKind: 'move'
+        }
+      }
+    } catch {
+      // This is an opportunistic default. A failed probe must not block onboarding or surface an
+      // error for a location the user never chose.
+    }
+  }
+
+  return null
+}
+
 // Keeps the five-step sequence visible without turning the lightweight setup flow into navigation.
 const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -111,6 +163,13 @@ const OnboardingWizard = ({
     chosenDataRoot: '',
     chosenKind: null
   })
+  // A slow automatic drive probe must never overwrite a location the user explicitly browsed to
+  // (or their explicit reset back to the system default).
+  const locationDraftTouched = useRef(false)
+  const handleLocationDraftChange = useCallback((draft: LocationDraft): void => {
+    locationDraftTouched.current = true
+    setLocationDraft(draft)
+  }, [])
   const [relaunchError, setRelaunchError] = useState<string | undefined>(undefined)
   // Relaunching replaces the whole wizard with a bare screen — owned here because LocationStep
   // unmounts (and the layout disappears) while it is in flight.
@@ -137,6 +196,22 @@ const OnboardingWizard = ({
   useEffect(() => {
     void loadStorageInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
   }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
+
+  useEffect(() => {
+    if (!dataRootInfo || locationDraftTouched.current) return
+
+    let cancelled = false
+    void findWindowsStorageDefault(dataRootInfo).then((recommendedDraft) => {
+      if (cancelled || !recommendedDraft || locationDraftTouched.current) {
+        return
+      }
+      setLocationDraft((current) => (current.chosenParent ? current : recommendedDraft))
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [dataRootInfo])
 
   // App starts this check on every launch. This local fallback also keeps the wizard self-contained in
   // tests or alternate entry surfaces where it may be mounted without App as its parent.
@@ -229,7 +304,7 @@ const OnboardingWizard = ({
                 dataRootInfo={dataRootInfo}
                 dataRootError={dataRootError}
                 locationDraft={locationDraft}
-                onLocationDraftChange={setLocationDraft}
+                onLocationDraftChange={handleLocationDraftChange}
                 relaunchError={relaunchError}
                 onRelaunchErrorChange={setRelaunchError}
                 onRetryDataRootInfo={retryDataRootInfo}

@@ -111,6 +111,180 @@ describe('OnboardingWizard flow', () => {
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
   })
 
+  it('defaults Windows onboarding storage to the first usable non-system drive', async () => {
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher'
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockResolvedValue([
+      { path: 'C:\\', label: 'C:' },
+      { path: 'D:\\', label: 'D:' },
+      { path: 'E:\\', label: 'E:' }
+    ])
+    window.api.storage.inspectDataRoot = vi.fn().mockResolvedValueOnce({
+      kind: 'move',
+      dataRoot: 'D:\\OpenScience'
+    })
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(container.textContent).toContain('D:\\OpenScience')
+    expect(window.api.storage.inspectDataRoot).toHaveBeenCalledWith('D:\\')
+    expect(window.api.storage.inspectDataRoot).toHaveBeenCalledTimes(1)
+
+    await clickButton(/finish/i)
+    await clickButton(/^restart$/i)
+
+    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith('D:\\', true)
+  })
+
+  it('skips unusable or existing Windows data roots when choosing the default drive', async () => {
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher'
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockResolvedValue([
+      { path: 'F:\\', label: 'F:' },
+      { path: 'C:\\', label: 'C:' },
+      { path: 'E:\\', label: 'E:' },
+      { path: 'D:\\', label: 'D:' }
+    ])
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockResolvedValueOnce({
+        kind: 'invalid',
+        dataRoot: 'D:\\OpenScience',
+        error: 'The selected folder is not writable.'
+      })
+      .mockResolvedValueOnce({
+        kind: 'adopt',
+        dataRoot: 'E:\\OpenScience'
+      })
+      .mockResolvedValueOnce({
+        kind: 'move',
+        dataRoot: 'F:\\OpenScience'
+      })
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(container.textContent).toContain('F:\\OpenScience')
+    expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(1, 'D:\\')
+    expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(2, 'E:\\')
+    expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(3, 'F:\\')
+  })
+
+  it('keeps the existing default when Windows has no usable non-system drive', async () => {
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher'
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockResolvedValue([
+      { path: 'C:\\', label: 'C:' },
+      { path: 'D:\\', label: 'D:' }
+    ])
+    window.api.storage.inspectDataRoot = vi.fn().mockResolvedValue({
+      kind: 'invalid',
+      dataRoot: 'D:\\OpenScience',
+      error: 'The selected folder is not writable.'
+    })
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+    await clickButton(/finish/i)
+    expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
+    expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
+  })
+
+  it('does not replace an already configured Windows data root', async () => {
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'E:\\Research\\OpenScience',
+        isDefault: false,
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher'
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockResolvedValue([
+      { path: 'C:\\', label: 'C:' },
+      { path: 'D:\\', label: 'D:' },
+      { path: 'E:\\', label: 'E:' }
+    ])
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(window.api.localFs.listDrives).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('E:\\Research\\OpenScience')
+  })
+
+  it('does not overwrite a location browsed while the Windows default probe is pending', async () => {
+    let releaseDefaultProbe: (() => void) | undefined
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher'
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockResolvedValue([
+      { path: 'C:\\', label: 'C:' },
+      { path: 'D:\\', label: 'D:' }
+    ])
+    window.api.storage.pickDirectory = vi.fn().mockResolvedValue('F:\\Research')
+    window.api.storage.inspectDataRoot = vi.fn().mockImplementation((parent: string) => {
+      if (parent === 'D:\\') {
+        return new Promise((resolve) => {
+          releaseDefaultProbe = () => resolve({ kind: 'move', dataRoot: 'D:\\OpenScience' })
+        })
+      }
+      return Promise.resolve({ kind: 'move', dataRoot: 'F:\\Research\\OpenScience' })
+    })
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+    await clickButton(/browse/i)
+
+    expect(container.textContent).toContain('F:\\Research\\OpenScience')
+    await act(async () => {
+      releaseDefaultProbe?.()
+    })
+    expect(container.textContent).toContain('F:\\Research\\OpenScience')
+    expect(container.textContent).not.toContain('D:\\OpenScience')
+  })
+
+  it('does not probe alternate drives outside Windows', async () => {
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(window.api.localFs.listDrives).not.toHaveBeenCalled()
+    expect(container.textContent).toContain(DEFAULT_DATA_ROOT)
+  })
+
   it('Back walks the steps in reverse without losing the provider draft', async () => {
     readyClaudeState()
 

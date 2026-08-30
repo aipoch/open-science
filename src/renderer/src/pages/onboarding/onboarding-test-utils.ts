@@ -187,6 +187,10 @@ const resetOnboardingStores = (): {
 
 const stubWindowApi = (): void => {
   ;(window as unknown as { api: unknown }).api = {
+    platform: 'darwin',
+    localFs: {
+      listDrives: vi.fn().mockResolvedValue([])
+    },
     storage: {
       getInfo: vi.fn().mockResolvedValue(storageInfo()),
       pickDirectory: vi.fn().mockResolvedValue(null),
