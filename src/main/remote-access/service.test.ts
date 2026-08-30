@@ -306,6 +306,22 @@ describe('RemoteAccessService', () => {
     expect(repeatedAuthorization?.isCurrent()).toBe(true)
   })
 
+  it('keeps provider observations from a probe current without persisting configuration', async () => {
+    const repository = await createRepository()
+    const before = await repository.load()
+    const deps = createReadyDeps()
+    const observed = readyInstallation('observed-service')
+    deps.detectRemoteIt.mockResolvedValueOnce(observed)
+    const broadcast = vi.fn()
+    const service = await RemoteAccessService.create({ repository, ...deps, broadcast })
+
+    await expect(service.probe()).resolves.toMatchObject({ remoteIt: observed })
+
+    expect(service.snapshot(true).remoteIt).toEqual(observed)
+    expect(await repository.load()).toEqual(before)
+    expect(broadcast).not.toHaveBeenCalled()
+  })
+
   it('keeps separate service IDs while switching between App and Browser access', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()

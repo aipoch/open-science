@@ -212,14 +212,11 @@ export class RemoteAccessService {
     return this.serialize(async () => {
       if (this.shutdownStarted || this.configurationError) return this.snapshot(true)
       try {
-        const remoteIt = await this.deps.detectRemoteIt(this.preferredServiceId())
-        return { ...this.snapshot(true), remoteIt }
+        this.remoteIt = await this.deps.detectRemoteIt(this.preferredServiceId())
       } catch (error) {
-        return {
-          ...this.snapshot(true),
-          remoteIt: { ...this.remoteIt, error: toErrorMessage(error) }
-        }
+        this.remoteIt = { ...this.remoteIt, error: toErrorMessage(error) }
       }
+      return this.snapshot(true)
     })
   }
 
