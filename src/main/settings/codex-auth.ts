@@ -8,8 +8,8 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 
 import type { CodexSubscriptionTransport } from '../../shared/settings'
-import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { terminateProcessTree } from '../process-tree'
+import { codexSubscriptionStorageDir } from './codex-paths'
 import { augmentedPathEnv } from './shell-path'
 import { clearSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
 
@@ -303,7 +303,10 @@ const isCodexCredentialStoreAssignment = (line: string): boolean =>
 // CODEX_HOME isolates file-backed auth.json, but the default/auto store can still select the
 // process-wide OS keyring. Pin subscription profiles to file storage so status, login, and logout
 // cannot observe or mutate the user's global Codex CLI credential.
-const serializeCodexFileCredentialStore = (existingConfigToml: string): string => {
+const serializeCodexCredentialStore = (
+  existingConfigToml: string,
+  credentialStore: 'file' | 'ephemeral'
+): string => {
   const lines = existingConfigToml.split(/\r?\n/)
   const result: string[] = []
   let inTopLevel = true
@@ -326,11 +329,20 @@ const serializeCodexFileCredentialStore = (existingConfigToml: string): string =
   const insertionCandidates = [firstOwnedMarkerIndex, firstTableIndex].filter((index) => index >= 0)
   const insertionIndex =
     insertionCandidates.length > 0 ? Math.min(...insertionCandidates) : result.length
-  result.splice(insertionIndex, 0, CODEX_FILE_CREDENTIAL_STORE)
+  result.splice(
+    insertionIndex,
+    0,
+    credentialStore === 'file'
+      ? CODEX_FILE_CREDENTIAL_STORE
+      : 'cli_auth_credentials_store = "ephemeral"'
+  )
   result.push('')
 
   return result.join('\n')
 }
+
+const serializeCodexFileCredentialStore = (existingConfigToml: string): string =>
+  serializeCodexCredentialStore(existingConfigToml, 'file')
 
 const restoreCompleteMarkedBlock = (lines: string[], begin: string, end: string): string[] => {
   const result = [...lines]
@@ -610,24 +622,25 @@ export const createCodexAuthEnvironment = (
   }
 }
 
-// Provider setup imports an existing login plus the safe, non-secret subset of its active provider
-// route. Global model defaults, MCP servers, Skills, sessions, memories, hooks, and tokens embedded in
-// provider config remain outside Open Science.
-export const importCodexAuthentication = async (
+type CodexAuthenticationSnapshot = Readonly<{
+  content: string
+  providerRoute?: ImportedCodexProviderRoute
+}>
+
+const readCodexAuthenticationSnapshot = async (
   sourceHome: string,
-  destinationHome: string
-): Promise<void> => {
+  required: boolean
+): Promise<CodexAuthenticationSnapshot | undefined> => {
   const sourcePath = join(sourceHome, 'auth.json')
-  const destinationPath = join(destinationHome, 'auth.json')
   const sourceConfigPath = join(sourceHome, 'config.toml')
-  const destinationConfigPath = join(destinationHome, 'config.toml')
   let content: string
 
   try {
     content = await readFile(sourcePath, 'utf8')
     const parsed = JSON.parse(content) as unknown
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error()
-  } catch {
+  } catch (error) {
+    if (!required && (error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw new Error('The selected Codex profile does not contain importable authentication.')
   }
 
@@ -638,23 +651,74 @@ export const importCodexAuthentication = async (
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
 
+  return { content, ...(providerRoute ? { providerRoute } : {}) }
+}
+
+const writeCodexAuthenticationSnapshot = async (
+  snapshot: CodexAuthenticationSnapshot | undefined,
+  destinationHome: string,
+  credentialStore?: 'file' | 'ephemeral'
+): Promise<void> => {
+  const destinationPath = join(destinationHome, 'auth.json')
+  const destinationConfigPath = join(destinationHome, 'config.toml')
   await mkdir(destinationHome, { recursive: true })
-  await writePrivateFileAtomically(destinationPath, content)
-  if (providerRoute) {
-    let existingConfigToml = ''
-    try {
-      existingConfigToml = await readFile(destinationConfigPath, 'utf8')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
-    await writePrivateFileAtomically(
-      destinationConfigPath,
-      serializeImportedCodexProviderRoute(providerRoute, existingConfigToml)
-    )
-  } else {
-    await clearImportedCodexProviderRoute(destinationHome)
+
+  let existingConfigToml = ''
+  try {
+    existingConfigToml = await readFile(destinationConfigPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
-  await ensureCodexAuthConfigHome(destinationHome, 'auto')
+  let nextConfigToml = snapshot?.providerRoute
+    ? serializeImportedCodexProviderRoute(snapshot.providerRoute, existingConfigToml)
+    : removeImportedCodexProviderRoute(existingConfigToml)
+  // Imported routes stay authoritative; aligning on 'auto' only removes a stale owned transport
+  // route left behind in a reused runtime home (subscription transport stays a runtime decision).
+  nextConfigToml = serializeCodexSubscriptionTransport(nextConfigToml, 'auto')
+  if (credentialStore) {
+    nextConfigToml = serializeCodexCredentialStore(nextConfigToml, credentialStore)
+  }
+
+  if (snapshot) await writePrivateFileAtomically(destinationPath, snapshot.content)
+  else await rm(destinationPath, { force: true })
+
+  if (nextConfigToml === existingConfigToml) return
+  if (nextConfigToml.trim()) {
+    await writePrivateFileAtomically(destinationConfigPath, nextConfigToml)
+  } else {
+    await rm(destinationConfigPath, { force: true })
+  }
+}
+
+// Provider setup imports an existing login plus the safe, non-secret subset of its active provider
+// route. Global model defaults, MCP servers, Skills, sessions, memories, hooks, and tokens embedded in
+// provider config remain outside Open Science.
+export const importCodexAuthentication = async (
+  sourceHome: string,
+  destinationHome: string
+): Promise<void> => {
+  const snapshot = await readCodexAuthenticationSnapshot(sourceHome, true)
+  await writeCodexAuthenticationSnapshot(snapshot, destinationHome, 'file')
+}
+
+// Runtime profiles start from a fresh app-owned home. Subscription backends receive one sanitized
+// authentication snapshot; every other backend is pinned to ephemeral ACP authentication and clears
+// any stale file credential or imported route already present in a reused runtime home.
+export const prepareCodexRuntimeHomeAuthentication = async ({
+  sourceHome,
+  runtimeHome,
+  useSubscriptionAuthentication
+}: Readonly<{
+  sourceHome?: string
+  runtimeHome: string
+  useSubscriptionAuthentication: boolean
+}>): Promise<void> => {
+  const snapshot =
+    useSubscriptionAuthentication && sourceHome
+      ? await readCodexAuthenticationSnapshot(sourceHome, false)
+      : undefined
+
+  await writeCodexAuthenticationSnapshot(snapshot, runtimeHome, snapshot ? 'file' : 'ephemeral')
 }
 
 export const clearImportedCodexProviderRoute = async (destinationHome: string): Promise<void> => {

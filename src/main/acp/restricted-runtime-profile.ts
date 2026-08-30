@@ -1,9 +1,10 @@
-import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { isolateCodeBuddyEnvironment } from '../agent-framework/codebuddy'
-import { projectSafeCodexProviderRoute } from '../settings/codex-auth'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 
 type RestrictedRuntimeProfile = Readonly<{
@@ -45,34 +46,6 @@ const RESTRICTED_CODEX_FEATURES = Object.freeze({
   default_mode_request_user_input: false,
   plugin_sharing: false
 })
-
-const copyCodexAuthentication = async (
-  sourceHome: string | undefined,
-  targetHome: string
-): Promise<boolean> => {
-  if (!sourceHome || sourceHome === targetHome) return false
-  try {
-    const target = join(targetHome, 'auth.json')
-    await copyFile(join(sourceHome, 'auth.json'), target)
-    await chmod(target, 0o600)
-    return true
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
-    throw error
-  }
-}
-
-const readCodexProviderRoute = async (
-  sourceHome: string | undefined
-): Promise<string | undefined> => {
-  if (!sourceHome) return undefined
-  try {
-    return projectSafeCodexProviderRoute(await readFile(join(sourceHome, 'config.toml'), 'utf8'))
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
-  }
-}
 
 const removeSkillRuntimeCapability = (
   source: Readonly<Record<string, unknown>> | undefined
@@ -157,16 +130,11 @@ const prepareCodexBackend = async (
   profile: RestrictedRuntimeProfile
 ): Promise<ResolvedAgentBackend> => {
   const codexHome = join(profileRoot, 'codex')
-  await mkdir(codexHome, { recursive: true })
-  const [hasFileAuthentication, providerRoute] = await Promise.all([
-    copyCodexAuthentication(backend.env.CODEX_HOME, codexHome),
-    readCodexProviderRoute(backend.env.CODEX_HOME)
-  ])
-  await writeFile(
-    join(codexHome, 'config.toml'),
-    `cli_auth_credentials_store = "${hasFileAuthentication ? 'file' : 'ephemeral'}"\n${providerRoute ? `\n${providerRoute}` : ''}`,
-    { encoding: 'utf8', mode: 0o600 }
-  )
+  await prepareCodexRuntimeHomeAuthentication({
+    sourceHome: backend.env.CODEX_HOME,
+    runtimeHome: codexHome,
+    useSubscriptionAuthentication: backend.providerId === CODEX_SUBSCRIPTION_PROVIDER_ID
+  })
   const codexConfig = record(JSON.parse(backend.env.CODEX_CONFIG ?? '{}'))
   delete codexConfig.developer_instructions
   codexConfig.experimental_use_unified_exec_tool = false
@@ -181,7 +149,7 @@ const prepareCodexBackend = async (
       ...backend.env,
       CODEX_HOME: codexHome,
       HOME: codexHome,
-      ...(backend.env.USERPROFILE === undefined ? {} : { USERPROFILE: codexHome }),
+      USERPROFILE: codexHome,
       CODEX_CONFIG: JSON.stringify(codexConfig)
     },
     systemPromptAppends: [profile.systemPrompt],

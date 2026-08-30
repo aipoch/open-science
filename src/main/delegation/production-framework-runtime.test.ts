@@ -1,21 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { AgentFrameworkId } from '../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID, type AgentFrameworkId } from '../../shared/settings'
 import {
   claudeCodeFramework,
   codeBuddyFramework,
   codexFramework,
   opencodeFramework,
+  type AgentSpawnInput,
   type ResolvedAgentBackend
 } from '../agent-framework'
 import {
   createProductionDelegatedFrameworkRuntime,
   DELEGATED_CHILD_SYSTEM_PROMPT_APPEND,
-  prepareCodeBuddyDelegateSpawn,
   withDelegatedChildContext
 } from './production-framework-runtime'
 
@@ -166,7 +168,7 @@ describe('production delegated framework runtime bridge', () => {
     await writeFile(join(sourceConfigDir, 'models.json'), '{"models":[]}\n')
 
     try {
-      const spawn = await prepareCodeBuddyDelegateSpawn(
+      const spawn = await codeBuddyFramework.prepareDelegatedSpawn!(
         {
           ...backend('codebuddy'),
           env: {
@@ -185,6 +187,116 @@ describe('production delegated framework runtime bridge', () => {
       )
     } finally {
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('copies app-owned Codex subscription authentication before spawning a delegated Attempt', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-codex-auth-'))
+    const workspaceCwd = await mkdtemp(join(tmpdir(), 'delegated-codex-workspace-'))
+    const sourceHome = join(dataRoot, 'codex-subscription')
+    await mkdir(sourceHome, { recursive: true })
+    await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"secret"}}\n', {
+      mode: 0o600
+    })
+    await writeFile(
+      join(sourceHome, 'config.toml'),
+      [
+        'cli_auth_credentials_store = "file"',
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers."subscription-route"]',
+        'name = "Subscription route"',
+        'base_url = "http://127.0.0.1:43123/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        '',
+        '[mcp_servers.persisted-tool]',
+        'command = "unsafe-tool"',
+        ''
+      ].join('\n'),
+      { mode: 0o600 }
+    )
+    const issueDelegatedNotebookConnection = vi.fn(async () => ({
+      endpoint: 'http://127.0.0.1:1',
+      token: 'attempt-token',
+      release: () => undefined,
+      revoke: async () => undefined
+    }))
+    const admittedBackend: ResolvedAgentBackend = {
+      ...backend('codex'),
+      providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      env: {
+        ...backend('codex').env,
+        HOME: sourceHome,
+        CODEX_HOME: sourceHome
+      }
+    }
+    let spawnedInput: AgentSpawnInput | undefined
+    let spawnedAuthJson: string | undefined
+    let spawnedConfigToml: string | undefined
+    let child: ChildProcessWithoutNullStreams | undefined
+    const spawnSpy = vi.spyOn(codexFramework, 'spawn').mockImplementation((input) => {
+      spawnedInput = input
+      spawnedAuthJson = readFileSync(join(input.env.CODEX_HOME!, 'auth.json'), 'utf8')
+      spawnedConfigToml = readFileSync(join(input.env.CODEX_HOME!, 'config.toml'), 'utf8')
+      child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
+        stdio: 'pipe'
+      })
+      return child
+    })
+    const frameworks = createProductionDelegatedFrameworkRuntime({
+      capacity: 1,
+      dataRoot,
+      runtime: { settingsService: {} } as never,
+      notebookRpcServer: () => ({ issueDelegatedNotebookConnection }) as never,
+      readSession: async () => delegatedSession('codex')
+    })
+
+    try {
+      const selected = await frameworks.forSession(session('codex'))
+      const reservation = await selected.execution.reserve(1)
+      const running = selected.execution.run(
+        {
+          session: { projectId: 'project-1', sessionId: 'session-codex' },
+          frameId: 'child-frame',
+          attemptId: 'attempt-1',
+          runtimeSegmentId: 'runtime-1',
+          executionModel: {
+            frameworkId: 'codex',
+            providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+            backendId: `codex:${CODEX_SUBSCRIPTION_PROVIDER_ID}`,
+            modelRoute: 'codex-responses',
+            model: 'gpt-5.4',
+            reasoningEffort: 'medium'
+          },
+          executionBackend: admittedBackend,
+          task: 'Investigate',
+          inputs: [],
+          workspaceCwd,
+          continuation: false
+        },
+        reservation.slotIds[0]
+      )
+
+      await vi.waitFor(() => expect(spawnedInput).toBeDefined())
+      const childHome = spawnedInput!.env.CODEX_HOME!
+      expect(childHome).not.toBe(sourceHome)
+      expect(spawnedAuthJson).toContain('secret')
+      expect(spawnedConfigToml).toContain('cli_auth_credentials_store = "file"')
+      expect(spawnedConfigToml).toContain('model_provider = "subscription-route"')
+      expect(spawnedConfigToml).toContain('base_url = "http://127.0.0.1:43123/v1"')
+      expect(spawnedConfigToml).not.toContain('mcp_servers')
+      expect(spawnedConfigToml).not.toContain('unsafe-tool')
+
+      child?.kill()
+      await expect(running.completion).rejects.toBeDefined()
+    } finally {
+      child?.kill()
+      spawnSpy.mockRestore()
+      await Promise.all([
+        rm(dataRoot, { recursive: true, force: true }),
+        rm(workspaceCwd, { recursive: true, force: true })
+      ])
     }
   })
 

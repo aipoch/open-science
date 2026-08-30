@@ -1,5 +1,8 @@
 import { execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -14,6 +17,7 @@ import {
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 import { terminateProcessTree } from '../process-tree'
 import { CODEX_VERSION } from '../settings/managed-codex'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
@@ -134,6 +138,99 @@ describe('codexFramework', () => {
       }
     }
   )
+
+  it('projects subscription authentication into a Windows delegated runtime home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-delegated-subscription-'))
+    const sourceHome = join(root, 'subscription')
+    const runtimeHome = join(root, 'runtime')
+    await mkdir(sourceHome, { recursive: true })
+    await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"secret"}}\n')
+    await writeFile(
+      join(sourceHome, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers."subscription-route"]',
+        'name = "Subscription route"',
+        'base_url = "http://127.0.0.1:43123/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        '',
+        '[mcp_servers.persisted-tool]',
+        'command = "unsafe-tool"',
+        ''
+      ].join('\n')
+    )
+
+    try {
+      const framework = createCodexFramework({ platform: 'win32' })
+      const prepared = await framework.prepareDelegatedSpawn!(
+        {
+          framework,
+          providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+          executablePath: '/runtime/codex-acp.exe',
+          env: { CODEX_HOME: sourceHome }
+        },
+        runtimeHome
+      )
+
+      expect(prepared.env).toMatchObject({
+        HOME: runtimeHome,
+        USERPROFILE: runtimeHome,
+        CODEX_HOME: runtimeHome
+      })
+      expect(await readFile(join(runtimeHome, 'auth.json'), 'utf8')).toContain('secret')
+      const configToml = await readFile(join(runtimeHome, 'config.toml'), 'utf8')
+      expect(configToml).toContain('cli_auth_credentials_store = "file"')
+      expect(configToml).toContain('model_provider = "subscription-route"')
+      expect(configToml).not.toContain('mcp_servers')
+      expect(configToml).not.toContain('unsafe-tool')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not copy stale subscription authentication for an API-key delegated backend', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-delegated-api-key-'))
+    const sourceHome = join(root, 'shared-codex-home')
+    const runtimeHome = join(root, 'runtime')
+    await mkdir(sourceHome, { recursive: true })
+    await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"stale"}}\n')
+    await writeFile(
+      join(sourceHome, 'config.toml'),
+      [
+        'model_provider = "stale-subscription-route"',
+        '',
+        '[model_providers."stale-subscription-route"]',
+        'name = "Stale route"',
+        'base_url = "http://127.0.0.1:43123/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        ''
+      ].join('\n')
+    )
+
+    try {
+      const framework = createCodexFramework({ platform: 'darwin' })
+      const prepared = await framework.prepareDelegatedSpawn!(
+        {
+          framework,
+          providerId: 'api-key-provider',
+          executablePath: '/runtime/codex-acp',
+          env: { CODEX_HOME: sourceHome, CODEX_CONFIG: '{"model":"gpt-5.4"}' }
+        },
+        runtimeHome
+      )
+
+      expect(prepared.env.CODEX_HOME).toBe(runtimeHome)
+      expect(existsSync(join(runtimeHome, 'auth.json'))).toBe(false)
+      expect(await readFile(join(runtimeHome, 'config.toml'), 'utf8')).toBe(
+        'cli_auth_credentials_store = "ephemeral"\n'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 
   it('describes the base role as a general agent instead of narrowing every task to coding', () => {
     expect(codexNativeModelInstructions).toContain('You are an agent')

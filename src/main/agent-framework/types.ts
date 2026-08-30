@@ -241,6 +241,14 @@ export interface AgentFramework {
   // Launch the ACP agent subprocess (stdio JSON-RPC), wrapping the per-framework binary + args.
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams
 
+  // Materialize a framework-owned, isolated spawn profile for one delegated Attempt. Generic
+  // orchestration supplies the admitted backend and runtime home without knowing credential or
+  // configuration details for the framework.
+  prepareDelegatedSpawn?(
+    backend: ResolvedAgentBackend,
+    runtimeHome: string
+  ): Promise<AgentSpawnInput>
+
   // Some ACP servers keep process-global current-session state. When present, the prompt workflow
   // calls this immediately before session.prompt() for the target provider session.
   beforePromptDispatch?(input: {

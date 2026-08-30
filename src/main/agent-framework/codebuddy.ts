@@ -26,6 +26,7 @@ import type {
   AgentModelConfig,
   AgentSpawnInput,
   ModelConfigContext,
+  ResolvedAgentBackend,
   SessionSetup,
   SessionSetupContext
 } from './types'
@@ -121,6 +122,18 @@ export const createCodeBuddyFramework = ({
         shell: needsShell
       }
     )
+  },
+
+  async prepareDelegatedSpawn(
+    backend: ResolvedAgentBackend,
+    runtimeHome: string
+  ): Promise<AgentSpawnInput> {
+    return {
+      executablePath: backend.executablePath,
+      args: [...(backend.args ?? [])],
+      env: await isolateCodeBuddyEnvironment(backend.env, join(runtimeHome, 'codebuddy')),
+      proxyEnvironmentMode: backend.proxyEnvironmentMode
+    }
   },
 
   async beforePromptDispatch({
