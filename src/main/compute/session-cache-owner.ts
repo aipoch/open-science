@@ -43,6 +43,7 @@ export class SessionCacheOwner {
     sessionId: string,
     filename: string
   ): Promise<{ operationId: string; path: string }> {
+    const safeFilename = assertSafeFilename(filename)
     const operationId = randomUUID()
     const directory = join(
       this.root,
@@ -51,7 +52,7 @@ export class SessionCacheOwner {
       operationId
     )
     await mkdir(directory, { recursive: true })
-    return { operationId, path: join(directory, assertSafeFilename(filename)) }
+    return { operationId, path: join(directory, safeFilename) }
   }
 
   removeOperation(projectId: string, sessionId: string, operationId: string): Promise<void> {

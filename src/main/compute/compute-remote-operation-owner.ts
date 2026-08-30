@@ -301,6 +301,42 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
+    const filename = basename(remotePath)
+    if (dest.kind === 'session-cache') {
+      if (!this.approvalBroker) {
+        throw new Error('ComputeApprovalBroker is required for session-cache downloads.')
+      }
+      if (!context || !this.sessionCacheOwner) {
+        throw new Error('Session cache downloads require an owning Project and Session.')
+      }
+      const approvalInfo = {
+        operation: 'download' as const,
+        provider_id: host.providerId,
+        provider_name: host.displayName,
+        shape: host.shape,
+        intent: 'Download remote file to session workspace',
+        remote_path: remotePath
+      }
+      const decision = await this.approvalBroker.requestWithContext(
+        approvalInfo,
+        {
+          sessionId: context.sessionId,
+          projectId: context.projectId,
+          operation: 'download',
+          ownerId: host.id
+        },
+        signal
+      )
+
+      if (decision === 'deny') {
+        const error = new Error(
+          `Download approval was denied for "${remotePath}" on host "${host.displayName}".`
+        ) as Error & { code: string }
+        error.code = 'download_denied'
+        throw error
+      }
+    }
+
     let connection
     try {
       connection = await this.connectionBroker.acquire(providerId, {
@@ -311,7 +347,6 @@ export class ComputeRemoteOperationOwner {
       throw remoteConnectionError(error)
     }
 
-    const filename = basename(remotePath)
     if (dest.kind === 'os-downloads') {
       return this.downloadToOsDownloads(host, connection, remotePath, filename)
     }
@@ -319,40 +354,7 @@ export class ComputeRemoteOperationOwner {
       return this.downloadToArtifact(host, connection, remotePath, filename)
     }
 
-    if (!this.approvalBroker) {
-      throw new Error('ComputeApprovalBroker is required for session-cache downloads.')
-    }
-    if (!context || !this.sessionCacheOwner) {
-      throw new Error('Session cache downloads require an owning Project and Session.')
-    }
-    const approvalInfo = {
-      operation: 'download' as const,
-      provider_id: host.providerId,
-      provider_name: host.displayName,
-      shape: host.shape,
-      intent: 'Download remote file to session workspace',
-      remote_path: remotePath
-    }
-    const decision = await this.approvalBroker.requestWithContext(
-      approvalInfo,
-      {
-        sessionId: context.sessionId,
-        projectId: context.projectId,
-        operation: 'download',
-        ownerId: host.id
-      },
-      signal
-    )
-
-    if (decision === 'deny') {
-      const error = new Error(
-        `Download approval was denied for "${remotePath}" on host "${host.displayName}".`
-      ) as Error & { code: string }
-      error.code = 'download_denied'
-      throw error
-    }
-
-    return this.downloadToSessionCache(host, connection, remotePath, filename, context)
+    return this.downloadToSessionCache(host, connection, remotePath, filename, context!)
   }
 
   private async downloadToOsDownloads(

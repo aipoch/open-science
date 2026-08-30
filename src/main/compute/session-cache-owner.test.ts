@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -25,6 +25,14 @@ describe('SessionCacheOwner', () => {
     expect(operation.path).toMatch(
       /compute\/session-cache\/project-1\/session-1\/[^/]+\/result\.csv$/
     )
+  })
+
+  it('does not allocate an operation directory for an invalid filename', async () => {
+    await expect(owner.createOperationFile('project-1', 'session-1', '')).rejects.toThrow(
+      'Invalid Session cache filename'
+    )
+
+    await expect(readdir(storageRoot, { recursive: true })).resolves.toEqual([])
   })
 
   it('removes only the deleted Session cache', async () => {

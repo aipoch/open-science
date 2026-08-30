@@ -1384,6 +1384,29 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     expect(err.message).toMatch(/download_denied|denied/i)
   })
 
+  it('does not acquire a remote connection before session-cache approval', async () => {
+    const acquire = vi.fn()
+    const { repo } = makeRepo()
+    const service = new ComputeRemoteOperationOwner(
+      { acquire } as unknown as ComputeConnectionBrokerAcquirer,
+      repo,
+      makeApprovalBroker('deny'),
+      tmpDir,
+      new SessionCacheOwner(tmpDir)
+    )
+
+    await expect(
+      service.download(
+        'ssh:biowulf',
+        '/remote/secret.key',
+        { kind: 'session-cache' },
+        { sessionId: 'session-1', projectId: 'project-1' }
+      )
+    ).rejects.toMatchObject({ code: 'download_denied' })
+
+    expect(acquire).not.toHaveBeenCalled()
+  })
+
   it('fires approval BEFORE scp for session-cache', async () => {
     const callOrder: string[] = []
 
