@@ -36,7 +36,8 @@ const SessionPersistenceAlert = ({
     <div
       role="alert"
       data-testid="session-persistence-alert"
-      className={`${inline ? 'w-full max-w-md' : 'fixed bottom-3 right-3 z-50 w-[min(420px,calc(100vw-24px))]'} rounded-xl border bg-card p-4 text-sm text-muted-foreground shadow-sm ${
+      // z-toast resolves to 70, above the standard portaled modal layer (z-50 / z-modal).
+      className={`${inline ? 'w-full max-w-md' : 'fixed bottom-3 right-3 z-toast w-[min(420px,calc(100vw-24px))]'} rounded-xl border bg-card p-4 text-sm text-muted-foreground shadow-sm ${
         variant === 'warning' ? 'border-border' : 'border-destructive/40'
       }`}
     >

@@ -1698,6 +1698,7 @@ describe('App startup routing', () => {
     expect(alert?.textContent).toContain('Quit was canceled')
     expect(alert?.closest('[inert]')).toBeNull()
     expect(alert?.closest('[aria-hidden="true"]')).toBeNull()
+    expect(alert?.classList.contains('z-toast')).toBe(true)
   })
 
   it('does not let a later notification peek override navigation while an earlier peek is pending', async () => {
