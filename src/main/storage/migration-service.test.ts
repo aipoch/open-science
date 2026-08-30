@@ -822,6 +822,9 @@ describe('runDataRootMigration (copy phase)', () => {
         dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, join('runtime', 'pkgs')]
       })
     )
+    expect(copyAndVerify).toHaveBeenCalledWith(
+      expect.objectContaining({ dirs: expect.arrayContaining(['compute']) })
+    )
     // runtime/ is excluded wholesale; only relocatable durable subtrees are copied explicitly.
     expect(MIGRATED_DIRS).not.toContain('runtime')
     expect(MIGRATED_DIRS).toContain('delegation')

@@ -222,6 +222,7 @@ describe('Project-owned data catalog architecture', () => {
       'artifact-provenance',
       'compute-jobs',
       'compute-job-remote-workdirs',
+      'compute-session-cache',
       'project-session-json',
       'artifact-bytes',
       'upload-bytes',
@@ -545,6 +546,25 @@ describe('Project-owned data catalog architecture', () => {
         'deleteOwnerRows'
       ),
       'this.repository.deleteByOwner'
+    )
+  })
+
+  it('proves Session cache follows the Compute Project deletion path', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'compute-session-cache')
+    ).toMatchObject({
+      medium: 'filesystem',
+      resources: ['compute/session-cache/<projectId>/<sessionId>/'],
+      policy: {
+        kind: 'coordinator-cleanup',
+        effect: 'hard-delete',
+        path: 'compute-job-project-delete',
+        operation: 'SessionCacheOwner.removeProject'
+      }
+    })
+    expectCallsInOrder(
+      functionScope('src/main/compute/session-cache-owner.ts', 'withSessionCacheDeletion'),
+      ['jobs.commitProjectJobDeletion', 'cache.removeProject']
     )
   })
 

@@ -427,6 +427,18 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'compute-session-cache',
+    medium: 'filesystem',
+    resources: ['compute/session-cache/<projectId>/<sessionId>/'],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'compute-job-project-delete',
+      operation: 'SessionCacheOwner.removeProject',
+      note: 'The composed Compute deletion owner drains and removes Session cache bytes after job cleanup.'
+    }
+  },
+  {
     id: 'project-session-json',
     medium: 'filesystem',
     resources: ['sessions/<projectId>/', 'deleted-sessions/<projectId>/'],

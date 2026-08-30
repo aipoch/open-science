@@ -47,9 +47,9 @@ import type { DataRootCleanupJournal } from './data-root-cleanup'
 
 export { DATA_ROOT_DIRS } from './data-directories'
 
-// Session workspaces contain user files and cloned repositories, so they move with artifacts,
-// notebooks, and uploads. runtime/ is intentionally excluded because its environments can contain
-// hardcoded absolute paths, so it is rebuilt on demand at the new root. See design §17.
+// Session workspaces and caches move with the other relocatable data. runtime/ is intentionally
+// excluded because its environments can contain hardcoded absolute paths, so it is rebuilt on
+// demand at the new root. See design §17.
 export const MIGRATED_DIRS = RELOCATABLE_DATA_DIRS
 
 // Classification of a candidate data root relative to the current one. 'move' = empty and
@@ -334,7 +334,7 @@ export const classifyDataRoot = async (
   }
 
   // Look one level into the existing target to classify it (design §21.5). Classify by USER data
-  // only (MIGRATED_DIRS = artifacts/delegation/notebooks/uploads/workspaces) — `runtime/` is rebuildable,
+  // only (MIGRATED_DIRS = artifacts/compute/delegation/notebooks/uploads/workspaces) — `runtime/` is rebuildable,
   // NOT user data, so it is ignored entirely: it counts neither as "our data" (→ adopt) nor as
   // foreign content (→ invalid). Without this, a leftover runtime/ (e.g. after a prior move that
   // excludes runtime) would make a data-less folder look adoptable and silently switch to an empty
