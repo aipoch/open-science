@@ -2100,6 +2100,60 @@ describe('workspace agent message sending', () => {
     }
   )
 
+  it('reports a stable application-owned Message as unsent when prompt ownership is lost', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      selectedSessionId: 'transport-session-1',
+      sessions: [
+        {
+          id: 'transport-session-1',
+          projectId: 'project-1',
+          cwd: '/workspace/project',
+          title: 'Compute analysis',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ]
+    })
+    const persisted = createDeferred<PersistedChatSession>()
+    const saveSession = vi.fn((session: PersistedChatSession) => {
+      void session
+      return persisted.promise
+    })
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    const sending = sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      text: 'Analyze the completed compute job',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'transport-session-1'
+          ? { ...session, status: 'idle', activeRun: undefined }
+          : session
+      )
+    }))
+    persisted.resolve(saveSession.mock.calls[0]![0])
+
+    await expect(sending).resolves.toBeUndefined()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('does not pin a catalog fallback model onto an unpinned send target', async () => {
     const runtime = {
       state: createSnapshot(['transport-session-1']),

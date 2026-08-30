@@ -493,8 +493,13 @@ const createComputeHandlers = (
         throw new Error('Compute analysis persistence is unavailable.')
       }
       const jobs = await jobRepository.transitionAnalysis(request)
-      const hosts = await repository.list()
-      const hostNameMap = new Map(hosts.map((host) => [host.providerId, host.displayName]))
+      const hostNameMap = new Map<string, string>()
+      try {
+        const hosts = await repository.list()
+        for (const host of hosts) hostNameMap.set(host.providerId, host.displayName)
+      } catch {
+        // The transition is already durable; provider IDs are valid summary fallbacks.
+      }
       return Promise.all(
         jobs.map((job) =>
           toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)

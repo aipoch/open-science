@@ -2030,6 +2030,42 @@ describe('compute handlers — jobsPendingNotification', () => {
     expect(transitionAnalysis).toHaveBeenCalledWith(request)
   })
 
+  it('returns provider fallback summaries when host lookup fails after an analysis transition', async () => {
+    const request = {
+      sessionId: 'sess-1',
+      jobIds: ['job-pending'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    const transitionAnalysis = vi.fn(async () => [
+      makeJob({
+        analysis_state: 'dispatched',
+        analysis_message_id: request.messageId,
+        analysis_updated_at: 2_000
+      })
+    ])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockRejectedValue(new Error('host lookup unavailable')) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ transitionAnalysis }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    await expect(handlers.jobsTransitionAnalysis(request)).resolves.toEqual([
+      expect.objectContaining({
+        job_id: 'job-pending',
+        display_name: 'ssh:biowulf',
+        analysis_state: 'dispatched'
+      })
+    ])
+    expect(transitionAnalysis).toHaveBeenCalledWith(request)
+  })
+
   it('rejects an analysis transition when durable Job persistence is unavailable', async () => {
     const handlers = createComputeHandlers(mockRepository({}))
 

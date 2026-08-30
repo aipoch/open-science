@@ -899,7 +899,7 @@ const sendWorkspaceMessage = async (
         useSessionStore.getState().failRun(sessionId, errorMessage(error))
         return undefined
       }
-      if (!ownsPrompt(sessionId, appended.messageId)) return appended
+      if (!ownsPrompt(sessionId, appended.messageId)) return undefined
     }
     const replay = prepared.replay()
     const continuation = input.planContinuation
