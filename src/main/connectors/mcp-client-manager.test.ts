@@ -808,6 +808,37 @@ describe('buildTransport', () => {
     await transport.close()
   })
 
+  it('does not forward static headers across an insecure transport redirect', async () => {
+    const redirectedHeaders: Headers[] = []
+    netFetch.mockImplementation(async (input, init) => {
+      const url = new URL(String(input))
+      if (url.hostname === 'redirect.example.test') {
+        redirectedHeaders.push(new Headers(init?.headers))
+        return new Response(null, { status: 202 })
+      }
+      const location = 'http://redirect.example.test/mcp'
+      if (init?.redirect === 'manual') {
+        return new Response(null, { status: 302, headers: { location } })
+      }
+      return netFetch(new URL(location), init)
+    })
+    const transport = buildTransport({
+      id: 'srv-http-redirect',
+      name: 'http-redirect-server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      headers: { 'X-API-Key': 'secret' }
+    })
+
+    await transport.start()
+    await transport
+      .send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+      .catch(() => undefined)
+
+    expect(redirectedHeaders).toEqual([])
+    await transport.close()
+  })
+
   it('throws when a streamable_http config is missing a url', () => {
     expect(() =>
       buildTransport({ id: 'srv-http', name: 'http-server', transport: 'streamable_http' })
