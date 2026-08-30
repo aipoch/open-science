@@ -210,10 +210,36 @@ const entryExists = (name) => {
     throw error
   }
 }
+const verifyOwnershipMarker = (directoryName, ownershipToken, ownerLabel) => {
+  let marker
+  try {
+    marker = lstatSync(join(directoryName, ownershipFile(ownershipToken)))
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') throw error
+    throw new Error(`${ownerLabel} ownership marker mismatch.`)
+  }
+  if (marker.isSymbolicLink() || !marker.isFile() || marker.size !== 0) {
+    throw new Error(`${ownerLabel} ownership marker mismatch.`)
+  }
+}
 const removeOwnedDirectory = (name, expectedIdentity) => {
   const actual = entryIdentity(name)
   if (!actual) return false
   if (expectedIdentity && !sameIdentity(actual, expectedIdentity)) {
+    throw new Error(`File-evidence owned directory identity changed: ${name}`)
+  }
+  rmSync(name, { recursive: true, force: true })
+  return true
+}
+const removeReceiptOwnedDirectory = (name, expectedIdentity, ownershipToken) => {
+  const actual = entryIdentity(name)
+  if (!actual) return false
+  if (!sameIdentity(actual, expectedIdentity)) {
+    throw new Error(`File-evidence owned directory identity changed: ${name}`)
+  }
+  verifyOwnershipMarker(name, ownershipToken, 'File-evidence Run')
+  const revalidated = entryIdentity(name)
+  if (!revalidated || !sameIdentity(revalidated, expectedIdentity)) {
     throw new Error(`File-evidence owned directory identity changed: ${name}`)
   }
   rmSync(name, { recursive: true, force: true })
@@ -289,11 +315,7 @@ const readProjectOwnership = (projectName) => {
   return { ...value, receiptName }
 }
 const verifyProjectMarker = (directoryName, ownershipToken) => {
-  const markerName = ownershipFile(ownershipToken)
-  const marker = lstatSync(join(directoryName, markerName))
-  if (marker.isSymbolicLink() || !marker.isFile() || marker.size !== 0) {
-    throw new Error('Notebook file-evidence Project ownership marker mismatch.')
-  }
+  verifyOwnershipMarker(directoryName, ownershipToken, 'Notebook file-evidence Project')
 }
 const verifyOwnedProject = (receipt) => {
   const actual = entryIdentity(receipt.projectName)
@@ -398,12 +420,24 @@ const cleanupReceiptTargets = (receipt) => {
   const stagingExpected =
     receipt.phase === 'prepared' ? preparedStagingIdentity(receipt) : receipt.stagingIdentity
   const stagingWasPresent = entryIdentity(receipt.stagingName) !== undefined
-  if (stagingExpected && removeOwnedDirectory(receipt.stagingName, stagingExpected)) {
+  const stagingRemoved =
+    stagingExpected &&
+    (receipt.phase === 'prepared'
+      ? removeOwnedDirectory(receipt.stagingName, stagingExpected)
+      : removeReceiptOwnedDirectory(
+          receipt.stagingName,
+          stagingExpected,
+          receipt.ownershipToken
+        ))
+  if (stagingRemoved) {
     removedStagingEntries += 1
   }
   const finalExpected =
     receipt.finalIdentity ?? (!stagingWasPresent ? receipt.stagingIdentity : undefined)
-  if (finalExpected && removeOwnedDirectory(receipt.finalName, finalExpected)) {
+  if (
+    finalExpected &&
+    removeReceiptOwnedDirectory(receipt.finalName, finalExpected, receipt.ownershipToken)
+  ) {
     removedRunEntries += 1
   }
   removeReceipt(receipt.receiptName)
@@ -934,7 +968,6 @@ const persist = (request) => {
       throw new Error('File-evidence sidecar exceeds the reserved storage budget.')
     }
     rmSync(CAPTURE_FILE, { force: true })
-    rmSync(ownershipFile(receipt.ownershipToken), { force: true })
     writeExclusiveFile('evidence.json', serialized)
     syncDirectory()
 
@@ -984,6 +1017,7 @@ const verifyPublishedEvidence = (receipt, expected) => {
   if (!actualIdentity || !expectedIdentity || !sameIdentity(actualIdentity, expectedIdentity)) {
     throw new Error('Published file-evidence directory identity mismatch.')
   }
+  verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'File-evidence Run')
   process.chdir(receipt.finalName)
   try {
     const bytes = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)

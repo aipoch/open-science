@@ -1186,6 +1186,53 @@ describe('working-file evidence', () => {
     await expect(readdir(evidenceRoot)).resolves.toEqual([])
   })
 
+  it('preserves a renamed final directory when its Run ownership marker is missing', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    const blobPool = await createWorkerBlobPool()
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'begin',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      receiptName: 'receipt-rename-marker-missing.json',
+      stagingName: 'staging-rename-marker-missing',
+      finalName: 'run-rename-marker-missing',
+      runId: 'rename-marker-missing',
+      evidenceId: 'notebook-file-evidence-rename-marker-missing',
+      storageKeyPrefix: 'file-evidence',
+      ...blobPool,
+      initialViewState: 'complete',
+      initialFiles: [],
+      maxGenerationBytes: 1024,
+      maxRunBytes: 64 * 1024,
+      diskReserveBytes: 0,
+      availableBytes: 1024 * 1024,
+      captureCancelled: false
+    })
+    const stagingRoot = join(evidenceRoot, 'staging-rename-marker-missing')
+    const finalRoot = join(evidenceRoot, 'run-rename-marker-missing')
+    const marker = (await readdir(stagingRoot)).find((entry) => entry.startsWith('.ownership-'))!
+    await rename(stagingRoot, finalRoot)
+    await unlink(join(finalRoot, marker))
+    await writeFile(join(finalRoot, 'keep.txt'), 'unowned')
+
+    await expect(
+      reconcileWorkingFileEvidence(
+        {
+          storageRoot: storageRoot as string,
+          root: evidenceRoot,
+          storageKeyPrefix: 'file-evidence'
+        },
+        []
+      )
+    ).rejects.toThrow(/File-evidence Run ownership marker mismatch/)
+    await expect(readFile(join(finalRoot, 'keep.txt'), 'utf8')).resolves.toBe('unowned')
+    await expect(
+      readFile(join(evidenceRoot, 'receipt-rename-marker-missing.json'), 'utf8')
+    ).resolves.toContain('rename-marker-missing')
+  })
+
   it('retires the exact receipt after the terminal Run has committed', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const evidenceRoot = join(storageRoot as string, 'file-evidence')
@@ -1206,6 +1253,9 @@ describe('working-file evidence', () => {
     )
 
     await expect(readdir(evidenceRoot)).resolves.toEqual(['run-run-committed'])
+    const runEntries = await readdir(join(evidenceRoot, 'run-run-committed'))
+    expect(runEntries).toContain('evidence.json')
+    expect(runEntries.some((entry) => entry.startsWith('.ownership-'))).toBe(true)
   })
 
   it('claims the Project before publishing evidence into its private root', async () => {
@@ -1760,9 +1810,11 @@ describe('working-file evidence', () => {
       generationCount: 0,
       reasonCodes: expect.arrayContaining(['generation-freeze-failed'])
     })
-    await expect(
-      readdir(join(storageRoot as string, 'file-evidence', 'run-run-cancelled-freeze'))
-    ).resolves.toEqual(['evidence.json'])
+    const evidenceEntries = await readdir(
+      join(storageRoot as string, 'file-evidence', 'run-run-cancelled-freeze')
+    )
+    expect(evidenceEntries).toContain('evidence.json')
+    expect(evidenceEntries.some((entry) => entry.startsWith('.ownership-'))).toBe(true)
   })
 
   it('flushes generation bytes before publishing the run-owned directory', async () => {
