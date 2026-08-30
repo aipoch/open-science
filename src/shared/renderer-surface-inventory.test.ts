@@ -205,6 +205,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'cancel-custom-server-authentication',
     'cancel-isolated-claude-login',
     'cancel-xai-oauth-login',
+    'disconnect-custom-server',
     'get-github-token-status',
     'install-claude',
     'install-codebuddy',
