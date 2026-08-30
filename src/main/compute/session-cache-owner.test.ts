@@ -37,6 +37,16 @@ describe('SessionCacheOwner', () => {
     ])
   })
 
+  it('creates the Session cache when the configured data root does not exist yet', async () => {
+    const absentRoot = join(storageRoot, 'OpenScience')
+    const freshOwner = new SessionCacheOwner(absentRoot)
+
+    const operation = await freshOwner.createOperationFile('project-1', 'session-1', 'result.csv')
+
+    expect((await stat(dirname(operation.path))).isDirectory()).toBe(true)
+    operation.release()
+  })
+
   it('does not allocate an operation directory for an invalid filename', async () => {
     await expect(owner.createOperationFile('project-1', 'session-1', '')).rejects.toThrow(
       'Invalid Session cache filename'

@@ -58,6 +58,7 @@ const createSafeDirectory = async (directory: string, label: string): Promise<vo
 }
 
 export class SessionCacheOwner {
+  private readonly storageRoot: string
   private readonly computeRoot: string
   private readonly root: string
   private readonly activeOperations = new Map<string, Set<Promise<void>>>()
@@ -67,6 +68,7 @@ export class SessionCacheOwner {
   private readonly reconcilingSessions = new Set<string>()
 
   constructor(storageRoot: string) {
+    this.storageRoot = storageRoot
     this.computeRoot = join(storageRoot, 'compute')
     this.root = join(this.computeRoot, 'session-cache')
   }
@@ -84,6 +86,7 @@ export class SessionCacheOwner {
     const partialOperationId = `${PARTIAL_OPERATION_PREFIX}${operationId}`
     const directory = join(this.root, safeProjectId, safeSessionId, partialOperationId)
     try {
+      await createSafeDirectory(this.storageRoot, 'data root')
       await createSafeDirectory(this.computeRoot, 'Compute')
       await createSafeDirectory(this.root, 'root')
       await createSafeDirectory(join(this.root, safeProjectId), 'Project')
