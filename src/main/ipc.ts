@@ -404,6 +404,7 @@ export type ApplicationRuntimeInterfaces = {
   sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
+  hasActiveReviewerWork: () => boolean
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
   abortQuitPreparation: () => void
 }
@@ -3594,6 +3595,7 @@ const createApplicationModules = async (
         delegated: { getActiveDelegatedSessions },
         notebook: notebookService
       }),
+    hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
     prepareForQuit: () => runtime.prepareForQuit(),
     abortQuitPreparation: () => runtime.abortQuitPreparation(),
     electronAdapters: {

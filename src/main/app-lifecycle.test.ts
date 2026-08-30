@@ -158,9 +158,11 @@ const setup = (
   > & {
     trayHost?: boolean
     detectActiveSessions?: () => ActiveSessionInfo[]
+    hasActiveReviewerWork?: () => boolean
     confirmClose?: (
       variant: CloseConfirmVariant,
-      sessions: ActiveSessionInfo[]
+      sessions: ActiveSessionInfo[],
+      reviewerActive?: boolean
     ) => Promise<CloseConfirmChoice>
   } = {}
 ): Harness => {
@@ -211,6 +213,7 @@ const setup = (
     onAppearanceChanged: overrides.onAppearanceChanged,
     platform: overrides.platform ?? 'linux',
     detectActiveSessions,
+    hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
     createConfirmClose: () => confirmClose
   })
   return {
@@ -371,6 +374,7 @@ describe('installAppLifecycle', () => {
       countWindows: (): number => 1,
       platform: 'linux',
       detectActiveSessions: (): ActiveSessionInfo[] => [],
+      hasActiveReviewerWork: () => false,
       createConfirmClose: () => (): Promise<CloseConfirmChoice> => Promise.resolve('quit')
     })
 
@@ -894,6 +898,29 @@ describe('installAppLifecycle', () => {
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(tray?.destroy).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('warns before ordinary quit when only Reviewer work is active', async () => {
+    const confirmClose = vi.fn(
+      (
+        _variant: CloseConfirmVariant,
+        sessions: ActiveSessionInfo[],
+        reviewerActive = false
+      ): Promise<CloseConfirmChoice> =>
+        Promise.resolve(sessions.length === 0 && !reviewerActive ? 'quit' : 'cancel')
+    )
+    const { app, quit, shutdownBackends } = setup({
+      hasActiveReviewerWork: () => true,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', [], true)
+    expect(quit).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
   })
 
   it('before-quit with delegated work + blocked choice keeps the app alive without interruption', async () => {

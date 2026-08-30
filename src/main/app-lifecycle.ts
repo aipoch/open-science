@@ -86,10 +86,16 @@ export type AppLifecycleDeps = {
   // Snapshot of sessions with running work (in-flight agent prompt or a notebook cell mid-execution),
   // used to populate the confirmation list and to skip the quit dialog when nothing is running.
   detectActiveSessions: () => ActiveSessionInfo[]
+  // Reviewer activity has no ActiveSessionInfo row, but still requires the ordinary-quit warning.
+  hasActiveReviewerWork: () => boolean
   // Builds the close-confirm coordinator bound to the current main window (recreated on demand).
   createConfirmClose: (
     getWindow: () => BrowserWindow | undefined
-  ) => (variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => Promise<CloseConfirmChoice>
+  ) => (
+    variant: CloseConfirmVariant,
+    sessions: ActiveSessionInfo[],
+    reviewerActive?: boolean
+  ) => Promise<CloseConfirmChoice>
 }
 
 // Installs the tray, the first window, and the quit/activate/window-all-closed handlers. Returns
@@ -146,6 +152,13 @@ export const installAppLifecycle = (
   }
 
   const confirmClose = deps.createConfirmClose(() => mainWindow)
+  const confirmResearchClose = (
+    variant: CloseConfirmVariant,
+    sessions: ActiveSessionInfo[]
+  ): Promise<CloseConfirmChoice> =>
+    deps.hasActiveReviewerWork()
+      ? confirmClose(variant, sessions, true)
+      : confirmClose(variant, sessions)
   const detectDelegatedWork = (): ActiveSessionInfo[] =>
     deps.detectActiveSessions().filter((session) => session.kind === 'delegated')
 
@@ -168,10 +181,10 @@ export const installAppLifecycle = (
     if (confirmInFlight) return 'cancel'
     confirmInFlight = true
     try {
-      const choice = await confirmClose('close-to-tray', deps.detectActiveSessions())
+      const choice = await confirmResearchClose('close-to-tray', deps.detectActiveSessions())
       if (choice !== 'quit') return choice
       const delegated = detectDelegatedWork()
-      return delegated.length > 0 ? await confirmClose('close-to-tray', delegated) : choice
+      return delegated.length > 0 ? await confirmResearchClose('close-to-tray', delegated) : choice
     } finally {
       confirmInFlight = false
     }
@@ -269,25 +282,25 @@ export const installAppLifecycle = (
       clearApplicationShutdownTrigger()
       if (confirmInFlight) return
       confirmInFlight = true
-      void confirmClose('quit', delegatedAtShutdownBoundary).finally(() => {
+      void confirmResearchClose('quit', delegatedAtShutdownBoundary).finally(() => {
         confirmInFlight = false
       })
       return
     }
 
     // Confirmation gate: unless the user already confirmed (e.g. Windows X -> Quit), confirm the
-    // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.
+    // quit. An empty active-session list with no Reviewer work resolves 'quit' with no modal.
     if (!quitConfirmed && ordinaryQuit) {
       event.preventDefault()
       if (confirmInFlight) return
       confirmInFlight = true
-      void confirmClose('quit', deps.detectActiveSessions())
+      void confirmResearchClose('quit', deps.detectActiveSessions())
         .then(async (choice) => {
           if (choice === 'quit') {
             const delegated = detectDelegatedWork()
             if (delegated.length > 0) {
               quitConfirmed = false
-              await confirmClose('quit', delegated)
+              await confirmResearchClose('quit', delegated)
               return
             }
             quitConfirmed = true

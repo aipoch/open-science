@@ -483,6 +483,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               taskControls,
               computePreferences,
               detectActiveSessions,
+              hasActiveReviewerWork,
               prepareForQuit,
               abortQuitPreparation,
               dispose: disposeApplicationRuntime
@@ -606,6 +607,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               getAppIconVariant: () => appIconControllerBox.current?.getVariant() ?? initialVariant,
               disposeApplicationRuntime,
               detectActiveSessions,
+              hasActiveReviewerWork,
               prepareForQuit,
               abortQuitPreparation,
               createSessionPersistenceFlush: (
@@ -716,6 +718,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             countWindows: () => BrowserWindow.getAllWindows().length,
             createInitialWindow: !ctx.webMode.headless,
             detectActiveSessions: ctx.detectActiveSessions,
+            hasActiveReviewerWork: ctx.hasActiveReviewerWork,
             prepareForQuit: ctx.prepareForQuit,
             abortQuitPreparation: () => {
               ctx.abortQuitPreparation()
