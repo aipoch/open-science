@@ -16,6 +16,7 @@ import {
 import type { ComputeHostRepository } from './repository'
 import { quoteRemotePath } from './remote-path-security'
 import type { SessionCacheOwner } from './session-cache-owner'
+import { withDataRootWrite } from '../storage/migration-state'
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
@@ -354,7 +355,9 @@ export class ComputeRemoteOperationOwner {
       return this.downloadToArtifact(host, connection, remotePath, filename)
     }
 
-    return this.downloadToSessionCache(host, connection, remotePath, filename, context!)
+    return withDataRootWrite(() =>
+      this.downloadToSessionCache(host, connection, remotePath, filename, context!)
+    )
   }
 
   private async downloadToOsDownloads(

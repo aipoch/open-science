@@ -13,6 +13,7 @@ import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 import { runScpTransfer, runScpUpload, type ScpRunner } from './scp-runner'
 import { SessionCacheOwner } from './session-cache-owner'
+import { waitForDataRootWriters } from '../storage/migration-state'
 
 const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
@@ -1384,11 +1385,18 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
           exceeded: false
         }
       })
+      const run = vi.fn(async () => ({
+        exitCode: 0,
+        stdout: 'f 7',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }))
       const cache = new SessionCacheOwner(tmpDir)
       const { repo } = makeRepo()
       const service = new ComputeRemoteOperationOwner(
         {
-          acquire: vi.fn(async () => ({ run: vi.fn(), upload: vi.fn(), download }))
+          acquire: vi.fn(async () => ({ run, upload: vi.fn(), download }))
         },
         repo,
         makeApprovalBroker('once'),
@@ -1420,6 +1428,63 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
       expect(deletionResult.status).toBe('fulfilled')
     }
   )
+
+  it('keeps data-root migration blocked until the session-cache download finishes', async () => {
+    let releaseTransfer!: () => void
+    const transferGate = new Promise<void>((resolve) => {
+      releaseTransfer = resolve
+    })
+    let markTransferStarted!: () => void
+    const transferStarted = new Promise<void>((resolve) => {
+      markTransferStarted = resolve
+    })
+    const download = vi.fn(async (_remotePath: string, localPath: string) => {
+      await writeFile(localPath, 'content')
+      markTransferStarted()
+      await transferGate
+      return {
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        bytesWritten: 7,
+        exceeded: false
+      }
+    })
+    const run = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: 'f 7',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    }))
+    const { repo } = makeRepo()
+    const service = new ComputeRemoteOperationOwner(
+      { acquire: vi.fn(async () => ({ run, upload: vi.fn(), download })) },
+      repo,
+      makeApprovalBroker('once'),
+      tmpDir,
+      new SessionCacheOwner(tmpDir)
+    )
+    const downloading = service.download(
+      'ssh:biowulf',
+      '/remote/results.csv',
+      { kind: 'session-cache' },
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    await transferStarted
+
+    let drained = false
+    const drain = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+
+    expect(drained).toBe(false)
+    releaseTransfer()
+    await downloading
+    await drain
+    expect(drained).toBe(true)
+  })
 
   it('throws download_denied when broker denies session-cache download', async () => {
     const runner = makeFakeRunner({
