@@ -65,15 +65,26 @@ export class McpToolCallError extends Error {
   }
 }
 
-const createCustomMcpFetch = (configuredUrl: URL): typeof fetch =>
+const createCustomMcpFetch = (
+  configuredUrl: URL,
+  configuredHeaders?: Record<string, string>
+): typeof fetch =>
   async function customMcpFetch(input, init): Promise<Response> {
     const inputRequest = typeof input === 'string' || input instanceof URL ? undefined : input
     let target = new URL(inputRequest?.url ?? input.toString())
+    const requestOrigin = target.origin
     let requestInit = init
+
+    if (target.origin === configuredUrl.origin && configuredHeaders) {
+      const headers = new Headers(inputRequest?.headers)
+      new Headers(init?.headers).forEach((value, name) => headers.set(name, value))
+      new Headers(configuredHeaders).forEach((value, name) => headers.set(name, value))
+      requestInit = { ...init, headers }
+    }
 
     for (let redirects = 0; ; redirects += 1) {
       assertSecureCustomMcpUrl(target.toString())
-      if (target.origin !== configuredUrl.origin) {
+      if (target.origin !== requestOrigin) {
         throw new Error('Remote MCP server redirects must stay on the configured origin.')
       }
 
@@ -88,7 +99,7 @@ const createCustomMcpFetch = (configuredUrl: URL): typeof fetch =>
 
       const next = new URL(location, target)
       assertSecureCustomMcpUrl(next.toString())
-      if (next.origin !== configuredUrl.origin) {
+      if (next.origin !== requestOrigin) {
         await response.body?.cancel()
         throw new Error('Remote MCP server redirects must stay on the configured origin.')
       }
@@ -370,9 +381,8 @@ export function buildTransport(
       assertSecureCustomMcpUrl(config.url)
       const url = new URL(config.url)
       return new StreamableHTTPClientTransport(url, {
-        fetch: createCustomMcpFetch(url),
-        ...(authProvider ? { authProvider } : {}),
-        ...(config.headers ? { requestInit: { headers: config.headers } } : {})
+        fetch: createCustomMcpFetch(url, config.headers),
+        ...(authProvider ? { authProvider } : {})
       })
     }
     case 'sse': {
@@ -382,9 +392,8 @@ export function buildTransport(
       assertSecureCustomMcpUrl(config.url)
       const url = new URL(config.url)
       return new SSEClientTransport(url, {
-        fetch: createCustomMcpFetch(url),
-        ...(authProvider ? { authProvider } : {}),
-        ...(config.headers ? { requestInit: { headers: config.headers } } : {})
+        fetch: createCustomMcpFetch(url, config.headers),
+        ...(authProvider ? { authProvider } : {})
       })
     }
   }

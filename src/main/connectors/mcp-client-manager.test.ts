@@ -11,7 +11,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { z } from 'zod'
 import { McpClientManager, McpToolCallError, buildTransport } from './mcp-client-manager'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
-import { OAuthCallbackServer, type PersistentOAuthClientProvider } from './oauth-client'
+import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
 import { EXTRA_PATH_DIRS } from '../settings/shell-path'
 
 const { netFetch, stderrWarn } = vi.hoisted(() => ({
@@ -809,6 +809,73 @@ describe('buildTransport', () => {
       expect.objectContaining({ method: 'POST' })
     )
     expect(directFetch).not.toHaveBeenCalled()
+    await transport.close()
+  })
+
+  it('allows OAuth discovery on a different secure origin from the MCP server', async () => {
+    netFetch.mockReset()
+    const authorizationServerHeaders: Headers[] = []
+    netFetch.mockImplementation(async (input, init) => {
+      const url = new URL(String(input))
+      if (url.origin === 'https://mcp.example.test' && url.pathname === '/mcp') {
+        return new Response(null, { status: 401 })
+      }
+      if (
+        url.origin === 'https://mcp.example.test' &&
+        url.pathname.startsWith('/.well-known/oauth-protected-resource')
+      ) {
+        return new Response(null, { status: 404 })
+      }
+      if (
+        url.origin === 'https://auth.example.test' &&
+        url.pathname === '/.well-known/oauth-authorization-server'
+      ) {
+        authorizationServerHeaders.push(new Headers(init?.headers))
+        return Response.json({
+          issuer: 'https://auth.example.test',
+          authorization_endpoint: 'https://auth.example.test/authorize',
+          token_endpoint: 'https://auth.example.test/token',
+          response_types_supported: ['code'],
+          code_challenge_methods_supported: ['S256']
+        })
+      }
+      throw new Error(`unexpected request to ${url}`)
+    })
+    const openExternal = vi.fn(async () => undefined)
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'srv-cross-origin-oauth',
+      redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+      config: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client'
+      },
+      openExternal
+    })
+    const transport = buildTransport(
+      {
+        id: 'srv-cross-origin-oauth',
+        name: 'cross-origin-oauth-server',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/mcp',
+        headers: { 'X-API-Key': 'mcp-static-secret' },
+        oauth: {
+          authorizationServerUrl: 'https://auth.example.test',
+          clientId: 'registered-client'
+        }
+      },
+      provider
+    )
+
+    await transport.start()
+    await expect(
+      transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    ).rejects.toBeInstanceOf(UnauthorizedError)
+
+    expect(openExternal).toHaveBeenCalledWith(
+      expect.stringMatching(/^https:\/\/auth\.example\.test\/authorize\?/)
+    )
+    expect(authorizationServerHeaders).toHaveLength(1)
+    expect(authorizationServerHeaders[0]?.get('X-API-Key')).toBeNull()
     await transport.close()
   })
 
