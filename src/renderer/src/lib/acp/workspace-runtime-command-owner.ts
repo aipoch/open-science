@@ -48,6 +48,8 @@ import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 type SendWorkspaceMessageIntent = {
   sessionId?: string
+  // Optional durable caller identity for restart-safe application-owned prompts.
+  messageId?: string
   branchSourceSessionId?: string
   branchSourceMessageId?: string
   text: string
@@ -725,6 +727,16 @@ const sendWorkspaceMessage = async (
   if (input.sessionId) {
     const sessionId = input.sessionId
     const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+    const stableMessageId = input.messageId?.trim()
+    if (input.messageId !== undefined && !stableMessageId) return undefined
+    const existingStableMessage = stableMessageId
+      ? session?.messages.find((message) => message.id === stableMessageId)
+      : undefined
+    if (existingStableMessage) {
+      return existingStableMessage.role === 'user' && existingStableMessage.content === content
+        ? { sessionId, messageId: existingStableMessage.id }
+        : undefined
+    }
     if (input.requireExistingSession && !session) return undefined
     if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
     const projectId = input.projectId ?? session?.projectId
@@ -855,6 +867,7 @@ const sendWorkspaceMessage = async (
     }
     const appended = useSessionStore.getState().appendUserMessage({
       sessionId,
+      messageId: stableMessageId,
       content,
       attachments: promptAttachments,
       annotations,
@@ -875,6 +888,19 @@ const sendWorkspaceMessage = async (
       preserveSelection: input.preserveSelection
     })
     if (!appended) return undefined
+    if (stableMessageId) {
+      const durableSession = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!durableSession) return undefined
+      try {
+        await saveSessionInOrder(toPersistedSession(durableSession))
+      } catch (error) {
+        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+        return undefined
+      }
+      if (!ownsPrompt(sessionId, appended.messageId)) return appended
+    }
     const replay = prepared.replay()
     const continuation = input.planContinuation
       ? {

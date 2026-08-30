@@ -30,6 +30,7 @@ import { formatSessionDetailsTitle } from '../../../shared/session-details'
 
 export type AppendUserMessageInput = {
   sessionId: string
+  messageId?: string
   content: string
   attachments?: PersistedUploadedAttachment[]
   parts?: MessagePart[]

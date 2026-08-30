@@ -2661,6 +2661,30 @@ describe('session store', () => {
     ])
   })
 
+  it('deduplicates a caller-provided user message id', () => {
+    const input = {
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      content: 'Analyze the completed compute job',
+      cwd: '/workspace/project'
+    }
+
+    const first = useSessionStore.getState().appendUserMessage(input)
+    const duplicate = useSessionStore.getState().appendUserMessage(input)
+    const conflict = useSessionStore.getState().appendUserMessage({
+      ...input,
+      content: 'Different prompt with the same identity'
+    })
+
+    expect(first).toEqual({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1'
+    })
+    expect(duplicate).toEqual(first)
+    expect(conflict).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
+  })
+
   it('creates a pending first message before a runtime session id exists', () => {
     const result = useSessionStore.getState().appendPendingUserMessage({
       content: 'Help me inspect this notebook',

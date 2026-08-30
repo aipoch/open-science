@@ -4,12 +4,16 @@
 // auto-fires a sendPrompt for each affected session. Key behaviors:
 //  - Batch: multiple done jobs for the same session in one microtask tick → one prompt.
 //  - Queue: session in flight → register onTurnEnd callback, fire after the turn finishes.
-//  - Idempotent: jobs with notification_consumed_at set are skipped; in-flight job ids are
-//    tracked in a memory Set so duplicate broadcasts don't re-queue.
-//  - markConsumed only on successful sendPrompt (failure → retry on next broadcast).
+//  - Durable lifecycle: pending jobs are claimed with a stable Message ID, then settled from the
+//    actual analysis turn outcome. Recovered dispatches reconcile against persisted Session state.
+//  - Idempotent: terminal jobs are skipped; in-flight job ids suppress duplicate broadcasts.
 //  - Cross-session isolation: prompt goes to job.session_id.
 
-import type { JobSummary } from '../../../../shared/compute'
+import type {
+  ComputeJobAnalysisState,
+  ComputeJobAnalysisTransition,
+  JobSummary
+} from '../../../../shared/compute'
 
 // Prompt text shown as the user message that kicks off the analysis turn. English per CLAUDE.md.
 export const buildAnalysisPrompt = (jobs: JobSummary[]): string => {
@@ -62,17 +66,27 @@ export type JobAnalysisTriggerDeps = {
   // Sends a prompt to a session; resolves to a result object on success or undefined on failure.
   sendPrompt: (
     sessionId: string,
-    text: string
+    text: string,
+    messageId: string
   ) => Promise<{ sessionId: string; messageId: string } | undefined>
-  // Persists notificationConsumedAt for the given job ids (IPC to main process).
-  markConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
-  // Registers a one-shot callback for when the given session's turn finishes (idle transition).
-  onTurnEnd: (sessionId: string, callback: () => void) => void
+  createMessageId: () => string
+  transitionAnalysis: (request: ComputeJobAnalysisTransition) => Promise<void>
+  getTurnState: (
+    sessionId: string,
+    messageId: string
+  ) => 'missing' | 'running' | Exclude<ComputeJobAnalysisState, 'dispatched'>
+  // Registers a one-shot callback for when the given session's turn reaches a terminal state.
+  onTurnEnd: (
+    sessionId: string,
+    callback: (outcome: Exclude<ComputeJobAnalysisState, 'dispatched'>) => void
+  ) => void
   // Structured logger; receives a tag and a detail message for observability.
   log: (tag: string, message: string) => void
 }
 
 type PendingBatch = {
+  sessionId: string
+  messageId?: string
   // jobs waiting to be sent once the session is free
   jobs: Map<string, JobSummary>
   // whether we've already registered an onTurnEnd callback for this session
@@ -86,18 +100,19 @@ type InFlightSet = Set<string> // job_id values currently being processed (in an
 export type JobAnalysisTrigger = {
   // Process a new done-state job broadcast.
   onJobDone: (job: JobSummary) => void
-  // Notify the trigger that a session's turn has ended (called by the turn-end listener).
-  // Exposed separately so hook integration can wire this without coupling to onTurnEnd dep.
-  _notifyTurnEnd: (sessionId: string) => void
 }
 
 export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnalysisTrigger => {
-  // Per-session queue of jobs pending analysis.
-  const pendingBySession = new Map<string, PendingBatch>()
-  // job_ids currently in flight (sendPrompt sent, markConsumed not yet called).
+  // Pending jobs are grouped by a durable dispatch Message ID when recovering, or by Session before
+  // the first dispatch is claimed. This prevents a recovered batch from absorbing newer pending Jobs.
+  const pendingBatches = new Map<string, PendingBatch>()
+  // job_ids currently queued, dispatching, or awaiting a durable terminal transition.
   const inFlight: InFlightSet = new Set()
   // Track jobs waiting for turn completion (dispatch sent, not yet consumed).
-  const awaitingTurnEnd = new Map<string, string[]>() // sessionId -> jobIds[]
+  const awaitingTurnEnd = new Map<
+    string,
+    { sessionId: string; messageId: string; jobIds: string[] }
+  >()
 
   const isDoneState = (job: JobSummary): boolean =>
     job.notified_at !== undefined && job.notified_at !== null
@@ -106,18 +121,81 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     job.notification_consumed_at !== undefined && job.notification_consumed_at !== null
 
   // Attempts to send the batched analysis prompt for a session immediately.
-  const flushSession = async (sessionId: string): Promise<void> => {
-    const batch = pendingBySession.get(sessionId)
+  const settle = async (
+    key: string,
+    sessionId: string,
+    messageId: string,
+    jobIds: string[],
+    state: Exclude<ComputeJobAnalysisState, 'dispatched'>
+  ): Promise<void> => {
+    try {
+      await deps.transitionAnalysis({ sessionId, jobIds, messageId, state })
+      deps.log('analysis-turn:settled', `session=${sessionId} state=${state}`)
+    } catch (err) {
+      deps.log('analysis-turn:settle-failed', `session=${sessionId} error=${String(err)}`)
+    } finally {
+      awaitingTurnEnd.delete(key)
+      for (const id of jobIds) inFlight.delete(id)
+    }
+  }
+
+  const onTurnEndCallback = async (
+    key: string,
+    outcome: Exclude<ComputeJobAnalysisState, 'dispatched'>
+  ): Promise<void> => {
+    const awaiting = awaitingTurnEnd.get(key)
+    if (!awaiting) return
+    if (deps.isSessionInFlight(awaiting.sessionId)) {
+      deps.onTurnEnd(awaiting.sessionId, (nextOutcome) => void onTurnEndCallback(key, nextOutcome))
+      return
+    }
+    await settle(key, awaiting.sessionId, awaiting.messageId, awaiting.jobIds, outcome)
+  }
+
+  const waitForAnalysisTurn = (
+    key: string,
+    sessionId: string,
+    messageId: string,
+    jobIds: string[]
+  ): void => {
+    awaitingTurnEnd.set(key, { sessionId, messageId, jobIds })
+    deps.onTurnEnd(sessionId, (outcome) => void onTurnEndCallback(key, outcome))
+  }
+
+  const flushBatch = async (key: string): Promise<void> => {
+    const batch = pendingBatches.get(key)
     if (!batch || batch.jobs.size === 0) return
 
     const jobsToSend = Array.from(batch.jobs.values())
     const jobIds = jobsToSend.map((j) => j.job_id)
+    const { sessionId } = batch
 
     // Mark in-flight so duplicate broadcasts are ignored.
     for (const id of jobIds) inFlight.add(id)
 
     // Clear the pending queue for this session.
-    pendingBySession.delete(sessionId)
+    pendingBatches.delete(key)
+
+    const messageId = batch.messageId ?? deps.createMessageId()
+    if (batch.messageId) {
+      const recoveredState = deps.getTurnState(sessionId, messageId)
+      if (recoveredState !== 'missing' && recoveredState !== 'running') {
+        await settle(key, sessionId, messageId, jobIds, recoveredState)
+        return
+      }
+      if (recoveredState === 'running') {
+        waitForAnalysisTurn(key, sessionId, messageId, jobIds)
+        return
+      }
+    } else {
+      try {
+        await deps.transitionAnalysis({ sessionId, jobIds, messageId, state: 'dispatched' })
+      } catch (err) {
+        deps.log('analysis-turn:claim-failed', `session=${sessionId} error=${String(err)}`)
+        for (const id of jobIds) inFlight.delete(id)
+        return
+      }
+    }
 
     deps.log('analysis-turn:sending', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
 
@@ -126,95 +204,70 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     let result: Awaited<ReturnType<typeof deps.sendPrompt>>
 
     try {
-      result = await deps.sendPrompt(sessionId, prompt)
+      result = await deps.sendPrompt(sessionId, prompt, messageId)
     } catch (err) {
       deps.log('analysis-turn:send-failed', `session=${sessionId} error=${String(err)}`)
-      // Don't mark consumed — will retry on next broadcast.
-      for (const id of jobIds) inFlight.delete(id)
+      await settle(key, sessionId, messageId, jobIds, 'failed')
       return
     }
 
-    if (!result) {
+    if (!result || result.messageId !== messageId) {
       deps.log('analysis-turn:send-returned-undefined', `session=${sessionId}`)
-      for (const id of jobIds) inFlight.delete(id)
+      await settle(key, sessionId, messageId, jobIds, 'failed')
       return
     }
 
     deps.log('analysis-turn:sent', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
 
-    // Register these jobs as awaiting turn completion. Mark consumed only when turn ends idle.
-    awaitingTurnEnd.set(sessionId, jobIds)
-
-    // Register onTurnEnd callback to mark consumed when turn truly completes (fix issue #3).
-    if (!batch.waitRegistered) {
-      batch.waitRegistered = true
-      deps.onTurnEnd(sessionId, () => onTurnEndCallback(sessionId))
-    }
+    // Register these jobs as awaiting turn completion. Only a succeeded transition consumes them.
+    waitForAnalysisTurn(key, sessionId, messageId, jobIds)
   }
 
-  // Called when a turn ends. Marks jobs consumed if the session is now idle.
-  const onTurnEndCallback = async (sessionId: string): Promise<void> => {
-    const jobIds = awaitingTurnEnd.get(sessionId)
-    if (!jobIds || jobIds.length === 0) return
-
-    // If session is still in-flight, another turn started — wait for the next onTurnEnd.
-    if (deps.isSessionInFlight(sessionId)) {
-      deps.log('analysis-turn:requeued-consumed', `session=${sessionId} still-in-flight`)
-      deps.onTurnEnd(sessionId, () => onTurnEndCallback(sessionId))
-      return
-    }
-
-    // Session is now idle — mark these jobs as consumed.
-    awaitingTurnEnd.delete(sessionId)
-
-    try {
-      await deps.markConsumed(sessionId, jobIds)
-      deps.log('analysis-turn:consumed', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
-    } catch (err) {
-      deps.log('analysis-turn:mark-consumed-failed', `session=${sessionId} error=${String(err)}`)
-    } finally {
-      // Clear in-flight markers now that we've attempted to mark consumed.
-      for (const id of jobIds) inFlight.delete(id)
-    }
-  }
-
-  const scheduleFlush = (sessionId: string): void => {
+  const scheduleFlush = (key: string): void => {
     // Use a microtask to batch multiple synchronous onJobDone calls.
-    void Promise.resolve().then(() => flushSession(sessionId))
+    void Promise.resolve().then(() => flushBatch(key))
   }
 
-  const notifyTurnEnd = (sessionId: string): void => {
-    const batch = pendingBySession.get(sessionId)
+  const notifyTurnEnd = (key: string): void => {
+    const batch = pendingBatches.get(key)
     if (!batch || batch.jobs.size === 0) return
 
     // Reset waitRegistered so a new callback can be registered if needed.
     batch.waitRegistered = false
 
-    if (deps.isSessionInFlight(sessionId)) {
+    if (deps.isSessionInFlight(batch.sessionId)) {
       // Another turn started; re-register.
       if (!batch.waitRegistered) {
         batch.waitRegistered = true
-        deps.onTurnEnd(sessionId, () => notifyTurnEnd(sessionId))
-        deps.log('analysis-turn:requeued', `session=${sessionId} still-in-flight`)
+        deps.onTurnEnd(batch.sessionId, () => notifyTurnEnd(key))
+        deps.log('analysis-turn:requeued', `session=${batch.sessionId} still-in-flight`)
       }
       return
     }
 
-    scheduleFlush(sessionId)
+    scheduleFlush(key)
   }
 
   const onJobDone = (job: JobSummary): void => {
     if (!isDoneState(job)) return
     if (isAlreadyConsumed(job)) return
+    if (job.analysis_state === 'succeeded') return
+    if (job.analysis_state === 'failed' || job.analysis_state === 'cancelled') return
     if (inFlight.has(job.job_id)) return
 
     const { session_id: sessionId, job_id: jobId } = job
+    const messageId = job.analysis_state === 'dispatched' ? job.analysis_message_id : undefined
+    if (job.analysis_state === 'dispatched' && !messageId) {
+      deps.log('analysis-turn:invalid-dispatch', `session=${sessionId} job=${jobId}`)
+      return
+    }
+    const key = messageId ? `${sessionId}\u0000${messageId}` : `${sessionId}\u0000pending`
 
-    let batch = pendingBySession.get(sessionId)
+    let batch = pendingBatches.get(key)
 
     if (!batch) {
-      batch = { jobs: new Map(), waitRegistered: false }
-      pendingBySession.set(sessionId, batch)
+      batch = { sessionId, messageId, jobs: new Map(), waitRegistered: false }
+      pendingBatches.set(key, batch)
     }
 
     if (batch.jobs.has(jobId)) return // already queued for this session
@@ -227,15 +280,15 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       // Session has a turn running — wait for it to finish.
       if (!batch.waitRegistered) {
         batch.waitRegistered = true
-        deps.onTurnEnd(sessionId, () => notifyTurnEnd(sessionId))
+        deps.onTurnEnd(sessionId, () => notifyTurnEnd(key))
         deps.log('analysis-turn:waiting-for-turn-end', `session=${sessionId} job=${jobId}`)
       }
       return
     }
 
     // Session is idle — flush on next microtask (allows batching of same-tick arrivals).
-    scheduleFlush(sessionId)
+    scheduleFlush(key)
   }
 
-  return { onJobDone, _notifyTurnEnd: notifyTurnEnd }
+  return { onJobDone }
 }

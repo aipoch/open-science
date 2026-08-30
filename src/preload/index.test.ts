@@ -313,6 +313,7 @@ describe('preload bridge — public surface inventory', () => {
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',
+      'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
       'compute.onApprovalRequest',

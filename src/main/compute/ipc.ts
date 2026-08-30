@@ -15,6 +15,7 @@ import type {
   ComputeJob,
   ComputeJobsListFilter,
   ComputeJobsPendingNotificationFilter,
+  ComputeJobAnalysisTransition,
   JobSummary,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
@@ -128,6 +129,9 @@ export const toJobSummary = async (
     // Phase 3b notification inbox timestamps (issue 06).
     notified_at: job.notified_at,
     notification_consumed_at: job.notification_consumed_at,
+    analysis_state: job.analysis_state,
+    analysis_message_id: job.analysis_message_id,
+    analysis_updated_at: job.analysis_updated_at,
     // Phase 3b compute_done payload fields (spec §11.3).
     featured_files: featuredFiles,
     featured_file_count: featuredFiles.length,
@@ -203,6 +207,7 @@ type ComputeHandlers = {
   jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   // Marks the given job ids as notification-consumed. Idempotent (issue 05).
   jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
+  jobsTransitionAnalysis: (request: ComputeJobAnalysisTransition) => Promise<JobSummary[]>
 }
 
 const createComputeHandlers = (
@@ -482,6 +487,19 @@ const createComputeHandlers = (
     jobsMarkConsumed: async (sessionId, jobIds) => {
       if (!jobRepository) return
       await jobRepository.markNotificationsConsumed(sessionId, jobIds)
+    },
+    jobsTransitionAnalysis: async (request) => {
+      if (!jobRepository || !storageRoot) {
+        throw new Error('Compute analysis persistence is unavailable.')
+      }
+      const jobs = await jobRepository.transitionAnalysis(request)
+      const hosts = await repository.list()
+      const hostNameMap = new Map(hosts.map((host) => [host.providerId, host.displayName]))
+      return Promise.all(
+        jobs.map((job) =>
+          toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
+        )
+      )
     }
   }
 }

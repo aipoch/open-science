@@ -45,6 +45,7 @@ type ComputeCommandOwner = Pick<
   | 'jobsList'
   | 'jobsPendingNotification'
   | 'jobsMarkConsumed'
+  | 'jobsTransitionAnalysis'
 >
 
 type ComputeBookmarksOwner = Readonly<{
@@ -200,6 +201,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'jobsMarkConsumed'>,
     OwnerResult<ComputeCommandOwner, 'jobsMarkConsumed'>
   >('compute:jobs:mark-consumed'),
+  jobsTransitionAnalysis: defineApplicationCommand<
+    'compute:jobs:transition-analysis',
+    OwnerArgs<ComputeCommandOwner, 'jobsTransitionAnalysis'>,
+    OwnerResult<ComputeCommandOwner, 'jobsTransitionAnalysis'>
+  >('compute:jobs:transition-analysis'),
   enabledHostsGet: defineApplicationCommand<
     'compute:enabled-hosts:get',
     OwnerArgs<ComputeEnabledHostsOwner, 'get'>,
@@ -252,6 +258,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.jobsList,
   computeApplicationCommands.jobsMarkConsumed,
   computeApplicationCommands.jobsPendingNotification,
+  computeApplicationCommands.jobsTransitionAnalysis,
   computeApplicationCommands.list,
   computeApplicationCommands.listDir,
   computeApplicationCommands.passwordCapability,
@@ -384,6 +391,8 @@ const registerComputeApplicationCommands = (
         dependencies.compute.jobsPendingNotification(args[0]),
       'compute:jobs:mark-consumed': ({ args }) =>
         dependencies.compute.jobsMarkConsumed(args[0], args[1]),
+      'compute:jobs:transition-analysis': ({ args }) =>
+        dependencies.compute.jobsTransitionAnalysis(args[0]),
       'compute:enabled-hosts:get': ({ args }) => dependencies.enabledHosts.get(args[0]),
       'compute:enabled-hosts:set': ({ args }) =>
         commitComputeHostAccess(() => dependencies.enabledHosts.set(args[0], args[1])),

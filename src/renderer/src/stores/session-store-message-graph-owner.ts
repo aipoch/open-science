@@ -196,6 +196,7 @@ export const createSessionMessageGraphOwner = <
   },
   appendUserMessage: ({
     sessionId,
+    messageId,
     content,
     attachments = [],
     parts,
@@ -228,10 +229,20 @@ export const createSessionMessageGraphOwner = <
 
     const state = get()
     const existingSession = state.sessions.find((session) => session.id === sessionId)
+    const stableMessageId = messageId?.trim()
+    if (messageId !== undefined && !stableMessageId) return undefined
+    const existingMessage = stableMessageId
+      ? existingSession?.messages.find((message) => message.id === stableMessageId)
+      : undefined
+    if (existingMessage) {
+      return existingMessage.role === 'user' && existingMessage.content === trimmedContent
+        ? { sessionId, messageId: existingMessage.id }
+        : undefined
+    }
     const now = Date.now()
     const userMessage: ChatMessage = {
       ...buildUserMessage({
-        id: createMessageId(),
+        id: stableMessageId ?? createMessageId(),
         content: trimmedContent,
         uploads,
         parts,

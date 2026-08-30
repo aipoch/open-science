@@ -63,7 +63,8 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     approvalReplayPending: vi.fn(() => undefined),
     jobsList: vi.fn(async () => []),
     jobsPendingNotification: vi.fn(async () => []),
-    jobsMarkConsumed: vi.fn(async () => undefined)
+    jobsMarkConsumed: vi.fn(async () => undefined),
+    jobsTransitionAnalysis: vi.fn(async () => [])
   } as unknown as ComputeCommandOwner,
   bookmarks: {
     get: vi.fn(async () => ['/work']),
@@ -92,14 +93,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 28 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 31 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(30)
+    expect(publicComputeChannels).toHaveLength(31)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -212,6 +213,16 @@ describe('Compute application commands', () => {
       computeApplicationCommands.jobsMarkConsumed,
       invocation(['session-1', ['job-1']])
     )
+    const analysisTransition = {
+      sessionId: 'session-1',
+      jobIds: ['job-1'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    await router.dispatcher.invoke(
+      computeApplicationCommands.jobsTransitionAnalysis,
+      invocation([analysisTransition])
+    )
     await router.dispatcher.invoke(
       computeApplicationCommands.enabledHostsGet,
       invocation(['session-1'])
@@ -262,6 +273,7 @@ describe('Compute application commands', () => {
     expect(dependencies.compute.approvalReplayPending).toHaveBeenCalledOnce()
     expect(dependencies.compute.jobsList).toHaveBeenCalledWith(filter)
     expect(dependencies.compute.jobsMarkConsumed).toHaveBeenCalledWith('session-1', ['job-1'])
+    expect(dependencies.compute.jobsTransitionAnalysis).toHaveBeenCalledWith(analysisTransition)
     expect(dependencies.enabledHosts.set).toHaveBeenCalledWith('session-1', ['ssh:cluster'])
     expect(enabledHostsResult).toEqual(session)
     expect(dependencies.enabledHosts.setHostEnabled).toHaveBeenCalledWith(

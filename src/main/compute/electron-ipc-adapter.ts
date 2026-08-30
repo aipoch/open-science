@@ -7,6 +7,7 @@ import {
   type ComputeApprovalDecisionInput,
   type ComputeJobsListFilter,
   type ComputeJobsPendingNotificationFilter,
+  type ComputeJobAnalysisTransition,
   type CreateComputeHostRequest,
   type CreatePasswordComputeHostRequest,
   type DeleteComputeHostRequest,
@@ -110,6 +111,14 @@ const computeJobsPendingNotificationFilterSchema = z.union([
   z.string(),
   z.object({ allSessions: z.literal(true) }).strict()
 ]) satisfies z.ZodType<ComputeJobsPendingNotificationFilter>
+const computeJobAnalysisTransitionSchema = z
+  .object({
+    sessionId: z.string(),
+    jobIds: stringArraySchema,
+    messageId: z.string(),
+    state: z.enum(['dispatched', 'succeeded', 'failed', 'cancelled'])
+  })
+  .strict() satisfies z.ZodType<ComputeJobAnalysisTransition>
 
 const computeIpcArgumentSchemas = Object.freeze({
   'compute:list': z.tuple([]),
@@ -138,6 +147,7 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:jobs:list': z.tuple([computeJobsListFilterSchema]),
   'compute:jobs:pending-notification': z.tuple([computeJobsPendingNotificationFilterSchema]),
   'compute:jobs:mark-consumed': z.tuple([z.string(), stringArraySchema]),
+  'compute:jobs:transition-analysis': z.tuple([computeJobAnalysisTransitionSchema]),
   'compute:enabled-hosts:get': z.tuple([z.string()]),
   'compute:enabled-hosts:set': z.tuple([z.string(), stringArraySchema]),
   'compute:host-enabled:set': z.tuple([z.string(), z.string(), z.boolean()]),
@@ -260,6 +270,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   // Marks job ids as notification-consumed (analysis turn done — issue 05).
   handleComputeIpc('compute:jobs:mark-consumed', (_event, sessionId, jobIds) =>
     handlers.jobsMarkConsumed(sessionId, jobIds)
+  )
+  handleComputeIpc('compute:jobs:transition-analysis', (_event, request) =>
+    handlers.jobsTransitionAnalysis(request)
   )
 
   // Per-session enabled Compute Hosts. Main commits Session authority before updating the runtime

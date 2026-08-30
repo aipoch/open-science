@@ -20,7 +20,7 @@ import {
 } from './migration-service'
 
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0020_test_suffix'
+  const id = '0021_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -266,10 +266,11 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ],
       from: null,
-      to: '0019_session_usage_attribution'
+      to: '0020_compute_job_analysis_state'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -282,8 +283,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0019_session_usage_attribution',
-      to: '0019_session_usage_attribution'
+      from: '0020_compute_job_analysis_state',
+      to: '0020_compute_job_analysis_state'
     })
   })
 
@@ -351,8 +352,11 @@ describe('application database migrations', () => {
       'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
     )
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution')`
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state')`
     )
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisState"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisUpdatedAt"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisMessageId"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
     await client.$executeRawUnsafe(`INSERT INTO "Session" (
@@ -368,7 +372,8 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ]
     })
     await expect(
@@ -441,7 +446,8 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -486,7 +492,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0019_session_usage_attribution'
+      to: '0020_compute_job_analysis_state'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -507,9 +513,12 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('DROP INDEX "ComputeJob_status_idx"')
     await removeComputePasswordAuthSchema(client)
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisState"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisUpdatedAt"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisMessageId"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution')`)
+      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state')`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: [
@@ -526,10 +535,11 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0019_session_usage_attribution'
+      to: '0020_compute_job_analysis_state'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -599,10 +609,11 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0019_session_usage_attribution'
+      to: '0020_compute_job_analysis_state'
     })
     await expect(
       client.$queryRaw<
@@ -721,7 +732,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0019_session_usage_attribution'
+      migrationId: '0020_compute_job_analysis_state'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -737,9 +748,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0020_test_suffix'],
-      from: '0019_session_usage_attribution',
-      to: '0020_test_suffix'
+      applied: ['0021_test_suffix'],
+      from: '0020_compute_job_analysis_state',
+      to: '0021_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -765,7 +776,8 @@ describe('application database migrations', () => {
       { id: '0017_agent_memory_project_scope' },
       { id: '0018_session_auxiliary_turn_usage' },
       { id: '0019_session_usage_attribution' },
-      { id: '0020_test_suffix' }
+      { id: '0020_compute_job_analysis_state' },
+      { id: '0021_test_suffix' }
     ])
   })
 
@@ -836,10 +848,11 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0019_session_usage_attribution'
+      to: '0020_compute_job_analysis_state'
     })
     expect(backupEvents).toEqual([
       {
@@ -931,6 +944,11 @@ describe('application database migrations', () => {
         migrationId: '0019_session_usage_attribution',
         path: `${databasePath}.before-0019_session_usage_attribution.backup`,
         reused: false
+      },
+      {
+        migrationId: '0020_compute_job_analysis_state',
+        path: `${databasePath}.before-0020_compute_job_analysis_state.backup`,
+        reused: false
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -957,9 +975,12 @@ describe('application database migrations', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0018_session_auxiliary_turn_usage.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0019_session_usage_attribution.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0020_compute_job_analysis_state.backup`)
     ).resolves.toBeUndefined()
     await expect(
       client.$queryRaw<Array<{ agentContext: string; name: string }>>`
@@ -990,7 +1011,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0020_test_suffix'
+      migrationId: '0021_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -1021,7 +1042,8 @@ describe('application database migrations', () => {
       { id: '0016_compute_job_sensitive_data_encryption' },
       { id: '0017_agent_memory_project_scope' },
       { id: '0018_session_auxiliary_turn_usage' },
-      { id: '0019_session_usage_attribution' }
+      { id: '0019_session_usage_attribution' },
+      { id: '0020_compute_job_analysis_state' }
     ])
   })
 
@@ -1086,7 +1108,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0020_test_suffix'
+      migrationId: '0021_test_suffix'
     })
   })
 
@@ -1131,9 +1153,10 @@ describe('application database migrations', () => {
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
         '0019_session_usage_attribution',
-        '0020_test_suffix'
+        '0020_compute_job_analysis_state',
+        '0021_test_suffix'
       ],
-      to: '0020_test_suffix'
+      to: '0021_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -1248,6 +1271,9 @@ describe('application database migrations', () => {
     `
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
     await removeComputePasswordAuthSchema(client)
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisState"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisUpdatedAt"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "analysisMessageId"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await removeAgentMemoryTriggers(client)
@@ -1376,7 +1402,8 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ]
     })
     await expect(
@@ -1492,7 +1519,8 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1560,7 +1588,8 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ]
     })
     await expect(
@@ -1631,7 +1660,8 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -1736,7 +1766,8 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ]
     })
     await expect(
@@ -1761,6 +1792,7 @@ describe('application database migrations', () => {
     const agentMemoryBackupPath = `${databasePath}.before-0017_agent_memory_project_scope.backup`
     const auxiliaryUsageBackupPath = `${databasePath}.before-0018_session_auxiliary_turn_usage.backup`
     const usageAttributionBackupPath = `${databasePath}.before-0019_session_usage_attribution.backup`
+    const analysisStateBackupPath = `${databasePath}.before-0020_compute_job_analysis_state.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -1805,7 +1837,8 @@ describe('application database migrations', () => {
         '0016_compute_job_sensitive_data_encryption',
         '0017_agent_memory_project_scope',
         '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution'
+        '0019_session_usage_attribution',
+        '0020_compute_job_analysis_state'
       ]
     })
     expect(backupEvents).toEqual([
@@ -1903,6 +1936,11 @@ describe('application database migrations', () => {
         migrationId: '0019_session_usage_attribution',
         path: usageAttributionBackupPath,
         reused: false
+      },
+      {
+        migrationId: '0020_compute_job_analysis_state',
+        path: analysisStateBackupPath,
+        reused: false
       }
     ])
     await expect(
@@ -1910,8 +1948,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0018_session_auxiliary_turn_usage.backup',
-      'open-science.db.before-0019_session_usage_attribution.backup'
+      'open-science.db.before-0019_session_usage_attribution.backup',
+      'open-science.db.before-0020_compute_job_analysis_state.backup'
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -1924,12 +1962,13 @@ describe('application database migrations', () => {
     await expect(access(modelCallUsageBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(computeJobEncryptionBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(agentMemoryBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(auxiliaryUsageBackupPath)).resolves.toBeUndefined()
+    await expect(access(auxiliaryUsageBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(usageAttributionBackupPath)).resolves.toBeUndefined()
+    await expect(access(analysisStateBackupPath)).resolves.toBeUndefined()
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
-      datasources: { db: { url: `file:${auxiliaryUsageBackupPath.replaceAll('\\', '/')}` } }
+      datasources: { db: { url: `file:${usageAttributionBackupPath.replaceAll('\\', '/')}` } }
     })
     try {
       await expect(
@@ -1941,7 +1980,7 @@ describe('application database migrations', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0017_agent_memory_project_scope' }])
+      ).resolves.toEqual([{ id: '0018_session_auxiliary_turn_usage' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -2384,6 +2423,11 @@ describe('application database migrations', () => {
         migrationId: '0019_session_usage_attribution',
         path: `${databasePath}.before-0019_session_usage_attribution.backup`,
         reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0020_compute_job_analysis_state',
+        path: `${databasePath}.before-0020_compute_job_analysis_state.backup`,
+        reused: false
       })
     ])
     expect(retired).toEqual([
@@ -2456,6 +2500,10 @@ describe('application database migrations', () => {
       {
         migrationId: '0019_session_usage_attribution',
         path: `${databasePath}.before-0019_session_usage_attribution.backup`
+      },
+      {
+        migrationId: '0020_compute_job_analysis_state',
+        path: `${databasePath}.before-0020_compute_job_analysis_state.backup`
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -2489,8 +2537,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0018_session_auxiliary_turn_usage.backup',
       'open-science.db.before-0019_session_usage_attribution.backup',
+      'open-science.db.before-0020_compute_job_analysis_state.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)

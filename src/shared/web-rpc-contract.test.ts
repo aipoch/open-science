@@ -79,6 +79,7 @@ describe('Web RPC contract', () => {
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',
+      'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
       'compute.passwordCapability',

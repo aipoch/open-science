@@ -20,7 +20,8 @@ import {
   createInitialSessionState,
   toPersistedSession,
   useSessionStore,
-  type ChatMessage
+  type ChatMessage,
+  type ChatSession
 } from '../../stores/session-store'
 import {
   createInitialPreviewWorkbenchState,
@@ -2029,6 +2030,75 @@ describe('workspace agent message sending', () => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
+
+  it.each<AgentFrameworkId>(['claude-code', 'opencode', 'codex', 'codebuddy'])(
+    'persists a stable application-owned Message before dispatching through %s',
+    async (agentFrameworkId) => {
+      useSessionStore.setState({
+        ...createInitialSessionState(),
+        selectedSessionId: 'transport-session-1',
+        sessions: [
+          {
+            id: 'transport-session-1',
+            projectId: 'project-1',
+            cwd: '/workspace/project',
+            title: 'Compute analysis',
+            status: 'idle',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1
+          } as ChatSession
+        ]
+      })
+      const persisted = createDeferred<PersistedChatSession>()
+      const saveSession = vi.fn((session: PersistedChatSession) => {
+        void session
+        return persisted.promise
+      })
+      vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+      const runtime = {
+        state: createSnapshot(['transport-session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      }
+      const input = {
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1',
+        text: 'Analyze the completed compute job',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId
+      }
+
+      const sending = sendWorkspaceMessage(runtime, input)
+
+      await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+      expect(saveSession.mock.calls[0]?.[0].messages).toEqual([
+        expect.objectContaining({
+          id: 'automatic-analysis-message-1',
+          role: 'user',
+          content: 'Analyze the completed compute job'
+        })
+      ])
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+      persisted.resolve(saveSession.mock.calls[0]![0])
+      await expect(sending).resolves.toEqual({
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1'
+      })
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+
+      await expect(sendWorkspaceMessage(runtime, input)).resolves.toEqual({
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1'
+      })
+      expect(saveSession).toHaveBeenCalledOnce()
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    }
+  )
 
   it('does not pin a catalog fallback model onto an unpinned send target', async () => {
     const runtime = {

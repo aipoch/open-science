@@ -80,6 +80,7 @@ import type {
   ComputeApprovalRequest,
   ComputeJobsListFilter,
   ComputeJobsPendingNotificationFilter,
+  ComputeJobAnalysisTransition,
   ComputeHost,
   ComputeHostDeletionStatus,
   ComputePasswordCapability,
@@ -863,6 +864,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.jobsPendingNotification': callable<
     (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   >()('compute', ['compute:jobs:pending-notification']),
+  'compute.jobsTransitionAnalysis': callable<
+    (request: ComputeJobAnalysisTransition) => Promise<JobSummary[]>
+  >()('compute', ['compute:jobs:transition-analysis']),
   'compute.list': callable<() => Promise<ComputeHost[]>>()('compute', ['compute:list']),
   'compute.listDir': callable<(providerId: string, path: string) => Promise<DirListing>>()(
     'compute',

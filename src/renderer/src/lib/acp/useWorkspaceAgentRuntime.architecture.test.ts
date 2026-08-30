@@ -500,6 +500,7 @@ const hookKeys = [
 ] as const
 const sendIntentKeys = [
   'sessionId',
+  'messageId',
   'branchSourceSessionId',
   'branchSourceMessageId',
   'text',

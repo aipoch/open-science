@@ -1,5 +1,10 @@
 import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
-import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
+import type {
+  ComputeJob,
+  ComputeJobAnalysisState,
+  ComputeJobAnalysisTransition,
+  ComputeJobStatus
+} from '../../shared/compute'
 import {
   OptionalSecureStorageStringProtection,
   type ProtectedJsonContainer
@@ -49,6 +54,13 @@ const asStatus = (value: string): ComputeJobStatus => {
     'error'
   ]
   return valid.includes(value as ComputeJobStatus) ? (value as ComputeJobStatus) : 'error'
+}
+
+const asAnalysisState = (value: string | null): ComputeJobAnalysisState | undefined => {
+  const valid: ComputeJobAnalysisState[] = ['dispatched', 'succeeded', 'failed', 'cancelled']
+  return valid.includes(value as ComputeJobAnalysisState)
+    ? (value as ComputeJobAnalysisState)
+    : undefined
 }
 
 export type CreateJobRequest = {
@@ -359,15 +371,17 @@ export class ComputeJobRepository {
     })
   }
 
-  // Returns notified jobs that have not yet been consumed, optionally scoped to one Session.
-  // The App-level analysis owner uses the global form for restart recovery.
+  // Returns notified jobs whose automatic analysis is still pending or dispatched, optionally
+  // scoped to one Session. Failed/cancelled outcomes stay unconsumed but are terminal and observable
+  // through normal Job reads, so the restart scan does not repeatedly requeue them.
   async findPendingNotifications(sessionId?: string): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
       where: {
         ...(sessionId === undefined ? {} : { sessionId }),
         notifiedAt: { not: null },
-        notificationConsumedAt: null
+        notificationConsumedAt: null,
+        OR: [{ analysisState: null }, { analysisState: 'dispatched' }]
       },
       orderBy: { createdAt: 'asc' }
     })
@@ -402,6 +416,59 @@ export class ComputeJobRepository {
         data: { notificationConsumedAt: new Date() }
       })
     })
+  }
+
+  async transitionAnalysis(request: ComputeJobAnalysisTransition): Promise<ComputeJob[]> {
+    const sessionId = request.sessionId.trim()
+    const messageId = request.messageId.trim()
+    const jobIds = [...new Set(request.jobIds.map((jobId) => jobId.trim()).filter(Boolean))]
+    if (!sessionId || !messageId || jobIds.length === 0) {
+      throw new Error('Compute analysis transition requires a Session, Jobs, and Message identity.')
+    }
+
+    const client = await this.getClient()
+    await client.$transaction(async (transaction) => {
+      const rows = await transaction.computeJob.findMany({ where: { id: { in: jobIds } } })
+      if (
+        rows.length !== jobIds.length ||
+        rows.some((row) => row.sessionId !== sessionId || row.notifiedAt === null)
+      ) {
+        throw new Error('Cannot transition compute analysis outside the requested Session.')
+      }
+
+      const transitionAllowed = rows.every((row) => {
+        if (request.state === 'dispatched') {
+          return (
+            row.notificationConsumedAt === null &&
+            (row.analysisState === null ||
+              (row.analysisState === 'dispatched' && row.analysisMessageId === messageId))
+          )
+        }
+        return (
+          row.analysisMessageId === messageId &&
+          (row.analysisState === 'dispatched' || row.analysisState === request.state)
+        )
+      })
+      if (!transitionAllowed) {
+        throw new Error('Compute analysis transition does not match its durable dispatch.')
+      }
+
+      await transaction.computeJob.updateMany({
+        where: { sessionId, id: { in: jobIds } },
+        data: {
+          analysisState: request.state,
+          analysisMessageId: messageId,
+          analysisUpdatedAt: new Date(),
+          ...(request.state === 'succeeded' ? { notificationConsumedAt: new Date() } : {})
+        }
+      })
+    })
+
+    const rows = await client.computeJob.findMany({
+      where: { sessionId, id: { in: jobIds } },
+      orderBy: { createdAt: 'asc' }
+    })
+    return rows.map(this.toJob)
   }
 
   // Counts non-terminal jobs (queued, submitted, running) across all sessions for a given provider.
@@ -523,6 +590,9 @@ export class ComputeJobRepository {
     ),
     notified_at: row.notifiedAt?.getTime(),
     notification_consumed_at: row.notificationConsumedAt?.getTime(),
+    analysis_state: asAnalysisState(row.analysisState),
+    analysis_message_id: row.analysisMessageId ?? undefined,
+    analysis_updated_at: row.analysisUpdatedAt?.getTime(),
     created_at: row.createdAt.getTime(),
     submitted_at: row.submittedAt?.getTime(),
     started_at: row.startedAt?.getTime(),

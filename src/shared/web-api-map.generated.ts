@@ -54,6 +54,7 @@ export const WEB_INVOKE_CHANNELS = {
   'compute.jobsList': 'compute:jobs:list',
   'compute.jobsMarkConsumed': 'compute:jobs:mark-consumed',
   'compute.jobsPendingNotification': 'compute:jobs:pending-notification',
+  'compute.jobsTransitionAnalysis': 'compute:jobs:transition-analysis',
   'compute.list': 'compute:list',
   'compute.listDir': 'compute:list-dir',
   'compute.passwordCapability': 'compute:password-capability',
