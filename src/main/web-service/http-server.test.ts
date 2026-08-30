@@ -1796,6 +1796,246 @@ describe('startWebHttpServer', () => {
     expect(directSignals[0]?.aborted).toBe(true)
   })
 
+  it('bounds retained caller leases when one principal rotates HTTP client nonces', async () => {
+    const callerSignals: AbortSignal[] = []
+    const remoteInvoke = vi.fn(async (_channel, invocation) => {
+      callerSignals.push(invocation.callerLease.signal)
+      return []
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      rpc: {
+        channels: () => ['projects:list'],
+        invoke: vi.fn(),
+        dispose: vi.fn()
+      },
+      applicationCommands: {
+        localWeb: { commandNames: () => [], invoke: vi.fn() },
+        remoteWeb: {
+          commandNames: () => ['projects:list'],
+          rejectedCommandNames: () => [],
+          invoke: remoteInvoke
+        }
+      },
+      externalAccess: {
+        authorizeHttp: vi.fn().mockResolvedValue(accessOnlyExternalAccess('shared-principal')),
+        authorizeWebSocket: vi.fn().mockResolvedValue(undefined)
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const responses: Response[] = []
+    for (let index = 0; index < 65; index += 1) {
+      responses.push(
+        await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-open-science-client': `rotated-client-${index}`
+          },
+          body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+        })
+      )
+    }
+
+    expect(responses.every((response) => response.status === 200)).toBe(true)
+    expect(callerSignals).toHaveLength(65)
+    expect(callerSignals.some((signal) => signal.aborted)).toBe(true)
+  })
+
+  it('rejects malformed or repeated HTTP client nonces before invoking a command', async () => {
+    const invoke = vi.fn().mockResolvedValue([])
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => ['projects:list'], invoke },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const body = JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    const postWithClientHeader = (clientHeader: string | string[]): Promise<number> =>
+      new Promise<number>((resolve, reject) => {
+        const request = httpRequest(
+          {
+            host: '127.0.0.1',
+            port: server.port,
+            path: '/rpc/projects%3Alist',
+            method: 'POST',
+            headers: {
+              authorization: 'Bearer test-token',
+              'content-type': 'application/json',
+              'content-length': String(Buffer.byteLength(body)),
+              'x-open-science-client': clientHeader
+            }
+          },
+          (response) => {
+            response.resume()
+            response.once('end', () => resolve(response.statusCode ?? 0))
+          }
+        )
+        request.once('error', reject)
+        request.end(body)
+      })
+
+    expect(
+      await Promise.all([
+        postWithClientHeader('x'.repeat(65)),
+        postWithClientHeader('client with spaces'),
+        postWithClientHeader(['first-client', 'second-client'])
+      ])
+    ).toEqual([400, 400, 400])
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed WebSocket client nonces during the HTTP upgrade', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    await new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket(
+        `ws://127.0.0.1:${server.port}/events?token=test-token&client=invalid%20client`
+      )
+      socket.once('open', () => {
+        socket.close()
+        reject(new Error('WebSocket with malformed client nonce opened.'))
+      })
+      socket.once('error', () => undefined)
+      socket.once('unexpected-response', (_request, response) => {
+        expect(response.statusCode).toBe(400)
+        response.resume()
+        resolve()
+      })
+    })
+  })
+
+  it('releases an HTTP-only caller when its connection closes during command execution', async () => {
+    let markInvocationStarted: (() => void) | undefined
+    const invocationStarted = new Promise<void>((resolve) => {
+      markInvocationStarted = resolve
+    })
+    let finishInvocation: (() => void) | undefined
+    const invocationGate = new Promise<void>((resolve) => {
+      finishInvocation = resolve
+    })
+    let callerSignal: AbortSignal | undefined
+    const directInvoke = vi.fn(async (_channel, invocation) => {
+      callerSignal = invocation.callerLease.signal
+      markInvocationStarted?.()
+      await invocationGate
+      return []
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
+      applicationCommands: {
+        localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
+        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const request = httpRequest({
+      host: '127.0.0.1',
+      port: server.port,
+      path: '/rpc/projects%3Alist',
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json',
+        'x-open-science-client': 'http-only-client'
+      }
+    })
+    request.once('error', () => undefined)
+    request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
+    await invocationStarted
+
+    request.destroy()
+    await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
+    finishInvocation?.()
+  })
+
+  it('releases an HTTP-only caller after its idle retention window', async () => {
+    let callerSignal: AbortSignal | undefined
+    const directInvoke = vi.fn(async (_channel, invocation) => {
+      callerSignal = invocation.callerLease.signal
+      return []
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      webClientRetention: { httpIdleTtlMs: 20 },
+      rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
+      applicationCommands: {
+        localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
+        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json',
+        'x-open-science-client': 'http-only-client'
+      },
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    })
+
+    expect(response.status).toBe(200)
+    expect(callerSignal?.aborted).toBe(false)
+    await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
+  })
+
   it('bounds close when an active HTTP request does not finish', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)

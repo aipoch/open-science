@@ -18,7 +18,6 @@ import {
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
 import {
-  ClientLeaseRegistry,
   createTaskCallerContext,
   createWebCallerContext,
   type CallerContext
@@ -68,6 +67,10 @@ const MAX_TASK_IDEMPOTENCY_BYTES = 64 * 1024 * 1024
 const MIN_TASK_IDEMPOTENCY_ENTRY_BYTES = 16 * 1024
 const MAX_IDEMPOTENCY_KEY_LENGTH = 255
 const MAX_CACHED_TASK_ERROR_MESSAGE_LENGTH = 4_096
+const MAX_WEB_CLIENTS_PER_PRINCIPAL = 64
+const MAX_WEB_CLIENT_NONCE_LENGTH = 64
+const DEFAULT_HTTP_CLIENT_IDLE_TTL_MS = 5 * 60_000
+const WEB_CLIENT_NONCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const gzipAsync = promisify(gzip)
 const log = createLogger('web-service')
 const STATIC_RESPONSE_SECURITY_HEADERS = {
@@ -113,6 +116,10 @@ type WebServerOptions = {
   applicationEvents: ApplicationEventSource
   eventHeartbeatIntervalMs?: number
   requestBodyBudgets?: RequestBodyBudgets
+  webClientRetention?: Readonly<{
+    maxClientsPerPrincipal?: number
+    httpIdleTtlMs?: number
+  }>
   externalAccess?: ExternalWebAccess
   tasks?: Pick<
     HeadlessTaskApi,
@@ -224,6 +231,148 @@ class RequestBodyBudgetRegistry {
     const clientBytes = (this.clientInFlightBytes.get(lease.clientId) ?? 0) - lease.reservedBytes
     if (clientBytes === 0) this.clientInFlightBytes.delete(lease.clientId)
     else this.clientInFlightBytes.set(lease.clientId, clientBytes)
+  }
+}
+
+class WebClientCapacityExceededError extends Error {
+  readonly name = 'WebClientCapacityExceededError'
+
+  constructor() {
+    super('Too many active Web clients for this authenticated principal.')
+  }
+}
+
+class InvalidWebClientNonceError extends Error {
+  readonly name = 'InvalidWebClientNonceError'
+
+  constructor() {
+    super('Web client identifier must be one ASCII token of at most 64 characters.')
+  }
+}
+
+type RetainedWebClient = {
+  clientId: string
+  httpRequests: number
+  sockets: number
+  idleTimer?: ReturnType<typeof setTimeout>
+}
+
+type WebClientLease = Readonly<{ release: (disconnected?: boolean) => void }>
+
+class WebClientLeaseRegistry {
+  private readonly clientsByPrincipal = new Map<string, Map<string, RetainedWebClient>>()
+  private disposed = false
+
+  constructor(
+    private readonly releaseClient: (clientId: string) => void,
+    private readonly maxClientsPerPrincipal = MAX_WEB_CLIENTS_PER_PRINCIPAL,
+    private readonly httpIdleTtlMs = DEFAULT_HTTP_CLIENT_IDLE_TTL_MS
+  ) {
+    if (!Number.isSafeInteger(maxClientsPerPrincipal) || maxClientsPerPrincipal <= 0) {
+      throw new TypeError('maxClientsPerPrincipal must be a positive safe integer.')
+    }
+    if (!Number.isSafeInteger(httpIdleTtlMs) || httpIdleTtlMs <= 0) {
+      throw new TypeError('httpIdleTtlMs must be a positive safe integer.')
+    }
+  }
+
+  acquireHttp(principalId: string, clientNonce: string, clientId: string): WebClientLease {
+    return this.acquire(principalId, clientNonce, clientId, 'httpRequests')
+  }
+
+  acquireSocket(principalId: string, clientNonce: string, clientId: string): WebClientLease {
+    return this.acquire(principalId, clientNonce, clientId, 'sockets')
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    const principalClients = [...this.clientsByPrincipal.values()]
+    const clients = principalClients.flatMap((clients) => [...clients.values()])
+    for (const clients of principalClients) clients.clear()
+    this.clientsByPrincipal.clear()
+    const failures: unknown[] = []
+    for (const client of clients) {
+      if (client.idleTimer) clearTimeout(client.idleTimer)
+      try {
+        this.releaseClient(client.clientId)
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'Web client cleanup failed.')
+  }
+
+  private acquire(
+    principalId: string,
+    clientNonce: string,
+    clientId: string,
+    kind: 'httpRequests' | 'sockets'
+  ): WebClientLease {
+    if (this.disposed) throw new Error('Web client lease registry is disposed.')
+    const clients = this.clientsByPrincipal.get(principalId) ?? new Map<string, RetainedWebClient>()
+    let client = clients.get(clientNonce)
+    if (!client) {
+      if (clients.size >= this.maxClientsPerPrincipal) {
+        const idle = [...clients].find(
+          ([, candidate]) => candidate.httpRequests === 0 && candidate.sockets === 0
+        )
+        if (!idle) throw new WebClientCapacityExceededError()
+        clients.delete(idle[0])
+        if (idle[1].idleTimer) clearTimeout(idle[1].idleTimer)
+        this.releaseClient(idle[1].clientId)
+      }
+      client = { clientId, httpRequests: 0, sockets: 0 }
+    } else if (client.clientId !== clientId) {
+      throw new Error('Web client identity changed within one principal scope.')
+    }
+    if (client.idleTimer) {
+      clearTimeout(client.idleTimer)
+      delete client.idleTimer
+    }
+    clients.delete(clientNonce)
+    clients.set(clientNonce, client)
+    this.clientsByPrincipal.set(principalId, clients)
+    client[kind] += 1
+    let released = false
+
+    return Object.freeze({
+      release: (disconnected = false) => {
+        if (released) return
+        released = true
+        if (clients.get(clientNonce) !== client) return
+        client[kind] -= 1
+        if (
+          (kind === 'sockets' || disconnected) &&
+          client.sockets === 0 &&
+          client.httpRequests === 0
+        ) {
+          clients.delete(clientNonce)
+          if (clients.size === 0) this.clientsByPrincipal.delete(principalId)
+          if (client.idleTimer) clearTimeout(client.idleTimer)
+          this.releaseClient(client.clientId)
+          return
+        }
+        clients.delete(clientNonce)
+        clients.set(clientNonce, client)
+        if (client.httpRequests === 0 && client.sockets === 0) {
+          client.idleTimer = setTimeout(() => {
+            if (
+              clients.get(clientNonce) !== client ||
+              client.httpRequests !== 0 ||
+              client.sockets !== 0
+            ) {
+              return
+            }
+            clients.delete(clientNonce)
+            if (clients.size === 0) this.clientsByPrincipal.delete(principalId)
+            delete client.idleTimer
+            this.releaseClient(client.clientId)
+          }, this.httpIdleTtlMs)
+          client.idleTimer.unref()
+        }
+      }
+    })
   }
 }
 
@@ -357,8 +506,21 @@ const closeRequestAfterResponse = (request: IncomingMessage, response: ServerRes
   else response.once('finish', () => request.destroy())
 }
 
+const parseClientNonce = (values: readonly string[]): string => {
+  if (values.length === 0) return 'web'
+  const value = values[0]
+  if (
+    values.length !== 1 ||
+    value.length > MAX_WEB_CLIENT_NONCE_LENGTH ||
+    !WEB_CLIENT_NONCE_PATTERN.test(value)
+  ) {
+    throw new InvalidWebClientNonceError()
+  }
+  return value
+}
+
 const requestClientNonce = (request: IncomingMessage): string =>
-  String(request.headers['x-open-science-client'] ?? 'web')
+  parseClientNonce(request.headersDistinct['x-open-science-client'] ?? [])
 
 const authorizedClientId = (principalId: string, clientNonce: string): string =>
   `${principalId}:${clientNonce}`
@@ -945,9 +1107,13 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       serverInFlightBytes: MAX_SERVER_IN_FLIGHT_RPC_BODY_BYTES
     }
   )
-  const clientLeases = new ClientLeaseRegistry((clientId) => {
-    commandClient.releaseClient('web', clientId)
-  })
+  const webClientLeases = new WebClientLeaseRegistry(
+    (clientId) => {
+      commandClient.releaseClient('web', clientId)
+    },
+    options.webClientRetention?.maxClientsPerPrincipal,
+    options.webClientRetention?.httpIdleTtlMs
+  )
   const wsServer = new WebSocketServer({ noServer: true })
 
   const isWebSocketAuthorizationCurrent = (socket: WebSocket): boolean => {
@@ -987,10 +1153,22 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         response.end('Unauthorized')
         return
       }
-      const clientNonce = requestClientNonce(request)
+      let clientNonce: string
+      try {
+        clientNonce = requestClientNonce(request)
+      } catch (error) {
+        if (error instanceof InvalidWebClientNonceError) {
+          json(response, 400, { error: error.message })
+          return
+        }
+        throw error
+      }
       const clientId = externalAuthorization
         ? authorizedClientId(externalAuthorization.principalId, clientNonce)
         : clientNonce
+      const clientPrincipalId = externalAuthorization
+        ? `remote:${externalAuthorization.principalId}`
+        : 'local'
       const requestBodyClientId = externalAuthorization?.principalId ?? clientId
       if (!hasValidUrlPathEncoding(url.pathname)) {
         json(response, 400, { error: 'Malformed URL encoding.' })
@@ -1153,6 +1331,19 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
               }
             : {})
         })
+        let clientLease: WebClientLease
+        try {
+          clientLease = webClientLeases.acquireHttp(clientPrincipalId, clientNonce, clientId)
+        } catch (error) {
+          if (error instanceof WebClientCapacityExceededError) {
+            webRpcError(response, 429, 'handler_error', error.message)
+            return
+          }
+          throw error
+        }
+        const releaseDisconnectedClient = (): void => clientLease.release(true)
+        request.once('aborted', releaseDisconnectedClient)
+        response.once('close', releaseDisconnectedClient)
         try {
           assertExternalAuthorizationCurrent(externalAuthorization)
           const dispatcher = auth.ok
@@ -1182,6 +1373,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           }
           const publicError = publicApplicationCommandError(error)
           webRpcError(response, 500, publicError.code, publicError.message)
+        } finally {
+          request.off('aborted', releaseDisconnectedClient)
+          response.off('close', releaseDisconnectedClient)
+          clientLease.release()
         }
         return
       }
@@ -1229,6 +1424,14 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           socket.destroy()
           return
         }
+        try {
+          parseClientNonce(url.searchParams.getAll('client'))
+        } catch (error) {
+          if (!(error instanceof InvalidWebClientNonceError)) throw error
+          socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n')
+          socket.destroy()
+          return
+        }
         wsServer.handleUpgrade(request, socket, head, (webSocket) => {
           if (externalAuthorization) {
             externalSockets.set(webSocket, externalAuthorization)
@@ -1244,7 +1447,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   wsServer.on('connection', (socket, request) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
-    const clientNonce = url.searchParams.get('client') ?? 'web'
+    const clientNonce = parseClientNonce(url.searchParams.getAll('client'))
     const externalAuthorization = externalSockets.get(socket)
     if (externalAuthorization && !externalAuthorization.isCurrent()) {
       externalSockets.delete(socket)
@@ -1255,7 +1458,18 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       externalAuthorization === undefined
         ? clientNonce
         : authorizedClientId(externalAuthorization.principalId, clientNonce)
-    const lease = clientLeases.acquire(clientId)
+    const clientPrincipalId =
+      externalAuthorization === undefined ? 'local' : `remote:${externalAuthorization.principalId}`
+    let lease: WebClientLease
+    try {
+      lease = webClientLeases.acquireSocket(clientPrincipalId, clientNonce, clientId)
+    } catch (error) {
+      if (error instanceof WebClientCapacityExceededError) {
+        socket.close(1013, 'Too many active Web clients')
+        return
+      }
+      throw error
+    }
     socket.on('close', () => {
       sockets.delete(socket)
       externalSockets.delete(socket)
@@ -1353,7 +1567,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     removeBroadcastSink()
     removeTaskProgressSink?.()
     try {
-      clientLeases.dispose()
+      webClientLeases.dispose()
     } finally {
       commandClient.dispose()
     }
@@ -1404,7 +1618,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       const closePromise = new Promise<void>((resolveClose) => server.close(() => resolveClose()))
       let cleanupError: unknown
       try {
-        clientLeases.dispose()
+        webClientLeases.dispose()
       } catch (error) {
         cleanupError = error
       } finally {
