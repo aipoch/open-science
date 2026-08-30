@@ -2154,6 +2154,64 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
   })
 
+  it('redispatches a stable Message preserved on an inactive conversation Branch', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      content: 'Analyze the completed compute job',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore
+      .getState()
+      .truncateSessionFromMessage('transport-session-1', 'automatic-analysis-message-1')
+
+    const truncated = useSessionStore.getState().sessions[0]
+    expect(truncated.messages).toEqual([])
+    expect(
+      truncated.conversationGraph?.messages.filter(
+        (message) => message.id === 'automatic-analysis-message-1'
+      )
+    ).toHaveLength(1)
+
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await expect(
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1',
+        text: 'Analyze the completed compute job',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId: 'claude-code'
+      })
+    ).resolves.toEqual({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1'
+    })
+
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([
+      expect.objectContaining({ id: 'automatic-analysis-message-1' })
+    ])
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].conversationGraph?.messages.filter(
+          (message) => message.id === 'automatic-analysis-message-1'
+        )
+    ).toHaveLength(1)
+  })
+
   it('reports a stable application-owned Message as unsent when prompt ownership is lost', async () => {
     useSessionStore.setState({
       ...createInitialSessionState(),

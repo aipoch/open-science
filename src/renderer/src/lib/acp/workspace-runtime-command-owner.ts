@@ -726,12 +726,26 @@ const sendWorkspaceMessage = async (
 
   if (input.sessionId) {
     const sessionId = input.sessionId
-    const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+    let session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
     const stableMessageId = input.messageId?.trim()
     if (input.messageId !== undefined && !stableMessageId) return undefined
-    const existingStableMessage = stableMessageId
+    let existingStableMessage = stableMessageId
       ? session?.messages.find((message) => message.id === stableMessageId)
       : undefined
+    const graphStableMessage = stableMessageId
+      ? session?.conversationGraph?.messages.find((message) => message.id === stableMessageId)
+      : undefined
+    if (!existingStableMessage && graphStableMessage && session) {
+      if (graphStableMessage.role !== 'user' || graphStableMessage.content !== content) {
+        return undefined
+      }
+      useSessionStore
+        .getState()
+        .activateMessageBranch(sessionId, graphStableMessage.introducedOnBranchId)
+      session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+      existingStableMessage = session?.messages.find((message) => message.id === stableMessageId)
+      if (!existingStableMessage) return undefined
+    }
     let rearmExistingStableMessage = false
     if (existingStableMessage) {
       if (existingStableMessage.role !== 'user' || existingStableMessage.content !== content) {
