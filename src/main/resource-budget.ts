@@ -9,6 +9,7 @@ const LOCAL_RESOURCE_BUDGETS = Object.freeze({
   artifactFileBytes: 1 * GIB,
   artifactTurnBytes: 2 * GIB,
   artifactSessionBytes: 10 * GIB,
+  notebookEvidenceProjectBytes: 10 * GIB,
   diskReserveBytes: 2 * GIB,
   reviewerReadBytes: 256 * 1024,
   reviewerSessionBytes: 2 * MIB

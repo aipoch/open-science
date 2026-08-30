@@ -45,7 +45,9 @@ type WorkingFileObservationDependencies = {
   now?: () => number
   maxGenerationBytes?: number
   maxRunBytes?: number
+  maxEvidenceBytes?: number
   diskReserveBytes?: number
+  evidenceQueueTimeoutMs?: number
   getAvailableBytes?: typeof availableBytes
   runEvidenceWorker?: typeof runEvidenceWorker
 }
@@ -88,6 +90,9 @@ type EvidenceWorkerBeginRequest = {
   runId: string
   evidenceId: string
   storageKeyPrefix: string
+  blobRoot: string
+  expectedBlobRootIdentity: FileIdentity
+  blobStorageKeyPrefix: string
   initialViewState: NotebookFileEvidenceCoverage
   initialFiles: Array<{
     file: SnapshotEntry
@@ -95,6 +100,7 @@ type EvidenceWorkerBeginRequest = {
   }>
   maxGenerationBytes: number
   maxRunBytes: number
+  maxEvidenceBytes: number
   diskReserveBytes: number
   availableBytes: number
   captureCancelled: boolean
@@ -108,6 +114,9 @@ type EvidenceWorkerPersistRequest = {
   runId: string
   evidenceId: string
   storageKeyPrefix: string
+  blobRoot: string
+  expectedBlobRootIdentity: FileIdentity
+  blobStorageKeyPrefix: string
   rootKinds: Array<'data' | 'handoff'>
   rootsAvailable: boolean
   reasonCodes: NotebookFileEvidenceReason[]
@@ -118,6 +127,7 @@ type EvidenceWorkerPersistRequest = {
   }>
   maxGenerationBytes: number
   maxRunBytes: number
+  maxEvidenceBytes: number
   diskReserveBytes: number
   availableBytes: number
   captureCancelled: boolean
@@ -154,6 +164,11 @@ type EvidenceWorkerDeleteProjectRequest = {
   expectedRootIdentity: FileIdentity
   projectName: string
 }
+type EvidenceWorkerEnsureProjectRequest = {
+  operation: 'ensure-project'
+  expectedRootIdentity: FileIdentity
+  projectName: string
+}
 type EvidenceWorkerResult =
   | { ok: true; capturedInitialGenerations: number }
   | {
@@ -163,6 +178,7 @@ type EvidenceWorkerResult =
     }
   | { ok: true; removedStagingEntries: number; removedRunEntries: number }
   | { ok: true; removedProjectEntries: number }
+  | { ok: true; projectOwned: true }
 
 type ActiveEvidenceCapture = {
   evidenceRoot: { path: string; identity: FileIdentity }
@@ -171,8 +187,11 @@ type ActiveEvidenceCapture = {
   finalName: string
   evidenceId: string
   storageKeyPrefix: string
+  blobRoot: { path: string; identity: FileIdentity }
+  blobStorageKeyPrefix: string
   maxGenerationBytes: number
   maxRunBytes: number
+  maxEvidenceBytes: number
   diskReserveBytes: number
 }
 
@@ -184,7 +203,9 @@ const EVENT_SETTLE_MS = 20
 const WATCHER_READY_MS = 5
 const MAX_WORKER_OUTPUT_BYTES = 16 * 1024 * 1024
 const EVIDENCE_WORKER_TIMEOUT_MS = 10 * 60 * 1000
+const EVIDENCE_QUEUE_TIMEOUT_MS = 5_000
 const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
+const NOTEBOOK_FILE_EVIDENCE_DIR = 'notebook-file-evidence'
 const BASELINE_REASON_CODES: NotebookFileEvidenceReason[] = [
   'file-reads-not-observed',
   'external-paths-not-observed',
@@ -320,7 +341,8 @@ export const runEvidenceWorker = async (
     | EvidenceWorkerCompleteRequest
     | EvidenceWorkerReconcileRequest
     | EvidenceWorkerCleanupRequest
-    | EvidenceWorkerDeleteProjectRequest,
+    | EvidenceWorkerDeleteProjectRequest
+    | EvidenceWorkerEnsureProjectRequest,
   signal?: AbortSignal
 ): Promise<EvidenceWorkerResult> =>
   new Promise((resolveResult, rejectResult) => {
@@ -415,12 +437,128 @@ type WorkingFileEvidenceLocation = {
 const receiptNameForRun = (runId: string): string => `receipt-${runId}.json`
 const finalNameForRun = (runId: string): string => `run-${runId}`
 
+const ensureProjectPromises = new Map<string, Promise<void>>()
+let blobWorkerTail = Promise.resolve()
+
+const waitForBlobWorkerTurn = async (
+  previous: Promise<void>,
+  signal: AbortSignal | undefined,
+  timeoutMs: number
+): Promise<void> =>
+  new Promise((resolveTurn, rejectTurn) => {
+    let settled = false
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+    }
+    const resolveOnce = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolveTurn()
+    }
+    const rejectOnce = (error: unknown): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      rejectTurn(error)
+    }
+    const abort = (): void =>
+      rejectOnce(signal?.reason ?? new Error('File-evidence queue aborted.'))
+    const timeout = setTimeout(
+      () => rejectOnce(new Error('File-evidence queue wait timed out.')),
+      timeoutMs
+    )
+    timeout.unref()
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) {
+      abort()
+      return
+    }
+    previous.catch(() => undefined).then(resolveOnce)
+  })
+
+const runSerializedBlobWorker = async (
+  worker: typeof runEvidenceWorker,
+  evidenceRoot: string,
+  request: EvidenceWorkerBeginRequest | EvidenceWorkerPersistRequest,
+  signal?: AbortSignal,
+  timeoutMs = EVIDENCE_QUEUE_TIMEOUT_MS
+): Promise<EvidenceWorkerResult> => {
+  const previous = blobWorkerTail
+  let release!: () => void
+  const turn = new Promise<void>((resolveTurn) => {
+    release = resolveTurn
+  })
+  const tail = previous.catch(() => undefined).then(() => turn)
+  blobWorkerTail = tail
+  try {
+    await waitForBlobWorkerTurn(previous, signal, timeoutMs)
+    return await worker(evidenceRoot, request, signal)
+  } finally {
+    release()
+    if (blobWorkerTail === tail) blobWorkerTail = Promise.resolve()
+  }
+}
+
+const ensureWorkingFileEvidenceProject = async (
+  storageRoot: string,
+  projectId: string,
+  worker: typeof runEvidenceWorker = runEvidenceWorker
+): Promise<void> => {
+  if (!SAFE_RUN_ID.test(projectId)) throw new Error('Unsafe Notebook file-evidence Project ID.')
+  const evidenceRoot = await secureEvidenceRoot(
+    storageRoot,
+    join(storageRoot, NOTEBOOK_FILE_EVIDENCE_DIR)
+  )
+  const key = `${evidenceRoot.path}\0${projectId}`
+  const existing = ensureProjectPromises.get(key)
+  if (existing) return existing
+  const ensuring = worker(evidenceRoot.path, {
+    operation: 'ensure-project',
+    expectedRootIdentity: evidenceRoot.identity,
+    projectName: projectId
+  }).then((result) => {
+    if (!('projectOwned' in result)) {
+      throw new Error('File-evidence Project ownership returned an invalid result.')
+    }
+  })
+  ensureProjectPromises.set(key, ensuring)
+  try {
+    await ensuring
+  } finally {
+    ensureProjectPromises.delete(key)
+  }
+}
+
+const projectEvidenceScope = (
+  storageRoot: string,
+  evidenceRoot: string,
+  storageKeyPrefix: string
+): { projectId: string; projectRoot: string; blobStorageKeyPrefix: string } | undefined => {
+  const segments = storageKeyPrefix.split('/')
+  if (segments[0] !== NOTEBOOK_FILE_EVIDENCE_DIR) return undefined
+  const projectId = segments[1]
+  if (!projectId || !SAFE_RUN_ID.test(projectId)) {
+    throw new Error('Unsafe Notebook file-evidence Project storage prefix.')
+  }
+  const projectRoot = join(storageRoot, NOTEBOOK_FILE_EVIDENCE_DIR, projectId)
+  if (!isPathInside(projectRoot, resolve(evidenceRoot))) {
+    throw new Error('Notebook file-evidence root does not match its Project storage prefix.')
+  }
+  return {
+    projectId,
+    projectRoot,
+    blobStorageKeyPrefix: `${NOTEBOOK_FILE_EVIDENCE_DIR}/${projectId}/blobs`
+  }
+}
+
 const deleteWorkingFileEvidenceProject = async (
   storageRoot: string,
   projectId: string
 ): Promise<void> => {
   if (!SAFE_RUN_ID.test(projectId)) throw new Error('Unsafe Notebook file-evidence Project ID.')
-  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, 'notebook-file-evidence'))
+  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, NOTEBOOK_FILE_EVIDENCE_DIR))
   const result = await runEvidenceWorker(root.path, {
     operation: 'delete-project',
     expectedRootIdentity: root.identity,
@@ -872,6 +1010,24 @@ const beginEvidenceCapture = async (
   const fileEvidenceRoot =
     request.fileEvidenceRoot ?? join(fileEvidenceStorageRoot, 'file-evidence')
   const fileEvidenceStoragePrefix = request.fileEvidenceStoragePrefix ?? 'file-evidence'
+  const projectScope = projectEvidenceScope(
+    fileEvidenceStorageRoot,
+    fileEvidenceRoot,
+    fileEvidenceStoragePrefix
+  )
+  if (projectScope) {
+    await ensureWorkingFileEvidenceProject(
+      fileEvidenceStorageRoot,
+      projectScope.projectId,
+      dependencies.runEvidenceWorker
+    )
+  }
+  const blobRoot = await secureEvidenceRoot(
+    fileEvidenceStorageRoot,
+    projectScope
+      ? join(projectScope.projectRoot, 'blobs')
+      : join(fileEvidenceStorageRoot, 'file-evidence-blobs')
+  )
   const evidenceId = `notebook-file-evidence-${request.runId}`
   const capture: ActiveEvidenceCapture = {
     evidenceRoot: await secureEvidenceRoot(fileEvidenceStorageRoot, fileEvidenceRoot),
@@ -880,8 +1036,12 @@ const beginEvidenceCapture = async (
     finalName: finalNameForRun(request.runId),
     evidenceId,
     storageKeyPrefix: fileEvidenceStoragePrefix,
+    blobRoot,
+    blobStorageKeyPrefix: projectScope?.blobStorageKeyPrefix ?? 'file-evidence-blobs',
     maxGenerationBytes: dependencies.maxGenerationBytes ?? LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
     maxRunBytes: dependencies.maxRunBytes ?? LOCAL_RESOURCE_BUDGETS.artifactTurnBytes,
+    maxEvidenceBytes:
+      dependencies.maxEvidenceBytes ?? LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
     diskReserveBytes: dependencies.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
   }
   const initialFiles = observations.flatMap((observation) => observation.initialFiles)
@@ -894,7 +1054,7 @@ const beginEvidenceCapture = async (
       : 'unavailable'
   const plannedBytes = Math.min(
     capture.maxRunBytes,
-    initialFiles.reduce((total, file) => total + file.size, 0)
+    Buffer.byteLength(JSON.stringify(initialFiles))
   )
   let reservedBytes = 0
   try {
@@ -909,7 +1069,8 @@ const beginEvidenceCapture = async (
     reservedDiskBytes += plannedBytes
     reservedBytes = plannedBytes
     const capturedAt = new Date((dependencies.now ?? Date.now)()).toISOString()
-    const result = await (dependencies.runEvidenceWorker ?? runEvidenceWorker)(
+    const result = await runSerializedBlobWorker(
+      dependencies.runEvidenceWorker ?? runEvidenceWorker,
       capture.evidenceRoot.path,
       {
         operation: 'begin',
@@ -920,6 +1081,9 @@ const beginEvidenceCapture = async (
         runId: request.runId,
         evidenceId,
         storageKeyPrefix: fileEvidenceStoragePrefix,
+        blobRoot: capture.blobRoot.path,
+        expectedBlobRootIdentity: capture.blobRoot.identity,
+        blobStorageKeyPrefix: capture.blobStorageKeyPrefix,
         initialViewState,
         initialFiles: initialFiles.map((file) => ({
           file,
@@ -930,11 +1094,13 @@ const beginEvidenceCapture = async (
         })),
         maxGenerationBytes: capture.maxGenerationBytes,
         maxRunBytes: capture.maxRunBytes,
+        maxEvidenceBytes: capture.maxEvidenceBytes,
         diskReserveBytes: capture.diskReserveBytes,
         availableBytes: Math.max(0, freeBytes - reservedDiskBytes + reservedBytes),
         captureCancelled: request.signal?.aborted ?? false
       },
-      request.signal
+      request.signal,
+      dependencies.evidenceQueueTimeoutMs
     )
     if (!('capturedInitialGenerations' in result)) {
       throw new Error('File-evidence initial capture returned an invalid result.')
@@ -995,11 +1161,7 @@ const persistEvidence = async (
     }
   }
 
-  const plannedBytes = Math.min(
-    capture.maxRunBytes,
-    changes.reduce((total, change) => total + (change.after?.size ?? 0), 0) +
-      Buffer.byteLength(JSON.stringify(changes))
-  )
+  const plannedBytes = Math.min(capture.maxRunBytes, Buffer.byteLength(JSON.stringify(changes)))
   let reservedBytes = 0
   try {
     const freeBytes = await (dependencies.getAvailableBytes ?? availableBytes)(
@@ -1012,7 +1174,8 @@ const persistEvidence = async (
     )
     reservedDiskBytes += plannedBytes
     reservedBytes = plannedBytes
-    const result = await (dependencies.runEvidenceWorker ?? runEvidenceWorker)(
+    const result = await runSerializedBlobWorker(
+      dependencies.runEvidenceWorker ?? runEvidenceWorker,
       capture.evidenceRoot.path,
       {
         operation: 'persist',
@@ -1023,6 +1186,9 @@ const persistEvidence = async (
         runId: request.runId,
         evidenceId: capture.evidenceId,
         storageKeyPrefix: capture.storageKeyPrefix,
+        blobRoot: capture.blobRoot.path,
+        expectedBlobRootIdentity: capture.blobRoot.identity,
+        blobStorageKeyPrefix: capture.blobStorageKeyPrefix,
         rootKinds,
         rootsAvailable: rootResults.every((result) => result.available),
         reasonCodes: rootResults.flatMap((result) => result.reasonCodes),
@@ -1036,11 +1202,13 @@ const persistEvidence = async (
         })),
         maxGenerationBytes: capture.maxGenerationBytes,
         maxRunBytes: capture.maxRunBytes,
+        maxEvidenceBytes: capture.maxEvidenceBytes,
         diskReserveBytes: capture.diskReserveBytes,
         availableBytes: Math.max(0, freeBytes - reservedDiskBytes + reservedBytes),
         captureCancelled: request.signal?.aborted ?? false
       },
-      request.signal?.aborted ? undefined : request.signal
+      request.signal?.aborted ? undefined : request.signal,
+      dependencies.evidenceQueueTimeoutMs
     )
     if (!('generations' in result)) {
       throw new Error('File-evidence persistence returned an invalid result.')

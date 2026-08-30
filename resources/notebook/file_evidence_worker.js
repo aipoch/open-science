@@ -16,9 +16,11 @@ const {
   renameSync,
   rmSync,
   statSync,
+  statfsSync,
   writeFileSync,
   writeSync
 } = require('node:fs')
+const { join } = require('node:path')
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024
 const MAX_INTERNAL_JSON_BYTES = 64 * 1024 * 1024
@@ -26,6 +28,10 @@ const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const RECEIPT_NAME = /^receipt-[A-Za-z0-9][A-Za-z0-9._-]*\.json$/u
 const CAPTURE_FILE = 'capture.json'
 const ownershipFile = (token) => `.ownership-${assertSafeName(token)}`
+const projectOwnershipReceipt = (projectName) =>
+  `.project-ownership-${assertSafeName(projectName)}.json`
+const projectDeletionTombstone = (ownershipToken) => `deleting-${assertSafeName(ownershipToken)}`
+const BLOB_NAME = /^sha256-[a-f0-9]{64}$/u
 const BASELINE_REASONS = [
   'file-reads-not-observed',
   'external-paths-not-observed',
@@ -68,9 +74,9 @@ const assertStorageKeyPrefix = (value) => {
   }
   return value
 }
-const syncDirectory = () => {
+const syncDirectoryPath = (path) => {
   try {
-    const descriptor = openSync('.', constants.O_RDONLY)
+    const descriptor = openSync(path, constants.O_RDONLY)
     try {
       fsyncSync(descriptor)
     } finally {
@@ -80,6 +86,7 @@ const syncDirectory = () => {
     if (process.platform !== 'win32') throw error
   }
 }
+const syncDirectory = () => syncDirectoryPath('.')
 const assertBoundRoot = (expected) => {
   const current = statSync('.')
   if (!current.isDirectory() || !sameIdentity(identity(current), expected)) {
@@ -192,6 +199,15 @@ const entryIdentity = (name) => {
     throw error
   }
 }
+const entryExists = (name) => {
+  try {
+    lstatSync(name)
+    return true
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return false
+    throw error
+  }
+}
 const removeOwnedDirectory = (name, expectedIdentity) => {
   const actual = entryIdentity(name)
   if (!actual) return false
@@ -200,6 +216,120 @@ const removeOwnedDirectory = (name, expectedIdentity) => {
   }
   rmSync(name, { recursive: true, force: true })
   return true
+}
+const projectOwnershipShape = (value, projectName) => {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    value.schemaVersion !== 1 ||
+    !['prepared', 'owned', 'deleting'].includes(value.phase) ||
+    value.projectName !== projectName ||
+    typeof value.ownershipToken !== 'string'
+  ) {
+    return false
+  }
+  try {
+    assertSafeName(value.projectName)
+    assertSafeName(value.ownershipToken)
+    if (
+      value.phase === 'deleting' &&
+      value.tombstoneName !== projectDeletionTombstone(value.ownershipToken)
+    ) {
+      return false
+    }
+  } catch {
+    return false
+  }
+  return true
+}
+const readProjectOwnership = (projectName) => {
+  const receiptName = projectOwnershipReceipt(projectName)
+  const value = readJson(receiptName, MAX_REQUEST_BYTES)
+  if (!projectOwnershipShape(value, projectName)) {
+    throw new Error(`Invalid file-evidence Project ownership receipt: ${receiptName}`)
+  }
+  return { ...value, receiptName }
+}
+const verifyProjectMarker = (directoryName, ownershipToken) => {
+  const markerName = ownershipFile(ownershipToken)
+  const marker = lstatSync(join(directoryName, markerName))
+  if (marker.isSymbolicLink() || !marker.isFile() || marker.size !== 0) {
+    throw new Error('Notebook file-evidence Project ownership marker mismatch.')
+  }
+}
+const verifyOwnedProject = (receipt) => {
+  const actual = entryIdentity(receipt.projectName)
+  if (!actual) {
+    throw new Error('Notebook file-evidence Project directory is missing or unsafe.')
+  }
+  verifyProjectMarker(receipt.projectName, receipt.ownershipToken)
+  return actual
+}
+const ensureProject = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const projectName = assertSafeName(request.projectName)
+  const receiptName = projectOwnershipReceipt(projectName)
+  if (!existsSync(receiptName)) {
+    if (entryExists(projectName)) {
+      throw new Error('Notebook file-evidence Project directory has no ownership receipt.')
+    }
+    publishExclusiveFile(
+      receiptName,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          phase: 'prepared',
+          projectName,
+          ownershipToken: randomUUID()
+        },
+        null,
+        2
+      )}\n`
+    )
+  }
+  const receipt = readProjectOwnership(projectName)
+  if (receipt.phase === 'deleting') {
+    throw new Error('Notebook file-evidence Project deletion is still in progress.')
+  }
+  if (receipt.phase === 'owned') {
+    verifyOwnedProject(receipt)
+    return { ok: true, projectOwned: true }
+  }
+
+  if (entryExists(projectDeletionTombstone(receipt.ownershipToken))) {
+    throw new Error('Prepared Notebook file-evidence Project has a deletion tombstone.')
+  }
+
+  let projectIdentity = entryIdentity(projectName)
+  if (!projectIdentity) {
+    mkdirSync(projectName, { mode: 0o700 })
+    projectIdentity = identity(lstatSync(projectName))
+  }
+  const entries = readdirSync(projectName)
+  if (entries.length === 0) {
+    process.chdir(projectName)
+    try {
+      if (!sameIdentity(identity(statSync('.')), projectIdentity)) {
+        throw new Error('Notebook file-evidence Project directory changed during ownership.')
+      }
+      writeExclusiveFile(ownershipFile(receipt.ownershipToken), '')
+      syncDirectory()
+    } finally {
+      process.chdir('..')
+    }
+    assertBoundRoot(request.expectedRootIdentity)
+  } else if (entries.length === 1 && entries[0] === ownershipFile(receipt.ownershipToken)) {
+    verifyProjectMarker(projectName, receipt.ownershipToken)
+  } else {
+    throw new Error('Prepared Notebook file-evidence Project ownership is not recoverable.')
+  }
+  replaceJson(receiptName, {
+    schemaVersion: 1,
+    phase: 'owned',
+    projectName,
+    ownershipToken: receipt.ownershipToken
+  })
+  return { ok: true, projectOwned: true }
 }
 const removeReceipt = (receiptName) => {
   rmSync(assertReceiptName(receiptName), { force: true })
@@ -242,7 +372,106 @@ const cleanupReceiptTargets = (receipt) => {
   return { removedStagingEntries, removedRunEntries }
 }
 
-const copyGeneration = (source, generation, relativePath, request, runBytesUsed, newBytesUsed) => {
+const bindBlobPool = (request) => {
+  if (
+    typeof request.blobRoot !== 'string' ||
+    !validIdentity(request.expectedBlobRootIdentity) ||
+    typeof request.blobStorageKeyPrefix !== 'string'
+  ) {
+    throw new Error('Missing file-evidence blob-pool identity.')
+  }
+  assertStorageKeyPrefix(request.blobStorageKeyPrefix)
+  const actual = entryIdentity(request.blobRoot)
+  if (!actual || !sameIdentity(actual, request.expectedBlobRootIdentity)) {
+    throw new Error('File-evidence blob-pool identity mismatch.')
+  }
+  return {
+    path: request.blobRoot,
+    identity: actual,
+    storageKeyPrefix: request.blobStorageKeyPrefix
+  }
+}
+const verifyBlob = (path, expectedSize, expectedChecksum) => {
+  const descriptor = openSync(
+    path,
+    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW
+  )
+  try {
+    const metadata = fstatSync(descriptor)
+    if (!metadata.isFile() || metadata.size !== expectedSize) {
+      throw new Error('File-evidence blob metadata mismatch.')
+    }
+    const hash = createHash('sha256')
+    let position = 0
+    const buffer = Buffer.allocUnsafe(64 * 1024)
+    while (position < metadata.size) {
+      const bytesRead = readSync(
+        descriptor,
+        buffer,
+        0,
+        Math.min(buffer.length, metadata.size - position),
+        position
+      )
+      if (bytesRead === 0) break
+      hash.update(buffer.subarray(0, bytesRead))
+      position += bytesRead
+    }
+    if (position !== metadata.size || hash.digest('hex') !== expectedChecksum) {
+      throw new Error('File-evidence blob checksum mismatch.')
+    }
+  } finally {
+    closeSync(descriptor)
+  }
+}
+const blobPoolBytes = (blobPool) => {
+  let bytes = 0
+  for (const entry of readdirSync(blobPool.path, { withFileTypes: true })) {
+    if (!entry.isFile() || entry.isSymbolicLink() || !BLOB_NAME.test(entry.name)) {
+      throw new Error(`Unsafe file-evidence blob-pool entry: ${entry.name}`)
+    }
+    const metadata = lstatSync(join(blobPool.path, entry.name))
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      throw new Error(`Unsafe file-evidence blob: ${entry.name}`)
+    }
+    bytes += metadata.size
+  }
+  return bytes
+}
+const streamDescriptor = (sourceDescriptor, size, targetDescriptor) => {
+  const hash = createHash('sha256')
+  let position = 0
+  const buffer = Buffer.allocUnsafe(64 * 1024)
+  while (position < size) {
+    const bytesRead = readSync(
+      sourceDescriptor,
+      buffer,
+      0,
+      Math.min(buffer.length, size - position),
+      position
+    )
+    if (bytesRead === 0) break
+    hash.update(buffer.subarray(0, bytesRead))
+    if (targetDescriptor !== undefined) {
+      let written = 0
+      while (written < bytesRead) {
+        written += writeSync(targetDescriptor, buffer, written, bytesRead - written)
+      }
+    }
+    position += bytesRead
+  }
+  return { bytesRead: position, checksum: hash.digest('hex') }
+}
+
+const copyGeneration = (
+  source,
+  generation,
+  relativePath,
+  request,
+  runBytesUsed,
+  newBytesUsed,
+  blobPool,
+  existingBlobBytes
+) => {
   if (request.captureCancelled) {
     return { state: 'unavailable', reason: 'generation-freeze-failed' }
   }
@@ -264,60 +493,75 @@ const copyGeneration = (source, generation, relativePath, request, runBytesUsed,
     }
     if (
       before.size > request.maxGenerationBytes ||
-      runBytesUsed + before.size > request.maxRunBytes ||
-      request.availableBytes - newBytesUsed - before.size < request.diskReserveBytes
+      runBytesUsed + before.size > request.maxRunBytes
     ) {
       return { state: 'unavailable', reason: 'generation-budget-exceeded' }
     }
 
-    targetDescriptor = openSync(
-      temporaryName,
-      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-      0o600
-    )
-    const hash = createHash('sha256')
-    let position = 0
-    const buffer = Buffer.allocUnsafe(64 * 1024)
-    while (position < before.size) {
-      const bytesRead = readSync(
-        sourceDescriptor,
-        buffer,
-        0,
-        Math.min(buffer.length, before.size - position),
-        position
-      )
-      if (bytesRead === 0) break
-      hash.update(buffer.subarray(0, bytesRead))
-      let written = 0
-      while (written < bytesRead) {
-        written += writeSync(targetDescriptor, buffer, written, bytesRead - written)
-      }
-      position += bytesRead
-    }
-    const after = fstatSync(sourceDescriptor)
+    const hashed = streamDescriptor(sourceDescriptor, before.size)
+    const afterHash = fstatSync(sourceDescriptor)
     if (
-      position !== before.size ||
-      fingerprint(before) !== fingerprint(after) ||
-      fingerprint(after) !== fingerprint(source)
+      hashed.bytesRead !== before.size ||
+      fingerprint(before) !== fingerprint(afterHash) ||
+      fingerprint(afterHash) !== fingerprint(source)
     ) {
       return { state: 'unavailable', reason: 'generation-freeze-failed' }
     }
-    fsyncSync(targetDescriptor)
-    closeSync(targetDescriptor)
-    targetDescriptor = undefined
-
-    const checksum = hash.digest('hex')
-    const contentName = `sha256-${checksum}-${randomUUID()}`
-    linkSync(temporaryName, contentName)
+    const checksum = hashed.checksum
+    const contentName = `sha256-${checksum}`
+    const blobPath = join(blobPool.path, contentName)
+    let publishedNewBlob = false
+    if (existsSync(blobPath)) {
+      verifyBlob(blobPath, before.size, checksum)
+    } else {
+      const filesystem = statfsSync(blobPool.path)
+      const currentAvailableBytes = Math.min(
+        request.availableBytes - newBytesUsed,
+        filesystem.bavail * filesystem.bsize
+      )
+      if (
+        existingBlobBytes + newBytesUsed + before.size > request.maxEvidenceBytes ||
+        currentAvailableBytes - before.size < request.diskReserveBytes
+      ) {
+        return { state: 'unavailable', reason: 'generation-budget-exceeded' }
+      }
+      targetDescriptor = openSync(
+        temporaryName,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+        0o600
+      )
+      const copied = streamDescriptor(sourceDescriptor, before.size, targetDescriptor)
+      const afterCopy = fstatSync(sourceDescriptor)
+      if (
+        copied.bytesRead !== before.size ||
+        copied.checksum !== checksum ||
+        fingerprint(before) !== fingerprint(afterCopy) ||
+        fingerprint(afterCopy) !== fingerprint(source)
+      ) {
+        return { state: 'unavailable', reason: 'generation-freeze-failed' }
+      }
+      fsyncSync(targetDescriptor)
+      closeSync(targetDescriptor)
+      targetDescriptor = undefined
+      try {
+        linkSync(temporaryName, blobPath)
+        syncDirectoryPath(blobPool.path)
+        publishedNewBlob = true
+      } catch (error) {
+        if (!error || error.code !== 'EEXIST') throw error
+        verifyBlob(blobPath, before.size, checksum)
+      }
+    }
     rmSync(temporaryName, { force: true })
     return {
       state: 'available',
+      newBytes: publishedNewBlob ? before.size : 0,
       generation: {
         generationId: generation.generationId,
         relativePath,
         checksum,
         sizeBytes: before.size,
-        contentStorageKey: `${request.storageKeyPrefix}/${request.finalName}/${contentName}`,
+        contentStorageKey: `${blobPool.storageKeyPrefix}/${contentName}`,
         capturedAt: generation.capturedAt
       }
     }
@@ -330,6 +574,11 @@ const copyGeneration = (source, generation, relativePath, request, runBytesUsed,
 
 const begin = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
+  const blobPool = bindBlobPool(request)
+  const existingBlobBytes = blobPoolBytes(blobPool)
+  if (!Number.isFinite(request.maxEvidenceBytes) || request.maxEvidenceBytes < 0) {
+    throw new Error('Invalid file-evidence Project budget.')
+  }
   const receiptName = assertReceiptName(request.receiptName)
   const stagingName = assertSafeName(request.stagingName)
   const finalName = assertSafeName(request.finalName)
@@ -378,7 +627,9 @@ const begin = (request) => {
         item.file.relativePath,
         request,
         bytesUsed,
-        newBytesUsed
+        newBytesUsed,
+        blobPool,
+        existingBlobBytes
       )
       const relation = {
         relation: 'available-before',
@@ -389,7 +640,7 @@ const begin = (request) => {
       if (frozen.state === 'available') {
         relation.generation = frozen.generation
         bytesUsed += frozen.generation.sizeBytes
-        newBytesUsed += frozen.generation.sizeBytes
+        newBytesUsed += frozen.newBytes
       } else {
         relation.reasonCode = frozen.reason
         reasons.push(frozen.reason)
@@ -443,6 +694,11 @@ const begin = (request) => {
 
 const persist = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
+  const blobPool = bindBlobPool(request)
+  const existingBlobBytes = blobPoolBytes(blobPool)
+  if (!Number.isFinite(request.maxEvidenceBytes) || request.maxEvidenceBytes < 0) {
+    throw new Error('Invalid file-evidence Project budget.')
+  }
   const receipt = readReceipt(request.receiptName)
   if (
     receipt.phase !== 'capturing' ||
@@ -516,12 +772,14 @@ const persist = (request) => {
           change.relativePath,
           request,
           bytesUsed,
-          newBytesUsed
+          newBytesUsed,
+          blobPool,
+          existingBlobBytes
         )
         if (frozen.state === 'available') {
           relation.generation = frozen.generation
           bytesUsed += frozen.generation.sizeBytes
-          newBytesUsed += frozen.generation.sizeBytes
+          newBytesUsed += frozen.newBytes
           generations.push({
             path: change.after.path,
             generationId: frozen.generation.generationId,
@@ -689,14 +947,75 @@ const cleanup = (request) => {
 const deleteProject = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const projectName = assertSafeName(request.projectName)
-  if (!existsSync(projectName)) return { ok: true, removedProjectEntries: 0 }
-  const projectIdentity = entryIdentity(projectName)
-  if (!projectIdentity) {
-    throw new Error('Unsafe Notebook file-evidence Project directory.')
+  const receiptName = projectOwnershipReceipt(projectName)
+  if (!existsSync(receiptName)) {
+    if (entryExists(projectName)) {
+      throw new Error('Notebook file-evidence Project directory has no ownership receipt.')
+    }
+    return { ok: true, removedProjectEntries: 0 }
   }
-  removeOwnedDirectory(projectName, projectIdentity)
+  let receipt = readProjectOwnership(projectName)
+  if (receipt.phase === 'prepared') {
+    ensureProject(request)
+    receipt = readProjectOwnership(projectName)
+  }
+  const tombstoneName = projectDeletionTombstone(receipt.ownershipToken)
+
+  if (receipt.phase === 'owned') {
+    const projectPresent = entryExists(projectName)
+    const tombstonePresent = entryExists(tombstoneName)
+    const projectIdentity = entryIdentity(projectName)
+    const tombstoneIdentity = entryIdentity(tombstoneName)
+    if (projectPresent && !projectIdentity) {
+      throw new Error('Notebook file-evidence Project directory is unsafe.')
+    }
+    if (tombstonePresent && !tombstoneIdentity) {
+      throw new Error('Notebook file-evidence Project deletion tombstone is unsafe.')
+    }
+    if (projectIdentity && tombstoneIdentity) {
+      throw new Error('Notebook file-evidence Project and deletion tombstone both exist.')
+    }
+    if (projectIdentity) {
+      verifyProjectMarker(projectName, receipt.ownershipToken)
+      renameSync(projectName, tombstoneName)
+      syncDirectory()
+      const renamedIdentity = entryIdentity(tombstoneName)
+      if (!renamedIdentity || !sameIdentity(projectIdentity, renamedIdentity)) {
+        throw new Error('Notebook file-evidence Project changed during deletion rename.')
+      }
+    } else if (tombstoneIdentity) {
+      verifyProjectMarker(tombstoneName, receipt.ownershipToken)
+    } else {
+      rmSync(receiptName, { force: true })
+      syncDirectory()
+      return { ok: true, removedProjectEntries: 0 }
+    }
+    replaceJson(receiptName, {
+      schemaVersion: 1,
+      phase: 'deleting',
+      projectName,
+      ownershipToken: receipt.ownershipToken,
+      tombstoneName
+    })
+    receipt = readProjectOwnership(projectName)
+  }
+
+  if (entryIdentity(projectName)) {
+    throw new Error('Notebook file-evidence Project reappeared during deletion.')
+  }
+  if (entryExists(projectName)) {
+    throw new Error('Notebook file-evidence Project path is unsafe during deletion.')
+  }
+  const tombstonePresent = entryExists(receipt.tombstoneName)
+  const tombstoneIdentity = entryIdentity(receipt.tombstoneName)
+  if (tombstonePresent && !tombstoneIdentity) {
+    throw new Error('Notebook file-evidence Project deletion tombstone is unsafe.')
+  }
+  const removed = removeOwnedDirectory(receipt.tombstoneName, tombstoneIdentity)
   syncDirectory()
-  return { ok: true, removedProjectEntries: 1 }
+  rmSync(receiptName, { force: true })
+  syncDirectory()
+  return { ok: true, removedProjectEntries: removed ? 1 : 0 }
 }
 
 let requestText = ''
@@ -715,19 +1034,21 @@ process.stdin.on('end', () => {
     const result =
       request.operation === 'begin'
         ? begin(request)
-        : request.operation === 'persist'
-          ? persist(request)
-          : request.operation === 'complete'
-            ? complete(request)
-            : request.operation === 'cleanup'
-              ? cleanup(request)
-              : request.operation === 'delete-project'
-                ? deleteProject(request)
-                : request.operation === 'reconcile'
-                  ? reconcile(request)
-                  : (() => {
-                      throw new Error('Unsupported file-evidence worker operation.')
-                    })()
+        : request.operation === 'ensure-project'
+          ? ensureProject(request)
+          : request.operation === 'persist'
+            ? persist(request)
+            : request.operation === 'complete'
+              ? complete(request)
+              : request.operation === 'cleanup'
+                ? cleanup(request)
+                : request.operation === 'delete-project'
+                  ? deleteProject(request)
+                  : request.operation === 'reconcile'
+                    ? reconcile(request)
+                    : (() => {
+                        throw new Error('Unsupported file-evidence worker operation.')
+                      })()
     process.stdout.write(`${JSON.stringify(result)}\n`)
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error))

@@ -23,7 +23,8 @@ import {
   reconcileWorkingFileEvidence,
   runEvidenceWorker,
   startWorkingFileObservation,
-  toPortableNotebookRelativePath
+  toPortableNotebookRelativePath,
+  type WorkingFileObservationResult
 } from './working-file-observer'
 
 const execFile = promisify(execFileCallback)
@@ -40,6 +41,23 @@ const createRoots = async (): Promise<{ sessionRoot: string; dataRoot: string }>
   const dataRoot = join(sessionRoot, 'data')
   await mkdir(dataRoot, { recursive: true })
   return { sessionRoot, dataRoot }
+}
+
+const createWorkerBlobPool = async (): Promise<{
+  blobRoot: string
+  expectedBlobRootIdentity: { dev: number; ino: number }
+  blobStorageKeyPrefix: string
+  maxEvidenceBytes: number
+}> => {
+  const blobRoot = join(storageRoot as string, 'file-evidence-blobs')
+  await mkdir(blobRoot, { recursive: true })
+  const metadata = await stat(blobRoot)
+  return {
+    blobRoot,
+    expectedBlobRootIdentity: { dev: metadata.dev, ino: metadata.ino },
+    blobStorageKeyPrefix: 'file-evidence-blobs',
+    maxEvidenceBytes: 64 * 1024
+  }
 }
 
 afterEach(async () => {
@@ -145,7 +163,7 @@ describe('working-file evidence', () => {
     ).toBe(content)
   })
 
-  it('publishes equal bytes as distinct immutable generations', async () => {
+  it('publishes distinct immutable generations that reuse an equal content blob', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const observation = await startWorkingFileObservation(
       { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-equal-generations' },
@@ -163,13 +181,19 @@ describe('working-file evidence', () => {
         'utf8'
       )
     ) as {
-      relations: Array<{ generation: { checksum: string; contentStorageKey: string } }>
+      relations: Array<{
+        generation: { generationId: string; checksum: string; contentStorageKey: string }
+      }>
     }
     const generations = evidence.relations.map((relation) => relation.generation)
 
     expect(result.fileEvidence).toMatchObject({ generationCount: 2 })
+    expect(new Set(generations.map((generation) => generation.generationId))).toHaveLength(2)
     expect(new Set(generations.map((generation) => generation.checksum))).toHaveLength(1)
-    expect(new Set(generations.map((generation) => generation.contentStorageKey))).toHaveLength(2)
+    expect(new Set(generations.map((generation) => generation.contentStorageKey))).toHaveLength(1)
+    await expect(readdir(join(storageRoot as string, 'file-evidence-blobs'))).resolves.toHaveLength(
+      1
+    )
     await expect(
       Promise.all(
         generations.map((generation) =>
@@ -177,6 +201,233 @@ describe('working-file evidence', () => {
         )
       )
     ).resolves.toEqual(['same bytes', 'same bytes'])
+  })
+
+  it('reuses an unchanged baseline blob across runs without reusing generation identity', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const input = join(dataRoot, 'input.csv')
+    const content = 'stable baseline'
+    await writeFile(input, content)
+    const generationIds = ['generation-run-1', 'generation-run-2']
+
+    const run = async (runId: string): Promise<WorkingFileObservationResult> => {
+      const observation = await startWorkingFileObservation(
+        { dataRoot, notebookSessionRoot: sessionRoot, runId },
+        {
+          watchDirectory: watcherUnavailable,
+          createId: () => generationIds.shift()!,
+          maxEvidenceBytes: Buffer.byteLength(content)
+        }
+      )
+      return observation.finish()
+    }
+    const first = await run('baseline-1')
+    const second = await run('baseline-2')
+    const generation = async (
+      result: typeof first
+    ): Promise<{ generationId: string; contentStorageKey: string }> => {
+      const sidecar = JSON.parse(
+        await readFile(
+          join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+          'utf8'
+        )
+      ) as {
+        relations: Array<{ generation: { generationId: string; contentStorageKey: string } }>
+      }
+      return sidecar.relations[0].generation
+    }
+
+    const firstGeneration = await generation(first)
+    const secondGeneration = await generation(second)
+    expect(firstGeneration.generationId).not.toBe(secondGeneration.generationId)
+    expect(firstGeneration.contentStorageKey).toBe(secondGeneration.contentStorageKey)
+    await expect(readdir(join(storageRoot as string, 'file-evidence-blobs'))).resolves.toHaveLength(
+      1
+    )
+  })
+
+  it('fails closed instead of replacing a corrupted existing blob', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    await writeFile(join(dataRoot, 'input.csv'), 'original bytes')
+    const first = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'blob-original' },
+      { watchDirectory: watcherUnavailable }
+    )
+    const firstResult = await first.finish()
+    const firstSidecar = JSON.parse(
+      await readFile(
+        join(storageRoot as string, ...firstResult.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
+    const blobPath = join(
+      storageRoot as string,
+      ...firstSidecar.relations[0].generation.contentStorageKey.split('/')
+    )
+    await writeFile(blobPath, 'corrupted byte')
+
+    const second = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'blob-corrupt-reuse' },
+      { watchDirectory: watcherUnavailable }
+    )
+    const secondResult = await second.finish()
+
+    expect(secondResult.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+    await expect(readFile(blobPath, 'utf8')).resolves.toBe('corrupted byte')
+  })
+
+  it('reuses a blob without reserving space for another full copy', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    await writeFile(join(dataRoot, 'large.csv'), Buffer.alloc(64 * 1024, 1))
+    const first = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'disk-reuse-first' },
+      { watchDirectory: watcherUnavailable, diskReserveBytes: 100 }
+    )
+    await first.finish()
+
+    const second = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'disk-reuse-second' },
+      {
+        watchDirectory: watcherUnavailable,
+        diskReserveBytes: 100,
+        getAvailableBytes: vi.fn().mockResolvedValue(10_000)
+      }
+    )
+    const result = await second.finish()
+
+    expect(result.fileEvidence).toMatchObject({ generationCount: 1 })
+    await expect(readdir(join(storageRoot as string, 'file-evidence-blobs'))).resolves.toHaveLength(
+      1
+    )
+  })
+
+  it('stops adding unique blobs at the evidence budget without deleting older evidence', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const firstInput = join(dataRoot, 'first.csv')
+    await writeFile(firstInput, '123456')
+    const first = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'budget-first' },
+      { watchDirectory: watcherUnavailable, maxEvidenceBytes: 10 }
+    )
+    const firstResult = await first.finish()
+
+    const second = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'budget-second' },
+      { watchDirectory: watcherUnavailable, maxEvidenceBytes: 10 }
+    )
+    await writeFile(join(dataRoot, 'second.csv'), 'abcdef')
+    const secondResult = await second.finish()
+
+    expect(firstResult.fileEvidence).toMatchObject({ generationCount: 1 })
+    expect(secondResult.fileEvidence).toMatchObject({
+      state: 'partial',
+      generationCount: 1,
+      reasonCodes: expect.arrayContaining(['generation-budget-exceeded'])
+    })
+    await expect(readdir(join(storageRoot as string, 'file-evidence-blobs'))).resolves.toHaveLength(
+      1
+    )
+    await expect(
+      readFile(
+        join(storageRoot as string, ...firstResult.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ).resolves.toContain('first.csv')
+  })
+
+  it('serializes concurrent Project blob writes so the shared budget stays bounded', async () => {
+    await createRoots()
+    const projectRoot = join(storageRoot as string, 'notebook-file-evidence', 'project-budget')
+    const requests = await Promise.all(
+      ['one', 'two'].map(async (sessionId) => {
+        const sessionRoot = join(storageRoot as string, `notebook-${sessionId}`)
+        const dataRoot = join(sessionRoot, 'data')
+        await mkdir(dataRoot, { recursive: true })
+        await writeFile(join(dataRoot, `${sessionId}.csv`), sessionId.padEnd(6, sessionId))
+        return startWorkingFileObservation(
+          {
+            dataRoot,
+            notebookSessionRoot: sessionRoot,
+            fileEvidenceStorageRoot: storageRoot,
+            fileEvidenceRoot: join(projectRoot, sessionId),
+            fileEvidenceStoragePrefix: `notebook-file-evidence/project-budget/${sessionId}`,
+            runId: `budget-${sessionId}`
+          },
+          { watchDirectory: watcherUnavailable, maxEvidenceBytes: 10 }
+        )
+      })
+    )
+    const results = await Promise.all(requests.map((request) => request.finish()))
+
+    expect(results.map((result) => result.fileEvidence.generationCount).sort()).toEqual([0, 1])
+    expect(
+      results.some((result) =>
+        result.fileEvidence.reasonCodes.includes('generation-budget-exceeded')
+      )
+    ).toBe(true)
+    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toHaveLength(1)
+  })
+
+  it('bounds queue wait so a concurrent capture cannot delay Notebook execution indefinitely', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const secondSessionRoot = join(storageRoot as string, 'notebook-second')
+    const secondDataRoot = join(secondSessionRoot, 'data')
+    await mkdir(secondDataRoot, { recursive: true })
+    let releaseFirst!: () => void
+    let markFirstStarted!: () => void
+    const firstGate = new Promise<void>((resolveGate) => {
+      releaseFirst = resolveGate
+    })
+    const firstStarted = new Promise<void>((resolveStarted) => {
+      markFirstStarted = resolveStarted
+    })
+    let beginCalls = 0
+    const worker: typeof runEvidenceWorker = async (_evidenceRoot, request) => {
+      if (request.operation === 'begin') {
+        beginCalls += 1
+        if (beginCalls === 1) {
+          markFirstStarted()
+          await firstGate
+        }
+        return { ok: true, capturedInitialGenerations: 0 }
+      }
+      throw new Error('simulated persistence failure')
+    }
+    const firstPromise = startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'queue-first' },
+      {
+        watchDirectory: watcherUnavailable,
+        runEvidenceWorker: worker,
+        evidenceQueueTimeoutMs: 1_000
+      }
+    )
+    await firstStarted
+
+    const second = await startWorkingFileObservation(
+      {
+        dataRoot: secondDataRoot,
+        notebookSessionRoot: secondSessionRoot,
+        runId: 'queue-second'
+      },
+      {
+        watchDirectory: watcherUnavailable,
+        runEvidenceWorker: worker,
+        evidenceQueueTimeoutMs: 10
+      }
+    )
+    const secondResult = await second.finish()
+
+    expect(beginCalls).toBe(1)
+    expect(secondResult.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+    releaseFirst()
+    const first = await firstPromise
+    await first.finish()
   })
 
   it('persists Python/R multi-file scientific outputs without changing member generations', async () => {
@@ -566,6 +817,28 @@ describe('working-file evidence', () => {
     await expect(readdir(outsideRoot)).resolves.toEqual([])
   })
 
+  it('rejects evidence when the bound blob pool is replaced during publication', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-replaced-blob-pool' },
+      { watchDirectory: watcherUnavailable }
+    )
+    const blobRoot = join(storageRoot as string, 'file-evidence-blobs')
+    const displacedBlobRoot = join(storageRoot as string, 'displaced-file-evidence-blobs')
+    await rename(blobRoot, displacedBlobRoot)
+    await mkdir(blobRoot)
+    await writeFile(join(dataRoot, 'result.csv'), 'must not enter replacement')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'unavailable',
+      reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
+    })
+    await expect(readdir(blobRoot)).resolves.toEqual([])
+    await expect(readdir(displacedBlobRoot)).resolves.toEqual([])
+  })
+
   it.skipIf(process.platform === 'win32')(
     'does not block when a captured source is replaced by a FIFO',
     async () => {
@@ -578,6 +851,7 @@ describe('working-file evidence', () => {
       const evidenceRoot = join(storageRoot as string, 'file-evidence')
       await mkdir(evidenceRoot)
       const root = await stat(evidenceRoot)
+      const blobPool = await createWorkerBlobPool()
       const controller = new AbortController()
       const abort = setTimeout(() => controller.abort(), 2_000)
 
@@ -591,6 +865,7 @@ describe('working-file evidence', () => {
           runId: 'special-source-test',
           evidenceId: 'notebook-file-evidence-special-source-test',
           storageKeyPrefix: 'file-evidence',
+          ...blobPool,
           initialViewState: 'complete',
           initialFiles: [],
           maxGenerationBytes: 1024,
@@ -611,6 +886,7 @@ describe('working-file evidence', () => {
               runId: 'special-source-test',
               evidenceId: 'notebook-file-evidence-special-source-test',
               storageKeyPrefix: 'file-evidence',
+              ...blobPool,
               rootKinds: ['data'],
               rootsAvailable: true,
               reasonCodes: [],
@@ -702,6 +978,7 @@ describe('working-file evidence', () => {
     const evidenceRoot = join(storageRoot as string, 'file-evidence')
     await mkdir(evidenceRoot)
     const root = await stat(evidenceRoot)
+    const blobPool = await createWorkerBlobPool()
     await runEvidenceWorker(evidenceRoot, {
       operation: 'begin',
       expectedRootIdentity: { dev: root.dev, ino: root.ino },
@@ -711,6 +988,7 @@ describe('working-file evidence', () => {
       runId: 'interrupted',
       evidenceId: 'notebook-file-evidence-interrupted',
       storageKeyPrefix: 'file-evidence',
+      ...blobPool,
       initialViewState: 'complete',
       initialFiles: [],
       maxGenerationBytes: 1024,
@@ -776,6 +1054,7 @@ describe('working-file evidence', () => {
     const evidenceRoot = join(storageRoot as string, 'file-evidence')
     await mkdir(evidenceRoot)
     const root = await stat(evidenceRoot)
+    const blobPool = await createWorkerBlobPool()
     await runEvidenceWorker(evidenceRoot, {
       operation: 'begin',
       expectedRootIdentity: { dev: root.dev, ino: root.ino },
@@ -785,6 +1064,7 @@ describe('working-file evidence', () => {
       runId: 'rename-gap',
       evidenceId: 'notebook-file-evidence-rename-gap',
       storageKeyPrefix: 'file-evidence',
+      ...blobPool,
       initialViewState: 'complete',
       initialFiles: [],
       maxGenerationBytes: 1024,
@@ -830,11 +1110,47 @@ describe('working-file evidence', () => {
     await expect(readdir(evidenceRoot)).resolves.toEqual(['run-run-committed'])
   })
 
+  it('claims the Project before publishing evidence into its private root', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const projectRoot = join(storageRoot as string, 'notebook-file-evidence', 'project-owned')
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        fileEvidenceStorageRoot: storageRoot,
+        fileEvidenceRoot: join(projectRoot, 'session-1'),
+        fileEvidenceStoragePrefix: 'notebook-file-evidence/project-owned/session-1',
+        runId: 'run-owned-project'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'result.csv'), 'owned evidence')
+    const result = await observation.finish()
+
+    expect(result.fileEvidence.storageKey).toBe(
+      'notebook-file-evidence/project-owned/session-1/run-run-owned-project/evidence.json'
+    )
+    expect(await readdir(join(storageRoot as string, 'notebook-file-evidence'))).toContain(
+      '.project-ownership-project-owned.json'
+    )
+    expect((await readdir(projectRoot)).some((name) => name.startsWith('.ownership-'))).toBe(true)
+    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toHaveLength(1)
+  })
+
   it('deletes only the requested Project private evidence root', async () => {
     await createRoots()
     const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
-    await mkdir(join(evidenceRoot, 'project-1', 'session-1'), { recursive: true })
-    await mkdir(join(evidenceRoot, 'project-2', 'session-2'), { recursive: true })
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    for (const projectName of ['project-1', 'project-2']) {
+      await runEvidenceWorker(evidenceRoot, {
+        operation: 'ensure-project',
+        expectedRootIdentity: { dev: root.dev, ino: root.ino },
+        projectName
+      })
+    }
+    await mkdir(join(evidenceRoot, 'project-1', 'session-1'))
+    await mkdir(join(evidenceRoot, 'project-2', 'session-2'))
     await writeFile(join(evidenceRoot, 'project-1', 'session-1', 'evidence.json'), 'delete')
     await writeFile(join(evidenceRoot, 'project-2', 'session-2', 'evidence.json'), 'keep')
 
@@ -844,6 +1160,158 @@ describe('working-file evidence', () => {
     await expect(
       readFile(join(evidenceRoot, 'project-2', 'session-2', 'evidence.json'), 'utf8')
     ).resolves.toBe('keep')
+    expect(await readdir(evidenceRoot)).toContain('.project-ownership-project-2.json')
+  })
+
+  it('recovers deletion after the owned Project was renamed to its tombstone', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'ensure-project',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      projectName: 'project-rename-gap'
+    })
+    const receiptPath = join(evidenceRoot, '.project-ownership-project-rename-gap.json')
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8')) as {
+      ownershipToken: string
+    }
+    const tombstoneName = `deleting-${receipt.ownershipToken}`
+    await writeFile(join(evidenceRoot, 'project-rename-gap', 'evidence.json'), 'delete')
+    await rename(join(evidenceRoot, 'project-rename-gap'), join(evidenceRoot, tombstoneName))
+
+    await deleteWorkingFileEvidenceProject(storageRoot as string, 'project-rename-gap')
+
+    await expect(readdir(evidenceRoot)).resolves.toEqual([])
+  })
+
+  it('retries a partially removed Project tombstone without requiring its deleted marker', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'ensure-project',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      projectName: 'project-partial-delete'
+    })
+    const receiptPath = join(evidenceRoot, '.project-ownership-project-partial-delete.json')
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8')) as {
+      ownershipToken: string
+    }
+    const tombstoneName = `deleting-${receipt.ownershipToken}`
+    await writeFile(join(evidenceRoot, 'project-partial-delete', 'evidence.json'), 'delete')
+    await rename(join(evidenceRoot, 'project-partial-delete'), join(evidenceRoot, tombstoneName))
+    await writeFile(
+      receiptPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        phase: 'deleting',
+        projectName: 'project-partial-delete',
+        ownershipToken: receipt.ownershipToken,
+        tombstoneName
+      })}\n`
+    )
+    await unlink(join(evidenceRoot, tombstoneName, `.ownership-${receipt.ownershipToken}`))
+
+    await deleteWorkingFileEvidenceProject(storageRoot as string, 'project-partial-delete')
+
+    await expect(readdir(evidenceRoot)).resolves.toEqual([])
+  })
+
+  it('preserves an unowned Project directory during deletion', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
+    await mkdir(join(evidenceRoot, 'project-unowned'), { recursive: true })
+    await writeFile(join(evidenceRoot, 'project-unowned', 'keep.txt'), 'keep')
+
+    await expect(
+      deleteWorkingFileEvidenceProject(storageRoot as string, 'project-unowned')
+    ).rejects.toThrow(/has no ownership receipt/)
+    await expect(readFile(join(evidenceRoot, 'project-unowned', 'keep.txt'), 'utf8')).resolves.toBe(
+      'keep'
+    )
+  })
+
+  it('recovers a prepared Project receipt after an empty directory allocation', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
+    const projectRoot = join(evidenceRoot, 'project-prepared')
+    await mkdir(projectRoot, { recursive: true })
+    await writeFile(
+      join(evidenceRoot, '.project-ownership-project-prepared.json'),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        phase: 'prepared',
+        projectName: 'project-prepared',
+        ownershipToken: 'project-token'
+      })}\n`
+    )
+    const root = await stat(evidenceRoot)
+
+    await expect(
+      runEvidenceWorker(evidenceRoot, {
+        operation: 'ensure-project',
+        expectedRootIdentity: { dev: root.dev, ino: root.ino },
+        projectName: 'project-prepared'
+      })
+    ).resolves.toEqual({ ok: true, projectOwned: true })
+    await expect(
+      readFile(join(evidenceRoot, '.project-ownership-project-prepared.json'), 'utf8')
+    ).resolves.toContain('"phase": "owned"')
+    await expect(readdir(projectRoot)).resolves.toEqual(['.ownership-project-token'])
+  })
+
+  it('revalidates a copied Project marker after data-root migration changes its inode', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'ensure-project',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      projectName: 'project-migrated'
+    })
+    const projectRoot = join(evidenceRoot, 'project-migrated')
+    const oldProjectRoot = join(evidenceRoot, 'old-project-migrated')
+    const marker = (await readdir(projectRoot)).find((name) => name.startsWith('.ownership-'))!
+    await rename(projectRoot, oldProjectRoot)
+    await mkdir(projectRoot)
+    await writeFile(join(projectRoot, marker), '')
+    await writeFile(join(projectRoot, 'copied-evidence.json'), 'copied')
+
+    await expect(
+      runEvidenceWorker(evidenceRoot, {
+        operation: 'ensure-project',
+        expectedRootIdentity: { dev: root.dev, ino: root.ino },
+        projectName: 'project-migrated'
+      })
+    ).resolves.toEqual({ ok: true, projectOwned: true })
+    await deleteWorkingFileEvidenceProject(storageRoot as string, 'project-migrated')
+    await expect(readdir(projectRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(join(oldProjectRoot, marker), 'utf8')).resolves.toBe('')
+  })
+
+  it('preserves an owned Project when its ownership marker is missing', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'notebook-file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'ensure-project',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      projectName: 'project-marker-missing'
+    })
+    const projectRoot = join(evidenceRoot, 'project-marker-missing')
+    const marker = (await readdir(projectRoot)).find((name) => name.startsWith('.ownership-'))!
+    await unlink(join(projectRoot, marker))
+    await writeFile(join(projectRoot, 'keep.txt'), 'keep')
+
+    await expect(
+      deleteWorkingFileEvidenceProject(storageRoot as string, 'project-marker-missing')
+    ).rejects.toThrow()
+    await expect(readFile(join(projectRoot, 'keep.txt'), 'utf8')).resolves.toBe('keep')
   })
 
   it('refuses to delete a Project evidence path that was replaced by a symlink', async () => {
@@ -857,7 +1325,7 @@ describe('working-file evidence', () => {
 
     await expect(
       deleteWorkingFileEvidenceProject(storageRoot as string, 'project-symlink')
-    ).rejects.toThrow(/Unsafe Notebook file-evidence Project directory/)
+    ).rejects.toThrow(/has no ownership receipt/)
     await expect(readFile(join(outsideRoot, 'keep.txt'), 'utf8')).resolves.toBe('keep')
   })
 
