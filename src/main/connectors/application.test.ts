@@ -139,6 +139,52 @@ describe('Connector application composition', () => {
     await module.dispose?.()
   })
 
+  it('captures the immutable custom Connector target and full arguments for approval', async () => {
+    const { settings, mcpClientManager, connectorApprovals, deps } = createHarness()
+    settings.getConnectors.mockResolvedValue({
+      enabledIds: [],
+      autoAllowIds: [],
+      askToolIds: ['stable-server/lookup'],
+      customMcpServers: [
+        {
+          id: 'server-id',
+          name: 'stable-server',
+          displayName: 'Duplicate label',
+          transport: 'streamable_http',
+          url: 'https://mcp.example.test/path',
+          enabled: true
+        }
+      ]
+    })
+    mcpClientManager.listTools.mockResolvedValue([
+      { name: 'lookup', description: 'Look up a record', inputSchema: { type: 'object' } }
+    ])
+    mcpClientManager.call.mockResolvedValue({ ok: true })
+    const module = await createConnectorApplicationModule(deps)
+    await module.capability.runtimeSettings.refresh()
+    const args = { query: 'x'.repeat(400) }
+
+    await module.capability.connectorService.call(
+      'stable-server',
+      'lookup',
+      args,
+      { origin: 'internal' }
+    )
+
+    expect(connectorApprovals.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectorId: 'server-id',
+        connectorName: 'stable-server',
+        displayName: 'Duplicate label',
+        transport: 'streamable_http',
+        target: 'https://mcp.example.test',
+        argsJson: JSON.stringify(args)
+      }),
+      undefined
+    )
+    await module.dispose?.()
+  })
+
   it('forwards the conversation cancellation signal to GitHub scanning', async () => {
     const { settings, skillImportApprovals, deps } = createHarness()
     const controller = new AbortController()

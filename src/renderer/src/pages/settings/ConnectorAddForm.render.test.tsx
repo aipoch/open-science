@@ -876,6 +876,37 @@ describe('ConnectorAddForm (edit)', () => {
     expect(addButton()?.disabled).toBe(true)
   })
 
+  it('reports malformed header lines instead of silently dropping them', () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Remote memory')
+    setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
+    selectOption('Authentication', 'Static headers')
+    setValue('Headers', 'Authorization: Bearer secret\nBROKEN')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: use Name: Value.')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
+  it('requires secure storage before submitting static credentials', () => {
+    useSettingsStore.setState({ encryptionAvailable: false })
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Local memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'API_TOKEN=secret')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Secure credential storage is unavailable')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
   it('keeps a legacy Connector editable when its name matches another stored ID', () => {
     useSettingsStore.setState({
       ...createInitialSettingsState(),

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -108,6 +108,15 @@ describe('ConnectorSettingsModule', () => {
     const c = await service.getConnectors()
     expect(c?.askToolIds ?? []).not.toContain(toolId)
     expect(c?.blockedToolIds ?? []).toContain(toolId)
+  })
+
+  it('does not persist policy for an unknown connector tool', async () => {
+    await expect(
+      service.setToolPermission({ toolId: 'chemistry/not-a-real-tool', permission: 'ask' })
+    ).rejects.toThrow('Unknown')
+
+    const connectors = await service.getConnectors()
+    expect(connectors?.askToolIds ?? []).not.toContain('chemistry/not-a-real-tool')
   })
 
   it('treats block as stronger than ask when reading inconsistent stored policy', async () => {
@@ -816,6 +825,78 @@ describe('ConnectorSettingsModule', () => {
     )
   })
 
+  it('keeps persisted identity conflicts visible but unavailable', async () => {
+    const baseline = await repository.getSettings()
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        ...baseline,
+        connectors: {
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'duplicate-id',
+              name: 'duplicate-one',
+              displayName: 'Duplicate one',
+              transport: 'stdio',
+              command: 'first-command',
+              enabled: true
+            },
+            {
+              id: 'duplicate-id',
+              name: 'duplicate-two',
+              displayName: 'Duplicate two',
+              transport: 'stdio',
+              command: 'second-command',
+              enabled: true
+            },
+            {
+              id: 'chemistry',
+              name: 'built-in-id-collision',
+              displayName: 'Built-in ID collision',
+              transport: 'stdio',
+              command: 'third-command',
+              enabled: true
+            },
+            {
+              id: 'cross-id',
+              name: 'cross-name',
+              displayName: 'Cross one',
+              transport: 'stdio',
+              command: 'fourth-command',
+              enabled: true
+            },
+            {
+              id: 'cross-name',
+              name: 'cross-other',
+              displayName: 'Cross two',
+              transport: 'stdio',
+              command: 'fifth-command',
+              enabled: true
+            },
+            {
+              id: 'Invalid ID',
+              name: 'invalid-id-format',
+              displayName: 'Invalid ID format',
+              transport: 'stdio',
+              command: 'sixth-command',
+              enabled: true
+            }
+          ]
+        }
+      })
+    )
+    service = new ConnectorSettingsModule(new SettingsRepository(dir))
+
+    const snapshot = await service.listConnectors()
+
+    expect(snapshot.customServers).toHaveLength(6)
+    expect(snapshot.customServers.every((server) => server.availability === 'unavailable')).toBe(
+      true
+    )
+  })
+
   it('exports only credential names and validates imports against installed connectors', async () => {
     const snapshot = await addCustomServer({
       id: 'internal-export-id',
@@ -851,6 +932,19 @@ describe('ConnectorSettingsModule', () => {
       transport: 'streamable_http',
       url: 'https://example.com/mcp'
     })
+  })
+
+  it('rejects credentials over non-loopback HTTP before persistence', async () => {
+    await expect(
+      addCustomServer({
+        name: 'remote-http-credentials',
+        transport: 'streamable_http',
+        url: 'http://example.com/mcp',
+        headers: { Authorization: 'Bearer secret' }
+      })
+    ).rejects.toThrow(/HTTPS|loopback/)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
   })
 
   it('stores OAuth configuration publicly and OAuth state encrypted', async () => {
@@ -890,6 +984,54 @@ describe('ConnectorSettingsModule', () => {
 
     const enabled = await service.setCustomServerEnabled({ id, enabled: true })
     expect(enabled.customServers[0].enabled).toBe(true)
+  })
+
+  it('does not let a stale OAuth save replace a concurrent configuration edit', async () => {
+    const added = await addCustomServer({
+      name: 'oauth-config-race',
+      transport: 'streamable_http',
+      url: 'https://old.example/mcp',
+      oauth: { authorizationServerUrl: 'https://old.example/oauth' }
+    })
+    const id = added.customServers[0].id
+    const updateCustomServer = repository.updateCustomServer.bind(repository)
+    let releaseStaleSave!: () => void
+    const staleSaveReleased = new Promise<void>((resolve) => {
+      releaseStaleSave = resolve
+    })
+    let markStaleSaveStarted!: () => void
+    const staleSaveStarted = new Promise<void>((resolve) => {
+      markStaleSaveStarted = resolve
+    })
+    let intercepted = false
+    vi.spyOn(repository, 'updateCustomServer').mockImplementation(
+      async (serverId, server, allowMissing) => {
+        if (!intercepted && server.oauthRef) {
+          intercepted = true
+          markStaleSaveStarted()
+          await staleSaveReleased
+        }
+        return updateCustomServer(serverId, server, allowMissing)
+      }
+    )
+
+    const staleSave = service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'stale-token', token_type: 'Bearer' }
+    })
+    await staleSaveStarted
+    await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://new.example/mcp',
+      oauth: { authorizationServerUrl: 'https://new.example/oauth' }
+    })
+    releaseStaleSave()
+    await staleSave
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.url).toBe('https://new.example/mcp')
+    expect(stored?.oauth?.authorizationServerUrl).toBe('https://new.example/oauth')
+    expect(stored?.oauthRef).toBeUndefined()
   })
 
   it('stores a pre-registered client secret as an encrypted ref and applies explicit edit semantics', async () => {
