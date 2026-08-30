@@ -261,6 +261,58 @@ describe('createJobAnalysisTrigger — batching', () => {
 })
 
 describe('createJobAnalysisTrigger — queuing', () => {
+  it('serializes a later batch that reuses the pending key after claim starts', async () => {
+    let resolveFirstClaim: (() => void) | undefined
+    const turnEndCallbacks: Array<(outcome: 'succeeded' | 'failed' | 'cancelled') => void> = []
+    const transitionAnalysis = vi.fn<JobAnalysisTriggerDeps['transitionAnalysis']>((request) => {
+      if (request.state === 'dispatched' && request.jobIds.includes('job-1')) {
+        return new Promise<void>((resolve) => {
+          resolveFirstClaim = resolve
+        })
+      }
+      return Promise.resolve()
+    })
+    const deps = createDeps({
+      createMessageId: vi
+        .fn<JobAnalysisTriggerDeps['createMessageId']>()
+        .mockReturnValueOnce('msg-1')
+        .mockReturnValueOnce('msg-2'),
+      transitionAnalysis,
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallbacks.push(callback)
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob({ job_id: 'job-1' }))
+    await flushMicrotasks()
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+
+    trigger.onJobDone(makeJob({ job_id: 'job-2' }))
+    await flushMicrotasks()
+
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+
+    resolveFirstClaim?.()
+    await flushMicrotasks()
+    expect(deps.sendPrompt).toHaveBeenCalledWith(
+      'sess-1',
+      expect.stringContaining('job-1'),
+      'msg-1'
+    )
+
+    turnEndCallbacks[0]?.('succeeded')
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).toHaveBeenLastCalledWith(
+      'sess-1',
+      expect.stringContaining('job-2'),
+      'msg-2'
+    )
+  })
+
   it('serializes recovered and pending analysis batches for the same session', async () => {
     const turnEndCallbacks: Array<(outcome: 'succeeded' | 'failed' | 'cancelled') => void> = []
     const deps = createDeps({

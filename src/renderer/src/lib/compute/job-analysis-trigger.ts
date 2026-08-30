@@ -118,13 +118,13 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   const pendingBatches = new Map<string, PendingBatch>()
   // ACP permits only one turn per Session. Keep recovered and newly pending batches behind the same
   // Session-level lock even though they have different durable batch keys.
-  const activeBatchBySession = new Map<string, string>()
+  const activeBatchBySession = new Map<string, PendingBatch>()
   // job_ids currently queued, dispatching, or awaiting a durable terminal transition.
   const inFlight: InFlightSet = new Set()
   // Track jobs waiting for turn completion (dispatch sent, not yet consumed).
   const awaitingTurnEnd = new Map<
     string,
-    { sessionId: string; messageId: string; jobIds: string[] }
+    { batch: PendingBatch; sessionId: string; messageId: string; jobIds: string[] }
   >()
   const claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -145,10 +145,16 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     }
   }
 
-  const releaseSessionBatch = (key: string, sessionId: string): void => {
-    if (activeBatchBySession.get(sessionId) !== key) return
+  const releaseSessionBatch = (batch: PendingBatch, sessionId: string): void => {
+    if (activeBatchBySession.get(sessionId) !== batch) return
     activeBatchBySession.delete(sessionId)
     scheduleNextSessionBatch(sessionId)
+  }
+
+  const mergeQueuedJobs = (key: string, batch: PendingBatch): void => {
+    const queued = pendingBatches.get(key)
+    if (!queued || queued === batch) return
+    for (const [jobId, job] of queued.jobs) batch.jobs.set(jobId, job)
   }
 
   const isDoneState = (job: JobSummary): boolean =>
@@ -160,6 +166,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   // Attempts to send the batched analysis prompt for a session immediately.
   const settle = async (
     key: string,
+    batch: PendingBatch,
     sessionId: string,
     messageId: string,
     jobIds: string[],
@@ -173,7 +180,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     } finally {
       awaitingTurnEnd.delete(key)
       for (const id of jobIds) inFlight.delete(id)
-      releaseSessionBatch(key, sessionId)
+      releaseSessionBatch(batch, sessionId)
     }
   }
 
@@ -187,16 +194,24 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       deps.onTurnEnd(awaiting.sessionId, (nextOutcome) => void onTurnEndCallback(key, nextOutcome))
       return
     }
-    await settle(key, awaiting.sessionId, awaiting.messageId, awaiting.jobIds, outcome)
+    await settle(
+      key,
+      awaiting.batch,
+      awaiting.sessionId,
+      awaiting.messageId,
+      awaiting.jobIds,
+      outcome
+    )
   }
 
   const waitForAnalysisTurn = (
     key: string,
+    batch: PendingBatch,
     sessionId: string,
     messageId: string,
     jobIds: string[]
   ): void => {
-    awaitingTurnEnd.set(key, { sessionId, messageId, jobIds })
+    awaitingTurnEnd.set(key, { batch, sessionId, messageId, jobIds })
     deps.onTurnEnd(sessionId, (outcome) => void onTurnEndCallback(key, outcome))
   }
 
@@ -209,8 +224,8 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     const jobIds = jobsToSend.map((j) => j.job_id)
     const { sessionId } = batch
 
-    const activeKey = activeBatchBySession.get(sessionId)
-    if (activeKey && activeKey !== key) {
+    const activeBatch = activeBatchBySession.get(sessionId)
+    if (activeBatch && activeBatch !== batch) {
       deps.log('analysis-turn:serialized', `session=${sessionId}`)
       return
     }
@@ -225,7 +240,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       return
     }
 
-    activeBatchBySession.set(sessionId, key)
+    activeBatchBySession.set(sessionId, batch)
 
     // Mark in-flight so duplicate broadcasts are ignored.
     for (const id of jobIds) inFlight.add(id)
@@ -240,15 +255,15 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
         recoveredState = await deps.getTurnState(sessionId, messageId)
       } catch (err) {
         deps.log('analysis-turn:reconcile-failed', `session=${sessionId} error=${String(err)}`)
-        await settle(key, sessionId, messageId, jobIds, 'failed')
+        await settle(key, batch, sessionId, messageId, jobIds, 'failed')
         return
       }
       if (recoveredState !== 'missing' && recoveredState !== 'running') {
-        await settle(key, sessionId, messageId, jobIds, recoveredState)
+        await settle(key, batch, sessionId, messageId, jobIds, recoveredState)
         return
       }
       if (recoveredState === 'running') {
-        waitForAnalysisTurn(key, sessionId, messageId, jobIds)
+        waitForAnalysisTurn(key, batch, sessionId, messageId, jobIds)
         return
       }
     } else {
@@ -261,6 +276,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
         // ID and retry the idempotent durable claim before sending anything.
         batch.messageId = messageId
         batch.claimPending = true
+        mergeQueuedJobs(key, batch)
         pendingBatches.set(key, batch)
         scheduleClaimRetry(key)
         return
@@ -272,8 +288,9 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     if (deps.isSessionInFlight(sessionId)) {
       batch.messageId = messageId
       batch.waitRegistered = true
-      pendingBatches.set(key, batch)
-      deps.onTurnEnd(sessionId, () => notifyTurnEnd(key))
+      const dispatchedKey = `${sessionId}\u0000${messageId}`
+      pendingBatches.set(dispatchedKey, batch)
+      deps.onTurnEnd(sessionId, () => notifyTurnEnd(dispatchedKey))
       deps.log('analysis-turn:waiting-for-turn-end', `session=${sessionId}`)
       return
     }
@@ -288,20 +305,20 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       result = await deps.sendPrompt(sessionId, prompt, messageId)
     } catch (err) {
       deps.log('analysis-turn:send-failed', `session=${sessionId} error=${String(err)}`)
-      await settle(key, sessionId, messageId, jobIds, 'failed')
+      await settle(key, batch, sessionId, messageId, jobIds, 'failed')
       return
     }
 
     if (!result || result.messageId !== messageId) {
       deps.log('analysis-turn:send-returned-undefined', `session=${sessionId}`)
-      await settle(key, sessionId, messageId, jobIds, 'failed')
+      await settle(key, batch, sessionId, messageId, jobIds, 'failed')
       return
     }
 
     deps.log('analysis-turn:sent', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
 
     // Register these jobs as awaiting turn completion. Only a succeeded transition consumes them.
-    waitForAnalysisTurn(key, sessionId, messageId, jobIds)
+    waitForAnalysisTurn(key, batch, sessionId, messageId, jobIds)
   }
 
   const scheduleFlush = (key: string): void => {
