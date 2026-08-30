@@ -47,14 +47,9 @@ const renderWizard = async (): Promise<void> => {
 const currentSection = (label: string): Element | null =>
   container.querySelector(`section[aria-label="${label}"]`)
 
-// Walks the whole happy path the way a user would: Environment → Agent → Model (validated) →
-// Notebook → Location. Assumes a ready Claude environment is set up.
+// Reaches the early storage step from Environment.
 const goToLocationStep = async (): Promise<void> => {
-  await clickButton(/^continue$/i) // Environment → Agent
-  await clickButton(/^continue$/i) // Agent → Model provider
-  await fillRequiredProviderFields(container)
-  await clickButton(/test & continue/i) // Model provider → Notebook
-  await clickButton(/^continue$/i) // Notebook → Location
+  await clickButton(/^continue$/i) // Environment → Location
 }
 
 describe('OnboardingWizard flow', () => {
@@ -80,35 +75,36 @@ describe('OnboardingWizard flow', () => {
     )
     expect(progressItems.map((item) => item.textContent)).toEqual([
       '1Environment',
-      '2Agent runtime',
-      '3Model provider',
-      '4Notebook runtime',
-      '5Data location'
+      '2Data location',
+      '3Agent runtime',
+      '4Model provider',
+      '5Notebook runtime'
     ])
     expect(progressItems[0].getAttribute('aria-current')).toBe('step')
 
-    // ② Agent runtime.
+    // ② Data location. Keeping the current default continues without a relaunch.
     await clickButton(/^continue$/i)
+    expect(currentSection('Choose data location')).not.toBeNull()
+    expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
+    await clickButton(/^continue$/i)
+
+    // ③ Agent runtime.
     expect(currentSection('Set up the agent runtime')).not.toBeNull()
     expect(currentSection('Prepare environment')).toBeNull()
 
-    // ③ Model provider.
+    // ④ Model provider.
     await clickButton(/^continue$/i)
     expect(currentSection('Configure model')).not.toBeNull()
 
-    // A successful validation lands on ④ Notebook (not straight on Location), and onboarding is
-    // not complete yet.
+    // A successful validation lands on ⑤ Notebook, which now owns final completion.
     await fillRequiredProviderFields(container)
     await clickButton(/test & continue/i)
     expect(currentSection('Notebook runtime (optional)')).not.toBeNull()
     expect(currentSection('Configure model')).toBeNull()
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
 
-    // ⑤ Data location.
-    await clickButton(/^continue$/i)
-    expect(currentSection('Choose data location')).not.toBeNull()
-    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
-    expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
+    await clickButton(/^finish$/i)
+    expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
   })
 
   it('defaults Windows onboarding storage to the first usable non-system drive', async () => {
@@ -139,10 +135,10 @@ describe('OnboardingWizard flow', () => {
     expect(window.api.storage.inspectDataRoot).toHaveBeenCalledWith('D:\\')
     expect(window.api.storage.inspectDataRoot).toHaveBeenCalledTimes(1)
 
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
     await clickButton(/^restart$/i)
 
-    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith('D:\\', true)
+    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith('D:\\', false)
   })
 
   it('skips unusable or existing Windows data roots when choosing the default drive', async () => {
@@ -212,12 +208,13 @@ describe('OnboardingWizard flow', () => {
     await goToLocationStep()
 
     expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
-    await clickButton(/finish/i)
-    expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
+    await clickButton(/continue/i)
+    expect(currentSection('Set up the agent runtime')).not.toBeNull()
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
   })
 
-  it('does not replace an already configured Windows data root', async () => {
+  it('resumes at Agent when a non-default data root was persisted before relaunch', async () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
@@ -235,10 +232,10 @@ describe('OnboardingWizard flow', () => {
     readyClaudeState()
 
     await renderWizard()
-    await goToLocationStep()
 
     expect(window.api.localFs.listDrives).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('E:\\Research\\OpenScience')
+    expect(currentSection('Set up the agent runtime')).not.toBeNull()
+    expect(currentSection('Choose data location')).toBeNull()
   })
 
   it('does not probe alternate drives for legacy data after its move prompt was dismissed', async () => {
@@ -320,18 +317,30 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
 
-    // Location → Notebook → Model provider.
-    await clickButton(/^back$/i)
-    expect(currentSection('Notebook runtime (optional)')).not.toBeNull()
-    await clickButton(/^back$/i)
-    expect(currentSection('Configure model')).not.toBeNull()
-
-    // The draft lives in the shell, so it survives the detour to the Agent step and back.
-    await clickButton(/^back$/i)
-    expect(currentSection('Set up the agent runtime')).not.toBeNull()
+    // Location → Environment, then walk forward to Notebook.
     await clickButton(/^back$/i)
     expect(currentSection('Prepare environment')).not.toBeNull()
 
+    await clickButton(/^continue$/i)
+    await clickButton(/^continue$/i)
+    expect(currentSection('Set up the agent runtime')).not.toBeNull()
+    await clickButton(/^continue$/i)
+    expect(currentSection('Configure model')).not.toBeNull()
+    await fillRequiredProviderFields(container)
+    await clickButton(/test & continue/i)
+    expect(currentSection('Notebook runtime (optional)')).not.toBeNull()
+
+    // Notebook → Provider → Agent → Location → Environment.
+    await clickButton(/^back$/i)
+    expect(currentSection('Configure model')).not.toBeNull()
+    await clickButton(/^back$/i)
+    expect(currentSection('Set up the agent runtime')).not.toBeNull()
+    await clickButton(/^back$/i)
+    expect(currentSection('Choose data location')).not.toBeNull()
+    await clickButton(/^back$/i)
+    expect(currentSection('Prepare environment')).not.toBeNull()
+
+    await clickButton(/^continue$/i)
     await clickButton(/^continue$/i)
     await clickButton(/^continue$/i)
     expect(container.querySelector<HTMLInputElement>('#provider-base-url')?.value).toBe(
@@ -352,7 +361,7 @@ describe('OnboardingWizard flow', () => {
     expect(container.textContent).toContain('/mnt/data/OpenScience')
 
     await clickButton(/^back$/i)
-    expect(currentSection('Notebook runtime (optional)')).not.toBeNull()
+    expect(currentSection('Prepare environment')).not.toBeNull()
     await clickButton(/^continue$/i)
 
     expect(currentSection('Choose data location')).not.toBeNull()
@@ -388,7 +397,7 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
     await clickButton(/^restart$/i)
 
     expect(document.body.textContent).toContain('Setting up your workspace')
@@ -412,7 +421,7 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
     await clickButton(/^restart$/i)
 
     expect(currentSection('Choose data location')).not.toBeNull()

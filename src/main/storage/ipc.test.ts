@@ -410,6 +410,44 @@ describe('storage IPC handlers', () => {
     expect(info.canAutoSelectDataDrive).toBe(true)
   })
 
+  it('get-info fails closed when default-root emptiness cannot be proven', async () => {
+    initDataRoot(undefined)
+    const logger = fakeDiagnosticLogger()
+    const deps = fakeDeps({
+      logger,
+      hasAnyExistingPath: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('denied'), { code: 'EIO' }))
+    })
+    registerStorageIpcHandlers(deps)
+
+    const info = (await invoke('storage:get-info')) as { canAutoSelectDataDrive: boolean }
+
+    expect(info.canAutoSelectDataDrive).toBe(false)
+    expect(logger.warn).toHaveBeenCalledWith(
+      'data root status detection failed',
+      expect.objectContaining({ errorCategory: 'system' })
+    )
+  })
+
+  it('get-info suppresses auto-selection when an interrupted onboarding already built a runtime', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'ds-runtime-home-'))
+    electronHome.path = home
+    try {
+      await mkdir(join(home, 'OpenScience', 'runtime'), { recursive: true })
+      initDataRoot(undefined)
+      registerStorageIpcHandlers(fakeDeps())
+
+      const info = (await invoke('storage:get-info')) as { canAutoSelectDataDrive: boolean }
+
+      expect(info.canAutoSelectDataDrive).toBe(false)
+    } finally {
+      electronHome.path = '/home/user'
+      initDataRoot(undefined)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
   it('get-info flags legacyDataMovePrompt for an unconfigured install with data in the config root', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-legacy-home-'))
     electronHome.path = home

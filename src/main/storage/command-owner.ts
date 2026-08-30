@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -31,7 +30,7 @@ import { exportRuntimeLocks } from '../notebook/runtime-relocation'
 import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
 import { removeNotebookWorkloadCache } from '../notebook/notebook-workload-cache-paths'
 import { detectActiveSessions } from './detect-active'
-import { isDataRootMissing } from './path-presence'
+import { hasAnyExistingPath, isDataRootMissing } from './path-presence'
 import {
   beginMigration,
   beginMigrationPreparation,
@@ -50,7 +49,7 @@ import {
 import { readMigrationMarker } from './migration-marker'
 import { availableBytes, computeStorageUsage } from './usage'
 import { broadcastToRenderers } from '../renderer-broadcast'
-import { RELOCATABLE_DATA_DIRS } from './data-directories'
+import { DATA_ROOT_DIRS, RELOCATABLE_DATA_DIRS } from './data-directories'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
@@ -116,6 +115,7 @@ type StorageCommandOwnerDeps = {
   ) => void
   notifyDataRootHandoffAborted?: () => void
   cleanupJournal?: DataRootCleanupJournal
+  hasAnyExistingPath?: typeof hasAnyExistingPath
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -215,14 +215,17 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
 
       const configRoot = resolveConfigRoot()
       const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
-      const hasUserData = RELOCATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir)))
+      const hasUserData = await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
+        RELOCATABLE_DATA_DIRS.map((dir) => join(configRoot, dir))
+      )
       legacyDataMovePrompt =
         legacyInPlace && hasUserData && storedSettings.legacyDataMovePromptDismissedAt === undefined
-      const currentRootHasUserData = RELOCATABLE_DATA_DIRS.some((dir) =>
-        existsSync(join(dataRoot, dir))
+      // Include runtime/: unlike legacy detection, onboarding must not pointer-switch away from a
+      // managed environment that was prepared before an interrupted setup resumed.
+      const currentRootHasData = await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
+        DATA_ROOT_DIRS.map((dir) => join(dataRoot, dir))
       )
-      canAutoSelectDataDrive =
-        !storedSettings.dataRoot && !currentRootHasUserData && !dataRootMissing
+      canAutoSelectDataDrive = !storedSettings.dataRoot && !currentRootHasData && !dataRootMissing
     } catch (err) {
       logger.warn('data root status detection failed', diagnosticErrorFields(err))
     }
