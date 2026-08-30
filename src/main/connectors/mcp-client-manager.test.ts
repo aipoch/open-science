@@ -809,6 +809,7 @@ describe('buildTransport', () => {
   })
 
   it('does not forward static headers across an insecure transport redirect', async () => {
+    netFetch.mockReset()
     const redirectedHeaders: Headers[] = []
     netFetch.mockImplementation(async (input, init) => {
       const url = new URL(String(input))
@@ -836,6 +837,38 @@ describe('buildTransport', () => {
       .catch(() => undefined)
 
     expect(redirectedHeaders).toEqual([])
+    await transport.close()
+  })
+
+  it('keeps static headers on a secure same-origin transport redirect', async () => {
+    netFetch.mockReset()
+    netFetch
+      .mockResolvedValueOnce(
+        new Response(null, { status: 307, headers: { location: '/redirected-mcp' } })
+      )
+      .mockResolvedValue(new Response(null, { status: 202 }))
+    const transport = buildTransport({
+      id: 'srv-http-same-origin-redirect',
+      name: 'http-same-origin-redirect-server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      headers: { 'X-API-Key': 'secret' }
+    })
+
+    await transport.start()
+    await transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+
+    expect(netFetch).toHaveBeenNthCalledWith(
+      2,
+      new URL('https://mcp.example.test/redirected-mcp'),
+      expect.objectContaining({
+        headers: expect.any(Headers),
+        method: 'POST',
+        redirect: 'manual'
+      })
+    )
+    const redirectedInit = netFetch.mock.calls[1]?.[1]
+    expect(new Headers(redirectedInit?.headers).get('X-API-Key')).toBe('secret')
     await transport.close()
   })
 

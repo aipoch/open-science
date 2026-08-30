@@ -21,6 +21,8 @@ const STDERR_LINE_LIMIT = 4 * 1024
 const STDERR_TOTAL_LIMIT = 64 * 1024
 const STDERR_REDACTION_COMPARISON_LIMIT = 4 * 1024 * 1024
 const STDERR_TRUNCATION_MARKER = '…[truncated]'
+const MAX_MCP_REDIRECTS = 5
+const MCP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 // Config for a user-added custom MCP server. OAuth state is a transient main-process projection;
 // stdio remains non-OAuth and remote servers can use OAuth, static headers, or neither.
@@ -61,6 +63,52 @@ export class McpToolCallError extends Error {
     this.name = 'McpToolCallError'
   }
 }
+
+const createCustomMcpFetch = (configuredUrl: URL): typeof fetch =>
+  async function customMcpFetch(input, init): Promise<Response> {
+    const inputRequest = typeof input === 'string' || input instanceof URL ? undefined : input
+    let target = new URL(inputRequest?.url ?? input.toString())
+    let requestInit = init
+
+    for (let redirects = 0; ; redirects += 1) {
+      assertSecureCustomMcpUrl(target.toString())
+      if (target.origin !== configuredUrl.origin) {
+        throw new Error('Remote MCP server redirects must stay on the configured origin.')
+      }
+
+      const response = await netFetchStandard(target, { ...requestInit, redirect: 'manual' })
+      if (!MCP_REDIRECT_STATUSES.has(response.status)) return response
+
+      const location = response.headers.get('location')
+      if (!location || redirects >= MAX_MCP_REDIRECTS) {
+        await response.body?.cancel()
+        throw new Error('Remote MCP server redirect is invalid.')
+      }
+
+      const next = new URL(location, target)
+      assertSecureCustomMcpUrl(next.toString())
+      if (next.origin !== configuredUrl.origin) {
+        await response.body?.cancel()
+        throw new Error('Remote MCP server redirects must stay on the configured origin.')
+      }
+
+      const method = (requestInit?.method ?? inputRequest?.method ?? 'GET').toUpperCase()
+      if (
+        response.status === 303 ||
+        ((response.status === 301 || response.status === 302) && method === 'POST')
+      ) {
+        const headers = new Headers(requestInit?.headers ?? inputRequest?.headers)
+        headers.delete('content-encoding')
+        headers.delete('content-language')
+        headers.delete('content-location')
+        headers.delete('content-type')
+        requestInit = { ...requestInit, body: undefined, headers, method: 'GET' }
+      }
+
+      await response.body?.cancel()
+      target = next
+    }
+  }
 
 type McpClientManagerDeps = {
   createClient?: (
@@ -318,8 +366,9 @@ export function buildTransport(
         throw new Error(`custom MCP server "${config.name}" is missing a url for streamable_http`)
       }
       assertSecureCustomMcpUrl(config.url)
-      return new StreamableHTTPClientTransport(new URL(config.url), {
-        fetch: netFetchStandard,
+      const url = new URL(config.url)
+      return new StreamableHTTPClientTransport(url, {
+        fetch: createCustomMcpFetch(url),
         ...(authProvider ? { authProvider } : {}),
         ...(config.headers ? { requestInit: { headers: config.headers } } : {})
       })
@@ -329,8 +378,9 @@ export function buildTransport(
         throw new Error(`custom MCP server "${config.name}" is missing a url for sse`)
       }
       assertSecureCustomMcpUrl(config.url)
-      return new SSEClientTransport(new URL(config.url), {
-        fetch: netFetchStandard,
+      const url = new URL(config.url)
+      return new SSEClientTransport(url, {
+        fetch: createCustomMcpFetch(url),
         ...(authProvider ? { authProvider } : {}),
         ...(config.headers ? { requestInit: { headers: config.headers } } : {})
       })
