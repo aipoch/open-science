@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -34,6 +34,39 @@ describe('SessionCacheOwner', () => {
 
     await expect(readdir(storageRoot, { recursive: true })).resolves.toEqual([])
   })
+
+  it.each(['Project', 'Session'] as const)(
+    'rejects a symlinked %s cache parent without writing outside the data root',
+    async (scope) => {
+      const outside = await mkdtemp(join(tmpdir(), 'open-science-session-cache-outside-'))
+      const cacheRoot = join(storageRoot, 'compute', 'session-cache')
+      await mkdir(cacheRoot, { recursive: true })
+      if (scope === 'Project') {
+        await symlink(
+          outside,
+          join(cacheRoot, 'project-1'),
+          process.platform === 'win32' ? 'junction' : 'dir'
+        )
+      } else {
+        const projectRoot = join(cacheRoot, 'project-1')
+        await mkdir(projectRoot)
+        await symlink(
+          outside,
+          join(projectRoot, 'session-1'),
+          process.platform === 'win32' ? 'junction' : 'dir'
+        )
+      }
+
+      try {
+        await expect(
+          owner.createOperationFile('project-1', 'session-1', 'result.csv')
+        ).rejects.toThrow(`Unsafe Session cache ${scope} directory.`)
+        await expect(readdir(outside)).resolves.toEqual([])
+      } finally {
+        await rm(outside, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('removes only the deleted Session cache', async () => {
     const removed = await owner.createOperationFile('project-1', 'session-1', 'removed.csv')

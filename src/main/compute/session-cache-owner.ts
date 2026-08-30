@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 
@@ -31,6 +31,20 @@ const assertSafeFilename = (filename: string): string => {
   return filename
 }
 
+const assertSafeDirectory = async (directory: string, label: string): Promise<void> => {
+  const entry = await lstat(directory)
+  if (entry.isSymbolicLink() || !entry.isDirectory()) {
+    throw new Error(`Unsafe Session cache ${label} directory.`)
+  }
+}
+
+const createSafeDirectory = async (directory: string, label: string): Promise<void> => {
+  await mkdir(directory).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  })
+  await assertSafeDirectory(directory, label)
+}
+
 export class SessionCacheOwner {
   private readonly root: string
   private readonly activeOperations = new Map<string, Set<Promise<void>>>()
@@ -53,7 +67,11 @@ export class SessionCacheOwner {
     const operationId = randomUUID()
     const directory = join(this.root, safeProjectId, safeSessionId, operationId)
     try {
-      await mkdir(directory, { recursive: true })
+      await mkdir(this.root, { recursive: true })
+      await assertSafeDirectory(this.root, 'root')
+      await createSafeDirectory(join(this.root, safeProjectId), 'Project')
+      await createSafeDirectory(join(this.root, safeProjectId, safeSessionId), 'Session')
+      await createSafeDirectory(directory, 'operation')
       return { operationId, path: join(directory, safeFilename), release }
     } catch (error) {
       release()
