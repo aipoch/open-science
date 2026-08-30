@@ -86,9 +86,11 @@ describe('buildStartupDiagnostics', () => {
 
   it('reuses the diagnostic credential policy before diagnostics cross IPC', () => {
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzdGFydHVwIn0.signaturevalue123'
+    const signedUrlSecret = 'signed-url-opaque-7319'
     const error = new Error(
       `request failed: Bearer bearer-opaque-7319; apiKey=key-opaque-7319; jwt=${jwt}; ` +
-        'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&ok=1'
+        'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&ok=1; ' +
+        `https://bucket.example.test/private?X-Amz-Signature=${signedUrlSecret}&version=7`
     )
 
     const result = buildStartupDiagnostics(error, { home: '/Users/alice' })
@@ -99,11 +101,13 @@ describe('buildStartupDiagnostics', () => {
       jwt,
       'alice',
       'password-opaque-7319',
-      'query-opaque-7319'
+      'query-opaque-7319',
+      signedUrlSecret
     ]) {
       expect(result).not.toContain(secret)
     }
     expect(result).toContain('[redacted]')
+    expect(result).toContain('version=7')
   })
 
   it('walks the cause chain with Caused by separators', () => {

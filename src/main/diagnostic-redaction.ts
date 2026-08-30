@@ -38,6 +38,8 @@ const TOKEN_METRIC_WORDS = new Set([
   'usage'
 ])
 
+const SIGNED_URL_QUERY_WORDS = new Set(['sig', 'signature'])
+
 const diagnosticKeyWords = (key: string): string[] =>
   key
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
@@ -75,6 +77,11 @@ const isSensitiveDiagnosticKey = (key: string): boolean => {
   ].some((suffix) => normalized.endsWith(suffix))
 }
 
+const isSensitiveUrlQueryKey = (key: string): boolean =>
+  key.toLowerCase() === 'key' ||
+  isSensitiveDiagnosticKey(key) ||
+  diagnosticKeyWords(key).some((word) => SIGNED_URL_QUERY_WORDS.has(word))
+
 const redactUrlCredentials = (rawUrl: string): string => {
   try {
     const url = new URL(rawUrl)
@@ -86,7 +93,7 @@ const redactUrlCredentials = (rawUrl: string): string => {
       changed = true
     }
     for (const key of [...url.searchParams.keys()]) {
-      if (!isSensitiveDiagnosticKey(key) && key.toLowerCase() !== 'key') continue
+      if (!isSensitiveUrlQueryKey(key)) continue
       url.searchParams.set(key, REDACTED_MARKER)
       changed = true
     }

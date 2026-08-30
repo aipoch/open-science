@@ -201,6 +201,14 @@ describe('logger: formatLine', () => {
         text: 'https://alice:malformed-url-opaque-7319@example.test:99999/path',
         secrets: ['alice', 'malformed-url-opaque-7319']
       },
+      {
+        text: 'https://bucket.example.test/private?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=aws-signature-opaque-7319&version=7',
+        secrets: ['aws-signature-opaque-7319']
+      },
+      {
+        text: 'https://storage.example.test/private?sv=2024-11-04&sig=azure-signature-opaque-7319&version=7',
+        secrets: ['azure-signature-opaque-7319']
+      },
       { text: 'sk-1234567890abcdef', secrets: ['sk-1234567890abcdef'] },
       { text: 'github_pat_1234567890abcdef', secrets: ['github_pat_1234567890abcdef'] },
       { text: 'AKIA1234567890ABCDEF', secrets: ['AKIA1234567890ABCDEF'] }
