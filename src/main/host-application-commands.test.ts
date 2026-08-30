@@ -492,7 +492,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(28)
+    expect(localOnlyChannels).toHaveLength(29)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(
@@ -528,6 +528,28 @@ describe('Host application commands', () => {
     expect(dependencies.logs.getStatus).not.toHaveBeenCalled()
     expect(dependencies.logs.openFile).not.toHaveBeenCalled()
     expect(dependencies.logs.revealInFolder).not.toHaveBeenCalled()
+  })
+
+  it('keeps the read-only Remote Access probe available only to local callers', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerHostApplicationCommands(router.registrar, dependencies)
+    const localCaller = createWebCallerContext('local-browser')
+    const remoteCaller = createWebCallerContext('remote-browser', { location: 'remote' })
+
+    await expect(
+      router.dispatcher.invoke(
+        hostApplicationCommands.remoteAccess.probe,
+        invocation([], localCaller)
+      )
+    ).resolves.toBe(remoteSnapshot)
+    await expect(
+      router.dispatcher.invoke(
+        hostApplicationCommands.remoteAccess.probe,
+        invocation([], remoteCaller)
+      )
+    ).rejects.toThrow('Channel only available from the local app: remote-access:probe')
+    expect(dependencies.remoteAccess.probe).toHaveBeenCalledOnce()
   })
 
   it('preserves the five-state Remote Access authority and freshness matrix', async () => {
@@ -593,7 +615,7 @@ describe('Host application commands', () => {
         hostApplicationCommands.remoteAccess.probe,
         invocation([], currentManager)
       )
-    ).rejects.toThrow('This action must be approved from the Open Science desktop app.')
+    ).rejects.toThrow('Channel only available from the local app: remote-access:probe')
     expect(dependencies.remoteAccess.detect).not.toHaveBeenCalled()
     expect(dependencies.remoteAccess.probe).not.toHaveBeenCalled()
   })

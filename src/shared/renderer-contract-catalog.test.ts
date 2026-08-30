@@ -13,6 +13,18 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('keeps the Remote Access probe local-only', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'remoteAccess.probe')
+    ).toMatchObject({
+      surfaceInstallation: {
+        electron: 'preload',
+        localWeb: 'web-rpc',
+        remoteWeb: 'rejecting-stub'
+      }
+    })
+  })
+
   it('keeps every logs command local-only', () => {
     const logs = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'logs')
 

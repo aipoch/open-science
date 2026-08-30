@@ -527,10 +527,8 @@ const registerHostApplicationCommands = (
         requireDesktopCaller(callerContext)
         return dependencies.remoteAccess.detect()
       },
-      'remote-access:probe': ({ callerContext }) => {
-        requireDesktopCaller(callerContext)
-        return dependencies.remoteAccess.probe()
-      },
+      'remote-access:probe': ({ callerContext }) =>
+        localCommand(callerContext, 'remote-access:probe', () => dependencies.remoteAccess.probe()),
       'remote-access:disable': ({ callerContext }) => {
         requireDesktopCaller(callerContext)
         return dependencies.remoteAccess.disable()

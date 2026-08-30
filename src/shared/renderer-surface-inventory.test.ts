@@ -183,6 +183,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   logs: ['get-status', 'open-file', 'reveal-in-folder'],
   'notebook-env': ['cancel', 'provision', 'repair'],
   notebook: ['export-ipynb', 'export-ipynb-all'],
+  'remote-access': ['probe'],
   runtime: [
     'pick-interpreter',
     'register-interpreter',
