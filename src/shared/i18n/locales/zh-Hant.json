@@ -444,6 +444,8 @@
     "Secure credential storage is unavailable. Unlock the system keychain and retry.": "安全憑證儲存無法使用。請解鎖系統鑰匙圈後重試。",
     "Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.": "參數或 URL 中不允許包含憑證。請改用加密的環境變數或標頭欄位。",
     "args appears to contain a credential.": "args 似乎包含憑證。",
+    "Duplicate credential names are not allowed on this platform.": "此平台不允許重複的憑證名稱。",
+    "Remote MCP server URL must use HTTPS or loopback HTTP.": "遠端 MCP 伺服器 URL 必須使用 HTTPS 或迴路 HTTP。",
     "Credentials unavailable": "憑證無法使用",
     "Authentication failed. Verify the username and password.": "認證失敗。請確認使用者名稱和密碼。",
     "The SSH host key is unknown. Verify it in a terminal before connecting.": "SSH 主機金鑰未知。請先在終端機中驗證，再進行連線。",

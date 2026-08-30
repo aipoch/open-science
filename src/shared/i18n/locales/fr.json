@@ -3635,6 +3635,8 @@
     "Secure credential storage is unavailable. Unlock the system keychain and retry.": "Le stockage sécurisé des informations d’identification n’est pas disponible. Déverrouillez le trousseau du système et réessayez.",
     "Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.": "Les identifiants ne sont pas autorisés dans les arguments ni les URL. Utilisez plutôt des champs d’environnement ou d’en-tête chiffrés.",
     "args appears to contain a credential.": "args semble contenir un identifiant.",
+    "Duplicate credential names are not allowed on this platform.": "Les noms d’identifiants en double ne sont pas autorisés sur cette plateforme.",
+    "Remote MCP server URL must use HTTPS or loopback HTTP.": "L’URL du serveur MCP distant doit utiliser HTTPS ou HTTP en boucle locale.",
     "Credentials unavailable": "Identifiants indisponibles",
     "Authentication failed. Verify the username and password.": "L'authentification a échoué. Vérifiez le nom d'utilisateur et le mot de passe.",
     "The SSH host key is unknown. Verify it in a terminal before connecting.": "La clé d'hôte SSH est inconnue. Vérifiez-le dans un terminal avant de vous connecter.",

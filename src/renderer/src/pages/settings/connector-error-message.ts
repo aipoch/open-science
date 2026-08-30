@@ -50,6 +50,10 @@ export const localizeConnectorError = (message: string, t: TFunction): string =>
       )
     case 'args appears to contain a credential.':
       return t('args appears to contain a credential.')
+    case 'Duplicate credential names are not allowed on this platform.':
+      return t('Duplicate credential names are not allowed on this platform.')
+    case 'Remote MCP server URL must use HTTPS or loopback HTTP.':
+      return t('Remote MCP server URL must use HTTPS or loopback HTTP.')
     default:
       if (
         /^(?:Connector|OAuth).+ must not exceed \d+ (?:characters|entries|bytes)\.$/u.test(message)

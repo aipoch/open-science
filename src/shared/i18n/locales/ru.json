@@ -3742,6 +3742,8 @@
     "Secure credential storage is unavailable. Unlock the system keychain and retry.": "Защищённое хранилище учётных данных недоступно. Разблокируйте системную связку ключей и повторите попытку.",
     "Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.": "Учётные данные нельзя указывать в аргументах или URL. Используйте зашифрованные поля переменных окружения или заголовков.",
     "args appears to contain a credential.": "Похоже, args содержит учётные данные.",
+    "Duplicate credential names are not allowed on this platform.": "Повторяющиеся имена учётных данных не допускаются на этой платформе.",
+    "Remote MCP server URL must use HTTPS or loopback HTTP.": "URL удалённого сервера MCP должен использовать HTTPS или HTTP с обратной петлёй.",
     "Credentials unavailable": "Учётные данные недоступны",
     "Authentication failed. Verify the username and password.": "Ошибка аутентификации. Убедитесь, что имя пользователя и пароль верны.",
     "The SSH host key is unknown. Verify it in a terminal before connecting.": "Ключ узла SSH неизвестен. Перед подключением подтвердите его в командной строке.",
