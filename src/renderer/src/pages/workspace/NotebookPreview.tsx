@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useEffectEvent, useRef, useState, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useRef,
+  useState,
+  type RefObject
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, RefreshCw, Variable } from 'lucide-react'
 
@@ -21,6 +29,7 @@ import type {
   NotebookKernelKind,
   NotebookLanguage,
   NotebookNamespaceSnapshot,
+  NotebookNamespaceVariable,
   NotebookRunRecord,
   NotebookRunStaleness,
   NotebookSessionReference,
@@ -277,23 +286,103 @@ const TerminalScrollback = ({
   )
 }
 
+const MAX_VARIABLE_SUGGESTIONS = 8
+
+const variablePrefixAtCaret = (
+  code: string,
+  caretOffset: number
+): { prefix: string; start: number } | undefined => {
+  const caret = Math.max(0, Math.min(caretOffset, code.length))
+  const match = code.slice(0, caret).match(/[\p{L}\p{N}_.]+$/u)
+  if (!match?.[0]) return undefined
+  return { prefix: match[0], start: caret - match[0].length }
+}
+
 // Captures one-line terminal code and submits on Enter while Shift+Enter keeps editing.
 const TerminalInput = ({
   code,
   disabled,
   language,
+  variables,
   onChange,
+  onFocusChange,
   onSubmit
 }: {
   code: string
   disabled: boolean
   language: NotebookLanguage
+  variables: readonly NotebookNamespaceVariable[]
   onChange: (value: string) => void
+  onFocusChange: (focused: boolean) => void
   onSubmit: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const listboxId = useId()
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const pendingCaretOffset = useRef<number | undefined>(undefined)
+  const [focused, setFocused] = useState(false)
+  const [caretOffset, setCaretOffset] = useState(code.length)
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
+  const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string>()
+  const prefix = variablePrefixAtCaret(code, caretOffset)
+  const suggestions = prefix
+    ? variables
+        .filter(
+          (variable) => variable.name !== prefix.prefix && variable.name.startsWith(prefix.prefix)
+        )
+        .slice(0, MAX_VARIABLE_SUGGESTIONS)
+    : []
+  const suggestionKey = `${code}\u0000${caretOffset}\u0000${suggestions
+    .map((variable) => variable.name)
+    .join('\u0000')}`
+  const suggestionsOpen =
+    focused && !disabled && suggestions.length > 0 && dismissedSuggestionKey !== suggestionKey
+  const activeSuggestion = suggestions[activeSuggestionIndex] ?? suggestions[0]
+  const activeOptionId = activeSuggestion
+    ? `${listboxId}-option-${suggestions.indexOf(activeSuggestion)}`
+    : undefined
+
+  useEffect(() => {
+    if (pendingCaretOffset.current === undefined) return
+    const nextCaretOffset = pendingCaretOffset.current
+    pendingCaretOffset.current = undefined
+    inputRef.current?.setSelectionRange(nextCaretOffset, nextCaretOffset)
+  }, [code])
+
+  const acceptSuggestion = (variable: NotebookNamespaceVariable): void => {
+    if (!prefix) return
+    const nextCaretOffset = prefix.start + variable.name.length
+    pendingCaretOffset.current = nextCaretOffset
+    setCaretOffset(nextCaretOffset)
+    setActiveSuggestionIndex(0)
+    onChange(`${code.slice(0, prefix.start)}${variable.name}${code.slice(caretOffset)}`)
+  }
+
   // Match Python REPL ergonomics while avoiding submit during IME composition.
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.nativeEvent.isComposing) return
+
+    if (suggestionsOpen) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const direction = event.key === 'ArrowDown' ? 1 : -1
+        setActiveSuggestionIndex(
+          (current) => (current + direction + suggestions.length) % suggestions.length
+        )
+        return
+      }
+      if ((event.key === 'Enter' && !event.shiftKey) || (event.key === 'Tab' && !event.shiftKey)) {
+        event.preventDefault()
+        if (activeSuggestion) acceptSuggestion(activeSuggestion)
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setDismissedSuggestionKey(suggestionKey)
+        return
+      }
+    }
+
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
 
     event.preventDefault()
@@ -305,19 +394,76 @@ const TerminalInput = ({
       <span className="pt-0.5 font-mono text-xs text-primary">
         {language === 'r' ? '>' : '>>>'}
       </span>
-      <textarea
-        rows={1}
-        value={code}
-        disabled={disabled}
-        placeholder={t('run code in this kernel...')}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoComplete="off"
-        className="min-h-0 flex-1 resize-none bg-transparent font-mono text-xs text-text-000 outline-none placeholder:text-text-300 disabled:cursor-not-allowed disabled:opacity-50"
-        data-testid="kernel-terminal-input"
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={handleKeyDown}
-      />
+      <div className="relative min-w-0 flex-1">
+        {suggestionsOpen ? (
+          <div
+            id={listboxId}
+            role="listbox"
+            aria-label={t('Variables')}
+            className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-48 overflow-y-auto rounded-md border border-border-100 bg-bg-000 py-1 shadow-card-opaque"
+          >
+            {suggestions.map((variable, index) => {
+              const active = variable === activeSuggestion
+              return (
+                <div
+                  key={variable.name}
+                  id={`${listboxId}-option-${index}`}
+                  role="option"
+                  aria-selected={active}
+                  className={cn(
+                    'flex w-full items-center justify-between gap-3 px-2 py-1 text-left font-mono text-xs',
+                    active ? 'bg-bg-300 text-text-000' : 'text-text-100 hover:bg-bg-200'
+                  )}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setActiveSuggestionIndex(index)}
+                  onClick={() => acceptSuggestion(variable)}
+                >
+                  <span className="min-w-0 truncate">{variable.name}</span>
+                  <span className="min-w-0 truncate text-[11px] text-text-300">
+                    {variable.type}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+        <textarea
+          ref={inputRef}
+          rows={1}
+          value={code}
+          disabled={disabled}
+          placeholder={t('run code in this kernel...')}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoComplete="off"
+          aria-autocomplete={suggestionsOpen ? 'list' : undefined}
+          aria-haspopup="listbox"
+          aria-controls={suggestionsOpen ? listboxId : undefined}
+          aria-activedescendant={suggestionsOpen ? activeOptionId : undefined}
+          className="min-h-0 w-full resize-none bg-transparent font-mono text-xs text-text-000 outline-none placeholder:text-text-300 disabled:cursor-not-allowed disabled:opacity-50"
+          data-testid="kernel-terminal-input"
+          onBlur={() => {
+            setFocused(false)
+            onFocusChange(false)
+          }}
+          onChange={(event) => {
+            onChange(event.target.value)
+            setCaretOffset(event.target.selectionStart)
+            setActiveSuggestionIndex(0)
+          }}
+          onFocus={() => {
+            setFocused(true)
+            setCaretOffset(inputRef.current?.selectionStart ?? code.length)
+            setActiveSuggestionIndex(0)
+            onFocusChange(true)
+          }}
+          onKeyDown={handleKeyDown}
+          onSelect={(event) => {
+            setCaretOffset(event.currentTarget.selectionStart)
+            setActiveSuggestionIndex(0)
+          }}
+        />
+      </div>
     </div>
   )
 }
@@ -329,6 +475,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const environmentScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const [notebookState, setNotebookState] = useState<NotebookSessionState | undefined>()
   const [terminalCode, setTerminalCode] = useState('')
+  const [terminalInputFocused, setTerminalInputFocused] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [submittingTarget, setSubmittingTarget] = useState<string | undefined>()
   const [actionError, setActionError] = useState<string | null>(null)
@@ -688,7 +835,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // Opening the view, switching target, or changing the private-name filter starts a fresh read.
   // Reopening never treats an old snapshot as current, and target checks drop late responses.
   useEffect(() => {
-    if (!showVariables || !activeDataLanguage || isNamespaceLost || isHistoricalEnvironmentView) {
+    if (
+      (!showVariables && !terminalInputFocused) ||
+      !activeDataLanguage ||
+      isNamespaceLost ||
+      isHistoricalEnvironmentView
+    ) {
       namespaceLoadKey.current = undefined
       return
     }
@@ -703,23 +855,24 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     isNamespaceLost,
     selectedTarget,
     showPrivateVariables,
-    showVariables
+    showVariables,
+    terminalInputFocused
   ])
 
   // Runtime events have no process key, so mark the open snapshot stale and wait for the refreshed
   // notebook state. Once the selected kernel is idle, coalesce all queued events into one read.
   useEffect(() => {
-    if (!showVariables) return
+    if (!showVariables && !terminalInputFocused) return
     return window.api.notebook.onChanged((event) => {
       if (event.sessionId !== item.notebook.sessionId) return
       namespaceRefreshQueued.current = true
       setNamespaceStatus((status) => (status === 'ready' ? 'stale' : status))
     })
-  }, [item.notebook.sessionId, showVariables])
+  }, [item.notebook.sessionId, showVariables, terminalInputFocused])
 
   useEffect(() => {
     if (
-      !showVariables ||
+      (!showVariables && !terminalInputFocused) ||
       !namespaceRefreshQueued.current ||
       isSelectedKernelRunning ||
       isNamespaceLost ||
@@ -734,7 +887,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     isNamespaceLost,
     isSelectedKernelRunning,
     notebookState,
-    showVariables
+    showVariables,
+    terminalInputFocused
   ])
 
   const activeNamespaceSnapshot =
@@ -746,6 +900,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       : undefined
   const activeNamespaceStatus =
     isNamespaceLost || isHistoricalEnvironmentView ? 'unavailable' : namespaceStatus
+  const suggestionVariables =
+    activeNamespaceStatus === 'ready' ? (activeNamespaceSnapshot?.variables ?? []) : []
   const normalizedNamespaceFilter = namespaceFilter.trim().toLocaleLowerCase()
   const visibleNamespaceVariables = (activeNamespaceSnapshot?.variables ?? []).filter(
     (variable) =>
@@ -1222,7 +1378,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                 code={terminalCode}
                 disabled={isTerminalLocked}
                 language={activeDataLanguage}
+                variables={suggestionVariables}
                 onChange={setTerminalCode}
+                onFocusChange={setTerminalInputFocused}
                 onSubmit={() => {
                   void submitTerminalCode()
                 }}

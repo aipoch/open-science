@@ -453,6 +453,102 @@ describe('NotebookPreview per-kernel tabs', () => {
     )
   })
 
+  it('suggests live variables and accepts the active option without executing', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+    vi.mocked(window.api.notebook.inspectNamespace).mockResolvedValue({
+      status: 'available',
+      language: 'python',
+      environment: 'default-python',
+      kernelEpochId: 'epoch-1',
+      variableCount: 2,
+      variablesTruncated: false,
+      variables: [
+        { name: 'frame', type: 'DataFrame', preview: '3 rows' },
+        { name: 'frameCount', type: 'int', preview: '3' }
+      ]
+    })
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'fr' } })
+
+    const listbox = await screen.findByRole('listbox', { name: 'Variables' })
+    const options = [...listbox.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(options.map((option) => option.textContent)).toEqual(['frameDataFrame', 'frameCountint'])
+    expect(options[0]?.getAttribute('aria-selected')).toBe('true')
+    expect(input.getAttribute('aria-activedescendant')).toBe(options[0]?.id)
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('listbox', { name: 'Variables' })).toBeNull()
+    fireEvent.change(input, { target: { value: 'f' } })
+    const reopened = await screen.findByRole('listbox', { name: 'Variables' })
+    const reopenedOptions = [...reopened.querySelectorAll<HTMLElement>('[role="option"]')]
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(reopenedOptions[1]?.getAttribute('aria-selected')).toBe('true')
+    expect(input.getAttribute('aria-activedescendant')).toBe(reopenedOptions[1]?.id)
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(input.value).toBe('frameCount')
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    expect(screen.queryByRole('listbox', { name: 'Variables' })).toBeNull()
+  })
+
+  it('replaces the identifier at the caret and leaves IME input untouched', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'print(fr + 1)' } })
+    input.setSelectionRange(8, 8)
+    fireEvent.select(input)
+    await screen.findByRole('listbox', { name: 'Variables' })
+
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(input.value).toBe('print(fr + 1)')
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(input.value).toBe('print(frame + 1)')
+    expect(input.selectionStart).toBe(11)
+    expect(input.selectionEnd).toBe(11)
+  })
+
+  it('closes variable suggestions as soon as the selected kernel becomes busy', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'fr' } })
+    await screen.findByRole('listbox', { name: 'Variables' })
+
+    const state = vi.mocked(window.api.notebook.state)
+    const idleState = await state.mock.results[0]?.value
+    state.mockResolvedValue({
+      ...idleState,
+      activeRunId: 'p1',
+      environments: idleState.environments.map((environment) => ({
+        ...environment,
+        status: 'running'
+      }))
+    })
+    const onChanged = vi.mocked(window.api.notebook.onChanged).mock.calls[0]?.[0]
+
+    await act(async () => {
+      onChanged?.(item.notebook)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.queryByRole('listbox', { name: 'Variables' })).toBeNull()
+    expect(input.disabled).toBe(true)
+  })
+
   it('clears a live namespace snapshot when its kernel terminates', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
 
