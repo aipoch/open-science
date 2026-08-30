@@ -170,6 +170,31 @@ describe('orchestrateAppStartup', () => {
     expect(listenersOrder).toBeLessThan(prepareOrder)
   })
 
+  it('forces exit when system shutdown is requested while prepare remains blocked', async () => {
+    vi.useFakeTimers()
+    try {
+      const preparation = deferred<{ tag: string }>()
+      const forceExit = vi.fn()
+      let requestSystemShutdown = (): void => {}
+      const deps = {
+        ...makeDeps({ prepare: vi.fn(() => preparation.promise) }),
+        installSystemShutdownListeners: (request: () => void) => {
+          requestSystemShutdown = request
+        },
+        forceExit,
+        startupSystemShutdownTimeoutMs: 25
+      } as Parameters<typeof orchestrateAppStartup<{ tag: string }>>[0]
+
+      void orchestrateAppStartup(deps)
+      requestSystemShutdown()
+      await vi.advanceTimersByTimeAsync(25)
+
+      expect(forceExit).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('drains a second instance that arrives during startup, forwarding its argv', async () => {
     const onSecondInstance = vi.fn()
     let signalDuringStartup: (argv: string[]) => void = () => {}

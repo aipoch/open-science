@@ -270,6 +270,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       return true
     },
     quit: () => app.quit(),
+    forceExit: () => app.exit(0),
     installSystemShutdownListeners: (requestSystemShutdown) => {
       signalSystemShutdown = requestSystemShutdown
 

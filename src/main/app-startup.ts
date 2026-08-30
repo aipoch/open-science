@@ -25,6 +25,8 @@ type SystemShutdownRelay = {
   bind: (handler: () => void) => void
 }
 
+const STARTUP_SYSTEM_SHUTDOWN_TIMEOUT_MS = 5_000
+
 type StartupWindowSurface = {
   focus: () => void
   isDestroyed: () => boolean
@@ -78,17 +80,30 @@ export const createSecondInstanceRelay = (): SecondInstanceRelay => {
   }
 }
 
-const createSystemShutdownRelay = (): SystemShutdownRelay => {
+const createSystemShutdownRelay = (
+  forceExit?: () => void,
+  timeoutMs = STARTUP_SYSTEM_SHUTDOWN_TIMEOUT_MS
+): SystemShutdownRelay => {
   let pending = false
   let handler: (() => void) | undefined
+  let forceExitTimer: ReturnType<typeof setTimeout> | undefined
 
   return {
     signal: () => {
       if (handler) handler()
-      else pending = true
+      else {
+        pending = true
+        // Startup preparation can block indefinitely before the bounded lifecycle owner exists.
+        // Preserve a short handoff window, then stop delaying the OS rather than hanging shutdown.
+        if (forceExit && !forceExitTimer) forceExitTimer = setTimeout(forceExit, timeoutMs)
+      }
     },
     bind: (next) => {
       handler = next
+      if (forceExitTimer) {
+        clearTimeout(forceExitTimer)
+        forceExitTimer = undefined
+      }
       if (!pending) return
       pending = false
       handler()
@@ -102,6 +117,9 @@ export type AppStartupDeps<Context> = {
   acquireSingleInstanceLock: (opts: { onSecondInstance: (argv: string[]) => void }) => boolean
   // Quits this launch when it is a secondary instance.
   quit: () => void
+  // Last-resort startup exit used only when preparation never reaches the bounded lifecycle owner.
+  forceExit?: () => void
+  startupSystemShutdownTimeoutMs?: number
   // Installs signal/native shutdown sources immediately after the primary-instance lock. The supplied
   // callback queues a request until the lifecycle's bounded shutdown owner exists.
   installSystemShutdownListeners?: (requestSystemShutdown: () => void) => void
@@ -199,7 +217,10 @@ export const orchestrateAppStartup = async <Context>(
   deps: AppStartupDeps<Context>
 ): Promise<void> => {
   const relay = createSecondInstanceRelay()
-  const systemShutdownRelay = createSystemShutdownRelay()
+  const systemShutdownRelay = createSystemShutdownRelay(
+    deps.forceExit,
+    deps.startupSystemShutdownTimeoutMs
+  )
 
   try {
     deps.diagnostics?.phase('single-instance-lock')
