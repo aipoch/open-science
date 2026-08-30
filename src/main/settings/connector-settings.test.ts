@@ -343,6 +343,30 @@ describe('ConnectorSettingsModule', () => {
     expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
   })
 
+  it('includes retained secrets when validating an updated Connector total', async () => {
+    const retainedEnvironment = Object.fromEntries(
+      Array.from({ length: 15 }, (_, index) => [`TOKEN_${index}`, 'x'.repeat(16_384)])
+    )
+    const added = await addCustomServer({
+      name: 'combined-secret-budget',
+      transport: 'stdio',
+      command: 'npx',
+      env: retainedEnvironment,
+      headers: { Authorization: 'small' }
+    })
+    keychain.encryptedValues.length = 0
+
+    await expect(
+      service.updateCustomServer({
+        id: added.customServers[0].id,
+        transport: 'stdio',
+        command: 'npx',
+        headers: { Authorization: 'x'.repeat(16_384) }
+      })
+    ).rejects.toThrow('Connector secret data must not exceed 262144 bytes.')
+    expect(keychain.encryptedValues).toEqual([])
+  })
+
   it('rejects a 65th custom Connector before persistence', async () => {
     for (let index = 0; index < 64; index += 1) {
       await addCustomServer({

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { sanitizeSettings } from './document-codec'
+import { CONNECTOR_RESOURCE_LIMITS } from './connector-resource-limits'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
 import type { StoredCustomMcpServer, StoredProvider } from './types'
@@ -922,6 +923,35 @@ describe('settings repository', () => {
 
     const settings = await repository.getSettings()
     expect(settings.providers.map((item) => item.id).sort()).toEqual(['p1', 'p2', 'p3'])
+  })
+
+  it('enforces the custom Connector capacity inside concurrent appends', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const server = (index: number): StoredCustomMcpServer => ({
+      id: `capacity-${index}`,
+      name: `capacity-${index}`,
+      displayName: `Capacity ${index}`,
+      transport: 'stdio',
+      command: 'npx',
+      enabled: true,
+      trustedAt: 1
+    })
+
+    await Promise.all(
+      Array.from({ length: CONNECTOR_RESOURCE_LIMITS.customServers - 1 }, (_, index) =>
+        repository.addCustomServer(server(index))
+      )
+    )
+    const results = await Promise.allSettled([
+      repository.addCustomServer(server(CONNECTOR_RESOURCE_LIMITS.customServers - 1)),
+      repository.addCustomServer(server(CONNECTOR_RESOURCE_LIMITS.customServers))
+    ])
+
+    expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter(({ status }) => status === 'rejected')).toHaveLength(1)
+    expect((await repository.getSettings()).connectors?.customMcpServers).toHaveLength(
+      CONNECTOR_RESOURCE_LIMITS.customServers
+    )
   })
 
   it('preserves concurrent mutations from Settings and legacy Compute callers', async () => {

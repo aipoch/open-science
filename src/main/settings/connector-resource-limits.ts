@@ -51,6 +51,28 @@ const assertSecretRecord = (values: Record<string, string> | undefined, label: s
   return totalBytes
 }
 
+const retainedSecretRecordBytes = (
+  values: Record<string, string> | undefined,
+  refs: Record<string, string> | undefined,
+  label: string
+): number => {
+  if (values !== undefined) return assertSecretRecord(values, label)
+  return Object.entries(refs ?? {}).reduce(
+    (total, [name, ref]) =>
+      total + Buffer.byteLength(name, 'utf8') + Buffer.byteLength(ref, 'utf8'),
+    0
+  )
+}
+
+const assertSecretValue = (value: string | undefined, label: string): number => {
+  if (value === undefined) return 0
+  const bytes = Buffer.byteLength(value, 'utf8')
+  if (bytes > CONNECTOR_RESOURCE_LIMITS.secretValueBytes) {
+    throw new Error(`${label} must not exceed ${CONNECTOR_RESOURCE_LIMITS.secretValueBytes} bytes.`)
+  }
+  return bytes
+}
+
 const assertOAuth = (
   oauth:
     NonNullable<AddCustomServerRequest['oauth']> | NonNullable<UpdateCustomServerRequest['oauth']>,
@@ -81,14 +103,10 @@ const assertOAuth = (
       'OAuth scope'
     )
   }
-  if (typeof oauth.clientSecret !== 'string') return 0
-  const bytes = Buffer.byteLength(oauth.clientSecret, 'utf8')
-  if (bytes > CONNECTOR_RESOURCE_LIMITS.secretValueBytes) {
-    throw new Error(
-      `OAuth client secret must not exceed ${CONNECTOR_RESOURCE_LIMITS.secretValueBytes} bytes.`
-    )
-  }
-  return bytes
+  return assertSecretValue(
+    typeof oauth.clientSecret === 'string' ? oauth.clientSecret : undefined,
+    'OAuth client secret'
+  )
 }
 
 const assertSecretTotal = (bytes: number): void => {
@@ -176,11 +194,61 @@ const assertUpdateCustomServerLimits = (
       'Connector argument'
     )
   }
-  const secretBytes =
-    assertSecretRecord(request.env, 'Connector environment variables') +
-    assertSecretRecord(request.headers, 'Connector headers') +
-    (request.oauth ? assertOAuth(request.oauth, existing.oauth) : 0)
-  assertSecretTotal(secretBytes)
+  if (request.oauth) assertOAuth(request.oauth, existing.oauth)
+
+  const changesSecretState =
+    request.env !== undefined || request.headers !== undefined || request.oauth !== undefined
+  if (!changesSecretState) return
+
+  const requestedOAuth = request.oauth
+  const nextOAuth =
+    request.transport === 'stdio' && requestedOAuth === undefined
+      ? undefined
+      : requestedOAuth === null
+        ? undefined
+        : requestedOAuth === undefined
+          ? existing.oauth
+          : requestedOAuth
+  const nextClientId =
+    requestedOAuth && requestedOAuth !== null
+      ? requestedOAuth.clientId?.trim() || undefined
+      : nextOAuth?.clientId
+  const nextAuthorizationServerUrl =
+    requestedOAuth && requestedOAuth !== null
+      ? requestedOAuth.authorizationServerUrl?.trim() || undefined
+      : nextOAuth?.authorizationServerUrl
+  const requestedClientSecret =
+    requestedOAuth && requestedOAuth !== null ? requestedOAuth.clientSecret : undefined
+  const oauthIdentityChanged =
+    nextClientId !== existing.oauth?.clientId ||
+    nextAuthorizationServerUrl !== existing.oauth?.authorizationServerUrl
+  const effectiveOAuthClientSecret = !nextOAuth
+    ? undefined
+    : typeof requestedClientSecret === 'string' && requestedClientSecret.trim()
+      ? requestedClientSecret.trim()
+      : requestedClientSecret === null || oauthIdentityChanged
+        ? undefined
+        : existing.oauthClientSecret
+  const retainedOAuthRef =
+    effectiveOAuthClientSecret === undefined &&
+    nextOAuth &&
+    requestedClientSecret !== null &&
+    !oauthIdentityChanged
+      ? existing.oauthClientSecretRef
+      : undefined
+  const environmentBytes =
+    request.env !== undefined
+      ? assertSecretRecord(request.env, 'Connector environment variables')
+      : retainedSecretRecordBytes(existing.env, existing.envRefs, 'Connector environment variables')
+  const headerBytes = nextOAuth
+    ? 0
+    : request.headers !== undefined
+      ? assertSecretRecord(request.headers, 'Connector headers')
+      : retainedSecretRecordBytes(existing.headers, existing.headerRefs, 'Connector headers')
+  const oauthBytes =
+    assertSecretValue(effectiveOAuthClientSecret, 'OAuth client secret') +
+    (retainedOAuthRef ? Buffer.byteLength(retainedOAuthRef, 'utf8') : 0)
+  assertSecretTotal(environmentBytes + headerBytes + oauthBytes)
 }
 
 export {

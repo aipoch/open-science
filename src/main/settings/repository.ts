@@ -36,6 +36,7 @@ import {
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
+import { assertCustomServerCapacity } from './connector-resource-limits'
 import {
   appendCustomServer,
   beginCustomServerDeletion,
@@ -644,6 +645,7 @@ class SettingsRepository {
   // Appends a fully-formed custom MCP server record.
   async addCustomServer(server: StoredCustomMcpServer): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
+      assertCustomServerCapacity(connectors.customMcpServers?.length ?? 0)
       connectors.customMcpServers = appendCustomServer(
         connectors.customMcpServers,
         server,

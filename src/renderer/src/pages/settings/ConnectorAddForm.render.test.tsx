@@ -789,6 +789,34 @@ describe('ConnectorAddForm (edit)', () => {
     expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ env: {} }))
   })
 
+  it('preserves named environment variables when their encrypted values are unavailable', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{
+            ...editServer,
+            hasEnv: false,
+            environmentNames: ['API_TOKEN']
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    openAdvancedSettings()
+    expect(document.body.textContent).toContain('API_TOKEN')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    await act(async () => save?.click())
+
+    const request = updateCustomServer.mock.calls[0]?.[0]
+    expect(request).not.toHaveProperty('env')
+  })
+
   it('reports malformed environment lines instead of silently dropping them', () => {
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)

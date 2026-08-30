@@ -222,7 +222,9 @@ export function ConnectorAddForm({
     (initialTemplate?.requiredSecrets?.environment ?? []).map((key) => `${key}=`).join('\n')
   )
   const [environmentUpdateMode, setEnvironmentUpdateMode] = useState<EnvironmentUpdateMode>(
-    isEdit && editServer?.hasEnv ? 'keep' : 'replace'
+    isEdit && (editServer?.hasEnv || Boolean(editServer?.environmentNames?.length))
+      ? 'keep'
+      : 'replace'
   )
   // Remote fields.
   const [url, setUrl] = useState(editServer?.url ?? initialTemplate?.url ?? '')
