@@ -64,15 +64,19 @@ const errorMessage = (error: unknown): string =>
 const unavailableFileEvidence = (): NotebookRunFileEvidence => ({
   schemaVersion: 1,
   state: 'unavailable',
+  scientificOutputCount: 0,
   managedRootsFinalState: 'unavailable',
+  scientificOutputAnalysis: 'unavailable',
   fileReads: 'unavailable',
   externalPaths: 'unavailable',
   writerAttribution: 'unavailable',
   reasonCodes: [
     'external-paths-not-observed',
+    'remote-outputs-not-observed',
     'file-reads-not-observed',
     'initial-file-generations-not-captured',
     'observation-not-started',
+    'delayed-writes-not-observed',
     'transient-files-not-captured',
     'writer-not-isolated'
   ]

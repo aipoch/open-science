@@ -8,11 +8,13 @@ import type {
   NotebookFileEvidenceReason,
   NotebookRunFileEvidence,
   NotebookRunRecord,
+  NotebookScientificOutput,
   NotebookWorkingFile
 } from '../../shared/notebook'
 import { assertDiskReserve } from '../bounded-file-io'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
+import { analyzeScientificOutputs } from './scientific-output-analysis'
 
 type WorkingFileObservationRequest = {
   dataRoot: string
@@ -74,6 +76,7 @@ type EvidenceWorkerPersistRequest = {
   rootKinds: Array<'data' | 'handoff'>
   rootsAvailable: boolean
   reasonCodes: NotebookFileEvidenceReason[]
+  scientificOutputs: NotebookScientificOutput[]
   changes: Array<{
     change: ObservedFileChange
     generation: { generationId: string; capturedAt: string }
@@ -112,7 +115,9 @@ const BASELINE_REASON_CODES: NotebookFileEvidenceReason[] = [
   'file-reads-not-observed',
   'initial-file-generations-not-captured',
   'external-paths-not-observed',
+  'remote-outputs-not-observed',
   'transient-files-not-captured',
+  'delayed-writes-not-observed',
   'writer-not-isolated'
 ]
 
@@ -136,7 +141,9 @@ const unavailableEvidence = (
 ): NotebookRunFileEvidence => ({
   schemaVersion: 1,
   state: 'unavailable',
+  scientificOutputCount: 0,
   managedRootsFinalState: 'unavailable',
+  scientificOutputAnalysis: 'unavailable',
   fileReads: 'unavailable',
   externalPaths: 'unavailable',
   writerAttribution: 'unavailable',
@@ -721,6 +728,13 @@ const persistEvidence = async (
   if (!request.runId || !SAFE_RUN_ID.test(request.runId)) {
     return { workingFiles, fileEvidence: unavailableEvidence(['run-identity-missing']) }
   }
+  const scientificOutputs = analyzeScientificOutputs(
+    changes.map((change) => ({
+      relation: change.relation,
+      relativePath: change.relativePath
+    })),
+    request.runId
+  )
 
   const evidenceId = `notebook-file-evidence-${request.runId}`
   const stagingName = `staging-${request.runId}-${randomUUID()}`
@@ -777,6 +791,7 @@ const persistEvidence = async (
         rootKinds,
         rootsAvailable: rootResults.every((result) => result.available),
         reasonCodes: rootResults.flatMap((result) => result.reasonCodes),
+        scientificOutputs,
         changes: changes.map((change) => ({
           change,
           generation: {

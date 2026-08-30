@@ -25,7 +25,9 @@ const BASELINE_REASONS = [
   'file-reads-not-observed',
   'initial-file-generations-not-captured',
   'external-paths-not-observed',
+  'remote-outputs-not-observed',
   'transient-files-not-captured',
+  'delayed-writes-not-observed',
   'writer-not-isolated'
 ]
 
@@ -233,6 +235,7 @@ const persist = (request) => {
       externalPaths: 'unavailable',
       writerAttribution: 'unavailable',
       reasonCodes,
+      scientificOutputs: request.scientificOutputs,
       relations
     }
     const serialized = `${JSON.stringify(sidecar, null, 2)}\n`
@@ -275,7 +278,9 @@ const persist = (request) => {
         storageKey: `file-evidence/${finalName}/evidence.json`,
         relationCount: relations.length,
         generationCount: generations.length,
+        scientificOutputCount: request.scientificOutputs.length,
         managedRootsFinalState: sidecar.managedRootsFinalState,
+        scientificOutputAnalysis: request.rootsAvailable ? 'partial' : 'unavailable',
         fileReads: sidecar.fileReads,
         externalPaths: sidecar.externalPaths,
         writerAttribution: sidecar.writerAttribution,

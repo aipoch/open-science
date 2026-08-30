@@ -111,7 +111,9 @@ const FILE_EVIDENCE_REASONS = new Set([
   'file-reads-not-observed',
   'initial-file-generations-not-captured',
   'external-paths-not-observed',
+  'remote-outputs-not-observed',
   'transient-files-not-captured',
+  'delayed-writes-not-observed',
   'writer-not-isolated',
   'watcher-unavailable',
   'observation-not-started',
@@ -141,6 +143,7 @@ const notebookFileEvidenceCandidate = (value: unknown): value is NotebookRunFile
   value.schemaVersion === 1 &&
   FILE_EVIDENCE_STATES.has(String(value.state)) &&
   FILE_EVIDENCE_COVERAGE.has(String(value.managedRootsFinalState)) &&
+  FILE_EVIDENCE_COVERAGE.has(String(value.scientificOutputAnalysis)) &&
   FILE_EVIDENCE_COVERAGE.has(String(value.fileReads)) &&
   FILE_EVIDENCE_COVERAGE.has(String(value.externalPaths)) &&
   FILE_EVIDENCE_COVERAGE.has(String(value.writerAttribution)) &&
@@ -151,7 +154,9 @@ const notebookFileEvidenceCandidate = (value: unknown): value is NotebookRunFile
   isOptionalSha256(value.checksum) &&
   isOptionalPortableStorageKey(value.storageKey) &&
   isOptionalNonNegativeInteger(value.relationCount) &&
-  isOptionalNonNegativeInteger(value.generationCount)
+  isOptionalNonNegativeInteger(value.generationCount) &&
+  Number.isSafeInteger(value.scientificOutputCount) &&
+  Number(value.scientificOutputCount) >= 0
 
 class UnsupportedNotebookDocumentVersionError extends DurableJsonRecoveryBarrierError {
   constructor() {

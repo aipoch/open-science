@@ -193,8 +193,14 @@ describe('NotebookRunTerminalizationOwner', () => {
       environmentCapture: { state: 'unavailable', reason: 'environment-capture-failed' },
       fileEvidence: {
         state: 'unavailable',
+        scientificOutputCount: 0,
+        scientificOutputAnalysis: 'unavailable',
         managedRootsFinalState: 'unavailable',
-        reasonCodes: expect.arrayContaining(['observation-not-started'])
+        reasonCodes: expect.arrayContaining([
+          'delayed-writes-not-observed',
+          'observation-not-started',
+          'remote-outputs-not-observed'
+        ])
       }
     })
     expect(terminalized.run).toEqual(document.runs[0])
@@ -211,7 +217,9 @@ describe('NotebookRunTerminalizationOwner', () => {
       storageKey: 'file-evidence/runs/run-evidence.json',
       relationCount: 2,
       generationCount: 1,
+      scientificOutputCount: 1,
       managedRootsFinalState: 'partial' as const,
+      scientificOutputAnalysis: 'partial' as const,
       fileReads: 'unavailable' as const,
       externalPaths: 'unavailable' as const,
       writerAttribution: 'unavailable' as const,

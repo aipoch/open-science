@@ -375,7 +375,9 @@ export type NotebookFileEvidenceReason =
   | 'file-reads-not-observed'
   | 'initial-file-generations-not-captured'
   | 'external-paths-not-observed'
+  | 'remote-outputs-not-observed'
   | 'transient-files-not-captured'
+  | 'delayed-writes-not-observed'
   | 'writer-not-isolated'
   | 'watcher-unavailable'
   | 'observation-not-started'
@@ -387,6 +389,25 @@ export type NotebookFileEvidenceReason =
   | 'evidence-persistence-failed'
   | 'run-identity-missing'
 
+export type NotebookScientificOutputStorageShape = 'single-file' | 'file-set' | 'directory-tree'
+
+export type NotebookScientificOutputRisk =
+  | 'format-validity-not-verified'
+  | 'multi-file-consistency-not-verified'
+  | 'database-state-not-verified'
+  | 'runtime-dependent-serialization'
+
+export type NotebookScientificOutput = {
+  outputId: string
+  storageShape: NotebookScientificOutputStorageShape
+  formatHint?: string
+  classificationAuthority: 'path-heuristic'
+  // Portable relation paths from the same evidence sidecar. Members may include deleted paths when
+  // a run replaced a partition or companion file while producing the logical output.
+  members: string[]
+  riskCodes: NotebookScientificOutputRisk[]
+}
+
 export type NotebookRunFileEvidence = {
   schemaVersion: 1
   state: 'complete' | 'partial' | 'unavailable'
@@ -395,7 +416,9 @@ export type NotebookRunFileEvidence = {
   storageKey?: string
   relationCount?: number
   generationCount?: number
+  scientificOutputCount: number
   managedRootsFinalState: NotebookFileEvidenceCoverage
+  scientificOutputAnalysis: NotebookFileEvidenceCoverage
   fileReads: NotebookFileEvidenceCoverage
   externalPaths: NotebookFileEvidenceCoverage
   writerAttribution: NotebookFileEvidenceCoverage

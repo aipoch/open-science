@@ -83,6 +83,8 @@ describe('working-file evidence', () => {
         storageKey: 'file-evidence/run-run-created/evidence.json',
         relationCount: 1,
         generationCount: 1,
+        scientificOutputCount: 1,
+        scientificOutputAnalysis: 'partial',
         reasonCodes: expect.arrayContaining([
           'watcher-unavailable',
           'file-reads-not-observed',
@@ -107,6 +109,13 @@ describe('working-file evidence', () => {
         authority: string
         generation: { contentStorageKey: string; capturedAt: string }
       }>
+      scientificOutputs: Array<{
+        storageShape: string
+        formatHint: string
+        classificationAuthority: string
+        members: string[]
+        riskCodes: string[]
+      }>
     }
     expect(evidence.relations[0]).toMatchObject({
       relation: 'created',
@@ -114,12 +123,102 @@ describe('working-file evidence', () => {
       authority: 'advisory',
       generation: { capturedAt: '1970-01-01T00:00:01.000Z' }
     })
+    expect(evidence.scientificOutputs).toMatchObject([
+      {
+        storageShape: 'single-file',
+        formatHint: 'text-data',
+        classificationAuthority: 'path-heuristic',
+        members: ['data/result.csv'],
+        riskCodes: ['format-validity-not-verified']
+      }
+    ])
     expect(
       await readFile(
         join(sessionRoot, ...evidence.relations[0].generation.contentStorageKey.split('/')),
         'utf8'
       )
     ).toBe(content)
+  })
+
+  it('persists Python/R multi-file scientific outputs without changing member generations', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-scientific-outputs' },
+      { watchDirectory: watcherUnavailable }
+    )
+    await mkdir(join(dataRoot, 'partitioned', 'species=setosa'), { recursive: true })
+    await mkdir(join(dataRoot, 'partitioned', 'species=virginica'), { recursive: true })
+    await mkdir(join(dataRoot, 'climate.zarr', 'temperature', 'c', '0'), { recursive: true })
+    await Promise.all([
+      writeFile(join(dataRoot, 'partitioned', 'species=setosa', 'part-0.parquet'), 'part 0'),
+      writeFile(join(dataRoot, 'partitioned', 'species=virginica', 'part-1.parquet'), 'part 1'),
+      writeFile(join(dataRoot, 'climate.zarr', 'zarr.json'), '{}'),
+      writeFile(join(dataRoot, 'climate.zarr', 'temperature', 'c', '0', '0'), 'chunk'),
+      writeFile(join(dataRoot, 'results.sqlite'), 'database'),
+      writeFile(join(dataRoot, 'results.sqlite-wal'), 'committed pages'),
+      writeFile(join(dataRoot, 'model.rds'), 'serialized R object')
+    ])
+
+    const result = await observation.finish()
+    expect(result.fileEvidence).toMatchObject({
+      schemaVersion: 1,
+      relationCount: 7,
+      generationCount: 7,
+      scientificOutputCount: 4,
+      scientificOutputAnalysis: 'partial',
+      reasonCodes: expect.arrayContaining([
+        'delayed-writes-not-observed',
+        'remote-outputs-not-observed'
+      ])
+    })
+    expect(result.workingFiles).toHaveLength(7)
+    expect(result.workingFiles.every((file) => file.generationId && file.checksum)).toBe(true)
+
+    const evidence = JSON.parse(
+      await readFile(join(sessionRoot, ...result.fileEvidence.storageKey!.split('/')), 'utf8')
+    ) as {
+      schemaVersion: number
+      scientificOutputs: Array<{
+        storageShape: string
+        formatHint: string
+        members: string[]
+        riskCodes: string[]
+      }>
+    }
+    expect(evidence.schemaVersion).toBe(1)
+    expect(evidence.scientificOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          storageShape: 'directory-tree',
+          formatHint: 'parquet-dataset',
+          members: [
+            'data/partitioned/species=setosa/part-0.parquet',
+            'data/partitioned/species=virginica/part-1.parquet'
+          ]
+        }),
+        expect.objectContaining({
+          storageShape: 'directory-tree',
+          formatHint: 'zarr',
+          members: ['data/climate.zarr/temperature/c/0/0', 'data/climate.zarr/zarr.json']
+        }),
+        expect.objectContaining({
+          storageShape: 'file-set',
+          formatHint: 'sqlite',
+          members: ['data/results.sqlite', 'data/results.sqlite-wal'],
+          riskCodes: [
+            'database-state-not-verified',
+            'format-validity-not-verified',
+            'multi-file-consistency-not-verified'
+          ]
+        }),
+        expect.objectContaining({
+          storageShape: 'single-file',
+          formatHint: 'r-serialization',
+          members: ['data/model.rds'],
+          riskCodes: ['format-validity-not-verified', 'runtime-dependent-serialization']
+        })
+      ])
+    )
   })
 
   it('records modified and deleted relations without dropping legacy working-file discovery', async () => {
@@ -358,7 +457,9 @@ describe('working-file evidence', () => {
               storageKey: 'file-evidence/run-run-replaced-root/evidence.json',
               relationCount: 1,
               generationCount: 0,
+              scientificOutputCount: 1,
               managedRootsFinalState: 'partial',
+              scientificOutputAnalysis: 'partial',
               fileReads: 'unavailable',
               externalPaths: 'unavailable',
               writerAttribution: 'unavailable',
@@ -408,6 +509,7 @@ describe('working-file evidence', () => {
               rootKinds: ['data'],
               rootsAvailable: true,
               reasonCodes: [],
+              scientificOutputs: [],
               changes: [
                 {
                   change: {
@@ -471,7 +573,9 @@ describe('working-file evidence', () => {
           storageKey: 'file-evidence/run-run-referenced/evidence.json',
           relationCount: 0,
           generationCount: 0,
+          scientificOutputCount: 0,
           managedRootsFinalState: 'partial',
+          scientificOutputAnalysis: 'partial',
           fileReads: 'unavailable',
           externalPaths: 'unavailable',
           writerAttribution: 'unavailable',
