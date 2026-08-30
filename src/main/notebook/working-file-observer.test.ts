@@ -140,6 +140,37 @@ describe('working-file evidence', () => {
     ).toBe(content)
   })
 
+  it('publishes equal bytes as distinct immutable generations', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-equal-generations' },
+      { watchDirectory: watcherUnavailable }
+    )
+    await Promise.all([
+      writeFile(join(dataRoot, 'first.csv'), 'same bytes'),
+      writeFile(join(dataRoot, 'second.csv'), 'same bytes')
+    ])
+
+    const result = await observation.finish()
+    const evidence = JSON.parse(
+      await readFile(join(sessionRoot, ...result.fileEvidence.storageKey!.split('/')), 'utf8')
+    ) as {
+      relations: Array<{ generation: { checksum: string; contentStorageKey: string } }>
+    }
+    const generations = evidence.relations.map((relation) => relation.generation)
+
+    expect(result.fileEvidence).toMatchObject({ generationCount: 2 })
+    expect(new Set(generations.map((generation) => generation.checksum))).toHaveLength(1)
+    expect(new Set(generations.map((generation) => generation.contentStorageKey))).toHaveLength(2)
+    await expect(
+      Promise.all(
+        generations.map((generation) =>
+          readFile(join(sessionRoot, ...generation.contentStorageKey.split('/')), 'utf8')
+        )
+      )
+    ).resolves.toEqual(['same bytes', 'same bytes'])
+  })
+
   it('persists Python/R multi-file scientific outputs without changing member generations', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const observation = await startWorkingFileObservation(

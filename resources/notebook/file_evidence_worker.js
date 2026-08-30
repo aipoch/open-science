@@ -7,10 +7,10 @@ const {
   existsSync,
   fstatSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readSync,
   renameSync,
   rmSync,
@@ -128,20 +128,13 @@ const copyGeneration = (change, generation, request, bytesUsed) => {
     target = undefined
 
     const checksum = hash.digest('hex')
-    const contentName = `sha256-${checksum}`
-    try {
-      renameSync(temporaryName, contentName)
-    } catch (error) {
-      if (!error || error.code !== 'EEXIST') throw error
-      const existing = readFileSync(contentName)
-      if (
-        existing.byteLength !== before.size ||
-        createHash('sha256').update(existing).digest('hex') !== checksum
-      ) {
-        throw error
-      }
-      rmSync(temporaryName, { force: true })
-    }
+    // Each relation is a distinct scientific generation even when its bytes match another
+    // relation. Publish it with an unpredictable run-local name and a no-overwrite hard link.
+    // linkSync fails on any pre-existing file or symlink, so collision handling never follows or
+    // retains an attacker-controlled path.
+    const contentName = `sha256-${checksum}-${randomUUID()}`
+    linkSync(temporaryName, contentName)
+    rmSync(temporaryName, { force: true })
     return {
       state: 'available',
       generation: {
