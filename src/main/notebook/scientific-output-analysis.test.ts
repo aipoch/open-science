@@ -9,6 +9,8 @@ const analyzeScientificOutputs = (
 describe('scientific output analysis', () => {
   it.each([
     ['data/table.csv', 'text-data', ['format-validity-not-verified']],
+    ['data/table.csv.gz', 'text-data', ['format-validity-not-verified']],
+    ['data/workbook.xlsx', 'spreadsheet', ['format-validity-not-verified']],
     ['data/frame.parquet', 'parquet', ['format-validity-not-verified']],
     ['data/frame.fst', 'fst', ['format-validity-not-verified']],
     ['data/climate.nc', 'netcdf', ['format-validity-not-verified']],

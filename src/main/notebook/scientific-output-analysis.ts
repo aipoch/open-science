@@ -41,6 +41,13 @@ const formatForPath = (
 ): { formatHint?: string; riskCodes: NotebookScientificOutputRisk[] } => {
   const path = lower(relativePath)
   const extension = posix.extname(path)
+  if (
+    ['.csv.gz', '.csv.bz2', '.csv.xz', '.tsv.gz', '.tsv.bz2', '.tsv.xz', '.txt.gz'].some((suffix) =>
+      path.endsWith(suffix)
+    )
+  ) {
+    return { formatHint: 'text-data', riskCodes: [FORMAT_RISK] }
+  }
   if (['.csv', '.tsv', '.txt', '.json', '.jsonl', '.ndjson'].includes(extension)) {
     return { formatHint: 'text-data', riskCodes: [FORMAT_RISK] }
   }

@@ -4469,6 +4469,67 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
+  it.each([
+    ['data.table', 'data.table::fwrite(value, "result.csv")'],
+    ['openxlsx', 'openxlsx::write.xlsx(value, "result.xlsx")'],
+    ['openxlsx workbook', 'openxlsx::saveWorkbook(value, "result.xlsx")'],
+    ['openxlsx2', 'openxlsx2::write_xlsx(value, "result.xlsx")'],
+    ['writexl', 'writexl::write_xlsx(value, "result.xlsx")'],
+    ['rio', 'rio::export(value, "result.csv")'],
+    ['fst', 'fst::write_fst(value, "result.fst")'],
+    ['qs', 'qs::qsave(value, "result.qs")'],
+    ['Arrow file', 'arrow::write_parquet(value, "result.parquet")'],
+    ['Arrow dataset', 'arrow::write_dataset(value, "result")'],
+    ['base workspace', 'save(value, file = "result.RData")']
+  ])('classifies an R %s output call without marking it opaque', async (_name, outputCall) => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-output-call-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run('run-1', 'r-output', `value <- data.frame(x = 1)\n${outputCall}`, 1),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps save.image conservative because it serializes the dynamic R workspace', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-save-image-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run('run-1', 'r-save-image', 'value <- 1\nsave.image("result.RData")', 1),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['dynamic-namespace'])
+    })
+  })
+
   it('classifies a base R plot with a deterministic marker loop without marking it unknown', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-plot-loop-'))
     temporaryRoots.push(storageRoot)

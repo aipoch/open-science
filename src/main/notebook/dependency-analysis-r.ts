@@ -410,8 +410,26 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
     'read_json_arrow',
     'read_parquet'
   ]
+  const arrowOutputCalls = [
+    'write_csv_arrow',
+    'write_dataset',
+    'write_feather',
+    'write_ipc_file',
+    'write_ipc_stream',
+    'write_parquet'
+  ]
+  const fstReferenceReadCalls = ['read_fst']
+  const fstOutputCalls = ['write_fst']
+  const openxlsxReferenceReadCalls = ['loadWorkbook', 'read.xlsx']
+  const openxlsxOutputCalls = ['saveWorkbook', 'write.xlsx']
+  const openxlsx2ReferenceReadCalls = ['read_xlsx', 'wb_load']
+  const openxlsx2OutputCalls = ['wb_save', 'write_xlsx']
+  const qsReferenceReadCalls = ['qread']
+  const qsOutputCalls = ['qsave']
   const terraReferenceReadCalls = ['rast', 'vect']
   const rioReferenceReadCalls = ['import']
+  const rioOutputCalls = ['export']
+  const writexlOutputCalls = ['write_xlsx']
   const tibbleConstructorCalls = ['as_tibble', 'tibble', 'tribble']
   const dataTableConstructorCalls = ['as.data.table', 'data.table', 'fread']
   const dataTableReferenceMutators = [
@@ -459,13 +477,21 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
     'file.exists',
     'message',
     'print',
+    'save',
     'saveRDS',
     'set.seed',
     'warning',
     'write.csv',
     'write.table',
+    ...arrowOutputCalls,
+    ...fstOutputCalls,
+    ...openxlsxOutputCalls,
+    ...openxlsx2OutputCalls,
+    ...qsOutputCalls,
     ...readrOutputCalls,
-    ...havenOutputCalls
+    ...havenOutputCalls,
+    ...rioOutputCalls,
+    ...writexlOutputCalls
   ]
   const tidyDataMaskCalls = [
     'arrange',
@@ -530,6 +556,10 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
   const referenceFileReadCalls = new Set([
     ...readrReferenceReadCalls,
     ...arrowReferenceReadCalls,
+    ...fstReferenceReadCalls,
+    ...openxlsxReferenceReadCalls,
+    ...openxlsx2ReferenceReadCalls,
+    ...qsReferenceReadCalls,
     ...terraReferenceReadCalls,
     ...rioReferenceReadCalls,
     'readRDS'
@@ -541,10 +571,14 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
     'Biobase',
     'data.table',
     'dplyr',
+    'fst',
     'ggplot2',
     'haven',
     'jsonlite',
     'Matrix',
+    'openxlsx',
+    'openxlsx2',
+    'qs',
     'readr',
     'readxl',
     'rio',
@@ -555,6 +589,7 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
     'tibble',
     'tidyr',
     'vroom',
+    'writexl',
     'yaml'
   ])
   const pipeOps = new Set(['%>%', '|>'])
@@ -640,6 +675,10 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
   const qualifiedReferenceFileRead = (pkg: string, name: string): boolean =>
     (pkg === 'arrow' && arrowReferenceReadCalls.includes(name)) ||
     (pkg === 'base' && name === 'readRDS') ||
+    (pkg === 'fst' && fstReferenceReadCalls.includes(name)) ||
+    (pkg === 'openxlsx' && openxlsxReferenceReadCalls.includes(name)) ||
+    (pkg === 'openxlsx2' && openxlsx2ReferenceReadCalls.includes(name)) ||
+    (pkg === 'qs' && qsReferenceReadCalls.includes(name)) ||
     (pkg === 'readr' && readrReferenceReadCalls.includes(name)) ||
     (pkg === 'rio' && rioReferenceReadCalls.includes(name)) ||
     (pkg === 'terra' && terraReferenceReadCalls.includes(name))
@@ -647,6 +686,7 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
     (pkg === 'base' && (pureSafe.has(name) || outputSafe.has(name))) ||
     qualifiedValueFileRead(pkg, name) ||
     qualifiedReferenceFileRead(pkg, name) ||
+    (pkg === 'arrow' && arrowOutputCalls.includes(name)) ||
     (['Biobase', 'SingleCellExperiment', 'SummarizedExperiment'].includes(pkg) &&
       (biocConstructors.has(name) || biocValue.has(name) || biocUnknown.has(name))) ||
     (pkg === 'data.table' &&
@@ -655,18 +695,24 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
         dataTableOutputCalls.includes(name) ||
         name === 'copy')) ||
     (pkg === 'dplyr' && tidyMask.has(name)) ||
+    (pkg === 'fst' && fstOutputCalls.includes(name)) ||
     (pkg === 'ggplot2' && ggplot2SafeCalls.includes(name)) ||
     (pkg === 'haven' &&
       (havenTabularReadCalls.includes(name) || havenOutputCalls.includes(name))) ||
+    (pkg === 'openxlsx' && openxlsxOutputCalls.includes(name)) ||
+    (pkg === 'openxlsx2' && openxlsx2OutputCalls.includes(name)) ||
+    (pkg === 'qs' && qsOutputCalls.includes(name)) ||
     (pkg === 'readr' &&
       (readrTabularReadCalls.includes(name) ||
         readrReferenceReadCalls.includes(name) ||
         readrOutputCalls.includes(name))) ||
     (pkg === 'readxl' && readxlTabularReadCalls.includes(name)) ||
+    (pkg === 'rio' && rioOutputCalls.includes(name)) ||
     (pkg === 'tibble' && tibbleConstructors.has(name)) ||
     (pkg === 'tidyr' && tidyrMask.has(name)) ||
     (pkg === 'stats' && (modelMask.has(name) || pureSafe.has(name))) ||
-    (pkg === 'utils' && outputSafe.has(name))
+    (pkg === 'utils' && outputSafe.has(name)) ||
+    (pkg === 'writexl' && writexlOutputCalls.includes(name))
   const tabularTransformName = (expr: RExpr | null | undefined): string | null => {
     const name = calledName(expr)
     if (!name || !tabularTransform.has(name)) return null
@@ -1650,6 +1696,7 @@ const analyzeRSource = (root: Node): NotebookRunDependencyFacts => {
       return
     }
     if (op === 'assign') unknown.push('dynamic-assignment')
+    if (op === 'save.image') unknown.push('dynamic-namespace')
     if (['get', 'eval', 'parse', 'substitute', 'do.call'].includes(op))
       unknown.push('dynamic-namespace')
     if (op === 'library' || op === 'require') {
