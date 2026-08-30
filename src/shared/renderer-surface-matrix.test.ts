@@ -84,6 +84,7 @@ const computePaths = [
   'compute.resetPassword',
   'compute.respondApproval',
   'compute.revealInFolder',
+  'compute.scratchClear',
   'compute.scratchSet',
   'compute.sshConfigAliases'
 ] as const

@@ -326,6 +326,7 @@ describe('preload bridge — public surface inventory', () => {
       'compute.resetPassword',
       'compute.respondApproval',
       'compute.revealInFolder',
+      'compute.scratchClear',
       'compute.scratchSet',
       'compute.sshConfigAliases',
       'databaseStartup.getState',

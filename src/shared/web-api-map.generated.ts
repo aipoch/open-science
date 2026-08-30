@@ -64,6 +64,7 @@ export const WEB_INVOKE_CHANNELS = {
   'compute.resetPassword': 'compute:reset-password',
   'compute.respondApproval': 'compute:approval-respond',
   'compute.revealInFolder': 'compute:reveal-in-folder',
+  'compute.scratchClear': 'compute:scratch:clear',
   'compute.scratchSet': 'compute:scratch:set',
   'compute.sshConfigAliases': 'compute:ssh-config-aliases',
   'github.getStars': 'github:get-stars',

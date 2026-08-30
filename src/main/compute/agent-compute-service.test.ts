@@ -12,7 +12,7 @@ type AgentComputeHarness = Readonly<{
   service: AgentComputeService
 }>
 
-const host = (providerId: string): ComputeHost => ({
+const host = (providerId: string, overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: providerId,
   providerId,
   displayName: providerId,
@@ -27,7 +27,8 @@ const host = (providerId: string): ComputeHost => ({
   detailsUpdatedAt: undefined,
   detailsUpdatedBy: undefined,
   createdAt: 1,
-  updatedAt: 1
+  updatedAt: 1,
+  ...overrides
 })
 
 const createHarness = (
@@ -74,6 +75,27 @@ describe('AgentComputeService', () => {
     await expect(service.list('session-1')).resolves.toEqual([
       expect.objectContaining({ providerId: 'ssh:available' }),
       expect.objectContaining({ providerId: 'ssh:selected' })
+    ])
+  })
+
+  it('reports a successful Probe as historical evidence rather than a live connection', async () => {
+    const { raw, service } = createHarness({
+      enabled: ['ssh:selected'],
+      selected: ['ssh:selected']
+    })
+    raw.list.mockResolvedValueOnce([
+      host('ssh:selected', {
+        probeResult: {
+          ok: true,
+          probedAt: '2020-01-01T00:00:00.000Z',
+          exitCode: 0,
+          errorTail: null
+        }
+      })
+    ])
+
+    await expect(service.listHosts('session-1')).resolves.toEqual([
+      expect.objectContaining({ status: 'last_probe_ok' })
     ])
   })
 

@@ -54,6 +54,7 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     detailsGet: vi.fn(async () => ({ doc: '# Cluster', isSkeleton: false })),
     detailsSave: vi.fn(async () => undefined),
     scratchSet: vi.fn(async () => undefined),
+    scratchClear: vi.fn(async () => undefined),
     concurrencySet: vi.fn(async () => undefined),
     listDir: vi.fn(async () => ({ path: '/work', entries: [] })),
     download: vi.fn(async () => ({ path: '/tmp/result.csv', name: 'result.csv', size: 10 })),
@@ -93,14 +94,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 31 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 32 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(31)
+    expect(publicComputeChannels).toHaveLength(32)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -177,6 +178,10 @@ describe('Compute application commands', () => {
     await router.dispatcher.invoke(
       computeApplicationCommands.scratchSet,
       invocation(['ssh:cluster', '/scratch'])
+    )
+    await router.dispatcher.invoke(
+      computeApplicationCommands.scratchClear,
+      invocation(['ssh:cluster'])
     )
     await router.dispatcher.invoke(
       computeApplicationCommands.concurrencySet,
@@ -263,6 +268,7 @@ describe('Compute application commands', () => {
       'old',
       'user'
     )
+    expect(dependencies.compute.scratchClear).toHaveBeenCalledWith('ssh:cluster')
     expect(dependencies.compute.download).toHaveBeenCalledWith(
       'ssh:cluster',
       '/work/result.csv',

@@ -19,6 +19,10 @@ import type {
   ResetPasswordHostPersistence
 } from './compute-auth-owner'
 import { computeProviderId, DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
+import {
+  parseHostConnectionPort,
+  validateHostConnectionProfile
+} from '../../shared/compute-host-connection-profile'
 import { decodeVersionedJson } from '../storage/versioned-json-decoder'
 import { ComputeConnectionError } from './connection-broker'
 import { assertSafeScratchRoot, assertSafeSshAlias } from './remote-path-security'
@@ -245,9 +249,8 @@ const serializeOverrides = (overrides: SshOverrides | undefined): string | null 
   if (!overrides) return null
   const clean: SshOverrides = {}
   if (overrides.user?.trim()) clean.user = overrides.user.trim()
-  if (typeof overrides.port === 'number' && Number.isFinite(overrides.port)) {
-    clean.port = overrides.port
-  }
+  const port = parseHostConnectionPort(overrides.port)
+  if (port !== undefined) clean.port = port
   if (overrides.identityFile?.trim()) clean.identityFile = overrides.identityFile.trim()
   return Object.keys(clean).length === 0
     ? null
@@ -314,7 +317,14 @@ class ComputeHostRepository {
   // Creates a host record. Validates the alias, the 32 KiB details cap, and rejects a duplicate
   // provider_id with a readable error before inserting. No SSH connection is made in Phase 1.
   async create(request: CreateComputeHostRequest): Promise<ComputeHost> {
-    const alias = assertSafeSshAlias(request.sshAlias)
+    const profile = validateHostConnectionProfile({
+      sshAlias: request.sshAlias,
+      displayName: request.displayName,
+      user: request.sshOverrides?.user,
+      port: request.sshOverrides?.port,
+      identityFile: request.sshOverrides?.identityFile
+    })
+    const alias = assertSafeSshAlias(profile.sshAlias)
 
     const detailsDoc = request.detailsDoc ?? ''
     if (detailsDoc.length > DETAILS_DOC_MAX_LENGTH) {
@@ -334,16 +344,19 @@ class ComputeHostRepository {
       throw new Error(`A host with alias "${alias}" is already registered.`)
     }
 
-    const displayName = request.displayName?.trim() || alias
     // A seeded details doc is authored by the user editing the Add form.
     const hasDetails = detailsDoc.length > 0
 
     const row = await client.computeHost.create({
       data: {
         providerId,
-        displayName,
+        displayName: profile.displayName,
         sshAlias: alias,
-        sshOverrides: serializeOverrides(request.sshOverrides),
+        sshOverrides: serializeOverrides({
+          user: profile.user,
+          port: profile.port,
+          identityFile: profile.identityFile
+        }),
         detailsDoc,
         detailsUpdatedBy: hasDetails ? 'user' : null,
         detailsUpdatedAt: hasDetails ? new Date() : null
@@ -779,6 +792,15 @@ class ComputeHostRepository {
     await client.computeHost.update({
       where: { providerId },
       data: { scratchRoot: safeScratchRoot, scratchPinned: true }
+    })
+  }
+
+  async clearScratchRoot(providerId: string): Promise<void> {
+    const client = await this.getClient()
+
+    await client.computeHost.update({
+      where: { providerId },
+      data: { scratchRoot: null, scratchPinned: false }
     })
   }
 

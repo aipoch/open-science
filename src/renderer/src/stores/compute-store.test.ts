@@ -453,6 +453,21 @@ describe('compute store — scratch root', () => {
     expect(scratchSet).toHaveBeenCalledWith('ssh:biowulf', '/my/scratch')
     expect(useComputeStore.getState().hosts[0].scratchPinned).toBe(true)
   })
+
+  it('clearScratch calls scratchClear and re-fetches the unpinned host', async () => {
+    const unpinnedHost = createHost({ scratchRoot: undefined, scratchPinned: false })
+    const scratchClear = vi.fn().mockResolvedValue(undefined)
+    const get = vi.fn().mockResolvedValue(unpinnedHost)
+    setComputeApi({ scratchClear, get })
+    useComputeStore.setState({
+      hosts: [createHost({ scratchRoot: '', scratchPinned: true })]
+    })
+
+    await useComputeStore.getState().clearScratch('ssh:biowulf')
+
+    expect(scratchClear).toHaveBeenCalledWith('ssh:biowulf')
+    expect(useComputeStore.getState().hosts[0].scratchPinned).toBe(false)
+  })
 })
 
 describe('compute store — concurrency limit', () => {

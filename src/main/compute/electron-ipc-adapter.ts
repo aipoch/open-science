@@ -135,6 +135,7 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:details:get': z.tuple([z.string()]),
   'compute:details:save': z.tuple([z.string(), z.string(), z.string(), detailsAuthorSchema]),
   'compute:scratch:set': z.tuple([z.string(), z.string()]),
+  'compute:scratch:clear': z.tuple([z.string()]),
   'compute:concurrency:set': z.tuple([z.string(), finiteNumberSchema]),
   'compute:session:set-concurrency-limit': z.tuple([z.string(), finiteNumberSchema]),
   'compute:session:status': z.tuple([z.string()]),
@@ -215,6 +216,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   )
   handleComputeIpc('compute:scratch:set', (_event, providerId, path) =>
     handlers.scratchSet(providerId, path)
+  )
+  handleComputeIpc('compute:scratch:clear', (_event, providerId) =>
+    handlers.scratchClear(providerId)
   )
   handleComputeIpc('compute:concurrency:set', (_event, providerId, limit) =>
     handlers.concurrencySet(providerId, limit)

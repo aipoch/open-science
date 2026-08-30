@@ -172,6 +172,8 @@ type ComputeHandlers = {
   ) => Promise<void>
   // Scratch root: set path and mark pinned.
   scratchSet: (providerId: string, path: string) => Promise<void>
+  // Scratch root: clear the override so probes may auto-detect it again.
+  scratchClear: (providerId: string) => Promise<void>
   // Enforced concurrent job limit: set 1..500.
   concurrencySet: (providerId: string, limit: number) => Promise<void>
   // Session-level concurrency control (Phase 3c, issue 04).
@@ -431,6 +433,7 @@ const createComputeHandlers = (
     detailsSave: (providerId, text, oldText, author) =>
       service.replaceDetails(providerId, { text, oldText, author }),
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
+    scratchClear: (providerId) => service.clearScratchRoot(providerId),
     concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
     setSessionConcurrencyLimit: (sessionId, limit) =>
       service.setSessionConcurrencyLimit(sessionId, limit),

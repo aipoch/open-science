@@ -211,4 +211,25 @@ describe('ComputePanel', () => {
     expect(container.querySelector('.bg-status-success-surface')).not.toBeNull()
     expect(container.querySelector('.bg-status-failure-surface')).not.toBeNull()
   })
+
+  it('labels a successful Probe as historical evidence instead of a live connection', () => {
+    useComputeStore.setState({
+      hosts: [
+        host({
+          probeResult: {
+            ok: true,
+            probedAt: '2020-01-01T00:00:00.000Z',
+            exitCode: 0,
+            errorTail: null
+          }
+        })
+      ],
+      isLoaded: true
+    })
+
+    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+
+    expect(container.textContent).toContain('Last probe succeeded')
+    expect(container.textContent).not.toContain('Connected')
+  })
 })

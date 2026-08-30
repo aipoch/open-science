@@ -426,6 +426,24 @@ describe('Compute password-host application handler', () => {
     expect(createPasswordHost).not.toHaveBeenCalled()
   })
 
+  it('rejects an invalid password-host display name before validation or persistence', async () => {
+    const { owner, createPasswordHost, acquireWithPassword } = setup()
+
+    await expect(
+      owner.createPassword({
+        sshAlias: 'cluster',
+        displayName: 'Cluster\0hidden',
+        authenticationMode: 'password',
+        username: 'researcher',
+        port: 22,
+        password: 'secret',
+        operationId: 'operation-invalid-profile'
+      })
+    ).rejects.toMatchObject({ code: 'unsupported_auth_configuration' })
+    expect(acquireWithPassword).not.toHaveBeenCalled()
+    expect(createPasswordHost).not.toHaveBeenCalled()
+  })
+
   it('replays a committed password-host creation without contacting the SSH transport', async () => {
     const committed = {
       ...publicHost(),

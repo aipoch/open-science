@@ -67,7 +67,7 @@ export type ProbeGpu = {
   count: number
 }
 
-// Structured probe snapshot (drives Connected / Probe failed chrome). Written by the probe in a later
+// Structured probe snapshot (drives Last probe succeeded / Probe failed chrome). Written by the probe in a later
 // issue; Phase 1 only reads it back if present.
 export type ProbeResult = {
   ok: boolean
@@ -122,7 +122,7 @@ export type ComputeHostSummary = {
   provider_id: string
   display_name: string
   shape: ComputeHostShape
-  status: 'connected' | 'probe_failed' | 'not_probed'
+  status: 'last_probe_ok' | 'probe_failed' | 'not_probed'
 }
 
 // Canonical Agent-facing catalog entry. Disabled hosts are omitted entirely; an enabled host is
@@ -163,7 +163,7 @@ export const computeHostSummary = (host: ComputeHost): ComputeHostSummary => ({
     host.probeResult === undefined
       ? 'not_probed'
       : host.probeResult.ok
-        ? 'connected'
+        ? 'last_probe_ok'
         : 'probe_failed'
 })
 

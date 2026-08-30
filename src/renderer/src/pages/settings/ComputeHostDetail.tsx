@@ -51,6 +51,7 @@ type DetailErrorKey =
   | 'Details must be {{limit}} characters or fewer.'
   | 'Failed to save details.'
   | 'Failed to set scratch root.'
+  | 'Failed to restore scratch auto-detection.'
   | 'Must be an integer between 1 and 500.'
   | 'Failed to set concurrency limit.'
 
@@ -81,6 +82,7 @@ export function ComputeHostDetail({
   const probingIds = useComputeStore((state) => state.probingIds)
   const saveDetails = useComputeStore((state) => state.saveDetails)
   const setScratch = useComputeStore((state) => state.setScratch)
+  const clearScratch = useComputeStore((state) => state.clearScratch)
   const setConcurrency = useComputeStore((state) => state.setConcurrency)
   const openSettingsToComputeAuthentication = useSettingsStore(
     (state) => state.openSettingsToComputeAuthentication
@@ -180,6 +182,7 @@ export function ComputeHostDetail({
   const [isEditingScratch, setIsEditingScratch] = useState(false)
   const [scratchInput, setScratchInput] = useState('')
   const [scratchSaving, setScratchSaving] = useState(false)
+  const [scratchClearing, setScratchClearing] = useState(false)
   const [scratchError, setScratchError] = useState<DetailError | undefined>(undefined)
 
   // Concurrency editor state
@@ -247,11 +250,11 @@ export function ComputeHostDetail({
   const credentialReady =
     host.authentication?.mode !== 'password' ||
     host.authentication.credentialStatus === 'configured'
-  const status: 'connected' | 'failed' | 'none' = !credentialReady
+  const status: 'last_probe_ok' | 'failed' | 'none' = !credentialReady
     ? 'none'
     : probed
       ? probed.ok
-        ? 'connected'
+        ? 'last_probe_ok'
         : 'failed'
       : 'none'
 
@@ -319,6 +322,18 @@ export function ComputeHostDetail({
     }
   }
 
+  const handleScratchClear = async (): Promise<void> => {
+    setScratchClearing(true)
+    setScratchError(undefined)
+    try {
+      await clearScratch(providerId)
+    } catch (err) {
+      setScratchError(failure(err, 'Failed to restore scratch auto-detection.'))
+    } finally {
+      setScratchClearing(false)
+    }
+  }
+
   const handleConcurrencyEdit = (): void => {
     setConcurrencyInput(String(host.concurrencyLimit ?? ''))
     setConcurrencyError(undefined)
@@ -351,7 +366,7 @@ export function ComputeHostDetail({
           <div
             className={cn(
               'flex size-10 shrink-0 items-center justify-center rounded-lg',
-              status === 'connected'
+              status === 'last_probe_ok'
                 ? 'bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground'
                 : status === 'failed'
                   ? 'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground'
@@ -364,9 +379,9 @@ export function ComputeHostDetail({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="truncate text-lg font-semibold text-foreground">{host.displayName}</h3>
-              {status === 'connected' ? (
+              {status === 'last_probe_ok' ? (
                 <Badge className="bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground">
-                  {t('Connected')}
+                  {t('Last probe succeeded')}
                 </Badge>
               ) : status === 'failed' ? (
                 <Badge className="bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground">
@@ -460,7 +475,7 @@ export function ComputeHostDetail({
       ) : null}
 
       {/* Resource summary — shown only when a successful probe has populated resource fields */}
-      {status === 'connected' && probed ? (
+      {status === 'last_probe_ok' && probed ? (
         <SettingsSection
           className="mt-6 rounded-xl border border-border bg-card p-4"
           title={t('Resources')}
@@ -780,15 +795,29 @@ export function ComputeHostDetail({
             </p>
           </div>
           {!isEditingScratch ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleScratchEdit}
-              className="shrink-0"
-            >
-              {t('Edit')}
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              {host.scratchPinned ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleScratchClear()}
+                  disabled={scratchClearing}
+                  aria-busy={scratchClearing}
+                >
+                  {t('Restore auto-detection')}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleScratchEdit}
+                disabled={scratchClearing}
+              >
+                {t('Edit')}
+              </Button>
+            </div>
           ) : null}
         </div>
 
@@ -828,7 +857,7 @@ export function ComputeHostDetail({
                 type="button"
                 size="sm"
                 onClick={() => void handleScratchSave()}
-                disabled={scratchSaving}
+                disabled={scratchSaving || scratchInput.trim().length === 0}
                 aria-busy={scratchSaving}
               >
                 {scratchSaving ? t('Saving…') : t('Save')}

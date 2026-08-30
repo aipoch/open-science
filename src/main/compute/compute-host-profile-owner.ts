@@ -297,6 +297,11 @@ export class ComputeHostProfileOwner {
     await this.repository.updateScratchPinned(providerId, assertSafeScratchRoot(path))
   }
 
+  async clearScratchRoot(providerId: string): Promise<void> {
+    if (!(await this.repository.get(providerId))) throw hostNotFound(providerId)
+    await this.repository.clearScratchRoot(providerId)
+  }
+
   async setConcurrencyLimit(providerId: string, limit: number): Promise<void> {
     if (!(await this.repository.get(providerId))) throw hostNotFound(providerId)
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) {

@@ -35,6 +35,7 @@ type ComputeCommandOwner = Pick<
   | 'detailsGet'
   | 'detailsSave'
   | 'scratchSet'
+  | 'scratchClear'
   | 'concurrencySet'
   | 'listDir'
   | 'download'
@@ -151,6 +152,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'scratchSet'>,
     OwnerResult<ComputeCommandOwner, 'scratchSet'>
   >('compute:scratch:set'),
+  scratchClear: defineApplicationCommand<
+    'compute:scratch:clear',
+    OwnerArgs<ComputeCommandOwner, 'scratchClear'>,
+    OwnerResult<ComputeCommandOwner, 'scratchClear'>
+  >('compute:scratch:clear'),
   concurrencySet: defineApplicationCommand<
     'compute:concurrency:set',
     OwnerArgs<ComputeCommandOwner, 'concurrencySet'>,
@@ -269,6 +275,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.approvalRespond,
   computeApplicationCommands.revealInFolder,
   computeApplicationCommands.scratchSet,
+  computeApplicationCommands.scratchClear,
   computeApplicationCommands.sshConfigAliases
 ] as const)
 
@@ -351,6 +358,7 @@ const registerComputeApplicationCommands = (
       'compute:details:save': ({ args }) =>
         dependencies.compute.detailsSave(args[0], args[1], args[2], args[3]),
       'compute:scratch:set': ({ args }) => dependencies.compute.scratchSet(args[0], args[1]),
+      'compute:scratch:clear': ({ args }) => dependencies.compute.scratchClear(args[0]),
       'compute:concurrency:set': ({ args }) =>
         dependencies.compute.concurrencySet(args[0], args[1]),
       'compute:list-dir': ({ args }) =>

@@ -913,6 +913,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.scratchSet': callable<(providerId: string, path: string) => Promise<void>>()('compute', [
     'compute:scratch:set'
   ]),
+  'compute.scratchClear': callable<(providerId: string) => Promise<void>>()('compute', [
+    'compute:scratch:clear'
+  ]),
   'compute.sshConfigAliases': callable<() => Promise<string[]>>()('compute', [
     'compute:ssh-config-aliases'
   ]),

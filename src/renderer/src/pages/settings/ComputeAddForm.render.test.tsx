@@ -161,6 +161,25 @@ describe('ComputeAddForm password authentication', () => {
     expect(useComputeStore.getState().createPasswordHost).not.toHaveBeenCalled()
   })
 
+  it('rejects a partially parsed SSH configuration port', async () => {
+    await act(async () => root.render(<ComputeAddForm onCreated={vi.fn()} onCancel={vi.fn()} />))
+    act(() => {
+      enter('compute-alias', 'cluster')
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.includes('Advanced'))
+        ?.click()
+    })
+    act(() => enter('compute-port', '22junk'))
+
+    const add = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Add'
+    )
+
+    expect(add?.disabled).toBe(true)
+    await act(async () => add?.click())
+    expect(useComputeStore.getState().createHost).not.toHaveBeenCalled()
+  })
+
   it('shows testing and a safe inline error while preserving correctable fields', async () => {
     let rejectCreate: ((error: Error) => void) | undefined
     const createPasswordHost = vi.fn(
