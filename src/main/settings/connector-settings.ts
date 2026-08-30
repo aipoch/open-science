@@ -36,10 +36,10 @@ import {
 } from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import {
-  hasAmbiguousCustomMcpCredentialNames,
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe
 } from '../connectors/custom-mcp-bootstrap'
+import { hasAmbiguousCustomMcpCredentialNames } from '../connectors/custom-mcp-windows-credential-names'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
