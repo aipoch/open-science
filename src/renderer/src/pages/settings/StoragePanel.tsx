@@ -64,6 +64,7 @@ const CATEGORY_LABEL_KEYS = {
   uploads: 'Uploads',
   runtime: 'Runtime',
   notebooks: 'Notebooks',
+  'notebook-file-evidence': 'Notebook evidence',
   workspaces: 'Session workspaces'
 } as const satisfies Record<UsageCategoryKey, string>
 
@@ -75,6 +76,7 @@ const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
   runtime: 'bg-storage-runtime',
   uploads: 'bg-storage-uploads',
   notebooks: 'bg-storage-notebooks',
+  'notebook-file-evidence': 'bg-storage-notebook-evidence',
   workspaces: 'bg-storage-workspaces'
 }
 

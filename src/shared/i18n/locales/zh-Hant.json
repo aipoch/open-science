@@ -1470,6 +1470,7 @@
     "Notebook runtime (optional)": "Notebook 執行環境（選用）",
     "Notebook runtimes": "Notebook 執行環境",
     "Notebooks": "Notebook",
+    "Notebook evidence": "Notebook 證據",
     "Notebooks run in an app-managed Python environment by default. You can change any of this later in Settings → Runtimes.": "Notebook 預設在應用託管的 Python 環境中執行。之後可以在「設定 → 執行環境」中修改這些設定。",
     "Notifications": "通知",
     "Earlier": "較早",

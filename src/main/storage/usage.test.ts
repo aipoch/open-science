@@ -25,6 +25,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 import { availableBytes, computeStorageUsage } from './usage'
+import { RELOCATABLE_DATA_DIRS } from './data-directories'
+import { STORAGE_USAGE_CATEGORY_KEYS } from '../../shared/storage'
 
 let dataRoot: string
 
@@ -49,6 +51,7 @@ describe('computeStorageUsage', () => {
     await writeSized(join(dataRoot, 'delegation', 'project-1', 'frame.bin'), 75)
     await writeSized(join(dataRoot, 'uploads', 'b.bin'), 50)
     await writeSized(join(dataRoot, 'workspaces', 'session-1', 'repo', 'data.bin'), 25)
+    await writeSized(join(dataRoot, 'notebook-file-evidence', 'project-1', 'generation.bin'), 125)
     await writeSized(join(dataRoot, 'runtime', 'python', 'p.bin'), 200)
     await writeSized(join(dataRoot, 'runtime', 'r', 'r.bin'), 300)
     // notebooks/ left absent.
@@ -68,9 +71,16 @@ describe('computeStorageUsage', () => {
         ]
       },
       { key: 'notebooks', bytes: 0 },
+      { key: 'notebook-file-evidence', bytes: 125 },
       { key: 'workspaces', bytes: 25 }
     ])
-    expect(usage.totalBytes).toBe(750)
+    expect(usage.totalBytes).toBe(875)
+  })
+
+  it('accounts for every relocatable data directory', () => {
+    expect(STORAGE_USAGE_CATEGORY_KEYS.filter((key) => key !== 'runtime').sort()).toEqual(
+      [...RELOCATABLE_DATA_DIRS].sort()
+    )
   })
 
   it('labels default-python/-r as python/r and the shared pkgs cache as conda', async () => {
@@ -182,6 +192,7 @@ describe('computeStorageUsage', () => {
       { key: 'uploads', bytes: 0 },
       { key: 'runtime', bytes: 0, children: [] },
       { key: 'notebooks', bytes: 0 },
+      { key: 'notebook-file-evidence', bytes: 0 },
       { key: 'workspaces', bytes: 0 }
     ])
     expect(usage.totalBytes).toBe(0)

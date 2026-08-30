@@ -1464,6 +1464,7 @@
     "Notebook runtime (optional)": "Environnement d'exécution Notebook (facultatif)",
     "Notebook runtimes": "Environnements d'exécution Notebook",
     "Notebooks": "Notebooks",
+    "Notebook evidence": "Preuves du Notebook",
     "Notebooks run in an app-managed Python environment by default. You can change any of this later in Settings → Runtimes.": "Les Notebooks s'exécutent par défaut dans un environnement Python géré par l'application. Vous pourrez modifier ce choix dans Paramètres → Environnements d'exécution.",
     "Notifications": "Notifications",
     "Earlier": "Plus tôt",

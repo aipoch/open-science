@@ -1,22 +1,12 @@
 import { readdir, stat, statfs } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import {
+  STORAGE_USAGE_CATEGORY_KEYS,
+  type StorageUsage,
+  type UsageChild
+} from '../../shared/storage'
 import { logicalEnvNameFromDirectory } from '../notebook/runtime-paths'
-
-export type UsageCategoryKey =
-  'artifacts' | 'delegation' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
-export type UsageChild = { name: string; bytes: number }
-export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
-export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
-
-const CATEGORY_KEYS: UsageCategoryKey[] = [
-  'artifacts',
-  'delegation',
-  'uploads',
-  'runtime',
-  'notebooks',
-  'workspaces'
-]
 
 const isMissingPathError = (error: unknown): boolean => {
   const code = (error as NodeJS.ErrnoException)?.code
@@ -138,8 +128,8 @@ const runtimeUsage = async (dir: string): Promise<{ bytes: number; children: Usa
 }
 
 export const computeStorageUsage = async (dataRoot: string): Promise<StorageUsage> => {
-  const categories: UsageCategory[] = []
-  for (const key of CATEGORY_KEYS) {
+  const categories: StorageUsage['categories'] = []
+  for (const key of STORAGE_USAGE_CATEGORY_KEYS) {
     const dir = join(dataRoot, key)
     if (key === 'runtime') {
       const { bytes, children } = await runtimeUsage(dir)

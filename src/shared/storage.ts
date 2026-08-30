@@ -1,7 +1,15 @@
 // Cross-process storage contracts shared by main, preload, and renderer.
 
-export type UsageCategoryKey =
-  'artifacts' | 'delegation' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
+export const STORAGE_USAGE_CATEGORY_KEYS = [
+  'artifacts',
+  'delegation',
+  'uploads',
+  'runtime',
+  'notebooks',
+  'notebook-file-evidence',
+  'workspaces'
+] as const
+export type UsageCategoryKey = (typeof STORAGE_USAGE_CATEGORY_KEYS)[number]
 export type UsageChild = { name: string; bytes: number }
 export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
 export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
