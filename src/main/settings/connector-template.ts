@@ -137,11 +137,18 @@ const argumentContainsCredential = (argument: string): boolean =>
   CREDENTIAL_HEADER.test(headerArgumentValue(argument)) ||
   argumentUrlContainsCredential(argument)
 
+const argumentsContainCredential = (args: readonly string[]): boolean =>
+  args.some(argumentContainsCredential) ||
+  args.some((argument, index) => {
+    if (!/^(?:--header|-H)(?:=.+)?$/i.test(argument.trim())) return false
+    return argumentContainsCredential(args.slice(index).join(' '))
+  })
+
 export const hasEmbeddedConnectorCredentials = (fields: {
   args?: readonly string[]
   url?: string
 }): boolean => {
-  if (fields.args?.some(argumentContainsCredential)) return true
+  if (fields.args && argumentsContainCredential(fields.args)) return true
   if (!fields.url) return false
 
   return urlContainsCredential(fields.url)

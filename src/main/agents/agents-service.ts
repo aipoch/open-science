@@ -14,6 +14,7 @@
 
 import { CONNECTOR_CATALOG, type ConnectorMeta } from '../connectors/catalog'
 import {
+  hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
   type CustomMcpFailureAvailability
 } from '../connectors/custom-mcp-bootstrap'
@@ -140,8 +141,9 @@ export type ConnectorReadModel = {
   description: string
   mainEnabled: boolean
   // Authentication/availability state, projected without secret detail. Custom connectors report
-  // 'unavailable'/'unauthenticated' from their stored shape; bundled connectors are 'available'.
-  availability: 'available' | 'unavailable' | 'unauthenticated'
+  // 'unavailable'/'unauthenticated'/'credential_unavailable' from their stored shape; bundled
+  // connectors are 'available'.
+  availability: 'available' | 'unavailable' | 'unauthenticated' | 'credential_unavailable'
   source: 'bundled' | 'custom'
   tools: ConnectorToolReadModel[]
 }
@@ -440,6 +442,7 @@ export const projectConnectorsFromStored = (
       const unreachable =
         (server.transport === 'stdio' && !server.command) ||
         (server.transport !== 'stdio' && !server.url)
+      const credentialUnavailable = !hasUsableCustomMcpCredentials(server)
       const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
       return {
         // Local Specialist references use the UUID; name remains the immutable public route.
@@ -447,15 +450,17 @@ export const projectConnectorsFromStored = (
         name: server.name,
         displayName: server.displayName,
         description: server.description ?? '',
-        mainEnabled: server.enabled && !unauthenticated,
+        mainEnabled: server.enabled && !credentialUnavailable && !unauthenticated,
         // Custom MCP servers expose their tools dynamically; we do not enumerate them here (the
         // milestone decides whole-Connector inclusion only). An empty tools list keeps the shape
         // consistent without leaking transport/command details.
         availability: unreachable
           ? 'unavailable'
-          : unauthenticated
-            ? 'unauthenticated'
-            : (runtimeAvailability ?? 'available'),
+          : credentialUnavailable
+            ? 'credential_unavailable'
+            : unauthenticated
+              ? 'unauthenticated'
+              : (runtimeAvailability ?? 'available'),
         source: 'custom',
         tools: []
       }

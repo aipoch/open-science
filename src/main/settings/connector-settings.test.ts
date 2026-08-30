@@ -988,6 +988,19 @@ describe('ConnectorSettingsModule', () => {
     expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
   })
 
+  it('rejects a credential-bearing header argument after renderer whitespace tokenization', async () => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-tokenized-header-argument',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args: ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
   it.each([
     ['split credential flag', ['--auth-token', 'plaintext-secret']],
     [
