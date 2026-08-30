@@ -70,7 +70,8 @@ const hasResolvedSecretRecord = (
 
 const hasCompleteCustomMcpCredentials = (server: StoredCustomMcpServer): boolean =>
   hasResolvedSecretRecord(server.envRefs, server.env) &&
-  hasResolvedSecretRecord(server.headerRefs, server.headers)
+  hasResolvedSecretRecord(server.headerRefs, server.headers) &&
+  (!server.oauthClientSecretRef || server.oauthClientSecret !== undefined)
 
 export const hasUsableCustomMcpCredentials = (server: StoredCustomMcpServer): boolean =>
   hasCompleteCustomMcpCredentials(server) && !hasEmbeddedConnectorCredentials(server)

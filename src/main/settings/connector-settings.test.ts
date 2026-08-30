@@ -188,13 +188,16 @@ describe('ConnectorSettingsModule', () => {
       remoteHeaders: snapshot.customServers.find(({ name }) => name === 'remote-secrets')
         ?.hasHeaders,
       oauthClientSecret: snapshot.customServers.find(({ name }) => name === 'oauth-secrets')?.oauth
-        ?.hasClientSecret
+        ?.hasClientSecret,
+      oauthAvailability: snapshot.customServers.find(({ name }) => name === 'oauth-secrets')
+        ?.availability
     }).toEqual({
       ncbi: false,
       openAlex: false,
       localEnv: false,
       remoteHeaders: false,
-      oauthClientSecret: false
+      oauthClientSecret: false,
+      oauthAvailability: 'credential_unavailable'
     })
   })
 
@@ -966,6 +969,19 @@ describe('ConnectorSettingsModule', () => {
         transport: 'stdio',
         command: 'example-mcp',
         args: ['--token=plaintext-secret']
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it('rejects a credential-bearing header argument when adding a custom server', async () => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-header-argument',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args: ['--header', 'Authorization: Bearer plaintext-secret']
       })
     ).rejects.toThrow(/encrypted environment or header fields/i)
 

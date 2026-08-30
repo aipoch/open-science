@@ -210,6 +210,7 @@ describe('Connector configuration templates', () => {
     [{ env: { API_TOKEN: 'secret' } }, 'Unknown field "env"'],
     [{ headers: { Authorization: 'Bearer secret' } }, 'Unknown field "headers"'],
     [{ args: ['--api-key=secret'] }, 'appears to contain a credential'],
+    [{ args: ['--header', 'Authorization: Bearer secret'] }, 'appears to contain a credential'],
     [{ url: 'https://mcp.example.test/mcp?token=secret' }, 'credential-like query parameter']
   ])('rejects secret-bearing or unknown fields', (extra, message) => {
     const preview = parseConnectorTemplate(

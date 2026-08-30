@@ -15,7 +15,7 @@ import { ApprovalBroker } from './approval-broker'
 import { CredentialRequestBroker } from './credential-request-broker'
 import { ParserEngine } from './engine'
 import { McpClientManager } from './mcp-client-manager'
-import { toCustomMcpConfig } from './custom-mcp-bootstrap'
+import { hasUsableCustomMcpCredentials, toCustomMcpConfig } from './custom-mcp-bootstrap'
 import { ConnectorRuntimeSettingsProjection } from './runtime-settings-projection'
 import { ConnectorService, type ConnectorCallContext } from './service'
 
@@ -99,6 +99,7 @@ const createConnectorApplication = (
         (candidate) => candidate.id === serverId
       )
       if (!server) throw new Error(`Unknown custom connector: ${serverId}`)
+      if (!hasUsableCustomMcpCredentials(server)) throw new Error('credential_unavailable')
       await mcpClientManager.authenticate(toCustomMcpConfig(server))
     },
     (serverId) => mcpClientManager.cancelAuthentication(serverId)

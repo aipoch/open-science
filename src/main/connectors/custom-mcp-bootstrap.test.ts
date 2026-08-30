@@ -243,12 +243,19 @@ describe('selectEnabledCustomServers', () => {
       },
       headers: { Authorization: 'Bearer resolved-value' }
     }
+    const partialOAuthClient: StoredCustomMcpServer = {
+      ...authenticatedOAuthServer,
+      id: 'partial-oauth-client',
+      name: 'partial-oauth-client',
+      displayName: 'Partial OAuth client',
+      oauthClientSecretRef: 'enc:unavailable'
+    }
 
     expect(
       selectEnabledCustomServers({
         enabledIds: [],
         autoAllowIds: [],
-        customMcpServers: [partialEnvironment, partialHeaders]
+        customMcpServers: [partialEnvironment, partialHeaders, partialOAuthClient]
       })
     ).toEqual([])
   })

@@ -1350,10 +1350,15 @@ describe('ConnectorService', () => {
           clientId: 'registered-client'
         },
         oauthClientSecretRef: 'enc:old-secret',
+        oauthClientSecret: 'old-secret',
         oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' as const } },
         enabled: true
       }
-      const replacement = { ...original, oauthClientSecretRef: 'enc:new-secret' }
+      const replacement = {
+        ...original,
+        oauthClientSecretRef: 'enc:new-secret',
+        oauthClientSecret: 'new-secret'
+      }
       let current = original
       let approve: ((decision: 'once') => void) | undefined
       const requestApproval = vi.fn(

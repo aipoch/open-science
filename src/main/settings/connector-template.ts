@@ -84,12 +84,26 @@ const SUSPICIOUS_QUERY_KEYS = new Set([
 ])
 const JWT = /(?:^|[=:\s])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|\s)/
 const SECRET_FLAG = /^--?(?:api[-_]?key|token|secret|password|credential|authorization)(?:=|$)/i
+const CREDENTIAL_HEADER =
+  /^(?:authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token|x-access-token)\s*:\s*\S/i
 const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SAFE_HEADER_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
 const CONNECTOR_TEMPLATE_DIGEST_CACHE_LIMIT = 64
 
+const headerArgumentValue = (argument: string): string => {
+  const trimmed = argument.trim()
+  const longOption = /^--header(?:=|\s+)(.+)$/i.exec(trimmed)
+  if (longOption) return longOption[1].trim()
+
+  const shortOption = /^-H(?:=|\s+)?(.+)$/i.exec(trimmed)
+  return shortOption ? shortOption[1].trim() : trimmed
+}
+
 const argumentContainsCredential = (argument: string): boolean =>
-  JWT.test(argument) || /^Bearer\s+/i.test(argument) || SECRET_FLAG.test(argument)
+  JWT.test(argument) ||
+  /^Bearer\s+/i.test(argument) ||
+  SECRET_FLAG.test(argument) ||
+  CREDENTIAL_HEADER.test(headerArgumentValue(argument))
 
 const hasSuspiciousQueryKey = (url: URL): boolean =>
   [...url.searchParams.keys()].some((key) =>
