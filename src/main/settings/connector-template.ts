@@ -93,7 +93,7 @@ const SUSPICIOUS_QUERY_KEYS = new Set([
 const JWT = /(?:^|[=:\s])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|\s)/
 const SECRET_FLAG =
   /^--?(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?(?:key|token)|auth(?:entication)?[-_]?(?:key|token)|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|refresh[-_]?token|secret(?:[-_]?access[-_]?key)?|security[-_]?token|session[-_]?token|tokens?|user)(?:[-_]?(?:file|path))?(?:=|:|$)/i
-const CREDENTIAL_USER_FLAG = /^-[uU](?:$|[=:]|[^-]*:)/
+const CREDENTIAL_USER_FLAG = /^-[uU](?:[=:]|[^-]*:)/
 const CREDENTIAL_HEADER_NAME =
   /(?:^|[-_])(?:auth(?:entication|orization)?|bearer|cookie|credentials?|passphrase|passwd|password|pat|secret|signature|token|(?:access|api|client|private|refresh|security|session)[-_]?(?:key|secret|token))(?:$|[-_])/i
 const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -149,8 +149,19 @@ const argumentContainsCredential = (argument: string): boolean =>
   headerArgumentContainsCredential(argument) ||
   argumentUrlContainsCredential(argument)
 
+const splitUserValueContainsCredential = (argument: string): boolean => {
+  const value = argument.trim()
+  if (/^[A-Za-z]:[\\/]/.test(value) || /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false
+  const separator = value.indexOf(':')
+  return separator >= 0 && /\S/.test(value.replace(':', ''))
+}
+
 const argumentsContainCredential = (args: readonly string[]): boolean =>
   args.some(argumentContainsCredential) ||
+  args.some(
+    (argument, index) =>
+      /^-[uU]$/.test(argument.trim()) && splitUserValueContainsCredential(args[index + 1] ?? '')
+  ) ||
   args.some((argument, index) => {
     if (!/^(?:--header|-H)(?:=.+)?$/i.test(argument.trim())) return false
     return argumentContainsCredential(args.slice(index).join(' '))

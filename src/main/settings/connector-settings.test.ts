@@ -333,6 +333,39 @@ describe('ConnectorSettingsModule', () => {
     expect(afterRemoval?.pendingCustomServerDeletionIds).toBeUndefined()
   })
 
+  it('clears inactive credential maps when the custom-server transport changes', async () => {
+    const added = await addCustomServer({
+      name: 'transport-secret-cleanup',
+      transport: 'stdio',
+      command: 'python3',
+      env: { API_TOKEN: 'stdio-secret' }
+    })
+    const id = added.customServers[0].id
+
+    await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      headers: { Authorization: 'Bearer remote-secret' }
+    })
+    let stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.envRefs).toBeUndefined()
+    expect(stored?.env).toBeUndefined()
+    expect(stored?.headerRefs).toBeDefined()
+
+    await service.updateCustomServer({
+      id,
+      transport: 'stdio',
+      command: 'python3',
+      args: ['-u', 'server.py'],
+      env: { API_TOKEN: 'next-stdio-secret' }
+    })
+    stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.headerRefs).toBeUndefined()
+    expect(stored?.headers).toBeUndefined()
+    expect(stored?.envRefs).toBeDefined()
+  })
+
   it('retains a deletion journal and reserves its ID when permission pruning fails', async () => {
     const added = await addCustomServer({
       name: 'recoverable-delete',

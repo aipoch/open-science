@@ -500,10 +500,16 @@ class ConnectorSettingsModule {
     const displayName = request.displayName?.trim() ?? existing.displayName
     if (!displayName) throw new Error('Display name is required')
 
-    const envRefs = request.env ? this.encryptSecretRecord(request.env) : existing.envRefs
+    const envRefs =
+      request.transport === 'stdio'
+        ? request.env
+          ? this.encryptSecretRecord(request.env)
+          : existing.envRefs
+        : undefined
     // Preserve legacy plaintext only when the caller leaves it untouched and safeStorage is still
     // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
-    const legacyEnv = request.env === undefined ? existing.env : undefined
+    const legacyEnv =
+      request.transport === 'stdio' && request.env === undefined ? existing.env : undefined
     const nextOAuth =
       request.transport === 'stdio' && request.oauth === undefined
         ? undefined
@@ -530,14 +536,14 @@ class ConnectorSettingsModule {
           ? undefined
           : existing.oauthClientSecretRef
     validateOAuthRegistration(nextOAuth ?? {}, Boolean(oauthClientSecretRef))
-    const headerRefs = nextOAuth
-      ? undefined
-      : request.headers
-        ? this.encryptSecretRecord(request.headers)
-        : existing.headerRefs
-    const legacyHeaders = nextOAuth
-      ? undefined
-      : request.headers === undefined
+    const headerRefs =
+      request.transport !== 'stdio' && !nextOAuth
+        ? request.headers
+          ? this.encryptSecretRecord(request.headers)
+          : existing.headerRefs
+        : undefined
+    const legacyHeaders =
+      request.transport !== 'stdio' && !nextOAuth && request.headers === undefined
         ? existing.headers
         : undefined
     const oauthChanged = !isDeepStrictEqual(existing.oauth ?? undefined, nextOAuth ?? undefined)

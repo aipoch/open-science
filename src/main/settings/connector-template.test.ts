@@ -291,6 +291,22 @@ describe('Connector configuration templates', () => {
     expect(preview.ready).toBe(true)
   })
 
+  it('accepts Python unbuffered mode without treating bare -u as a credential flag', () => {
+    const preview = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'python-server',
+        display_name: 'Python Server',
+        transport: 'stdio',
+        command: 'python3',
+        args: ['-u', 'server.py']
+      })
+    )
+
+    expect(preview.ready).toBe(true)
+  })
+
   it('accepts local paths with portability warnings', () => {
     const local = parseConnectorTemplate(
       JSON.stringify({

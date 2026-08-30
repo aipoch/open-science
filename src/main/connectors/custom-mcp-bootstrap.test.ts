@@ -260,6 +260,31 @@ describe('selectEnabledCustomServers', () => {
     ).toEqual([])
   })
 
+  it('ignores unresolved credential maps that are unused by the active transport', () => {
+    const stdioWithStaleHeaders: StoredCustomMcpServer = {
+      ...stdioServer,
+      id: 'stdio-stale-headers',
+      name: 'stdio-stale-headers',
+      displayName: 'Stdio stale headers',
+      headerRefs: { Authorization: 'enc:unavailable' }
+    }
+    const remoteWithStaleEnvironment: StoredCustomMcpServer = {
+      ...remoteServer,
+      id: 'remote-stale-environment',
+      name: 'remote-stale-environment',
+      displayName: 'Remote stale environment',
+      envRefs: { API_TOKEN: 'enc:unavailable' }
+    }
+
+    expect(
+      selectEnabledCustomServers({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [stdioWithStaleHeaders, remoteWithStaleEnvironment]
+      })
+    ).toEqual([stdioWithStaleHeaders, remoteWithStaleEnvironment])
+  })
+
   it('fails closed for historical servers with credentials embedded in args or URLs', () => {
     const unsafeArguments: StoredCustomMcpServer = {
       ...stdioServer,

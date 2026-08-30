@@ -69,9 +69,10 @@ const hasResolvedSecretRecord = (
 ): boolean => !refs || Object.keys(refs).every((name) => Object.hasOwn(values ?? {}, name))
 
 const hasCompleteCustomMcpCredentials = (server: StoredCustomMcpServer): boolean =>
-  hasResolvedSecretRecord(server.envRefs, server.env) &&
-  hasResolvedSecretRecord(server.headerRefs, server.headers) &&
-  (!server.oauthClientSecretRef || server.oauthClientSecret !== undefined)
+  server.transport === 'stdio'
+    ? hasResolvedSecretRecord(server.envRefs, server.env)
+    : hasResolvedSecretRecord(server.headerRefs, server.headers) &&
+      (!server.oauthClientSecretRef || server.oauthClientSecret !== undefined)
 
 export const hasUsableCustomMcpCredentials = (server: StoredCustomMcpServer): boolean =>
   hasCompleteCustomMcpCredentials(server) && !hasEmbeddedConnectorCredentials(server)
