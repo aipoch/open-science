@@ -448,6 +448,11 @@ class ConnectorSettingsModule {
         (candidate) => candidate.id === request.id
       )
       if (!server) throw new Error(`Unknown custom connector: ${request.id}`)
+      if (!hasUsableCustomMcpCredentials(server)) {
+        throw new Error(
+          `credential_unavailable: Re-enter credentials for "${server.displayName}" before enabling it`
+        )
+      }
       if (server.oauth && !server.oauthState?.tokens?.access_token) {
         throw new Error(`Sign in to "${server.displayName}" before enabling it`)
       }

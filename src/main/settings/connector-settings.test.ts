@@ -201,6 +201,27 @@ describe('ConnectorSettingsModule', () => {
     })
   })
 
+  it('refuses to persist enabled state when custom credentials are unavailable', async () => {
+    await repository.addCustomServer({
+      id: 'credential-unavailable-enable',
+      name: 'credential-unavailable-enable',
+      displayName: 'Credential unavailable enable',
+      transport: 'stdio',
+      enabled: false,
+      command: 'example-mcp',
+      envRefs: { API_TOKEN: 'not-a-key-ref' }
+    })
+
+    await expect(
+      service.setCustomServerEnabled({ id: 'credential-unavailable-enable', enabled: true })
+    ).rejects.toThrow('credential_unavailable')
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.find(
+      ({ id }) => id === 'credential-unavailable-enable'
+    )
+    expect(stored?.enabled).toBe(false)
+  })
+
   it('encrypts OpenAlex at rest and exposes only configured state', async () => {
     let snapshot = await service.setOpenAlexCredential({ apiKey: 'openalex-secret' })
     expect(snapshot.openAlex).toEqual({ hasApiKey: true })
