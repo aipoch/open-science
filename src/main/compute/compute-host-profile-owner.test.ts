@@ -510,6 +510,31 @@ describe('ComputeHostProfileOwner.probe', () => {
     expect(updateScratchRoot).not.toHaveBeenCalled()
   })
 
+  it('does NOT persist an invalid $SCRATCH value from a successful probe', async () => {
+    const stdout = [
+      'os=Linux',
+      'cpus=8',
+      'mem_mib=16000',
+      'gpus=',
+      'sbatch=no',
+      'qsub=no',
+      'bsub=no',
+      'scratch=../../$(touch /tmp/not-approved)'
+    ].join('\n')
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo, updateScratchRoot } = makeRepo()
+    const service = new ComputeHostProfileOwner(runner, repo)
+
+    await expect(service.probe('ssh:biowulf')).resolves.toMatchObject({ ok: true })
+    expect(updateScratchRoot).not.toHaveBeenCalled()
+  })
+
   it('does NOT write detailsDoc', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
@@ -698,6 +723,31 @@ describe('ComputeHostProfileOwner.setScratchRoot', () => {
     const service = new ComputeHostProfileOwner(fakeRunner, repo)
     await service.setScratchRoot('ssh:biowulf', '/my/scratch')
     expect(updateScratchPinned).toHaveBeenCalledWith('ssh:biowulf', '/my/scratch')
+  })
+
+  it('accepts a canonical home-relative scratch root', async () => {
+    const { repo, updateScratchPinned } = makeRepo()
+    const service = new ComputeHostProfileOwner(fakeRunner, repo)
+
+    await service.setScratchRoot('ssh:biowulf', '~/scratch path/$literal')
+
+    expect(updateScratchPinned).toHaveBeenCalledWith('ssh:biowulf', '~/scratch path/$literal')
+  })
+
+  it.each([
+    'relative/path',
+    '/scratch/../other',
+    '/scratch/./other',
+    '/scratch//other',
+    '/scratch/other/',
+    '/scratch\nother',
+    `/${'a'.repeat(4096)}`
+  ])('rejects an invalid scratch root before persistence: %j', async (path) => {
+    const { repo, updateScratchPinned } = makeRepo()
+    const service = new ComputeHostProfileOwner(fakeRunner, repo)
+
+    await expect(service.setScratchRoot('ssh:biowulf', path)).rejects.toThrow(/scratch root/i)
+    expect(updateScratchPinned).not.toHaveBeenCalled()
   })
 
   it('throws when the host does not exist', async () => {

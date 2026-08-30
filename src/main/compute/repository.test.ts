@@ -26,12 +26,13 @@ const createRow = (overrides: Record<string, unknown> = {}): Record<string, unkn
 
 // Builds a mock computeHost delegate; each method is a spy the tests can assert against.
 const createMockClient = (
-  methods: Partial<Record<'findMany' | 'findUnique' | 'create' | 'delete', unknown>>
+  methods: Partial<Record<'findMany' | 'findUnique' | 'create' | 'update' | 'delete', unknown>>
 ): { client: ComputeHostClient; computeHost: Record<string, ReturnType<typeof vi.fn>> } => {
   const computeHost = {
     findMany: vi.fn(methods.findMany as never),
     findUnique: vi.fn(methods.findUnique as never),
     create: vi.fn(methods.create as never),
+    update: vi.fn(methods.update as never),
     delete: vi.fn(methods.delete as never)
   }
 
@@ -180,6 +181,27 @@ describe('compute host repository', () => {
     expect(computeHost.findUnique).toHaveBeenCalledWith({ where: { providerId: 'ssh:missing' } })
   })
 
+  it('keeps historical aliases and scratch roots readable without rewriting them', async () => {
+    const { client } = createMockClient({
+      findUnique: () =>
+        Promise.resolve(
+          createRow({
+            providerId: 'ssh:-legacy-option',
+            sshAlias: '-legacy-option',
+            scratchRoot: 'relative/legacy-scratch',
+            scratchPinned: true
+          })
+        )
+    })
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(repository.get('ssh:-legacy-option')).resolves.toMatchObject({
+      sshAlias: '-legacy-option',
+      scratchRoot: 'relative/legacy-scratch',
+      scratchPinned: true
+    })
+  })
+
   it('creates a host: derives provider_id, defaults display name to alias, seeds details as user', async () => {
     const { client, computeHost } = createMockClient({
       // No existing host with this providerId → create proceeds.
@@ -245,6 +267,40 @@ describe('compute host repository', () => {
 
     await expect(repository.create({ sshAlias: '   ' })).rejects.toThrow(/alias/i)
     expect(computeHost.create).not.toHaveBeenCalled()
+  })
+
+  it('rejects an option-like alias without touching the database', async () => {
+    const { client, computeHost } = createMockClient({})
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(
+      repository.create({ sshAlias: '-oProxyCommand=touch /tmp/not-approved' })
+    ).rejects.toThrow(/alias/i)
+    expect(computeHost.findUnique).not.toHaveBeenCalled()
+    expect(computeHost.create).not.toHaveBeenCalled()
+  })
+
+  it.each(['relative/path', '/scratch/../other', '/scratch\nother'])(
+    'rejects an invalid discovered scratch root before writing: %j',
+    async (scratchRoot) => {
+      const { client, computeHost } = createMockClient({})
+      const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+      await expect(repository.updateScratchRoot('ssh:biowulf', scratchRoot)).rejects.toThrow(
+        /scratch root/i
+      )
+      expect(computeHost.update).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects an invalid pinned scratch root before writing', async () => {
+    const { client, computeHost } = createMockClient({})
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(repository.updateScratchPinned('ssh:biowulf', '~/scratch//other')).rejects.toThrow(
+      /scratch root/i
+    )
+    expect(computeHost.update).not.toHaveBeenCalled()
   })
 
   it('rejects a duplicate alias with a readable error before inserting', async () => {

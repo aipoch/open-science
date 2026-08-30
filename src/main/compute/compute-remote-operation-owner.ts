@@ -14,6 +14,7 @@ import {
   type ComputeConnectionLease
 } from './connection-broker'
 import type { ComputeHostRepository } from './repository'
+import { quoteRemotePath } from './remote-path-security'
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
@@ -92,11 +93,7 @@ export class ComputeRemoteOperationOwner {
       throw remoteConnectionError(error)
     }
 
-    const expandedPath =
-      path === '~' ? '$HOME' : path.startsWith('~/') ? `$HOME/${path.slice(2)}` : path
-    const quotedPath = expandedPath.startsWith('$HOME')
-      ? expandedPath
-      : shellSingleQuote(expandedPath)
+    const quotedPath = quoteRemotePath(path)
     const remoteCommand = [
       `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
       `cd ${quotedPath} || exit 1`,
@@ -227,7 +224,7 @@ export class ComputeRemoteOperationOwner {
     }
 
     const cwdExpression = host.scratchRoot
-      ? `cd ${JSON.stringify(host.scratchRoot)} 2>/dev/null || cd ~`
+      ? `cd ${quoteRemotePath(host.scratchRoot)} 2>/dev/null || cd ~`
       : 'cd ~'
     const wrappedCommand = `${cwdExpression}; ${cmd}`
     const timeoutMs =

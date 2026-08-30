@@ -213,6 +213,29 @@ describe('ComputeRemoteOperationOwner.callCommand', () => {
     expect(calledCmd).toContain('ls')
   })
 
+  it('quotes scratchRoot so shell expansions cannot add unapproved commands', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
+    )
+    const runner: SshRunner = { run: runMock }
+    const host = sampleHost({ scratchRoot: '/scratch/$(touch /tmp/not-approved)' })
+    const { repo } = makeRepo(host)
+    const approvalBroker = makeApprovalBroker('once')
+    const service = makeOwner(runner, repo, approvalBroker)
+
+    await service.callCommand('ssh:biowulf', 'printf approved', 'test approval')
+
+    expect(approvalBroker.request).toHaveBeenCalledWith(
+      expect.objectContaining({ command_full: 'printf approved' }),
+      undefined,
+      undefined
+    )
+    const calledCmd = (runMock.mock.calls[0] as unknown as [unknown, string])?.[1]
+    expect(calledCmd).toBe(
+      "cd '/scratch/$(touch /tmp/not-approved)' 2>/dev/null || cd ~; printf approved"
+    )
+  })
+
   it('falls back to cd ~ when no scratchRoot is configured', async () => {
     const runMock = vi.fn(() =>
       Promise.resolve({ exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false })
@@ -392,6 +415,27 @@ const buildListDirStdout = (resolvedPath: string, home: string, findOutput: stri
   `${resolvedPath}\n${home}\n${findOutput}`
 
 describe('ComputeRemoteOperationOwner.listDir', () => {
+  it('quotes a ~/ suffix so shell expansions cannot run while browsing', async () => {
+    const runMock = vi.fn(() =>
+      Promise.resolve({
+        exitCode: 0,
+        stdout: '/home/user/$(touch /tmp/not-approved)\n/home/user\n',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+    )
+    const runner: SshRunner = { run: runMock }
+    const { repo } = makeRepo()
+    const service = makeOwner(runner, repo)
+
+    await service.listDir('ssh:biowulf', '~/$(touch /tmp/not-approved)')
+
+    const calledCmd = (runMock.mock.calls[0] as unknown as [unknown, string])?.[1]
+    expect(calledCmd).toContain("realpath ~/'$(touch /tmp/not-approved)'")
+    expect(calledCmd).toContain("cd ~/'$(touch /tmp/not-approved)' || exit 1")
+  })
+
   it('preserves a stable sanitized password-authentication error code', async () => {
     const runner: SshRunner = {
       run: vi.fn(async () => {
