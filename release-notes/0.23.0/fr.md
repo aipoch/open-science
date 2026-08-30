@@ -1,0 +1,27 @@
+## ✨ Points forts
+
+- **Lisez des articles avec l'agent.** Reliez jusqu'à trois PDF à une session comme contexte de lecture — l'agent peut lire la page courante, parcourir l'intégralité du document et y effectuer des recherches. Sélectionnez du texte ou une zone dans l'aperçu PDF remanié pour l'envoyer comme preuve, avec révélation au clic dans la source. (#1791)
+- **Les variables Notebook à portée de main.** Le terminal partagé suggère au fil de la saisie les noms de variables du noyau, et sur les aperçus larges le panneau Variables en direct s'ancrer à côté des cellules et du terminal au lieu de les remplacer. (#1919, #1918)
+- **Abonnements Tencent.** Tencent Coding Plan (Chine continentale) et Token Plan (international) rejoignent les fournisseurs intégrés à côté du TokenHub en paiement à l'usage. (#1901)
+- **Des données locales plus sûres.** Le déplacement de l'emplacement de stockage des données est atomique et préserve les métadonnées d'artefacts, les brouillons de téléversement et l'identité des versions d'artefacts, et les rapports de diagnostic partagés pour le support sont anonymisés par défaut. (#1882, #1904, #1905, #1907)
+
+## 🚀 Nouveautés
+
+- **Contexte de lecture PDF et preuves** — reliez jusqu'à trois PDF multi-pages à une session avec des actions explicites de liaison et de déliaison ; l'agent lit la page courante, parcourt l'intégralité du document par lots ou effectue des recherches dans les PDF liés, et ce qu'il lit reste stable à travers les envois en file d'attente, les réessais, les branches et les reprises. L'aperçu PDF remanié ajoute du texte sélectionnable, la sélection de zone, un plan et des vignettes, la recherche dans le document, la navigation par pages et des contrôles de zoom, et les sélections deviennent des annotations de preuve avec révélation au clic dans le document source. (#1791)
+- **Suggestions de variables du noyau en direct** — le terminal du notebook suggère les noms de variables correspondants depuis le noyau Python ou R en cours d'exécution, avec leurs types, navigables au clavier et sûrs avec les éditeurs de méthode d'entrée. (#1919)
+- **Panneau Variables ancré dans les aperçus larges** — quand l'aperçu du notebook est assez large, les Variables en direct s'ancrent dans une colonne latérale tandis que les cellules et le terminal restent visibles ; les aperçus étroits conservent la vue Variables focalisée, et l'ancrage revient automatiquement dès que l'espace le permet. (#1918)
+- **Tencent Coding Plan et Token Plan** — des fournisseurs de plans d'abonnement dédiés pour les endpoints de Chine continentale et internationaux, chacun avec sa propre liste de modèles organisée, à côté du Tencent TokenHub en paiement à l'usage existant. (#1901)
+
+## 🔧 Améliorations
+
+- Les caches de charge de travail Notebook passent sous l'emplacement de stockage des données configuré, si bien que déplacer le stockage emporte les caches de paquets et de charge de travail au lieu de les laisser sur le disque système. (#1710)
+- Les rapports de diagnostic partagés pour le support sont anonymisés par défaut, et les diagnostics locaux restent bornés afin que de longues sessions de recherche ne les fassent pas croître sans limite. (#1907, #1909)
+- Quitter pendant un travail actif est expliqué au lieu d'être silencieusement bloqué — avec un avertissement avant d'interrompre un relecteur en cours — et les notifications sont localisées, respectent le réglage de confidentialité de votre système pour les aperçus, et ignorent les clics périmés. (#1910, #1912, #1913, #1914)
+
+## 🐛 Corrections
+
+- **Stockage et migration** — déplacer l'emplacement de stockage des données ne laisse plus de données partiellement copiées derrière lui, et les métadonnées d'artefacts, les brouillons de téléversement et l'identité des versions d'artefacts y survivent (#1882, #1885, #1893, #1904, #1905) ; les fichiers de session endommagés sont signalés au lieu d'être silencieusement ignorés, et la récupération après suppression reste limitée à ce qui a été supprimé (#1899) ; les projets signalent le nettoyage encore en attente après suppression (#1896) ; et les chemins système liés sont rejetés pendant la migration (#1894).
+- **Accès distant** — les sessions de navigateur autorisées sont isolées les unes des autres, le cycle de vie de l'autorisation est appliqué de bout en bout, et les requêtes distantes suivent leurs contrats. (#1915, #1917, #1897)
+- **Identifiants et fournisseurs** — la récupération d'identifiant vous atteint dans le composeur (#1883) ; les identifiants indéchiffrables ne sont plus signalés comme sains (#1886) ; le stockage secret Linux non sécurisé est rejeté au lieu d'être utilisé en silence (#1887) ; l'état du stockage sécurisé s'actualise de lui-même (#1888) ; et le catalogue de fournisseurs ne récupère plus d'écritures périmées. (#1890)
+- **Calcul, notebook et téléversements** — les résultats de l'analyse automatique persistent à travers les redémarrages (#1916) ; les alias d'hôte SSH et les chemins de travail sont validés (#1920) ; le noyau R survit aux annulations répétées (#1892) ; et les requêtes de finalisation de session sont validées. (#1908)
+- **Service et plateforme** — le service local rejette l'encodage d'URL malformé (#1889) ; la gestion des plateformes de mise à jour et du CLI est corrigée (#1895) et le cycle de vie de l'installateur est durci (#1898) ; les permissions d'outils des spécialistes sont appliquées pour les connecteurs (#1926) ; et l'isolation des documents entre les surfaces de l'application est appliquée. (#1924)
