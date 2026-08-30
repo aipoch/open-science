@@ -892,6 +892,33 @@ describe('ConnectorAddForm (edit)', () => {
     expect(addButton()?.disabled).toBe(true)
   })
 
+  it('reports duplicate environment and header names instead of overwriting them', () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'API_TOKEN=first\nAPI_TOKEN=second')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: API_TOKEN is duplicated.')
+    expect(addButton()?.disabled).toBe(true)
+
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+    setValue('Display name', 'Remote memory')
+    setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
+    selectOption('Authentication', 'Static headers')
+    setValue('Headers', 'Authorization: first\nAuthorization: second')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: Authorization is duplicated.')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
   it('requires secure storage before submitting static credentials', () => {
     useSettingsStore.setState({ encryptionAvailable: false })
     act(() => {
@@ -901,6 +928,23 @@ describe('ConnectorAddForm (edit)', () => {
     setValue('Display name', 'Local memory')
     openAdvancedSettings()
     setValue('Environment variables', 'API_TOKEN=secret')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Secure credential storage is unavailable')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
+  it('requires secure storage before submitting static remote headers', () => {
+    useSettingsStore.setState({ encryptionAvailable: false })
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Remote memory')
+    setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
+    selectOption('Authentication', 'Static headers')
+    setValue('Headers', 'Authorization: Bearer secret')
     checkTrust()
 
     expect(document.body.textContent).toContain('Secure credential storage is unavailable')
