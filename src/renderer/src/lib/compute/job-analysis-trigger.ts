@@ -106,6 +106,9 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   // Pending jobs are grouped by a durable dispatch Message ID when recovering, or by Session before
   // the first dispatch is claimed. This prevents a recovered batch from absorbing newer pending Jobs.
   const pendingBatches = new Map<string, PendingBatch>()
+  // ACP permits only one turn per Session. Keep recovered and newly pending batches behind the same
+  // Session-level lock even though they have different durable batch keys.
+  const activeBatchBySession = new Map<string, string>()
   // job_ids currently queued, dispatching, or awaiting a durable terminal transition.
   const inFlight: InFlightSet = new Set()
   // Track jobs waiting for turn completion (dispatch sent, not yet consumed).
@@ -113,6 +116,20 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     string,
     { sessionId: string; messageId: string; jobIds: string[] }
   >()
+
+  const scheduleNextSessionBatch = (sessionId: string): void => {
+    for (const [nextKey, nextBatch] of pendingBatches) {
+      if (nextBatch.sessionId !== sessionId) continue
+      scheduleFlush(nextKey)
+      return
+    }
+  }
+
+  const releaseSessionBatch = (key: string, sessionId: string): void => {
+    if (activeBatchBySession.get(sessionId) !== key) return
+    activeBatchBySession.delete(sessionId)
+    scheduleNextSessionBatch(sessionId)
+  }
 
   const isDoneState = (job: JobSummary): boolean =>
     job.notified_at !== undefined && job.notified_at !== null
@@ -136,6 +153,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     } finally {
       awaitingTurnEnd.delete(key)
       for (const id of jobIds) inFlight.delete(id)
+      releaseSessionBatch(key, sessionId)
     }
   }
 
@@ -170,6 +188,24 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     const jobIds = jobsToSend.map((j) => j.job_id)
     const { sessionId } = batch
 
+    const activeKey = activeBatchBySession.get(sessionId)
+    if (activeKey && activeKey !== key) {
+      deps.log('analysis-turn:serialized', `session=${sessionId}`)
+      return
+    }
+
+    // The Session may have started a turn after onJobDone scheduled this microtask.
+    if (deps.isSessionInFlight(sessionId)) {
+      if (!batch.waitRegistered) {
+        batch.waitRegistered = true
+        deps.onTurnEnd(sessionId, () => notifyTurnEnd(key))
+        deps.log('analysis-turn:waiting-for-turn-end', `session=${sessionId}`)
+      }
+      return
+    }
+
+    activeBatchBySession.set(sessionId, key)
+
     // Mark in-flight so duplicate broadcasts are ignored.
     for (const id of jobIds) inFlight.add(id)
 
@@ -193,8 +229,20 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       } catch (err) {
         deps.log('analysis-turn:claim-failed', `session=${sessionId} error=${String(err)}`)
         for (const id of jobIds) inFlight.delete(id)
+        releaseSessionBatch(key, sessionId)
         return
       }
+    }
+
+    // Claiming is asynchronous. A user turn can start while the durable transition is being saved,
+    // so keep the claimed batch queued until the Session is idle instead of failing the send.
+    if (deps.isSessionInFlight(sessionId)) {
+      batch.messageId = messageId
+      batch.waitRegistered = true
+      pendingBatches.set(key, batch)
+      deps.onTurnEnd(sessionId, () => notifyTurnEnd(key))
+      deps.log('analysis-turn:waiting-for-turn-end', `session=${sessionId}`)
+      return
     }
 
     deps.log('analysis-turn:sending', `session=${sessionId} jobs=[${jobIds.join(',')}]`)

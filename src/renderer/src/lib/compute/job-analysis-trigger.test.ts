@@ -224,6 +224,82 @@ describe('createJobAnalysisTrigger — batching', () => {
 })
 
 describe('createJobAnalysisTrigger — queuing', () => {
+  it('serializes recovered and pending analysis batches for the same session', async () => {
+    const turnEndCallbacks: Array<(outcome: 'succeeded' | 'failed' | 'cancelled') => void> = []
+    const deps = createDeps({
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallbacks.push(callback)
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(
+      makeJob({
+        job_id: 'job-recovered',
+        analysis_state: 'dispatched',
+        analysis_message_id: 'message-recovered'
+      })
+    )
+    trigger.onJobDone(makeJob({ job_id: 'job-pending' }))
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
+    expect(deps.sendPrompt).toHaveBeenCalledWith(
+      'sess-1',
+      expect.stringContaining('job-recovered'),
+      'message-recovered'
+    )
+
+    turnEndCallbacks[0]?.('succeeded')
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).toHaveBeenCalledTimes(2)
+    expect(deps.sendPrompt).toHaveBeenLastCalledWith(
+      'sess-1',
+      expect.stringContaining('job-pending'),
+      'msg-1'
+    )
+  })
+
+  it('waits when a session starts a turn while a pending batch is being claimed', async () => {
+    let sessionInFlight = false
+    let resolveClaim: (() => void) | undefined
+    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
+    const deps = createDeps({
+      isSessionInFlight: vi.fn(() => sessionInFlight),
+      transitionAnalysis: vi.fn((request) =>
+        request.state === 'dispatched'
+          ? new Promise<void>((resolve) => {
+              resolveClaim = resolve
+            })
+          : Promise.resolve()
+      ),
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallback = callback
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    expect(deps.transitionAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'dispatched' })
+    )
+
+    sessionInFlight = true
+    resolveClaim?.()
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    expect(deps.onTurnEnd).toHaveBeenCalledWith('sess-1', expect.any(Function))
+
+    sessionInFlight = false
+    turnEndCallback?.('succeeded')
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('queues when session is in flight and sends after notifyTurnEnd', async () => {
     let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
     const deps = createDeps({
