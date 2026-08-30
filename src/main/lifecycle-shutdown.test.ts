@@ -180,6 +180,48 @@ describe('BackendShutdownCoordinator', () => {
   })
 
   it.each([
+    { pendingBackends: ['runtime'] as const },
+    { pendingBackends: ['notebook'] as const },
+    { pendingBackends: ['runtime', 'notebook'] as const }
+  ])(
+    'identifies only $pendingBackends when the quit budget expires',
+    async ({ pendingBackends }) => {
+      vi.useFakeTimers()
+      const pendingBackendSet = new Set<string>(pendingBackends)
+      const neverSettles = (): Promise<never> => new Promise(() => {})
+      const deps = makeDeps({
+        runtime: {
+          shutdownForQuit: vi.fn(() =>
+            pendingBackendSet.has('runtime') ? neverSettles() : Promise.resolve({ reaped: true })
+          ),
+          shutdownForUpdateGate: vi.fn(async () => ({ reaped: true }))
+        },
+        notebook: {
+          dispose: vi.fn(() =>
+            pendingBackendSet.has('notebook') ? neverSettles() : Promise.resolve({ reaped: true })
+          ),
+          shutdownAll: vi.fn(async () => ({ reaped: true }))
+        }
+      })
+      const coordinator = new BackendShutdownCoordinator(deps)
+
+      const pending = coordinator.runForQuit(25)
+      await vi.advanceTimersByTimeAsync(25)
+
+      await expect(pending).resolves.toEqual({ completed: false, reaped: false })
+      for (const backend of ['runtime', 'notebook'] as const) {
+        const assertion = expect(deps.log?.error)
+        const expected = [
+          'backend shutdown timed out',
+          { backend, errorCategory: 'timeout' }
+        ] as const
+        if (pendingBackendSet.has(backend)) assertion.toHaveBeenCalledWith(...expected)
+        else assertion.not.toHaveBeenCalledWith(...expected)
+      }
+    }
+  )
+
+  it.each([
     ['timeout', { completed: false, reaped: false }],
     ['degraded', { completed: true, reaped: false }]
   ] as const)(

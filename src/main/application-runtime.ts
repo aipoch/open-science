@@ -1,10 +1,21 @@
 import { diagnosticErrorFields, type Logger } from './logger'
-import { BackendShutdownOutcomeError, type ShutdownStepOutcome } from './lifecycle-shutdown'
+import {
+  BackendShutdownOutcomeError,
+  QUIT_SHUTDOWN_BUDGET_MS,
+  type ShutdownStepOutcome
+} from './lifecycle-shutdown'
 
 type Awaitable<T> = T | Promise<T>
 
 export const APPLICATION_MODULE_DISPOSAL_BUDGET_MS = 1000
-export const APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS = 5000
+export const APPLICATION_WEB_SHUTDOWN_BUDGET_MS = APPLICATION_MODULE_DISPOSAL_BUDGET_MS
+export const APPLICATION_RUNTIME_SHUTDOWN_BUDGET_MS =
+  QUIT_SHUTDOWN_BUDGET_MS + APPLICATION_MODULE_DISPOSAL_BUDGET_MS
+export const APPLICATION_FINAL_SURFACE_SHUTDOWN_BUDGET_MS = APPLICATION_MODULE_DISPOSAL_BUDGET_MS
+export const APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS =
+  APPLICATION_WEB_SHUTDOWN_BUDGET_MS +
+  APPLICATION_RUNTIME_SHUTDOWN_BUDGET_MS +
+  APPLICATION_FINAL_SURFACE_SHUTDOWN_BUDGET_MS
 
 export class ApplicationModuleDisposalTimeoutError extends Error {
   constructor(
@@ -61,8 +72,9 @@ export type ApplicationLifecycleShutdownDependencies = {
 
 // Direct Web/Task adapters close before the application command router, which in turn closes before
 // its underlying RemoteAccess owner. Closing Web first can publish RemoteAccess's stopped state, but
-// this path runs only while the app is quitting. A failed surface still cannot strand a later one, and
-// the shared deadline reserves time for every later surface before app.exit().
+// this path runs only while the app is quitting. Phase caps preserve the runtime's configured backend
+// budget and reserve time for RemoteAccess/IPC under one absolute deadline. A failed surface still
+// cannot strand a later one before app.exit().
 export const shutdownApplicationSurfaces = async ({
   disposeApplicationRuntime,
   shutdownRemoteAccess,
@@ -139,17 +151,16 @@ export const shutdownApplicationSurfaces = async ({
     }
   }
 
-  const surfaces: ReadonlyArray<readonly [string, () => Awaitable<void>]> = [
-    ['web-controller', disposeWebController],
-    ['application-runtime', disposeApplicationRuntime],
-    ['remote-access', shutdownRemoteAccess],
-    ['ipc-handlers', disposeIpcHandlers]
+  const surfaces: ReadonlyArray<readonly [string, () => Awaitable<void>, number]> = [
+    ['web-controller', disposeWebController, APPLICATION_WEB_SHUTDOWN_BUDGET_MS],
+    ['application-runtime', disposeApplicationRuntime, APPLICATION_RUNTIME_SHUTDOWN_BUDGET_MS],
+    ['remote-access', shutdownRemoteAccess, APPLICATION_FINAL_SURFACE_SHUTDOWN_BUDGET_MS],
+    ['ipc-handlers', disposeIpcHandlers, APPLICATION_FINAL_SURFACE_SHUTDOWN_BUDGET_MS]
   ]
   const shutdownDeadline = Date.now() + APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS
-  for (const [index, [surface, operation]] of surfaces.entries()) {
+  for (const [surface, operation, phaseBudgetMs] of surfaces) {
     const remainingBudgetMs = Math.max(0, shutdownDeadline - Date.now())
-    const remainingSurfaceCount = surfaces.length - index
-    await dispose(surface, operation, Math.floor(remainingBudgetMs / remainingSurfaceCount))
+    await dispose(surface, operation, Math.min(phaseBudgetMs, remainingBudgetMs))
   }
   return overallOutcome
 }

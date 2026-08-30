@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
   APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS,
   composeApplicationRuntime,
   composeApplicationRuntimeWithAdapters,
   shutdownApplicationSurfaces,
   withApplicationRuntimeShutdown
 } from './application-runtime'
-import { BackendShutdownOutcomeError } from './lifecycle-shutdown'
+import {
+  BackendShutdownCoordinator,
+  BackendShutdownOutcomeError,
+  QUIT_SHUTDOWN_BUDGET_MS
+} from './lifecycle-shutdown'
 import { createApplicationEventModule } from './application-events'
 
 describe('application runtime composition', () => {
@@ -278,6 +283,67 @@ describe('application runtime composition', () => {
 })
 
 describe('application surface shutdown', () => {
+  it('waits for runtime disposal within its configured budget before closing later surfaces', async () => {
+    vi.useFakeTimers()
+    const order: string[] = []
+
+    try {
+      const shutdownCoordinator = new BackendShutdownCoordinator({
+        runtime: {
+          shutdownForQuit: async () => {
+            order.push('application-runtime:start')
+            await new Promise<void>((resolve) => setTimeout(resolve, 2000))
+            order.push('application-runtime:end')
+            return { reaped: true }
+          },
+          shutdownForUpdateGate: async () => ({ reaped: true })
+        },
+        notebook: {
+          dispose: async () => ({ reaped: true }),
+          shutdownAll: async () => ({ reaped: true })
+        }
+      })
+      const runtime = await composeApplicationRuntime(async (modules) => {
+        await modules.add({ shutdownCoordinator }, ({ shutdownCoordinator: coordinator }) => ({
+          name: 'backend-shutdown-coordinator',
+          capability: undefined,
+          disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS + APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
+          dispose: async () =>
+            BackendShutdownOutcomeError.assertClean(await coordinator.runForQuit())
+        }))
+        return {}
+      })
+
+      const shutdown = shutdownApplicationSurfaces({
+        disposeWebController: () => {
+          order.push('web-controller')
+        },
+        disposeApplicationRuntime: () => runtime.dispose(),
+        shutdownRemoteAccess: () => {
+          order.push('remote-access')
+        },
+        disposeIpcHandlers: () => {
+          order.push('ipc-handlers')
+        }
+      })
+
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(order).toEqual(['web-controller', 'application-runtime:start'])
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(shutdown).resolves.toBe('completed')
+      expect(order).toEqual([
+        'web-controller',
+        'application-runtime:start',
+        'application-runtime:end',
+        'remote-access',
+        'ipc-handlers'
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('times out a hung surface and still attempts every later surface', async () => {
     vi.useFakeTimers()
     let outcome: Awaited<ReturnType<typeof shutdownApplicationSurfaces>> | undefined
