@@ -301,6 +301,43 @@ describe('OnboardingWizard flow', () => {
     expect(container.textContent).not.toContain('D:\\OpenScience')
   })
 
+  it('does not update the draft after leaving Location while the Windows probe is pending', async () => {
+    let releaseDefaultProbe: (() => void) | undefined
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockResolvedValue([
+      { path: 'C:\\', label: 'C:' },
+      { path: 'D:\\', label: 'D:' }
+    ])
+    window.api.storage.inspectDataRoot = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseDefaultProbe = () => resolve({ kind: 'move', dataRoot: 'D:\\OpenScience' })
+        })
+    )
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+    expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+
+    await clickButton(/^continue$/i)
+    expect(currentSection('Set up the agent runtime')).not.toBeNull()
+    await act(async () => releaseDefaultProbe?.())
+
+    await clickButton(/^back$/i)
+    expect(currentSection('Choose data location')).not.toBeNull()
+    expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+    expect(container.textContent).not.toContain('D:\\OpenScience')
+  })
+
   it('does not probe alternate drives outside Windows', async () => {
     readyClaudeState()
 

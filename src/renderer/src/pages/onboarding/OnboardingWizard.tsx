@@ -176,6 +176,12 @@ const OnboardingWizard = ({
     locationDraftTouched.current = true
     setLocationDraft(draft)
   }, [])
+  const leaveLocation = useCallback((nextStep: 'environment' | 'agent'): void => {
+    // Leaving is an explicit decision on the currently displayed draft. Freeze it synchronously so
+    // a recommendation still in flight cannot change the choice after Location has unmounted.
+    locationDraftTouched.current = true
+    setStep(nextStep)
+  }, [])
   const [relaunchError, setRelaunchError] = useState<string | undefined>(undefined)
   // Relaunching replaces the whole wizard with a bare screen — owned here because LocationStep
   // unmounts (and the layout disappears) while it is in flight.
@@ -211,7 +217,7 @@ const OnboardingWizard = ({
   }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
 
   useEffect(() => {
-    if (!dataRootInfo || locationDraftTouched.current) return
+    if (step !== 'location' || !dataRootInfo || locationDraftTouched.current) return
 
     let cancelled = false
     void findWindowsStorageDefault(dataRootInfo).then((recommendedDraft) => {
@@ -224,7 +230,7 @@ const OnboardingWizard = ({
     return () => {
       cancelled = true
     }
-  }, [dataRootInfo])
+  }, [dataRootInfo, step])
 
   // App starts this check on every launch. This local fallback also keeps the wizard self-contained in
   // tests or alternate entry surfaces where it may be mounted without App as its parent.
@@ -304,8 +310,8 @@ const OnboardingWizard = ({
                 relaunchError={relaunchError}
                 onRelaunchErrorChange={setRelaunchError}
                 onRetryDataRootInfo={retryDataRootInfo}
-                onBack={() => setStep('environment')}
-                onContinue={() => setStep('agent')}
+                onBack={() => leaveLocation('environment')}
+                onContinue={() => leaveLocation('agent')}
                 setIsRelaunching={setIsRelaunching}
               />
             ) : step === 'agent' ? (
