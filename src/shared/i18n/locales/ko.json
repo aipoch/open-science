@@ -293,7 +293,7 @@
     "The remote file will be copied into this Session's local cache. Approve only if you trust the source and path.": "원격 파일이 이 세션의 로컬 캐시에 복사됩니다. 출처와 경로를 신뢰하는 경우에만 승인하세요.",
     "This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.": "이 작업은 호스트에서 사용자 계정으로 실행되며 샌드박스 처리되지 않습니다. 승인하기 전에 명령, 리소스, 원격 작업 디렉터리 및 시간 제한을 검토하세요.",
     "Remote path": "원격 경로",
-    "{{seconds}} seconds": "{{seconds}}초",
+    "{{count}} seconds_other": "{{count}}초",
     "remote file downloads from {{host}}": "{{host}}에서 원격 파일 다운로드",
     "remote job submissions on {{host}}": "{{host}}에서 원격 작업 제출",
     "Allow the agent to use every tool from this connector without showing an approval card each time.": "에이전트가 매번 승인 카드를 표시하지 않고 이 커넥터의 모든 도구를 사용할 수 있도록 허용합니다.",

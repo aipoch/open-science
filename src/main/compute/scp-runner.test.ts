@@ -657,6 +657,65 @@ describe('SystemScpRunner', () => {
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
   })
 
+  it('force-kills and settles cancellation when the child ignores SIGTERM', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const controller = new AbortController()
+    const settled = vi.fn()
+
+    void runner
+      .copy('/usr/bin/scp', ['biowulf:/remote/x', '/tmp/x'], 10_000, {
+        signal: controller.signal
+      })
+      .then(settled, settled)
+
+    controller.abort()
+    expect(child.kill.mock.calls).toEqual([['SIGTERM']])
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(settled).toHaveBeenCalledOnce()
+    expect(settled.mock.calls[0]?.[0]).toMatchObject({ name: 'AbortError' })
+  })
+
+  it('force-kills and settles when the output stream fails and the child never closes', async () => {
+    vi.useFakeTimers()
+    const dir = await mkdtemp(join(tmpdir(), 'scp-output-error-test-'))
+    const child = new FakeChild()
+    spawnMock.mockReturnValueOnce(child as unknown as ReturnType<typeof spawnMock>)
+    const settled = vi.fn()
+
+    try {
+      void runner
+        .copyFromRemoteBounded(
+          { sshBinary: '/usr/bin/ssh', host: 'cluster', extraArgs: [] },
+          '/remote/result.csv',
+          join(dir, 'missing', 'result.csv'),
+          1024
+        )
+        .then(settled, settled)
+
+      await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGTERM'))
+      expect(settled).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
+      expect(settled).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(settled).toHaveBeenCalledWith(
+        expect.objectContaining({ exitCode: null, stderr: expect.stringContaining('ENOENT') })
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('drops stderr chunks once the running total is already over the 8 KB cap', async () => {
     const child = new FakeChild()
     execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)

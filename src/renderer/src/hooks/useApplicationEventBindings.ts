@@ -100,8 +100,7 @@ const useApplicationEventBindings = ({
   const dismissComputeApproval = useComputeStore((state) => state.dismissApproval)
   const hasComputeApproval = useComputeStore((state) =>
     state.pendingApprovals.some(
-      (candidate) =>
-        !candidate.session_id || !openSideChatParentSessionIds.has(candidate.session_id)
+      (candidate) => !candidate.sessionId || !openSideChatParentSessionIds.has(candidate.sessionId)
     )
   )
   const enqueueSkillImport = useSkillImportStore((state) => state.enqueue)

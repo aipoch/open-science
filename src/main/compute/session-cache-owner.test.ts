@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -22,9 +22,14 @@ describe('SessionCacheOwner', () => {
   it('allocates each download below its owning Project and Session', async () => {
     const operation = await owner.createOperationFile('project-1', 'session-1', 'result.csv')
 
-    expect(operation.path).toMatch(
-      /compute\/session-cache\/project-1\/session-1\/[^/]+\/result\.csv$/
-    )
+    expect(relative(storageRoot, operation.path).split(sep)).toEqual([
+      'compute',
+      'session-cache',
+      'project-1',
+      'session-1',
+      expect.any(String),
+      'result.csv'
+    ])
   })
 
   it('does not allocate an operation directory for an invalid filename', async () => {
@@ -35,19 +40,27 @@ describe('SessionCacheOwner', () => {
     await expect(readdir(storageRoot, { recursive: true })).resolves.toEqual([])
   })
 
-  it.each(['Project', 'Session'] as const)(
+  it.each(['Compute', 'Project', 'Session'] as const)(
     'rejects a symlinked %s cache parent without writing outside the data root',
     async (scope) => {
       const outside = await mkdtemp(join(tmpdir(), 'open-science-session-cache-outside-'))
       const cacheRoot = join(storageRoot, 'compute', 'session-cache')
-      await mkdir(cacheRoot, { recursive: true })
+      if (scope === 'Compute') {
+        await symlink(
+          outside,
+          join(storageRoot, 'compute'),
+          process.platform === 'win32' ? 'junction' : 'dir'
+        )
+      } else {
+        await mkdir(cacheRoot, { recursive: true })
+      }
       if (scope === 'Project') {
         await symlink(
           outside,
           join(cacheRoot, 'project-1'),
           process.platform === 'win32' ? 'junction' : 'dir'
         )
-      } else {
+      } else if (scope === 'Session') {
         const projectRoot = join(cacheRoot, 'project-1')
         await mkdir(projectRoot)
         await symlink(
@@ -67,6 +80,75 @@ describe('SessionCacheOwner', () => {
       }
     }
   )
+
+  it.each([
+    ['Project deletion through a symlinked Compute directory', 'compute', 'project'],
+    ['Project deletion through a symlinked cache root', 'cache', 'project'],
+    ['Session deletion through a symlinked Project directory', 'project', 'session'],
+    ['operation cleanup through a symlinked Session directory', 'session', 'operation']
+  ] as const)('rejects %s without deleting external data', async (_label, linkAt, action) => {
+    const outside = await mkdtemp(join(tmpdir(), 'open-science-session-cache-delete-outside-'))
+    const computeRoot = join(storageRoot, 'compute')
+    const cacheRoot = join(computeRoot, 'session-cache')
+    const externalFile =
+      linkAt === 'compute'
+        ? join(outside, 'session-cache', 'project-1', 'session-1', 'operation-1', 'result.csv')
+        : linkAt === 'cache'
+          ? join(outside, 'project-1', 'session-1', 'operation-1', 'result.csv')
+          : linkAt === 'project'
+            ? join(outside, 'session-1', 'operation-1', 'result.csv')
+            : join(outside, 'operation-1', 'result.csv')
+
+    try {
+      await mkdir(dirname(externalFile), { recursive: true })
+      await writeFile(externalFile, 'retained')
+      if (linkAt === 'compute') {
+        await symlink(outside, computeRoot, process.platform === 'win32' ? 'junction' : 'dir')
+      } else {
+        await mkdir(linkAt === 'cache' ? computeRoot : cacheRoot, { recursive: true })
+        const link =
+          linkAt === 'cache'
+            ? cacheRoot
+            : linkAt === 'project'
+              ? join(cacheRoot, 'project-1')
+              : join(cacheRoot, 'project-1', 'session-1')
+        if (linkAt === 'session') await mkdir(dirname(link), { recursive: true })
+        await symlink(outside, link, process.platform === 'win32' ? 'junction' : 'dir')
+      }
+
+      const removal =
+        action === 'project'
+          ? owner.removeProject('project-1')
+          : action === 'session'
+            ? owner.removeSession('project-1', 'session-1')
+            : owner.removeOperation('project-1', 'session-1', 'operation-1')
+      await expect(removal).rejects.toThrow('Unsafe Session cache')
+      await expect(readFile(externalFile, 'utf8')).resolves.toBe('retained')
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects reconciliation through a symlinked cache root without deleting external data', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'open-science-session-cache-reconcile-outside-'))
+    const externalFile = join(outside, 'orphan-project', 'orphan-session', 'result.csv')
+    await mkdir(join(storageRoot, 'compute'))
+    await symlink(
+      outside,
+      join(storageRoot, 'compute', 'session-cache'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    try {
+      await mkdir(dirname(externalFile), { recursive: true })
+      await writeFile(externalFile, 'retained')
+
+      await expect(owner.reconcileActiveSessions([])).rejects.toThrow('Unsafe Session cache')
+      await expect(readFile(externalFile, 'utf8')).resolves.toBe('retained')
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
 
   it('removes only the deleted Session cache', async () => {
     const removed = await owner.createOperationFile('project-1', 'session-1', 'removed.csv')

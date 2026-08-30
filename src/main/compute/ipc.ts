@@ -351,6 +351,14 @@ const createComputeHandlers = (
       connectionBroker,
       credentialVault
     })
+  const listHostNames = async (): Promise<Map<string, string>> => {
+    try {
+      const hosts = await repository.list()
+      return new Map(hosts.map((host) => [host.providerId, host.displayName]))
+    } catch {
+      return new Map()
+    }
+  }
 
   const createHostWithLifecycle = <Request extends { sshAlias: string }>(
     request: Request,
@@ -464,8 +472,7 @@ const createComputeHandlers = (
       broker.finishSessionDeletion(sessionId, retained),
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
-      const hosts = await repository.list()
-      const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
+      const hostNameMap = await listHostNames()
       const jobs =
         'nonTerminal' in filter
           ? await jobRepository.findNonTerminal()
@@ -478,8 +485,7 @@ const createComputeHandlers = (
     },
     jobsPendingNotification: async (filter) => {
       if (!jobRepository || !storageRoot) return []
-      const hosts = await repository.list()
-      const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
+      const hostNameMap = await listHostNames()
       const jobs =
         typeof filter === 'string'
           ? await jobRepository.findPendingNotifications(filter)
@@ -507,13 +513,7 @@ const createComputeHandlers = (
           log.warn('compute analysis transition broadcast failed', errorLogFields(error))
         }
       }
-      const hostNameMap = new Map<string, string>()
-      try {
-        const hosts = await repository.list()
-        for (const host of hosts) hostNameMap.set(host.providerId, host.displayName)
-      } catch {
-        // The transition is already durable; provider IDs are valid summary fallbacks.
-      }
+      const hostNameMap = await listHostNames()
       return Promise.all(
         jobs.map((job) =>
           toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)

@@ -5,7 +5,8 @@ import {
   consumeComputeHostsPreload,
   createInitialComputeState,
   preloadComputeHosts,
-  useComputeStore
+  useComputeStore,
+  type ComputeApproval
 } from './compute-store'
 
 const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
@@ -502,19 +503,33 @@ describe('compute store - approval replay', () => {
     useComputeStore.getState().enqueueApproval(request)
     useComputeStore.getState().enqueueApproval(request)
 
-    expect(useComputeStore.getState().pendingApprovals).toEqual([request])
+    expect(useComputeStore.getState().pendingApprovals).toEqual([
+      {
+        id: 'approval-1',
+        operation: 'call_command',
+        sessionId: 'session-1',
+        providerId: 'ssh:lab',
+        providerName: 'Lab',
+        shape: 'direct_ssh',
+        intent: 'Run analysis',
+        commandPreview: 'run-analysis',
+        commandFull: 'run-analysis',
+        willPersistUnencrypted: false
+      }
+    ])
   })
 
   it('dismisses a settled approval idempotently', () => {
-    const first: ComputeApprovalRequest = {
+    const first: ComputeApproval = {
       id: 'approval-1',
       operation: 'call_command',
-      provider_id: 'ssh:lab',
-      provider_name: 'Lab',
+      providerId: 'ssh:lab',
+      providerName: 'Lab',
       shape: 'direct_ssh',
       intent: 'Run analysis',
-      command_preview: 'run-analysis',
-      command_full: 'run-analysis'
+      commandPreview: 'run-analysis',
+      commandFull: 'run-analysis',
+      willPersistUnencrypted: false
     }
     const second = { ...first, id: 'approval-2' }
 

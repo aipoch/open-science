@@ -38,6 +38,16 @@ const assertSafeDirectory = async (directory: string, label: string): Promise<vo
   }
 }
 
+const assertSafeExistingDirectory = async (directory: string, label: string): Promise<boolean> => {
+  try {
+    await assertSafeDirectory(directory, label)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
 const createSafeDirectory = async (directory: string, label: string): Promise<void> => {
   await mkdir(directory).catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
@@ -46,13 +56,15 @@ const createSafeDirectory = async (directory: string, label: string): Promise<vo
 }
 
 export class SessionCacheOwner {
+  private readonly computeRoot: string
   private readonly root: string
   private readonly activeOperations = new Map<string, Set<Promise<void>>>()
   private readonly closedProjects = new Set<string>()
   private readonly closedSessions = new Set<string>()
 
   constructor(storageRoot: string) {
-    this.root = join(storageRoot, 'compute', 'session-cache')
+    this.computeRoot = join(storageRoot, 'compute')
+    this.root = join(this.computeRoot, 'session-cache')
   }
 
   async createOperationFile(
@@ -67,8 +79,8 @@ export class SessionCacheOwner {
     const operationId = randomUUID()
     const directory = join(this.root, safeProjectId, safeSessionId, operationId)
     try {
-      await mkdir(this.root, { recursive: true })
-      await assertSafeDirectory(this.root, 'root')
+      await createSafeDirectory(this.computeRoot, 'Compute')
+      await createSafeDirectory(this.root, 'root')
       await createSafeDirectory(join(this.root, safeProjectId), 'Project')
       await createSafeDirectory(join(this.root, safeProjectId, safeSessionId), 'Session')
       await createSafeDirectory(directory, 'operation')
@@ -79,16 +91,15 @@ export class SessionCacheOwner {
     }
   }
 
-  removeOperation(projectId: string, sessionId: string, operationId: string): Promise<void> {
-    return rm(
-      join(
-        this.root,
-        assertSafeSegment(projectId, 'Project id'),
-        assertSafeSegment(sessionId, 'Session id'),
-        assertSafeSegment(operationId, 'operation id')
-      ),
-      { recursive: true, force: true }
-    )
+  async removeOperation(projectId: string, sessionId: string, operationId: string): Promise<void> {
+    const safeProjectId = assertSafeSegment(projectId, 'Project id')
+    const safeSessionId = assertSafeSegment(sessionId, 'Session id')
+    const safeOperationId = assertSafeSegment(operationId, 'operation id')
+    if (!(await this.assertSafePath(safeProjectId, safeSessionId, safeOperationId))) return
+    await rm(join(this.root, safeProjectId, safeSessionId, safeOperationId), {
+      recursive: true,
+      force: true
+    })
   }
 
   async removeSession(projectId: string, sessionId: string): Promise<void> {
@@ -97,6 +108,7 @@ export class SessionCacheOwner {
     const key = this.sessionKey(safeProjectId, safeSessionId)
     this.closedSessions.add(key)
     await Promise.all(this.activeOperations.get(key) ?? [])
+    if (!(await this.assertSafePath(safeProjectId, safeSessionId))) return
     await rm(join(this.root, safeProjectId, safeSessionId), { recursive: true, force: true })
   }
 
@@ -109,6 +121,7 @@ export class SessionCacheOwner {
         .filter(([key]) => key.startsWith(prefix))
         .flatMap(([, operations]) => [...operations])
     )
+    if (!(await this.assertSafePath(safeProjectId))) return
     await rm(join(this.root, safeProjectId), {
       recursive: true,
       force: true
@@ -127,11 +140,12 @@ export class SessionCacheOwner {
       activeByProject.set(projectId, activeSessions)
     }
 
-    const projectEntries = await readdir(this.root, { withFileTypes: true }).catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw error
-    })
+    if (!(await this.assertSafePath())) return
+    const projectEntries = await readdir(this.root, { withFileTypes: true })
     for (const projectEntry of projectEntries) {
+      if (projectEntry.isSymbolicLink()) {
+        throw new Error('Unsafe Session cache Project directory.')
+      }
       if (!projectEntry.isDirectory() || !isSafeSegment(projectEntry.name)) continue
       const activeSessions = activeByProject.get(projectEntry.name)
       if (!activeSessions) {
@@ -140,8 +154,12 @@ export class SessionCacheOwner {
       }
 
       const projectDirectory = join(this.root, projectEntry.name)
+      if (!(await assertSafeExistingDirectory(projectDirectory, 'Project'))) continue
       const sessionEntries = await readdir(projectDirectory, { withFileTypes: true })
       for (const sessionEntry of sessionEntries) {
+        if (sessionEntry.isSymbolicLink()) {
+          throw new Error('Unsafe Session cache Session directory.')
+        }
         if (!sessionEntry.isDirectory() || !isSafeSegment(sessionEntry.name)) continue
         if (!activeSessions.has(sessionEntry.name)) {
           await this.removeSession(projectEntry.name, sessionEntry.name)
@@ -172,6 +190,28 @@ export class SessionCacheOwner {
       if (operations.size === 0) this.activeOperations.delete(key)
       settle()
     }
+  }
+
+  private async assertSafePath(
+    projectId?: string,
+    sessionId?: string,
+    operationId?: string
+  ): Promise<boolean> {
+    const directories: [string, string][] = [
+      [this.computeRoot, 'Compute'],
+      [this.root, 'root']
+    ]
+    if (projectId) directories.push([join(this.root, projectId), 'Project'])
+    if (projectId && sessionId) {
+      directories.push([join(this.root, projectId, sessionId), 'Session'])
+    }
+    if (projectId && sessionId && operationId) {
+      directories.push([join(this.root, projectId, sessionId, operationId), 'operation'])
+    }
+    for (const [directory, label] of directories) {
+      if (!(await assertSafeExistingDirectory(directory, label))) return false
+    }
+    return true
   }
 
   private sessionKey(projectId: string, sessionId: string): string {

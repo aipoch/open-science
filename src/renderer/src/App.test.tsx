@@ -734,7 +734,7 @@ describe('App startup routing', () => {
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true
     mocks.settings.pendingApprovals = [{ id: 'connector', sessionId: 'connector-session' }]
-    mocks.compute.pendingApprovals = [{ id: 'compute', session_id: 'compute-session' }]
+    mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'compute-session' }]
     mocks.skillImport.pending = [{ id: 'skill', sessionId: 'skill-session' }]
     await render()
 
@@ -787,7 +787,7 @@ describe('App startup routing', () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
     mocks.sideChatParentSessionIds.add('side-chat-session')
-    mocks.compute.pendingApprovals = [{ id: 'compute', session_id: 'side-chat-session' }]
+    mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'side-chat-session' }]
     await render()
 
     expect(mocks.presentationProps.computeApproval?.active).toBe(false)
@@ -807,7 +807,7 @@ describe('App startup routing', () => {
 
   it('consumes the close shortcut while a decision-required approval is active', async () => {
     mocks.settings.isLoaded = true
-    mocks.compute.pendingApprovals = [{ id: 'compute', session_id: 'compute-session' }]
+    mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'compute-session' }]
     await render()
 
     expect(mocks.closeActiveModal.handler?.()).toBe('handled')

@@ -126,36 +126,21 @@ describe('compute host repository', () => {
     })
   })
 
-  it('does not expose unsupported or corrupt Compute JSON payloads', async () => {
+  it.each([
+    [
+      'future-version JSON',
+      { sshOverrides: JSON.stringify({ schemaVersion: 2, user: 'future-user' }) }
+    ],
+    ['corrupt JSON', { sshOverrides: JSON.stringify({ schemaVersion: 1, port: 'not-a-number' }) }],
+    ['an unsupported Host shape', { shape: 'future-cluster-shape' }],
+    ['an unsupported details author', { detailsUpdatedBy: 'future-author' }]
+  ])('fails the Host catalog for %s instead of treating it as missing', async (_label, row) => {
     const { client } = createMockClient({
-      findMany: () =>
-        Promise.resolve([
-          createRow({
-            id: 'future',
-            providerId: 'ssh:future',
-            sshOverrides: JSON.stringify({ schemaVersion: 2, user: 'future-user' }),
-            probeResult: JSON.stringify({ schemaVersion: 2, ok: true })
-          }),
-          createRow({
-            id: 'corrupt',
-            providerId: 'ssh:corrupt',
-            sshOverrides: JSON.stringify({ schemaVersion: 1, port: 'not-a-number' }),
-            probeResult: JSON.stringify({
-              schemaVersion: 1,
-              ok: 'yes',
-              probedAt: '2026-01-01T00:00:00Z',
-              exitCode: 0,
-              errorTail: null
-            })
-          })
-        ])
+      findMany: () => Promise.resolve([createRow(row)])
     })
     const repository = new ComputeHostRepository(() => Promise.resolve(client))
 
-    await expect(repository.list()).resolves.toMatchObject([
-      { providerId: 'ssh:future', sshOverrides: undefined, probeResult: undefined },
-      { providerId: 'ssh:corrupt', sshOverrides: undefined, probeResult: undefined }
-    ])
+    await expect(repository.list()).rejects.toThrow('Compute Host data is corrupt or unsupported')
   })
 
   it('fails the Host catalog when one row uses an unsupported authentication mode', async () => {

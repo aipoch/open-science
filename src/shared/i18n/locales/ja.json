@@ -294,7 +294,7 @@
     "The remote file will be copied into this Session's local cache. Approve only if you trust the source and path.": "リモートファイルはこの Session のローカルキャッシュにコピーされます。コピー元とパスを信頼できる場合にのみ承認してください。",
     "This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.": "このジョブはホスト上のアカウントとして実行され、サンドボックス化されません。承認する前に、コマンド、リソース、リモート作業ディレクトリ、タイムアウトを確認してください。",
     "Remote path": "リモートパス",
-    "{{seconds}} seconds": "{{seconds}} 秒",
+    "{{count}} seconds_other": "{{count}} 秒",
     "remote file downloads from {{host}}": "{{host}} からのリモートファイルのダウンロード",
     "remote job submissions on {{host}}": "{{host}} でのリモートジョブ送信",
     "Allow the agent to use every tool from this connector without showing an approval card each time.": "エージェントが毎回承認カードを表示せずに、このコネクタからのすべてのツールを使用できるようにします。",

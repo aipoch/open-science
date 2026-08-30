@@ -46,7 +46,7 @@ export function ComputeApprovalDialog({
   const { t } = useTranslation()
   const request = useComputeStore((state) =>
     state.pendingApprovals.find(
-      (candidate) => !candidate.session_id || !blockedSessionIds?.has(candidate.session_id)
+      (candidate) => !candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId)
     )
   )
   const respondApproval = useComputeStore((state) => state.respondApproval)
@@ -79,7 +79,7 @@ export function ComputeApprovalDialog({
   }
 
   const hasCommand = dialogRequest.operation !== 'download'
-  const isLongCommand = hasCommand && dialogRequest.command_preview !== dialogRequest.command_full
+  const isLongCommand = hasCommand && dialogRequest.commandPreview !== dialogRequest.commandFull
   const showFull = expandedRequestId === dialogRequest.id
   const title =
     dialogRequest.operation === 'download'
@@ -101,10 +101,10 @@ export function ComputeApprovalDialog({
           )
   const broadScopeSubject =
     dialogRequest.operation === 'download'
-      ? t('remote file downloads from {{host}}', { host: dialogRequest.provider_name })
+      ? t('remote file downloads from {{host}}', { host: dialogRequest.providerName })
       : dialogRequest.operation === 'submit_job'
-        ? t('remote job submissions on {{host}}', { host: dialogRequest.provider_name })
-        : t('remote commands on {{host}}', { host: dialogRequest.provider_name })
+        ? t('remote job submissions on {{host}}', { host: dialogRequest.providerName })
+        : t('remote commands on {{host}}', { host: dialogRequest.providerName })
 
   return (
     <Dialog.Root open={active && Boolean(request)}>
@@ -135,7 +135,7 @@ export function ComputeApprovalDialog({
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Host')}</span>
                 <span className="min-w-0 truncate font-medium text-foreground">
-                  {dialogRequest.provider_name}
+                  {dialogRequest.providerName}
                 </span>
               </div>
               <div className="flex gap-2">
@@ -147,7 +147,7 @@ export function ComputeApprovalDialog({
                   <span className="w-20 shrink-0 text-muted-foreground">{t('Command')}</span>
                   <div className="min-w-0 flex-1">
                     <span className="break-all font-mono text-muted-foreground">
-                      {showFull ? dialogRequest.command_full : dialogRequest.command_preview}
+                      {showFull ? dialogRequest.commandFull : dialogRequest.commandPreview}
                     </span>
                     {isLongCommand && (
                       <button
@@ -178,15 +178,15 @@ export function ComputeApprovalDialog({
                 <div className="flex gap-2">
                   <span className="w-20 shrink-0 text-muted-foreground">{t('Remote path')}</span>
                   <span className="min-w-0 break-all font-mono text-muted-foreground">
-                    {dialogRequest.remote_path}
+                    {dialogRequest.remotePath}
                   </span>
                 </div>
               )}
-              {dialogRequest.operation === 'submit_job' && dialogRequest.inputs_summary && (
+              {dialogRequest.operation === 'submit_job' && dialogRequest.inputsSummary && (
                 <div className="flex gap-2">
                   <span className="w-20 shrink-0 text-muted-foreground">{t('Inputs')}</span>
                   <span className="min-w-0 break-words text-foreground">
-                    {dialogRequest.inputs_summary}
+                    {dialogRequest.inputsSummary}
                   </span>
                 </div>
               )}
@@ -203,7 +203,10 @@ export function ComputeApprovalDialog({
                   <div className="flex gap-2">
                     <span className="w-20 shrink-0 text-muted-foreground">{t('Timeout')}</span>
                     <span className="min-w-0 text-foreground">
-                      {t('{{seconds}} seconds', { seconds: dialogRequest.timeout_seconds })}
+                      {t('{{count}} seconds', {
+                        count: dialogRequest.timeoutSeconds,
+                        defaultValue_one: '{{count}} second'
+                      })}
                     </span>
                   </div>
                   <div className="flex gap-2">
@@ -211,7 +214,7 @@ export function ComputeApprovalDialog({
                       {t('Remote workdir')}
                     </span>
                     <span className="min-w-0 break-all font-mono text-muted-foreground">
-                      {dialogRequest.remote_workdir}
+                      {dialogRequest.remoteWorkdir}
                     </span>
                   </div>
                 </>

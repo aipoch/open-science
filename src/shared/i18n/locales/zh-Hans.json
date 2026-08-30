@@ -348,7 +348,7 @@
     "The remote file will be copied into this Session's local cache. Approve only if you trust the source and path.": "远程文件将复制到此 Session 的本地缓存中。只有信任文件来源和路径时才批准。",
     "This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.": "此作业将以你在该主机上的账户身份运行，且不在沙箱中。批准前请检查命令、资源、远程工作目录和超时设置。",
     "Remote path": "远程路径",
-    "{{seconds}} seconds": "{{seconds}} 秒",
+    "{{count}} seconds_other": "{{count}} 秒",
     "remote file downloads from {{host}}": "从 {{host}} 下载远程文件",
     "remote job submissions on {{host}}": "在 {{host}} 上提交远程作业",
     "Allow the agent to use every tool from this connector without showing an approval card each time.": "允许智能体使用该连接器的所有工具，且每次都不再显示批准卡片。",

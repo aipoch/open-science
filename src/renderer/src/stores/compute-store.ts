@@ -12,6 +12,64 @@ import type {
   ProbeResult
 } from '../../../shared/compute'
 
+type ComputeApprovalBase = {
+  id: string
+  sessionId?: string
+  providerId: string
+  providerName: string
+  shape: string
+  intent: string
+  willPersistUnencrypted: boolean
+}
+
+export type ComputeApproval = ComputeApprovalBase &
+  (
+    | { operation: 'call_command'; commandPreview: string; commandFull: string }
+    | { operation: 'download'; remotePath: string }
+    | {
+        operation: 'submit_job'
+        commandPreview: string
+        commandFull: string
+        inputsSummary?: string
+        resources?: string
+        timeoutSeconds: number
+        remoteWorkdir: string
+      }
+  )
+
+const projectComputeApprovalRequest = (request: ComputeApprovalRequest): ComputeApproval => {
+  const base: ComputeApprovalBase = {
+    id: request.id,
+    ...(request.session_id ? { sessionId: request.session_id } : {}),
+    providerId: request.provider_id,
+    providerName: request.provider_name,
+    shape: request.shape,
+    intent: request.intent,
+    willPersistUnencrypted: request.willPersistUnencrypted === true
+  }
+  if (request.operation === 'download') {
+    return { ...base, operation: request.operation, remotePath: request.remote_path }
+  }
+  if (request.operation === 'call_command') {
+    return {
+      ...base,
+      operation: request.operation,
+      commandPreview: request.command_preview,
+      commandFull: request.command_full
+    }
+  }
+  return {
+    ...base,
+    operation: request.operation,
+    commandPreview: request.command_preview,
+    commandFull: request.command_full,
+    ...(request.inputs_summary ? { inputsSummary: request.inputs_summary } : {}),
+    ...(request.resources ? { resources: request.resources } : {}),
+    timeoutSeconds: request.timeout_seconds,
+    remoteWorkdir: request.remote_workdir
+  }
+}
+
 type ComputeStoreData = {
   hosts: ComputeHost[]
   isLoaded: boolean
@@ -21,7 +79,7 @@ type ComputeStoreData = {
   // Tracks which hosts are currently being probed so the UI can show a Probing... state.
   probingIds: Set<string>
   // Pending compute approval requests, oldest first. Answered one at a time.
-  pendingApprovals: ComputeApprovalRequest[]
+  pendingApprovals: ComputeApproval[]
 }
 
 type ComputeStore = ComputeStoreData & {
@@ -266,12 +324,12 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     }
   },
 
-  // Queues an incoming compute approval request (pushed from main before each SSH call).
+  // Queues an incoming transport request after projecting it to renderer-native field names.
   enqueueApproval: (request) => {
     set((state) =>
       state.pendingApprovals.some(({ id }) => id === request.id)
         ? state
-        : { pendingApprovals: [...state.pendingApprovals, request] }
+        : { pendingApprovals: [...state.pendingApprovals, projectComputeApprovalRequest(request)] }
     )
   },
 

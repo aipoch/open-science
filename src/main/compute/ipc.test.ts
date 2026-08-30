@@ -884,6 +884,25 @@ describe('compute handlers — jobsList', () => {
     const result = await handlers.jobsList({ sessionId: 'sess-1' })
     expect(result[0]!.display_name).toBe('ssh:biowulf')
   })
+
+  it('keeps the Job feed available when the Host catalog cannot be decoded', async () => {
+    const findBySession = vi.fn().mockResolvedValue([makeJob()])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockRejectedValue(new Error('unsupported Host row')) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findBySession }),
+      undefined,
+      undefined,
+      '/tmp/test-storage'
+    )
+
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+
+    expect(result[0]!.display_name).toBe('ssh:biowulf')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1993,6 +2012,25 @@ describe('compute handlers — jobsPendingNotification', () => {
     )
 
     const result = await handlers.jobsPendingNotification('sess-1')
+    expect(result[0]!.display_name).toBe('ssh:biowulf')
+  })
+
+  it('keeps notification recovery available when the Host catalog cannot be decoded', async () => {
+    const findPendingNotifications = vi.fn().mockResolvedValue([makeJob()])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockRejectedValue(new Error('unsupported Host row')) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ findPendingNotifications }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    const result = await handlers.jobsPendingNotification('sess-1')
+
     expect(result[0]!.display_name).toBe('ssh:biowulf')
   })
 

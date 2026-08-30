@@ -158,11 +158,12 @@ const decodeProbeResult = (value: unknown): ProbeResult | undefined => {
   }
 }
 
-// Existing unversioned values remain readable as legacy data. Unsupported and corrupt payloads are
-// deliberately omitted from the domain object instead of being mistaken for the current schema.
+// Existing unversioned values remain readable as legacy data. Unsupported and corrupt payloads
+// fail the Host read instead of being mistaken for a missing optional field.
 const parseComputeJson = <T>(
   value: string | null,
-  decode: (value: unknown) => T | undefined
+  decode: (value: unknown) => T | undefined,
+  field: string
 ): T | undefined => {
   if (value === null) return undefined
   const result = decodeVersionedJson(value, {
@@ -171,21 +172,32 @@ const parseComputeJson = <T>(
     decode,
     decodeUnversioned: decode
   })
-  return result.status === 'valid' || result.status === 'legacy' ? result.value : undefined
+  if (result.status === 'unsupported') {
+    throw new Error(
+      `Compute Host data is corrupt or unsupported: ${field} uses schema version ${result.version}.`
+    )
+  }
+  if (result.status === 'corrupt') {
+    throw new Error(`Compute Host data is corrupt or unsupported: ${field} is corrupt.`)
+  }
+  return result.value
 }
 
 const serializeProbeResult = (result: ProbeResult): string =>
   JSON.stringify({ schemaVersion: COMPUTE_JSON_SCHEMA_VERSION, ...result })
 
-// Narrows the free-text shape column back to the domain union, defaulting unknown values to
-// 'direct_ssh' so a corrupt row still renders as a plain host rather than crashing.
-const asShape = (value: string): ComputeHostShape =>
-  value === 'scheduler_cluster' || value === 'bridge_runner' || value === 'direct_ssh'
-    ? value
-    : 'direct_ssh'
+const asShape = (value: string): ComputeHostShape => {
+  if (value === 'scheduler_cluster' || value === 'bridge_runner' || value === 'direct_ssh') {
+    return value
+  }
+  throw new Error(`Compute Host data is corrupt or unsupported: unknown shape ${value}.`)
+}
 
-const asAuthor = (value: string | null): DetailsAuthor | undefined =>
-  value === 'user' || value === 'agent' ? value : undefined
+const asAuthor = (value: string | null): DetailsAuthor | undefined => {
+  if (value === null) return undefined
+  if (value === 'user' || value === 'agent') return value
+  throw new Error(`Compute Host data is corrupt or unsupported: unknown details author ${value}.`)
+}
 
 const asAuthenticationMode = (value: string): ComputeAuthenticationMode => {
   if (value === 'ssh_config' || value === 'password') return value
@@ -220,7 +232,7 @@ const toHost = (row: PrismaComputeHost, hasCredential = false): ComputeHost => (
   displayName: row.displayName,
   shape: asShape(row.shape),
   sshAlias: row.sshAlias,
-  sshOverrides: parseComputeJson(row.sshOverrides, decodeSshOverrides),
+  sshOverrides: parseComputeJson(row.sshOverrides, decodeSshOverrides, 'sshOverrides'),
   authentication: {
     mode: asAuthenticationMode(row.authenticationMode ?? 'ssh_config'),
     credentialStatus:
@@ -235,7 +247,7 @@ const toHost = (row: PrismaComputeHost, hasCredential = false): ComputeHost => (
   scratchRoot: row.scratchRoot ?? undefined,
   scratchPinned: row.scratchPinned,
   concurrencyLimit: row.concurrencyLimit ?? undefined,
-  probeResult: parseComputeJson(row.probeResult, decodeProbeResult),
+  probeResult: parseComputeJson(row.probeResult, decodeProbeResult, 'probeResult'),
   detailsDoc: row.detailsDoc,
   detailsUpdatedAt: row.detailsUpdatedAt?.getTime(),
   detailsUpdatedBy: asAuthor(row.detailsUpdatedBy),
