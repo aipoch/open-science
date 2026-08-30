@@ -231,8 +231,35 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       deps.log('analysis-turn:settled', `session=${sessionId} state=${state}`)
     } catch (err) {
       deps.log('analysis-turn:settle-failed', `session=${sessionId} error=${String(err)}`)
+      let retryJobIds = jobIds
+      try {
+        const jobIdSet = new Set(jobIds)
+        const currentJobs = (await deps.getJobsForSession(sessionId)).filter((job) =>
+          jobIdSet.has(job.job_id)
+        )
+        retryJobIds = currentJobs
+          .filter(
+            (job) => job.analysis_state === 'dispatched' && job.analysis_message_id === messageId
+          )
+          .map((job) => job.job_id)
+        const retryJobIdSet = new Set(retryJobIds)
+        for (const jobId of jobIds) {
+          if (!retryJobIdSet.has(jobId)) inFlight.delete(jobId)
+        }
+      } catch (reconcileErr) {
+        deps.log(
+          'analysis-turn:settle-reconcile-failed',
+          `session=${sessionId} error=${String(reconcileErr)}`
+        )
+      }
+      if (retryJobIds.length === 0) {
+        awaitingTurnEnd.delete(key)
+        releaseSessionBatch(batch, sessionId)
+        deps.log('analysis-turn:settle-reconciled', `session=${sessionId}`)
+        return
+      }
       scheduleSettlementRetry(key, () => {
-        void settle(key, batch, sessionId, messageId, jobIds, state)
+        void settle(key, batch, sessionId, messageId, retryJobIds, state)
       })
       return
     }

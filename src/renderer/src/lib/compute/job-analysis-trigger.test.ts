@@ -148,6 +148,11 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     })
     const deps = createDeps({
       transitionAnalysis,
+      getJobsForSession: vi
+        .fn()
+        .mockResolvedValue([
+          makeJob({ analysis_state: 'dispatched', analysis_message_id: 'msg-1' })
+        ]),
       onTurnEnd: vi.fn((_sessionId, callback) => {
         turnEndCallback = callback
       })
@@ -187,6 +192,43 @@ describe('createJobAnalysisTrigger — immediate send', () => {
         }
       ]
     ])
+  })
+
+  it('stops retrying a failed terminal transition after the job is deleted', async () => {
+    vi.useFakeTimers()
+    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
+    const transitionAnalysis = vi.fn<JobAnalysisTriggerDeps['transitionAnalysis']>((request) =>
+      request.state === 'succeeded'
+        ? Promise.reject(new Error('analysis transition conflict'))
+        : Promise.resolve()
+    )
+    const deps = createDeps({
+      transitionAnalysis,
+      getJobsForSession: vi.fn().mockResolvedValue([]),
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallback = callback
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    await flushMicrotasks()
+    turnEndCallback?.('succeeded')
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    expect(deps.getJobsForSession).toHaveBeenCalledWith('sess-1')
+    expect(
+      transitionAnalysis.mock.calls.filter(([request]) => request.state === 'succeeded')
+    ).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    await flushMicrotasks()
+
+    expect(
+      transitionAnalysis.mock.calls.filter(([request]) => request.state === 'succeeded')
+    ).toHaveLength(1)
   })
 
   it('records failure when sendPrompt returns undefined', async () => {
