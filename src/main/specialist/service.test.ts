@@ -244,6 +244,27 @@ describe('SpecialistService.create', () => {
     expect(await service.list()).toEqual([])
   })
 
+  it('rejects an overlong Connector tool glob before persisting the profile', async () => {
+    await expect(
+      service.create({
+        name: 'My Bot',
+        capabilityMode: 'full',
+        fullAccess: {
+          excludedSkillIds: [],
+          excludedConnectorIds: [],
+          connectorTools: [
+            {
+              connectorId: 'molecule',
+              excludeToolsPattern: 'x'.repeat(129)
+            }
+          ]
+        }
+      })
+    ).rejects.toThrow(/capability configuration is invalid/i)
+
+    expect(await service.list()).toEqual([])
+  })
+
   it('rejects non-string optional identity fields before persisting the profile', async () => {
     await expect(service.create({ name: 'My Bot', description: 42 } as never)).rejects.toThrow(
       /description must be a string/i
