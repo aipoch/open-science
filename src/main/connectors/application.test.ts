@@ -182,6 +182,41 @@ describe('Connector application composition', () => {
     await module.dispose?.()
   })
 
+  it('bounds oversized approval arguments before broadcasting them', async () => {
+    const { settings, mcpClientManager, connectorApprovals, deps } = createHarness()
+    settings.getConnectors.mockResolvedValue({
+      enabledIds: [],
+      autoAllowIds: [],
+      askToolIds: ['stable-server/lookup'],
+      customMcpServers: [
+        {
+          id: 'server-id',
+          name: 'stable-server',
+          displayName: 'Stable server',
+          transport: 'streamable_http',
+          url: 'https://mcp.example.test/path',
+          enabled: true
+        }
+      ]
+    })
+    mcpClientManager.listTools.mockResolvedValue([
+      { name: 'lookup', description: 'Look up a record', inputSchema: { type: 'object' } }
+    ])
+    mcpClientManager.call.mockResolvedValue({ ok: true })
+    const module = await createConnectorApplicationModule(deps)
+    await module.capability.runtimeSettings.refresh()
+    const args = { query: 'x'.repeat(70_000) }
+
+    await module.capability.connectorService.call('stable-server', 'lookup', args, {
+      origin: 'internal'
+    })
+
+    const request = connectorApprovals.request.mock.calls[0][0]
+    expect(request.argsJson?.length).toBeLessThan(JSON.stringify(args).length)
+    expect(request.argsJsonTruncated).toBe(true)
+    await module.dispose?.()
+  })
+
   it('forwards the conversation cancellation signal to GitHub scanning', async () => {
     const { settings, skillImportApprovals, deps } = createHarness()
     const controller = new AbortController()
