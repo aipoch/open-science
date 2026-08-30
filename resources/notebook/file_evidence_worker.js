@@ -33,7 +33,12 @@ const ownershipFile = (token) => `.ownership-${assertSafeName(token)}`
 const projectOwnershipReceipt = (projectName) =>
   `.project-ownership-${assertSafeName(projectName)}.json`
 const projectDeletionTombstone = (ownershipToken) => `deleting-${assertSafeName(ownershipToken)}`
+const runDeletionTombstonePrefix = (ownershipToken, kind) =>
+  `deleting-run-${assertSafeName(ownershipToken)}-${kind}`
+const UUID_NAME = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u
 const BLOB_NAME = /^sha256-[a-f0-9]{64}$/u
+const BLOB_DELETION_TOMBSTONE_NAME =
+  /^deleting-(sha256-[a-f0-9]{64})-([a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/u
 const BASELINE_REASONS = [
   'file-reads-not-observed',
   'external-paths-not-observed',
@@ -54,6 +59,7 @@ const sameIdentity = (left, right) =>
   validIdentity(left) && validIdentity(right) && left.dev === right.dev && left.ino === right.ino
 const fingerprint = (value) =>
   [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs].join(':')
+const quarantineFingerprint = (value) => [value.dev, value.ino, value.size, value.mtimeMs].join(':')
 const uniqueReasons = (values) => [...new Set([...BASELINE_REASONS, ...values])].sort()
 const assertSafeName = (value) => {
   if (!SAFE_NAME.test(value)) throw new Error(`Unsafe file-evidence name: ${value}`)
@@ -222,37 +228,96 @@ const verifyOwnershipMarker = (directoryName, ownershipToken, ownerLabel) => {
     throw new Error(`${ownerLabel} ownership marker mismatch.`)
   }
 }
-const removeOwnedDirectory = (name, expectedIdentity) => {
+const removeRunTombstone = (name, expectedIdentity, ownershipToken) => {
+  const actual = entryIdentity(name)
+  if (!actual) {
+    if (entryExists(name)) throw new Error(`File-evidence Run quarantine is unsafe: ${name}`)
+    return false
+  }
+  if (!sameIdentity(actual, expectedIdentity)) {
+    throw new Error(`File-evidence Run quarantine identity changed: ${name}`)
+  }
+  const rootPath = process.cwd()
+  const rootIdentity = identity(statSync('.'))
+  const markerName = ownershipFile(ownershipToken)
+  process.chdir(name)
+  try {
+    if (!sameIdentity(identity(statSync('.')), expectedIdentity)) {
+      throw new Error(`File-evidence Run quarantine identity changed: ${name}`)
+    }
+    let entries = readdirSync('.')
+    if (entries.includes(markerName)) {
+      verifyOwnershipMarker('.', ownershipToken, 'File-evidence Run')
+      for (const entry of entries) {
+        if (entry !== markerName) rmSync(entry, { recursive: true, force: true })
+      }
+      syncDirectory()
+      verifyOwnershipMarker('.', ownershipToken, 'File-evidence Run')
+      rmSync(markerName)
+      syncDirectory()
+      entries = readdirSync('.')
+    }
+    if (entries.length !== 0) {
+      throw new Error('File-evidence Run quarantine lost its ownership marker.')
+    }
+  } finally {
+    process.chdir(rootPath)
+  }
+  assertBoundRoot(rootIdentity)
+  const revalidated = entryIdentity(name)
+  if (!revalidated || !sameIdentity(revalidated, expectedIdentity)) {
+    throw new Error(`File-evidence Run quarantine identity changed: ${name}`)
+  }
+  rmdirSync(name)
+  syncDirectory()
+  return true
+}
+const findRunDeletionTombstone = (ownershipToken, kind) => {
+  const prefix = runDeletionTombstonePrefix(ownershipToken, kind)
+  const matches = []
+  for (const entry of readdirSync('.')) {
+    if (entry !== prefix && !entry.startsWith(`${prefix}-`)) continue
+    const suffix = entry.slice(prefix.length + 1)
+    if (!UUID_NAME.test(suffix)) {
+      throw new Error(`Unsafe file-evidence Run quarantine name: ${entry}`)
+    }
+    matches.push(entry)
+  }
+  if (matches.length > 1) {
+    throw new Error('Multiple file-evidence Run quarantines exist.')
+  }
+  return matches[0]
+}
+const removeReceiptOwnedDirectory = (name, expectedIdentity, ownershipToken, kind) => {
   if (!validIdentity(expectedIdentity)) {
     throw new Error(`File-evidence owned directory identity is missing: ${name}`)
   }
+  const existingQuarantineName = findRunDeletionTombstone(ownershipToken, kind)
   const actual = entryIdentity(name)
-  if (!actual) {
-    if (entryExists(name)) throw new Error(`File-evidence owned directory is unsafe: ${name}`)
-    return false
+  const quarantineIdentity = existingQuarantineName
+    ? entryIdentity(existingQuarantineName)
+    : undefined
+  if (entryExists(name) && !actual) {
+    throw new Error(`File-evidence owned directory is unsafe: ${name}`)
   }
-  if (expectedIdentity && !sameIdentity(actual, expectedIdentity)) {
-    throw new Error(`File-evidence owned directory identity changed: ${name}`)
+  if (existingQuarantineName && entryExists(existingQuarantineName) && !quarantineIdentity) {
+    throw new Error(`File-evidence Run quarantine is unsafe: ${existingQuarantineName}`)
   }
-  rmSync(name, { recursive: true, force: true })
-  return true
-}
-const removeReceiptOwnedDirectory = (name, expectedIdentity, ownershipToken) => {
-  const actual = entryIdentity(name)
-  if (!actual) {
-    if (entryExists(name)) throw new Error(`File-evidence owned directory is unsafe: ${name}`)
-    return false
+  if (actual && quarantineIdentity) {
+    throw new Error('File-evidence Run cleanup source and quarantine both exist.')
   }
+  if (existingQuarantineName && quarantineIdentity) {
+    return removeRunTombstone(existingQuarantineName, expectedIdentity, ownershipToken)
+  }
+  if (!actual) return false
   if (!sameIdentity(actual, expectedIdentity)) {
     throw new Error(`File-evidence owned directory identity changed: ${name}`)
   }
   verifyOwnershipMarker(name, ownershipToken, 'File-evidence Run')
-  const revalidated = entryIdentity(name)
-  if (!revalidated || !sameIdentity(revalidated, expectedIdentity)) {
-    throw new Error(`File-evidence owned directory identity changed: ${name}`)
-  }
-  rmSync(name, { recursive: true, force: true })
-  return true
+  const quarantineName = `${runDeletionTombstonePrefix(ownershipToken, kind)}-${randomUUID()}`
+  renameSync(name, quarantineName)
+  syncDirectory()
+  return removeRunTombstone(quarantineName, expectedIdentity, ownershipToken)
 }
 const removeProjectTombstone = (name, ownershipToken, expectedRootIdentity) => {
   const expectedIdentity = entryIdentity(name)
@@ -408,14 +473,11 @@ const preparedStagingIdentity = (receipt) => {
   const actual = entryIdentity(receipt.stagingName)
   if (!actual) {
     if (entryExists(receipt.stagingName)) {
-      throw new Error(
-        `Prepared file-evidence staging directory is unsafe: ${receipt.stagingName}`
-      )
+      throw new Error(`Prepared file-evidence staging directory is unsafe: ${receipt.stagingName}`)
     }
     return undefined
   }
   const entries = readdirSync(receipt.stagingName)
-  if (entries.length === 0) return actual
   const markerName = ownershipFile(receipt.ownershipToken)
   if (!entries.includes(markerName)) {
     throw new Error(
@@ -438,13 +500,12 @@ const cleanupReceiptTargets = (receipt) => {
   const stagingWasPresent = entryIdentity(receipt.stagingName) !== undefined
   const stagingRemoved =
     stagingExpected &&
-    (receipt.phase === 'prepared'
-      ? removeOwnedDirectory(receipt.stagingName, stagingExpected)
-      : removeReceiptOwnedDirectory(
-          receipt.stagingName,
-          stagingExpected,
-          receipt.ownershipToken
-        ))
+    removeReceiptOwnedDirectory(
+      receipt.stagingName,
+      stagingExpected,
+      receipt.ownershipToken,
+      'staging'
+    )
   if (stagingRemoved) {
     removedStagingEntries += 1
   }
@@ -452,7 +513,7 @@ const cleanupReceiptTargets = (receipt) => {
     receipt.finalIdentity ?? (!stagingWasPresent ? receipt.stagingIdentity : undefined)
   if (
     finalExpected &&
-    removeReceiptOwnedDirectory(receipt.finalName, finalExpected, receipt.ownershipToken)
+    removeReceiptOwnedDirectory(receipt.finalName, finalExpected, receipt.ownershipToken, 'final')
   ) {
     removedRunEntries += 1
   }
@@ -511,15 +572,31 @@ const verifyBlob = (path, expectedSize, expectedChecksum) => {
     closeSync(descriptor)
   }
 }
+const blobEntry = (name) => {
+  if (BLOB_NAME.test(name)) return { blobName: name, quarantined: false }
+  const match = BLOB_DELETION_TOMBSTONE_NAME.exec(name)
+  return match ? { blobName: match[1], quarantined: true } : undefined
+}
 const blobPoolBytes = (blobPool) => {
   let bytes = 0
   for (const entry of readdirSync(blobPool.path, { withFileTypes: true })) {
-    if (!entry.isFile() || entry.isSymbolicLink() || !BLOB_NAME.test(entry.name)) {
+    const parsed = blobEntry(entry.name)
+    if (!entry.isFile() || entry.isSymbolicLink() || !parsed) {
       throw new Error(`Unsafe file-evidence blob-pool entry: ${entry.name}`)
     }
     const metadata = lstatSync(join(blobPool.path, entry.name))
     if (!metadata.isFile() || metadata.isSymbolicLink()) {
       throw new Error(`Unsafe file-evidence blob: ${entry.name}`)
+    }
+    if (parsed.quarantined) {
+      if (metadata.nlink !== 1) {
+        throw new Error(`Unsafe file-evidence blob quarantine links: ${entry.name}`)
+      }
+      verifyBlob(
+        join(blobPool.path, entry.name),
+        metadata.size,
+        parsed.blobName.slice('sha256-'.length)
+      )
     }
     bytes += metadata.size
   }
@@ -531,36 +608,79 @@ const sweepBlobPool = (blobPool) => {
     throw new Error('File-evidence blob-pool identity changed before cleanup.')
   }
   const orphaned = []
+  const quarantined = []
+  const seenBlobNames = new Set()
   for (const entry of readdirSync(blobPool.path, { withFileTypes: true })) {
-    if (!entry.isFile() || entry.isSymbolicLink() || !BLOB_NAME.test(entry.name)) {
+    const parsed = blobEntry(entry.name)
+    if (!entry.isFile() || entry.isSymbolicLink() || !parsed) {
       throw new Error(`Unsafe file-evidence blob-pool entry: ${entry.name}`)
     }
+    if (seenBlobNames.has(parsed.blobName)) {
+      throw new Error(`Multiple file-evidence blob entries exist: ${parsed.blobName}`)
+    }
+    seenBlobNames.add(parsed.blobName)
     const blobPath = join(blobPool.path, entry.name)
     const metadata = lstatSync(blobPath)
     if (!metadata.isFile() || metadata.isSymbolicLink()) {
       throw new Error(`Unsafe file-evidence blob: ${entry.name}`)
     }
-    if (metadata.nlink === 1) {
+    if (parsed.quarantined) {
+      if (metadata.nlink !== 1) {
+        throw new Error(`Unsafe file-evidence blob quarantine links: ${entry.name}`)
+      }
+      verifyBlob(blobPath, metadata.size, parsed.blobName.slice('sha256-'.length))
+      quarantined.push({ name: entry.name, fingerprint: fingerprint(metadata) })
+    } else if (metadata.nlink === 1) {
       orphaned.push({ name: entry.name, fingerprint: fingerprint(metadata) })
     }
   }
   if (!sameIdentity(entryIdentity(blobPool.path), blobPool.identity)) {
     throw new Error('File-evidence blob-pool identity changed during cleanup scan.')
   }
+  for (const candidate of [...quarantined, ...orphaned]) {
+    const metadata = lstatSync(join(blobPool.path, candidate.name))
+    if (
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      metadata.nlink !== 1 ||
+      fingerprint(metadata) !== candidate.fingerprint
+    ) {
+      throw new Error(`File-evidence orphan changed during cleanup: ${candidate.name}`)
+    }
+  }
+  for (const tombstone of quarantined) {
+    rmSync(join(blobPool.path, tombstone.name))
+    syncDirectoryPath(blobPool.path)
+  }
   for (const orphan of orphaned) {
-    const metadata = lstatSync(join(blobPool.path, orphan.name))
+    const sourcePath = join(blobPool.path, orphan.name)
+    const tombstoneName = `deleting-${orphan.name}-${randomUUID()}`
+    const tombstonePath = join(blobPool.path, tombstoneName)
+    const metadata = lstatSync(sourcePath)
     if (
       metadata.isSymbolicLink() ||
       !metadata.isFile() ||
       metadata.nlink !== 1 ||
       fingerprint(metadata) !== orphan.fingerprint
     ) {
-      throw new Error(`File-evidence orphan changed during cleanup: ${orphan.name}`)
+      throw new Error(`File-evidence orphan changed before quarantine: ${orphan.name}`)
     }
+    renameSync(sourcePath, tombstonePath)
+    syncDirectoryPath(blobPool.path)
+    const quarantinedMetadata = lstatSync(tombstonePath)
+    if (
+      quarantinedMetadata.isSymbolicLink() ||
+      !quarantinedMetadata.isFile() ||
+      quarantinedMetadata.nlink !== 1 ||
+      quarantineFingerprint(quarantinedMetadata) !== quarantineFingerprint(metadata)
+    ) {
+      throw new Error(`File-evidence orphan changed during quarantine: ${orphan.name}`)
+    }
+    verifyBlob(tombstonePath, quarantinedMetadata.size, orphan.name.slice('sha256-'.length))
+    rmSync(tombstonePath)
+    syncDirectoryPath(blobPool.path)
   }
-  for (const orphan of orphaned) rmSync(join(blobPool.path, orphan.name))
-  if (orphaned.length > 0) syncDirectoryPath(blobPool.path)
-  return orphaned.length
+  return quarantined.length + orphaned.length
 }
 const bindRunBlob = (blobPath, contentName, expectedSize, expectedChecksum) => {
   if (!entryExists(RUN_BLOBS_DIRECTORY)) {
@@ -761,6 +881,7 @@ const begin = (request) => {
   }
   publishExclusiveFile(receiptName, `${JSON.stringify(receipt, null, 2)}\n`)
   let stagingIdentity
+  let ownershipMarkerPublished = false
   try {
     mkdirSync(stagingName, { mode: 0o700 })
     stagingIdentity = identity(lstatSync(stagingName))
@@ -769,6 +890,7 @@ const begin = (request) => {
       throw new Error('File-evidence staging directory changed during capture binding.')
     }
     writeExclusiveFile(ownershipFile(receipt.ownershipToken), '')
+    ownershipMarkerPublished = true
     syncDirectory()
     process.chdir('..')
     assertBoundRoot(request.expectedRootIdentity)
@@ -848,9 +970,11 @@ const begin = (request) => {
       if (stagingIdentity && sameIdentity(identity(statSync('.')), stagingIdentity))
         process.chdir('..')
       assertBoundRoot(request.expectedRootIdentity)
-      removeOwnedDirectory(stagingName, stagingIdentity)
-      removeReceipt(receiptName)
-      sweepBlobPool(blobPool)
+      if (stagingIdentity && ownershipMarkerPublished) {
+        removeReceiptOwnedDirectory(stagingName, stagingIdentity, receipt.ownershipToken, 'staging')
+        removeReceipt(receiptName)
+        sweepBlobPool(blobPool)
+      }
     } catch {
       // Keep the original failure. A durable receipt remains for startup reconciliation if cleanup fails.
     }

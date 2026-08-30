@@ -1221,6 +1221,102 @@ describe('working-file evidence', () => {
     await expect(readdir(evidenceRoot)).resolves.toEqual([])
   })
 
+  it('recovers cleanup after a Run directory was quarantined', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    const blobPool = await createWorkerBlobPool()
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'begin',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      receiptName: 'receipt-run-quarantine.json',
+      stagingName: 'staging-run-quarantine',
+      finalName: 'run-run-quarantine',
+      runId: 'run-quarantine',
+      evidenceId: 'notebook-file-evidence-run-quarantine',
+      storageKeyPrefix: 'file-evidence',
+      ...blobPool,
+      initialViewState: 'complete',
+      initialFiles: [],
+      maxGenerationBytes: 1024,
+      maxRunBytes: 64 * 1024,
+      diskReserveBytes: 0,
+      availableBytes: 1024 * 1024,
+      captureCancelled: false
+    })
+    const receipt = JSON.parse(
+      await readFile(join(evidenceRoot, 'receipt-run-quarantine.json'), 'utf8')
+    ) as { ownershipToken: string }
+    const tombstoneName =
+      `deleting-run-${receipt.ownershipToken}-staging-` + '00000000-0000-4000-8000-000000000001'
+    await rename(join(evidenceRoot, 'staging-run-quarantine'), join(evidenceRoot, tombstoneName))
+
+    const result = await reconcileWorkingFileEvidence(
+      {
+        storageRoot: storageRoot as string,
+        root: evidenceRoot,
+        storageKeyPrefix: 'file-evidence'
+      },
+      []
+    )
+
+    expect(result).toEqual({ removedStagingEntries: 1, removedRunEntries: 0 })
+    await expect(readdir(evidenceRoot)).resolves.toEqual([])
+  })
+
+  it('preserves source, quarantine, and receipt when a Run quarantine name collides', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'file-evidence')
+    await mkdir(evidenceRoot)
+    const root = await stat(evidenceRoot)
+    const blobPool = await createWorkerBlobPool()
+    await runEvidenceWorker(evidenceRoot, {
+      operation: 'begin',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      receiptName: 'receipt-run-quarantine-collision.json',
+      stagingName: 'staging-run-quarantine-collision',
+      finalName: 'run-run-quarantine-collision',
+      runId: 'run-quarantine-collision',
+      evidenceId: 'notebook-file-evidence-run-quarantine-collision',
+      storageKeyPrefix: 'file-evidence',
+      ...blobPool,
+      initialViewState: 'complete',
+      initialFiles: [],
+      maxGenerationBytes: 1024,
+      maxRunBytes: 64 * 1024,
+      diskReserveBytes: 0,
+      availableBytes: 1024 * 1024,
+      captureCancelled: false
+    })
+    const receiptPath = join(evidenceRoot, 'receipt-run-quarantine-collision.json')
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8')) as { ownershipToken: string }
+    const tombstoneRoot = join(
+      evidenceRoot,
+      `deleting-run-${receipt.ownershipToken}-staging-` + '00000000-0000-4000-8000-000000000001'
+    )
+    await mkdir(tombstoneRoot)
+    await writeFile(join(tombstoneRoot, 'keep.txt'), 'unowned quarantine data')
+
+    await expect(
+      reconcileWorkingFileEvidence(
+        {
+          storageRoot: storageRoot as string,
+          root: evidenceRoot,
+          storageKeyPrefix: 'file-evidence'
+        },
+        []
+      )
+    ).rejects.toThrow(/Run cleanup source and quarantine both exist/)
+    await expect(
+      readFile(join(evidenceRoot, 'staging-run-quarantine-collision', 'capture.json'), 'utf8')
+    ).resolves.toContain('run-quarantine-collision')
+    await expect(readFile(join(tombstoneRoot, 'keep.txt'), 'utf8')).resolves.toBe(
+      'unowned quarantine data'
+    )
+    await expect(readFile(receiptPath, 'utf8')).resolves.toContain('run-quarantine-collision')
+  })
+
   it('preserves a renamed final directory when its Run ownership marker is missing', async () => {
     await createRoots()
     const evidenceRoot = join(storageRoot as string, 'file-evidence')
@@ -1599,6 +1695,83 @@ describe('working-file evidence', () => {
     await expect(readFile(join(projectRoot, 'blobs', orphanName), 'utf8')).resolves.toBe(
       orphanContent
     )
+  })
+
+  it('recovers an orphan CAS blob already moved to quarantine', async () => {
+    await createRoots()
+    const projectRoot = join(
+      storageRoot as string,
+      'notebook-file-evidence',
+      'project-cas-recovery'
+    )
+    const evidenceRoot = join(projectRoot, 'session-1')
+    const storageKeyPrefix = 'notebook-file-evidence/project-cas-recovery/session-1'
+    const location = { storageRoot: storageRoot as string, root: evidenceRoot, storageKeyPrefix }
+    await reconcileWorkingFileEvidence(location, [])
+    const content = 'quarantined orphan bytes'
+    const blobName = `sha256-${createHash('sha256').update(content).digest('hex')}`
+    const blobRoot = join(projectRoot, 'blobs')
+    await writeFile(join(blobRoot, blobName), content)
+    await rename(
+      join(blobRoot, blobName),
+      join(blobRoot, `deleting-${blobName}-00000000-0000-4000-8000-000000000001`)
+    )
+
+    await reconcileWorkingFileEvidence(location, [])
+
+    await expect(readdir(blobRoot)).resolves.toEqual([])
+  })
+
+  it('preserves CAS source and quarantine when the same blob has both entries', async () => {
+    await createRoots()
+    const projectRoot = join(
+      storageRoot as string,
+      'notebook-file-evidence',
+      'project-cas-quarantine-collision'
+    )
+    const evidenceRoot = join(projectRoot, 'session-1')
+    const storageKeyPrefix = 'notebook-file-evidence/project-cas-quarantine-collision/session-1'
+    const location = { storageRoot: storageRoot as string, root: evidenceRoot, storageKeyPrefix }
+    await reconcileWorkingFileEvidence(location, [])
+    const content = 'colliding orphan bytes'
+    const blobName = `sha256-${createHash('sha256').update(content).digest('hex')}`
+    const blobRoot = join(projectRoot, 'blobs')
+    const tombstoneName = `deleting-${blobName}-` + '00000000-0000-4000-8000-000000000001'
+    await writeFile(join(blobRoot, blobName), content)
+    await writeFile(join(blobRoot, tombstoneName), content)
+
+    await expect(reconcileWorkingFileEvidence(location, [])).rejects.toThrow(
+      /Multiple file-evidence blob entries exist/
+    )
+    await expect(readFile(join(blobRoot, blobName), 'utf8')).resolves.toBe(content)
+    await expect(readFile(join(blobRoot, tombstoneName), 'utf8')).resolves.toBe(content)
+  })
+
+  it('preserves a CAS quarantine whose bytes do not match its hash name', async () => {
+    await createRoots()
+    const projectRoot = join(
+      storageRoot as string,
+      'notebook-file-evidence',
+      'project-cas-tampered'
+    )
+    const evidenceRoot = join(projectRoot, 'session-1')
+    const storageKeyPrefix = 'notebook-file-evidence/project-cas-tampered/session-1'
+    const location = { storageRoot: storageRoot as string, root: evidenceRoot, storageKeyPrefix }
+    await reconcileWorkingFileEvidence(location, [])
+    const claimedContent = 'claimed bytes'
+    const actualContent = 'unowned replacement bytes'
+    const blobName = `sha256-${createHash('sha256').update(claimedContent).digest('hex')}`
+    const tombstonePath = join(
+      projectRoot,
+      'blobs',
+      `deleting-${blobName}-00000000-0000-4000-8000-000000000001`
+    )
+    await writeFile(tombstonePath, actualContent)
+
+    await expect(reconcileWorkingFileEvidence(location, [])).rejects.toThrow(
+      /blob checksum mismatch/
+    )
+    await expect(readFile(tombstonePath, 'utf8')).resolves.toBe(actualContent)
   })
 
   it('claims the Project before session evidence reconciliation creates its root', async () => {
