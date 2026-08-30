@@ -75,7 +75,7 @@ type PermissionGrantSnapshotProvider = () => AcpStateSnapshot['permissionGrants'
 type PendingPromptStart = {
   id: string
   runtime: AcpRuntime
-  sessionCancellationGeneration: number
+  cancelled: boolean
   globalCancellationGeneration: number
 }
 
@@ -157,7 +157,6 @@ class AcpRuntimeCoordinator {
   private globalCancellationGeneration = 0
   private delegatedWorkRevision = 0
   private promptAttemptSequence = 0
-  private readonly sessionCancellationGenerations = new Map<string, number>()
   private readonly pendingPromptStarts = new Map<string, PendingPromptStart[]>()
   private readonly activePromptRequests = new Map<string, ActivePromptRequest>()
   private readonly activePromptCounts = new Map<string, number>()
@@ -1044,8 +1043,7 @@ class AcpRuntimeCoordinator {
     const attempt: PendingPromptStart = {
       id: `prompt-attempt-${++this.promptAttemptSequence}`,
       runtime,
-      sessionCancellationGeneration:
-        this.sessionCancellationGenerations.get(request.sessionId) ?? 0,
+      cancelled: false,
       globalCancellationGeneration: this.globalCancellationGeneration
     }
     const pending = this.pendingPromptStarts.get(request.sessionId) ?? []
@@ -1093,8 +1091,7 @@ class AcpRuntimeCoordinator {
       settlementLeaseId = leaseId
       if (
         attempt.globalCancellationGeneration !== this.globalCancellationGeneration ||
-        attempt.sessionCancellationGeneration !==
-          (this.sessionCancellationGenerations.get(request.sessionId) ?? 0) ||
+        attempt.cancelled ||
         this.activePromptRequests.get(request.sessionId) !== activePrompt
       ) {
         throw new DelegateMessagePreAcceptanceError(
@@ -1534,10 +1531,7 @@ class AcpRuntimeCoordinator {
   }
 
   private invalidateSessionTurn(sessionId: string, notifyCancellation = true): void {
-    this.sessionCancellationGenerations.set(
-      sessionId,
-      (this.sessionCancellationGenerations.get(sessionId) ?? 0) + 1
-    )
+    for (const attempt of this.pendingPromptStarts.get(sessionId) ?? []) attempt.cancelled = true
     this.pendingPromptStarts.delete(sessionId)
     const activePrompt = this.activePromptRequests.get(sessionId)
     if (activePrompt && activePrompt.turnToken === undefined) {
@@ -1659,9 +1653,8 @@ class AcpRuntimeCoordinator {
           this.activePromptCounts.set(sessionId, (this.activePromptCounts.get(sessionId) ?? 0) + 1)
           if (
             attempt &&
-            attempt.globalCancellationGeneration === this.globalCancellationGeneration &&
-            attempt.sessionCancellationGeneration ===
-              (this.sessionCancellationGenerations.get(sessionId) ?? 0)
+            !attempt.cancelled &&
+            attempt.globalCancellationGeneration === this.globalCancellationGeneration
           ) {
             this.teardownCallbacks.onSessionTurnStarted?.(sessionId, turnToken)
           }

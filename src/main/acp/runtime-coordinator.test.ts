@@ -46,6 +46,11 @@ const emptySnapshot = (): AcpStateSnapshot => ({
 const runtimeEventId = (runtimeSequence: number, eventId: string): RegExp =>
   new RegExp(`^runtime-${runtimeSequence}-[0-9a-f-]{36}:${eventId}$`, 'u')
 
+const retainedSessionCancellationKeys = (owner: object): unknown[] =>
+  Object.entries(owner).flatMap(([name, value]) =>
+    name.includes('sessionCancellation') && value instanceof Map ? Array.from(value.keys()) : []
+  )
+
 const createFakeRuntime = (options: {
   frameworkId: AgentFrameworkId
   sessionIds: string[]
@@ -1501,7 +1506,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(rootTurnStarted).toHaveBeenCalledTimes(3)
   })
 
-  it.each(['cancel', 'handoff'] as const)(
+  it.each(['cancel', 'handoff', 'delete'] as const)(
     'does not dispatch a root turn superseded by %s while its settlement baseline loads',
     async (supersede) => {
       const settlementStart = createDeferred<string | undefined>()
@@ -1548,8 +1553,10 @@ describe('AcpRuntimeCoordinator', () => {
 
       if (supersede === 'cancel') {
         await coordinator.cancelPrompt({ sessionId: session.sessionId })
-      } else {
+      } else if (supersede === 'handoff') {
         await coordinator.stopPromptForHandoff(session.sessionId)
+      } else {
+        await coordinator.deleteSession({ sessionId: session.sessionId })
       }
       await coordinator.waitForSessionInteractionRelease(session.sessionId)
       settlementStart.resolve('settlement-lease-1')
@@ -1563,6 +1570,9 @@ describe('AcpRuntimeCoordinator', () => {
         clean: false,
         leaseId: 'settlement-lease-1'
       })
+      if (supersede === 'delete') {
+        expect(retainedSessionCancellationKeys(coordinator)).not.toContain(session.sessionId)
+      }
     }
   )
 
