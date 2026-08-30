@@ -399,6 +399,7 @@ describe('storage IPC handlers', () => {
       isDefault: boolean
       defaultDataRoot: string
       defaultParent: string
+      canAutoSelectDataDrive: boolean
     }
 
     expect(info.isDefault).toBe(true)
@@ -406,6 +407,7 @@ describe('storage IPC handlers', () => {
     // Derive with join so the assertion holds on Windows (backslashes), not just POSIX.
     expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))
     expect(info.defaultParent).toBe('/home/user')
+    expect(info.canAutoSelectDataDrive).toBe(true)
   })
 
   it('get-info flags legacyDataMovePrompt for an unconfigured install with data in the config root', async () => {
@@ -420,10 +422,12 @@ describe('storage IPC handlers', () => {
       const info = (await invoke('storage:get-info')) as {
         legacyDataMovePrompt: boolean
         dataRoot: string
+        canAutoSelectDataDrive: boolean
       }
 
       expect(info.dataRoot).toBe(join(home, '.open-science'))
       expect(info.legacyDataMovePrompt).toBe(true)
+      expect(info.canAutoSelectDataDrive).toBe(false)
     } finally {
       electronHome.path = '/home/user'
       initDataRoot(undefined)
@@ -442,10 +446,12 @@ describe('storage IPC handlers', () => {
       const info = (await invoke('storage:get-info')) as {
         legacyDataMovePrompt: boolean
         dataRoot: string
+        canAutoSelectDataDrive: boolean
       }
 
       expect(info.dataRoot).toBe(join(home, '.open-science'))
       expect(info.legacyDataMovePrompt).toBe(true)
+      expect(info.canAutoSelectDataDrive).toBe(false)
     } finally {
       electronHome.path = '/home/user'
       initDataRoot(undefined)
@@ -465,9 +471,13 @@ describe('storage IPC handlers', () => {
       })
       registerStorageIpcHandlers(deps)
 
-      const info = (await invoke('storage:get-info')) as { legacyDataMovePrompt: boolean }
+      const info = (await invoke('storage:get-info')) as {
+        legacyDataMovePrompt: boolean
+        canAutoSelectDataDrive: boolean
+      }
 
       expect(info.legacyDataMovePrompt).toBe(false)
+      expect(info.canAutoSelectDataDrive).toBe(false)
     } finally {
       electronHome.path = '/home/user'
       initDataRoot(undefined)

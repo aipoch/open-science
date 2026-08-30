@@ -117,7 +117,8 @@ describe('OnboardingWizard flow', () => {
       storageInfo({
         dataRoot: 'C:\\Users\\researcher\\OpenScience',
         defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultParent: 'C:\\Users\\researcher'
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
       })
     )
     window.api.localFs.listDrives = vi.fn().mockResolvedValue([
@@ -150,7 +151,8 @@ describe('OnboardingWizard flow', () => {
       storageInfo({
         dataRoot: 'C:\\Users\\researcher\\OpenScience',
         defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultParent: 'C:\\Users\\researcher'
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
       })
     )
     window.api.localFs.listDrives = vi.fn().mockResolvedValue([
@@ -191,7 +193,8 @@ describe('OnboardingWizard flow', () => {
       storageInfo({
         dataRoot: 'C:\\Users\\researcher\\OpenScience',
         defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultParent: 'C:\\Users\\researcher'
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
       })
     )
     window.api.localFs.listDrives = vi.fn().mockResolvedValue([
@@ -238,6 +241,31 @@ describe('OnboardingWizard flow', () => {
     expect(container.textContent).toContain('E:\\Research\\OpenScience')
   })
 
+  it('does not probe alternate drives for legacy data after its move prompt was dismissed', async () => {
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\.open-science',
+        isDefault: true,
+        defaultDataRoot: 'C:\\Users\\researcher\\.open-science',
+        defaultParent: 'C:\\Users\\researcher',
+        legacyDataMovePrompt: false,
+        canAutoSelectDataDrive: false
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockResolvedValue([
+      { path: 'C:\\', label: 'C:' },
+      { path: 'D:\\', label: 'D:' }
+    ])
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(window.api.localFs.listDrives).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('C:\\Users\\researcher\\.open-science')
+  })
+
   it('does not overwrite a location browsed while the Windows default probe is pending', async () => {
     let releaseDefaultProbe: (() => void) | undefined
     window.api.platform = 'win32'
@@ -245,7 +273,8 @@ describe('OnboardingWizard flow', () => {
       storageInfo({
         dataRoot: 'C:\\Users\\researcher\\OpenScience',
         defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultParent: 'C:\\Users\\researcher'
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
       })
     )
     window.api.localFs.listDrives = vi.fn().mockResolvedValue([

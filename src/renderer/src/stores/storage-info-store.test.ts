@@ -11,6 +11,7 @@ const storageInfo = (totalBytes: number): StorageInfo => ({
   dataRootMissing: false,
   legacyDataMovePrompt: false,
   cleanupPending: false,
+  canAutoSelectDataDrive: false,
   usage: { categories: [], totalBytes },
   availableBytes: 1_000
 })

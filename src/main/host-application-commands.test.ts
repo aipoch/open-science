@@ -133,6 +133,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
       dataRootMissing: false,
       legacyDataMovePrompt: false,
       cleanupPending: false,
+      canAutoSelectDataDrive: false,
       usage: { categories: [], totalBytes: 0 },
       availableBytes: 100
     })),

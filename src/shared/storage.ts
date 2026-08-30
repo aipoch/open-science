@@ -29,6 +29,10 @@ export type StorageStatus = {
 }
 
 export type StorageInfo = StorageStatus & {
+  // Main-owned onboarding eligibility. True only when the default data root is unconfigured and
+  // contains no relocatable user data, so selecting another drive can use a pointer switch without
+  // hiding an existing install. This is derived on every read and is never persisted.
+  canAutoSelectDataDrive: boolean
   usage: StorageUsage
   availableBytes: number
 }

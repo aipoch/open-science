@@ -33,6 +33,7 @@ const richInfo: StorageInfo = {
   dataRootMissing: false,
   legacyDataMovePrompt: false,
   cleanupPending: false,
+  canAutoSelectDataDrive: false,
   usage: {
     categories: [
       { key: 'artifacts', bytes: 22_700_000 },
@@ -109,6 +110,7 @@ beforeEach(() => {
         dataRootMissing: false,
         legacyDataMovePrompt: false,
         cleanupPending: false,
+        canAutoSelectDataDrive: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       }),
@@ -156,6 +158,7 @@ describe('StoragePanel', () => {
         dataRootMissing: false,
         legacyDataMovePrompt: false,
         cleanupPending: false,
+        canAutoSelectDataDrive: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       })
@@ -180,6 +183,7 @@ describe('StoragePanel', () => {
         dataRootMissing: false,
         legacyDataMovePrompt: false,
         cleanupPending: false,
+        canAutoSelectDataDrive: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       })

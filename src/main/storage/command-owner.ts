@@ -189,7 +189,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     }
   }
 
-  const getStatus = async (): Promise<StorageStatus> => {
+  const getStatusSnapshot = async (): Promise<{
+    status: StorageStatus
+    canAutoSelectDataDrive: boolean
+  }> => {
     const dataRoot = resolveDataRoot()
     // Only an explicitly-configured-but-now-gone root counts as "missing"; a fresh install's unset
     // dataRoot (default `~/OpenScience` not created yet) is normal and must never nag the user.
@@ -198,6 +201,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     // unset (using the default), that default resolved to the config root itself, and real user data
     // lives there. Offer the one-time "move to the visible OpenScience folder" prompt until answered.
     let legacyDataMovePrompt = false
+    // Fail closed: only the same main-owned filesystem/settings snapshot that identifies an empty,
+    // unconfigured root may authorize onboarding's pointer-only default-drive selection.
+    let canAutoSelectDataDrive = false
     const cleanupPending = await cleanupJournal.hasPending().catch(() => true)
     try {
       const storedSettings = await deps.settingsService.getStoredSettings()
@@ -212,23 +218,33 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       const hasUserData = RELOCATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir)))
       legacyDataMovePrompt =
         legacyInPlace && hasUserData && storedSettings.legacyDataMovePromptDismissedAt === undefined
+      const currentRootHasUserData = RELOCATABLE_DATA_DIRS.some((dir) =>
+        existsSync(join(dataRoot, dir))
+      )
+      canAutoSelectDataDrive =
+        !storedSettings.dataRoot && !currentRootHasUserData && !dataRootMissing
     } catch (err) {
       logger.warn('data root status detection failed', diagnosticErrorFields(err))
     }
 
     return {
-      dataRoot,
-      isDefault: samePath(dataRoot, computeDefaultDataRoot()),
-      defaultDataRoot: computeDefaultDataRoot(),
-      defaultParent: defaultDataParent(),
-      dataRootMissing,
-      legacyDataMovePrompt,
-      cleanupPending
+      status: {
+        dataRoot,
+        isDefault: samePath(dataRoot, computeDefaultDataRoot()),
+        defaultDataRoot: computeDefaultDataRoot(),
+        defaultParent: defaultDataParent(),
+        dataRootMissing,
+        legacyDataMovePrompt,
+        cleanupPending
+      },
+      canAutoSelectDataDrive
     }
   }
 
+  const getStatus = async (): Promise<StorageStatus> => (await getStatusSnapshot()).status
+
   const getInfo = async (): Promise<StorageInfo> => {
-    const status = await getStatus()
+    const { status, canAutoSelectDataDrive } = await getStatusSnapshot()
     let available = 0
     try {
       available = await availableBytes(status.dataRoot)
@@ -238,6 +254,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
 
     return {
       ...status,
+      canAutoSelectDataDrive,
       usage: await computeStorageUsage(status.dataRoot),
       availableBytes: available
     }

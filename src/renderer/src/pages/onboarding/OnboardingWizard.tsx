@@ -49,7 +49,13 @@ const windowsDriveLetter = (path: string): string | undefined => {
 const findWindowsStorageDefault = async (
   storageInfo: StorageInfo
 ): Promise<LocationDraft | null> => {
-  if (window.api.platform !== 'win32' || !storageInfo.isDefault) return null
+  if (
+    window.api.platform !== 'win32' ||
+    !storageInfo.isDefault ||
+    !storageInfo.canAutoSelectDataDrive
+  ) {
+    return null
+  }
 
   const defaultDrive = windowsDriveLetter(storageInfo.defaultDataRoot)
   if (!defaultDrive) return null
