@@ -101,6 +101,16 @@ export const useJobAnalysisEffect = ({
         const jobStore = useSessionJobStore.getState()
         for (const job of jobs) jobStore.applyUpdate(job)
       },
+      getJobsForSession: async (sessionId) => {
+        if (!isActive || typeof window.api?.compute?.jobsList !== 'function') {
+          throw new Error('Compute Job reconciliation is unavailable.')
+        }
+        const jobs = await window.api.compute.jobsList({ sessionId })
+        if (!isActive) return []
+        const jobStore = useSessionJobStore.getState()
+        for (const job of jobs) jobStore.applyUpdate(job)
+        return jobs
+      },
       getTurnState: async (sessionId, messageId) => {
         const session = await loadAnalysisSession(sessionId)
         if (!session) return 'missing'

@@ -71,6 +71,7 @@ export type JobAnalysisTriggerDeps = {
   ) => Promise<{ sessionId: string; messageId: string } | undefined>
   createMessageId: () => string
   transitionAnalysis: (request: ComputeJobAnalysisTransition) => Promise<void>
+  getJobsForSession: (sessionId: string) => Promise<JobSummary[]>
   getTurnState: (
     sessionId: string,
     messageId: string
@@ -165,6 +166,38 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     const queued = pendingBatches.get(key)
     if (!queued || queued === batch) return
     for (const [jobId, job] of queued.jobs) batch.jobs.set(jobId, job)
+  }
+
+  const reconcileClaimFailure = async (
+    key: string,
+    batch: PendingBatch,
+    sessionId: string,
+    jobIds: string[]
+  ): Promise<boolean> => {
+    let currentJobs: JobSummary[]
+    try {
+      const jobIdSet = new Set(jobIds)
+      currentJobs = (await deps.getJobsForSession(sessionId)).filter((job) =>
+        jobIdSet.has(job.job_id)
+      )
+    } catch (err) {
+      deps.log('analysis-turn:claim-reconcile-failed', `session=${sessionId} error=${String(err)}`)
+      return false
+    }
+    if (currentJobs.length !== jobIds.length) return false
+    const durableStateChanged = currentJobs.some(
+      (job) =>
+        job.notification_consumed_at !== undefined ||
+        (job.analysis_state !== undefined && job.analysis_state !== null)
+    )
+    if (!durableStateChanged) return false
+
+    pendingBatches.delete(key)
+    for (const jobId of jobIds) inFlight.delete(jobId)
+    releaseSessionBatch(batch, sessionId)
+    for (const job of currentJobs) onJobDone(job)
+    deps.log('analysis-turn:claim-reconciled', `session=${sessionId}`)
+    return true
   }
 
   const isDoneState = (job: JobSummary): boolean =>
@@ -285,6 +318,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
         batch.claimPending = false
       } catch (err) {
         deps.log('analysis-turn:claim-failed', `session=${sessionId} error=${String(err)}`)
+        if (await reconcileClaimFailure(key, batch, sessionId, jobIds)) return
         // The transition may have committed before its response was lost. Retain the same Message
         // ID and retry the idempotent durable claim before sending anything.
         batch.messageId = messageId
@@ -361,7 +395,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     scheduleFlush(key)
   }
 
-  const onJobDone = (job: JobSummary): void => {
+  function onJobDone(job: JobSummary): void {
     if (disposed) return
     if (!isDoneState(job)) return
     if (isAlreadyConsumed(job)) return

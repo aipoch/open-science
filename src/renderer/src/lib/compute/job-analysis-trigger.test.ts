@@ -42,6 +42,7 @@ const createDeps = (overrides: Partial<JobAnalysisTriggerDeps> = {}): JobAnalysi
   sendPrompt: vi.fn(async (sessionId, _text, messageId) => ({ sessionId, messageId })),
   createMessageId: vi.fn().mockReturnValue('msg-1'),
   transitionAnalysis: vi.fn().mockResolvedValue(undefined),
+  getJobsForSession: vi.fn().mockResolvedValue([]),
   getTurnState: vi.fn().mockReturnValue('missing'),
   onTurnEnd: vi.fn(),
   log: vi.fn(),
@@ -276,6 +277,49 @@ describe('createJobAnalysisTrigger — idempotency', () => {
       state: 'dispatched'
     })
     expect(deps.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('adopts a competing renderer claim after its broadcast arrives before the local conflict', async () => {
+    vi.useFakeTimers()
+    let rejectClaim: ((error: Error) => void) | undefined
+    const transitionAnalysis = vi.fn<JobAnalysisTriggerDeps['transitionAnalysis']>(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectClaim = reject
+        })
+    )
+    const winner = makeJob({
+      analysis_state: 'dispatched',
+      analysis_message_id: 'winner-message'
+    })
+    const deps = createDeps({
+      createMessageId: vi.fn().mockReturnValue('loser-message'),
+      transitionAnalysis,
+      getJobsForSession: vi.fn().mockResolvedValue([winner])
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+
+    trigger.onJobDone(winner)
+    await flushMicrotasks()
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+
+    rejectClaim?.(new Error('analysis transition conflict'))
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    expect(deps.getJobsForSession).toHaveBeenCalledWith('sess-1')
+    expect(deps.sendPrompt).toHaveBeenCalledWith(
+      'sess-1',
+      expect.stringContaining('job-1'),
+      'winner-message'
+    )
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
   })
 })
 
