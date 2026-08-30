@@ -822,6 +822,8 @@
     "The maximum number of custom Connectors has been reached.": "カスタムコネクタの上限に達しました。",
     "Keep saved variables": "保存済みの変数を保持",
     "Line {{line}}: use KEY=VALUE.": "{{line}} 行目: KEY=VALUE 形式を使用してください。",
+    "Line {{line}}: use Name: Value.": "{{line}} 行目: Name: Value 形式を使用してください。",
+    "Line {{line}}: {{name}} is duplicated.": "{{line}} 行目: {{name}} が重複しています。",
     "Manage “{{name}}” connection": "「{{name}}」の接続を管理",
     "Reauthenticate": "再認証",
     "Replace saved variables": "保存済みの変数を置換",

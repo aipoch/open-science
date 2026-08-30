@@ -43,13 +43,18 @@ const parseArgs = (raw: string, onePerLine = false): string[] =>
     .map((token) => token.trim())
     .filter((token) => token.length > 0)
 
-type ParsedEnvironment = { values: Record<string, string>; invalidLines: number[] }
+type ParsedNamedValues = {
+  values: Record<string, string>
+  invalidLines: number[]
+  duplicateLines: Array<{ line: number; name: string }>
+}
 type EnvironmentUpdateMode = 'keep' | 'replace' | 'clear'
 
 // Parses one KEY=VALUE per line and preserves line numbers for actionable validation feedback.
-const parseEnv = (raw: string): ParsedEnvironment => {
+const parseEnv = (raw: string): ParsedNamedValues => {
   const env: Record<string, string> = {}
   const invalidLines: number[] = []
+  const duplicateLines: ParsedNamedValues['duplicateLines'] = []
   for (const [index, line] of raw.split('\n').entries()) {
     const trimmed = line.trim()
     if (!trimmed) continue
@@ -58,22 +63,35 @@ const parseEnv = (raw: string): ParsedEnvironment => {
       invalidLines.push(index + 1)
       continue
     }
-    env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim()
+    const name = trimmed.slice(0, eq).trim()
+    if (Object.hasOwn(env, name)) duplicateLines.push({ line: index + 1, name })
+    env[name] = trimmed.slice(eq + 1).trim()
   }
-  return { values: env, invalidLines }
+  return { values: env, invalidLines, duplicateLines }
 }
 
-// Parses one "Name: Value" per line into a headers record; blank/invalid lines are ignored.
-const parseHeaders = (raw: string): Record<string, string> => {
+// Parses one "Name: Value" per line and preserves validation errors instead of dropping input.
+const parseHeaders = (raw: string): ParsedNamedValues => {
   const headers: Record<string, string> = {}
-  for (const line of raw.split('\n')) {
+  const invalidLines: number[] = []
+  const duplicateLines: ParsedNamedValues['duplicateLines'] = []
+  const headerNames = new Map<string, string>()
+  for (const [index, line] of raw.split('\n').entries()) {
     const trimmed = line.trim()
     if (!trimmed) continue
     const colon = trimmed.indexOf(':')
-    if (colon <= 0) continue
-    headers[trimmed.slice(0, colon).trim()] = trimmed.slice(colon + 1).trim()
+    if (colon <= 0) {
+      invalidLines.push(index + 1)
+      continue
+    }
+    const name = trimmed.slice(0, colon).trim()
+    const normalizedName = name.toLowerCase()
+    const previousName = headerNames.get(normalizedName)
+    if (previousName) duplicateLines.push({ line: index + 1, name })
+    else headerNames.set(normalizedName, name)
+    headers[previousName ?? name] = trimmed.slice(colon + 1).trim()
   }
-  return headers
+  return { values: headers, invalidLines, duplicateLines }
 }
 
 // A required-field marker next to a label. Purely visual; the real guard is the disabled Add button.
@@ -307,6 +325,8 @@ export function ConnectorAddForm({
   const parsedEnv = parsedEnvironment.values
   const environmentErrors =
     environmentUpdateMode === 'replace' ? parsedEnvironment.invalidLines : []
+  const environmentDuplicateErrors =
+    environmentUpdateMode === 'replace' ? parsedEnvironment.duplicateLines : []
   const parsedHeaders = parseHeaders(headersText)
   const commandPreview = [command.trim(), ...parsedArgs].filter((part) => part.length > 0).join(' ')
   const requiredEnvironment = initialTemplate?.requiredSecrets?.environment ?? []
@@ -337,12 +357,20 @@ export function ConnectorAddForm({
     (requiredHeaders.length === 0 ||
       (mode === 'remote' &&
         remoteAuth === 'headers' &&
-        requiredHeaders.every((header) => (parsedHeaders[header] ?? '').trim().length > 0))) &&
+        requiredHeaders.every(
+          (header) => (parsedHeaders.values[header] ?? '').trim().length > 0
+        ))) &&
     (!requiresOAuthClientSecret ||
       (mode === 'remote' &&
         remoteAuth === 'oauth' &&
         encryptionAvailable &&
         clientSecret.trim().length > 0))
+
+  const hasUnsavedStaticCredentials =
+    (mode === 'local' &&
+      environmentUpdateMode === 'replace' &&
+      Object.keys(parsedEnv).length > 0) ||
+    (mode === 'remote' && remoteAuth === 'headers' && Object.keys(parsedHeaders.values).length > 0)
 
   const requiredFilled =
     displayName.trim().length > 0 &&
@@ -351,7 +379,12 @@ export function ConnectorAddForm({
     (mode === 'local' ? command.trim().length > 0 : url.trim().length > 0) &&
     oauthRegistrationValid &&
     requiredSecretValuesFilled &&
-    (mode !== 'local' || environmentErrors.length === 0)
+    (mode !== 'local' ||
+      (environmentErrors.length === 0 && environmentDuplicateErrors.length === 0)) &&
+    (mode !== 'remote' ||
+      remoteAuth !== 'headers' ||
+      (parsedHeaders.invalidLines.length === 0 && parsedHeaders.duplicateLines.length === 0)) &&
+    (!hasUnsavedStaticCredentials || encryptionAvailable)
   const canSubmit = requiredFilled && trusted && !submitting && !editTargetMissing
 
   const switchMode = (next: ConnectorMode): void => {
@@ -365,7 +398,7 @@ export function ConnectorAddForm({
     setError(null)
     try {
       const env = parsedEnv
-      const headers = parsedHeaders
+      const headers = parsedHeaders.values
       const oauthScopes = oauthScopesText
         .split(/[\s,]+/)
         .map((scope) => scope.trim())
@@ -764,6 +797,18 @@ export function ConnectorAddForm({
                         {t('Line {{line}}: use KEY=VALUE.', { line })}
                       </p>
                     ))}
+                    {environmentDuplicateErrors.map(({ line, name }) => (
+                      <p key={`${line}-${name}`} className="text-xs text-status-failure">
+                        {t('Line {{line}}: {{name}} is duplicated.', { line, name })}
+                      </p>
+                    ))}
+                    {!encryptionAvailable && Object.keys(parsedEnv).length > 0 ? (
+                      <p className="text-xs leading-5 text-destructive">
+                        {t(
+                          'Secure credential storage is unavailable. Unlock the system keychain and retry.'
+                        )}
+                      </p>
+                    ) : null}
                   </div>
                 </>
               ) : (
@@ -1110,6 +1155,11 @@ export function ConnectorAddForm({
                         id="connector-headers"
                         aria-label={t('Headers')}
                         aria-required={requiredHeaders.length > 0 || undefined}
+                        aria-invalid={
+                          parsedHeaders.invalidLines.length > 0 ||
+                          parsedHeaders.duplicateLines.length > 0 ||
+                          undefined
+                        }
                         aria-describedby="connector-headers-help"
                         value={headersText}
                         rows={3}
@@ -1130,6 +1180,23 @@ export function ConnectorAddForm({
                           : ''}
                         {isEdit ? ' ' + t('Leave blank to keep the current values.') : ''}
                       </p>
+                      {parsedHeaders.invalidLines.map((line) => (
+                        <p key={line} className="text-xs text-status-failure">
+                          {t('Line {{line}}: use Name: Value.', { line })}
+                        </p>
+                      ))}
+                      {parsedHeaders.duplicateLines.map(({ line, name }) => (
+                        <p key={`${line}-${name}`} className="text-xs text-status-failure">
+                          {t('Line {{line}}: {{name}} is duplicated.', { line, name })}
+                        </p>
+                      ))}
+                      {!encryptionAvailable && Object.keys(parsedHeaders.values).length > 0 ? (
+                        <p className="text-xs leading-5 text-destructive">
+                          {t(
+                            'Secure credential storage is unavailable. Unlock the system keychain and retry.'
+                          )}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                 </>

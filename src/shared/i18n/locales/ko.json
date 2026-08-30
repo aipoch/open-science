@@ -841,6 +841,8 @@
     "The maximum number of custom Connectors has been reached.": "사용자 지정 커넥터의 최대 개수에 도달했습니다.",
     "Keep saved variables": "저장된 변수 유지",
     "Line {{line}}: use KEY=VALUE.": "{{line}}번 줄: KEY=VALUE 형식을 사용하세요.",
+    "Line {{line}}: use Name: Value.": "{{line}}번 줄: Name: Value 형식을 사용하세요.",
+    "Line {{line}}: {{name}} is duplicated.": "{{line}}번 줄: {{name}}이(가) 중복되었습니다.",
     "Manage “{{name}}” connection": "‘{{name}}’ 연결 관리",
     "Reauthenticate": "다시 인증",
     "Replace saved variables": "저장된 변수 바꾸기",

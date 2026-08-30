@@ -896,6 +896,8 @@
     "The maximum number of custom Connectors has been reached.": "自定义连接器数量已达到上限。",
     "Keep saved variables": "保留已保存的变量",
     "Line {{line}}: use KEY=VALUE.": "第 {{line}} 行：请使用 KEY=VALUE 格式。",
+    "Line {{line}}: use Name: Value.": "第 {{line}} 行：请使用 Name: Value 格式。",
+    "Line {{line}}: {{name}} is duplicated.": "第 {{line}} 行：{{name}} 重复。",
     "Manage “{{name}}” connection": "管理“{{name}}”连接",
     "Reauthenticate": "重新认证",
     "Replace saved variables": "替换已保存的变量",

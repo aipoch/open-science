@@ -863,6 +863,8 @@
     "The maximum number of custom Connectors has been reached.": "Se ha alcanzado el número máximo de Conectores personalizados.",
     "Keep saved variables": "Conservar variables guardadas",
     "Line {{line}}: use KEY=VALUE.": "Línea {{line}}: use KEY=VALUE.",
+    "Line {{line}}: use Name: Value.": "Línea {{line}}: use Name: Value.",
+    "Line {{line}}: {{name}} is duplicated.": "Línea {{line}}: {{name}} está duplicado.",
     "Manage “{{name}}” connection": "Gestionar la conexión «{{name}}»",
     "Reauthenticate": "Volver a autenticar",
     "Replace saved variables": "Reemplazar variables guardadas",

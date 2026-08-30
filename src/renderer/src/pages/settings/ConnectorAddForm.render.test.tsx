@@ -878,7 +878,9 @@ describe('ConnectorAddForm (edit)', () => {
 
   it('reports malformed header lines instead of silently dropping them', () => {
     act(() => {
-      root.render(<ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />)
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
     })
 
     setValue('Display name', 'Remote memory')
@@ -892,7 +894,7 @@ describe('ConnectorAddForm (edit)', () => {
     expect(addButton()?.disabled).toBe(true)
   })
 
-  it('reports duplicate environment and header names instead of overwriting them', () => {
+  it('reports duplicate environment names instead of overwriting them', () => {
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
     })
@@ -904,9 +906,13 @@ describe('ConnectorAddForm (edit)', () => {
 
     expect(document.body.textContent).toContain('Line 2: API_TOKEN is duplicated.')
     expect(addButton()?.disabled).toBe(true)
+  })
 
+  it('reports duplicate header names instead of overwriting them', () => {
     act(() => {
-      root.render(<ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />)
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
     })
     setValue('Display name', 'Remote memory')
     setValue('Server URL', 'https://mcp.example.test')
@@ -937,7 +943,9 @@ describe('ConnectorAddForm (edit)', () => {
   it('requires secure storage before submitting static remote headers', () => {
     useSettingsStore.setState({ encryptionAvailable: false })
     act(() => {
-      root.render(<ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />)
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
     })
 
     setValue('Display name', 'Remote memory')
