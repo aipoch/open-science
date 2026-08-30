@@ -326,6 +326,52 @@ describe('FileBrowserModal', () => {
     expect(document.body.textContent).toContain('Saved to Downloads')
   })
 
+  it('allows switching to an unprobed host and lets listDir determine reachability', async () => {
+    const listDir = vi.fn().mockResolvedValue(mockListing)
+    useComputeStore.setState({
+      ...createInitialComputeState(),
+      isLoaded: true,
+      loadHosts: vi.fn(),
+      hosts: [
+        connectedHost({
+          id: 'host-a',
+          providerId: 'ssh:host-a',
+          displayName: 'host-a',
+          sshAlias: 'host-a'
+        }),
+        connectedHost({
+          id: 'host-b',
+          providerId: 'ssh:host-b',
+          displayName: 'host-b',
+          sshAlias: 'host-b',
+          probeResult: undefined
+        })
+      ]
+    })
+    setComputeApi({
+      listDir,
+      bookmarksGet: vi.fn().mockResolvedValue([]),
+      bookmarksSet: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => {
+      root.render(<FileBrowserModal open={true} onClose={vi.fn()} initialProviderId="ssh:host-a" />)
+      await Promise.resolve()
+    })
+
+    const hostBButton = Array.from(document.querySelectorAll('button')).find(
+      (element) => element.textContent?.trim() === 'host-b'
+    ) as HTMLButtonElement | undefined
+    expect(hostBButton?.disabled).toBe(false)
+
+    await act(async () => {
+      hostBButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(listDir).toHaveBeenCalledWith('ssh:host-b', '/scratch/user')
+  })
+
   it('keeps the active host listing when the previous host responds last', async () => {
     const hostAListing = deferred<DirListing>()
     const hostBListing = deferred<DirListing>()

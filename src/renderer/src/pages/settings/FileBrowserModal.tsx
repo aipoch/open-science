@@ -392,7 +392,7 @@ export function FileBrowserModal({
   const projects = useProjectStore((s) => s.projects)
   const activeProject = projects.find((p) => p.id === activeProjectId)
 
-  // Active host — defaults to initialProviderId or first reachable host.
+  // Active host — defaults to initialProviderId or the first configured host.
   const [activeProviderId, setActiveProviderId] = useState<string | undefined>(
     initialProviderId ?? hosts[0]?.providerId
   )
@@ -678,12 +678,11 @@ export function FileBrowserModal({
                 key={h.providerId}
                 type="button"
                 onClick={() => handleHostSelect(h.providerId)}
-                disabled={!h.probeResult?.ok}
                 className={cn(
                   'flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors',
                   h.providerId === activeProviderId
                     ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80 disabled:opacity-40 disabled:cursor-not-allowed'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
                 )}
               >
                 <span
