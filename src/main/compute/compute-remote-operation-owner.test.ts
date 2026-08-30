@@ -1361,6 +1361,66 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     await expect(stat(dirname(attemptedLocalPath!))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it.each(['Session', 'Project'] as const)(
+    'waits for in-flight downloads before removing the %s cache',
+    async (scope) => {
+      let releaseTransfer!: () => void
+      const transferGate = new Promise<void>((resolve) => {
+        releaseTransfer = resolve
+      })
+      let markTransferStarted!: () => void
+      const transferStarted = new Promise<void>((resolve) => {
+        markTransferStarted = resolve
+      })
+      const download = vi.fn(async (_remotePath: string, localPath: string) => {
+        await writeFile(localPath, 'content')
+        markTransferStarted()
+        await transferGate
+        return {
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 7,
+          exceeded: false
+        }
+      })
+      const cache = new SessionCacheOwner(tmpDir)
+      const { repo } = makeRepo()
+      const service = new ComputeRemoteOperationOwner(
+        {
+          acquire: vi.fn(async () => ({ run: vi.fn(), upload: vi.fn(), download }))
+        },
+        repo,
+        makeApprovalBroker('once'),
+        tmpDir,
+        cache
+      )
+      const downloading = service.download(
+        'ssh:biowulf',
+        '/remote/results.csv',
+        { kind: 'session-cache' },
+        { sessionId: 'session-1', projectId: 'project-1' }
+      )
+      await transferStarted
+
+      const deleting =
+        scope === 'Session'
+          ? cache.removeSession('project-1', 'session-1')
+          : cache.removeProject('project-1')
+      const deletionOutcome = await Promise.race([
+        deleting.then(() => 'settled' as const),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500))
+      ])
+
+      releaseTransfer()
+      const [downloadResult, deletionResult] = await Promise.allSettled([downloading, deleting])
+
+      expect(deletionOutcome).toBe('blocked')
+      expect(downloadResult.status).toBe('fulfilled')
+      expect(deletionResult.status).toBe('fulfilled')
+    }
+  )
+
   it('throws download_denied when broker denies session-cache download', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,

@@ -514,6 +514,8 @@ export class ComputeRemoteOperationOwner {
         operation.operationId
       ).catch(() => undefined)
       throw error
+    } finally {
+      operation.release()
     }
   }
 

@@ -40,6 +40,7 @@ describe('SessionCacheOwner', () => {
     const retained = await owner.createOperationFile('project-1', 'session-2', 'retained.csv')
     await writeFile(removed.path, 'removed')
     await writeFile(retained.path, 'retained')
+    removed.release()
 
     await owner.removeSession('project-1', 'session-1')
 
@@ -47,11 +48,34 @@ describe('SessionCacheOwner', () => {
     await expect(stat(retained.path)).resolves.toMatchObject({ size: 8 })
   })
 
+  it.each(['Session', 'Project'] as const)(
+    'rejects late operations after %s cache deletion starts',
+    async (scope) => {
+      const active = await owner.createOperationFile('project-1', 'session-1', 'active.csv')
+      const deleting =
+        scope === 'Session'
+          ? owner.removeSession('project-1', 'session-1')
+          : owner.removeProject('project-1')
+
+      await expect(
+        owner.createOperationFile(
+          'project-1',
+          scope === 'Session' ? 'session-1' : 'session-2',
+          'late.csv'
+        )
+      ).rejects.toThrow('cannot accept new operations')
+
+      active.release()
+      await deleting
+    }
+  )
+
   it('reconciles crash leftovers only after receiving the complete active Session set', async () => {
     const orphan = await owner.createOperationFile('project-1', 'orphan-session', 'orphan.csv')
     const active = await owner.createOperationFile('project-1', 'active-session', 'active.csv')
     await writeFile(orphan.path, 'orphan')
     await writeFile(active.path, 'active')
+    orphan.release()
 
     await owner.reconcileActiveSessions([{ sessionId: 'active-session', projectId: 'project-1' }])
 

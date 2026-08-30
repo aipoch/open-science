@@ -33,6 +33,9 @@ const assertSafeFilename = (filename: string): string => {
 
 export class SessionCacheOwner {
   private readonly root: string
+  private readonly activeOperations = new Map<string, Set<Promise<void>>>()
+  private readonly closedProjects = new Set<string>()
+  private readonly closedSessions = new Set<string>()
 
   constructor(storageRoot: string) {
     this.root = join(storageRoot, 'compute', 'session-cache')
@@ -42,17 +45,20 @@ export class SessionCacheOwner {
     projectId: string,
     sessionId: string,
     filename: string
-  ): Promise<{ operationId: string; path: string }> {
+  ): Promise<{ operationId: string; path: string; release(): void }> {
     const safeFilename = assertSafeFilename(filename)
+    const safeProjectId = assertSafeSegment(projectId, 'Project id')
+    const safeSessionId = assertSafeSegment(sessionId, 'Session id')
+    const release = this.registerOperation(safeProjectId, safeSessionId)
     const operationId = randomUUID()
-    const directory = join(
-      this.root,
-      assertSafeSegment(projectId, 'Project id'),
-      assertSafeSegment(sessionId, 'Session id'),
-      operationId
-    )
-    await mkdir(directory, { recursive: true })
-    return { operationId, path: join(directory, safeFilename) }
+    const directory = join(this.root, safeProjectId, safeSessionId, operationId)
+    try {
+      await mkdir(directory, { recursive: true })
+      return { operationId, path: join(directory, safeFilename), release }
+    } catch (error) {
+      release()
+      throw error
+    }
   }
 
   removeOperation(projectId: string, sessionId: string, operationId: string): Promise<void> {
@@ -67,19 +73,25 @@ export class SessionCacheOwner {
     )
   }
 
-  removeSession(projectId: string, sessionId: string): Promise<void> {
-    return rm(
-      join(
-        this.root,
-        assertSafeSegment(projectId, 'Project id'),
-        assertSafeSegment(sessionId, 'Session id')
-      ),
-      { recursive: true, force: true }
-    )
+  async removeSession(projectId: string, sessionId: string): Promise<void> {
+    const safeProjectId = assertSafeSegment(projectId, 'Project id')
+    const safeSessionId = assertSafeSegment(sessionId, 'Session id')
+    const key = this.sessionKey(safeProjectId, safeSessionId)
+    this.closedSessions.add(key)
+    await Promise.all(this.activeOperations.get(key) ?? [])
+    await rm(join(this.root, safeProjectId, safeSessionId), { recursive: true, force: true })
   }
 
-  removeProject(projectId: string): Promise<void> {
-    return rm(join(this.root, assertSafeSegment(projectId, 'Project id')), {
+  async removeProject(projectId: string): Promise<void> {
+    const safeProjectId = assertSafeSegment(projectId, 'Project id')
+    this.closedProjects.add(safeProjectId)
+    const prefix = `${safeProjectId}/`
+    await Promise.all(
+      [...this.activeOperations.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .flatMap(([, operations]) => [...operations])
+    )
+    await rm(join(this.root, safeProjectId), {
       recursive: true,
       force: true
     })
@@ -118,6 +130,34 @@ export class SessionCacheOwner {
         }
       }
     }
+  }
+
+  private registerOperation(projectId: string, sessionId: string): () => void {
+    const key = this.sessionKey(projectId, sessionId)
+    if (this.closedProjects.has(projectId) || this.closedSessions.has(key)) {
+      throw new Error('Session cache is being deleted and cannot accept new operations.')
+    }
+
+    let settle!: () => void
+    const operation = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    const operations = this.activeOperations.get(key) ?? new Set<Promise<void>>()
+    operations.add(operation)
+    this.activeOperations.set(key, operations)
+
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      operations.delete(operation)
+      if (operations.size === 0) this.activeOperations.delete(key)
+      settle()
+    }
+  }
+
+  private sessionKey(projectId: string, sessionId: string): string {
+    return `${projectId}/${sessionId}`
   }
 }
 
