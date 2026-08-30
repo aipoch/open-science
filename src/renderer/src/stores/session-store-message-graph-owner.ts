@@ -197,6 +197,7 @@ export const createSessionMessageGraphOwner = <
   appendUserMessage: ({
     sessionId,
     messageId,
+    rearmExisting,
     content,
     attachments = [],
     parts,
@@ -235,9 +236,42 @@ export const createSessionMessageGraphOwner = <
       ? existingSession?.messages.find((message) => message.id === stableMessageId)
       : undefined
     if (existingMessage) {
-      return existingMessage.role === 'user' && existingMessage.content === trimmedContent
-        ? { sessionId, messageId: existingMessage.id }
-        : undefined
+      if (existingMessage.role !== 'user' || existingMessage.content !== trimmedContent) {
+        return undefined
+      }
+      if (rearmExisting && existingSession) {
+        const now = Date.now()
+        const activeRun: ActiveRun = {
+          promptMessageId: existingMessage.id,
+          startedAt: now
+        }
+        set({
+          selectedSessionId: preserveSelection ? state.selectedSessionId : sessionId,
+          sessions: state.sessions.map((session) =>
+            session.id === sessionId
+              ? {
+                  ...session,
+                  status: 'running',
+                  activeRun,
+                  activeRunRuntimeSegmentId: undefined,
+                  interrupted: undefined,
+                  resumeRecovery: undefined,
+                  agentStatus: undefined,
+                  error: undefined,
+                  errorReportable: undefined,
+                  compacting: undefined,
+                  messages: session.messages.map((message) =>
+                    message.id === existingMessage.id
+                      ? { ...message, interrupted: undefined }
+                      : message
+                  ),
+                  updatedAt: now
+                }
+              : session
+          )
+        } as Partial<State>)
+      }
+      return { sessionId, messageId: existingMessage.id }
     }
     const now = Date.now()
     const userMessage: ChatMessage = {

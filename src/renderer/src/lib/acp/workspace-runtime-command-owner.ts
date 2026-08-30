@@ -732,10 +732,19 @@ const sendWorkspaceMessage = async (
     const existingStableMessage = stableMessageId
       ? session?.messages.find((message) => message.id === stableMessageId)
       : undefined
+    let rearmExistingStableMessage = false
     if (existingStableMessage) {
-      return existingStableMessage.role === 'user' && existingStableMessage.content === content
-        ? { sessionId, messageId: existingStableMessage.id }
-        : undefined
+      if (existingStableMessage.role !== 'user' || existingStableMessage.content !== content) {
+        return undefined
+      }
+      const hasResponse = session?.messages.some(
+        (message) =>
+          message.role === 'agent' && message.responseToMessageId === existingStableMessage.id
+      )
+      if (hasResponse || session?.activeRun?.promptMessageId === existingStableMessage.id) {
+        return { sessionId, messageId: existingStableMessage.id }
+      }
+      rearmExistingStableMessage = true
     }
     if (input.requireExistingSession && !session) return undefined
     if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
@@ -813,6 +822,7 @@ const sendWorkspaceMessage = async (
       replay: {
         descriptor: input.historyReplayDescriptor,
         cutMessageId: input.truncateFromMessageId,
+        excludeMessageId: rearmExistingStableMessage ? existingStableMessage?.id : undefined,
         force: input.forceHistoryReplay,
         includeResumeFallback: Boolean(input.forcedSkillIds?.length)
       },
@@ -868,6 +878,7 @@ const sendWorkspaceMessage = async (
     const appended = useSessionStore.getState().appendUserMessage({
       sessionId,
       messageId: stableMessageId,
+      rearmExisting: rearmExistingStableMessage,
       content,
       attachments: promptAttachments,
       annotations,

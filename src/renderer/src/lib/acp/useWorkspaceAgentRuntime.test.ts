@@ -2100,6 +2100,60 @@ describe('workspace agent message sending', () => {
     }
   )
 
+  it('redispatches a persisted stable Message when no response or active run exists', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      content: 'Analyze the completed compute job',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'transport-session-1'
+          ? { ...session, status: 'idle', activeRun: undefined }
+          : session
+      )
+    }))
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await expect(
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1',
+        text: 'Analyze the completed compute job',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId: 'claude-code'
+      })
+    ).resolves.toEqual({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1'
+    })
+
+    expect(saveSession).toHaveBeenCalledOnce()
+    expect(saveSession.mock.calls[0]?.[0]).toMatchObject({
+      status: 'running',
+      activeRun: { promptMessageId: 'automatic-analysis-message-1' },
+      messages: [
+        {
+          id: 'automatic-analysis-message-1',
+          role: 'user',
+          content: 'Analyze the completed compute job'
+        }
+      ]
+    })
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('reports a stable application-owned Message as unsent when prompt ownership is lost', async () => {
     useSessionStore.setState({
       ...createInitialSessionState(),

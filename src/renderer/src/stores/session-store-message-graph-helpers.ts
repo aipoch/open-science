@@ -31,6 +31,8 @@ import { formatSessionDetailsTitle } from '../../../shared/session-details'
 export type AppendUserMessageInput = {
   sessionId: string
   messageId?: string
+  // Reuses a matching persisted Message as the owner of a restarted application prompt.
+  rearmExisting?: boolean
   content: string
   attachments?: PersistedUploadedAttachment[]
   parts?: MessagePart[]
