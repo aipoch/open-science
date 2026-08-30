@@ -4,6 +4,7 @@ import {
   DEFAULT_APP_ICON_VARIANT,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
+  DEFAULT_SHOW_NOTIFICATION_CONTENT,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
   isCodexSubscriptionProvider
@@ -133,6 +134,8 @@ type SettingsStoreData = RuntimeSetupState &
     visionModelPending: boolean
     // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
     notificationsEnabled: boolean
+    // Whether native banners may include task/request details. Defaults off for privacy.
+    showNotificationContent: boolean
     // Whether conversations receive the app-owned Skill package import tool and instructions.
     conversationSkillImportEnabled: boolean
     // Saved Windows titlebar-close behavior. Undefined means ask every time.
@@ -199,6 +202,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   visionModel: undefined,
   visionModelPending: false,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
+  showNotificationContent: DEFAULT_SHOW_NOTIFICATION_CONTENT,
   conversationSkillImportEnabled: DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: undefined,
   appIconVariant: DEFAULT_APP_ICON_VARIANT,
@@ -224,6 +228,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not
   // write undefined into the boolean preference.
   notificationsEnabled: snapshot.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+  showNotificationContent: snapshot.showNotificationContent ?? DEFAULT_SHOW_NOTIFICATION_CONTENT,
   conversationSkillImportEnabled:
     snapshot.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: snapshot.closePreference,

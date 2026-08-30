@@ -347,6 +347,10 @@ class SettingsRepository {
     return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
   }
 
+  async setShowNotificationContent(enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, showNotificationContent: enabled }))
+  }
+
   async setConversationSkillImportEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, conversationSkillImportEnabled: enabled }))
   }

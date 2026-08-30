@@ -110,9 +110,11 @@ import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from './lo
 import type {
   NotificationInboxChanged,
   NotificationInboxSnapshot,
+  NotificationDesktopAvailability,
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
   NotificationMarkSessionCompletionsReadRequest,
+  NotificationTestResult,
   OpenSessionFromNotificationRequest,
   UnreadTaskViewState
 } from './notifications'
@@ -265,6 +267,7 @@ import type {
   SetAgentFrameworkRequest,
   SetConversationSkillImportEnabledRequest,
   SetNotificationsEnabledRequest,
+  SetShowNotificationContentRequest,
   SetClosePreferenceRequest,
   SetProjectFilesFilterRequest,
   SetDefaultPermissionProfileRequest,
@@ -1129,6 +1132,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'notifications',
     ['notifications:get-snapshot']
   ),
+  'notifications.getDesktopAvailability': callable<
+    () => Promise<NotificationDesktopAvailability>
+  >()('notifications', ['notifications:get-desktop-availability', ELECTRON], {
+    optionalMember: true
+  }),
   'notifications.markAllRead': callable<
     (request: NotificationMarkAllReadRequest) => Promise<void>
   >()('notifications', ['notifications:mark-all-read']),
@@ -1139,6 +1147,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'notifications.markSessionCompletionsRead': callable<
     (request: NotificationMarkSessionCompletionsReadRequest) => Promise<void>
   >()('notifications', ['notifications:mark-session-completions-read']),
+  'notifications.sendTest': callable<() => Promise<NotificationTestResult>>()(
+    'notifications',
+    ['notifications:send-test', ELECTRON],
+    { optionalMember: true }
+  ),
   'notifications.onChanged': callable<
     (listener: AcpListener<NotificationInboxChanged>) => RemoveListener
   >()('notifications', ['notifications:changed', EVENT]),
@@ -1742,6 +1755,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.setNotificationsEnabled': callable<
     (request: SetNotificationsEnabledRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:set-notifications-enabled', LOCAL]),
+  'settings.setShowNotificationContent': callable<
+    (request: SetShowNotificationContentRequest) => Promise<SettingsSnapshot>
+  >()('settings', ['settings:set-show-notification-content', LOCAL]),
   'settings.setPackageMirror': callable<
     (request: SetPackageMirrorRequest) => Promise<PackageMirror>
   >()('settings', ['settings:set-package-mirror', LOCAL]),

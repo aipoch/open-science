@@ -1,4 +1,8 @@
-import type { NotificationInboxItem as DbNotificationInboxItem, PrismaClient } from '@prisma/client'
+import type {
+  NotificationInboxItem as DbNotificationInboxItem,
+  Prisma,
+  PrismaClient
+} from '@prisma/client'
 
 import type {
   NotificationActionState,
@@ -12,6 +16,18 @@ export const MAX_NOTIFICATION_INBOX_ITEMS = 1000
 const DEFAULT_SNAPSHOT_LIMIT = 50
 const MAX_SNAPSHOT_LIMIT = 200
 const SQLITE_IN_CHUNK_SIZE = 500
+
+const ACTIVE_PENDING_WHERE = {
+  actionState: 'pending',
+  targetInvalidatedAt: null
+} satisfies Prisma.NotificationInboxItemWhereInput
+const NOTIFICATION_HISTORY_WHERE = {
+  OR: [
+    { actionState: null },
+    { actionState: { not: 'pending' } },
+    { targetInvalidatedAt: { not: null } }
+  ]
+} satisfies Prisma.NotificationInboxItemWhereInput
 
 type NotificationInboxClient = Pick<
   PrismaClient,
@@ -117,6 +133,23 @@ const stateFor = async (
   return { changed, unreadCount, latestSequence: latest?.sequence ?? 0 }
 }
 
+const pruneNotificationHistory = async (
+  client: Pick<NotificationInboxClient, 'notificationInboxItem'>
+): Promise<void> => {
+  const expired = await client.notificationInboxItem.findMany({
+    where: NOTIFICATION_HISTORY_WHERE,
+    orderBy: { sequence: 'desc' },
+    skip: MAX_NOTIFICATION_INBOX_ITEMS,
+    select: { sequence: true }
+  })
+  if (expired.length === 0) return
+  await mutateInChunks(
+    expired.map((row) => row.sequence),
+    (sequences) =>
+      client.notificationInboxItem.deleteMany({ where: { sequence: { in: sequences } } })
+  )
+}
+
 // Serializes every read and mutation through one queue so mark-all boundaries, retention, and
 // snapshots observe one database order even when desktop and Web clients act concurrently.
 export class NotificationInboxDbRepository {
@@ -131,13 +164,21 @@ export class NotificationInboxDbRepository {
     )
     return this.enqueue(async () => {
       const client = await this.getClient()
-      const [rows, metadata] = await Promise.all([
+      const [pendingRows, historyRows, metadata] = await Promise.all([
         client.notificationInboxItem.findMany({
+          where: ACTIVE_PENDING_WHERE,
+          orderBy: { sequence: 'desc' }
+        }),
+        client.notificationInboxItem.findMany({
+          where: NOTIFICATION_HISTORY_WHERE,
           orderBy: { sequence: 'desc' },
           take: limit
         }),
         stateFor(client, false)
       ])
+      const rows = [...pendingRows, ...historyRows].sort(
+        (left, right) => right.sequence - left.sequence
+      )
       return { ...metadata, items: rows.map(toInboxItem) }
     })
   }
@@ -170,20 +211,7 @@ export class NotificationInboxDbRepository {
           }
         })
 
-        const expired = await transaction.notificationInboxItem.findMany({
-          orderBy: { sequence: 'desc' },
-          skip: MAX_NOTIFICATION_INBOX_ITEMS,
-          select: { sequence: true }
-        })
-        if (expired.length > 0) {
-          await mutateInChunks(
-            expired.map((row) => row.sequence),
-            (sequences) =>
-              transaction.notificationInboxItem.deleteMany({
-                where: { sequence: { in: sequences } }
-              })
-          )
-        }
+        await pruneNotificationHistory(transaction)
         return stateFor(transaction, true)
       })
     })
@@ -201,6 +229,7 @@ export class NotificationInboxDbRepository {
           where: { dedupeKey, actionState: 'pending' },
           data: { actionState, settledAt: new Date(settledAt) }
         })
+        if (result.count > 0) await pruneNotificationHistory(transaction)
         return stateFor(transaction, result.count > 0)
       })
     })
@@ -218,6 +247,7 @@ export class NotificationInboxDbRepository {
           },
           data: { actionState: 'expired', settledAt: new Date(settledAt) }
         })
+        if (result.count > 0) await pruneNotificationHistory(transaction)
         return stateFor(transaction, result.count > 0)
       })
     })
@@ -275,6 +305,7 @@ export class NotificationInboxDbRepository {
           normalized,
           new Date(invalidatedAt)
         )
+        if (changed > 0) await pruneNotificationHistory(transaction)
         return stateFor(transaction, changed > 0)
       })
     })
@@ -298,6 +329,7 @@ export class NotificationInboxDbRepository {
           )
         )
         const changed = await invalidateSessionRows(transaction, removed, new Date(invalidatedAt))
+        if (changed > 0) await pruneNotificationHistory(transaction)
         return stateFor(transaction, changed > 0)
       })
     })
@@ -331,20 +363,7 @@ export class NotificationInboxDbRepository {
           })
         }
         if (legacy.length > 0) await transaction.unreadTaskSession.deleteMany()
-        const expired = await transaction.notificationInboxItem.findMany({
-          orderBy: { sequence: 'desc' },
-          skip: MAX_NOTIFICATION_INBOX_ITEMS,
-          select: { sequence: true }
-        })
-        if (expired.length > 0) {
-          await mutateInChunks(
-            expired.map((row) => row.sequence),
-            (sequences) =>
-              transaction.notificationInboxItem.deleteMany({
-                where: { sequence: { in: sequences } }
-              })
-          )
-        }
+        await pruneNotificationHistory(transaction)
         return stateFor(transaction, changed)
       })
     })

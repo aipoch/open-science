@@ -30,9 +30,14 @@ let cliApi: {
 }
 let settingsApi: {
   setNotificationsEnabled: ReturnType<typeof vi.fn>
+  setShowNotificationContent: ReturnType<typeof vi.fn>
   setClosePreference: ReturnType<typeof vi.fn>
   setAppIconVariant: ReturnType<typeof vi.fn>
   listAppIcons: ReturnType<typeof vi.fn>
+}
+let notificationsApi: {
+  getDesktopAvailability: ReturnType<typeof vi.fn>
+  sendTest: ReturnType<typeof vi.fn>
 }
 
 const findButton = (pattern: RegExp): HTMLButtonElement | undefined =>
@@ -86,6 +91,11 @@ beforeEach(() => {
       .mockImplementation((request: { enabled: boolean }) =>
         Promise.resolve({ notificationsEnabled: request.enabled })
       ),
+    setShowNotificationContent: vi
+      .fn()
+      .mockImplementation((request: { enabled: boolean }) =>
+        Promise.resolve({ showNotificationContent: request.enabled })
+      ),
     setClosePreference: vi
       .fn()
       .mockImplementation((request: { preference?: 'minimize' | 'quit' }) =>
@@ -108,9 +118,14 @@ beforeEach(() => {
   }
   useSettingsStore.setState({
     notificationsEnabled: true,
+    showNotificationContent: false,
     closePreference: undefined,
     appIconVariant: 'light'
   })
+  notificationsApi = {
+    getDesktopAvailability: vi.fn().mockResolvedValue('supported'),
+    sendTest: vi.fn().mockResolvedValue('shown')
+  }
   ;(window as unknown as { api: unknown }).api = {
     logs: {
       getStatus: vi.fn().mockResolvedValue({
@@ -127,6 +142,7 @@ beforeEach(() => {
     window: { onCloseConfirmRequest: vi.fn() },
     cli: cliApi,
     github: { getStars: vi.fn().mockResolvedValue(1) },
+    notifications: notificationsApi,
     settings: settingsApi
   }
 })
@@ -238,6 +254,32 @@ describe('GeneralPanel notifications', () => {
 
     expect(settingsApi.setNotificationsEnabled).toHaveBeenCalledWith({ enabled: false })
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+  })
+
+  it('keeps task content private by default and can verify native delivery', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const contentToggle = container.querySelector(
+      '[aria-label="Toggle task content in system notifications"]'
+    ) as HTMLButtonElement | null
+    expect(contentToggle?.getAttribute('data-state')).toBe('unchecked')
+
+    await act(async () => {
+      contentToggle?.click()
+    })
+    await flush()
+    expect(settingsApi.setShowNotificationContent).toHaveBeenCalledWith({ enabled: true })
+
+    await act(async () => {
+      findButton(/Send test notification/)?.click()
+    })
+    await flush()
+
+    expect(notificationsApi.sendTest).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Test notification shown.')
   })
 })
 

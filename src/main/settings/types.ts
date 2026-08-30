@@ -186,6 +186,8 @@ export type StoredSettings = {
   visionModel?: VisionModelConfiguration
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
+  // Native notification detail is privacy-sensitive. Absent means generic copy only.
+  showNotificationContent?: boolean
   // Conversation-driven Skill package import. Absent means enabled.
   conversationSkillImportEnabled?: boolean
   // Interface language preference shared by desktop renderer and native surfaces. Absent means the

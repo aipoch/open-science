@@ -245,6 +245,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setReasoningEffort': 'settings:set-reasoning-effort',
   'settings.setReviewerModel': 'settings:set-reviewer-model',
   'settings.setSessionDetailsModel': 'settings:set-session-details-model',
+  'settings.setShowNotificationContent': 'settings:set-show-notification-content',
   'settings.setSkillEnabled': 'settings:set-skill-enabled',
   'settings.setSkillsEnabled': 'settings:set-skills-enabled',
   'settings.setSubagentModel': 'settings:set-subagent-model',

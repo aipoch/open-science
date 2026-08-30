@@ -191,6 +191,7 @@ const installApi = (): void => {
       openFile: vi.fn().mockResolvedValue({ opened: true }),
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     },
+    notifications: {},
     storage: {
       getStatus: vi.fn().mockResolvedValue({
         dataRoot: '/Users/x/.open-science',

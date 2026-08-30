@@ -417,6 +417,9 @@ export type VisionModelConfiguration = Readonly<{
 // is unfocused, so the default surprises no one staring at the window.
 export const DEFAULT_NOTIFICATIONS_ENABLED = true
 
+// Native notification detail is opt-in because banners may appear on lock screens or shared displays.
+export const DEFAULT_SHOW_NOTIFICATION_CONTENT = false
+
 // Conversation-driven Skill package import is opt-out. When disabled, the runtime omits both the
 // app-owned import MCP server and its prompt/attachment guidance from subsequent conversations.
 export const DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED = true
@@ -515,6 +518,9 @@ export type SettingsSnapshot = {
   visionModel?: VisionModelConfiguration
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
+  // Whether native banners may include bounded task/request detail. Provider errors remain hidden.
+  // Older app/Web peers may omit this newly-added preference; consumers must default to false.
+  showNotificationContent?: boolean
   // Whether conversations may detect attached Skill packages and request an app-owned import flow.
   conversationSkillImportEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
@@ -567,6 +573,10 @@ export type SetVisionModelRequest = {
 }
 
 export type SetNotificationsEnabledRequest = {
+  enabled: boolean
+}
+
+export type SetShowNotificationContentRequest = {
   enabled: boolean
 }
 

@@ -114,7 +114,9 @@ import {
   buildSkillImportApprovalBroadcast,
   buildConnectorApprovalBroadcast,
   buildConnectorCredentialRequestBroadcast,
-  buildTaskNotificationShow
+  buildTaskNotificationShow,
+  getTaskNotificationAvailability,
+  showTestTaskNotification
 } from './notifications/electron-wiring'
 import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
 import { startDiagnosticOperation, type DiagnosticOperation } from './diagnostics/operation'
@@ -1439,16 +1441,19 @@ const createApplicationModules = async (
   // regression on either of those contracts would not be caught by TaskNotificationService tests.
   const notificationsLog = createLogger('notifications')
   const liveNotifications = new Set<Notification>()
+  const taskNotificationDeliveryDeps = {
+    notificationCtor: Notification,
+    liveNotifications,
+    log: notificationsLog,
+    headless,
+    translate
+  }
   const taskNotifications = new TaskNotificationService({
     isEnabled: () => settingsService.getNotificationsEnabled(),
+    showContent: () => settingsService.getShowNotificationContent(),
     isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
     translate,
-    show: buildTaskNotificationShow({
-      notificationCtor: Notification,
-      liveNotifications,
-      log: notificationsLog,
-      headless
-    }),
+    show: buildTaskNotificationShow(taskNotificationDeliveryDeps),
     onDeliveryError: (error) =>
       notificationsLog.warn('task notification delivery failed', errorLogFields(error)),
     onAttentionError: (error) =>
@@ -1467,6 +1472,12 @@ const createApplicationModules = async (
   // for retry, without an older IPC round trip clearing a newer click target.
   declareElectronAdapter('task-notifications', () => {
     registerNotificationInboxIpcAdapter(notificationInbox)
+    ipcMainHandle('notifications:get-desktop-availability', () =>
+      getTaskNotificationAvailability(taskNotificationDeliveryDeps)
+    )
+    ipcMainHandle('notifications:send-test', () =>
+      showTestTaskNotification(taskNotificationDeliveryDeps)
+    )
     ipcMainHandle('notifications:peek-pending-open-session', () =>
       taskNotifications.peekPendingOpenSession()
     )

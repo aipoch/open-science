@@ -19,6 +19,7 @@ export type SettingsPreferencesSnapshot = {
   dataRoot?: string
   reasoningEffort: ReasoningEffort
   notificationsEnabled: boolean
+  showNotificationContent: boolean
   conversationSkillImportEnabled: boolean
   closePreference?: CloseActionPreference
   appIconVariant: AppIconVariant
@@ -38,6 +39,7 @@ export interface SettingsPreferences {
   dismissLegacyDataMovePrompt(): Promise<SettingsPreferencesSnapshot>
   setReasoningEffort(effort: ReasoningEffort): Promise<SettingsPreferencesSnapshot>
   setNotificationsEnabled(enabled: boolean): Promise<SettingsPreferencesSnapshot>
+  setShowNotificationContent(enabled: boolean): Promise<SettingsPreferencesSnapshot>
   setConversationSkillImportEnabled(enabled: boolean): Promise<SettingsPreferencesSnapshot>
   setClosePreference(
     preference: CloseActionPreference | undefined

@@ -219,7 +219,9 @@ describe('describeTaskNotification', () => {
   it('includes the error text when a turn fails', () => {
     expect(describeTaskNotification(errorEvent('Rate limit reached'), 'Plot the curve')).toEqual({
       title: 'Task failed',
-      body: '"Plot the curve" failed: Rate limit reached'
+      body: '"Plot the curve" failed: Rate limit reached',
+      genericBody: 'A task failed. Open the app for details.',
+      alwaysGeneric: true
     })
   })
 
@@ -264,6 +266,7 @@ describe('describeTaskNotification', () => {
 // Drives the service with injected gates so each filtering rule is pinned independently.
 const createService = (overrides: {
   isEnabled?: () => Promise<boolean>
+  showContent?: () => Promise<boolean>
   isAppFocused?: () => boolean
   show?: (request: TaskNotificationRequest) => void
   onDeliveryError?: (error: unknown) => void
@@ -289,6 +292,7 @@ const createService = (overrides: {
   const inboxErrors: unknown[] = []
   const deps: TaskNotificationServiceDeps = {
     isEnabled: overrides.isEnabled ?? (() => Promise.resolve(true)),
+    showContent: overrides.showContent ?? (() => Promise.resolve(true)),
     isAppFocused: overrides.isAppFocused ?? (() => false),
     show: overrides.show ?? ((request) => shown.push(request)),
     onDeliveryError: overrides.onDeliveryError ?? ((error) => deliveryErrors.push(error)),
@@ -333,6 +337,41 @@ describe('TaskNotificationService', () => {
       body: '智能体已完成对"绘制曲线"的回复。'
     })
     expect(inbox.record).toHaveBeenCalledWith(expect.objectContaining({ title: 'Task completed' }))
+  })
+
+  it('keeps prompt text and provider errors out of native notifications by default', async () => {
+    const shown: TaskNotificationRequest[] = []
+    const service = new TaskNotificationService({
+      isEnabled: async () => true,
+      isAppFocused: () => false,
+      translate: (key) => key,
+      show: (request) => shown.push(request)
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Secret research prompt' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+    service.trackPrompt({ sessionId: 'session-1', text: 'Another secret prompt' })
+    await service.handleRuntimeEvent(errorEvent('Provider leaked request details'))
+
+    expect(shown.map(({ title, body }) => ({ title, body }))).toEqual([
+      { title: 'Task completed', body: 'A task completed. Open the app to view it.' },
+      { title: 'Task failed', body: 'A task failed. Open the app for details.' }
+    ])
+  })
+
+  it('keeps localized provider failures generic even when detailed content is enabled', async () => {
+    const { service, shown } = createService({
+      showContent: async () => true,
+      translate: (key, options) => translateNativeMessage('zh-Hans', key, options)
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: '敏感提示词' })
+    await service.handleRuntimeEvent(errorEvent('敏感 provider 错误'))
+
+    expect(shown[0]).toMatchObject({
+      title: '任务失败',
+      body: '任务失败。打开应用查看详细信息。'
+    })
   })
 
   it('notifies on completion using the tracked prompt as the task name', async () => {
@@ -653,7 +692,7 @@ describe('TaskNotificationService', () => {
     await service.handleRuntimeEvent(errorEvent('process killed'))
 
     expect(shown).toHaveLength(1)
-    expect(shown[0]?.body).toBe('"Plot the curve" failed: process killed')
+    expect(shown[0]?.body).toBe('A task failed. Open the app for details.')
   })
 
   it('swallows delivery errors and reports them instead of rejecting', async () => {
@@ -843,9 +882,7 @@ describe('TaskNotificationService', () => {
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     const handling = service.handleRuntimeEvent(stopEvent('end_turn'))
-    await Promise.resolve()
-
-    expect(shown).toHaveLength(1)
+    await vi.waitFor(() => expect(shown).toHaveLength(1))
 
     finishInbox?.()
     await handling

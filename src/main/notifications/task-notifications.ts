@@ -23,6 +23,8 @@ export type TaskNotification = {
   title: string
   body: string
   attention?: boolean
+  genericBody?: string
+  alwaysGeneric?: boolean
 }
 
 export type TaskNotificationRequest = TaskNotification & {
@@ -33,6 +35,8 @@ export type TaskNotificationRequest = TaskNotification & {
 export type TaskNotificationServiceDeps = {
   // Fresh settings read, so the Settings toggle applies without a restart.
   isEnabled: () => Promise<boolean>
+  // Detailed native copy is a separate privacy opt-in. Absence fails closed to generic copy.
+  showContent?: () => Promise<boolean>
   // Notifications only make sense when the user has switched away; a focused app needs none.
   isAppFocused: () => boolean
   // OS-specific delivery (Electron Notification in production, a spy in tests).
@@ -150,6 +154,23 @@ const AUTHORIZATION_INBOX_SUMMARY = {
 
 const AGENT_QUESTION_INBOX_SUMMARY = 'The agent is waiting for your response.'
 
+const GENERIC_NATIVE_BODY_BY_TITLE: Readonly<Record<string, string>> = {
+  'Task completed': 'A task completed. Open the app to view it.',
+  'Task needs attention': 'A task needs attention. Open the app for details.',
+  'Task failed': 'A task failed. Open the app for details.',
+  'Approval needed': 'A task needs your approval. Open the app to review it.',
+  'Response needed': 'A task needs your response. Open the app to continue.',
+  'Plan approval needed': 'A plan is ready for approval. Open the app to review it.'
+}
+
+const genericNativeNotification = (notification: TaskNotification): TaskNotification => ({
+  ...notification,
+  body:
+    notification.genericBody ??
+    GENERIC_NATIVE_BODY_BY_TITLE[notification.title] ??
+    'Open the app for details.'
+})
+
 const connectorCredentialDedupeKey = (originId: string): string =>
   `input:connector-credential:${originId}`
 
@@ -242,6 +263,8 @@ export const describeTaskNotification = (
 
     return {
       title: translate('Task failed'),
+      genericBody: translate('A task failed. Open the app for details.'),
+      alwaysGeneric: true,
       body: truncate(
         taskName ? translate('{{taskName}} failed: {{reason}}', { taskName, reason }) : reason,
         MAX_BODY_LENGTH
@@ -794,9 +817,13 @@ export class TaskNotificationService {
     if (this.isAppFocused()) return
 
     let enabled = false
+    let showContent = false
 
     try {
-      enabled = await this.deps.isEnabled()
+      ;[enabled, showContent] = await Promise.all([
+        this.deps.isEnabled(),
+        this.deps.showContent?.().catch(() => false) ?? Promise.resolve(false)
+      ])
     } catch {
       // A settings read failure must not break the event flow; fail closed rather than spam.
       return
@@ -825,7 +852,9 @@ export class TaskNotificationService {
     // unavailable on a platform without preventing the other from reaching the user.
     try {
       this.deps.show({
-        ...notification,
+        ...(showContent && !notification.alwaysGeneric
+          ? notification
+          : genericNativeNotification(notification)),
         // Clicks always surface the window; the handler opens the conversation when there is one.
         onClick
       })

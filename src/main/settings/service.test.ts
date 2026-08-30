@@ -5829,6 +5829,18 @@ describe('SettingsService: notifications preference', () => {
     expect(snapshot.notificationsEnabled).toBe(false)
     expect((await repository.getSettings()).notificationsEnabled).toBe(false)
   })
+
+  it('defaults native notification content to hidden and persists an explicit opt-in', async () => {
+    const service = createService()
+
+    expect((await service.getSettingsView()).showNotificationContent).toBe(false)
+    expect(await service.getShowNotificationContent()).toBe(false)
+
+    const snapshot = await service.setShowNotificationContent(true)
+
+    expect(snapshot.showNotificationContent).toBe(true)
+    expect((await repository.getSettings()).showNotificationContent).toBe(true)
+  })
 })
 
 describe('SettingsService: conversation Skill import preference', () => {

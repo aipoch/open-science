@@ -2,12 +2,17 @@ import type { Notification } from 'electron'
 
 import type { ComputeApprovalRequest } from '../../shared/compute'
 import type {
+  NotificationDesktopAvailability,
+  NotificationTestResult
+} from '../../shared/notifications'
+import type {
   ConnectorApprovalRequest,
   ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
 import type { ComputeApprovalContext } from '../compute/compute-approval-broker'
 import type { Logger } from '../logger'
+import type { NativeTranslator } from '../locale/main-process-messages'
 import {
   runTaskNotificationInBackground,
   type TaskNotificationRequest,
@@ -21,36 +26,125 @@ import {
 export type BuildTaskNotificationShowDeps = {
   notificationCtor: typeof Notification
   liveNotifications: Set<Notification>
-  log: Pick<Logger, 'info'>
+  log: Pick<Logger, 'info' | 'warn'>
   headless: boolean
+  translate?: NativeTranslator
+}
+
+type TaskNotificationAvailabilityDeps = Pick<
+  BuildTaskNotificationShowDeps,
+  'notificationCtor' | 'headless'
+>
+
+export const getTaskNotificationAvailability = (
+  deps: TaskNotificationAvailabilityDeps
+): NotificationDesktopAvailability => {
+  if (deps.headless) return 'unavailable'
+  try {
+    return deps.notificationCtor.isSupported() ? 'supported' : 'unavailable'
+  } catch {
+    return 'unavailable'
+  }
+}
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error)
+
+const deliverTaskNotification = (
+  deps: BuildTaskNotificationShowDeps,
+  request: TaskNotificationRequest,
+  onResult?: (result: NotificationTestResult) => void
+): Notification | undefined => {
+  const { title, body, onClick } = request
+  if (getTaskNotificationAvailability(deps) === 'unavailable') {
+    onResult?.('unavailable')
+    return undefined
+  }
+
+  let notification: Notification
+  try {
+    notification = new deps.notificationCtor({ title, body })
+  } catch (error) {
+    deps.log.warn('task notification delivery failed', { title, error: errorMessage(error) })
+    onResult?.('failed')
+    return undefined
+  }
+
+  let resultReported = false
+  const reportResult = (result: NotificationTestResult): void => {
+    if (resultReported) return
+    resultReported = true
+    onResult?.(result)
+  }
+
+  deps.log.info('task notification delivery attempted', { title, supported: true })
+  deps.liveNotifications.add(notification)
+  notification.once('show', () => {
+    deps.log.info('task notification shown', { title })
+    reportResult('shown')
+  })
+  notification.once('failed', (_event, error) => {
+    deps.liveNotifications.delete(notification)
+    deps.log.warn('task notification delivery failed', { title, error })
+    reportResult('failed')
+  })
+  notification.once('click', () => {
+    deps.liveNotifications.delete(notification)
+    onClick()
+  })
+  notification.once('close', () => {
+    deps.liveNotifications.delete(notification)
+    reportResult('unconfirmed')
+  })
+  try {
+    notification.show()
+  } catch (error) {
+    deps.liveNotifications.delete(notification)
+    deps.log.warn('task notification delivery failed', { title, error: errorMessage(error) })
+    reportResult('failed')
+    return undefined
+  }
+  return notification
 }
 
 export const buildTaskNotificationShow =
   (deps: BuildTaskNotificationShowDeps) =>
   (request: TaskNotificationRequest): void => {
-    const { title, body, onClick } = request
-
-    // Headless --serve launches never notify by contract: there is no local desktop user to see the
-    // banner, and a click here would create a main window where none belongs.
-    if (deps.headless) return
-    // Daemon-less Linux hosts degrade the same way.
-    if (!deps.notificationCtor.isSupported()) return
-
-    const notification = new deps.notificationCtor({ title, body })
-
-    // Logged so a silently-swallowed banner (OS permission, Focus mode) is distinguishable from a
-    // gate that stopped delivery upstream.
-    deps.log.info('delivering task notification', { title, supported: true })
-    // Retain the instance until the banner resolves; a GC before click would silently drop the
-    // handler on some platforms.
-    deps.liveNotifications.add(notification)
-    notification.once('click', () => {
-      deps.liveNotifications.delete(notification)
-      onClick()
-    })
-    notification.once('close', () => deps.liveNotifications.delete(notification))
-    notification.show()
+    deliverTaskNotification(deps, request)
   }
+
+export const showTestTaskNotification = (
+  deps: BuildTaskNotificationShowDeps,
+  timeoutMs = 2_000
+): Promise<NotificationTestResult> =>
+  new Promise((resolve) => {
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const finish = (result: NotificationTestResult): void => {
+      if (settled) return
+      settled = true
+      if (timeout) clearTimeout(timeout)
+      resolve(result)
+    }
+
+    const notification = deliverTaskNotification(
+      deps,
+      {
+        title: deps.translate?.('Test notification') ?? 'Test notification',
+        body:
+          deps.translate?.('System notifications from Open Science are working.') ??
+          'System notifications from Open Science are working.',
+        onClick: () => undefined
+      },
+      finish
+    )
+    if (!settled) {
+      timeout = setTimeout(() => {
+        if (notification) deps.liveNotifications.delete(notification)
+        finish('unconfirmed')
+      }, timeoutMs)
+    }
+  })
 
 // Builds the ApprovalBroker broadcast callback. The wire-up is the exact seam that the previous
 // spec review flagged: a wrong implementation (e.g. forgetting to pass sessionId through, or routing

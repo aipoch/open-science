@@ -461,6 +461,20 @@ describe('settings repository', () => {
     expect(sanitizeSettings({}).notificationsEnabled).toBeUndefined()
   })
 
+  it('persists the system-notification content opt-in across a sanitized reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setShowNotificationContent(true)
+
+    expect((await repository.getSettings()).showNotificationContent).toBe(true)
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.showNotificationContent).toBe(true)
+    expect(
+      sanitizeSettings({ showNotificationContent: 'yes' }).showNotificationContent
+    ).toBeUndefined()
+  })
+
   it('persists the conversation Skill import preference across a sanitized read and a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

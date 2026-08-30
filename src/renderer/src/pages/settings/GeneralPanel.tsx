@@ -16,6 +16,10 @@ import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
 import type { LogFileStatus } from '../../../../shared/logs'
 import { APP } from '../../../../shared/app-config'
+import type {
+  NotificationDesktopAvailability,
+  NotificationTestResult
+} from '../../../../shared/notifications'
 import { AppIconSection } from './AppIconSection'
 import { AppVersionSection } from './AppVersionSection'
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
@@ -66,18 +70,47 @@ const GeneralPanel = (): React.JSX.Element => {
   const [cli, setCli] = useState<CliLauncherStatus | null>(null)
   const [isUpdatingCli, setIsUpdatingCli] = useState(false)
   const [cliError, setCliError] = useState<GeneralActionError | undefined>(undefined)
+  const [notificationAvailability, setNotificationAvailability] =
+    useState<NotificationDesktopAvailability>('unavailable')
+  const [notificationTestResult, setNotificationTestResult] = useState<NotificationTestResult>()
+  const [isTestingNotification, setIsTestingNotification] = useState(false)
   const notificationsEnabled = useSettingsStore((state) => state.notificationsEnabled)
   const setNotificationsEnabled = useSettingsStore((state) => state.setNotificationsEnabled)
+  const showNotificationContent = useSettingsStore((state) => state.showNotificationContent)
+  const setShowNotificationContent = useSettingsStore((state) => state.setShowNotificationContent)
   const closePreference = useSettingsStore((state) => state.closePreference)
   const setClosePreference = useSettingsStore((state) => state.setClosePreference)
 
   useEffect(() => {
     void window.api.logs.getStatus().then(setLogStatus, () => setLogStatus(null))
     void window.api.cli.getStatus().then(setCli)
+    const getAvailability = window.api.notifications.getDesktopAvailability
+    if (getAvailability) {
+      void getAvailability()
+        .then(setNotificationAvailability)
+        .catch(() => {
+          setNotificationAvailability('unavailable')
+        })
+    }
   }, [])
 
   const logPath = logStatus?.path ?? null
   const logExists = logStatus?.existing === true
+
+  const handleTestNotification = async (): Promise<void> => {
+    const sendTest = window.api.notifications.sendTest
+    if (!sendTest) return
+
+    setIsTestingNotification(true)
+    setNotificationTestResult(undefined)
+    try {
+      setNotificationTestResult(await sendTest())
+    } catch {
+      setNotificationTestResult('failed')
+    } finally {
+      setIsTestingNotification(false)
+    }
+  }
 
   const handleCli = async (action: 'install' | 'uninstall'): Promise<void> => {
     setIsUpdatingCli(true)
@@ -231,6 +264,54 @@ const GeneralPanel = (): React.JSX.Element => {
               aria-label={t('Toggle task notifications')}
               onToggle={() => void setNotificationsEnabled(!notificationsEnabled)}
             />
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
+          label={t('Show task content in system notifications')}
+          description={t(
+            'Include task names and request details. Provider errors are always hidden.'
+          )}
+        >
+          <div className="flex justify-end">
+            <SettingsToggle
+              enabled={showNotificationContent}
+              disabled={!notificationsEnabled}
+              aria-label={t('Toggle task content in system notifications')}
+              onToggle={() => void setShowNotificationContent(!showNotificationContent)}
+            />
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
+          label={t('System notification status')}
+          description={
+            notificationAvailability === 'supported'
+              ? t('System notifications are supported on this device.')
+              : t('System notifications are unavailable on this device.')
+          }
+        >
+          <div className="flex flex-col items-end gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={notificationAvailability !== 'supported' || isTestingNotification}
+              onClick={() => void handleTestNotification()}
+            >
+              {isTestingNotification ? t('Sending test…') : t('Send test notification')}
+            </Button>
+            {notificationTestResult ? (
+              <p className="text-right text-xs text-muted-foreground" role="status">
+                {notificationTestResult === 'shown'
+                  ? t('Test notification shown.')
+                  : notificationTestResult === 'failed'
+                    ? t('Test notification failed.')
+                    : notificationTestResult === 'unconfirmed'
+                      ? t('Test notification sent, but display could not be confirmed.')
+                      : t('System notifications are unavailable on this device.')}
+              </p>
+            ) : null}
           </div>
         </SettingsRow>
 

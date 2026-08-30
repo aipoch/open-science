@@ -449,8 +449,17 @@ class SettingsService {
     return (await this.preferences.getSnapshot()).notificationsEnabled
   }
 
+  async getShowNotificationContent(): Promise<boolean> {
+    return (await this.preferences.getSnapshot()).showNotificationContent
+  }
+
   async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
     await this.preferences.setNotificationsEnabled(enabled)
+    return this.getSettingsView()
+  }
+
+  async setShowNotificationContent(enabled: boolean): Promise<SettingsSnapshot> {
+    await this.preferences.setShowNotificationContent(enabled)
     return this.getSettingsView()
   }
 

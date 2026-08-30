@@ -384,6 +384,7 @@ describe('Settings backend ownership architecture', () => {
       'setRuntimeEnablement',
       'setRuntimeSelection',
       'setSessionDetailsModel',
+      'setShowNotificationContent',
       'setSkillEnabled',
       'setSkillsEnabled',
       'setSubagentModel',
@@ -472,7 +473,7 @@ describe('Settings backend ownership architecture', () => {
         codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotificationsEnabled getPackageMirror
-        getPreflight getRuntimeEnablement getRuntimeSelection getSettingsView getSkillDetail
+        getPreflight getRuntimeEnablement getRuntimeSelection getSettingsView getShowNotificationContent getSkillDetail
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         importSkillZipBatch installClaude installCodeBuddy installCodex installOpencode isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
@@ -488,7 +489,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
-        setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSessionDetailsModel setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
+        setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodeBuddy uninstallCodex
         uninstallOpencode updateCustomServer updateSkill upsertProvider validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
@@ -690,6 +691,7 @@ describe('Settings backend ownership architecture', () => {
       'reasoningEffort',
       'reviewerModel',
       'sessionDetailsModel',
+      'showNotificationContent',
       'subagentModel',
       'version',
       'visionModel'

@@ -46,6 +46,7 @@ import {
   type SetDefaultPermissionProfileRequest,
   type SetConversationSkillImportEnabledRequest,
   type SetNotificationsEnabledRequest,
+  type SetShowNotificationContentRequest,
   type SetProjectFilesFilterRequest,
   type SetReasoningEffortRequest,
   type SetReviewerModelRequest,
@@ -73,6 +74,7 @@ import {
   readConversationSkillImportEnabled,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
+  readShowNotificationContent,
   readProjectFilesFilter,
   readReasoningEffort,
   readReviewerModel,
@@ -214,6 +216,14 @@ const registerSettingsIpcHandlers = ({
       const enabled = readNotificationsEnabled(request)
       log.info('set notifications enabled requested', { enabled })
       return service.setNotificationsEnabled(enabled)
+    }
+  )
+  ipcMainHandle(
+    'settings:set-show-notification-content',
+    async (_event, request: SetShowNotificationContentRequest) => {
+      const enabled = readShowNotificationContent(request)
+      log.info('set show notification content requested', { enabled })
+      return service.setShowNotificationContent(enabled)
     }
   )
   ipcMainHandle(
