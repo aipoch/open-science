@@ -51,7 +51,14 @@ import { getNotebookFileEvidenceLocation } from './repository'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
-  'status' | 'stdout' | 'stderr' | 'traceback' | 'outputs' | 'truncated' | 'workingFiles'
+  | 'status'
+  | 'stdout'
+  | 'stderr'
+  | 'traceback'
+  | 'outputs'
+  | 'truncated'
+  | 'workingFiles'
+  | 'fileEvidence'
 > & { viewImages?: readonly TransientViewImage[] }
 
 type NotebookControlCompletionInterceptor = {
@@ -584,7 +591,8 @@ class NotebookExecutionOwner {
       traceback: result.traceback,
       outputs: result.outputs,
       ...(result.truncated ? { truncated: true } : {}),
-      workingFiles: result.workingFiles
+      workingFiles: result.workingFiles,
+      fileEvidence: result.fileEvidence
     }
   }
 
