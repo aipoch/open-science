@@ -844,6 +844,39 @@ describe('ConnectorService', () => {
       expect(call).not.toHaveBeenCalled()
     })
 
+    it('rejects a historical custom server with credentials embedded in an OAuth URL', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-oauth-url-credential',
+              name: 'oauth-url-credential',
+              displayName: 'OAuth URL credential',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test',
+              oauth: {
+                authorizationServerUrl: 'https://auth.example.test?api_key=legacy-plaintext-secret'
+              },
+              oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' } },
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('oauth-url-credential', 'do_thing', {}, internal)).rejects.toThrow(
+        /credential_unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
     it('rejects a historical custom server with curl-style user credentials', async () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)

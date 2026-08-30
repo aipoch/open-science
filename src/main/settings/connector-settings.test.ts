@@ -1022,6 +1022,36 @@ describe('ConnectorSettingsModule', () => {
     expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
   })
 
+  it.each([
+    [
+      'client metadata URL',
+      { clientMetadataUrl: 'https://oauth-user:oauth-secret@client.example.test/metadata' }
+    ],
+    [
+      'authorization server URL',
+      { authorizationServerUrl: 'https://auth.example.test?api_key=oauth-secret' }
+    ],
+    [
+      'redirect URI',
+      {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        redirectUri: 'http://127.0.0.1/callback?access_token=oauth-secret'
+      }
+    ]
+  ])('rejects credentials embedded in an OAuth %s', async (_description, oauth) => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-oauth-url',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test',
+        oauth
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
   it('rejects a credential-bearing header argument after renderer whitespace tokenization', async () => {
     await expect(
       addCustomServer({
@@ -1079,6 +1109,29 @@ describe('ConnectorSettingsModule', () => {
     expect((await repository.getSettings()).connectors?.customMcpServers?.[0]?.url).toBe(
       'https://mcp.example.test'
     )
+  })
+
+  it('rejects a credential-bearing OAuth URL when updating a custom server', async () => {
+    const added = await addCustomServer({
+      name: 'unsafe-oauth-url-update',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { authorizationServerUrl: 'https://auth.example.test' }
+    })
+
+    await expect(
+      service.updateCustomServer({
+        id: added.customServers[0].id,
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test',
+        oauth: { authorizationServerUrl: 'https://auth.example.test?api_key=oauth-secret' }
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect(
+      (await repository.getSettings()).connectors?.customMcpServers?.[0]?.oauth
+        ?.authorizationServerUrl
+    ).toBe('https://auth.example.test')
   })
 
   it('rejects an invalid custom server (stdio without a command)', async () => {
@@ -1139,6 +1192,37 @@ describe('ConnectorSettingsModule', () => {
 
     const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
     expect(storedJson).toContain('legacy-plaintext-secret')
+  })
+
+  it('redacts credential-bearing OAuth URLs from historical custom-server views', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-oauth-url-secret',
+      name: 'legacy-oauth-url-secret',
+      displayName: 'Legacy OAuth URL secret',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        clientMetadataUrl: 'https://oauth-user:client-secret@client.example.test/metadata',
+        authorizationServerUrl: 'https://auth.example.test?api_key=issuer-secret',
+        clientId: 'registered-client',
+        redirectUri: 'http://127.0.0.1/callback?access_token=redirect-secret'
+      },
+      enabled: true
+    })
+
+    const [server] = (await service.listConnectors()).customServers
+    expect(server).toMatchObject({
+      name: 'legacy-oauth-url-secret',
+      enabled: false,
+      availability: 'credential_unavailable'
+    })
+    expect(server.oauth).not.toHaveProperty('clientMetadataUrl')
+    expect(server.oauth).not.toHaveProperty('authorizationServerUrl')
+    expect(server.oauth).not.toHaveProperty('redirectUri')
+    expect(JSON.stringify(server)).not.toMatch(/client-secret|issuer-secret|redirect-secret/)
+
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).toMatch(/client-secret|issuer-secret|redirect-secret/)
   })
 
   it('redacts curl-style user credentials from historical custom-server views', async () => {

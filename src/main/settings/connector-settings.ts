@@ -103,6 +103,11 @@ const hasResolvedSecretRecord = (
 const assertCredentialFieldsAreEncrypted = (fields: {
   args?: readonly string[]
   url?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    redirectUri?: string
+  } | null
 }): void => {
   if (hasEmbeddedConnectorCredentials(fields)) {
     throw new Error(
@@ -672,6 +677,15 @@ class ConnectorSettingsModule {
         const routeUnavailable = !isCustomMcpServerRouteSafe(server, customServers)
         const argsContainCredentials = hasEmbeddedConnectorCredentials({ args: server.args })
         const urlContainsCredentials = hasEmbeddedConnectorCredentials({ url: server.url })
+        const clientMetadataUrlContainsCredentials = hasEmbeddedConnectorCredentials({
+          url: server.oauth?.clientMetadataUrl
+        })
+        const authorizationServerUrlContainsCredentials = hasEmbeddedConnectorCredentials({
+          url: server.oauth?.authorizationServerUrl
+        })
+        const redirectUriContainsCredentials = hasEmbeddedConnectorCredentials({
+          url: server.oauth?.redirectUri
+        })
         const credentialUnavailable = !hasUsableCustomMcpCredentials(server)
         const unavailable =
           routeUnavailable ||
@@ -716,15 +730,18 @@ class ConnectorSettingsModule {
           ...(server.oauth
             ? {
                 oauth: {
-                  ...(server.oauth.clientMetadataUrl
+                  ...(server.oauth.clientMetadataUrl && !clientMetadataUrlContainsCredentials
                     ? { clientMetadataUrl: server.oauth.clientMetadataUrl }
                     : {}),
-                  ...(server.oauth.authorizationServerUrl
+                  ...(server.oauth.authorizationServerUrl &&
+                  !authorizationServerUrlContainsCredentials
                     ? { authorizationServerUrl: server.oauth.authorizationServerUrl }
                     : {}),
                   ...(server.oauth.scopes ? { scopes: server.oauth.scopes } : {}),
                   ...(server.oauth.clientId ? { clientId: server.oauth.clientId } : {}),
-                  ...(server.oauth.redirectUri ? { redirectUri: server.oauth.redirectUri } : {}),
+                  ...(server.oauth.redirectUri && !redirectUriContainsCredentials
+                    ? { redirectUri: server.oauth.redirectUri }
+                    : {}),
                   hasTokens: Boolean(server.oauthState?.tokens?.access_token),
                   hasClientSecret: server.oauthClientSecret !== undefined
                 }

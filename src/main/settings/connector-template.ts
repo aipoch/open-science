@@ -159,11 +159,19 @@ const argumentsContainCredential = (args: readonly string[]): boolean =>
 export const hasEmbeddedConnectorCredentials = (fields: {
   args?: readonly string[]
   url?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    redirectUri?: string
+  } | null
 }): boolean => {
   if (fields.args && argumentsContainCredential(fields.args)) return true
-  if (!fields.url) return false
-
-  return urlContainsCredential(fields.url)
+  return [
+    fields.url,
+    fields.oauth?.clientMetadataUrl,
+    fields.oauth?.authorizationServerUrl,
+    fields.oauth?.redirectUri
+  ].some((url) => Boolean(url && urlContainsCredential(url)))
 }
 
 // Keeps preview digests opaque to the renderer without persisting exported connector metadata.
