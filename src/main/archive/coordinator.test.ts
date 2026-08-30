@@ -307,7 +307,7 @@ describe('ArchiveCoordinator', () => {
     )
 
     expect(sessions.assertSessionAvailable).toHaveBeenCalledWith(project.id, session.id)
-    expect(operation).toHaveBeenCalledOnce()
+    expect(operation).toHaveBeenCalledWith(project.id)
   })
 
   it('fails closed when a session owner cannot be resolved', async () => {

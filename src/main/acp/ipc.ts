@@ -29,18 +29,18 @@ import {
   resolveElicitationResponseSessionId,
   resolvePermissionResponseSessionId
 } from './response-session-admission'
+import { bindResumeRequestToProject } from './session-project-binding'
 import { installAgentShutdownGuard } from './shutdown-guard'
 
 type AcpIpcSessionAdmission = {
   withSessionAvailableById<Result>(
     sessionId: string,
-    operation: () => Promise<Result>
+    operation: (projectId: string) => Promise<Result>
   ): Promise<Result>
 }
 
 type AcpSessionMemoryPreferenceResolver = (request: {
   sessionId: string
-  projectId?: string
 }) => Promise<boolean | undefined>
 
 const withDurableMemoryPreference = async (
@@ -48,10 +48,7 @@ const withDurableMemoryPreference = async (
   resolveMemoryEnabled?: AcpSessionMemoryPreferenceResolver
 ): Promise<AcpResumeSessionRequest> => {
   if (!resolveMemoryEnabled) return request
-  const memoryEnabled = await resolveMemoryEnabled({
-    sessionId: request.sessionId,
-    ...(request.projectId ? { projectId: request.projectId } : {})
-  })
+  const memoryEnabled = await resolveMemoryEnabled({ sessionId: request.sessionId })
   return { ...request, memoryEnabled: memoryEnabled ?? false }
 }
 
@@ -86,8 +83,13 @@ const registerAcpIpcHandlerSet = (
       workflows.continueInterruptedTurn(request)
   )
   ipcMainHandle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
-    sessionAdmission.withSessionAvailableById(request.sessionId, async () =>
-      runtime.resetSessionContext(await withDurableMemoryPreference(request, resolveMemoryEnabled))
+    sessionAdmission.withSessionAvailableById(request.sessionId, async (projectId) =>
+      runtime.resetSessionContext(
+        await withDurableMemoryPreference(
+          bindResumeRequestToProject(request, projectId),
+          resolveMemoryEnabled
+        )
+      )
     )
   )
   ipcMainHandle('acp:compact-session', (_event, request: AcpCompactSessionRequest) =>

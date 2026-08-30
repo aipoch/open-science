@@ -29,6 +29,7 @@ import {
   resolveElicitationResponseSessionId,
   resolvePermissionResponseSessionId
 } from './response-session-admission'
+import { bindResumeRequestToProject } from './session-project-binding'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 
@@ -177,7 +178,7 @@ type AcpApplicationCommandDependencies = Readonly<{
     ): Promise<Result>
     withSessionAvailableById<Result>(
       sessionId: string,
-      operation: () => Promise<Result>
+      operation: (projectId: string) => Promise<Result>
     ): Promise<Result>
   }>
   respondDelegatedQuestion?: (
@@ -218,7 +219,10 @@ const registerAcpCommands = (
         dependencies.archiveAvailability
           ? dependencies.archiveAvailability.withSessionAvailableById(
               invocation.args[0].sessionId,
-              () => dependencies.runtime.resetSessionContext(invocation.args[0])
+              (projectId) =>
+                dependencies.runtime.resetSessionContext(
+                  bindResumeRequestToProject(invocation.args[0], projectId)
+                )
             )
           : dependencies.runtime.resetSessionContext(invocation.args[0]),
       'acp:compact-session': (invocation) =>

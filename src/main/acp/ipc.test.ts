@@ -153,8 +153,8 @@ type AcpTestOptions = Parameters<typeof createAcpRuntime>[0]
 const passThroughSessionAdmission = {
   withSessionAvailableById: <Result>(
     _sessionId: string,
-    operation: () => Promise<Result>
-  ): Promise<Result> => operation()
+    operation: (projectId: string) => Promise<Result>
+  ): Promise<Result> => operation('project-1')
 }
 
 // Minimal options — createRuntime just forwards them into the mocked AcpRuntime constructor.
@@ -296,7 +296,7 @@ it('rejects ACP response mutations before runtime work when Session admission is
   const sessionAdmission = {
     withSessionAvailableById: async <Result>(
       sessionId: string,
-      operation: () => Promise<Result>
+      operation: (projectId: string) => Promise<Result>
     ): Promise<Result> => {
       void operation
       admitted.push(sessionId)
@@ -392,10 +392,10 @@ it('rejects forged and unknown ACP response authority before Session admission',
   const admitted: string[] = []
   const withSessionAvailableById = <Result>(
     sessionId: string,
-    operation: () => Promise<Result>
+    operation: (projectId: string) => Promise<Result>
   ): Promise<Result> => {
     admitted.push(sessionId)
-    return operation()
+    return operation('project-1')
   }
   const responseRuntime = {
     getSnapshot: vi.fn(() => ({
@@ -551,8 +551,8 @@ describe('ACP module transport seam', () => {
         },
         withSessionAvailableById: async <Result>(
           _sessionId: string,
-          operation: () => Promise<Result>
-        ): Promise<Result> => operation()
+          operation: (projectId: string) => Promise<Result>
+        ): Promise<Result> => operation('project-1')
       },
       interruptedTurnSessions: { loadSession: vi.fn(async () => session) }
     })
@@ -1108,6 +1108,19 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
 })
 
 describe('installAcpIpcHandlers — reset-session-context bridge', () => {
+  const persistedProjectId = 'persisted-project'
+  const ownerResolvingArchiveAvailability = {
+    withSessionAvailable: async <Result>(
+      _projectId: string,
+      _sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result> => operation(),
+    withSessionAvailableById: async <Result>(
+      _sessionId: string,
+      operation: (projectId: string) => Promise<Result>
+    ): Promise<Result> => operation(persistedProjectId)
+  }
+
   it('registers the acp:reset-session-context channel', () => {
     registerWithFakes()
     expect(handlers.has('acp:reset-session-context')).toBe(true)
@@ -1120,10 +1133,35 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     const result = await handlers.get('acp:reset-session-context')?.({}, request)
 
     expect(resetSessionContext).toHaveBeenCalledTimes(1)
-    expect(resetSessionContext).toHaveBeenCalledWith(request)
+    expect(resetSessionContext).toHaveBeenCalledWith({ ...request, projectId: 'project-1' })
     // The distinct resume channel must not be driven by the reset call.
     expect(resumeSession).not.toHaveBeenCalled()
     expect(result).toEqual({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+  })
+
+  it('injects the persisted Project owner when the request omits projectId', async () => {
+    registerWithFakes({ archiveAvailability: ownerResolvingArchiveAvailability })
+    const request: AcpResumeSessionRequest = { sessionId: 's-1', cwd: '/workspace' }
+
+    await handlers.get('acp:reset-session-context')?.({}, request)
+
+    expect(resetSessionContext).toHaveBeenCalledWith({
+      ...request,
+      projectId: persistedProjectId
+    })
+  })
+
+  it('rejects a request whose projectId disagrees with the persisted owner', async () => {
+    registerWithFakes({ archiveAvailability: ownerResolvingArchiveAvailability })
+
+    await expect(
+      handlers.get('acp:reset-session-context')?.(
+        {},
+        { sessionId: 's-1', cwd: '/workspace', projectId: 'forged-project' }
+      )
+    ).rejects.toThrow('Session does not belong to the requested Project.')
+
+    expect(resetSessionContext).not.toHaveBeenCalled()
   })
 
   it('uses the durable Memory preference for renderer resume and reset requests', async () => {
@@ -1142,6 +1180,8 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     expect(resumeSession).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
     expect(resetSessionContext).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
     expect(resolveMemoryEnabled).toHaveBeenCalledTimes(2)
+    expect(resolveMemoryEnabled).toHaveBeenNthCalledWith(1, { sessionId: request.sessionId })
+    expect(resolveMemoryEnabled).toHaveBeenNthCalledWith(2, { sessionId: request.sessionId })
   })
 
   it('fails closed when the durable Memory preference is missing', async () => {
@@ -1196,8 +1236,8 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     const archiveAvailability = {
       withSessionAvailableById: <Result>(
         _sessionId: string,
-        operation: () => Promise<Result>
-      ): Promise<Result> => enqueueArchive(operation)
+        operation: (projectId: string) => Promise<Result>
+      ): Promise<Result> => enqueueArchive(() => operation('project-1'))
     }
     const withSessionAvailableById = vi.spyOn(archiveAvailability, 'withSessionAvailableById')
     const steerFollowUp = vi.fn(() =>
@@ -1237,9 +1277,17 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
         }
       },
       withSessionAvailableById: async <Result>(
-        _sessionId: string,
-        operation: () => Promise<Result>
-      ): Promise<Result> => operation()
+        sessionId: string,
+        operation: (projectId: string) => Promise<Result>
+      ): Promise<Result> => {
+        admitted('project-1', sessionId, operation)
+        admissionActive = true
+        try {
+          return await operation('project-1')
+        } finally {
+          admissionActive = false
+        }
+      }
     }
     registerWithFakes({ archiveAvailability })
     const request: AcpResumeSessionRequest = {

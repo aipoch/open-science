@@ -3747,17 +3747,11 @@ const createApplicationModules = async (
           withSessionAvailableById: (sessionId, operation) =>
             archiveCoordinator.withSessionAvailableById(sessionId, operation)
         },
-        resolveMemoryEnabled: async ({ sessionId, projectId }) => {
-          const sessions = projectId
-            ? [await sessionRepository.loadSession(projectId, sessionId)].filter(
-                (session): session is PersistedChatSession => session !== undefined
-              )
-            : (await sessionRepository.loadAll()).sessions.filter(
-                (session) => session.id === sessionId
-              )
-          if (sessions.length === 0) return undefined
-          if (sessions.length !== 1) return false
-          return sessions[0].memoryEnabled !== false
+        resolveMemoryEnabled: async ({ sessionId }) => {
+          const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+          if (!projectId) return undefined
+          const session = await sessionRepository.loadSession(projectId, sessionId)
+          return session ? session.memoryEnabled !== false : undefined
         },
         respondDelegatedQuestion: (input) => {
           if (!delegatedWork.root.respondQuestion) {
