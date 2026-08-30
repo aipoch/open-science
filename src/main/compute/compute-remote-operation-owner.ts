@@ -414,17 +414,7 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
-    const { fileType, size: remoteSize } = await this.statRemote(host, connection, remotePath)
-    if (fileType !== 'f') {
-      const fsError = new Error(`Remote path is not a regular file: ${remotePath}`) as Error & {
-        remoteFsError: RemoteFsError
-      }
-      fsError.remoteFsError = {
-        detail: fileType === 'd' ? 'Path is a directory.' : 'Path is not a regular file.',
-        remoteKind: 'not_a_file'
-      }
-      throw fsError
-    }
+    const remoteSize = await this.statRemoteFile(host, connection, remotePath)
     if (remoteSize === 0) {
       const fsError = new Error(`Remote file is empty: ${remotePath}`) as Error & {
         remoteFsError: RemoteFsError
@@ -533,8 +523,10 @@ export class ComputeRemoteOperationOwner {
       `  printf 'f '; stat -c '%s' ${quoted} 2>/dev/null || stat -f '%z' ${quoted}`,
       `elif [ -d ${quoted} ]; then`,
       `  echo 'd 0'`,
+      `elif [ -e ${quoted} ] || [ -L ${quoted} ]; then`,
+      `  echo 'o 0'`,
       `else`,
-      `  echo '? 0'`,
+      `  echo 'm 0'`,
       `fi`
     ].join('\n')
     let result
@@ -573,6 +565,16 @@ export class ComputeRemoteOperationOwner {
     remotePath: string
   ): Promise<number> {
     const { fileType, size } = await this.statRemote(host, connection, remotePath)
+    if (fileType === 'm') {
+      const fsError = new Error(`Remote path not found: ${remotePath}`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsError.remoteFsError = {
+        detail: 'Path not found.',
+        remoteKind: 'not_found'
+      }
+      throw fsError
+    }
     if (fileType !== 'f') {
       const fsError = new Error(`Remote path is not a regular file: ${remotePath}`) as Error & {
         remoteFsError: RemoteFsError

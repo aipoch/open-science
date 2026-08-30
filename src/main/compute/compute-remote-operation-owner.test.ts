@@ -1103,6 +1103,34 @@ describe('ComputeRemoteOperationOwner.download (artifact)', () => {
     expect(err.remoteFsError?.remoteKind).toBe('not_a_file')
   })
 
+  it('throws not_found when the remote file disappeared before transfer', async () => {
+    const runner: SshRunner = {
+      run: vi.fn(async (_target, command) => ({
+        exitCode: 0,
+        stdout: command.includes("echo 'm 0'") ? 'm 0' : '? 0',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }))
+    }
+    const { repo } = makeRepo()
+    const scpRunner = defaultScpRunner()
+    const service = makeOwner(runner, repo, undefined, scpRunner, tmpDir)
+
+    const err = await service
+      .download('ssh:biowulf', '/remote/disappeared.csv', {
+        kind: 'artifact',
+        projectId: 'proj-1'
+      })
+      .catch((e) => e)
+
+    expect(err.remoteFsError).toMatchObject({
+      remoteKind: 'not_found',
+      detail: expect.stringMatching(/not found/i)
+    })
+    expect(scpRunner.copy).not.toHaveBeenCalled()
+  })
+
   it('throws not_a_file if post-transfer re-stat detects size growth', async () => {
     // Pre-transfer stat: 100 bytes; post-transfer actual file: 200 bytes (growth detected)
     const runner = makeFakeRunner({
