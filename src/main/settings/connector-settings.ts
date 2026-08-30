@@ -325,12 +325,23 @@ class ConnectorSettingsModule {
   }
 
   async setToolPermission(request: SetToolPermissionRequest): Promise<ConnectorDetailView> {
+    const separator = request.toolId.indexOf('/')
+    const connectorId = separator > 0 ? request.toolId.slice(0, separator) : ''
+    const method = separator > 0 ? request.toolId.slice(separator + 1) : ''
+    const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === connectorId)
+    if (
+      !connector ||
+      !method ||
+      !getConnectorTools(connectorId).some((tool) => tool.id === method)
+    ) {
+      throw new Error(`Unknown connector tool: ${request.toolId}`)
+    }
+
     await this.repository.setToolPolicy(
       request.toolId,
       request.permission === 'ask',
       request.permission === 'block'
     )
-    const connectorId = request.toolId.split('/')[0]
     return this.getConnectorDetail(connectorId)
   }
 
