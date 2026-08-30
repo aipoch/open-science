@@ -121,6 +121,7 @@ class SkillCatalogModule {
   private readonly userSkills: UserSkillRepository
   private readonly githubFetch: FetchLike
   private readonly registeredHelpers: RegisteredSkillHelperCatalog
+  private readonly failedAgentHomeIdentityMigrationPaths = new Set<string>()
   private userSkillCatalogRead: Promise<BundledSkill[]> | undefined
 
   constructor(private readonly options: SkillCatalogModuleOptions) {
@@ -704,12 +705,15 @@ class SkillCatalogModule {
 
     for (const item of discovered) {
       if (!item.identityMigration) continue
+      const pathKey = process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath
       try {
         await this.userSkills.importAgentHomeSkill(item.realPath, item.identityMigration.skill, {
           ...item.identityMigration.options,
           reservedNames
         })
+        this.failedAgentHomeIdentityMigrationPaths.delete(pathKey)
       } catch (error) {
+        this.failedAgentHomeIdentityMigrationPaths.add(pathKey)
         log.warn('Agent Home Skill identity migration failed', {
           source: item.identityMigration.skill.source,
           slug: item.identityMigration.skill.slug,
@@ -826,6 +830,13 @@ class SkillCatalogModule {
       for (const candidate of candidates) {
         candidate.item.skill.alreadyImported = true
         candidate.item.matchedFallbackDirectoryNames.add(fallbackSlug)
+      }
+    }
+    for (const item of discovered) {
+      if (!item.identityMigration) continue
+      const pathKey = process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath
+      if (this.failedAgentHomeIdentityMigrationPaths.has(pathKey)) {
+        item.skill.alreadyImported = false
       }
     }
     return discovered

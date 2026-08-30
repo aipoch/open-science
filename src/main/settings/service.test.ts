@@ -27,7 +27,7 @@ import type {
   ClaudeIsolatedAuthStatus
 } from './claude-isolated-auth'
 import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
-import type { UserSkillRepository } from '../skills/user-skill-repository'
+import type { UserSkillRepository as UserSkillRepositoryType } from '../skills/user-skill-repository'
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '../logger'
@@ -61,6 +61,7 @@ const { SkillRegistry } = await import('../skills/registry')
 const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
 const { netFetch } = await import('../skills/net-fetch')
+const { UserSkillRepository } = await import('../skills/user-skill-repository')
 const { UserSkillSpecialistPackageAdapter } = await import('../skills/specialist-package-adapter')
 const { opencodeConfigDir, opencodeTransportProviderId } =
   await import('../agent-framework/opencode')
@@ -196,6 +197,7 @@ const createService = (
     userClaudeDir?: string
     userCodexDir?: string
     userAgentsDir?: string
+    userSkills?: UserSkillRepositoryType
     log?: Logger
   } = {}
 ): InstanceType<typeof SettingsService> =>
@@ -208,6 +210,7 @@ const createService = (
     userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
     userCodexDir: options.userCodexDir ?? join(storageRoot, 'no-user-codex'),
     userAgentsDir: options.userAgentsDir ?? join(storageRoot, 'no-user-agents'),
+    userSkills: options.userSkills,
     executeClaudeProbe: options.executeClaudeProbe,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedClaudeImpl: options.installManagedClaudeImpl as any,
@@ -4402,7 +4405,7 @@ describe('SettingsService: skills', () => {
               sourceDir: join(storageRoot, 'skills', 'imported', 'data-explorer')
             }
           ])
-      } as unknown as UserSkillRepository
+      } as unknown as UserSkillRepositoryType
     })
 
     expect(await service.skillNudgeNamesForIds(['imported-data-explorer'])).toEqual([
@@ -7235,6 +7238,47 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
     })
 
     await expect(service.migrateAgentHomeSkillIdentities()).resolves.toBeUndefined()
+  })
+
+  it('keeps a failed Agent Home identity migration selectable for manual repair', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-migration-failure-legacy-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-migration-failure-shared-'))
+    const original = await seedSkill(userClaudeDir, 'real-skill')
+    const userSkills = new UserSkillRepository(storageRoot)
+    const service = createService(undefined, { userClaudeDir, userAgentsDir, userSkills })
+    await repository.setAgentFramework('claude-code')
+    await service.importAgentHomeSkills({
+      skills: [{ source: 'claude', slug: 'real-skill' }]
+    })
+
+    await mkdir(join(userAgentsDir, 'skills'), { recursive: true })
+    await rename(original, join(userAgentsDir, 'skills', 'real-skill'))
+    await rm(join(userClaudeDir, 'skills'), { recursive: true })
+    await symlink(join(userAgentsDir, 'skills'), join(userClaudeDir, 'skills'))
+    vi.spyOn(userSkills, 'importAgentHomeSkill').mockRejectedValueOnce(
+      new Error('simulated migration write failure')
+    )
+
+    await service.migrateAgentHomeSkillIdentities()
+
+    await expect(service.listAgentHomeSkills()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'agents',
+          slug: 'real-skill',
+          alreadyImported: false
+        })
+      ])
+    )
+
+    await expect(
+      service.importAgentHomeSkills({ skills: [{ source: 'agents', slug: 'real-skill' }] })
+    ).resolves.toMatchObject({ results: [{ status: 'updated', id: 'imported-real-skill' }] })
+    await expect(service.listAgentHomeSkills()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'agents', slug: 'real-skill', alreadyImported: true })
+      ])
+    )
   })
 })
 
