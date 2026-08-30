@@ -36,6 +36,32 @@ describe('renderer contract catalog', () => {
     ).toBe(true)
   })
 
+  it('keeps custom Connector lifecycle mutations local-only', () => {
+    const publicPaths = [
+      'settings.addCustomServer',
+      'settings.setCustomServerEnabled',
+      'settings.removeCustomServer',
+      'settings.updateCustomServer'
+    ]
+
+    expect(
+      publicPaths.map((publicPath) =>
+        RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)
+      )
+    ).toEqual(
+      publicPaths.map((publicPath) =>
+        expect.objectContaining({
+          publicPath,
+          surfaceInstallation: {
+            electron: 'preload',
+            localWeb: 'web-rpc',
+            remoteWeb: 'rejecting-stub'
+          }
+        })
+      )
+    )
+  })
+
   it('publishes remote-access route management only on Electron', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>

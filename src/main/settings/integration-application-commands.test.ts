@@ -189,7 +189,11 @@ describe('Settings integration application commands', () => {
             contract.channel !== 'settings:disconnect-custom-server' &&
             contract.channel !== 'settings:retry-custom-server' &&
             contract.channel !== 'settings:set-openalex-credential' &&
-            contract.channel !== 'settings:validate-openalex-credential'
+            contract.channel !== 'settings:validate-openalex-credential' &&
+            contract.channel !== 'settings:add-custom-server' &&
+            contract.channel !== 'settings:set-custom-server-enabled' &&
+            contract.channel !== 'settings:remove-custom-server' &&
+            contract.channel !== 'settings:update-custom-server'
         )
         .every(
           (contract) =>
@@ -207,7 +211,11 @@ describe('Settings integration application commands', () => {
             contract.channel === 'settings:disconnect-custom-server' ||
             contract.channel === 'settings:retry-custom-server' ||
             contract.channel === 'settings:set-openalex-credential' ||
-            contract.channel === 'settings:validate-openalex-credential'
+            contract.channel === 'settings:validate-openalex-credential' ||
+            contract.channel === 'settings:add-custom-server' ||
+            contract.channel === 'settings:set-custom-server-enabled' ||
+            contract.channel === 'settings:remove-custom-server' ||
+            contract.channel === 'settings:update-custom-server'
         )
         .every(
           (contract) =>
@@ -317,7 +325,7 @@ describe('Settings integration application commands', () => {
     expect(skillMethod('setConversationSkillImportEnabled')).not.toHaveBeenCalled()
   })
 
-  it('delegates all eight remote Connector mutations through the Connector workflow owner', async () => {
+  it('delegates all four remotely available Connector mutations through the workflow owner', async () => {
     const { connectorMethod, dependencies } = createDependencies()
     const router = createApplicationCommandRouter()
     registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
@@ -338,32 +346,6 @@ describe('Settings integration application commands', () => {
       settingsIntegrationApplicationCommands.setNcbiCredentials,
       invocation([{ contactEmail: 'researcher@example.test', apiKey: 'secret' }] as const)
     )
-    await router.dispatcher.invoke(
-      settingsIntegrationApplicationCommands.addCustomServer,
-      invocation([
-        { name: 'custom', displayName: 'Custom', transport: 'stdio', command: 'custom-mcp' }
-      ] as const)
-    )
-    await router.dispatcher.invoke(
-      settingsIntegrationApplicationCommands.setCustomServerEnabled,
-      invocation([{ id: 'server-1', enabled: false }] as const)
-    )
-    await router.dispatcher.invoke(
-      settingsIntegrationApplicationCommands.removeCustomServer,
-      invocation([{ id: 'server-1' }] as const)
-    )
-    await router.dispatcher.invoke(
-      settingsIntegrationApplicationCommands.updateCustomServer,
-      invocation([
-        {
-          id: 'server-2',
-          description: 'Updated',
-          transport: 'streamable_http',
-          url: 'https://mcp.example.test'
-        }
-      ] as const)
-    )
-
     expect(connectorMethod('setConnectorEnabled')).toHaveBeenCalledWith({
       id: 'pubchem',
       enabled: false
@@ -380,33 +362,101 @@ describe('Settings integration application commands', () => {
       contactEmail: 'researcher@example.test',
       apiKey: 'secret'
     })
+  })
+
+  it('rejects custom Connector lifecycle mutations from remote callers before a workflow can run', async () => {
+    const { connectorMethod, dependencies } = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
+
+    const attempts = [
+      [
+        settingsIntegrationApplicationCommands.addCustomServer,
+        [{ name: 'custom', displayName: 'Custom', transport: 'stdio', command: 'custom-mcp' }]
+      ],
+      [
+        settingsIntegrationApplicationCommands.setCustomServerEnabled,
+        [{ id: 'server-1', enabled: true }]
+      ],
+      [settingsIntegrationApplicationCommands.removeCustomServer, [{ id: 'server-1' }]],
+      [
+        settingsIntegrationApplicationCommands.updateCustomServer,
+        [{ id: 'server-1', transport: 'stdio', command: 'replacement-mcp' }]
+      ]
+    ] as const
+
+    for (const [command, args] of attempts) {
+      await expect(router.dispatcher.invoke(command, invocation(args))).rejects.toThrow(
+        `Channel only available from the local app: ${command.name}`
+      )
+    }
+
+    expect(connectorMethod('addCustomServer')).not.toHaveBeenCalled()
+    expect(connectorMethod('setCustomServerEnabled')).not.toHaveBeenCalled()
+    expect(connectorMethod('removeCustomServer')).not.toHaveBeenCalled()
+    expect(connectorMethod('updateCustomServer')).not.toHaveBeenCalled()
+  })
+
+  it('allows custom Connector lifecycle, authentication, secrets, and retry only locally', async () => {
+    const { connectorMethod, dependencies } = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
+
+    const localCaller = createWebCallerContext('local-human')
+
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.addCustomServer,
+      invocation(
+        [{ name: 'custom', displayName: 'Custom', transport: 'stdio', command: 'custom-mcp' }],
+        localCaller
+      )
+    )
     expect(connectorMethod('addCustomServer')).toHaveBeenCalledWith({
       name: 'custom',
       displayName: 'Custom',
       transport: 'stdio',
       command: 'custom-mcp'
     })
+
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.setCustomServerEnabled,
+      invocation([{ id: 'server-1', enabled: false }], localCaller)
+    )
     expect(connectorMethod('setCustomServerEnabled')).toHaveBeenCalledWith({
       id: 'server-1',
       enabled: false
     })
+
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.removeCustomServer,
+      invocation([{ id: 'server-1' }], localCaller)
+    )
     expect(connectorMethod('removeCustomServer')).toHaveBeenCalledWith({ id: 'server-1' })
+
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.updateCustomServer,
+      invocation(
+        [
+          {
+            id: 'server-2',
+            description: 'Updated',
+            transport: 'streamable_http',
+            url: 'https://mcp.example.test'
+          }
+        ],
+        localCaller
+      )
+    )
     expect(connectorMethod('updateCustomServer')).toHaveBeenCalledWith({
       id: 'server-2',
       description: 'Updated',
       transport: 'streamable_http',
       url: 'https://mcp.example.test'
     })
-  })
-
-  it('allows authentication, secret writes, validation, and runtime retry only locally', async () => {
-    const { connectorMethod, dependencies } = createDependencies()
-    const router = createApplicationCommandRouter()
-    registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
 
     await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.authenticateCustomServer,
-      invocation([{ id: 'server-1' }] as const, createWebCallerContext('local-human'))
+      invocation([{ id: 'server-1' }] as const, localCaller)
     )
     expect(connectorMethod('authenticateCustomServer')).toHaveBeenCalledWith({ id: 'server-1' })
 

@@ -421,7 +421,6 @@ class ConnectorSettingsModule {
       displayName,
       transport: request.transport,
       enabled: !request.oauth,
-      trustedAt: Date.now(),
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
       ...(request.args && request.args.length > 0 ? { args: request.args } : {}),

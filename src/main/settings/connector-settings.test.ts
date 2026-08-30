@@ -295,6 +295,17 @@ describe('ConnectorSettingsModule', () => {
     await expect(service.getConnectorDetail('nope')).rejects.toThrow(/Unknown connector/)
   })
 
+  it('does not synthesize persisted trust metadata from an ordinary add request', async () => {
+    await addCustomServer({
+      name: 'unverified-trust',
+      transport: 'stdio',
+      command: 'npx'
+    })
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored).not.toHaveProperty('trustedAt')
+  })
+
   it('adds, toggles, and removes a local (stdio) custom server', async () => {
     let snapshot = await addCustomServer({
       name: 'my-mem',

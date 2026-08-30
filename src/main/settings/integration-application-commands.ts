@@ -296,13 +296,22 @@ const registerIntegrationSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:validate-openalex-credential')
         return dependencies.connectors.validateOpenAlexCredential(args[0])
       },
-      'settings:add-custom-server': ({ args }) => dependencies.connectors.addCustomServer(args[0]),
-      'settings:set-custom-server-enabled': ({ args }) =>
-        dependencies.connectors.setCustomServerEnabled(args[0]),
-      'settings:remove-custom-server': ({ args }) =>
-        dependencies.connectors.removeCustomServer(args[0]),
-      'settings:update-custom-server': ({ args }) =>
-        dependencies.connectors.updateCustomServer(args[0]),
+      'settings:add-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:add-custom-server')
+        return dependencies.connectors.addCustomServer(args[0])
+      },
+      'settings:set-custom-server-enabled': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-custom-server-enabled')
+        return dependencies.connectors.setCustomServerEnabled(args[0])
+      },
+      'settings:remove-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:remove-custom-server')
+        return dependencies.connectors.removeCustomServer(args[0])
+      },
+      'settings:update-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:update-custom-server')
+        return dependencies.connectors.updateCustomServer(args[0])
+      },
       'settings:authenticate-custom-server': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:authenticate-custom-server')
         return dependencies.connectors.authenticateCustomServer(args[0])

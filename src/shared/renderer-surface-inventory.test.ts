@@ -198,6 +198,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'unregister-interpreter'
   ],
   settings: [
+    'add-custom-server',
     'authenticate-custom-server',
     'begin-xai-oauth-login',
     'cancel-claude-login',
@@ -219,11 +220,13 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'logout-isolated-codex',
     'logout-shared-claude',
     'logout-xai-oauth',
+    'remove-custom-server',
     'remove-github-token',
     'retry-custom-server',
     'save-github-token',
     'set-app-icon-variant',
     'set-close-preference',
+    'set-custom-server-enabled',
     'set-default-permission-profile',
     'set-notifications-enabled',
     'set-show-notification-content',
@@ -235,6 +238,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'uninstall-codebuddy',
     'uninstall-codex',
     'uninstall-opencode',
+    'update-custom-server',
     'validate-openalex-credential',
     'wait-xai-oauth-login'
   ],

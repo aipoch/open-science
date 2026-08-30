@@ -1493,7 +1493,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('sessions', ['sessions:unlink-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'settings.addCustomServer': callable<
     (request: AddCustomServerRequest) => Promise<ConnectorsSnapshot>
-  >()('settings', ['settings:add-custom-server']),
+  >()('settings', ['settings:add-custom-server', LOCAL]),
   'settings.authenticateCustomServer': callable<
     (request: DisconnectCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:authenticate-custom-server', LOCAL]),
@@ -1703,7 +1703,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('settings', ['settings:refresh-provider-models']),
   'settings.removeCustomServer': callable<
     (request: RemoveCustomServerRequest) => Promise<ConnectorsSnapshot>
-  >()('settings', ['settings:remove-custom-server']),
+  >()('settings', ['settings:remove-custom-server', LOCAL]),
   'settings.removeGitHubToken': callable<() => Promise<GitHubTokenStatus>>()('settings', [
     'settings:remove-github-token',
     LOCAL
@@ -1769,7 +1769,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('settings', ['settings:set-conversation-skill-import-enabled']),
   'settings.setCustomServerEnabled': callable<
     (request: SetCustomServerEnabledRequest) => Promise<ConnectorsSnapshot>
-  >()('settings', ['settings:set-custom-server-enabled']),
+  >()('settings', ['settings:set-custom-server-enabled', LOCAL]),
   'settings.setDefaultPermissionProfile': callable<
     (request: SetDefaultPermissionProfileRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:set-default-permission-profile', LOCAL]),
@@ -1840,7 +1840,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ]),
   'settings.updateCustomServer': callable<
     (request: UpdateCustomServerRequest) => Promise<ConnectorsSnapshot>
-  >()('settings', ['settings:update-custom-server']),
+  >()('settings', ['settings:update-custom-server', LOCAL]),
   'settings.updateSkill': callable<(request: UpdateSkillRequest) => Promise<SkillView[]>>()(
     'settings',
     ['settings:update-skill']
