@@ -136,11 +136,7 @@ describe('PreviewFallback', () => {
     })
     await act(async () => {
       root.render(
-        <PreviewUnsupportedContent
-          path="/research/results.bin"
-          name="results.bin"
-          source="local"
-        />
+        <PreviewUnsupportedContent path="/research/results.bin" name="results.bin" source="local" />
       )
     })
 
