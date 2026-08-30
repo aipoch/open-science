@@ -572,6 +572,7 @@ describe('NotificationBell', () => {
       } satisfies ConnectorApprovalRequest
       const computeRequest = {
         id: 'request-1',
+        operation: 'call_command',
         provider_id: 'ssh:cluster',
         provider_name: 'Cluster',
         shape: 'direct_ssh',

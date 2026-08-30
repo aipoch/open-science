@@ -489,11 +489,14 @@ describe('compute store - approval replay', () => {
   it('deduplicates a replayed approval request by its stable id', () => {
     const request: ComputeApprovalRequest = {
       id: 'approval-1',
+      operation: 'call_command',
       session_id: 'session-1',
       provider_id: 'ssh:lab',
       provider_name: 'Lab',
       shape: 'direct_ssh',
-      intent: 'Run analysis'
+      intent: 'Run analysis',
+      command_preview: 'run-analysis',
+      command_full: 'run-analysis'
     }
 
     useComputeStore.getState().enqueueApproval(request)
@@ -505,10 +508,13 @@ describe('compute store - approval replay', () => {
   it('dismisses a settled approval idempotently', () => {
     const first: ComputeApprovalRequest = {
       id: 'approval-1',
+      operation: 'call_command',
       provider_id: 'ssh:lab',
       provider_name: 'Lab',
       shape: 'direct_ssh',
-      intent: 'Run analysis'
+      intent: 'Run analysis',
+      command_preview: 'run-analysis',
+      command_full: 'run-analysis'
     }
     const second = { ...first, id: 'approval-2' }
 

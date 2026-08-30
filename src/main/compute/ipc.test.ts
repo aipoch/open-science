@@ -477,11 +477,13 @@ describe('compute handlers', () => {
 
     const decision = await approvalBroker.requestWithContext(
       {
+        operation: 'call_command',
         provider_id: current.providerId,
         provider_name: current.displayName,
         shape: current.shape ?? 'direct_ssh',
         intent: 'call_command',
-        command_preview: 'hostname'
+        command_preview: 'hostname',
+        command_full: 'hostname'
       },
       {
         sessionId: 'session-1',
@@ -599,6 +601,7 @@ describe('compute handlers', () => {
     )
     const broker = approvalBrokerFrom(computeHandlers.computeService)
     const request = {
+      operation: 'call_command' as const,
       provider_id: 'ssh:biowulf',
       provider_name: 'biowulf',
       shape: 'direct_ssh' as const,
@@ -609,7 +612,7 @@ describe('compute handlers', () => {
     const context = {
       sessionId: 'session-1',
       projectId: 'project-1',
-      operation: 'call_command',
+      operation: 'call_command' as const,
       ownerId: 'host-1'
     }
 
@@ -2269,6 +2272,7 @@ describe('installComputeIpcHandlers', () => {
       settleAuthorization: vi.fn(() => Promise.resolve())
     })
     const request = {
+      operation: 'call_command' as const,
       provider_id: 'ssh:biowulf',
       provider_name: 'biowulf',
       shape: 'direct_ssh' as const,
@@ -2279,7 +2283,7 @@ describe('installComputeIpcHandlers', () => {
     const context = {
       sessionId: 'session-1',
       projectId: 'project-1',
-      operation: 'call_command',
+      operation: 'call_command' as const,
       ownerId: 'host-1'
     }
 
@@ -2341,6 +2345,7 @@ describe('installComputeIpcHandlers', () => {
       }
     })
     const decision = broker.request({
+      operation: 'call_command',
       provider_id: 'ssh:biowulf',
       provider_name: 'biowulf',
       shape: 'direct_ssh',
@@ -2387,6 +2392,7 @@ describe('installComputeIpcHandlers', () => {
       }
     })
     const decision = broker.request({
+      operation: 'call_command',
       provider_id: 'ssh:biowulf',
       provider_name: 'biowulf',
       shape: 'direct_ssh',

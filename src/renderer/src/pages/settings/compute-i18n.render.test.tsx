@@ -34,6 +34,7 @@ const host = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
 
 const approvalRequest: ComputeApprovalRequest = {
   id: 'approval-1',
+  operation: 'call_command',
   provider_id: 'ssh:cluster',
   provider_name: 'Research cluster',
   shape: 'direct_ssh',

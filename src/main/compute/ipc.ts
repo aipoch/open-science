@@ -46,6 +46,7 @@ import { dispatchJob } from './job-dispatcher'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { deleteComputeHost, type DeleteComputeHostOptions } from './compute-host-deletion-owner'
 import { getJobHarvestDir } from './harvest-engine'
+import { SessionCacheOwner } from './session-cache-owner'
 import { workspaceRelativePath } from './workspace-path'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import {
@@ -228,7 +229,8 @@ const createComputeHandlers = (
   >,
   permissionGrantRegistry?: PermissionGrantRegistry,
   hostLifecycle?: ComputeHostLifecycle,
-  authenticationDependencies?: ComputeAuthenticationDependencies
+  authenticationDependencies?: ComputeAuthenticationDependencies,
+  sessionCacheOwner?: SessionCacheOwner
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -344,6 +346,7 @@ const createComputeHandlers = (
       jobRepository,
       artifactResolver,
       storageRoot,
+      sessionCacheOwner,
       concurrencyManager,
       connectionBroker,
       credentialVault
@@ -563,6 +566,7 @@ type ComputeIpcModule = {
   jobRepository: ComputeJobRepository
   hostRepository: ComputeHostRepository
   enabledComputeHostsRegistry: EnabledComputeHostsRegistry
+  sessionCacheOwner: SessionCacheOwner
 }
 
 // Constructs the shared Compute module without installing an Electron transport. Keeping this seam
@@ -587,6 +591,7 @@ const createComputeIpcModule = (
 ): ComputeIpcModule => {
   const storageRoot = resolveStorageRoot()
   const dataRoot = resolveDataRoot()
+  const sessionCacheOwner = new SessionCacheOwner(dataRoot)
   void repository
     .cleanupOrphanCredentials?.()
     .catch((error) => log.warn('orphan Compute Credential cleanup failed', errorLogFields(error)))
@@ -607,7 +612,9 @@ const createComputeIpcModule = (
     dataRoot,
     taskNotifications,
     permissionGrantRegistry,
-    hostLifecycle
+    hostLifecycle,
+    undefined,
+    sessionCacheOwner
   )
   const jobDeletionOwner = createComputeJobDeletionOwner({
     jobRepository,
@@ -623,7 +630,8 @@ const createComputeIpcModule = (
     jobDeletionOwner,
     jobRepository,
     hostRepository: repository,
-    enabledComputeHostsRegistry
+    enabledComputeHostsRegistry,
+    sessionCacheOwner
   }
 }
 

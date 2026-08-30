@@ -218,6 +218,7 @@ import {
   SessionPersistenceCoordinator,
   type ComputeJobDeletionParticipant
 } from './session-persistence/coordinator'
+import { withSessionCacheDeletion } from './compute/session-cache-owner'
 import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
 import { registerSideChatIpcHandlers } from './side-chat/ipc'
 import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
@@ -772,6 +773,15 @@ const createApplicationModules = async (
       countNonTerminalBySession(sessionId: string): Promise<number>
     }
   } = {}
+  const sessionCacheOwnerRef: {
+    current?: {
+      removeSession(projectId: string, sessionId: string): Promise<void>
+      removeProject(projectId: string): Promise<void>
+      reconcileActiveSessions(
+        sessions: ReadonlyArray<{ projectId: string; sessionId: string }>
+      ): Promise<void>
+    }
+  } = {}
   const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
   const computeJobDeletionPort = {
     restoreProjectJobDeletion: (projectId: string): Promise<void> => {
@@ -833,8 +843,10 @@ const createApplicationModules = async (
     uploadRepository,
     artifactProvenanceRepository,
     {
-      reconcileSessions: (sessions) =>
-        reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
+      reconcileSessions: async (sessions) => {
+        await reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
+        await sessionCacheOwnerRef.current?.reconcileActiveSessions(sessions)
+      }
     },
     undefined,
     computeJobDeletionPort,
@@ -1651,6 +1663,7 @@ const createApplicationModules = async (
     jobDeletionOwner,
     jobRepository,
     hostRepository,
+    sessionCacheOwner,
     enabledComputeHostsRegistry: hostsRegistry
   } = computeIpcModule
   computeJobActivityRef.current = jobRepository
@@ -1662,7 +1675,8 @@ const createApplicationModules = async (
     withDataRootWrite
   })
   sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner
-  computeJobDeletionRef.current = jobDeletionOwner
+  sessionCacheOwnerRef.current = sessionCacheOwner
+  computeJobDeletionRef.current = withSessionCacheDeletion(jobDeletionOwner, sessionCacheOwner)
   await projectDeletionCoordinator.restorePendingDeletionBarriers()
   await jobDeletionOwner.restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)
   composition.phase('deletion-barriers')

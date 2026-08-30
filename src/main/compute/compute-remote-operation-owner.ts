@@ -15,6 +15,7 @@ import {
 } from './connection-broker'
 import type { ComputeHostRepository } from './repository'
 import { quoteRemotePath } from './remote-path-security'
+import type { SessionCacheOwner } from './session-cache-owner'
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
@@ -79,7 +80,8 @@ export class ComputeRemoteOperationOwner {
     private readonly connectionBroker: ComputeConnectionBrokerAcquirer,
     private readonly repository: ComputeHostRepository,
     private readonly approvalBroker: ComputeApprovalBroker | undefined,
-    private readonly overrideDownloadsDir?: string
+    private readonly overrideDownloadsDir?: string,
+    private readonly sessionCacheOwner?: SessionCacheOwner
   ) {}
 
   async listDir(providerId: string, path: string): Promise<DirListing> {
@@ -181,6 +183,7 @@ export class ComputeRemoteOperationOwner {
     const commandPreview =
       cmd.length > COMMAND_PREVIEW_MAX_LEN ? `${cmd.slice(0, COMMAND_PREVIEW_MAX_LEN)}…` : cmd
     const approvalInfo = {
+      operation: 'call_command' as const,
       provider_id: host.providerId,
       provider_name: host.displayName,
       shape: host.shape,
@@ -194,7 +197,7 @@ export class ComputeRemoteOperationOwner {
           {
             sessionId: context.sessionId,
             projectId: context.projectId,
-            operation: 'call_command',
+            operation: 'call_command' as const,
             ownerId: host.id
           },
           signal
@@ -319,25 +322,27 @@ export class ComputeRemoteOperationOwner {
     if (!this.approvalBroker) {
       throw new Error('ComputeApprovalBroker is required for session-cache downloads.')
     }
+    if (!context || !this.sessionCacheOwner) {
+      throw new Error('Session cache downloads require an owning Project and Session.')
+    }
     const approvalInfo = {
+      operation: 'download' as const,
       provider_id: host.providerId,
       provider_name: host.displayName,
       shape: host.shape,
       intent: 'Download remote file to session workspace',
       remote_path: remotePath
     }
-    const decision = context
-      ? await this.approvalBroker.requestWithContext(
-          approvalInfo,
-          {
-            sessionId: context.sessionId,
-            projectId: context.projectId,
-            operation: 'download',
-            ownerId: host.id
-          },
-          signal
-        )
-      : await this.approvalBroker.request(approvalInfo, undefined, signal)
+    const decision = await this.approvalBroker.requestWithContext(
+      approvalInfo,
+      {
+        sessionId: context.sessionId,
+        projectId: context.projectId,
+        operation: 'download',
+        ownerId: host.id
+      },
+      signal
+    )
 
     if (decision === 'deny') {
       const error = new Error(
@@ -347,7 +352,7 @@ export class ComputeRemoteOperationOwner {
       throw error
     }
 
-    return this.downloadToSessionCache(host, connection, remotePath, filename)
+    return this.downloadToSessionCache(host, connection, remotePath, filename, context)
   }
 
   private async downloadToOsDownloads(
@@ -465,7 +470,8 @@ export class ComputeRemoteOperationOwner {
     host: ComputeHost,
     connection: ComputeConnectionLease,
     remotePath: string,
-    filename: string
+    filename: string,
+    context: { sessionId: string; projectId: string }
   ): Promise<LocalFile> {
     const remoteSize = await this.statRemoteFile(host, connection, remotePath)
     if (remoteSize > MAX_DOWNLOAD_BYTES) {
@@ -479,27 +485,32 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
-    const tempBase = this.overrideDownloadsDir ?? tmpdir()
-    const tempDir = await mkdtemp(join(tempBase, 'cs-session-'))
-    const destPath = join(tempDir, filename)
+    const operation = await this.sessionCacheOwner!.createOperationFile(
+      context.projectId,
+      context.sessionId,
+      filename
+    )
     try {
-      await this.transferDownload(connection, remotePath, destPath, MAX_DOWNLOAD_BYTES)
+      await this.transferDownload(connection, remotePath, operation.path, MAX_DOWNLOAD_BYTES)
       const localSize = await this.verifyStableDownload(
         host,
         connection,
         remotePath,
-        destPath,
+        operation.path,
         remoteSize
       )
-
       return {
-        path: destPath,
+        path: operation.path,
         name: filename,
         size: localSize,
         mimeType: inferMimeType(filename)
       }
     } catch (error) {
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+      await this.sessionCacheOwner!.removeOperation(
+        context.projectId,
+        context.sessionId,
+        operation.operationId
+      ).catch(() => undefined)
       throw error
     }
   }

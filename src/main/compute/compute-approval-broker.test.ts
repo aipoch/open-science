@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ComputeApprovalBroker } from './compute-approval-broker'
-import type { ComputeApprovalRequest } from '../../shared/compute'
+import type { ComputeApprovalRequest, ComputeApprovalRequestInfo } from '../../shared/compute'
 
 // A synchronous fake timer so timeout behavior is deterministic without real time passing.
 const makeTimer = (): {
@@ -22,9 +22,12 @@ const makeTimer = (): {
 }
 
 // Minimal approval request payload for tests.
-const makeRequest = (
-  overrides: Partial<Omit<ComputeApprovalRequest, 'id'>> = {}
-): Omit<ComputeApprovalRequest, 'id'> => ({
+type CallCommandApproval = Extract<ComputeApprovalRequestInfo, { operation: 'call_command' }>
+type DownloadApproval = Extract<ComputeApprovalRequestInfo, { operation: 'download' }>
+type SubmitJobApproval = Extract<ComputeApprovalRequestInfo, { operation: 'submit_job' }>
+
+const makeRequest = (overrides: Partial<CallCommandApproval> = {}): CallCommandApproval => ({
+  operation: 'call_command',
   provider_id: 'ssh:biowulf',
   provider_name: 'biowulf',
   shape: 'direct_ssh',
@@ -35,14 +38,26 @@ const makeRequest = (
 })
 
 // Minimal download approval request payload (no command fields).
-const makeDownloadRequest = (
-  overrides: Partial<Omit<ComputeApprovalRequest, 'id'>> = {}
-): Omit<ComputeApprovalRequest, 'id'> => ({
+const makeDownloadRequest = (overrides: Partial<DownloadApproval> = {}): DownloadApproval => ({
+  operation: 'download',
   provider_id: 'ssh:biowulf',
   provider_name: 'biowulf',
   shape: 'direct_ssh',
   intent: 'Download remote file for analysis',
   remote_path: '/home/user/data/results.csv',
+  ...overrides
+})
+
+const makeJobRequest = (overrides: Partial<SubmitJobApproval> = {}): SubmitJobApproval => ({
+  operation: 'submit_job',
+  provider_id: 'ssh:biowulf',
+  provider_name: 'biowulf',
+  shape: 'scheduler_cluster',
+  intent: 'Run analysis',
+  command_preview: 'python analysis.py',
+  command_full: 'python analysis.py',
+  timeout_seconds: 3600,
+  remote_workdir: '/scratch/jobs/job-1',
   ...overrides
 })
 
@@ -391,7 +406,7 @@ describe('ComputeApprovalBroker', () => {
       sessionId: 'session-retained',
       projectId: 'project-1',
       operation: 'call_command'
-    }
+    } as const
 
     broker.beginSessionDeletion('session-retained')
     broker.completeSessionCancellation('session-retained')
@@ -414,7 +429,7 @@ describe('ComputeApprovalBroker', () => {
       sessionId: 'session-deleted',
       projectId: 'project-1',
       operation: 'call_command'
-    }
+    } as const
 
     broker.beginSessionDeletion('session-deleted')
     broker.finishSessionDeletion('session-deleted', false)
@@ -759,7 +774,7 @@ describe('ComputeApprovalBroker', () => {
     })
 
     const req = makeRequest({ provider_id: 'ssh:biowulf' })
-    const ctx = { sessionId: 'session-A', projectId: 'proj-1', operation: 'call_command' }
+    const ctx = { sessionId: 'session-A', projectId: 'proj-1', operation: 'call_command' } as const
 
     // First request: user approves with 'session' scope.
     const firstPromise = broker.requestWithContext(req, ctx)
@@ -786,12 +801,12 @@ describe('ComputeApprovalBroker', () => {
       broadcast,
       permissionGrants: { resolve: resolveGrant, remember } as never
     })
-    const request = makeRequest({ willPersistUnencrypted: true })
+    const request = makeJobRequest({ willPersistUnencrypted: true })
     const context = {
       sessionId: 'session-A',
       projectId: 'project-1',
       operation: 'submit_job'
-    }
+    } as const
 
     const decision = broker.requestWithContext(request, context)
 
@@ -826,7 +841,7 @@ describe('ComputeApprovalBroker', () => {
       sessionId: 'session-A',
       projectId: 'project-1',
       operation: 'call_command'
-    }
+    } as const
     const request = makeRequest()
 
     const decision = broker.requestWithContext(request, context)
@@ -877,7 +892,7 @@ describe('ComputeApprovalBroker', () => {
     })
 
     const req = makeRequest({ provider_id: 'ssh:biowulf' })
-    const ctx = { sessionId: 'session-C', projectId: 'proj-1', operation: 'call_command' }
+    const ctx = { sessionId: 'session-C', projectId: 'proj-1', operation: 'call_command' } as const
 
     const firstPromise = broker.requestWithContext(req, ctx)
     await Promise.resolve()
@@ -1024,7 +1039,7 @@ describe('ComputeApprovalBroker — download operation', () => {
     })
 
     const req = makeDownloadRequest({ provider_id: 'ssh:biowulf' })
-    const ctx = { sessionId: 'session-dl', projectId: 'proj-1', operation: 'download' }
+    const ctx = { sessionId: 'session-dl', projectId: 'proj-1', operation: 'download' } as const
 
     const firstPromise = broker.requestWithContext(req, ctx)
     await Promise.resolve()
@@ -1051,7 +1066,7 @@ describe('ComputeApprovalBroker — download operation', () => {
 
     // Grant session scope for call_command.
     const cmdReq = makeRequest({ provider_id: 'ssh:biowulf' })
-    const cmdCtx = { sessionId: 'sess', projectId: 'p', operation: 'call_command' }
+    const cmdCtx = { sessionId: 'sess', projectId: 'p', operation: 'call_command' } as const
     const p1 = broker.requestWithContext(cmdReq, cmdCtx)
     await Promise.resolve()
     broker.respond('id-1', 'session')
@@ -1069,7 +1084,7 @@ describe('ComputeApprovalBroker — download operation', () => {
       checkProjectGrant: () => Promise.resolve(false)
     })
     const dlReq = makeDownloadRequest({ provider_id: 'ssh:biowulf' })
-    const dlCtx = { sessionId: 'sess', projectId: 'p', operation: 'download' }
+    const dlCtx = { sessionId: 'sess', projectId: 'p', operation: 'download' } as const
     const p2 = broker2.requestWithContext(dlReq, dlCtx)
     await Promise.resolve()
     broker2.respond('id-2', 'once')
@@ -1100,7 +1115,7 @@ describe('ComputeApprovalBroker — download operation', () => {
     })
 
     const req = makeDownloadRequest({ provider_id: 'ssh:biowulf' })
-    const ctx = { sessionId: 'sess', projectId: 'proj-dl', operation: 'download' }
+    const ctx = { sessionId: 'sess', projectId: 'proj-dl', operation: 'download' } as const
 
     // First request: user picks project scope.
     const p1 = broker.requestWithContext(req, ctx)

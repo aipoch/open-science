@@ -7,8 +7,9 @@ import type { ComputeApprovalRequest } from '../../../../shared/compute'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { ComputeApprovalDialog } from './ComputeApprovalDialog'
 
-const request: ComputeApprovalRequest = {
+const request: Extract<ComputeApprovalRequest, { operation: 'call_command' }> = {
   id: 'approval-1',
+  operation: 'call_command',
   provider_id: 'ssh:cluster',
   provider_name: 'Research cluster',
   shape: 'direct_ssh',
@@ -94,6 +95,62 @@ describe('ComputeApprovalDialog', () => {
     ).toBe(true)
     expect(document.body.textContent).toContain('Research cluster')
     expect(document.body.textContent).toContain('python ...')
+  })
+
+  it('shows the remote path instead of an empty command for download approval', () => {
+    useComputeStore.setState({
+      pendingApprovals: [
+        {
+          id: 'approval-download',
+          operation: 'download',
+          provider_id: 'ssh:cluster',
+          provider_name: 'Research cluster',
+          shape: 'direct_ssh',
+          intent: 'Download remote file to session workspace',
+          remote_path: '/remote/private/results.csv'
+        } as ComputeApprovalRequest
+      ]
+    })
+
+    act(() => root.render(<ComputeApprovalDialog />))
+
+    const dialogText = document.body.querySelector('[role="dialog"]')?.textContent
+    expect(dialogText).toContain('Allow remote file download?')
+    expect(dialogText).toContain('Remote path')
+    expect(dialogText).toContain('/remote/private/results.csv')
+    expect(dialogText).not.toContain('Command')
+  })
+
+  it('shows the complete execution envelope for job approval', () => {
+    useComputeStore.setState({
+      pendingApprovals: [
+        {
+          id: 'approval-job',
+          operation: 'submit_job',
+          provider_id: 'ssh:cluster',
+          provider_name: 'Research cluster',
+          shape: 'scheduler_cluster',
+          intent: 'Run the analysis',
+          command_preview: 'python analysis.py',
+          command_full: 'python analysis.py',
+          inputs_summary: '2 input files',
+          resources: '{"cpus":4,"memory":"16 GiB"}',
+          timeout_seconds: 3600,
+          remote_workdir: '/scratch/project/job-1'
+        } as ComputeApprovalRequest
+      ]
+    })
+
+    act(() => root.render(<ComputeApprovalDialog />))
+
+    const dialogText = document.body.querySelector('[role="dialog"]')?.textContent
+    expect(dialogText).toContain('Allow remote job submission?')
+    expect(dialogText).toContain('Resources')
+    expect(dialogText).toContain('{"cpus":4,"memory":"16 GiB"}')
+    expect(dialogText).toContain('Timeout')
+    expect(dialogText).toContain('3600 seconds')
+    expect(dialogText).toContain('Remote workdir')
+    expect(dialogText).toContain('/scratch/project/job-1')
   })
 
   it('warns without blocking approval when job data will be stored unencrypted', () => {

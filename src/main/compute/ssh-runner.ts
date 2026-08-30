@@ -5,15 +5,11 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 import type { SshOverrides } from '../../shared/compute'
+import { BoundedChildTermination } from './bounded-child-termination'
 import { assertSafeSshAlias, shellSingleQuote } from './remote-path-security'
 
 // Maximum bytes captured per stream before we truncate. Caller can pass a smaller cap.
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
-
-// Give ssh a short opportunity to shut down cleanly before forcing it to exit. A second, shorter
-// window lets Node deliver the exit/close events after SIGKILL while still bounding every run.
-const TERMINATION_GRACE_MS = 2_000
-const FORCE_KILL_EVENT_GRACE_MS = 1_000
 
 // Short connect timeout used for probe calls; SSH itself honors ConnectTimeout from config but we
 // add it explicitly to override any large value from ~/.ssh/config (design.md §1).
@@ -285,7 +281,6 @@ export class SystemSshRunner implements SshRunner {
       let aborted = false
       let abortReason: unknown
       let settled = false
-      let processExited = false
       let observedExitCode: number | null = null
 
       const child = execFile(target.sshBinary, args, {
@@ -295,8 +290,9 @@ export class SystemSshRunner implements SshRunner {
       })
 
       let timeoutTimer: NodeJS.Timeout | undefined
-      let terminationTimer: NodeJS.Timeout | undefined
-      let finalBoundaryTimer: NodeJS.Timeout | undefined
+      const termination = new BoundedChildTermination(child, () => {
+        finish(observedExitCode)
+      })
 
       const clearTimer = (timer: NodeJS.Timeout | undefined): void => {
         if (timer !== undefined) clearTimeout(timer)
@@ -310,30 +306,21 @@ export class SystemSshRunner implements SshRunner {
         stderrBuf.push(chunk)
       }
 
-      const cleanup = (detachChild = false): void => {
+      const cleanup = (): void => {
         clearTimer(timeoutTimer)
-        clearTimer(terminationTimer)
-        clearTimer(finalBoundaryTimer)
+        termination.stop()
         opts.signal?.removeEventListener('abort', onAbort)
         child.stdout?.removeListener('data', onStdout)
         child.stderr?.removeListener('data', onStderr)
         child.removeListener('exit', onExit)
         child.removeListener('close', onClose)
         child.removeListener('error', onError)
-        if (detachChild) {
-          // A failed late signal delivery must not become an unhandled EventEmitter error after the
-          // caller has crossed the hard boundary and no longer owns this ChildProcess.
-          child.on('error', () => undefined)
-          child.stdout?.destroy()
-          child.stderr?.destroy()
-          child.unref()
-        }
       }
 
-      const finish = (exitCode: number | null, spawnError?: Error, detachChild = false): void => {
+      function finish(exitCode: number | null, spawnError?: Error): void {
         if (settled) return
         settled = true
-        cleanup(detachChild)
+        cleanup()
         if (aborted) {
           reject(abortReason)
           return
@@ -347,37 +334,6 @@ export class SystemSshRunner implements SshRunner {
         })
       }
 
-      const scheduleFinalBoundary = (): void => {
-        if (finalBoundaryTimer !== undefined) return
-        finalBoundaryTimer = setTimeout(() => {
-          finalBoundaryTimer = undefined
-          finish(observedExitCode, undefined, true)
-        }, FORCE_KILL_EVENT_GRACE_MS)
-      }
-
-      const safeKill = (signal: NodeJS.Signals): void => {
-        try {
-          child.kill(signal)
-        } catch {
-          // A failed signal delivery must not defeat the final settlement boundary below.
-        }
-      }
-
-      const requestTermination = (): void => {
-        if (settled) return
-        if (processExited) {
-          scheduleFinalBoundary()
-          return
-        }
-        if (terminationTimer !== undefined || finalBoundaryTimer !== undefined) return
-        safeKill('SIGTERM')
-        terminationTimer = setTimeout(() => {
-          terminationTimer = undefined
-          safeKill('SIGKILL')
-          scheduleFinalBoundary()
-        }, TERMINATION_GRACE_MS)
-      }
-
       const onAbort = (): void => {
         if (settled || aborted) return
         aborted = true
@@ -385,19 +341,15 @@ export class SystemSshRunner implements SshRunner {
           opts.signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError')
         clearTimer(timeoutTimer)
         timeoutTimer = undefined
-        requestTermination()
+        termination.request()
       }
 
       const onExit = (code: number | null): void => {
-        processExited = true
         observedExitCode = code
-        clearTimer(terminationTimer)
-        terminationTimer = undefined
-        if (aborted || timedOut) scheduleFinalBoundary()
+        termination.observeExit()
       }
 
       const onClose = (code: number | null): void => {
-        processExited = true
         observedExitCode = code
         finish(code)
       }
@@ -411,7 +363,7 @@ export class SystemSshRunner implements SshRunner {
 
       timeoutTimer = setTimeout(() => {
         timedOut = true
-        requestTermination()
+        termination.request()
       }, opts.timeoutMs)
       opts.signal?.addEventListener('abort', onAbort, { once: true })
       child.stdout?.on('data', onStdout)

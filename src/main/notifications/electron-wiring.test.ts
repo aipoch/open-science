@@ -408,15 +408,18 @@ describe('approval notification broadcasts', () => {
     })
     const request: ComputeApprovalRequest = {
       id: 'compute-1',
+      operation: 'call_command',
       provider_id: 'ssh:cluster',
       provider_name: 'Research Cluster',
       shape: 'scheduler_cluster',
-      intent: 'Run molecular dynamics'
+      intent: 'Run molecular dynamics',
+      command_preview: 'run-md',
+      command_full: 'run-md'
     }
     const context = {
       sessionId: 'session-42',
       projectId: 'project-1',
-      operation: 'call_command'
+      operation: 'call_command' as const
     }
 
     broadcast(request, context)

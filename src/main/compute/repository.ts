@@ -297,13 +297,7 @@ class ComputeHostRepository {
     const client = await this.getClient()
     const rows = await client.computeHost.findMany({ orderBy: { createdAt: 'desc' } })
 
-    return rows.flatMap((row) => {
-      try {
-        return [toHost(row)]
-      } catch {
-        return []
-      }
-    })
+    return rows.map((row) => toHost(row))
   }
 
   // Returns a single host by its provider id ("ssh:<alias>") or null when it no longer exists.

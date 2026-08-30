@@ -1,4 +1,9 @@
-import type { ComputeApprovalRequest, ComputeApprovalDecision } from '../../shared/compute'
+import type {
+  ComputeApprovalDecision,
+  ComputeApprovalOperation,
+  ComputeApprovalRequest,
+  ComputeApprovalRequestInfo
+} from '../../shared/compute'
 import type { ComputePermissionGrantAdapter } from './permission-grant-adapter'
 
 // Re-export so callers that import from this module don't have to reference shared/compute directly.
@@ -12,7 +17,7 @@ export type ComputeApprovalContext = {
   // Project identifier used for project-scope persistent grants.
   projectId: string
   // The compute operation being approved (e.g. 'call_command').
-  operation: string
+  operation: ComputeApprovalOperation
   // Immutable ComputeHost row id captured with the request. Provider ids are reusable, so this
   // distinguishes a deleted host from a later host created with the same SSH alias.
   ownerId?: string
@@ -106,11 +111,14 @@ export class ComputeApprovalBroker {
   // Broadcasts an approval request and resolves once the renderer responds (or the timeout denies).
   // Does NOT check grants — use requestWithContext for that.
   request(
-    info: Omit<ComputeApprovalRequest, 'id'>,
+    info: ComputeApprovalRequestInfo,
     context?: ComputeApprovalContext,
     signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
     signal?.throwIfAborted()
+    if (context && context.operation !== info.operation) {
+      throw new Error('Compute approval operation does not match its authorization context.')
+    }
     if (this.globalCancellationActive) return Promise.resolve('deny')
     if (context && this.cancellingSessions.has(context.sessionId)) return Promise.resolve('deny')
     const id = this.deps.generateId()
@@ -157,11 +165,14 @@ export class ComputeApprovalBroker {
   // Like request(), but checks Session and Project grants first. If a grant matches, resolves
   // immediately without broadcasting. When the user responds with a scope that has memory, records it.
   requestWithContext(
-    info: Omit<ComputeApprovalRequest, 'id'>,
+    info: ComputeApprovalRequestInfo,
     ctx: ComputeApprovalContext,
     signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
     signal?.throwIfAborted()
+    if (ctx.operation !== info.operation) {
+      throw new Error('Compute approval operation does not match its authorization context.')
+    }
     if (this.globalCancellationActive) return Promise.resolve('deny')
     if (this.cancellingSessions.has(ctx.sessionId)) return Promise.resolve('deny')
     const providerId = info.provider_id
@@ -182,7 +193,7 @@ export class ComputeApprovalBroker {
   }
 
   private async requestWithContextOperation(
-    info: Omit<ComputeApprovalRequest, 'id'>,
+    info: ComputeApprovalRequestInfo,
     ctx: ComputeApprovalContext,
     signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {

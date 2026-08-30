@@ -278,32 +278,46 @@ export const normalizeComputeApprovalDecision = (
   decision: ComputeApprovalDecisionInput
 ): ComputeApprovalDecision => (decision === 'conversation' ? 'session' : decision)
 
-// Approval request broadcast from main to the renderer for a compute:call_command invocation.
-// provider_name is the human-readable display name; shape is the host topology string.
-// For call_command: command_preview + command_full are set.
-// For download: remote_path is set instead of command fields.
-// For submit_job (Phase 3a): command_preview + command_full + submit_job-specific fields are set.
-export type ComputeApprovalRequest = {
-  id: string
-  // Renderer-only ownership hint used to defer this dialog while its Session has Side chat open.
-  // Main's approval broker remains authoritative and keeps the request pending.
-  session_id?: string
+export type ComputeApprovalOperation = 'call_command' | 'submit_job' | 'download'
+
+type ComputeApprovalRequestBase = {
   provider_id: string
   provider_name: string
   shape: string
   intent: string
-  // call_command fields (present for op=call_command).
-  command_preview?: string
-  command_full?: string
-  // download field (present for op=download).
-  remote_path?: string
-  // submit_job fields (present for op=submit_job, Phase 3a).
-  inputs_summary?: string
-  resources?: string
-  timeout_seconds?: number
-  remote_workdir?: string
   // Transient approval disclosure; this is never persisted as Compute Job state.
   willPersistUnencrypted?: boolean
+}
+
+// Operation-specific disclosure broadcast from main to the renderer. The discriminator keeps a
+// malformed optional-field bag from silently presenting the wrong authorization object.
+export type ComputeApprovalRequestInfo = ComputeApprovalRequestBase &
+  (
+    | {
+        operation: 'call_command'
+        command_preview: string
+        command_full: string
+      }
+    | {
+        operation: 'download'
+        remote_path: string
+      }
+    | {
+        operation: 'submit_job'
+        command_preview: string
+        command_full: string
+        inputs_summary?: string
+        resources?: string
+        timeout_seconds: number
+        remote_workdir: string
+      }
+  )
+
+export type ComputeApprovalRequest = ComputeApprovalRequestInfo & {
+  id: string
+  // Renderer-only ownership hint used to defer this dialog while its Session has Side chat open.
+  // Main's approval broker remains authoritative and keeps the request pending.
+  session_id?: string
 }
 
 // Job status values, including concurrency-managed queued work.

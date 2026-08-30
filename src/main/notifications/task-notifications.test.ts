@@ -1010,10 +1010,13 @@ describe('TaskNotificationService', () => {
     const { service, shown, attentionRequests } = createService({})
     const request: ComputeApprovalRequest = {
       id: 'compute-1',
+      operation: 'call_command',
       provider_id: 'ssh:cluster',
       provider_name: 'Research Cluster',
       shape: 'scheduler_cluster',
-      intent: 'Run molecular dynamics'
+      intent: 'Run molecular dynamics',
+      command_preview: 'run-md',
+      command_full: 'run-md'
     }
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Simulate the protein' })

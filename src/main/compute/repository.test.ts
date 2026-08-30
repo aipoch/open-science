@@ -158,7 +158,7 @@ describe('compute host repository', () => {
     ])
   })
 
-  it('keeps readable Compute rows available when one row is corrupt', async () => {
+  it('fails the Host catalog when one row uses an unsupported authentication mode', async () => {
     const { client } = createMockClient({
       findMany: () =>
         Promise.resolve([
@@ -168,7 +168,9 @@ describe('compute host repository', () => {
     })
     const repository = new ComputeHostRepository(() => Promise.resolve(client))
 
-    await expect(repository.list()).resolves.toMatchObject([{ providerId: 'ssh:healthy' }])
+    await expect(repository.list()).rejects.toThrow(
+      'This SSH authentication configuration is not supported.'
+    )
   })
 
   it('returns null when a host is not found', async () => {

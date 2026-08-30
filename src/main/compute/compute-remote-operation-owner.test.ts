@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,6 +12,7 @@ import { ComputeRemoteOperationOwner } from './compute-remote-operation-owner'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 import { runScpTransfer, runScpUpload, type ScpRunner } from './scp-runner'
+import { SessionCacheOwner } from './session-cache-owner'
 
 const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
@@ -67,6 +68,7 @@ vi.mock('./ssh-runner', async (importOriginal) => {
 const makeApprovalBroker = (decision: 'once' | 'deny'): ComputeApprovalBroker =>
   ({
     request: vi.fn(() => Promise.resolve(decision)),
+    requestWithContext: vi.fn(() => Promise.resolve(decision)),
     respond: vi.fn()
   }) as unknown as ComputeApprovalBroker
 
@@ -102,7 +104,8 @@ const makeOwner = (
     } as ComputeConnectionBrokerAcquirer,
     repository,
     approvalBroker,
-    overrideDownloadsDir
+    overrideDownloadsDir,
+    overrideDownloadsDir ? new SessionCacheOwner(overrideDownloadsDir) : undefined
   )
 
 describe('ComputeRemoteOperationOwner.callCommand', () => {
@@ -1232,7 +1235,8 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
       { acquire },
       repo,
       makeApprovalBroker('once'),
-      tmpDir
+      tmpDir,
+      new SessionCacheOwner(tmpDir)
     )
     const signal = new AbortController().signal
 
@@ -1240,7 +1244,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
       'ssh:biowulf',
       '/remote/results.csv',
       { kind: 'session-cache' },
-      undefined,
+      { sessionId: 'session-1', projectId: 'project-1' },
       signal
     )
 
@@ -1270,9 +1274,12 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     const broker = makeApprovalBroker('once')
     const service = makeOwner(runner, repo, broker, scpRunner, tmpDir)
 
-    const result = await service.download('ssh:biowulf', '/remote/results.csv', {
-      kind: 'session-cache'
-    })
+    const result = await service.download(
+      'ssh:biowulf',
+      '/remote/results.csv',
+      { kind: 'session-cache' },
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
 
     expect(result.name).toBe('results.csv')
     expect(result.size).toBe(7) // 'content' is 7 bytes
@@ -1309,13 +1316,49 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     const service = makeOwner(runner, repo, makeApprovalBroker('once'), scpRunner, tmpDir)
 
     const error = await service
-      .download('ssh:biowulf', '/remote/results.csv', { kind: 'session-cache' })
+      .download(
+        'ssh:biowulf',
+        '/remote/results.csv',
+        { kind: 'session-cache' },
+        { sessionId: 'session-1', projectId: 'project-1' }
+      )
       .catch((cause) => cause)
 
     expect(error.remoteFsError).toMatchObject({
       remoteKind: 'not_a_file',
       detail: expect.stringMatching(/changed during transfer/i)
     })
+  })
+
+  it('removes the session-cache directory immediately when the transfer fails', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: 'f 7',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo } = makeRepo()
+    let attemptedLocalPath: string | undefined
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        attemptedLocalPath = args[args.length - 1]
+        return { exitCode: 1, stderr: 'connection reset', timedOut: false }
+      })
+    }
+    const service = makeOwner(runner, repo, makeApprovalBroker('once'), scpRunner, tmpDir)
+
+    await expect(
+      service.download(
+        'ssh:biowulf',
+        '/remote/results.csv',
+        { kind: 'session-cache' },
+        { sessionId: 'session-1', projectId: 'project-1' }
+      )
+    ).rejects.toThrow('connection reset')
+
+    expect(attemptedLocalPath).toBeDefined()
+    await expect(stat(dirname(attemptedLocalPath!))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('throws download_denied when broker denies session-cache download', async () => {
@@ -1331,7 +1374,12 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     const service = makeOwner(runner, repo, broker, successScpRunner, tmpDir)
 
     const err = await service
-      .download('ssh:biowulf', '/remote/secret.key', { kind: 'session-cache' })
+      .download(
+        'ssh:biowulf',
+        '/remote/secret.key',
+        { kind: 'session-cache' },
+        { sessionId: 'session-1', projectId: 'project-1' }
+      )
       .catch((e) => e)
     expect(err.message).toMatch(/download_denied|denied/i)
   })
@@ -1368,7 +1416,12 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     } as unknown as ComputeApprovalBroker
 
     const service = makeOwner(runner, repo, broker, scpRunner, tmpDir)
-    await service.download('ssh:biowulf', '/remote/data.csv', { kind: 'session-cache' })
+    await service.download(
+      'ssh:biowulf',
+      '/remote/data.csv',
+      { kind: 'session-cache' },
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
 
     expect(callOrder).toEqual(['approval', 'scp'])
   })
