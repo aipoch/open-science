@@ -128,6 +128,9 @@ type ApplicationCommandComposition = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  'remote-access:detect',
+  'remote-access:disable',
+  'remote-access:set-mode',
   'sessions:export-conversation',
   'uploads:stage-local-file'
 ])

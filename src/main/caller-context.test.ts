@@ -41,6 +41,18 @@ describe('caller context', () => {
       principalKind: 'automation',
       actionOrigin: 'automation'
     })
+    expect(
+      createTaskCallerContext({
+        clientId: 'trusted-browser:browser-tab',
+        location: 'remote'
+      })
+    ).toMatchObject({
+      clientId: 'trusted-browser:browser-tab',
+      lifecycleClientId: 'web:trusted-browser:browser-tab',
+      leaseId: 'trusted-browser:browser-tab',
+      surface: 'task',
+      location: 'remote'
+    })
   })
 
   it('keeps remote authority narrow and tied to authorization freshness', () => {

@@ -266,6 +266,7 @@ const sendWebSocketMessage = (socket: WebSocket, message: string): boolean => {
 
 export type ExternalWebAccessAuthorization = {
   kind: 'authorized' | 'authorized-pairing-manager'
+  principalId: string
   isCurrent: () => boolean
 }
 
@@ -355,12 +356,18 @@ const closeRequestAfterResponse = (request: IncomingMessage, response: ServerRes
   else response.once('finish', () => request.destroy())
 }
 
+const requestClientNonce = (request: IncomingMessage): string =>
+  String(request.headers['x-open-science-client'] ?? 'web')
+
+const authorizedClientId = (principalId: string, clientNonce: string): string =>
+  `${principalId}:${clientNonce}`
+
 const readJsonBody = async (
   request: IncomingMessage,
   response: ServerResponse,
-  registry: RequestBodyBudgetRegistry
+  registry: RequestBodyBudgetRegistry,
+  clientId: string
 ): Promise<unknown> => {
-  const clientId = String(request.headers['x-open-science-client'] ?? 'web')
   const declared = declaredContentLength(request)
   let lease: RequestBodyBudgetLease
   try {
@@ -561,7 +568,13 @@ const runIdempotentTask = <Result>(
 ): Promise<Result> => {
   const key = idempotencyKey(request)
   if (key === undefined) return operation()
-  const scope = JSON.stringify([callerContext.location, request.method, url.pathname, key])
+  const scope = JSON.stringify([
+    callerContext.location,
+    callerContext.clientId,
+    request.method,
+    url.pathname,
+    key
+  ])
   const serializedBody = JSON.stringify(body)
   const fingerprint = createHash('sha256').update(serializedBody).digest('hex')
   // Project responses may retain request-derived strings; reserve twice the UTF-8 body plus fixed
@@ -712,6 +725,7 @@ const handleTaskApiRequest = async (
   url: URL,
   tasks: NonNullable<WebServerOptions['tasks']>,
   callerContext: CallerContext,
+  requestBodyClientId: string,
   requestBodyBudgetRegistry: RequestBodyBudgetRegistry,
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization
@@ -727,7 +741,8 @@ const handleTaskApiRequest = async (
         const body = (await readJsonBody(
           request,
           response,
-          requestBodyBudgetRegistry
+          requestBodyBudgetRegistry,
+          requestBodyClientId
         )) as CreateTaskProjectRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 201, {
@@ -747,7 +762,8 @@ const handleTaskApiRequest = async (
         const body = (await readJsonBody(
           request,
           response,
-          requestBodyBudgetRegistry
+          requestBodyBudgetRegistry,
+          requestBodyClientId
         )) as UpdateTaskProjectRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, {
@@ -766,7 +782,8 @@ const handleTaskApiRequest = async (
         const body = (await readJsonBody(
           request,
           response,
-          requestBodyBudgetRegistry
+          requestBodyBudgetRegistry,
+          requestBodyClientId
         )) as StartTaskRunRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 202, {
@@ -790,7 +807,7 @@ const handleTaskApiRequest = async (
       }
       const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)
       if (cancelRunMatch && request.method === 'POST') {
-        await readJsonBody(request, response, requestBodyBudgetRegistry)
+        await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, {
           data: await tasks.cancelRun(decodeURIComponent(cancelRunMatch[1]))
@@ -810,7 +827,7 @@ const handleTaskApiRequest = async (
       )
       if (sessionPlanResponseMatch && request.method === 'POST' && tasks.respondSessionPlan) {
         const body = parseTaskPlanResponseRequest(
-          await readJsonBody(request, response, requestBodyBudgetRegistry)
+          await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
         )
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, {
@@ -964,11 +981,16 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           externalAuthorization = decision
         }
       }
-      if (!authorized) {
+      if (!authorized || (externalAuthorization && !externalAuthorization.isCurrent())) {
         response.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
         response.end('Unauthorized')
         return
       }
+      const clientNonce = requestClientNonce(request)
+      const clientId = externalAuthorization
+        ? authorizedClientId(externalAuthorization.principalId, clientNonce)
+        : clientNonce
+      const requestBodyClientId = externalAuthorization?.principalId ?? clientId
       if (!hasValidUrlPathEncoding(url.pathname)) {
         json(response, 400, { error: 'Malformed URL encoding.' })
         return
@@ -1032,11 +1054,13 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           createTaskCallerContext({
             ...(externalAuthorization
               ? {
+                  clientId,
                   location: 'remote' as const,
                   isAuthorizationCurrent: externalAuthorization.isCurrent
                 }
               : {})
           }),
+          requestBodyClientId,
           requestBodyBudgetRegistry,
           taskIdempotencyRegistry,
           externalAuthorization
@@ -1059,7 +1083,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         }
         let body: unknown
         try {
-          body = await readJsonBody(request, response, requestBodyBudgetRegistry)
+          body = await readJsonBody(
+            request,
+            response,
+            requestBodyBudgetRegistry,
+            requestBodyClientId
+          )
         } catch (error) {
           if (error instanceof RequestBodyBudgetExceededError) {
             webRpcError(
@@ -1111,7 +1140,6 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           )
           return
         }
-        const clientId = String(request.headers['x-open-science-client'] ?? 'web')
         const callerContext = createWebCallerContext(clientId, {
           ...(externalAuthorization
             ? {
@@ -1193,7 +1221,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             ? await options.externalAccess.authorizeWebSocket(request, url)
             : undefined
         if (
-          (!auth.ok && !externalAuthorization) ||
+          (!auth.ok && (!externalAuthorization || !externalAuthorization.isCurrent())) ||
           !['/events', '/api/v1/events'].includes(url.pathname)
         ) {
           socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
@@ -1215,7 +1243,17 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   wsServer.on('connection', (socket, request) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
-    const clientId = url.searchParams.get('client') ?? 'web'
+    const clientNonce = url.searchParams.get('client') ?? 'web'
+    const externalAuthorization = externalSockets.get(socket)
+    if (externalAuthorization && !externalAuthorization.isCurrent()) {
+      externalSockets.delete(socket)
+      socket.close(1008, 'Remote access expired')
+      return
+    }
+    const clientId =
+      externalAuthorization === undefined
+        ? clientNonce
+        : authorizedClientId(externalAuthorization.principalId, clientNonce)
     const lease = clientLeases.acquire(clientId)
     socket.on('close', () => {
       sockets.delete(socket)

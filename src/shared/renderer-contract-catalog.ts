@@ -1286,14 +1286,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: ApproveRemotePairingRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:approve']),
   'remoteAccess.detect': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
-    'remote-access:detect'
+    'remote-access:detect',
+    ELECTRON
   ]),
   'remoteAccess.probe': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
     'remote-access:probe',
     LOCAL
   ]),
   'remoteAccess.disable': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
-    'remote-access:disable'
+    'remote-access:disable',
+    ELECTRON
   ]),
   'remoteAccess.getSnapshot': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
     'remote-access:get-snapshot'
@@ -1310,7 +1312,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('remote-access', ['remote-access:revoke-browser']),
   'remoteAccess.setMode': callable<
     (request: SetRemoteAccessModeRequest) => Promise<RemoteAccessSnapshot>
-  >()('remote-access', ['remote-access:set-mode']),
+  >()('remote-access', ['remote-access:set-mode', ELECTRON]),
   'reviewer.abortFixLoop': callable<(request: ReviewSessionRequest) => Promise<void>>()(
     'reviewer',
     ['reviewer:abort-fix-loop']

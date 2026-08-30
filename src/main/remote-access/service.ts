@@ -421,7 +421,6 @@ export class RemoteAccessService {
     return this.serialize(async () => {
       this.assertConfigurationAvailable()
       const revocation = this.pairing.revoke(browserId)
-      this.authorizationGeneration += 1
       this.webController?.closeExternalConnections(browserId)
       await revocation
       return this.snapshot(canManage, canManagePairing)

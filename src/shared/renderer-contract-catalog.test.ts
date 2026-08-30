@@ -36,6 +36,32 @@ describe('renderer contract catalog', () => {
     ).toBe(true)
   })
 
+  it('publishes remote-access route management only on Electron', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
+        ['remoteAccess.detect', 'remoteAccess.disable', 'remoteAccess.setMode'].includes(publicPath)
+      ).map(({ publicPath, surfaceInstallation, dispatchPolicy }) => ({
+        publicPath,
+        surfaceInstallation,
+        dispatchPolicy
+      }))
+    ).toEqual(
+      ['remoteAccess.detect', 'remoteAccess.disable', 'remoteAccess.setMode'].map((publicPath) => ({
+        publicPath,
+        surfaceInstallation: {
+          electron: 'preload',
+          localWeb: 'unavailable',
+          remoteWeb: 'unavailable'
+        },
+        dispatchPolicy: {
+          electron: 'electron-ipc-request',
+          localWeb: 'none',
+          remoteWeb: 'none'
+        }
+      }))
+    )
+  })
+
   it('pins the complete capability-owned inventory and legacy map projection', () => {
     const projection = projectRendererContractMaps(RENDERER_CONTRACT_CATALOG)
 

@@ -185,14 +185,16 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 55 request channels in their existing capability groups', () => {
+  it('defines the exact 55 Electron request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
       const rendererChannels = contracts
         .filter(
           ({ kind, surfaceInstallation }) =>
-            kind === 'method' && surfaceInstallation.localWeb === 'web-rpc'
+            kind === 'method' &&
+            (surfaceInstallation.localWeb === 'web-rpc' ||
+              (capability === 'remote-access' && surfaceInstallation.electron === 'preload'))
         )
         .map(({ channel }) => channel)
         .filter((channel): channel is string => channel !== null)

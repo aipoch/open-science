@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -461,6 +462,80 @@ describe('RemoteAccessService', () => {
     )
     releaseSave?.()
     await revocation
+  })
+
+  it('keeps other trusted browser authorizations current when one browser is revoked', async () => {
+    const repository = await createRepository()
+    const now = Date.now()
+    const tokenHash = (secret: string): string => createHash('sha256').update(secret).digest('hex')
+    await repository.save({
+      version: 5,
+      mode: 'remoteit-public',
+      trustedBrowsers: [
+        {
+          id: 'browser-a',
+          browser: 'Safari',
+          platform: 'macOS',
+          tokenHash: tokenHash('secret-a'),
+          createdAt: now,
+          lastSeenAt: now,
+          expiresAt: Number.MAX_SAFE_INTEGER
+        },
+        {
+          id: 'browser-b',
+          browser: 'Firefox',
+          platform: 'Linux',
+          tokenHash: tokenHash('secret-b'),
+          createdAt: now,
+          lastSeenAt: now,
+          expiresAt: Number.MAX_SAFE_INTEGER
+        }
+      ]
+    })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    const controller = {
+      ...webController(),
+      closeExternalConnections: vi.fn()
+    }
+    service.attachWebController(controller)
+    await service.setMode('remoteit-public')
+    const host = 'open-science.connect.remote.it'
+    const authorizationFor = (
+      browserId: string,
+      secret: string
+    ): ReturnType<typeof service.webAccess.authorizeHttp> =>
+      service.webAccess.authorizeHttp(
+        {
+          method: 'POST',
+          url: '/rpc/projects:list',
+          headers: {
+            host,
+            origin: `https://${host}`,
+            cookie: `open_science_remote_session=${browserId}.${secret}`
+          },
+          socket: { remoteAddress: '203.0.113.10' }
+        } as unknown as IncomingMessage,
+        remoteResponse(),
+        new URL(`https://${host}/rpc/projects:list`)
+      )
+
+    const browserA = await authorizationFor('browser-a', 'secret-a')
+    const browserB = await authorizationFor('browser-b', 'secret-b')
+    if (typeof browserA !== 'object' || typeof browserB !== 'object') {
+      throw new Error('Expected both trusted browsers to be authorized.')
+    }
+    expect(browserA.isCurrent()).toBe(true)
+    expect(browserB.isCurrent()).toBe(true)
+
+    await service.revoke('browser-a')
+
+    expect(browserA.isCurrent()).toBe(false)
+    expect(browserB.isCurrent()).toBe(true)
+    expect(controller.closeExternalConnections).toHaveBeenCalledWith('browser-a')
   })
 
   it('does not retain an unclaimed trusted browser when access is disabled during approval', async () => {

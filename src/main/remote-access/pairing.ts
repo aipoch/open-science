@@ -424,12 +424,7 @@ export class RemoteSessionPairingManager {
       return 'denied'
     }
     if (sessionAccess) {
-      return this.httpAuthorization(
-        request,
-        needsOrigin,
-        authorizationGeneration,
-        sessionAccess.kind === 'trusted'
-      )
+      return this.httpAuthorization(request, needsOrigin, authorizationGeneration, sessionAccess)
     }
 
     if (url.pathname === REMOTE_PAIR_STATUS_PATH && request.method === 'GET') {
@@ -464,13 +459,15 @@ export class RemoteSessionPairingManager {
     request: IncomingMessage,
     needsOrigin: boolean,
     authorizationGeneration: number,
-    canManagePairing: boolean
+    sessionAccess: Exclude<RemoteSessionAccess, undefined>
   ): ExternalWebAccessAuthorization {
     return {
-      kind: canManagePairing ? 'authorized-pairing-manager' : 'authorized',
+      kind: sessionAccess.kind === 'trusted' ? 'authorized-pairing-manager' : 'authorized',
+      principalId: sessionAccess.sessionId,
       isCurrent: () =>
         authorizationGeneration === (this.options.authorizationGeneration?.() ?? 0) &&
-        this.isExpectedRemoteRequest(request, needsOrigin)
+        this.isExpectedRemoteRequest(request, needsOrigin) &&
+        this.isSessionAccessCurrent(sessionAccess)
     }
   }
 

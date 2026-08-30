@@ -202,7 +202,8 @@ describe('RemoteSessionPairingManager', () => {
     )
     const pendingCookie = cookiePair(firstResponse.headers.get('set-cookie') as string)
     await manager.approve(manager.pendingViews()[0].id, 'always')
-    expect((await repository.load()).trustedBrowsers).toHaveLength(1)
+    const [trustedBrowser] = (await repository.load()).trustedBrowsers
+    if (!trustedBrowser) throw new Error('Expected a persisted trusted browser.')
 
     const statusResponse = response()
     await manager.webAccess.authorizeHttp(
@@ -221,13 +222,27 @@ describe('RemoteSessionPairingManager', () => {
       isEnabled: () => true,
       onChanged: vi.fn()
     })
+    const httpAuthorization = await restartedManager.webAccess.authorizeHttp(
+      request('/', { cookie: sessionCookie }),
+      response().response,
+      new URL('https://home.example.ts.net/')
+    )
+    expect(httpAuthorization).toMatchObject({
+      kind: 'authorized-pairing-manager',
+      principalId: trustedBrowser.id
+    })
     await expect(
-      restartedManager.webAccess.authorizeHttp(
-        request('/', { cookie: sessionCookie }),
-        response().response,
-        new URL('https://home.example.ts.net/')
+      restartedManager.webAccess.authorizeWebSocket(
+        request('/events', {
+          cookie: sessionCookie,
+          origin: 'https://home.example.ts.net'
+        }),
+        new URL('https://home.example.ts.net/events')
       )
-    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
+    ).resolves.toMatchObject({
+      principalId: trustedBrowser.id,
+      isCurrent: expect.any(Function)
+    })
     expect(restartedManager.pendingViews()).toHaveLength(0)
 
     await expect(
