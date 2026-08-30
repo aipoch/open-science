@@ -29,8 +29,10 @@ named functions directly without an import or discovery step.
 - `dataVersionIds`: immutable Upload or Artifact Version identities grounding
   the panels.
 - `width_mm`: venue column width, commonly 85–89 mm single or 174–183 mm double.
-- `rulesVersionId`: immutable Artifact Version containing the design rules used
-  by the composite reviewer.
+- `rulesVersionId` (optional): a pre-existing, finalized immutable Artifact
+  Version containing additional design rules used by the composite reviewer.
+  When absent, the reviewer loads `figure-style` directly. Never create a rules
+  Artifact in the current turn and treat its pending Version as delegated input.
 - `delegatePrefix`: short branch-unique prefix for panel and reviewer child names.
 
 Run this workflow only in the Main/root agent. Delegated children cannot call
@@ -125,28 +127,60 @@ checks. Return each wave's validated `{ letter, versionId }` values from the
 `repl_execute` call instead of relying on local `const` or `let` declarations to
 survive a later call.
 
+Treat collection as a **Delegated Wait**: bounded observation, not child
+lifetime management. It is distinct from an **Attempt Deadline**, which exists
+only when the user or execution contract explicitly imposes one. Use
+`host.collect(..., { timeoutSeconds: 240, returnWhen: 'all' })` inside a
+`repl_execute` call whose `timeoutMs` is at most `270000`, then inspect every
+returned status. If any pinned Attempt is still `running`, collect those same
+exact `{ frameId, attemptId }` handles again in another bounded observation
+window. Expiry returns a durable observation and never stops the Attempt. A
+transport or REPL observation timeout is also not an Attempt Deadline: it does
+not make a child failed and never authorizes `host.stopChild` or a replacement
+child. Retry only after the pinned Attempt is terminal: either it settled as
+`error`/`cancelled`, or it settled as `completed` but its required postcondition
+or Version/Artifact identity validation was explicitly rejected. A `running`
+Attempt is never retryable; cancel it only when the user explicitly asks.
+
 Keep Version identities in outline order. Resolve bytes with
 `host.artifactPath(versionId)` only after collection; temporary paths are never
 the Agent-to-Agent contract. Child names remain occupied after settlement, so
 use a unique `delegatePrefix` and round number.
 
-## 3. Compose and bind the producer Run
+## 3. Compose in a producer child and bind the Run
 
-Resolve the collected Version identities, place the paths in a small JSON
-handoff under `process.env.OPEN_SCIENCE_HANDOFF_DIR`, and read that manifest from
-the Python producer cell. On that same `notebook_execute` request, pass the
-ordered, de-duplicated panel identities as
-`artifactVersionInputs: panelVersions.map(({ versionId }) => versionId)`. This
-registers the delegated immutable panel Versions as the composition Run's
-provenance inputs; paths remain byte-access implementation details and must never
-replace Version identities in this field. Call `compose_figure`, verify the
-notebook result is completed, and keep the actual returned `runId`. Publish the
-final PNG with
-`write_artifact_file({ filename: "figure.png", producerRunId: composeResult.runId })`;
-never substitute a round number or locally invented Run identity. This binds the
-composite Artifact to the run that last wrote its bytes. Fail the workflow if
-any panel Version cannot be validated in the active Project; never silently
-compose with an unregistered provenance input.
+The Main Agent's own `write_artifact_file` output remains pending until the root
+turn ends, so it cannot be inspected or passed to a reviewer in the same turn.
+Compose in one non-delegating producer child instead. Generate its exact task in
+Python with `composition_task(outline, panelVersions, fig_label)` and pass the
+ordered panel Version IDs in `inputs`. The child must not call `host.delegate`.
+
+Use this output schema:
+
+```javascript
+const compositionOutputSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['compositeVersionId'],
+  properties: { compositeVersionId: { type: 'string', minLength: 1 } }
+}
+```
+
+Collect its exact `{ frameId, attemptId }` receipt and apply the same terminal
+checks as a panel: completed status, satisfied structured output, exactly one
+`figure.png`, and equality between that Artifact's `versionId` and
+`structuredOutput.compositeVersionId`. Attempt settlement finalizes the
+composite Version, so Main can now use it with `host.viewImage` and as reviewer
+input. This is the required provenance-safe boundary; never replace it with a
+root pending Version or an absolute/local path fallback.
+
+Inside the producer child, the task resolves panel bytes with
+`host.artifactPath`, moves only paths through a JSON handoff under
+`process.env.OPEN_SCIENCE_HANDOFF_DIR`, and passes the ordered, de-duplicated
+panel identities to the composition `notebook_execute` as
+`artifactVersionInputs`. It calls `compose_figure`, verifies completion, and
+publishes `figure.png` with the exact returned `runId` as `producerRunId` before
+submitting the composite Version identity.
 
 ## 3.5 Look before review
 
@@ -177,12 +211,16 @@ obvious defect before formal review.
 
 ## 4. Adversarial review loop
 
-Run at most three rounds with review floors 5 → 4 → 3. Generate the reviewer
-task with `composite_review_task(...)` and its `outputSchema` with
-`review_schema()`. Pass the task unchanged to one reviewer; include the
-composite, optional previous composite, `rulesVersionId`, and every non-null
-panel data Version in `inputs`. Collect the exact receipt and use only validated
-`structuredOutput` as the review object.
+Run **one to three** rounds with review floors 5 → 4 → 3. At least one formal
+reviewer Attempt is mandatory even when Main's crop inspection finds no obvious
+defect; never replace this step with Main self-review. Generate the reviewer
+task with `composite_review_task(compositeVersionId, outline,
+rulesVersionId or None, ...)` and its `outputSchema` with `review_schema()`.
+Pass the task unchanged to one reviewer; include the finalized composite,
+optional previous composite, every non-null panel data Version, and only a
+pre-existing finalized `rulesVersionId` in `inputs`. When no rules Version was
+supplied, the task tells the reviewer to load `figure-style` directly. Collect
+the exact receipt and use only validated `structuredOutput` as the review object.
 
 After each result:
 
@@ -192,16 +230,34 @@ After each result:
    `apply_outline_revisions(outline, revisions)` to compute their panel scope.
 3. Call `group_fixes_by_panel(review)` and compute
    `regen = affected | set(fixb)`.
-4. Regenerate only `regen`. Build each retry task as
-   `panel_task(outline, letter) + fixb.get(letter, "")` and add: “Do not
+4. Regenerate only `regen`. For every regenerated panel, actually call
+   `panel_task(outline, letter, fig_label)` and use its returned base task
+   byte-for-byte unchanged. Only append `fixb.get(letter, "")` and: “Do not
    over-correct: preserve everything the previous version got right.” Include
-   the prior panel Version and its data Version in `inputs`.
-5. Keep every clean panel's exact Version identity. Compose a new revision only
-   after every regenerated panel passes the same identity checks.
+   the prior panel Version and its data Version in `inputs`. Never handwrite,
+   shorten, or rename the generated retry task. This preserves the exact
+   `panel_<letter>.png`
+   filename, pixel geometry, publication, and structured-output postconditions.
+   Run the same validation after every round. A terminal child that publishes
+   `panel_<letter>_final.png` or any other alias fails validation; its Version
+   must not enter composition provenance, and only after terminal settlement may
+   Main create a fresh-name retry.
+5. Keep every clean panel's exact Version identity. Compose a new revision with
+   a fresh producer child only after every regenerated panel passes the same
+   identity checks; never reuse a child name or a root pending Version.
 
 Stop when accepted, or when `outline_revisions` is empty and new findings are
 only carve-out exceptions to the previous round; that is the over-labeling
 signal. Otherwise stop after round three.
+
+## 5. Return the accepted composite
+
+Only after a reviewer accepts the current composite, verify that no panel
+Attempt started after its producer and that its provenance still contains the
+latest validated Version for every panel. Return that existing finalized child
+Artifact as the deliverable and include a user-visible Markdown link named
+`figure.png` in the final response. Do not create a duplicate root Artifact or
+claim completion from Main's visual inspection alone.
 
 ## Anti-patterns
 

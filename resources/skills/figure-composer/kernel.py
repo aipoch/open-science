@@ -84,7 +84,7 @@ Neighbors: {neighbours}
 - Environment `figures`, Python/matplotlib. Load `figure-style`; every dependent `notebook_execute` request includes `{{"kernelSkillIds":["figure-style"],"code":"apply_figure_style()\\n..."}}`. `kernelSkillIds` contains the skill ID; call `apply_figure_style()` directly in `code` without an import or discovery step,
   then **immediately** `import matplotlib as mpl; mpl.rcParams['savefig.bbox']=None` (the style helper
   sets it to `'tight'`, which silently resizes the canvas).
-- `fig = plt.figure(figsize=({w/300:.3f},{h/300:.3f}), dpi=300)`; `fig.savefig('panel_{letter}.png', dpi=300, transparent=True)`. **No `bbox_inches='tight'`, no `plt.tight_layout()`, no `constrained_layout`** — they change pixel dimensions. Use `fig.subplots_adjust(...)` only.
+- `fig = plt.figure(figsize=({w}/300,{h}/300), dpi=300)`; keep the exact pixel-ratio expressions rather than rounded decimal inches. `fig.savefig('panel_{letter}.png', dpi=300, transparent=True)`. **No `bbox_inches='tight'`, no `plt.tight_layout()`, no `constrained_layout`** — they change pixel dimensions. Use `fig.subplots_adjust(...)` only.
 - Reserve top-left ~10×6 mm clear for the composer's panel letter. Do NOT draw your own.
 - **§9 Render-then-verify:** after savefig, (a) `from PIL import Image; assert
   Image.open('panel_{letter}.png').size==({w},{h})` — if not, you used tight_layout/
@@ -94,6 +94,36 @@ Neighbors: {neighbours}
 - Design rules {rules_ref} apply in full.
 
 Publish `panel_{letter}.png` with the Artifact writer using the exact notebook `runId` as `producerRunId`; submit its returned `panelVersionId` plus `labelsUsed`. The parent accepts the identity only when it matches `artifactsCreated`."""
+
+
+def composition_task(outline, panel_versions, fig_label="Figure"):
+    """Build the non-delegating composition child's exact task."""
+    import json
+    ordered = []
+    by_letter = {item["letter"]: item["versionId"] for item in panel_versions}
+    for panel in outline["panels"]:
+        letter = panel["letter"]
+        if letter not in by_letter:
+            raise ValueError(f"missing panel Version for {letter}")
+        ordered.append({"letter": letter, "versionId": by_letter[letter]})
+    return f"""Compose the finalized panel Artifacts into `{fig_label}`. This is a producer task, not the outer composer: do not call `host.delegate`.
+
+Use this exact outline:
+```json
+{json.dumps(outline, indent=2)}
+```
+
+Use these ordered, immutable panel Versions:
+```json
+{json.dumps(ordered, indent=2)}
+```
+
+1. In `repl_execute`, resolve each Version with `host.artifactPath(versionId)`. Write a small JSON manifest containing the outline and resolved paths under `process.env.OPEN_SCIENCE_HANDOFF_DIR`.
+2. In one Python `notebook_execute`, load `figure-composer`, read that manifest, and call `compose_figure(outline, panel_paths, 'figure.png', letter_case='upper')`. Pass the ordered, de-duplicated Version IDs as `artifactVersionInputs`. Verify the run completed and retain its exact `runId`.
+3. Publish `figure.png` with `write_artifact_file`, using that exact `runId` as `producerRunId`.
+4. Call `host.submitOutput({{compositeVersionId}})` with the returned Artifact `version_id`, then finish normally.
+
+The parent accepts the composite identity only when it matches the exact `figure.png` entry in `artifactsCreated`."""
 
 
 def compose_crops(outline, dpi=300, gutter_mm=4, pad_px=4):
@@ -164,7 +194,7 @@ def review_schema(per_panel=True):
         "required":["editor_verdict","outline_revisions","violations","strongest_aspect"]}
 
 
-def composite_review_task(composite_vid, outline, rules_vid, prev_vid=None, round_no=1, min_floor=5):
+def composite_review_task(composite_vid, outline, rules_vid=None, prev_vid=None, round_no=1, min_floor=5):
     """Build the adversarial reviewer's task string for the composed figure."""
     panel_tbl = "\n".join(
         f"  {p['letter']}: {p['role']:<10} row{p['row']}+{p.get('rowspan',1)} col{p['col']}+{p['colspan']} "
@@ -175,6 +205,8 @@ def composite_review_task(composite_vid, outline, rules_vid, prev_vid=None, roun
         for p in outline["panels"] if p.get("data_vid")) or "  none (all panels are schematic)"
     prev_line = (f"\n**Previous version** (for `regression_vs_prev`): `{{{{artifact:{prev_vid}}}}}`"
                  if prev_vid else "")
+    rules_line = (f"**Design rules:** `{{{{artifact:{rules_vid}}}}}`"
+                  if rules_vid else "**Design rules:** load and apply the `figure-style` Skill directly.")
     return f"""You are an adversarial journal production editor reviewing a COMPOSED multi-panel figure.
 Review at TWO levels:
 
@@ -188,7 +220,7 @@ Review at TWO levels:
 
 ## Figure
 **Composite:** `{{{{artifact:{composite_vid}}}}}`
-**Design rules:** `{{{{artifact:{rules_vid}}}}}`{prev_line}
+{rules_line}{prev_line}
 
 **Claim:** {outline['claim']}
 
@@ -202,7 +234,10 @@ Review at TWO levels:
 Environment `figures`. Render the composite at full size, then inspect each panel crop from
 the outline geometry. For panels with data, spot-check 2–3 plotted values against the CSV.
 Be calibrated: minimum {min_floor} violations total (decreasing 5→4→3 by round);
-do not manufacture. Return ONLY structured output."""
+do not manufacture. Build one object that satisfies the delegated output schema, call
+`await host.submitOutput(review)` with that object, confirm it returned `accepted: true`, and finish
+only after the submission is accepted.
+Do not merely print or return the JSON as terminal text."""
 
 
 def apply_outline_revisions(outline, revisions):
