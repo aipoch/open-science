@@ -26,12 +26,16 @@ type StartupDiagnosticsOptions = {
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const replaceRoot = (text: string, root: string | undefined, marker: string): string => {
-  if (!root || root === '/' || /^[A-Za-z]:[\\/]?$/.test(root)) return text
-  const variants = new Set([root, root.replace(/\\/g, '/')])
+  if (!root || /^[\\/]+$/.test(root) || /^[A-Za-z]:[\\/]*$/.test(root)) return text
+  const normalizedRoot = root.replace(/[\\/]+$/, '')
+  const variants = new Set([normalizedRoot, normalizedRoot.replace(/\\/g, '/')])
   let redacted = text
   for (const variant of variants) {
-    const flags = /^[A-Za-z]:[\\/]/.test(variant) || variant.startsWith('\\\\') ? 'gi' : 'g'
-    redacted = redacted.replace(new RegExp(escapeRegExp(variant), flags), marker)
+    const flags =
+      /^[A-Za-z]:[\\/]/.test(variant) || variant.startsWith('\\\\') || variant.startsWith('//')
+        ? 'gi'
+        : 'g'
+    redacted = redacted.replace(new RegExp(`${escapeRegExp(variant)}(?=$|[\\\\/])`, flags), marker)
   }
   return redacted
 }
@@ -58,12 +62,13 @@ const redactRemainingAbsolutePaths = (text: string): string =>
     .replace(/\bfile:\/\/[^\r\n"'<>()[\]{}]+/gi, '<absolute-path>')
     .replace(/\\\\[^\r\n"'<>()[\]{}]+/g, '<absolute-path>')
     .replace(
-      /(^|[\s("'=])([A-Za-z]:[\\/][^\r\n"'<>()[\]{}]*)/gm,
+      /(^|[\s("'=:])([A-Za-z]:[\\/][^\r\n"'<>()[\]{}]*)/gm,
       (_match, boundary: string) => `${boundary}<absolute-path>`
     )
-    // A leading boundary avoids URL paths, `I/O`, and suffixes below already-redacted named roots.
+    // The double-slash guard excludes URL schemes even when ':' is accepted as a path boundary.
+    // Other leading boundaries avoid `I/O` and suffixes below already-redacted named roots.
     .replace(
-      /(^|[\s("'=])\/(?!\/)([^\r\n"'<>()[\]{}]*)/gm,
+      /(^|[\s("'=:])\/(?!\/)([^\r\n"'<>()[\]{}]*)/gm,
       (_match, boundary: string) => `${boundary}<absolute-path>`
     )
     // Multiple unquoted paths on one line can leave adjacent markers as each conservative matcher

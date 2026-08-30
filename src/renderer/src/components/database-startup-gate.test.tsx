@@ -299,6 +299,16 @@ describe('DatabaseStartupGate', () => {
     expect(decodeURIComponent(url)).toContain('Startup blocked: database_newer_than_app')
     expect(decodeURIComponent(url)).toContain('Error: reviewed and edited')
 
+    fireEvent.change(details, { target: { value: '' } })
+    expect(issueLink.getAttribute('aria-disabled')).toBe('true')
+    expect(issueLink.getAttribute('href')).toBeNull()
+
+    await act(async () => screen.getByRole('checkbox').click())
+    const clearedUrl = issueLink.getAttribute('href') ?? ''
+    expect(issueLink.getAttribute('aria-disabled')).toBe('false')
+    expect(decodeURIComponent(clearedUrl)).not.toContain('Error: boom')
+    expect(decodeURIComponent(clearedUrl)).not.toContain('## Error stack')
+
     fireEvent.change(details, { target: { value: 'Error: edited again' } })
     expect(issueLink.getAttribute('aria-disabled')).toBe('true')
     expect(issueLink.getAttribute('href')).toBeNull()

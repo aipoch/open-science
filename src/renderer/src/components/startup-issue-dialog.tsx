@@ -26,10 +26,7 @@ type StartupIssueDialogProps = {
 const StartupIssueDialog = ({ error, onClose }: StartupIssueDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [diagnostics, setDiagnostics] = useState(error.diagnostics ?? '')
-  const issueUrl = useMemo(
-    () => buildStartupIssueUrl(error, diagnostics.trim() ? diagnostics : undefined),
-    [diagnostics, error]
-  )
+  const issueUrl = useMemo(() => buildStartupIssueUrl(error, diagnostics), [diagnostics, error])
   const issuePreview = useMemo(() => {
     const body = new URL(issueUrl).searchParams.get('body') ?? ''
     return `${buildStartupIssueTitle(error)}\n\n${body}`

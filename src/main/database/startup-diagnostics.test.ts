@@ -40,8 +40,8 @@ describe('buildStartupDiagnostics', () => {
 
     const result = buildStartupDiagnostics(error, {
       home: '/Users/alice',
-      configRoot: '/Volumes/Config Space/.open-science',
-      dataRoot: '/mnt/research/OpenScience'
+      configRoot: '/Volumes/Config Space/.open-science/',
+      dataRoot: '/mnt/research/OpenScience/'
     })
 
     expect(result).toContain('<config-root>/open-science.db')
@@ -56,6 +56,38 @@ describe('buildStartupDiagnostics', () => {
     expect(result).not.toContain('fileserver')
     expect(result).not.toContain('research-share')
   })
+
+  it('does not apply a configured-root marker to a sibling path prefix', () => {
+    const error = new Error('cannot open /data/project-old/secret.db')
+
+    const result = buildStartupDiagnostics(error, {
+      home: '/Users/alice',
+      dataRoot: '/data/project/'
+    })
+
+    expect(result).toContain('<absolute-path>')
+    expect(result).not.toContain('<data-root>-old')
+    expect(result).not.toContain('project-old')
+    expect(result).not.toContain('secret.db')
+  })
+
+  it.each([
+    ['POSIX', 'endpoint:https://example.test/public path:/srv/private.db', '/srv/private.db'],
+    [
+      'drive-letter',
+      String.raw`endpoint:https://example.test/public path:D:\Clients\private.db`,
+      String.raw`D:\Clients\private.db`
+    ]
+  ])(
+    'redacts a colon-prefixed %s path without treating a URL as a path',
+    (_kind, message, path) => {
+      const result = buildStartupDiagnostics(new Error(message), { home: '/Users/alice' })
+
+      expect(result).toContain('endpoint:https://example.test/public')
+      expect(result).toContain('path:<absolute-path>')
+      expect(result).not.toContain(path)
+    }
+  )
 
   it.each([
     '/srv/customer/Private Study/patient.db',
