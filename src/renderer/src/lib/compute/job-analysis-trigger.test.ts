@@ -135,6 +135,59 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     })
   })
 
+  it('retries a failed terminal transition with the same Message ID', async () => {
+    vi.useFakeTimers()
+    let terminalAttempts = 0
+    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
+    const transitionAnalysis = vi.fn<JobAnalysisTriggerDeps['transitionAnalysis']>((request) => {
+      if (request.state === 'succeeded' && terminalAttempts++ === 0) {
+        return Promise.reject(new Error('database temporarily unavailable'))
+      }
+      return Promise.resolve()
+    })
+    const deps = createDeps({
+      transitionAnalysis,
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallback = callback
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    turnEndCallback?.('succeeded')
+    await flushMicrotasks()
+
+    expect(
+      transitionAnalysis.mock.calls.filter(([request]) => request.state === 'succeeded')
+    ).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await flushMicrotasks()
+
+    const terminalCalls = transitionAnalysis.mock.calls.filter(
+      ([request]) => request.state === 'succeeded'
+    )
+    expect(terminalCalls).toEqual([
+      [
+        {
+          sessionId: 'sess-1',
+          jobIds: ['job-1'],
+          messageId: 'msg-1',
+          state: 'succeeded'
+        }
+      ],
+      [
+        {
+          sessionId: 'sess-1',
+          jobIds: ['job-1'],
+          messageId: 'msg-1',
+          state: 'succeeded'
+        }
+      ]
+    ])
+  })
+
   it('records failure when sendPrompt returns undefined', async () => {
     const deps = createDeps({
       sendPrompt: vi.fn().mockResolvedValue(undefined)

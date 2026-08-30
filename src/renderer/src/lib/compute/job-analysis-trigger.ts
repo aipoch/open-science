@@ -111,7 +111,7 @@ export type JobAnalysisTrigger = {
 }
 
 export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnalysisTrigger => {
-  const claimRetryDelayMs = 1_000
+  const transitionRetryDelayMs = 1_000
   let disposed = false
   // Pending jobs are grouped by a durable dispatch Message ID when recovering, or by Session before
   // the first dispatch is claimed. This prevents a recovered batch from absorbing newer pending Jobs.
@@ -127,14 +127,24 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     { batch: PendingBatch; sessionId: string; messageId: string; jobIds: string[] }
   >()
   const claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const settlementRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   const scheduleClaimRetry = (key: string): void => {
     if (disposed || claimRetryTimers.has(key)) return
     const timer = setTimeout(() => {
       claimRetryTimers.delete(key)
       scheduleFlush(key)
-    }, claimRetryDelayMs)
+    }, transitionRetryDelayMs)
     claimRetryTimers.set(key, timer)
+  }
+
+  const scheduleSettlementRetry = (key: string, retry: () => void): void => {
+    if (disposed || settlementRetryTimers.has(key)) return
+    const timer = setTimeout(() => {
+      settlementRetryTimers.delete(key)
+      if (!disposed) retry()
+    }, transitionRetryDelayMs)
+    settlementRetryTimers.set(key, timer)
   }
 
   const scheduleNextSessionBatch = (sessionId: string): void => {
@@ -177,11 +187,14 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       deps.log('analysis-turn:settled', `session=${sessionId} state=${state}`)
     } catch (err) {
       deps.log('analysis-turn:settle-failed', `session=${sessionId} error=${String(err)}`)
-    } finally {
-      awaitingTurnEnd.delete(key)
-      for (const id of jobIds) inFlight.delete(id)
-      releaseSessionBatch(batch, sessionId)
+      scheduleSettlementRetry(key, () => {
+        void settle(key, batch, sessionId, messageId, jobIds, state)
+      })
+      return
     }
+    awaitingTurnEnd.delete(key)
+    for (const id of jobIds) inFlight.delete(id)
+    releaseSessionBatch(batch, sessionId)
   }
 
   const onTurnEndCallback = async (
@@ -395,6 +408,8 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     disposed = true
     for (const timer of claimRetryTimers.values()) clearTimeout(timer)
     claimRetryTimers.clear()
+    for (const timer of settlementRetryTimers.values()) clearTimeout(timer)
+    settlementRetryTimers.clear()
     pendingBatches.clear()
     awaitingTurnEnd.clear()
     activeBatchBySession.clear()
