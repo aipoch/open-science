@@ -10,7 +10,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 // classifyDataRoot now derives the target via storage-root's dataRootForParent, so migration-service
@@ -1369,6 +1369,42 @@ describe('runDataRootMigration (copy phase)', () => {
 })
 
 describe('commitDataRootSwitch (commit phase)', () => {
+  it('rejects an older verified marker that omits a newly registered data directory', async () => {
+    const cacheFile = join(
+      currentDataRoot,
+      'compute',
+      'session-cache',
+      'project-1',
+      'session-1',
+      'result.csv'
+    )
+    await mkdir(dirname(cacheFile), { recursive: true })
+    await writeFile(cacheFile, 'retained')
+    const olderDirs = MIGRATED_DIRS.filter((directory) => directory !== 'compute')
+    await seedVerifiedMarker(emptyParent, currentDataRoot, {
+      migratedDirs: olderDirs,
+      inventory: await scanInventory(currentDataRoot, olderDirs)
+    })
+    const setDataRoot = vi.fn(async () => undefined)
+
+    const result = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot,
+        expectedToken: 'tok-test',
+        validateProvenanceState: async () => undefined
+      },
+      emptyParent
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'The staged copy does not include all current data. Run the move again.'
+    })
+    expect(setDataRoot).not.toHaveBeenCalled()
+    await expect(readFile(cacheFile, 'utf8')).resolves.toBe('retained')
+  })
+
   it('commits an empty migration with cleanup journaling when the source root is missing', async () => {
     const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
     await rm(currentDataRoot, { recursive: true, force: true })

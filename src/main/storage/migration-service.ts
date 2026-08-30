@@ -869,6 +869,15 @@ export const commitDataRootSwitch = async (
   }
 
   const migratedDirs = marker.migratedDirs ?? [...MIGRATED_DIRS]
+  const currentDataPaths = MIGRATED_DIRS.filter((path) =>
+    existsSync(join(deps.currentDataRoot, path))
+  )
+  if (currentDataPaths.some((path) => !migratedDirs.includes(path))) {
+    return failResult({
+      ok: false,
+      error: 'The staged copy does not include all current data. Run the move again.'
+    })
+  }
   const requiredPaths = [RUNTIME_ENVIRONMENT_MANIFESTS_DIR, RUNTIME_PKGS_DIR].filter((path) =>
     existsSync(join(deps.currentDataRoot, path))
   )
