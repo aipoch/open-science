@@ -455,7 +455,8 @@ export class JobPoller {
       const transition = await this.lifecycle.dispatchRunning(
         job.job_id,
         JSON.stringify(remoteHandle),
-        startedAt
+        startedAt,
+        job.remote_workdir ? undefined : workdir
       )
       return transition.kind === 'applied' ? transition.job : undefined
     }

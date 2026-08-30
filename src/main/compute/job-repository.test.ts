@@ -135,10 +135,12 @@ describe('ComputeJob repository (SQLite integration)', () => {
     const updated = await repo.update('test-job-1', {
       status: 'running',
       remoteHandle: JSON.stringify({ pid: 1234, workdir: '~/.openscience/jobs/test-job-1' }),
+      remoteWorkdir: '/scratch/.openscience/jobs/test-job-1',
       startedAt: new Date()
     })
     expect(updated.status).toBe('running')
     expect(updated.started_at).toBeGreaterThan(0)
+    expect(updated.remote_workdir).toBe('/scratch/.openscience/jobs/test-job-1')
 
     // update to terminal.
     await repo.update('test-job-1', {

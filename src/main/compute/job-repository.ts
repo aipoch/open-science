@@ -86,6 +86,7 @@ export type CreateJobRequest = {
 export type UpdateJobRequest = {
   status?: ComputeJobStatus
   remoteHandle?: string
+  remoteWorkdir?: string
   exitCode?: number | null
   stdoutTail?: string | null
   stderrTail?: string | null
@@ -609,6 +610,8 @@ export class ComputeJobRepository {
     if (updates.status !== undefined) data.status = updates.status
     if (updates.remoteHandle !== undefined)
       data.remoteHandle = this.protectJson(updates.remoteHandle, 'object', sensitiveDataEncrypted)
+    if (updates.remoteWorkdir !== undefined)
+      data.remoteWorkdir = this.protectOptional(updates.remoteWorkdir, sensitiveDataEncrypted)
     if ('exitCode' in updates) data.exitCode = updates.exitCode
     if ('stdoutTail' in updates)
       data.stdoutTail =

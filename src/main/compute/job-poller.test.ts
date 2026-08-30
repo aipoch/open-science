@@ -1160,7 +1160,8 @@ describe('JobPoller', () => {
       'job-1',
       expect.objectContaining({
         status: 'running',
-        remoteHandle: expect.stringContaining('/scratch/.openscience/jobs/job-1')
+        remoteHandle: expect.stringContaining('/scratch/.openscience/jobs/job-1'),
+        remoteWorkdir: '/scratch/.openscience/jobs/job-1'
       })
     )
   })
