@@ -122,6 +122,32 @@ describe('ConnectorAddForm (local command)', () => {
     expect(document.activeElement).toBe(radios[1])
   })
 
+  it('does not let hidden local environment errors block remote submission', async () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Remote after local')
+    openAdvancedSettings()
+    setValue('Environment variables', 'missing-equals')
+    const remote = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+    ).find((radio) => radio.textContent?.trim() === 'Remote server')
+    act(() => remote?.click())
+    setValue('Server URL', 'https://mcp.example.test')
+    checkTrust()
+
+    expect(addButton()?.disabled).toBe(false)
+    await act(async () => addButton()?.click())
+    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayName: 'Remote after local',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test'
+      })
+    )
+  })
+
   it('adds a stdio server with the default npx command, then calls onDone', async () => {
     const onDone = vi.fn()
     act(() => {

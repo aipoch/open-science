@@ -351,7 +351,7 @@ export function ConnectorAddForm({
     (mode === 'local' ? command.trim().length > 0 : url.trim().length > 0) &&
     oauthRegistrationValid &&
     requiredSecretValuesFilled &&
-    environmentErrors.length === 0
+    (mode !== 'local' || environmentErrors.length === 0)
   const canSubmit = requiredFilled && trusted && !submitting && !editTargetMissing
 
   const switchMode = (next: ConnectorMode): void => {

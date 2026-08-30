@@ -672,6 +672,41 @@ describe('buildTransport', () => {
     expect(serialized).not.toContain('omega-private-material')
   })
 
+  it('does not release a multiline secret prefix when later stderr interrupts the value', () => {
+    const transport = buildTransport({
+      id: 'srv-stdio',
+      name: 'stdio-server',
+      transport: 'stdio',
+      command: 'npx',
+      env: { PRIVATE_MATERIAL: 'alpha-private-material\nomega-private-material' }
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    stderr?.write('alpha-private-material\n')
+    stderr?.write('unrelated diagnostic\n')
+
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain('alpha-private-material')
+    expect(serialized).toContain('unrelated diagnostic')
+  })
+
+  it('redacts newline-escaped representations of configured multiline values', () => {
+    const transport = buildTransport({
+      id: 'srv-stdio',
+      name: 'stdio-server',
+      transport: 'stdio',
+      command: 'npx',
+      env: { PRIVATE_MATERIAL: 'alpha-private-material\nomega-private-material' }
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    stderr?.write('alpha-private-material\\nomega-private-material\n')
+
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain('alpha-private-material')
+    expect(serialized).not.toContain('omega-private-material')
+  })
+
   it('keeps an explicitly configured stdio PATH ahead of the augmented directories', () => {
     const customPath = '/custom/bin'
     const pathDirs = stdioTransportEnvironment({ PATH: customPath }).PATH?.split(delimiter) ?? []

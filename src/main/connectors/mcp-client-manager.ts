@@ -102,7 +102,13 @@ function waitForConnection(promise: Promise<Client>, signal?: AbortSignal): Prom
 }
 
 const uniqueKnownValues = (values: readonly string[]): string[] =>
-  [...new Set(values.filter(Boolean))].sort((a, b) => b.length - a.length)
+  [
+    ...new Set(
+      values
+        .filter(Boolean)
+        .flatMap((value) => [value, value.replace(/\r/gu, '\\r').replace(/\n/gu, '\\n')])
+    )
+  ].sort((a, b) => b.length - a.length)
 
 const truncateUtf8 = (value: string, maxBytes: number): string => {
   if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
@@ -135,6 +141,7 @@ const captureStdioStderr = (
     knownValuesByInitial.set(initial, matches)
   }
   let redactionPending = ''
+  let heldKnownValuePrefixLength = 0
   let linePending = ''
   let receivedBytes = 0
   let totalTruncationLogged = false
@@ -157,6 +164,7 @@ const captureStdioStderr = (
     if (knownValues.length === 0) {
       appendRedactedText(redactionPending)
       redactionPending = ''
+      heldKnownValuePrefixLength = 0
       return
     }
 
@@ -177,19 +185,32 @@ const captureStdioStderr = (
       if (mayCompleteLongerValue) {
         ready += redactionPending.slice(emittedStart, cursor)
         redactionPending = remaining
+        heldKnownValuePrefixLength = remaining.length
         if (ready) appendRedactedText(ready)
         return
       }
-      if (complete) {
+      if (
+        complete &&
+        (heldKnownValuePrefixLength === 0 || complete.length >= heldKnownValuePrefixLength)
+      ) {
         ready += `${redactionPending.slice(emittedStart, cursor)}[REDACTED]`
         cursor += complete.length
         emittedStart = cursor
+        heldKnownValuePrefixLength = 0
+        continue
+      }
+      if (cursor === 0 && heldKnownValuePrefixLength > 0) {
+        ready += '[REDACTED]'
+        cursor = heldKnownValuePrefixLength
+        emittedStart = cursor
+        heldKnownValuePrefixLength = 0
         continue
       }
       cursor += 1
     }
     ready += redactionPending.slice(emittedStart)
     redactionPending = ''
+    heldKnownValuePrefixLength = 0
     if (ready) appendRedactedText(ready)
   }
 
@@ -198,6 +219,7 @@ const captureStdioStderr = (
     if (redactionPending) {
       appendRedactedText('[REDACTED]')
       redactionPending = ''
+      heldKnownValuePrefixLength = 0
     }
     if (linePending) writeLine(linePending)
     linePending = ''
