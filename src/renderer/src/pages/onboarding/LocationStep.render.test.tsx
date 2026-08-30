@@ -60,6 +60,7 @@ const renderStep = async (isResolvingDefaultLocation = false): Promise<RenderRes
         relaunchError={relaunchError}
         onRelaunchErrorChange={setRelaunchError}
         onRetryDataRootInfo={vi.fn()}
+        onInteractionStart={vi.fn()}
         onBack={onBack}
         onContinue={onContinue}
         isResolvingDefaultLocation={isResolvingDefaultLocation}

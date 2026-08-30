@@ -170,6 +170,7 @@ const OnboardingWizard = ({
     chosenKind: null
   })
   const [didResolveStorageDefault, setDidResolveStorageDefault] = useState(false)
+  const didResolveStorageResume = useRef(false)
   // A slow automatic drive probe must never overwrite a location the user explicitly browsed to
   // (or their explicit reset back to the system default).
   const locationDraftTouched = useRef(false)
@@ -178,9 +179,13 @@ const OnboardingWizard = ({
     setDidResolveStorageDefault(true)
     setLocationDraft(draft)
   }, [])
+  const suppressStorageResume = useCallback((): void => {
+    didResolveStorageResume.current = true
+  }, [])
   const leaveLocation = useCallback((nextStep: 'environment' | 'agent'): void => {
     // Continue is disabled until the automatic probe resolves, so leaving forward freezes the
     // displayed choice. Back only cancels the in-flight probe; returning to Location retries it.
+    didResolveStorageResume.current = true
     if (nextStep === 'agent') locationDraftTouched.current = true
     setStep(nextStep)
   }, [])
@@ -191,7 +196,6 @@ const OnboardingWizard = ({
 
   const didRequestCheck = useRef(false)
   const didKickEnv = useRef(false)
-  const didResolveStorageResume = useRef(false)
 
   // Fetch the current data location once, up front, for Location display and relaunch resume.
   const handleDataRootInfoSuccess = useCallback((info: StorageInfo): void => {
@@ -202,7 +206,7 @@ const OnboardingWizard = ({
     // steps the user already completed before the restart.
     if (!didResolveStorageResume.current) {
       didResolveStorageResume.current = true
-      if (!info.isDefault) setStep('agent')
+      if (!info.isDefault && !locationDraftTouched.current) setStep('agent')
     }
   }, [])
   const handleDataRootInfoFailure = useCallback((error: unknown): void => {
@@ -329,6 +333,7 @@ const OnboardingWizard = ({
                 relaunchError={relaunchError}
                 onRelaunchErrorChange={setRelaunchError}
                 onRetryDataRootInfo={retryDataRootInfo}
+                onInteractionStart={suppressStorageResume}
                 onBack={() => leaveLocation('environment')}
                 onContinue={() => leaveLocation('agent')}
                 isResolvingDefaultLocation={isResolvingStorageDefault}

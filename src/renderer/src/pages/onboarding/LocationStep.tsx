@@ -35,6 +35,7 @@ type LocationStepProps = {
   relaunchError: string | undefined
   onRelaunchErrorChange: (error: string | undefined) => void
   onRetryDataRootInfo: () => void
+  onInteractionStart: () => void
   onBack: () => void
   onContinue: () => void
   isResolvingDefaultLocation: boolean
@@ -59,6 +60,7 @@ const LocationStep = ({
   relaunchError,
   onRelaunchErrorChange,
   onRetryDataRootInfo,
+  onInteractionStart,
   onBack,
   onContinue,
   isResolvingDefaultLocation,
@@ -85,6 +87,7 @@ const LocationStep = ({
   }
 
   const handleBrowseLocation = async (): Promise<void> => {
+    onInteractionStart()
     await runExclusive(async () => {
       setLocationError(undefined)
       try {

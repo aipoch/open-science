@@ -358,6 +358,50 @@ describe('OnboardingWizard flow', () => {
     expect(findButton(/^continue$/i)?.disabled).toBe(false)
   })
 
+  it('does not let a late storage resume override a Browse interaction in flight', async () => {
+    let resolveStorageInfo: ((info: ReturnType<typeof storageInfo>) => void) | undefined
+    let resolvePickedDirectory: ((path: string) => void) | undefined
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStorageInfo = resolve
+        })
+    )
+    window.api.storage.pickDirectory = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePickedDirectory = resolve
+        })
+    )
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockResolvedValue({ kind: 'move', dataRoot: 'F:\\Research\\OpenScience' })
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+    await clickButton(/browse/i)
+
+    await act(async () => {
+      resolveStorageInfo?.(
+        storageInfo({
+          dataRoot: 'D:\\OpenScience',
+          defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+          isDefault: false
+        })
+      )
+    })
+
+    expect(currentSection('Choose data location')).not.toBeNull()
+
+    await act(async () => {
+      resolvePickedDirectory?.('F:\\Research')
+    })
+    expect(container.textContent).toContain('F:\\Research\\OpenScience')
+    expect(container.textContent).not.toContain('Set up the agent runtime')
+  })
+
   it('does not probe alternate drives outside Windows', async () => {
     readyClaudeState()
 
