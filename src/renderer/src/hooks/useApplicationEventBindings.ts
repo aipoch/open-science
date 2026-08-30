@@ -49,6 +49,10 @@ type ApplicationEventProjection = Readonly<{
   webEventConnectionPhase: WebEventConnectionPhase
   blockedApprovalSessionIds: ReadonlySet<string>
   lifecycle: ReturnType<typeof useLifecycleSync>
+  notification: Readonly<{
+    unavailableToken: number | undefined
+    dismissUnavailable: () => void
+  }>
   allowsArchiveUndoShortcut: () => boolean
   navigation: Readonly<{
     view: NavigationView
@@ -116,6 +120,7 @@ const useApplicationEventBindings = ({
   const listenForNotificationChanges = useNotificationInboxStore((state) => state.listen)
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false)
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
+  const [unavailableNotificationToken, setUnavailableNotificationToken] = useState<number>()
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
   const notificationOpenIntent = useRef<NotificationOpenIntent>({
@@ -354,11 +359,15 @@ const useApplicationEventBindings = ({
         }
         if (
           intent.generation !== notificationOpenIntent.current.generation ||
-          !sessionExists ||
           useNavigationStore.getState().userNavigationRevision !== intent.userNavigationRevision
         ) {
           return
         }
+        if (!sessionExists) {
+          setUnavailableNotificationToken(consumed.token)
+          return
+        }
+        setUnavailableNotificationToken(undefined)
         useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
       }
 
@@ -431,6 +440,10 @@ const useApplicationEventBindings = ({
     webEventConnectionPhase,
     blockedApprovalSessionIds: openSideChatParentSessionIds,
     lifecycle,
+    notification: {
+      unavailableToken: unavailableNotificationToken,
+      dismissUnavailable: () => setUnavailableNotificationToken(undefined)
+    },
     allowsArchiveUndoShortcut,
     navigation: { view },
     globalSearch: { open: openGlobalSearch, setOpen: setGlobalSearchOpen },

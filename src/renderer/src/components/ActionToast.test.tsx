@@ -83,4 +83,21 @@ describe('ActionToast', () => {
 
     expect(onDismiss).toHaveBeenCalledOnce()
   })
+
+  it('renders a dismiss-only status without an action button', async () => {
+    await act(async () =>
+      root.render(
+        <ActionToast
+          title="This session is unavailable"
+          dismissLabel="Dismiss"
+          onDismiss={vi.fn()}
+        />
+      )
+    )
+
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      'This session is unavailable'
+    )
+    expect(container.querySelectorAll('button')).toHaveLength(1)
+  })
 })

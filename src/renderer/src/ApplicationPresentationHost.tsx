@@ -2,6 +2,7 @@ import { useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
+import { ActionToast } from '@/components/ActionToast'
 import { ConnectorAuthToast } from '@/components/ConnectorAuthToast'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { ErrorNotice } from '@/components/error-notice'
@@ -138,6 +139,21 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
       onRetry={sessions.retryWrites}
     />
   ) : null
+  const quitPersistenceAlert = startup.quitPersistence.notice ? (
+    <SessionPersistenceAlert
+      title={t('Quit was canceled')}
+      message={
+        startup.quitPersistence.notice.reason === 'conflict'
+          ? t('A conversation changed elsewhere and could not be saved safely.')
+          : t('One or more conversations could not be saved.')
+      }
+      onDismiss={startup.quitPersistence.dismissNotice}
+      onRetry={() => {
+        startup.quitPersistence.dismissNotice()
+        sessions.retryWrites()
+      }}
+    />
+  ) : null
 
   return (
     <>
@@ -162,6 +178,8 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
             message={sessions.loadError}
             onRetry={sessions.retryLoad}
           />
+        ) : quitPersistenceAlert ? (
+          quitPersistenceAlert
         ) : writeErrorAlert ? (
           writeErrorAlert
         ) : sessions.loadWarning ? (
@@ -172,7 +190,9 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
             onDismiss={sessions.dismissLoadWarning}
           />
         ) : null}
-        {sessions.catalogRecovery.kind !== 'ready' ? writeErrorAlert : null}
+        {sessions.catalogRecovery.kind !== 'ready'
+          ? (quitPersistenceAlert ?? writeErrorAlert)
+          : null}
         <WorkspaceAgentRuntimeProvider>
           <JobAnalysisRuntimeBridge enabled={sessions.isReady} />
           <WorkspaceMessageQueueProvider>
@@ -203,6 +223,17 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         <StorageCleanupToast />
         <NotificationLiveToast />
         <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
+        {events.notification.unavailableToken !== undefined ? (
+          <ActionToast
+            key={events.notification.unavailableToken}
+            title={t('This session was deleted or is unavailable.')}
+            dismissLabel={t('Close')}
+            onDismiss={events.notification.dismissUnavailable}
+            autoDismissMs={6000}
+            className="top-44"
+            testId="notification-target-unavailable-toast"
+          />
+        ) : null}
       </div>
       <WebEventRecoveryDialog
         active={activePresentation === 'webEventRecovery'}

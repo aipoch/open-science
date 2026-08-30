@@ -56,6 +56,10 @@
     "Import Connector configuration": "コネクタ構成のインポート"
   },
   "renderer": {
+    "A conversation changed elsewhere and could not be saved safely.": "別の場所で会話が変更されたため、安全に保存できませんでした。",
+    "One or more conversations could not be saved.": "1件以上の会話を保存できませんでした。",
+    "Quit was canceled": "終了はキャンセルされました",
+    "This session was deleted or is unavailable.": "このセッションは削除されたか、利用できません。",
     "Add context for the Agent": "エージェント向けの補足を追加",
     "Agent Message": "エージェントのメッセージ",
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "注釈付き画像を利用できなくなりました。固定バージョンへのアクセスを復元するか、注釈を削除してから再試行してください。",

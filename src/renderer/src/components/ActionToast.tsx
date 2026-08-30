@@ -8,9 +8,9 @@ import { cn } from '@/lib/utils'
 type ActionToastProps = {
   title: string
   detail?: string
-  actionLabel: string
+  actionLabel?: string
   dismissLabel: string
-  onAction: () => void
+  onAction?: () => void
   onDismiss: () => void
   autoDismissMs?: number
   className?: string
@@ -62,13 +62,15 @@ const ActionToast = ({
           </span>
         ) : null}
       </span>
-      <button
-        type="button"
-        onClick={onAction}
-        className="inline-flex h-7 shrink-0 items-center rounded px-2 text-xs font-medium whitespace-nowrap text-primary hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
-        {actionLabel}
-      </button>
+      {actionLabel && onAction ? (
+        <button
+          type="button"
+          onClick={onAction}
+          className="inline-flex h-7 shrink-0 items-center rounded px-2 text-xs font-medium whitespace-nowrap text-primary hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {actionLabel}
+        </button>
+      ) : null}
       <button
         type="button"
         aria-label={dismissLabel}

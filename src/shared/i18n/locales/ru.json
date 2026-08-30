@@ -59,6 +59,10 @@
     "Import Connector configuration": "Импорт конфигурации коннектора"
   },
   "renderer": {
+    "A conversation changed elsewhere and could not be saved safely.": "Диалог был изменён в другом месте, поэтому его не удалось безопасно сохранить.",
+    "One or more conversations could not be saved.": "Не удалось сохранить один или несколько диалогов.",
+    "Quit was canceled": "Выход отменён",
+    "This session was deleted or is unavailable.": "Эта сессия удалена или недоступна.",
     "Add context for the Agent": "Добавить контекст для Агента",
     "Agent Message": "Сообщение Агента",
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "Аннотированное изображение больше недоступно. Восстановите доступ к зафиксированной версии или удалите аннотацию и повторите попытку.",

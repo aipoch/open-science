@@ -123,7 +123,9 @@ type Harness = {
   trayHandlers: TrayHandlers | undefined
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
-  abortQuitPreparation: () => Promise<void> | void
+  abortQuitPreparation: (
+    reason: import('../shared/session-persistence-flush').SessionPersistenceFlushAbortReason
+  ) => Promise<void> | void
   flushSessionPersistence: (
     timeoutMs?: number
   ) => Promise<RendererSessionPersistenceFlushOutcome | void>
@@ -632,7 +634,7 @@ describe('installAppLifecycle', () => {
 
     expect(flushSessionPersistence).toHaveBeenCalledOnce()
     expect(prepareForQuit).not.toHaveBeenCalled()
-    expect(abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(abortQuitPreparation).toHaveBeenCalledWith('conflict')
     expect(shutdownBackends).not.toHaveBeenCalled()
     expect(tray?.destroy).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()
@@ -658,7 +660,7 @@ describe('installAppLifecycle', () => {
 
     expect(flushSessionPersistence).toHaveBeenCalledOnce()
     expect(prepareForQuit).not.toHaveBeenCalled()
-    expect(abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(abortQuitPreparation).toHaveBeenCalledWith('renderer-failed')
     expect(shutdownBackends).not.toHaveBeenCalled()
     expect(tray?.destroy).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()
@@ -707,7 +709,7 @@ describe('installAppLifecycle', () => {
 
     expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
     expect(prepareForQuit).toHaveBeenCalledOnce()
-    expect(abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(abortQuitPreparation).toHaveBeenCalledWith('conflict')
     expect(shutdownBackends).not.toHaveBeenCalled()
     expect(tray?.destroy).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()
@@ -736,7 +738,7 @@ describe('installAppLifecycle', () => {
 
     expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
     expect(prepareForQuit).toHaveBeenCalledOnce()
-    expect(abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(abortQuitPreparation).toHaveBeenCalledWith('renderer-failed')
     expect(shutdownBackends).not.toHaveBeenCalled()
     expect(tray?.destroy).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()

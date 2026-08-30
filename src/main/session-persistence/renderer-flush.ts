@@ -5,6 +5,8 @@ import {
   SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL,
   SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL,
   SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL,
+  type SessionPersistenceFlushAbortReason,
+  type SessionPersistenceFlushAbortedEvent,
   type SessionPersistenceFlushRequest,
   type SessionPersistenceFlushResponse
 } from '../../shared/session-persistence-flush'
@@ -52,7 +54,7 @@ export const createWebSessionPersistenceFlush = (
 ): Readonly<{
   flush: (targetLifecycleClientId: string) => Promise<RendererSessionPersistenceFlushOutcome>
   acknowledge: (response: SessionPersistenceFlushResponse, lifecycleClientId: string) => void
-  notifyAborted: () => void
+  notifyAborted: (reason?: SessionPersistenceFlushAbortReason) => void
 }> => {
   const responseListeners = new Set<
     (response: SessionPersistenceFlushResponse, lifecycleClientId: string) => void
@@ -86,7 +88,8 @@ export const createWebSessionPersistenceFlush = (
     acknowledge: (response, lifecycleClientId) => {
       for (const listener of responseListeners) listener(response, lifecycleClientId)
     },
-    notifyAborted: () => events.publish(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, undefined)
+    notifyAborted: (reason) =>
+      events.publish(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, reason ? { reason } : undefined)
   })
 }
 
@@ -163,10 +166,17 @@ export const createElectronSessionPersistenceFlush = (
 }
 
 export const notifyRendererSessionPersistenceFlushAborted = (
-  getWindow: () => BrowserWindow | undefined
+  getWindow: () => BrowserWindow | undefined,
+  reason?: SessionPersistenceFlushAbortedEvent['reason']
 ): void => {
   const window = getWindow()
   const webContents = window?.webContents
   if (!window || window.isDestroyed() || !webContents || webContents.isDestroyed()) return
+  if (reason) {
+    webContents.send(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, {
+      reason
+    } satisfies SessionPersistenceFlushAbortedEvent)
+    return
+  }
   webContents.send(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL)
 }

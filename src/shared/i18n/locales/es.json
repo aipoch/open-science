@@ -58,6 +58,10 @@
     "Import Connector configuration": "Importar configuración del conector"
   },
   "renderer": {
+    "A conversation changed elsewhere and could not be saved safely.": "Una conversación cambió en otro lugar y no se pudo guardar de forma segura.",
+    "One or more conversations could not be saved.": "No se pudieron guardar una o más conversaciones.",
+    "Quit was canceled": "Se canceló la salida",
+    "This session was deleted or is unavailable.": "Esta sesión se eliminó o no está disponible.",
     "Architect": "Arquitecto",
     "Archivist": "Archivero",
     "Builder": "Constructor",

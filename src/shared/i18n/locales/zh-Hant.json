@@ -56,6 +56,10 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "A conversation changed elsewhere and could not be saved safely.": "會話已在其他位置變更，無法安全儲存。",
+    "One or more conversations could not be saved.": "一個或多個會話無法儲存。",
+    "Quit was canceled": "已取消結束",
+    "This session was deleted or is unavailable.": "此會話已刪除或無法使用。",
     "Add context for the Agent": "為智能體新增上下文",
     "Agent Message": "智能體訊息",
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "某個已標註的圖片已無法使用。請恢復其固定版本的存取權限，或移除該標註，然後再試一次。",

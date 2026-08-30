@@ -58,6 +58,10 @@
     "Import Connector configuration": "Importer la configuration du connecteur"
   },
   "renderer": {
+    "A conversation changed elsewhere and could not be saved safely.": "Une conversation a été modifiée ailleurs et n’a pas pu être enregistrée en toute sécurité.",
+    "One or more conversations could not be saved.": "Une ou plusieurs conversations n’ont pas pu être enregistrées.",
+    "Quit was canceled": "La fermeture a été annulée",
+    "This session was deleted or is unavailable.": "Cette session a été supprimée ou n’est pas disponible.",
     "Add context for the Agent": "Ajouter du contexte pour l’Agent",
     "Agent Message": "Message de l’Agent",
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "Une image annotée n’est plus disponible. Restaurez l’accès à sa version fixe ou supprimez l’annotation, puis réessayez.",

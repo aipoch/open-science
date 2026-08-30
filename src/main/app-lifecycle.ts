@@ -1,10 +1,8 @@
 import type { App, BrowserWindow, Tray } from 'electron'
 
 import type { ActiveSessionInfo } from '../shared/storage'
-import {
-  rendererSessionPersistenceFlushBlocksShutdown,
-  type RendererSessionPersistenceFlushOutcome
-} from './session-persistence/renderer-flush'
+import type { SessionPersistenceFlushAbortReason } from '../shared/session-persistence-flush'
+import { type RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
 import type { ShutdownStepOutcome } from './lifecycle-shutdown'
 import { flushDiagnosticsWithTimeout } from './diagnostics/flush'
 import { diagnosticErrorFields, type Logger } from './logger'
@@ -59,7 +57,7 @@ export type AppLifecycleDeps = {
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
   // Reopens Main/renderer admission when persistence prevents an orderly quit from committing.
-  abortQuitPreparation: () => Promise<void> | void
+  abortQuitPreparation: (reason: SessionPersistenceFlushAbortReason) => Promise<void> | void
   // Drains renderer runtime events and its ordered Session write queue before the window disappears.
   flushSessionPersistence: (
     timeoutMs?: number
@@ -143,6 +141,10 @@ export const installAppLifecycle = (
     if (outcome === 'renderer-gone') return 'degraded'
     return 'completed'
   }
+  const rendererPersistenceAbortReason = (
+    outcome: RendererSessionPersistenceFlushOutcome
+  ): SessionPersistenceFlushAbortReason | undefined =>
+    outcome === 'conflict' || outcome === 'renderer-failed' ? outcome : undefined
   const shutdownTrigger = (): ApplicationShutdownTrigger => {
     try {
       return deps.shutdownTrigger?.() ?? currentApplicationShutdownTrigger()
@@ -339,7 +341,7 @@ export const installAppLifecycle = (
       let rendererFlushOutcome: RendererSessionPersistenceFlushOutcome
       let rendererFlushResult: ShutdownStepOutcome
       let backendTeardownResult: ShutdownStepOutcome
-      let shutdownAbortedForRendererPersistence = false
+      let shutdownAbortReason: SessionPersistenceFlushAbortReason | undefined
       const flushRendererSessionPersistence = async (
         phase: 'renderer-session-preflight' | 'renderer-session-flush',
         timeoutMs: number
@@ -365,11 +367,9 @@ export const installAppLifecycle = (
         )
         rendererPreflightOutcome = preflight.outcome
         rendererPreflightResult = preflight.result
-        if (
-          ordinaryQuit &&
-          rendererSessionPersistenceFlushBlocksShutdown(rendererPreflightOutcome)
-        ) {
-          shutdownAbortedForRendererPersistence = true
+        const preflightAbortReason = rendererPersistenceAbortReason(rendererPreflightOutcome)
+        if (ordinaryQuit && preflightAbortReason) {
+          shutdownAbortReason = preflightAbortReason
           diagnostics?.complete({
             degraded: true,
             rendererPreflightOutcome,
@@ -402,8 +402,9 @@ export const installAppLifecycle = (
         )
         rendererFlushOutcome = finalFlush.outcome
         rendererFlushResult = finalFlush.result
-        if (ordinaryQuit && rendererSessionPersistenceFlushBlocksShutdown(rendererFlushOutcome)) {
-          shutdownAbortedForRendererPersistence = true
+        const finalAbortReason = rendererPersistenceAbortReason(rendererFlushOutcome)
+        if (ordinaryQuit && finalAbortReason) {
+          shutdownAbortReason = finalAbortReason
           diagnostics?.complete({
             degraded: true,
             rendererPreflightResult,
@@ -449,9 +450,9 @@ export const installAppLifecycle = (
           if (result === 'timeout') deps.log?.warn('final log flush timed out')
         }
       } finally {
-        if (shutdownAbortedForRendererPersistence) {
+        if (shutdownAbortReason) {
           try {
-            await deps.abortQuitPreparation()
+            await deps.abortQuitPreparation(shutdownAbortReason)
           } catch (error) {
             try {
               deps.log?.error('quit preparation rollback failed', diagnosticErrorFields(error))

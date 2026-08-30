@@ -9,6 +9,10 @@ export type SessionPersistenceFlushRequest = {
   targetLifecycleClientId?: string
 }
 export type SessionPersistenceFlushStatus = 'completed' | 'conflict' | 'failed'
+export type SessionPersistenceFlushAbortReason = 'conflict' | 'renderer-failed'
+export type SessionPersistenceFlushAbortedEvent = {
+  reason: SessionPersistenceFlushAbortReason
+}
 export type SessionPersistenceFlushResponse = {
   requestId: string
   status: SessionPersistenceFlushStatus

@@ -187,6 +187,23 @@ describe('createElectronSessionPersistenceFlush', () => {
       webContents
     }
 
+    notifyRendererSessionPersistenceFlushAborted(() => window as never, 'conflict')
+
+    expect(webContents.send).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, {
+      reason: 'conflict'
+    })
+  })
+
+  it('preserves the payload-free durability-abort notification', () => {
+    const webContents = {
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      isDestroyed: vi.fn(() => false),
+      webContents
+    }
+
     notifyRendererSessionPersistenceFlushAborted(() => window as never)
 
     expect(webContents.send).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL)
@@ -342,6 +359,17 @@ describe('createWebSessionPersistenceFlush', () => {
   })
 
   it('notifies Web when a refused handoff must resume renderer activity', () => {
+    const publish = vi.fn()
+    const coordinator = createWebSessionPersistenceFlush({ publish })
+
+    coordinator.notifyAborted('renderer-failed')
+
+    expect(publish).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, {
+      reason: 'renderer-failed'
+    })
+  })
+
+  it('preserves the payload-free Web durability-abort notification', () => {
     const publish = vi.fn()
     const coordinator = createWebSessionPersistenceFlush({ publish })
 

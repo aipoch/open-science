@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { renderHook } from '@testing-library/react'
+import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const { flushPreviewPersistence, flushSessionPersistence, resumeAutoReviewsAfterQuitAbort } =
@@ -35,14 +35,14 @@ afterEach(() => {
 })
 
 describe('completeQuitPersistenceFlush', () => {
-  it('resumes renderer quit preparation when Main aborts shutdown', () => {
-    let notifyAborted = (): void => undefined
+  it('resumes renderer quit preparation and exposes the blocking conflict', () => {
+    let notifyAborted: (event: { reason: 'conflict' }) => void = () => undefined
     const removeAborted = vi.fn()
     const removeRequest = vi.fn()
     vi.stubGlobal('window', {
       api: {
         sessions: {
-          onFlushAborted: (listener: () => void) => {
+          onFlushAborted: (listener: typeof notifyAborted) => {
             notifyAborted = listener
             return removeAborted
           },
@@ -52,13 +52,36 @@ describe('completeQuitPersistenceFlush', () => {
       }
     })
 
-    const { unmount } = renderHook(() => useQuitPersistenceFlush())
-    notifyAborted()
+    const { result, unmount } = renderHook(() => useQuitPersistenceFlush())
+    act(() => notifyAborted({ reason: 'conflict' }))
 
     expect(resumeAutoReviewsAfterQuitAbort).toHaveBeenCalledOnce()
+    expect(result.current).toMatchObject({ notice: { reason: 'conflict' } })
     unmount()
     expect(removeAborted).toHaveBeenCalledOnce()
     expect(removeRequest).toHaveBeenCalledOnce()
+  })
+
+  it('resumes renderer activity without a quit notice for a durability handoff abort', () => {
+    let notifyAborted: (event?: { reason: 'conflict' }) => void = () => undefined
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          onFlushAborted: (listener: typeof notifyAborted) => {
+            notifyAborted = listener
+            return vi.fn()
+          },
+          onFlushRequest: () => vi.fn(),
+          sendFlushResponse: vi.fn()
+        }
+      }
+    })
+
+    const { result } = renderHook(() => useQuitPersistenceFlush())
+    act(() => notifyAborted())
+
+    expect(resumeAutoReviewsAfterQuitAbort).toHaveBeenCalledOnce()
+    expect(result.current.notice).toBeUndefined()
   })
 
   it('flushes Preview persistence before acknowledging quit', async () => {

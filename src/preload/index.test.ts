@@ -62,7 +62,9 @@ type PreloadApi = {
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
-    onFlushAborted: (listener: () => void) => unknown
+    onFlushAborted: (
+      listener: (event?: { reason: 'conflict' | 'renderer-failed' }) => void
+    ) => unknown
     onFlushRequest: (listener: (request: { requestId: string }) => void) => unknown
     sendFlushResponse: (response: { requestId: string }) => void
   }
@@ -1492,9 +1494,9 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
     api.sessions.onFlushAborted(abortedListener)
     expect(onMock).toHaveBeenCalledWith('sessions:flush-aborted', expect.any(Function))
     const wrappedAbortedListener = onMock.mock.calls.at(-1)?.[1] as
-      ((_event: unknown) => void) | undefined
-    wrappedAbortedListener?.({})
-    expect(abortedListener).toHaveBeenCalledOnce()
+      ((_event: unknown, payload: { reason: 'conflict' }) => void) | undefined
+    wrappedAbortedListener?.({}, { reason: 'conflict' })
+    expect(abortedListener).toHaveBeenCalledWith({ reason: 'conflict' })
 
     api.sessions.onFlushRequest(listener)
     expect(onMock).toHaveBeenCalledWith('sessions:flush-request', expect.any(Function))

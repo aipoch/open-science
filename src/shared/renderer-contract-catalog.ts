@@ -240,6 +240,7 @@ import type {
   UpdateSessionArchiveRequest
 } from './session-persistence'
 import type {
+  SessionPersistenceFlushAbortedEvent,
   SessionPersistenceFlushRequest,
   SessionPersistenceFlushResponse
 } from './session-persistence-flush'
@@ -1416,11 +1417,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'sessions',
     ['session:deleted', EVENT]
   ),
-  'sessions.onFlushAborted': callable<(listener: () => void) => RemoveListener>()(
-    'sessions',
-    ['sessions:flush-aborted', EVENT],
-    { optionalMember: true }
-  ),
+  'sessions.onFlushAborted': callable<
+    (listener: AcpListener<SessionPersistenceFlushAbortedEvent | undefined>) => RemoveListener
+  >()('sessions', ['sessions:flush-aborted', EVENT], { optionalMember: true }),
   'sessions.onFlushRequest': callable<
     (listener: AcpListener<SessionPersistenceFlushRequest>) => RemoveListener
   >()('sessions', ['sessions:flush-request', EVENT], { optionalMember: true }),
