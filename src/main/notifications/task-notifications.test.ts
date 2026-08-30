@@ -5,6 +5,11 @@ import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { ComputeApprovalRequest } from '../../shared/compute'
 import type { ConversationSkillImportApprovalRequest } from '../../shared/settings'
 import {
+  englishNativeTranslator,
+  translateNativeMessage,
+  type NativeTranslator
+} from '../locale/main-process-messages'
+import {
   describeConnectorApprovalNotification,
   describePermissionNotification,
   describeTaskNotification,
@@ -268,6 +273,7 @@ const createService = (overrides: {
   inbox?: TaskNotificationServiceDeps['inbox']
   onInboxError?: (error: unknown) => void
   hasNonTerminalComputeJobs?: (sessionId: string) => Promise<boolean>
+  translate?: NativeTranslator
 }): {
   service: TaskNotificationService
   shown: TaskNotificationRequest[]
@@ -281,7 +287,7 @@ const createService = (overrides: {
   const attentionRequests: number[] = []
   const attentionErrors: unknown[] = []
   const inboxErrors: unknown[] = []
-  const service = new TaskNotificationService({
+  const deps: TaskNotificationServiceDeps = {
     isEnabled: overrides.isEnabled ?? (() => Promise.resolve(true)),
     isAppFocused: overrides.isAppFocused ?? (() => false),
     show: overrides.show ?? ((request) => shown.push(request)),
@@ -289,8 +295,10 @@ const createService = (overrides: {
     onAttentionError: overrides.onAttentionError ?? ((error) => attentionErrors.push(error)),
     inbox: overrides.inbox,
     onInboxError: overrides.onInboxError ?? ((error) => inboxErrors.push(error)),
-    hasNonTerminalComputeJobs: overrides.hasNonTerminalComputeJobs
-  })
+    hasNonTerminalComputeJobs: overrides.hasNonTerminalComputeJobs,
+    translate: overrides.translate ?? englishNativeTranslator
+  }
+  const service = new TaskNotificationService(deps)
   service.setAttentionHandlers({
     request: overrides.requestAttention ?? (() => attentionRequests.push(1)),
     clear: overrides.clearAttention ?? (() => undefined)
@@ -306,6 +314,27 @@ const createService = (overrides: {
 }
 
 describe('TaskNotificationService', () => {
+  it('localizes system delivery while keeping the inbox title as a stable English key', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const { service, shown } = createService({
+      inbox,
+      translate: (key, options) => translateNativeMessage('zh-Hans', key, options)
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: '绘制曲线' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(shown[0]).toMatchObject({
+      title: '任务已完成',
+      body: '智能体已完成对"绘制曲线"的回复。'
+    })
+    expect(inbox.record).toHaveBeenCalledWith(expect.objectContaining({ title: 'Task completed' }))
+  })
+
   it('notifies on completion using the tracked prompt as the task name', async () => {
     const { service, shown, attentionRequests } = createService({})
 
@@ -378,6 +407,7 @@ describe('TaskNotificationService', () => {
     const service = new TaskNotificationService({
       isEnabled: async () => false,
       isAppFocused: () => true,
+      translate: englishNativeTranslator,
       show,
       inbox
     })

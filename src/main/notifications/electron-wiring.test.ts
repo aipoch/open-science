@@ -6,6 +6,7 @@ import type {
   ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
+import { englishNativeTranslator } from '../locale/main-process-messages'
 import { TaskNotificationService } from './task-notifications'
 import {
   buildComputeApprovalBroadcast,
@@ -113,6 +114,7 @@ describe('buildTaskNotificationShow', () => {
     const service = new TaskNotificationService({
       isEnabled: () => Promise.resolve(true),
       isAppFocused: () => false,
+      translate: englishNativeTranslator,
       show: buildTaskNotificationShow({
         notificationCtor: FakeNotification as never,
         liveNotifications: notifications as never,

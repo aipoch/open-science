@@ -1441,6 +1441,7 @@ const createApplicationModules = async (
   const taskNotifications = new TaskNotificationService({
     isEnabled: () => settingsService.getNotificationsEnabled(),
     isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+    translate,
     show: buildTaskNotificationShow({
       notificationCtor: Notification,
       liveNotifications,
