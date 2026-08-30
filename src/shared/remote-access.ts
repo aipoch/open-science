@@ -181,6 +181,7 @@ export const remoteAccessApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([])),
     remoteAccessSnapshotResult
   ),
+  probe: defineApplicationCommandContract(validationCodec(z.tuple([])), remoteAccessSnapshotResult),
   disable: defineApplicationCommandContract(
     validationCodec(z.tuple([])),
     remoteAccessSnapshotResult

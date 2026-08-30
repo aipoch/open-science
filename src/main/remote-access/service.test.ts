@@ -43,6 +43,27 @@ const remoteResponse = (): ServerResponse =>
     end: vi.fn().mockReturnThis()
   }) as unknown as ServerResponse
 
+const capturedRemoteResponse = (): {
+  response: ServerResponse
+  header: (name: string) => string | string[] | undefined
+} => {
+  const headers = new Map<string, string | string[]>()
+  const response = {
+    setHeader: (name: string, value: string | string[]) => {
+      headers.set(name.toLowerCase(), value)
+      return response
+    },
+    writeHead: vi.fn().mockReturnThis(),
+    end: vi.fn().mockReturnThis()
+  }
+  return {
+    response: response as unknown as ServerResponse,
+    header: (name) => headers.get(name.toLowerCase())
+  }
+}
+
+const cookiePair = (header: string): string => header.split(';', 1)[0]
+
 const webController = (port = 4180): WebServiceController => ({
   ensureStarted: vi.fn().mockResolvedValue({
     port,
@@ -226,6 +247,63 @@ describe('RemoteAccessService', () => {
       remoteItBrowserServiceId: 'browser-service-1',
       remoteItPublicUrl: 'https://open-science.connect.remote.it/'
     })
+  })
+
+  it('probes Browser access without closing or invalidating a one-time session', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const controller = webController()
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    service.attachWebController(controller)
+    await service.setMode('remoteit-public')
+
+    const host = 'open-science.connect.remote.it'
+    const pairingResponse = capturedRemoteResponse()
+    await service.webAccess.authorizeHttp(
+      remoteRequest(host),
+      pairingResponse.response,
+      new URL(`https://${host}/`)
+    )
+    const pairingCookie = cookiePair(pairingResponse.header('set-cookie') as string)
+    const [pending] = service.snapshot(true).pendingRequests
+    await service.approve({ requestId: pending.id, decision: 'once' })
+
+    const statusResponse = capturedRemoteResponse()
+    await service.webAccess.authorizeHttp(
+      {
+        ...remoteRequest(host),
+        url: '/__open_science_remote/pair/status',
+        headers: { host, cookie: pairingCookie }
+      } as IncomingMessage,
+      statusResponse.response,
+      new URL(`https://${host}/__open_science_remote/pair/status`)
+    )
+    const sessionCookie = cookiePair((statusResponse.header('set-cookie') as string[])[0])
+    const websocketRequest = {
+      ...remoteRequest(host),
+      url: '/api/v1/events',
+      headers: { host, cookie: sessionCookie, origin: `https://${host}` }
+    } as IncomingMessage
+
+    const authorization = await service.webAccess.authorizeWebSocket(
+      websocketRequest,
+      new URL(`https://${host}/api/v1/events`)
+    )
+    expect(authorization?.isCurrent()).toBe(true)
+
+    await service.probe()
+
+    expect(controller.closeExternalConnections).not.toHaveBeenCalled()
+    expect(authorization?.isCurrent()).toBe(true)
+    const repeatedAuthorization = await service.webAccess.authorizeWebSocket(
+      websocketRequest,
+      new URL(`https://${host}/api/v1/events`)
+    )
+    expect(repeatedAuthorization?.isCurrent()).toBe(true)
   })
 
   it('keeps separate service IDs while switching between App and Browser access', async () => {

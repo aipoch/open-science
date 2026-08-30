@@ -101,6 +101,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
   remoteAccess: {
     snapshot: vi.fn(() => remoteSnapshot),
     detect: vi.fn(async () => remoteSnapshot),
+    probe: vi.fn(async () => remoteSnapshot),
     setMode: vi.fn(async () => remoteSnapshot),
     disable: vi.fn(async () => remoteSnapshot),
     approve: vi.fn(async () => remoteSnapshot),
@@ -184,7 +185,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 54 request channels in their existing capability groups', () => {
+  it('defines the exact 55 request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -202,7 +203,7 @@ describe('Host application commands', () => {
       }
     })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(54)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(55)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -218,7 +219,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(54)
+    expect(router.dispatcher.commandNames()).toHaveLength(55)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -303,6 +304,7 @@ describe('Host application commands', () => {
       invocation([{ requestId: 'pair-1', decision: 'once' }])
     )
     await router.dispatcher.invoke(hostApplicationCommands.remoteAccess.detect, invocation([]))
+    await router.dispatcher.invoke(hostApplicationCommands.remoteAccess.probe, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.remoteAccess.disable, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.remoteAccess.getSnapshot, invocation([]))
     await router.dispatcher.invoke(
@@ -391,6 +393,8 @@ describe('Host application commands', () => {
       true,
       true
     )
+    expect(dependencies.remoteAccess.detect).toHaveBeenCalledOnce()
+    expect(dependencies.remoteAccess.probe).toHaveBeenCalledOnce()
     expect(dependencies.remoteAccess.reject).toHaveBeenCalledWith('pair-2', true, true)
     expect(dependencies.remoteAccess.revoke).toHaveBeenCalledWith('browser-1', true, true)
     expect(dependencies.remoteAccess.setMode).toHaveBeenCalledWith('remoteit')
@@ -584,7 +588,14 @@ describe('Host application commands', () => {
         invocation([], currentManager)
       )
     ).rejects.toThrow('This action must be approved from the Open Science desktop app.')
+    await expect(
+      router.dispatcher.invoke(
+        hostApplicationCommands.remoteAccess.probe,
+        invocation([], currentManager)
+      )
+    ).rejects.toThrow('This action must be approved from the Open Science desktop app.')
     expect(dependencies.remoteAccess.detect).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.probe).not.toHaveBeenCalled()
   })
 
   it('rejects malformed Remote Access arguments before entering an owner', async () => {
@@ -594,6 +605,7 @@ describe('Host application commands', () => {
     const cases: Array<readonly [string, readonly unknown[]]> = [
       ['remote-access:approve', [undefined]],
       ['remote-access:detect', [{}]],
+      ['remote-access:probe', [{}]],
       ['remote-access:disable', [{}]],
       ['remote-access:get-snapshot', [{}]],
       ['remote-access:reject', [undefined]],
@@ -609,6 +621,7 @@ describe('Host application commands', () => {
 
     expect(dependencies.remoteAccess.approve).not.toHaveBeenCalled()
     expect(dependencies.remoteAccess.detect).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.probe).not.toHaveBeenCalled()
     expect(dependencies.remoteAccess.disable).not.toHaveBeenCalled()
     expect(dependencies.remoteAccess.snapshot).not.toHaveBeenCalled()
     expect(dependencies.remoteAccess.reject).not.toHaveBeenCalled()

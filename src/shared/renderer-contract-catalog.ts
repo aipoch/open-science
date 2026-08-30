@@ -1287,6 +1287,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'remoteAccess.detect': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
     'remote-access:detect'
   ]),
+  'remoteAccess.probe': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
+    'remote-access:probe'
+  ]),
   'remoteAccess.disable': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
     'remote-access:disable'
   ]),

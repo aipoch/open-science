@@ -309,6 +309,7 @@ describe('application command composition', () => {
     const firstSnapshot = vi.fn(() => snapshot)
     const firstOwner = {
       snapshot: firstSnapshot,
+      probe: vi.fn(),
       detect: vi.fn(),
       setMode: vi.fn(),
       disable: vi.fn(),

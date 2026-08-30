@@ -137,6 +137,7 @@ export const WEB_INVOKE_CHANNELS = {
   'remoteAccess.detect': 'remote-access:detect',
   'remoteAccess.disable': 'remote-access:disable',
   'remoteAccess.getSnapshot': 'remote-access:get-snapshot',
+  'remoteAccess.probe': 'remote-access:probe',
   'remoteAccess.reject': 'remote-access:reject',
   'remoteAccess.revokeBrowser': 'remote-access:revoke-browser',
   'remoteAccess.setMode': 'remote-access:set-mode',

@@ -88,6 +88,7 @@ describe('remote access IPC authorization', () => {
     const service = {
       approve: vi.fn(),
       detect: vi.fn(),
+      probe: vi.fn(),
       disable: vi.fn(),
       snapshot: vi.fn(),
       reject: vi.fn(),
@@ -99,6 +100,7 @@ describe('remote access IPC authorization', () => {
     const cases: Array<readonly [string, unknown]> = [
       ['remote-access:get-snapshot', { unexpected: true }],
       ['remote-access:detect', { unexpected: true }],
+      ['remote-access:probe', { unexpected: true }],
       ['remote-access:disable', { unexpected: true }],
       ['remote-access:approve', undefined],
       ['remote-access:reject', undefined],
@@ -114,6 +116,7 @@ describe('remote access IPC authorization', () => {
 
     expect(service.approve).not.toHaveBeenCalled()
     expect(service.detect).not.toHaveBeenCalled()
+    expect(service.probe).not.toHaveBeenCalled()
     expect(service.disable).not.toHaveBeenCalled()
     expect(service.snapshot).not.toHaveBeenCalled()
     expect(service.reject).not.toHaveBeenCalled()

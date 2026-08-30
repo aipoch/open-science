@@ -234,6 +234,16 @@ const installApi = (): void => {
         pendingRequests: [],
         trustedBrowsers: []
       }),
+      probe: vi.fn().mockResolvedValue({
+        canManage: true,
+        canManagePairing: true,
+        mode: 'off',
+        enabled: false,
+        lifecycle: 'disabled',
+        remoteIt: { installed: false, loggedIn: false, registered: false },
+        pendingRequests: [],
+        trustedBrowsers: []
+      }),
       detect: vi.fn().mockResolvedValue({
         canManage: true,
         canManagePairing: true,
@@ -2044,10 +2054,18 @@ describe('SettingsPage layout', () => {
     expect(modeGrid?.className).toContain('sm:grid-cols-3')
     expect(document.body.textContent).not.toContain('route on exit')
     expect(document.body.textContent).not.toContain('service on exit')
-    expect(
-      (window as unknown as { api: { remoteAccess: { detect: ReturnType<typeof vi.fn> } } }).api
-        .remoteAccess.detect
-    ).toHaveBeenCalledOnce()
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            probe: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    expect(remoteAccess.probe).toHaveBeenCalledOnce()
+    expect(remoteAccess.detect).not.toHaveBeenCalled()
   })
 
   it('exits loading when the initial remote access snapshot fails', async () => {
@@ -2113,13 +2131,13 @@ describe('SettingsPage layout', () => {
     )
   })
 
-  it('does not detect after leaving the Remote panel during the initial snapshot load', async () => {
+  it('does not probe after leaving the Remote panel during the initial snapshot load', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2153,16 +2171,16 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
 
-    expect(remoteAccess.detect).not.toHaveBeenCalled()
+    expect(remoteAccess.probe).not.toHaveBeenCalled()
   })
 
-  it('does not detect after leaving the Remote panel during an initial-load retry', async () => {
+  it('does not probe after leaving the Remote panel during an initial-load retry', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2201,7 +2219,7 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
 
-    expect(remoteAccess.detect).not.toHaveBeenCalled()
+    expect(remoteAccess.probe).not.toHaveBeenCalled()
   })
 
   it('reuses the remote access snapshot when the panel is reopened within 60 seconds', async () => {
@@ -2210,7 +2228,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2226,7 +2244,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(manageableSnapshot)
-    remoteAccess.detect.mockResolvedValue(manageableSnapshot)
+    remoteAccess.probe.mockResolvedValue(manageableSnapshot)
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Remote')?.click())
@@ -2234,7 +2252,7 @@ describe('SettingsPage layout', () => {
     await act(async () => navButton('Remote')?.click())
 
     expect(remoteAccess.getSnapshot).toHaveBeenCalledOnce()
-    expect(remoteAccess.detect).toHaveBeenCalledOnce()
+    expect(remoteAccess.probe).toHaveBeenCalledOnce()
   })
 
   it('invalidates the remote access cache when a pairing request arrives while the panel is closed', async () => {
@@ -2288,13 +2306,13 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).toContain('654321')
   })
 
-  it('does not let an older initial detection overwrite a newer lifecycle snapshot', async () => {
+  it('does not let an older initial probe overwrite a newer lifecycle snapshot', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
             onChanged: ReturnType<typeof vi.fn>
           }
         }
@@ -2317,20 +2335,20 @@ describe('SettingsPage layout', () => {
       lifecycle: 'running',
       remoteIt: { installed: true, loggedIn: true, registered: true }
     }
-    let finishInitialDetection!: (snapshot: typeof initialSnapshot) => void
+    let finishInitialProbe!: (snapshot: typeof initialSnapshot) => void
     remoteAccess.getSnapshot
       .mockResolvedValueOnce(initialSnapshot)
       .mockResolvedValueOnce(eventSnapshot)
-    remoteAccess.detect.mockImplementationOnce(
+    remoteAccess.probe.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          finishInitialDetection = resolve
+          finishInitialProbe = resolve
         })
     )
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Remote')?.click())
-    expect(remoteAccess.detect).toHaveBeenCalledOnce()
+    expect(remoteAccess.probe).toHaveBeenCalledOnce()
 
     const lifecycleListener = remoteAccess.onChanged.mock.calls[0]?.[0] as (() => void) | undefined
     await act(async () => {
@@ -2343,7 +2361,7 @@ describe('SettingsPage layout', () => {
     )
 
     await act(async () => {
-      finishInitialDetection(initialSnapshot)
+      finishInitialProbe(initialSnapshot)
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -2360,6 +2378,7 @@ describe('SettingsPage layout', () => {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
             setMode: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
             detect: ReturnType<typeof vi.fn>
             onChanged: ReturnType<typeof vi.fn>
           }
@@ -2487,7 +2506,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2504,7 +2523,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(staleOffSnapshot)
-    remoteAccess.detect.mockResolvedValue(staleOffSnapshot)
+    remoteAccess.probe.mockResolvedValue(staleOffSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2523,7 +2542,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2540,7 +2559,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(appErrorSnapshot)
-    remoteAccess.detect.mockResolvedValue(appErrorSnapshot)
+    remoteAccess.probe.mockResolvedValue(appErrorSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2583,7 +2602,7 @@ describe('SettingsPage layout', () => {
           api: {
             remoteAccess: {
               getSnapshot: ReturnType<typeof vi.fn>
-              detect: ReturnType<typeof vi.fn>
+              probe: ReturnType<typeof vi.fn>
             }
           }
         }
@@ -2636,7 +2655,7 @@ describe('SettingsPage layout', () => {
       ).toBe(true)
       expect(settingsSection(currentSection)).not.toBeUndefined()
       expect(settingsSection(otherSection)).toBeUndefined()
-      expect(remoteAccess.detect).not.toHaveBeenCalled()
+      expect(remoteAccess.probe).not.toHaveBeenCalled()
     }
   )
 
@@ -2646,7 +2665,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2674,7 +2693,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(remoteItSnapshot)
-    remoteAccess.detect.mockResolvedValue(remoteItSnapshot)
+    remoteAccess.probe.mockResolvedValue(remoteItSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2713,7 +2732,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2740,7 +2759,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(readySnapshot)
-    remoteAccess.detect.mockResolvedValue(readySnapshot)
+    remoteAccess.probe.mockResolvedValue(readySnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2762,7 +2781,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2792,7 +2811,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(publicSnapshot)
-    remoteAccess.detect.mockResolvedValue(publicSnapshot)
+    remoteAccess.probe.mockResolvedValue(publicSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2829,7 +2848,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2852,7 +2871,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(publicSnapshot)
-    remoteAccess.detect.mockResolvedValue(publicSnapshot)
+    remoteAccess.probe.mockResolvedValue(publicSnapshot)
     const writeText = vi.fn().mockRejectedValue(new Error('Clipboard permission denied'))
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
 
@@ -2881,7 +2900,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2903,7 +2922,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(setupSnapshot)
-    remoteAccess.detect.mockResolvedValue(setupSnapshot)
+    remoteAccess.probe.mockResolvedValue(setupSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)

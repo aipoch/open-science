@@ -62,6 +62,7 @@ type PairingManagerOptions = {
   isEnabled: () => boolean
   authorizationGeneration?: () => number
   onChanged: () => void
+  onAuthorizationExpired?: (principalId: string) => void
   now?: () => number
 }
 
@@ -478,6 +479,7 @@ export class RemoteSessionPairingManager {
     url: URL
   ): ReturnType<ExternalWebAccess['authorizeWebSocket']> {
     const authorizationGeneration = this.options.authorizationGeneration?.() ?? 0
+    const pairingAuthorizationGeneration = this.authorizationGeneration
     if (
       !['/events', '/api/v1/events'].includes(url.pathname) ||
       !this.isExpectedRemoteRequest(request, true)
@@ -487,11 +489,37 @@ export class RemoteSessionPairingManager {
     const sessionAccess = await this.getSessionAccess(request)
     if (
       authorizationGeneration !== (this.options.authorizationGeneration?.() ?? 0) ||
+      pairingAuthorizationGeneration !== this.authorizationGeneration ||
       !this.isExpectedRemoteRequest(request, true)
     ) {
       return undefined
     }
-    return sessionAccess ? { sessionId: sessionAccess.sessionId } : undefined
+    return sessionAccess
+      ? {
+          principalId: sessionAccess.sessionId,
+          isCurrent: () =>
+            authorizationGeneration === (this.options.authorizationGeneration?.() ?? 0) &&
+            pairingAuthorizationGeneration === this.authorizationGeneration &&
+            this.isExpectedRemoteRequest(request, true) &&
+            this.isSessionAccessCurrent(sessionAccess)
+        }
+      : undefined
+  }
+
+  private isSessionAccessCurrent(access: Exclude<RemoteSessionAccess, undefined>): boolean {
+    const now = this.now()
+    if (access.kind === 'once') {
+      const session = this.oneTimeSessions.get(access.sessionId)
+      return Boolean(session && session.expiresAt > now)
+    }
+    if (
+      this.pendingRevocations.has(access.sessionId) ||
+      this.unclaimedTrustedBrowserCleanup.has(access.sessionId)
+    ) {
+      return false
+    }
+    const browser = this.stored.trustedBrowsers.find(({ id }) => id === access.sessionId)
+    return Boolean(browser && browser.expiresAt > now)
   }
 
   private ensurePending(
@@ -692,23 +720,35 @@ export class RemoteSessionPairingManager {
   private pruneExpired(): void {
     const now = this.now()
     let pendingViewsChanged = false
+    const expiredPrincipalIds = new Set<string>()
     for (const [id, request] of this.pending) {
       if (request.expiresAt > now) continue
       if (request.status === 'pending' || request.status === 'approving') {
         pendingViewsChanged = true
       }
       if (request.grant?.decision === 'always') {
+        expiredPrincipalIds.add(request.grant.sessionId)
         this.unclaimedTrustedBrowserCleanup.add(request.grant.sessionId)
       } else if (request.grant?.decision === 'once') {
+        expiredPrincipalIds.add(request.grant.sessionId)
         this.oneTimeSessions.delete(request.grant.sessionId)
       }
       this.pending.delete(id)
     }
     for (const [id, session] of this.oneTimeSessions) {
-      if (session.expiresAt <= now) this.oneTimeSessions.delete(id)
+      if (session.expiresAt <= now) {
+        this.oneTimeSessions.delete(id)
+        expiredPrincipalIds.add(id)
+      }
     }
     for (const browser of this.stored.trustedBrowsers) {
-      if (browser.expiresAt <= now) this.unclaimedTrustedBrowserCleanup.add(browser.id)
+      if (browser.expiresAt <= now && !this.unclaimedTrustedBrowserCleanup.has(browser.id)) {
+        this.unclaimedTrustedBrowserCleanup.add(browser.id)
+        expiredPrincipalIds.add(browser.id)
+      }
+    }
+    for (const principalId of expiredPrincipalIds) {
+      this.options.onAuthorizationExpired?.(principalId)
     }
     this.scheduleUnclaimedTrustedBrowserCleanup()
     this.scheduleExpirationTimer()

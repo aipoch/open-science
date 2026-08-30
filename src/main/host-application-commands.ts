@@ -194,6 +194,10 @@ const remoteAccessCommands = Object.freeze({
     'remote-access:detect',
     remoteAccessApplicationCommandContracts.detect
   ),
+  probe: defineApplicationCommand<'remote-access:probe', readonly [], RemoteAccessSnapshot>(
+    'remote-access:probe',
+    remoteAccessApplicationCommandContracts.probe
+  ),
   disable: defineApplicationCommand<'remote-access:disable', readonly [], RemoteAccessSnapshot>(
     'remote-access:disable',
     remoteAccessApplicationCommandContracts.disable
@@ -378,7 +382,7 @@ type HostApplicationCommandDependencies = Readonly<{
   }>
   remoteAccess: Pick<
     RemoteAccessService,
-    'snapshot' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
+    'snapshot' | 'probe' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
   >
   reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
@@ -522,6 +526,10 @@ const registerHostApplicationCommands = (
       'remote-access:detect': ({ callerContext }) => {
         requireDesktopCaller(callerContext)
         return dependencies.remoteAccess.detect()
+      },
+      'remote-access:probe': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.remoteAccess.probe()
       },
       'remote-access:disable': ({ callerContext }) => {
         requireDesktopCaller(callerContext)

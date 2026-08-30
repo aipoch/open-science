@@ -272,7 +272,8 @@ export type ExternalWebAccessAuthorization = {
 export type ExternalWebAccessDecision = ExternalWebAccessAuthorization | 'handled' | 'denied'
 
 export type ExternalWebSocketAccess = {
-  sessionId?: string
+  principalId: string
+  isCurrent: () => boolean
 }
 
 // Optional authentication boundary for a loopback reverse proxy. The normal localhost token path
@@ -910,7 +911,7 @@ const serveStatic = async (
 
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
   const sockets = new Set<WebSocket>()
-  const externalSockets = new Map<WebSocket, string | undefined>()
+  const externalSockets = new Map<WebSocket, ExternalWebSocketAccess>()
   const publicEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
   const internalEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
   const livenessSockets = new Set<WebSocket>()
@@ -930,6 +931,21 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     commandClient.releaseClient('web', clientId)
   })
   const wsServer = new WebSocketServer({ noServer: true })
+
+  const isWebSocketAuthorizationCurrent = (socket: WebSocket): boolean => {
+    const authorization = externalSockets.get(socket)
+    if (!authorization) return true
+    try {
+      if (authorization.isCurrent()) return true
+    } catch {
+      // A failed runtime authorization check is stale by default.
+    }
+    socket.close(1008, 'Remote access expired')
+    return false
+  }
+
+  const sendCurrentWebSocketMessage = (socket: WebSocket, message: string): boolean =>
+    isWebSocketAuthorizationCurrent(socket) && sendWebSocketMessage(socket, message)
 
   const handleRequest = async (
     request: IncomingMessage,
@@ -1186,7 +1202,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         }
         wsServer.handleUpgrade(request, socket, head, (webSocket) => {
           if (externalAuthorization) {
-            externalSockets.set(webSocket, externalAuthorization.sessionId)
+            externalSockets.set(webSocket, externalAuthorization)
           }
           wsServer.emit('connection', webSocket, request)
         })
@@ -1230,7 +1246,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                 after: afterValue === null ? Number.NaN : Number(afterValue)
               })
         for (const message of messages) {
-          if (!sendWebSocketMessage(socket, message)) break
+          if (!sendCurrentWebSocketMessage(socket, message)) break
         }
       }
     } else {
@@ -1248,7 +1264,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         const afterValue = url.searchParams.get('after')
         const after = afterValue === null ? Number.NaN : Number(afterValue)
         for (const message of internalEventStream.resume({ streamId, after })) {
-          if (!sendWebSocketMessage(socket, message)) break
+          if (!sendCurrentWebSocketMessage(socket, message)) break
         }
       }
     }
@@ -1269,19 +1285,19 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     for (const socket of sockets) {
       if (publicEventSockets.has(socket)) {
         for (const publicMessage of publicMessages) {
-          if (!sendWebSocketMessage(socket, publicMessage)) break
+          if (!sendCurrentWebSocketMessage(socket, publicMessage)) break
         }
       } else if (internalEventSockets.get(socket) === 'replay') {
-        if (replayInternalMessage) sendWebSocketMessage(socket, replayInternalMessage)
+        if (replayInternalMessage) sendCurrentWebSocketMessage(socket, replayInternalMessage)
       } else if (legacyInternalMessage) {
-        sendWebSocketMessage(socket, legacyInternalMessage)
+        sendCurrentWebSocketMessage(socket, legacyInternalMessage)
       }
     }
   })
   const removeTaskProgressSink = options.tasks?.subscribeProgress((event) => {
     const message = publicTaskEventStream.publish(projectPublicTaskProgressEvent(event))
     for (const socket of publicEventSockets.keys()) {
-      sendWebSocketMessage(socket, message)
+      sendCurrentWebSocketMessage(socket, message)
     }
   })
 
@@ -1315,22 +1331,25 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     const internalHeartbeat = internalEventStream.heartbeat()
     for (const socket of livenessSockets) {
       if (socket.readyState !== WebSocket.OPEN) continue
+      if (!isWebSocketAuthorizationCurrent(socket)) continue
       if (awaitingPong.has(socket)) {
         socket.terminate()
         continue
       }
       awaitingPong.add(socket)
       socket.ping()
-      if (publicEventSockets.has(socket)) sendWebSocketMessage(socket, publicHeartbeat)
-      else if (internalEventSockets.has(socket)) sendWebSocketMessage(socket, internalHeartbeat)
+      if (publicEventSockets.has(socket)) sendCurrentWebSocketMessage(socket, publicHeartbeat)
+      else if (internalEventSockets.has(socket)) {
+        sendCurrentWebSocketMessage(socket, internalHeartbeat)
+      }
     }
   }, options.eventHeartbeatIntervalMs ?? DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS)
 
   return {
     port,
-    closeExternalConnections: (sessionId) => {
-      for (const [socket, externalSessionId] of externalSockets) {
-        if (sessionId === undefined || externalSessionId === sessionId) {
+    closeExternalConnections: (principalId) => {
+      for (const [socket, authorization] of externalSockets) {
+        if (principalId === undefined || authorization.principalId === principalId) {
           socket.close(1008, 'Remote access revoked')
         }
       }

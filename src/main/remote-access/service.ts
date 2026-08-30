@@ -123,7 +123,9 @@ export class RemoteAccessService {
       isAllowedRemoteHost: (hostname) => context.service?.isAllowedRemoteHost(hostname) === true,
       isEnabled: () => context.service?.runtimeEnabled === true,
       authorizationGeneration: () => context.service?.authorizationGeneration ?? 0,
-      onChanged: () => context.service?.notifyChanged()
+      onChanged: () => context.service?.notifyChanged(),
+      onAuthorizationExpired: (principalId) =>
+        context.service?.webController?.closeExternalConnections(principalId)
     }
     let configurationError: Error | undefined
     let loadFailure: unknown
@@ -204,6 +206,21 @@ export class RemoteAccessService {
 
   detect(): Promise<RemoteAccessSnapshot> {
     return this.serialize(() => this.detectSerialized())
+  }
+
+  probe(): Promise<RemoteAccessSnapshot> {
+    return this.serialize(async () => {
+      if (this.shutdownStarted || this.configurationError) return this.snapshot(true)
+      try {
+        const remoteIt = await this.deps.detectRemoteIt(this.preferredServiceId())
+        return { ...this.snapshot(true), remoteIt }
+      } catch (error) {
+        return {
+          ...this.snapshot(true),
+          remoteIt: { ...this.remoteIt, error: toErrorMessage(error) }
+        }
+      }
+    })
   }
 
   private async detectSerialized(): Promise<RemoteAccessSnapshot> {

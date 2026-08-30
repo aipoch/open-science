@@ -37,6 +37,11 @@ export const registerRemoteAccessIpcHandlers = (service: RemoteAccessService): v
     requireDesktopCaller(callerContextForEvent(event))
     return service.detect()
   })
+  ipcMainHandle('remote-access:probe', async (event, ...args) => {
+    remoteAccessApplicationCommandContracts.probe.args.parse(args)
+    requireDesktopCaller(callerContextForEvent(event))
+    return service.probe()
+  })
   ipcMainHandle('remote-access:set-mode', async (event, ...args) => {
     const [request] = remoteAccessApplicationCommandContracts.setMode.args.parse(args)
     requireDesktopCaller(callerContextForEvent(event))
