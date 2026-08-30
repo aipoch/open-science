@@ -48,6 +48,8 @@ export const localizeConnectorError = (message: string, t: TFunction): string =>
       return t(
         'Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.'
       )
+    case 'args appears to contain a credential.':
+      return t('args appears to contain a credential.')
     default:
       return message
   }

@@ -3268,6 +3268,7 @@
     "The saved credential is unavailable on this device.": "保存済みの認証情報はこのデバイスでは利用できません。",
     "Secure credential storage is unavailable. Unlock the system keychain and retry.": "安全な認証情報ストレージを利用できません。システムキーチェーンのロックを解除して、もう一度お試しください。",
     "Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.": "引数や URL に認証情報を含めることはできません。代わりに暗号化された環境変数またはヘッダーフィールドを使用してください。",
+    "args appears to contain a credential.": "args に認証情報が含まれている可能性があります。",
     "Credentials unavailable": "認証情報を利用できません",
     "Authentication failed. Verify the username and password.": "認証に失敗しました。ユーザー名とパスワードを確認してください。",
     "The SSH host key is unknown. Verify it in a terminal before connecting.": "SSH ホスト鍵が不明です。接続する前にターミナルで確認してください。",

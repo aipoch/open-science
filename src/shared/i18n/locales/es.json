@@ -3534,6 +3534,7 @@
     "The saved credential is unavailable on this device.": "La credencial guardada no está disponible en este dispositivo.",
     "Secure credential storage is unavailable. Unlock the system keychain and retry.": "El almacenamiento seguro de credenciales no está disponible. Desbloquee el llavero del sistema y vuelva a intentarlo.",
     "Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.": "No se permiten credenciales en argumentos ni URL. Use en su lugar campos de entorno o encabezado cifrados.",
+    "args appears to contain a credential.": "Parece que args contiene una credencial.",
     "Credentials unavailable": "Credenciales no disponibles",
     "Authentication failed. Verify the username and password.": "Error de autenticación. Verifique el nombre de usuario y la contraseña.",
     "The SSH host key is unknown. Verify it in a terminal before connecting.": "Se desconoce la clave del host SSH. Verifíquela en una terminal antes de conectarse.",

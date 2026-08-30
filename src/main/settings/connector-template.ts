@@ -94,8 +94,8 @@ const JWT = /(?:^|[=:\s])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|\
 const SECRET_FLAG =
   /^--?(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?(?:key|token)|auth(?:entication)?[-_]?(?:key|token)|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|refresh[-_]?token|secret(?:[-_]?access[-_]?key)?|security[-_]?token|session[-_]?token|tokens?|user)(?:[-_]?(?:file|path))?(?:=|:|$)/i
 const CREDENTIAL_USER_FLAG = /^-[uU](?:$|[=:]|[^-]*:)/
-const CREDENTIAL_HEADER =
-  /^(?:authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token|x-access-token)\s*:\s*\S/i
+const CREDENTIAL_HEADER_NAME =
+  /(?:^|[-_])(?:auth(?:entication|orization)?|bearer|cookie|credentials?|passphrase|passwd|password|pat|secret|signature|token|(?:access|api|client|private|refresh|security|session)[-_]?(?:key|secret|token))(?:$|[-_])/i
 const SAFE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SAFE_HEADER_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
 const CONNECTOR_TEMPLATE_DIGEST_CACHE_LIMIT = 64
@@ -131,12 +131,22 @@ const headerArgumentValue = (argument: string): string => {
   return shortOption ? shortOption[1].trim() : trimmed
 }
 
+const headerArgumentContainsCredential = (argument: string): boolean => {
+  const value = headerArgumentValue(argument)
+  const separator = value.indexOf(':')
+  return (
+    separator > 0 &&
+    CREDENTIAL_HEADER_NAME.test(value.slice(0, separator).trim()) &&
+    /\S/.test(value.slice(separator + 1))
+  )
+}
+
 const argumentContainsCredential = (argument: string): boolean =>
   JWT.test(argument) ||
   /^Bearer\s+/i.test(argument) ||
   SECRET_FLAG.test(argument) ||
   CREDENTIAL_USER_FLAG.test(argument) ||
-  CREDENTIAL_HEADER.test(headerArgumentValue(argument)) ||
+  headerArgumentContainsCredential(argument) ||
   argumentUrlContainsCredential(argument)
 
 const argumentsContainCredential = (args: readonly string[]): boolean =>

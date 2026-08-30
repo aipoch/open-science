@@ -211,6 +211,7 @@ describe('Connector configuration templates', () => {
     [{ headers: { Authorization: 'Bearer secret' } }, 'Unknown field "headers"'],
     [{ args: ['--api-key=secret'] }, 'appears to contain a credential'],
     [{ args: ['--header', 'Authorization: Bearer secret'] }, 'appears to contain a credential'],
+    [{ args: ['--header', 'X-API-Token: secret'] }, 'appears to contain a credential'],
     [
       { args: ['--header', 'Authorization:', 'Bearer', 'secret'] },
       'appears to contain a credential'
@@ -267,6 +268,27 @@ describe('Connector configuration templates', () => {
       })
     )
     expect(ordinary.ready).toBe(true)
+  })
+
+  it('accepts ordinary custom header arguments', () => {
+    const preview = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'ordinary-header',
+        display_name: 'Ordinary Header',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args: [
+          '--header',
+          'X-Request-ID: request-123',
+          '--header',
+          'Idempotency-Key: operation-123'
+        ]
+      })
+    )
+
+    expect(preview.ready).toBe(true)
   })
 
   it('accepts local paths with portability warnings', () => {
@@ -419,6 +441,7 @@ describe('Connector configuration templates', () => {
 
   it.each([
     ['split header credentials', ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']],
+    ['custom token header credentials', ['--header', 'X-API-Token:', 'plaintext-secret']],
     ['curl-style user credentials', ['--user', 'researcher:plaintext-secret']]
   ])('withholds both export formats for historical %s', (_description, args) => {
     const result = buildConnectorTemplateExport({

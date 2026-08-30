@@ -425,6 +425,7 @@
     "The saved credential is unavailable on this device.": "保存的凭据在此设备上不可用。",
     "Secure credential storage is unavailable. Unlock the system keychain and retry.": "安全凭据存储不可用。请解锁系统密钥环后重试。",
     "Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.": "参数或 URL 中不允许包含凭据。请改用加密的环境变量或请求头字段。",
+    "args appears to contain a credential.": "args 似乎包含凭据。",
     "Credentials unavailable": "凭据不可用",
     "Authentication failed. Verify the username and password.": "认证失败。请确认用户名和密码。",
     "The SSH host key is unknown. Verify it in a terminal before connecting.": "SSH 主机密钥未知。请先在终端中验证，再进行连接。",

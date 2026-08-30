@@ -1009,6 +1009,19 @@ describe('ConnectorSettingsModule', () => {
     expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
   })
 
+  it('rejects a credential-bearing custom header argument when adding a custom server', async () => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-custom-header-argument',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args: ['--header', 'X-API-Token: plaintext-secret']
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
   it('rejects a credential-bearing header argument after renderer whitespace tokenization', async () => {
     await expect(
       addCustomServer({
