@@ -55,6 +55,7 @@ const parseEnv = (raw: string): ParsedNamedValues => {
   const env: Record<string, string> = {}
   const invalidLines: number[] = []
   const duplicateLines: ParsedNamedValues['duplicateLines'] = []
+  const environmentNames = new Set<string>()
   for (const [index, line] of raw.split('\n').entries()) {
     const trimmed = line.trim()
     if (!trimmed) continue
@@ -64,7 +65,9 @@ const parseEnv = (raw: string): ParsedNamedValues => {
       continue
     }
     const name = trimmed.slice(0, eq).trim()
-    if (Object.hasOwn(env, name)) duplicateLines.push({ line: index + 1, name })
+    const normalizedName = name.toLowerCase()
+    if (environmentNames.has(normalizedName)) duplicateLines.push({ line: index + 1, name })
+    else environmentNames.add(normalizedName)
     env[name] = trimmed.slice(eq + 1).trim()
   }
   return { values: env, invalidLines, duplicateLines }

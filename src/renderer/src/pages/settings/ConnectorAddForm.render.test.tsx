@@ -908,6 +908,20 @@ describe('ConnectorAddForm (edit)', () => {
     expect(addButton()?.disabled).toBe(true)
   })
 
+  it('reports environment names that collide case-insensitively on Windows', () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'API_TOKEN=first\napi_token=second')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: api_token is duplicated.')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
   it('reports duplicate header names instead of overwriting them', () => {
     act(() => {
       root.render(
