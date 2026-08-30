@@ -7122,6 +7122,8 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
     await rename(original, canonical)
     await symlink(canonical, original)
 
+    await service.migrateAgentHomeSkillIdentities()
+
     expect(await service.listAgentHomeSkills()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -7165,6 +7167,11 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
     await rm(join(userClaudeDir, 'skills'), { recursive: true })
     await symlink(join(userAgentsDir, 'skills'), join(userClaudeDir, 'skills'))
 
+    // Startup migration must include inactive framework roots. The old identity is Claude-owned,
+    // while the selected framework exposes only the shared Agent Home root.
+    await repository.setAgentFramework('opencode')
+    await service.migrateAgentHomeSkillIdentities()
+
     expect(await service.listAgentHomeSkills()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -7175,8 +7182,37 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
       ])
     )
 
-    await repository.setAgentFramework('opencode')
-    expect(await service.listAgentHomeSkills()).toEqual(
+    await expect(
+      readFile(join(storageRoot, 'skills', 'imported', 'real-skill', '.source.json'), 'utf8').then(
+        JSON.parse
+      )
+    ).resolves.toMatchObject({ agentHome: { source: 'agents', slug: 'real-skill' } })
+  })
+
+  it('does not rewrite imported metadata while listing Agent Home Skills', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-symlink-root-alias-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-symlink-root-shared-'))
+    const original = await seedSkill(userClaudeDir, 'real-skill')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    expect(
+      (
+        await service.importAgentHomeSkills({
+          skills: [{ source: 'claude', slug: 'real-skill' }]
+        })
+      ).results[0]
+    ).toMatchObject({ status: 'imported', id: 'imported-real-skill' })
+
+    const importedSource = join(storageRoot, 'skills', 'imported', 'real-skill', '.source.json')
+    const metadataBeforeList = await readFile(importedSource, 'utf8')
+    const sharedSkill = join(userAgentsDir, 'skills', 'real-skill')
+    await mkdir(join(userAgentsDir, 'skills'), { recursive: true })
+    await rename(original, sharedSkill)
+    await rm(join(userClaudeDir, 'skills'), { recursive: true })
+    await symlink(join(userAgentsDir, 'skills'), join(userClaudeDir, 'skills'))
+
+    await expect(service.listAgentHomeSkills()).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           source: 'agents',
@@ -7185,6 +7221,20 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
         })
       ])
     )
+
+    await expect(readFile(importedSource, 'utf8')).resolves.toBe(metadataBeforeList)
+  })
+
+  it('keeps startup available when Agent Home identity migration cannot scan its roots', async () => {
+    const invalidHome = join(storageRoot, 'agent-home-file')
+    await writeFile(invalidHome, 'not a directory')
+    const service = createService(undefined, {
+      userAgentsDir: invalidHome,
+      userClaudeDir: invalidHome,
+      userCodexDir: invalidHome
+    })
+
+    await expect(service.migrateAgentHomeSkillIdentities()).resolves.toBeUndefined()
   })
 })
 

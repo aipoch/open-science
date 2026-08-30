@@ -2275,6 +2275,7 @@
     "This PDF couldn't be rendered for preview": "この PDF はプレビュー用にレンダリングできませんでした",
     "This Plan is still pending, but its original Agent interaction has ended. Send a normal message to let the Agent decide how to continue.": "このプランはまだ保留中ですが、当初のエージェントインタラクションは終了しました。通常のメッセージを送信して、エージェントに続行方法を決定させます。",
     "This plan is shown as a saved snapshot. Step progress is unavailable for archived sessions.": "このプランは、保存されたスナップショットとして表示されます。ステップの進行状況は、アーカイブされたセッションでは利用できません。",
+    "This Skill is no longer available.": "このスキルは利用できなくなりました。",
     "This Skill is protected and cannot be deleted.": "このスキルは保護されているため、削除できません。",
     "This Specialist can no longer be resolved by name — it was renamed or removed since the request started. Approving will be rejected.": "このスペシャリストは名前で解決できなくなりました。リクエストの開始後に名前が変更または削除されました。承認は拒否されます。",
     "This Specialist is disabled. Approving will be rejected.": "このスペシャリストは無効になっています。承認は拒否されます。",

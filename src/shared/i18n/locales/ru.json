@@ -2399,6 +2399,7 @@
     "This PDF couldn't be rendered for preview": "Этот PDF не может быть отображен для предпросмотра",
     "This Plan is still pending, but its original Agent interaction has ended. Send a normal message to let the Agent decide how to continue.": "Этот план ещё ожидается, но взаимодействие с агентом было завершено. Отправьте обычное сообщение, чтобы агент определил, как продолжить.",
     "This plan is shown as a saved snapshot. Step progress is unavailable for archived sessions.": "Этот план отображается как сохранённый снимок. Ход выполнения шагов недоступен для архивных сессий.",
+    "This Skill is no longer available.": "Этот навык больше недоступен.",
     "This Skill is protected and cannot be deleted.": "Этот навык защищён и не может быть удалён.",
     "This Specialist can no longer be resolved by name — it was renamed or removed since the request started. Approving will be rejected.": "Этот специалист больше не может быть найден по имени — он был переименован или удалён с момента начала запроса. Подтверждение будет отклонено.",
     "This Specialist is disabled. Approving will be rejected.": "Этот специалист отключён. Подтверждение будет отклонено.",

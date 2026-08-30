@@ -2349,6 +2349,7 @@
     "This PDF couldn't be rendered for preview": "无法渲染此 PDF 以进行预览",
     "This Plan is still pending, but its original Agent interaction has ended. Send a normal message to let the Agent decide how to continue.": "该计划仍处于待处理状态，但其原始智能体交互已结束。发送一条普通消息，让智能体决定如何继续。",
     "This plan is shown as a saved snapshot. Step progress is unavailable for archived sessions.": "此计划以已保存快照的形式展示。已归档会话的步骤进度不可用。",
+    "This Skill is no longer available.": "此技能已不可用。",
     "This Skill is protected and cannot be deleted.": "此技能受保护，无法删除。",
     "This Specialist can no longer be resolved by name — it was renamed or removed since the request started. Approving will be rejected.": "已无法再按名称解析该专家 — 自请求开始以来它已被重命名或移除。批准将被拒绝。",
     "This Specialist is disabled. Approving will be rejected.": "该专家已停用。批准将被拒绝。",

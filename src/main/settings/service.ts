@@ -708,6 +708,10 @@ class SettingsService {
     return this.skills.listAgentHomeSkills()
   }
 
+  async migrateAgentHomeSkillIdentities(): Promise<void> {
+    await this.skills.migrateAgentHomeSkillIdentities()
+  }
+
   async previewAgentHomeSkill(
     request: PreviewAgentHomeSkillRequest
   ): Promise<SkillImportPreviewContent> {

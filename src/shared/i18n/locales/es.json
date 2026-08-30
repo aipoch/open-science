@@ -2382,6 +2382,7 @@
     "This Plan is still pending, but its original Agent interaction has ended. Send a normal message to let the Agent decide how to continue.": "Este plan sigue pendiente, pero la interacción original con el agente ha terminado. Envíe un mensaje normal para que el agente decida cómo continuar.",
     "This plan is shown as a saved snapshot. Step progress is unavailable for archived sessions.": "Este plan se muestra como una instantánea guardada. El progreso del paso no está disponible para sesiones archivadas.",
     "This message snapshot was created by a newer version of Open Science. Update the app to view it.": "Esta instantánea del mensaje fue creada por una versión más reciente de Open Science. Actualice la aplicación para verla.",
+    "This Skill is no longer available.": "Esta habilidad ya no está disponible.",
     "This Skill is protected and cannot be deleted.": "Esta habilidad está protegida y no se puede eliminar.",
     "This Specialist can no longer be resolved by name — it was renamed or removed since the request started. Approving will be rejected.": "Este especialista ya no se puede resolver por su nombre; se le cambió el nombre o se lo eliminó desde que comenzó la solicitud. Si lo aprueba, la solicitud será rechazada.",
     "This Specialist is disabled. Approving will be rejected.": "Este especialista está deshabilitado. Si lo aprueba, la solicitud será rechazada.",

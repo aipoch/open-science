@@ -500,6 +500,8 @@ const createApplicationModules = async (
     }
   }
   const storedSettings = await settingsService.getStoredSettings()
+  await settingsService.migrateAgentHomeSkillIdentities()
+  composition.phase('agent-home-skill-identity-migration')
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
   // Prime the data-root cache from settings before any data repository is constructed below. A change

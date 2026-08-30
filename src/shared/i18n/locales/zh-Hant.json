@@ -2346,6 +2346,7 @@
     "This PDF couldn't be rendered for preview": "無法算繪此 PDF 以進行預覽",
     "This Plan is still pending, but its original Agent interaction has ended. Send a normal message to let the Agent decide how to continue.": "該計畫仍處於待處理狀態，但其原始智能體互動已結束。傳送一則普通訊息，讓智能體決定如何繼續。",
     "This plan is shown as a saved snapshot. Step progress is unavailable for archived sessions.": "此計畫以已儲存快照的形式呈現。已封存會話的步驟進度無法使用。",
+    "This Skill is no longer available.": "此技能已無法使用。",
     "This Skill is protected and cannot be deleted.": "此技能受保護，無法刪除。",
     "This Specialist can no longer be resolved by name — it was renamed or removed since the request started. Approving will be rejected.": "已無法再按名稱解析該專家 — 自請求開始以來它已被重新命名或移除。核准將被拒絕。",
     "This Specialist is disabled. Approving will be rejected.": "該專家已停用。核准將被拒絕。",

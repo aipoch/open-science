@@ -298,7 +298,11 @@ const SkillsPanel = ({
           className="px-5 pt-5"
           onOpenTag={onOpenTag}
         />
-        <SkillEditLoader skillId={view.id} onDone={() => onNavigate({ kind: 'list' })} />
+        <SkillEditLoader
+          key={view.id}
+          skillId={view.id}
+          onDone={() => onNavigate({ kind: 'list' })}
+        />
       </div>
     )
   }

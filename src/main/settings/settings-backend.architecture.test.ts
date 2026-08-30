@@ -479,7 +479,7 @@ describe('Settings backend ownership architecture', () => {
         isNpmAvailable listAgentHomeSkills listConnectors listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
         loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
-        markPathsNormalized previewAgentHomeSkill previewCustomServerTemplateExport
+        markPathsNormalized migrateAgentHomeSkillIdentities previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
         provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog removeCustomServer removeGitHubToken
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
@@ -751,6 +751,7 @@ describe('Settings backend ownership architecture', () => {
       /registerIpcHandlers\(\{\s+mainEntryPath,\s+settingsStore,\s+translate,/u
     )
     expect(mainIpc).toContain('settingsStore ?? resolveStorageRoot()')
+    expect(mainIpc).toContain('await settingsService.migrateAgentHomeSkillIdentities()')
     expect(mainIpc).toContain(
       'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
     )
