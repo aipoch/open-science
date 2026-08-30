@@ -1690,11 +1690,14 @@ describe('App startup routing', () => {
     }
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true
+    mocks.sessionPersistence.loadError = 'selected conversation unavailable'
 
     await render()
     act(() => notifyFlushAborted({ reason: 'renderer-failed' }))
 
-    const alert = container.querySelector('[data-testid="session-persistence-alert"]')
+    const alert = Array.from(
+      container.querySelectorAll('[data-testid="session-persistence-alert"]')
+    ).find((candidate) => candidate.textContent?.includes('Quit was canceled'))
     expect(alert?.textContent).toContain('Quit was canceled')
     expect(alert?.closest('[inert]')).toBeNull()
     expect(alert?.closest('[aria-hidden="true"]')).toBeNull()

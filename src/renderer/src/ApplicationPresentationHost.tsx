@@ -237,9 +237,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           />
         ) : null}
       </div>
-      {sessions.catalogRecovery.kind === 'ready' && sessions.loadError
-        ? null
-        : quitPersistenceAlert}
+      {quitPersistenceAlert}
       <WebEventRecoveryDialog
         active={activePresentation === 'webEventRecovery'}
         phase={events.webEventConnectionPhase}
