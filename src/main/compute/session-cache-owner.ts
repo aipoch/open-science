@@ -256,6 +256,7 @@ export class SessionCacheOwner {
     operationId?: string
   ): Promise<boolean> {
     const directories: [string, string][] = [
+      [this.storageRoot, 'data root'],
       [this.computeRoot, 'Compute'],
       [this.root, 'root']
     ]

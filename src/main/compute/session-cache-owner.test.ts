@@ -97,6 +97,7 @@ describe('SessionCacheOwner', () => {
   )
 
   it.each([
+    ['Project deletion through a symlinked data root', 'data-root', 'project'],
     ['Project deletion through a symlinked Compute directory', 'compute', 'project'],
     ['Project deletion through a symlinked cache root', 'cache', 'project'],
     ['Session deletion through a symlinked Project directory', 'project', 'session'],
@@ -106,18 +107,31 @@ describe('SessionCacheOwner', () => {
     const computeRoot = join(storageRoot, 'compute')
     const cacheRoot = join(computeRoot, 'session-cache')
     const externalFile =
-      linkAt === 'compute'
-        ? join(outside, 'session-cache', 'project-1', 'session-1', 'operation-1', 'result.csv')
-        : linkAt === 'cache'
-          ? join(outside, 'project-1', 'session-1', 'operation-1', 'result.csv')
-          : linkAt === 'project'
-            ? join(outside, 'session-1', 'operation-1', 'result.csv')
-            : join(outside, 'operation-1', 'result.csv')
+      linkAt === 'data-root'
+        ? join(
+            outside,
+            'compute',
+            'session-cache',
+            'project-1',
+            'session-1',
+            'operation-1',
+            'result.csv'
+          )
+        : linkAt === 'compute'
+          ? join(outside, 'session-cache', 'project-1', 'session-1', 'operation-1', 'result.csv')
+          : linkAt === 'cache'
+            ? join(outside, 'project-1', 'session-1', 'operation-1', 'result.csv')
+            : linkAt === 'project'
+              ? join(outside, 'session-1', 'operation-1', 'result.csv')
+              : join(outside, 'operation-1', 'result.csv')
 
     try {
       await mkdir(dirname(externalFile), { recursive: true })
       await writeFile(externalFile, 'retained')
-      if (linkAt === 'compute') {
+      if (linkAt === 'data-root') {
+        await rm(storageRoot, { recursive: true, force: true })
+        await symlink(outside, storageRoot, process.platform === 'win32' ? 'junction' : 'dir')
+      } else if (linkAt === 'compute') {
         await symlink(outside, computeRoot, process.platform === 'win32' ? 'junction' : 'dir')
       } else {
         await mkdir(linkAt === 'cache' ? computeRoot : cacheRoot, { recursive: true })
