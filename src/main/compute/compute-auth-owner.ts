@@ -96,6 +96,18 @@ const requireValidTrimmedField = (value: string, label: string): string => {
   return result
 }
 
+const requireSafeSshAlias = (value: string): string => {
+  const alias = requireValidTrimmedField(value, 'SSH alias')
+  try {
+    return assertSafeSshAlias(alias)
+  } catch (error) {
+    throw new ComputeConnectionError(
+      'unsupported_auth_configuration',
+      error instanceof Error ? error.message : undefined
+    )
+  }
+}
+
 class ComputeAuthOwner {
   private readonly mutationTails = new Map<string, Promise<void>>()
 
@@ -145,7 +157,7 @@ class ComputeAuthOwner {
     if (request.authenticationMode !== 'password') {
       throw new ComputeConnectionError('unsupported_auth_configuration')
     }
-    const alias = assertSafeSshAlias(requireValidTrimmedField(request.sshAlias, 'SSH alias'))
+    const alias = requireSafeSshAlias(request.sshAlias)
     const username = requireValidTrimmedField(request.username, 'Username')
     const operationId = requireValidTrimmedField(
       request.operationId,

@@ -420,7 +420,7 @@ describe('Compute password-host application handler', () => {
         password: 'secret',
         operationId: 'operation-unsafe-alias'
       })
-    ).rejects.toThrow(/alias/i)
+    ).rejects.toMatchObject({ code: 'unsupported_auth_configuration' })
     expect(encrypt).not.toHaveBeenCalled()
     expect(acquireWithPassword).not.toHaveBeenCalled()
     expect(createPasswordHost).not.toHaveBeenCalled()
