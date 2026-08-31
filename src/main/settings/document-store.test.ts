@@ -59,6 +59,25 @@ describe('settings document store', () => {
     ).resolves.toMatchObject({ providers: [], notificationsEnabled: false })
   })
 
+  it('migrates a version 1 settings document through the registered pipeline', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-'))
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        providers: [{ id: 'provider-1', type: 'custom', name: 'Provider', model: 'model-1' }],
+        activeProviderId: 'provider-1'
+      }),
+      'utf8'
+    )
+
+    await expect(new SettingsDocumentStore(storageRoot).read()).resolves.toMatchObject({
+      version: 2,
+      activeProviderId: 'provider-1',
+      activeModel: 'model-1'
+    })
+  })
+
   it('recovers a valid historical Settings temp when the primary is missing', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-temp-'))
     await writeFile(
@@ -77,6 +96,19 @@ describe('settings document store', () => {
     await expect(readdir(storageRoot)).resolves.toEqual(['settings.json'])
   })
 
+  it('does not skip a future Settings temp and recover an older format', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-temp-'))
+    const temporaryName = 'settings.json.1700000000000-1.tmp'
+    const futureContents = '{"version":3,"futurePreference":"must-survive"}\n'
+    await writeFile(join(storageRoot, temporaryName), futureContents, 'utf8')
+
+    await expect(new SettingsDocumentStore(storageRoot).read()).rejects.toThrow(
+      'Settings document version 3 is newer than supported version 2.'
+    )
+    await expect(readFile(join(storageRoot, temporaryName), 'utf8')).resolves.toBe(futureContents)
+    await expect(readdir(storageRoot)).resolves.toEqual([temporaryName])
+  })
+
   it('rejects corrupt JSON and prevents a mutation from publishing over it', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-'))
     const settingsPath = join(storageRoot, 'settings.json')
@@ -90,6 +122,38 @@ describe('settings document store', () => {
 
     expect(update).not.toHaveBeenCalled()
     await expect(readFile(settingsPath, 'utf8')).resolves.toBe(corruptContents)
+  })
+
+  it('rejects mutation of a future settings document without overwriting its fields', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-'))
+    const settingsPath = join(storageRoot, 'settings.json')
+    const futureContents = `${JSON.stringify({
+      version: 3,
+      providers: [],
+      futurePreference: 'must-survive'
+    })}\n`
+    await writeFile(settingsPath, futureContents, 'utf8')
+    const store = new SettingsDocumentStore(storageRoot)
+    const update = vi.fn((settings) => ({ ...settings, notificationsEnabled: false }))
+
+    await expect(store.mutate(update)).rejects.toThrow(
+      'Settings document version 3 is newer than supported version 2.'
+    )
+
+    expect(update).not.toHaveBeenCalled()
+    await expect(readFile(settingsPath, 'utf8')).resolves.toBe(futureContents)
+  })
+
+  it('rejects an unversioned settings document', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-'))
+    const settingsPath = join(storageRoot, 'settings.json')
+    const unversionedContents = '{"providers":[]}\n'
+    await writeFile(settingsPath, unversionedContents, 'utf8')
+
+    await expect(new SettingsDocumentStore(storageRoot).read()).rejects.toThrow(
+      'Settings document is corrupt.'
+    )
+    await expect(readFile(settingsPath, 'utf8')).resolves.toBe(unversionedContents)
   })
 
   it('propagates a read I/O failure without publishing and recovers its mutation queue', async () => {

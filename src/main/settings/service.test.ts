@@ -5966,7 +5966,7 @@ describe('SettingsService: default permission profile', () => {
   it('projects a valid profile from settings.json', async () => {
     await writeFile(
       join(storageRoot, 'settings.json'),
-      JSON.stringify({ defaultPermissionProfile: 'auto' }),
+      JSON.stringify({ version: 2, defaultPermissionProfile: 'auto' }),
       'utf8'
     )
     const service = createService()
