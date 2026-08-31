@@ -289,11 +289,13 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
   }
   const oauthRef = asString(value.oauthRef)
   const oauthClientSecretRef = asString(value.oauthClientSecretRef)
-  if (server.oauth) {
+  const sharedOAuthReference =
+    transport !== 'stdio' && oauthRef?.startsWith('credential:') ? oauthRef : undefined
+  if (server.oauth || sharedOAuthReference) {
     delete server.headers
     delete server.headerRefs
     if (oauthRef) server.oauthRef = oauthRef
-    if (oauthClientSecretRef) server.oauthClientSecretRef = oauthClientSecretRef
+    if (server.oauth && oauthClientSecretRef) server.oauthClientSecretRef = oauthClientSecretRef
   }
   const trustedAt = asNumber(value.trustedAt)
   if (trustedAt !== undefined) server.trustedAt = trustedAt

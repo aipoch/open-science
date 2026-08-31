@@ -25,6 +25,8 @@ vi.mock('electron', () => ({
 }))
 
 const { ConnectorSettingsModule } = await import('./connector-settings')
+const { DeviceCredentialStore } = await import('./device-credentials')
+const { selectEnabledCustomServers } = await import('../connectors/custom-mcp-bootstrap')
 const { CustomServerIdConflictError } = await import('./custom-server-identity')
 const { SettingsRepository } = await import('./repository')
 const { ALL_CONNECTOR_IDS } = await import('../connectors/registry')
@@ -59,6 +61,649 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers).toEqual([])
     expect(snapshot.ncbi).toEqual({ contactEmail: undefined, hasApiKey: false })
     expect(snapshot.openAlex).toEqual({ hasApiKey: false })
+  })
+
+  it('returns the exact credential created by each concurrent request', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+
+    const [first, second] = await Promise.all([
+      service.createDeviceCredential({
+        displayName: 'Shared name',
+        kind: 'token',
+        secret: 'first-secret'
+      }),
+      service.createDeviceCredential({
+        displayName: 'Shared name',
+        kind: 'token',
+        secret: 'second-secret'
+      })
+    ])
+
+    expect(first.createdCredential.id).not.toBe(second.createdCredential.id)
+    expect(first.createdCredential.displayName).toBe('Shared name')
+    expect(second.createdCredential.displayName).toBe('Shared name')
+    expect(first.credentials).toContainEqual(first.createdCredential)
+    expect(second.credentials).toContainEqual(second.createdCredential)
+  })
+
+  it('binds new Connectors to device-global static credentials without copying plaintext', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credentials = await service.createDeviceCredential({
+      displayName: 'Lab token',
+      kind: 'token',
+      secret: 'shared-secret'
+    })
+    const credential = credentials.credentials[0]!
+
+    await addCustomServer({
+      name: 'shared-static',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      headerCredentialIds: { Authorization: credential.id }
+    })
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.headerRefs).toEqual({ Authorization: `credential:${credential.id}` })
+    expect(JSON.stringify(stored)).not.toContain('shared-secret')
+    expect((await service.getConnectors())?.customMcpServers?.[0]?.headers).toEqual({
+      Authorization: 'Bearer shared-secret'
+    })
+    await expect(service.removeDeviceCredential({ id: credential.id })).rejects.toThrow(
+      /shared-static/i
+    )
+  })
+
+  it('rebinds an existing Connector environment variable to a device credential', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const first = (
+      await service.createDeviceCredential({
+        displayName: 'First token',
+        kind: 'api_key',
+        secret: 'first-secret'
+      })
+    ).credentials[0]!
+    const second = (
+      await service.createDeviceCredential({
+        displayName: 'Second token',
+        kind: 'api_key',
+        secret: 'second-secret'
+      })
+    ).credentials.find(({ displayName }) => displayName === 'Second token')!
+    const added = await addCustomServer({
+      name: 'rebind-static',
+      transport: 'stdio',
+      command: 'npx',
+      envCredentialIds: { API_TOKEN: first.id }
+    })
+
+    await service.updateCustomServer({
+      id: added.customServers[0].id,
+      transport: 'stdio',
+      command: 'npx',
+      envCredentialIds: { API_TOKEN: second.id }
+    })
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.envRefs).toEqual({ API_TOKEN: `credential:${second.id}` })
+    expect(JSON.stringify(stored)).not.toContain('second-secret')
+    expect((await service.getConnectors())?.customMcpServers?.[0]?.env).toEqual({
+      API_TOKEN: 'second-secret'
+    })
+  })
+
+  it('rebinds an existing Connector header to a device credential', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const first = (
+      await service.createDeviceCredential({
+        displayName: 'First token',
+        kind: 'token',
+        secret: 'first-secret'
+      })
+    ).createdCredential
+    const second = (
+      await service.createDeviceCredential({
+        displayName: 'Second token',
+        kind: 'token',
+        secret: 'second-secret'
+      })
+    ).createdCredential
+    const added = await addCustomServer({
+      name: 'rebind-header',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      headerCredentialIds: { Authorization: first.id }
+    })
+
+    await service.updateCustomServer({
+      id: added.customServers[0].id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      headerCredentialIds: { Authorization: second.id }
+    })
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.headerRefs).toEqual({ Authorization: `credential:${second.id}` })
+    expect(JSON.stringify(stored)).not.toContain('second-secret')
+    expect((await service.getConnectors())?.customMcpServers?.[0]?.headers).toEqual({
+      Authorization: 'Bearer second-secret'
+    })
+  })
+
+  it('serializes credential removal with a concurrent Connector binding', async () => {
+    const credentialStore = new DeviceCredentialStore(dir)
+    service = new ConnectorSettingsModule(repository, fetch, credentialStore)
+    const credentials = await service.createDeviceCredential({
+      displayName: 'Concurrent token',
+      kind: 'token',
+      secret: 'shared-secret'
+    })
+    const credential = credentials.credentials[0]!
+    let releasePersist!: () => void
+    let markPersistStarted!: () => void
+    const persistStarted = new Promise<void>((resolve) => {
+      markPersistStarted = resolve
+    })
+    const persistReleased = new Promise<void>((resolve) => {
+      releasePersist = resolve
+    })
+    const addPersistedServer = repository.addCustomServer.bind(repository)
+    vi.spyOn(repository, 'addCustomServer').mockImplementation(async (server) => {
+      markPersistStarted()
+      await persistReleased
+      return addPersistedServer(server)
+    })
+    const removeCredential = vi.spyOn(credentialStore, 'remove')
+
+    const adding = addCustomServer({
+      name: 'concurrent-binding',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      headerCredentialIds: { Authorization: credential.id }
+    })
+    await persistStarted
+    const removing = service.removeDeviceCredential({ id: credential.id })
+    await Promise.resolve()
+
+    expect(removeCredential).not.toHaveBeenCalled()
+    releasePersist()
+    await adding
+    await expect(removing).rejects.toThrow(/concurrent-binding/i)
+    expect(removeCredential).not.toHaveBeenCalled()
+  })
+
+  it('keeps shared OAuth config and state solely in the device credential document', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credentials = await service.createDeviceCredential({
+      displayName: 'Lab OAuth',
+      kind: 'oauth',
+      resourceUri: 'https://mcp.example.test/',
+      transport: 'streamable_http',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test/',
+        scopes: ['read'],
+        clientId: 'registered-client',
+        clientSecret: 'oauth-client-secret'
+      }
+    })
+    const credential = credentials.credentials[0]!
+    await service.saveCustomServerOAuthState(`credential:${credential.id}`, {
+      tokens: { access_token: 'initial-oauth-token', token_type: 'bearer' }
+    })
+    const added = await addCustomServer({
+      name: 'shared-oauth',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      oauthCredentialId: credential.id
+    })
+    expect(added.customServers[0]).toMatchObject({
+      enabled: true,
+      oauthCredentialId: credential.id,
+      oauth: { sharedCredential: true }
+    })
+    const id = added.customServers[0]!.id
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'oauth-token', token_type: 'bearer' }
+    })
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored).toMatchObject({ oauthRef: `credential:${credential.id}` })
+    expect(stored?.oauth).toBeUndefined()
+    expect((await service.getConnectors())?.customMcpServers?.[0]).toMatchObject({
+      oauth: { scopes: ['read'] },
+      oauthState: { tokens: { access_token: 'oauth-token' } }
+    })
+    expect((await service.listDeviceCredentials()).credentials[0]).toMatchObject({
+      status: 'connected',
+      consumerCount: 1,
+      consumerNames: ['shared-oauth']
+    })
+
+    const exported = await service.buildCustomServerTemplateExport(id)
+    expect(exported.contents).not.toContain('oauth-client-secret')
+    expect(JSON.parse(exported.contents!).oauth).toEqual({
+      authorization_server_url: 'https://auth.example.test/',
+      scopes: ['read'],
+      client_id: 'registered-client'
+    })
+    expect(JSON.parse(exported.contents!).required_secrets).toEqual({ oauth_client_secret: true })
+
+    await expect(
+      service.updateCustomServer({
+        id,
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/',
+        oauth: {
+          authorizationServerUrl: 'https://auth.example.test/',
+          scopes: ['write'],
+          clientId: 'registered-client'
+        }
+      })
+    ).rejects.toThrow(/edited in Credentials/i)
+    expect((await repository.getSettings()).connectors?.customMcpServers?.[0]?.oauthRef).toBe(
+      `credential:${credential.id}`
+    )
+
+    await addCustomServer({
+      name: 'shared-oauth-sibling',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      oauthCredentialId: credential.id
+    })
+    const consumerIds = await service.deviceCredentialConsumerIds(credential.id)
+    await repository.setCustomServersEnabled(consumerIds, true)
+    await service.disconnectCustomServer(id)
+    expect((await service.listDeviceCredentials()).credentials[0]).toMatchObject({
+      status: 'disconnected',
+      consumerCount: 2
+    })
+    expect(
+      (await service.listConnectors()).customServers.filter((server) =>
+        consumerIds.includes(server.id)
+      )
+    ).toEqual([
+      expect.objectContaining({ enabled: false }),
+      expect.objectContaining({ enabled: false })
+    ])
+  })
+
+  it('binds an existing remote Connector to an already connected OAuth credential', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'Existing OAuth',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: { scopes: ['read'] }
+      })
+    ).credentials[0]!
+    const added = await addCustomServer({
+      name: 'existing-remote',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/'
+    })
+    const id = added.customServers[0]!.id
+    await service.saveCustomServerOAuthState(`credential:${credential.id}`, {
+      tokens: { access_token: 'connected-token', token_type: 'Bearer' }
+    })
+
+    const updated = await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      oauthCredentialId: credential.id
+    })
+
+    expect((await repository.getSettings()).connectors?.customMcpServers?.[0]).toMatchObject({
+      oauthRef: `credential:${credential.id}`,
+      enabled: true
+    })
+    expect(updated.customServers[0]).toMatchObject({
+      oauthCredentialId: credential.id,
+      oauth: { scopes: ['read'], sharedCredential: true }
+    })
+    expect((await service.listDeviceCredentials()).credentials[0]).toMatchObject({
+      consumerCount: 1,
+      consumerNames: ['existing-remote']
+    })
+  })
+
+  it('disables an existing remote Connector when the selected OAuth credential is disconnected', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'Disconnected OAuth',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: {}
+      })
+    ).credentials[0]!
+    const added = await addCustomServer({
+      name: 'disconnected-remote',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/'
+    })
+
+    await service.updateCustomServer({
+      id: added.customServers[0]!.id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      oauthCredentialId: credential.id
+    })
+
+    expect((await repository.getSettings()).connectors?.customMcpServers?.[0]).toMatchObject({
+      oauthRef: `credential:${credential.id}`,
+      enabled: false
+    })
+  })
+
+  it('fails closed when a shared OAuth client secret cannot be decrypted', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'Unavailable OAuth secret',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: {
+          authorizationServerUrl: 'https://auth.example.test/',
+          clientId: 'registered-client',
+          clientSecret: 'oauth-secret'
+        }
+      })
+    ).credentials[0]!
+    await addCustomServer({
+      name: 'unavailable-oauth-secret',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      oauthCredentialId: credential.id
+    })
+
+    keychain.available = false
+
+    await expect(service.listConnectors()).resolves.toMatchObject({
+      customServers: [
+        expect.objectContaining({
+          name: 'unavailable-oauth-secret',
+          availability: 'credential_unavailable'
+        })
+      ]
+    })
+  })
+
+  it('requires a shared OAuth credential transport to match its Connector', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'SSE OAuth',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'sse',
+        oauth: {}
+      })
+    ).credentials[0]!
+
+    await expect(
+      addCustomServer({
+        name: 'wrong-transport',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/',
+        oauthCredentialId: credential.id
+      })
+    ).rejects.toThrow(/transport does not match/i)
+  })
+
+  it('serializes OAuth disconnect with new Connector bindings', async () => {
+    const credentialStore = new DeviceCredentialStore(dir)
+    service = new ConnectorSettingsModule(repository, fetch, credentialStore)
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'Shared OAuth',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: {}
+      })
+    ).credentials[0]!
+    await credentialStore.saveOAuthState(credential.id, {
+      tokens: { access_token: 'shared-token', token_type: 'bearer' }
+    })
+    const barrierEntered = Promise.withResolvers<void>()
+    const releaseBarrier = Promise.withResolvers<void>()
+    const disconnect = service.disconnectDeviceCredential(
+      credential.id,
+      async (consumers, mutation) => {
+        expect(consumers).toEqual([])
+        barrierEntered.resolve()
+        await releaseBarrier.promise
+        return mutation()
+      }
+    )
+    await barrierEntered.promise
+    const add = addCustomServer({
+      name: 'disconnect-race',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      oauthCredentialId: credential.id
+    })
+    let addSettled = false
+    void add.finally(() => {
+      addSettled = true
+    })
+    await Promise.resolve()
+    expect(addSettled).toBe(false)
+    releaseBarrier.resolve()
+    await Promise.all([disconnect, add])
+
+    expect((await repository.getSettings()).connectors?.customMcpServers?.[0]).toMatchObject({
+      enabled: false,
+      oauthRef: `credential:${credential.id}`
+    })
+    expect((await credentialStore.resolveOAuth(credential.id))?.state).toBeUndefined()
+  })
+
+  it.each([
+    ['resource URL', { url: 'https://other.example.test/' }],
+    ['transport', { transport: 'sse' as const }]
+  ])(
+    'fails closed when a persisted shared OAuth binding has a mismatched %s',
+    async (_case, mutation) => {
+      const credentialStore = new DeviceCredentialStore(dir)
+      service = new ConnectorSettingsModule(repository, fetch, credentialStore)
+      const credential = (
+        await service.createDeviceCredential({
+          displayName: 'Scoped OAuth',
+          kind: 'oauth',
+          resourceUri: 'https://mcp.example.test/',
+          transport: 'streamable_http',
+          oauth: {}
+        })
+      ).credentials[0]!
+      await credentialStore.saveOAuthState(credential.id, {
+        tokens: { access_token: 'scoped-token', token_type: 'bearer' }
+      })
+      await addCustomServer({
+        name: 'tampered-oauth-scope',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/',
+        oauthCredentialId: credential.id
+      })
+      const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+      await repository.updateCustomServer(stored!.id, { ...stored!, ...mutation, enabled: true })
+
+      const runtime = await service.getConnectors()
+      expect(runtime?.customMcpServers?.[0]).toMatchObject({
+        oauthRef: `credential:${credential.id}`,
+        oauthCredentialUnavailable: true
+      })
+      expect(runtime?.customMcpServers?.[0]).not.toHaveProperty('oauthState')
+      expect(selectEnabledCustomServers(runtime)).toEqual([])
+      await expect(service.listConnectors()).resolves.toMatchObject({
+        customServers: [
+          expect.objectContaining({
+            name: 'tampered-oauth-scope',
+            availability: 'credential_unavailable'
+          })
+        ]
+      })
+    }
+  )
+
+  it('requires shared OAuth registration metadata to satisfy imported Connector requirements', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'Registered OAuth',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: {
+          authorizationServerUrl: 'https://auth.example.test/',
+          clientId: 'registered-client',
+          redirectUri: 'http://127.0.0.1:8080/callback'
+        }
+      })
+    ).credentials[0]!
+
+    await expect(
+      addCustomServer({
+        name: 'wrong-oauth-registration',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/',
+        oauthCredentialId: credential.id,
+        oauthRequirements: {
+          authorizationServerUrl: 'https://auth.example.test/',
+          clientId: 'registered-client',
+          redirectUri: 'http://127.0.0.1:9090/other'
+        }
+      })
+    ).rejects.toThrow(/registration does not match/i)
+  })
+
+  it('enforces imported client-secret requirements for a selected shared OAuth credential', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'Public OAuth client',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: {}
+      })
+    ).credentials[0]!
+
+    await expect(
+      addCustomServer({
+        name: 'secret-required',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/',
+        oauthCredentialId: credential.id,
+        requiresOAuthClientSecret: true
+      })
+    ).rejects.toThrow(/requires a client secret/i)
+  })
+
+  it('clears an unavailable shared OAuth binding when Configure disables OAuth', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'Missing OAuth',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: {}
+      })
+    ).credentials[0]!
+    const added = await addCustomServer({
+      name: 'recover-missing-oauth',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      oauthCredentialId: credential.id
+    })
+    const id = added.customServers[0]!.id
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    await repository.updateCustomServer(stored!.id, {
+      ...stored!,
+      oauthRef: 'credential:missing'
+    })
+
+    const updated = await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      oauth: null
+    })
+
+    expect(
+      (await repository.getSettings()).connectors?.customMcpServers?.[0]?.oauthRef
+    ).toBeUndefined()
+    expect(updated.customServers[0]).not.toHaveProperty('oauth')
+    expect(updated.customServers[0]).not.toHaveProperty('availability', 'credential_unavailable')
+  })
+
+  it('fails closed when a referenced shared OAuth credential is missing', async () => {
+    const credentialStore = new DeviceCredentialStore(dir)
+    service = new ConnectorSettingsModule(repository, fetch, credentialStore)
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'Missing OAuth',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: {}
+      })
+    ).credentials[0]!
+    const added = await addCustomServer({
+      name: 'missing-oauth',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      oauthCredentialId: credential.id
+    })
+    const id = added.customServers[0]!.id
+    await repository.setCustomServerEnabled(id, true)
+
+    await credentialStore.remove(credential.id)
+
+    await expect(service.listConnectors()).resolves.toMatchObject({
+      customServers: [
+        expect.objectContaining({ name: 'missing-oauth', availability: 'credential_unavailable' })
+      ]
+    })
+    expect(selectEnabledCustomServers(await service.getConnectors())).toEqual([])
+    await expect(service.setCustomServerEnabled({ id, enabled: true })).rejects.toThrow(
+      /credential_unavailable/i
+    )
+  })
+
+  it('lists a Connector with an unavailable shared static credential as unavailable', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const credential = (
+      await service.createDeviceCredential({
+        displayName: 'Unavailable token',
+        kind: 'token',
+        secret: 'shared-secret'
+      })
+    ).credentials[0]!
+    await addCustomServer({
+      name: 'unavailable-static',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/',
+      headerCredentialIds: { Authorization: credential.id }
+    })
+
+    keychain.available = false
+
+    await expect(service.listConnectors()).resolves.toMatchObject({
+      customServers: [
+        expect.objectContaining({
+          name: 'unavailable-static',
+          hasHeaders: false,
+          headerNames: ['Authorization'],
+          availability: 'credential_unavailable'
+        })
+      ]
+    })
   })
 
   it('disables and re-enables one connector', async () => {
@@ -384,6 +1029,69 @@ describe('ConnectorSettingsModule', () => {
 
     expect(keychain.encryptedValues).toEqual([])
     expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it.each([
+    [
+      'entry count',
+      Object.fromEntries(
+        Array.from({ length: 65 }, (_, index) => [`X-Credential-${index}`, `credential-${index}`])
+      ),
+      'Connector header credential bindings must not exceed 64 entries.'
+    ],
+    [
+      'credential ID length',
+      { Authorization: 'c'.repeat(129) },
+      'Connector header credential bindings credential ID must not exceed 128 characters.'
+    ],
+    [
+      'serialized size',
+      Object.fromEntries(
+        Array.from({ length: 64 }, (_, index) => [
+          `X-${String(index).padStart(2, '0')}-${'n'.repeat(123)}`,
+          'c'.repeat(128)
+        ])
+      ),
+      'Connector header credential bindings must not exceed 16384 serialized bytes.'
+    ]
+  ])('rejects excessive credential binding %s before lookup', async (_case, bindings, error) => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+
+    await expect(
+      addCustomServer({
+        name: 'oversized-bindings',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/',
+        headerCredentialIds: bindings
+      })
+    ).rejects.toThrow(error)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it('applies header credential binding limits before update lookup', async () => {
+    service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+    const added = await addCustomServer({
+      name: 'update-binding-limits',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/'
+    })
+    const bindings = Object.fromEntries(
+      Array.from({ length: 65 }, (_, index) => [`X-Credential-${index}`, `credential-${index}`])
+    )
+
+    await expect(
+      service.updateCustomServer({
+        id: added.customServers[0].id,
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/',
+        headerCredentialIds: bindings
+      })
+    ).rejects.toThrow('Connector header credential bindings must not exceed 64 entries.')
+
+    expect((await repository.getSettings()).connectors?.customMcpServers?.[0]?.headerRefs).toBe(
+      undefined
+    )
   })
 
   it.each([

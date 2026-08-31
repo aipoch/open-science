@@ -26,6 +26,9 @@ export const classifyCustomMcpFailure = (error: unknown): CustomMcpFailureAvaila
 // transport. A stdio server with a missing command becomes an empty string so a misconfigured
 // entry fails the connect attempt (caught by the caller) rather than throwing here.
 export function toCustomMcpConfig(server: StoredCustomMcpServer): CustomMcpServerConfig {
+  const oauthCredentialId = server.oauthRef?.startsWith('credential:')
+    ? server.oauthRef.slice('credential:'.length)
+    : undefined
   return {
     id: server.id,
     name: server.name,
@@ -44,7 +47,8 @@ export function toCustomMcpConfig(server: StoredCustomMcpServer): CustomMcpServe
             ...(server.oauth.clientId && server.oauthClientSecret
               ? { clientSecret: server.oauthClientSecret }
               : {}),
-            ...(server.oauthState ? { state: server.oauthState } : {})
+            ...(server.oauthState ? { state: server.oauthState } : {}),
+            ...(oauthCredentialId ? { credentialId: oauthCredentialId } : {})
           }
         }
       : {})
@@ -90,10 +94,12 @@ const hasResolvedSecretRecord = (
 ): boolean => !refs || Object.keys(refs).every((name) => Object.hasOwn(values ?? {}, name))
 
 const hasCompleteCustomMcpCredentials = (server: StoredCustomMcpServer): boolean =>
-  server.transport === 'stdio'
-    ? hasResolvedSecretRecord(server.envRefs, server.env)
-    : hasResolvedSecretRecord(server.headerRefs, server.headers) &&
-      (!server.oauthClientSecretRef || server.oauthClientSecret !== undefined)
+  server.oauthCredentialUnavailable
+    ? false
+    : server.transport === 'stdio'
+      ? hasResolvedSecretRecord(server.envRefs, server.env)
+      : hasResolvedSecretRecord(server.headerRefs, server.headers) &&
+        (!server.oauthClientSecretRef || server.oauthClientSecret !== undefined)
 
 export const hasUsableCustomMcpCredentials = (server: StoredCustomMcpServer): boolean =>
   hasCompleteCustomMcpCredentials(server) && !hasEmbeddedConnectorCredentials(server)

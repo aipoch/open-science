@@ -30,6 +30,8 @@ export type ConnectorApplicationSettingsCapabilities = Pick<
   SettingsService,
   | 'getConnectors'
   | 'saveCustomServerOAuthState'
+  | 'resolveDeviceOAuthCredential'
+  | 'setDeviceCredentialAuthenticator'
   | 'setCustomServerRuntimeProjectionProvider'
   | 'setCustomServerAuthenticator'
   | 'previewSkillArchive'

@@ -1,4 +1,4 @@
-import { BookOpen, Check, KeyRound, Server } from 'lucide-react'
+import { BookOpen, Check, KeyRound, Server, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -7,14 +7,20 @@ import type { OpenAlexCredentialValidation } from '../../../../shared/settings'
 import { GitHubMark } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { errorDetail } from '@/lib/error-detail'
 import { useSettingsStore } from '@/stores/settings-store'
 import { GitHubTokenControl } from './GitHubTokenControl'
 import { MaskedPasswordField } from './MaskedPasswordField'
+import { DeviceCredentialEditor } from './DeviceCredentialEditor'
+import { SettingsSection } from './SettingsLayout'
 
 export type CredentialsServiceId = 'github' | 'literature' | 'openalex'
 export type CredentialsView =
-  { kind: 'list' } | { kind: 'service'; serviceId: CredentialsServiceId }
+  | { kind: 'list' }
+  | { kind: 'service'; serviceId: CredentialsServiceId }
+  | { kind: 'create' }
+  | { kind: 'credential'; id: string }
 type DesktopCredentialAvailability = 'checking' | 'available' | 'unavailable'
 
 type CredentialsPanelProps = {
@@ -39,8 +45,11 @@ export function CredentialsPanel({
   const openAlex = useSettingsStore((state) => state.openAlex)
   const ncbi = useSettingsStore((state) => state.ncbi)
   const customServers = useSettingsStore((state) => state.customServers)
+  const deviceCredentials = useSettingsStore((state) => state.deviceCredentials)
   const providers = useSettingsStore((state) => state.providers)
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
+  const loadDeviceCredentials = useSettingsStore((state) => state.loadDeviceCredentials)
+  const removeDeviceCredential = useSettingsStore((state) => state.removeDeviceCredential)
   const setOpenAlexCredential = useSettingsStore((state) => state.setOpenAlexCredential)
   const validateOpenAlexCredential = useSettingsStore((state) => state.validateOpenAlexCredential)
   const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
@@ -58,6 +67,7 @@ export function CredentialsPanel({
   const [emailDraft, setEmailDraft] = useState<{ source: string; value: string }>()
   const email = emailDraft?.source === storedEmail ? emailDraft.value : storedEmail
   const [busy, setBusy] = useState(false)
+  const [credentialMessage, setCredentialMessage] = useState<string>()
   const [feedback, setFeedback] = useState<{
     serviceId: CredentialsServiceId
     message: string
@@ -78,6 +88,7 @@ export function CredentialsPanel({
 
   useEffect(() => {
     void loadConnectors().catch(() => undefined)
+    void loadDeviceCredentials().catch(() => undefined)
     void window.api.settings
       .getGitHubTokenStatus()
       .then((status) => {
@@ -89,7 +100,52 @@ export function CredentialsPanel({
           isLocalOnlyActionError(error) ? 'unavailable' : 'available'
         )
       })
-  }, [loadConnectors])
+  }, [loadConnectors, loadDeviceCredentials])
+
+  if (
+    (view.kind === 'create' || view.kind === 'credential') &&
+    desktopCredentialAvailability !== 'available'
+  ) {
+    if (desktopCredentialAvailability === 'checking') {
+      return <p className="p-5 text-sm text-muted-foreground">{t('Checking…')}</p>
+    }
+    return (
+      <div className="space-y-5 p-5">
+        <p className="text-sm text-muted-foreground">
+          {t('This credential can only be configured in the local desktop app.')}
+        </p>
+        <div className="flex justify-end">
+          <Button type="button" variant="ghost" onClick={() => onNavigate({ kind: 'list' })}>
+            {t('Cancel')}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  if (view.kind === 'create') {
+    return (
+      <DeviceCredentialEditor
+        onDone={() => onNavigate({ kind: 'list' })}
+        onCancel={() => onNavigate({ kind: 'list' })}
+      />
+    )
+  }
+
+  if (view.kind === 'credential') {
+    const credential = deviceCredentials.find(({ id }) => id === view.id)
+    return credential ? (
+      <DeviceCredentialEditor
+        credential={credential}
+        onDone={() => onNavigate({ kind: 'list' })}
+        onCancel={() => onNavigate({ kind: 'list' })}
+      />
+    ) : (
+      <div className="p-5 text-sm text-muted-foreground">
+        {t('This credential no longer exists.')}
+      </div>
+    )
+  }
 
   const saveOpenAlex = async (): Promise<void> => {
     const candidate = apiKey.trim()
@@ -389,6 +445,97 @@ export function CredentialsPanel({
           })}
         </div>
       </section>
+
+      {desktopCredentialAvailability === 'available' ? (
+        <SettingsSection
+          title={t('Connector credentials')}
+          description={t(
+            'Device-wide credentials that can be shared by the Custom Connectors you choose.'
+          )}
+          action={
+            <Button type="button" onClick={() => onNavigate({ kind: 'create' })}>
+              {t('New credential')}
+            </Button>
+          }
+        >
+          {deviceCredentials.length > 0 ? (
+            <div className="divide-y divide-border rounded-xl border border-border">
+              {deviceCredentials.map((credential) => (
+                <div key={credential.id} className="flex items-center gap-3 px-4 py-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
+                    <KeyRound className="size-4 text-muted-foreground" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{credential.displayName}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {credential.kind === 'api_key'
+                        ? t('API key · Stored')
+                        : credential.kind === 'token'
+                          ? t('Access token · Stored')
+                          : credential.status === 'connected'
+                            ? t('OAuth · Connected')
+                            : t('OAuth · Sign-in required')}
+                      {' · '}
+                      {t('{{count}} Connectors', {
+                        count: credential.consumerCount,
+                        defaultValue_one: '{{count}} Connector'
+                      })}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => onNavigate({ kind: 'credential', id: credential.id })}
+                  >
+                    {t('Manage')}
+                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          aria-label={t('Remove {{name}}', { name: credential.displayName })}
+                          aria-disabled={credential.consumerCount > 0 || undefined}
+                          disabled={busy}
+                          onClick={() => {
+                            if (credential.consumerCount > 0) return
+                            if (!window.confirm(t('Remove this credential from this device?')))
+                              return
+                            setBusy(true)
+                            setCredentialMessage(undefined)
+                            void removeDeviceCredential({ id: credential.id })
+                              .catch((error) =>
+                                setCredentialMessage(
+                                  errorDetail(error) ?? t('Could not remove credential.')
+                                )
+                              )
+                              .finally(() => setBusy(false))
+                          }}
+                        >
+                          <Trash2 className="size-4" aria-hidden="true" />
+                        </Button>
+                      </TooltipTrigger>
+                      {credential.consumerCount > 0 ? (
+                        <TooltipContent>
+                          {t('Remove this credential from its Connectors first.')}
+                        </TooltipContent>
+                      ) : null}
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t('No Connector credentials yet.')}</p>
+          )}
+          {credentialMessage ? (
+            <p className="mt-3 text-sm text-destructive" role="alert">
+              {credentialMessage}
+            </p>
+          ) : null}
+        </SettingsSection>
+      ) : null}
 
       <section>
         <h2 className="text-base font-semibold">{t('Custom')}</h2>

@@ -315,6 +315,7 @@ import type {
   ScanRepoRequest,
   ScanRepoResult,
   ConnectorsSnapshot,
+  DeviceCredentialsSnapshot,
   ConnectorDetailView,
   ConnectorTemplateExportPreview,
   ConnectorTemplateSelectionResult,
@@ -329,11 +330,16 @@ import type {
   ValidateOpenAlexCredentialRequest,
   OpenAlexCredentialValidation,
   AddCustomServerRequest,
+  CreateDeviceCredentialRequest,
+  CreateDeviceCredentialResult,
+  DeviceCredentialAuthenticationRequest,
   AuthenticateCustomServerRequest,
   DisconnectCustomServerRequest,
   SetCustomServerEnabledRequest,
   RemoveCustomServerRequest,
+  RemoveDeviceCredentialRequest,
   UpdateCustomServerRequest,
+  UpdateDeviceCredentialRequest,
   ConnectorApprovalRequest,
   ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest,
@@ -1505,6 +1511,18 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.addCustomServer': callable<
     (request: AddCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:add-custom-server', LOCAL]),
+  'settings.createDeviceCredential': callable<
+    (request: CreateDeviceCredentialRequest) => Promise<CreateDeviceCredentialResult>
+  >()('settings', ['settings:create-device-credential', LOCAL]),
+  'settings.authenticateDeviceCredential': callable<
+    (request: DeviceCredentialAuthenticationRequest) => Promise<DeviceCredentialsSnapshot>
+  >()('settings', ['settings:authenticate-device-credential', LOCAL]),
+  'settings.cancelDeviceCredentialAuthentication': callable<
+    (request: DeviceCredentialAuthenticationRequest) => Promise<void>
+  >()('settings', ['settings:cancel-device-credential-authentication', LOCAL]),
+  'settings.disconnectDeviceCredential': callable<
+    (request: DeviceCredentialAuthenticationRequest) => Promise<DeviceCredentialsSnapshot>
+  >()('settings', ['settings:disconnect-device-credential', LOCAL]),
   'settings.authenticateCustomServer': callable<
     (request: DisconnectCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:authenticate-custom-server', LOCAL]),
@@ -1628,6 +1646,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.listConnectors': callable<() => Promise<ConnectorsSnapshot>>()('settings', [
     'settings:list-connectors'
   ]),
+  'settings.listDeviceCredentials': callable<() => Promise<DeviceCredentialsSnapshot>>()(
+    'settings',
+    ['settings:list-device-credentials', LOCAL]
+  ),
   'settings.listSkills': callable<() => Promise<SkillView[]>>()('settings', [
     'settings:list-skills'
   ]),
@@ -1715,6 +1737,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.removeCustomServer': callable<
     (request: RemoveCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:remove-custom-server', LOCAL]),
+  'settings.removeDeviceCredential': callable<
+    (request: RemoveDeviceCredentialRequest) => Promise<DeviceCredentialsSnapshot>
+  >()('settings', ['settings:remove-device-credential', LOCAL]),
   'settings.removeGitHubToken': callable<() => Promise<GitHubTokenStatus>>()('settings', [
     'settings:remove-github-token',
     LOCAL
@@ -1852,6 +1877,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.updateCustomServer': callable<
     (request: UpdateCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:update-custom-server', LOCAL]),
+  'settings.updateDeviceCredential': callable<
+    (request: UpdateDeviceCredentialRequest) => Promise<DeviceCredentialsSnapshot>
+  >()('settings', ['settings:update-device-credential', LOCAL]),
   'settings.updateSkill': callable<(request: UpdateSkillRequest) => Promise<SkillView[]>>()(
     'settings',
     ['settings:update-skill']

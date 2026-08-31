@@ -1,14 +1,18 @@
 import type {
   AuthenticateCustomServerRequest,
+  CreateDeviceCredentialRequest,
+  DeviceCredentialAuthenticationRequest,
   DisconnectCustomServerRequest,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
+  RemoveDeviceCredentialRequest,
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
   SetOpenAlexCredentialRequest,
   SetToolPermissionRequest,
   UpdateCustomServerRequest,
+  UpdateDeviceCredentialRequest,
   ValidateOpenAlexCredentialRequest
 } from '../../../shared/settings'
 import { wireConnectorReload } from '../../connector-reload'
@@ -18,6 +22,14 @@ import type { SettingsService } from '../service'
 type ConnectorSettingsWorkflowStore = Pick<
   SettingsService,
   | 'listConnectors'
+  | 'listDeviceCredentials'
+  | 'deviceCredentialConsumerIds'
+  | 'createDeviceCredential'
+  | 'updateDeviceCredential'
+  | 'removeDeviceCredential'
+  | 'authenticateDeviceCredential'
+  | 'cancelDeviceCredentialAuthentication'
+  | 'disconnectDeviceCredential'
   | 'setConnectorEnabled'
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
@@ -60,6 +72,62 @@ class ConnectorSettingsWorkflows {
     request: SetConnectorEnabledRequest
   ): WorkflowResult<'setConnectorEnabled'> {
     return this.afterConnectorsChanged(() => this.settings.setConnectorEnabled(request))
+  }
+
+  async listDeviceCredentials(): WorkflowResult<'listDeviceCredentials'> {
+    return this.settings.listDeviceCredentials()
+  }
+
+  async createDeviceCredential(
+    request: CreateDeviceCredentialRequest
+  ): WorkflowResult<'createDeviceCredential'> {
+    return this.settings.createDeviceCredential(request)
+  }
+
+  async updateDeviceCredential(
+    request: UpdateDeviceCredentialRequest
+  ): WorkflowResult<'updateDeviceCredential'> {
+    const snapshot =
+      request.secret === undefined
+        ? await this.settings.updateDeviceCredential(request)
+        : await this.settings.updateDeviceCredential(request, (consumers, mutation) =>
+            this.withDeviceCredentialConsumersBlocked(consumers, mutation)
+          )
+    return snapshot
+  }
+
+  async removeDeviceCredential(
+    request: RemoveDeviceCredentialRequest
+  ): WorkflowResult<'removeDeviceCredential'> {
+    const consumers = await this.settings.deviceCredentialConsumerIds(request.id)
+    if (consumers.length === 0) {
+      await this.effects.resetCustomServerClient(`credential:${request.id}`)
+    }
+    return this.settings.removeDeviceCredential(request)
+  }
+
+  async authenticateDeviceCredential(
+    request: DeviceCredentialAuthenticationRequest
+  ): WorkflowResult<'authenticateDeviceCredential'> {
+    const snapshot = await this.settings.authenticateDeviceCredential(request)
+    this.connectorsChanged()
+    return snapshot
+  }
+
+  async cancelDeviceCredentialAuthentication(
+    request: DeviceCredentialAuthenticationRequest
+  ): WorkflowResult<'cancelDeviceCredentialAuthentication'> {
+    return this.settings.cancelDeviceCredentialAuthentication(request)
+  }
+
+  async disconnectDeviceCredential(
+    request: DeviceCredentialAuthenticationRequest
+  ): WorkflowResult<'disconnectDeviceCredential'> {
+    const snapshot = await this.settings.disconnectDeviceCredential(
+      request,
+      (consumers, mutation) => this.withDeviceCredentialConsumersBlocked(consumers, mutation)
+    )
+    return snapshot
   }
 
   async setConnectorAutoAllow(
@@ -143,7 +211,9 @@ class ConnectorSettingsWorkflows {
   async disconnectCustomServer(
     request: AuthenticateCustomServerRequest
   ): WorkflowResult<'disconnectCustomServer'> {
-    const snapshot = await this.settings.disconnectCustomServer(request.id)
+    const snapshot = await this.settings.disconnectCustomServer(request.id, (consumers, mutation) =>
+      this.withDeviceCredentialConsumersBlocked(consumers, mutation)
+    )
     this.effects.clearCustomServerFailure(request.id)
     this.connectorsChanged()
     return snapshot
@@ -187,6 +257,31 @@ class ConnectorSettingsWorkflows {
       return guard
     } catch (error) {
       guard?.rollback()
+      throw error
+    }
+  }
+
+  private async withDeviceCredentialConsumersBlocked<Result>(
+    consumers: string[],
+    mutation: () => Promise<Result>
+  ): Promise<Result> {
+    const guards = consumers.map((id) => this.effects.beginCustomServerSecurityChange(id))
+    const resetConsumers = (): Promise<void[]> =>
+      Promise.all(consumers.map((id) => this.effects.resetCustomServerClient(id)))
+    let mutationCompleted = false
+    try {
+      await resetConsumers()
+      const result = await mutation()
+      mutationCompleted = true
+      this.effects.invalidatePermissionProjection()
+      await this.refreshConnectorProjection()
+      await resetConsumers()
+      for (const guard of guards) guard?.rollback()
+      return result
+    } catch (error) {
+      if (!mutationCompleted) {
+        for (const guard of guards) guard?.rollback()
+      }
       throw error
     }
   }

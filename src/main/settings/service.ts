@@ -7,13 +7,19 @@ import type {
   ClaudeInstallEvent,
   ClaudeInstallResult,
   ConnectorDetailView,
+  CreateDeviceCredentialRequest,
+  CreateDeviceCredentialResult,
+  DeviceCredentialsSnapshot,
+  DeviceCredentialAuthenticationRequest,
   ConnectorTemplateExportPreview,
   ConnectorTemplatePreview,
   ConnectorsSnapshot,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
+  RemoveDeviceCredentialRequest,
   SetCustomServerEnabledRequest,
   UpdateCustomServerRequest,
+  UpdateDeviceCredentialRequest,
   AgentHomeSkillView,
   CreateSkillRequest,
   DeleteSkillRequest,
@@ -97,7 +103,11 @@ import { buildSettingsSnapshot } from './settings-view'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SkillCatalogModule, type SkillCatalogEntry } from './skill-catalog'
 import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
-import type { CustomServerRuntimeProjectionProvider } from './connector-settings'
+import type {
+  CustomServerRuntimeProjectionProvider,
+  DeviceCredentialConsumerMutation
+} from './connector-settings'
+import { DeviceCredentialStore, type ResolvedOAuthDeviceCredential } from './device-credentials'
 import { ProviderAccountsModule } from './provider-accounts'
 import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
 import {
@@ -202,6 +212,9 @@ class SettingsService {
   private customServerAuthenticator?: (serverId: string) => Promise<void>
   private customServerAuthenticationCanceller?: (serverId: string) => Promise<void>
   private customServerDisconnector?: (serverId: string) => Promise<void>
+  private deviceCredentialAuthenticator?: (credentialId: string) => Promise<void>
+  private deviceCredentialAuthenticationCanceller?: (credentialId: string) => Promise<void>
+  private deviceCredentialDisconnector?: (credentialId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -213,7 +226,11 @@ class SettingsService {
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
-    this.connectors = new ConnectorSettingsModule(this.repository, options.openAlexFetch)
+    this.connectors = new ConnectorSettingsModule(
+      this.repository,
+      options.openAlexFetch,
+      new DeviceCredentialStore(this.storageRoot)
+    )
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     const userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skills = new SkillCatalogModule({
@@ -930,6 +947,75 @@ class SettingsService {
     return this.connectors.listConnectors()
   }
 
+  async listDeviceCredentials(): Promise<DeviceCredentialsSnapshot> {
+    return this.connectors.listDeviceCredentials()
+  }
+
+  async deviceCredentialConsumerIds(id: string): Promise<string[]> {
+    return this.connectors.deviceCredentialConsumerIds(id)
+  }
+
+  async deviceCredentialIdForServer(serverId: string): Promise<string | undefined> {
+    return this.connectors.deviceCredentialIdForServer(serverId)
+  }
+
+  async createDeviceCredential(
+    request: CreateDeviceCredentialRequest
+  ): Promise<CreateDeviceCredentialResult> {
+    return this.connectors.createDeviceCredential(request)
+  }
+
+  async updateDeviceCredential(
+    request: UpdateDeviceCredentialRequest,
+    withConsumersBlocked?: DeviceCredentialConsumerMutation
+  ): Promise<DeviceCredentialsSnapshot> {
+    return this.connectors.updateDeviceCredential(request, withConsumersBlocked)
+  }
+
+  async removeDeviceCredential(
+    request: RemoveDeviceCredentialRequest
+  ): Promise<DeviceCredentialsSnapshot> {
+    return this.connectors.removeDeviceCredential(request)
+  }
+
+  async resolveDeviceOAuthCredential(
+    id: string
+  ): Promise<ResolvedOAuthDeviceCredential | undefined> {
+    return this.connectors.resolveDeviceOAuthCredential(id)
+  }
+
+  setDeviceCredentialAuthenticator(
+    authenticate: (credentialId: string) => Promise<void>,
+    cancel: (credentialId: string) => Promise<void>,
+    disconnect: (credentialId: string) => Promise<void>
+  ): void {
+    this.deviceCredentialAuthenticator = authenticate
+    this.deviceCredentialAuthenticationCanceller = cancel
+    this.deviceCredentialDisconnector = disconnect
+  }
+
+  async authenticateDeviceCredential(
+    request: DeviceCredentialAuthenticationRequest
+  ): Promise<DeviceCredentialsSnapshot> {
+    if (!this.deviceCredentialAuthenticator) throw new Error('Device OAuth is unavailable')
+    await this.deviceCredentialAuthenticator(request.id)
+    return this.connectors.listDeviceCredentials()
+  }
+
+  async cancelDeviceCredentialAuthentication(
+    request: DeviceCredentialAuthenticationRequest
+  ): Promise<void> {
+    await this.deviceCredentialAuthenticationCanceller?.(request.id)
+  }
+
+  async disconnectDeviceCredential(
+    request: DeviceCredentialAuthenticationRequest,
+    withConsumersBlocked?: DeviceCredentialConsumerMutation
+  ): Promise<DeviceCredentialsSnapshot> {
+    await this.deviceCredentialDisconnector?.(request.id)
+    return this.connectors.disconnectDeviceCredential(request.id, withConsumersBlocked)
+  }
+
   async previewCustomServerTemplateExport(id: string): Promise<ConnectorTemplateExportPreview> {
     return (await this.connectors.buildCustomServerTemplateExport(id)).preview
   }
@@ -1052,12 +1138,23 @@ class SettingsService {
     await this.customServerAuthenticationCanceller?.(serverId)
   }
 
-  async disconnectCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
-    if (!this.customServerDisconnector) {
-      throw new Error('Custom MCP OAuth disconnect is not available yet')
+  async disconnectCustomServer(
+    serverId: string,
+    withConsumersBlocked?: DeviceCredentialConsumerMutation
+  ): Promise<ConnectorsSnapshot> {
+    const credentialId = await this.connectors.deviceCredentialIdForServer(serverId)
+    if (credentialId) {
+      if (!this.deviceCredentialDisconnector) {
+        throw new Error('Device OAuth disconnect is not available yet')
+      }
+      await this.deviceCredentialDisconnector(credentialId)
+    } else {
+      if (!this.customServerDisconnector) {
+        throw new Error('Custom MCP OAuth disconnect is not available yet')
+      }
+      await this.customServerDisconnector(serverId)
     }
-    await this.customServerDisconnector(serverId)
-    return this.connectors.disconnectCustomServer(serverId)
+    return this.connectors.disconnectCustomServer(serverId, withConsumersBlocked)
   }
 
   // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.

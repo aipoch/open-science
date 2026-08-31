@@ -401,6 +401,21 @@ const openCustomServerEditor = async (displayName: string): Promise<void> => {
   })
 }
 
+const selectSettingsOption = (label: string, option: string): void => {
+  const trigger = document.body.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)
+  act(() => {
+    trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (candidate) => candidate.textContent?.includes(option)
+  )
+  act(() => {
+    item?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+    item?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+}
+
 const settingsSection = (title: string): HTMLElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')).find(
     (section) => section.querySelector('h3')?.textContent?.trim() === title
@@ -2995,6 +3010,104 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalled()
     expect(document.body.textContent).toContain('Chemistry')
     expect(document.body.textContent).toContain('Contact email')
+  })
+
+  it('keeps a Connector draft when device credential creation uses Settings history', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Connectors')?.click())
+
+    const addConnector = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.includes('Add connector'))
+    openRadixMenu(addConnector)
+    const localCommand = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Local command'))
+    await act(async () => {
+      clickRadixMenuItem(localCommand)
+      await Promise.resolve()
+    })
+
+    const displayName = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Display name"]'
+    )!
+    fireEvent.change(displayName, { target: { value: 'Draft research server' } })
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-controls="connector-advanced-settings"]')
+        ?.click()
+    )
+    const newCredential = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'New credential')
+    await act(async () => newCredential?.click())
+
+    expect(document.body.textContent).toContain('Stored on this device')
+    expect(document.body.textContent).toContain('Add connector')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
+    ).toBe('Draft research server')
+  })
+
+  it('keeps edit-time credential creation in the Connector flow without Connector Tags', async () => {
+    const customServer = {
+      id: 'notion-connector-id',
+      name: 'notion2',
+      displayName: 'Notion2',
+      transport: 'stdio' as const,
+      enabled: true,
+      command: 'npx',
+      hasEnv: true,
+      environmentNames: ['API_TOKEN']
+    }
+    vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
+      connectors: [],
+      customServers: [customServer],
+      ncbi: { hasApiKey: false }
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Connectors')?.click())
+    await openCustomServerEditor('Notion2')
+    expect(document.body.querySelector('[aria-label="Manage Tags"]')).not.toBeNull()
+
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-controls="connector-advanced-settings"]')
+        ?.click()
+    )
+    selectSettingsOption('Environment variable action', 'Replace saved variables')
+    fireEvent.change(document.body.querySelector('[aria-label="Environment variables"]')!, {
+      target: { value: 'API_TOKEN=' }
+    })
+    const newCredential = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'New credential')
+    await act(async () => newCredential?.click())
+
+    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.querySelector('[aria-label="Manage Tags"]')).toBeNull()
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).some(
+        (button) => button.textContent?.trim() === 'Edit notion2'
+      )
+    ).toBe(true)
+    expect(document.body.textContent).toContain('New credential')
+
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+    expect(document.body.querySelector('[aria-label="Manage Tags"]')).not.toBeNull()
+    expect(
+      document.body.querySelector<HTMLTextAreaElement>('[aria-label="Environment variables"]')
+        ?.value
+    ).toBe('API_TOKEN=')
   })
 
   it('blocks Connector save and preserves the draft when a live refresh removes the target', async () => {

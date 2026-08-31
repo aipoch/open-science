@@ -1,4 +1,8 @@
-import type { AddCustomServerRequest, UpdateCustomServerRequest } from '../../shared/settings'
+import type {
+  AddCustomServerRequest,
+  DeviceOAuthRegistration,
+  UpdateCustomServerRequest
+} from '../../shared/settings'
 import type { StoredCustomMcpServer } from './types'
 import { SETTINGS_RESOURCE_LIMITS, assertCharacterLimit } from './settings-resource-limits'
 
@@ -16,7 +20,9 @@ const CONNECTOR_RESOURCE_LIMITS = Object.freeze({
   secretEntries: 64,
   secretNameCharacters: 128,
   secretValueBytes: SETTINGS_RESOURCE_LIMITS.credentialBytes,
-  secretRecordBytes: 256 * 1024
+  secretRecordBytes: 256 * 1024,
+  credentialIdCharacters: 128,
+  credentialBindingRecordBytes: 16 * 1024
 })
 
 const assertStringList = (
@@ -51,6 +57,33 @@ const assertSecretRecord = (values: Record<string, string> | undefined, label: s
   return totalBytes
 }
 
+const assertCredentialBindingRecord = (
+  values: Record<string, string> | undefined,
+  label: string
+): void => {
+  if (!values) return
+  const entries = Object.entries(values)
+  if (entries.length > CONNECTOR_RESOURCE_LIMITS.secretEntries) {
+    throw new Error(`${label} must not exceed ${CONNECTOR_RESOURCE_LIMITS.secretEntries} entries.`)
+  }
+  for (const [name, credentialId] of entries) {
+    assertCharacterLimit(name, CONNECTOR_RESOURCE_LIMITS.secretNameCharacters, `${label} name`)
+    assertCharacterLimit(
+      credentialId,
+      CONNECTOR_RESOURCE_LIMITS.credentialIdCharacters,
+      `${label} credential ID`
+    )
+  }
+  if (
+    Buffer.byteLength(JSON.stringify(values), 'utf8') >
+    CONNECTOR_RESOURCE_LIMITS.credentialBindingRecordBytes
+  ) {
+    throw new Error(
+      `${label} must not exceed ${CONNECTOR_RESOURCE_LIMITS.credentialBindingRecordBytes} serialized bytes.`
+    )
+  }
+}
+
 const retainedSecretRecordBytes = (
   values: Record<string, string> | undefined,
   refs: Record<string, string> | undefined,
@@ -74,8 +107,7 @@ const assertSecretValue = (value: string | undefined, label: string): number => 
 }
 
 const assertOAuth = (
-  oauth:
-    NonNullable<AddCustomServerRequest['oauth']> | NonNullable<UpdateCustomServerRequest['oauth']>,
+  oauth: DeviceOAuthRegistration & { clientSecret?: string | null },
   existing?: StoredCustomMcpServer['oauth']
 ): number => {
   const assertChanged = (
@@ -153,6 +185,17 @@ const assertAddCustomServerLimits = (request: AddCustomServerRequest): void => {
     assertSecretRecord(request.headers, 'Connector headers') +
     (request.oauth ? assertOAuth(request.oauth) : 0)
   assertSecretTotal(secretBytes)
+  assertCredentialBindingRecord(
+    request.envCredentialIds,
+    'Connector environment credential bindings'
+  )
+  assertCredentialBindingRecord(request.headerCredentialIds, 'Connector header credential bindings')
+  assertCharacterLimit(
+    request.oauthCredentialId,
+    CONNECTOR_RESOURCE_LIMITS.credentialIdCharacters,
+    'OAuth credential ID'
+  )
+  if (request.oauthRequirements) assertOAuth(request.oauthRequirements)
 }
 
 const assertUpdateCustomServerLimits = (
@@ -195,9 +238,24 @@ const assertUpdateCustomServerLimits = (
     )
   }
   if (request.oauth) assertOAuth(request.oauth, existing.oauth)
+  assertCredentialBindingRecord(
+    request.envCredentialIds,
+    'Connector environment credential bindings'
+  )
+  assertCredentialBindingRecord(request.headerCredentialIds, 'Connector header credential bindings')
+  assertCharacterLimit(
+    request.oauthCredentialId,
+    CONNECTOR_RESOURCE_LIMITS.credentialIdCharacters,
+    'OAuth credential ID'
+  )
 
   const changesSecretState =
-    request.env !== undefined || request.headers !== undefined || request.oauth !== undefined
+    request.env !== undefined ||
+    request.envCredentialIds !== undefined ||
+    request.headers !== undefined ||
+    request.headerCredentialIds !== undefined ||
+    request.oauth !== undefined ||
+    request.oauthCredentialId !== undefined
   if (!changesSecretState) return
 
   const requestedOAuth = request.oauth
@@ -239,12 +297,20 @@ const assertUpdateCustomServerLimits = (
   const environmentBytes =
     request.env !== undefined
       ? assertSecretRecord(request.env, 'Connector environment variables')
-      : retainedSecretRecordBytes(existing.env, existing.envRefs, 'Connector environment variables')
+      : request.envCredentialIds !== undefined
+        ? Buffer.byteLength(JSON.stringify(request.envCredentialIds), 'utf8')
+        : retainedSecretRecordBytes(
+            existing.env,
+            existing.envRefs,
+            'Connector environment variables'
+          )
   const headerBytes = nextOAuth
     ? 0
     : request.headers !== undefined
       ? assertSecretRecord(request.headers, 'Connector headers')
-      : retainedSecretRecordBytes(existing.headers, existing.headerRefs, 'Connector headers')
+      : request.headerCredentialIds !== undefined
+        ? Buffer.byteLength(JSON.stringify(request.headerCredentialIds), 'utf8')
+        : retainedSecretRecordBytes(existing.headers, existing.headerRefs, 'Connector headers')
   const oauthBytes =
     assertSecretValue(effectiveOAuthClientSecret, 'OAuth client secret') +
     (retainedOAuthRef ? Buffer.byteLength(retainedOAuthRef, 'utf8') : 0)

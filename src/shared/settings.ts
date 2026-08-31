@@ -1359,13 +1359,16 @@ export type CustomServerView = {
   availability?: 'unavailable' | 'unauthenticated' | 'credential_unavailable'
   // Background discovery is transient and does not make the Connector unavailable by itself.
   checking?: boolean
-  // Display-only config summary. Environment names are safe to show; values stay write-only.
+  // Display-only config summary. Environment/header names are safe to show; values stay write-only.
   command?: string
   args?: string[]
   url?: string
   hasHeaders?: boolean
+  headerNames?: string[]
   hasEnv?: boolean
   environmentNames?: string[]
+  // Opaque device credential reference used to preselect a shared OAuth credential in Configure.
+  oauthCredentialId?: string
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
@@ -1375,6 +1378,7 @@ export type CustomServerView = {
     hasTokens: boolean
     // Optional for compatibility with snapshots from an older main process during development.
     hasClientSecret?: boolean
+    sharedCredential?: boolean
   }
 }
 
@@ -1398,6 +1402,57 @@ export type ValidateOpenAlexCredentialRequest = { apiKey: string }
 export type OpenAlexCredentialValidation =
   { valid: true } | { valid: false; reason: 'invalid-format' | 'rejected' | 'unavailable' }
 
+export type DeviceCredentialKind = 'api_key' | 'token' | 'oauth'
+export type DeviceOAuthTransport = Extract<CustomServerTransport, 'streamable_http' | 'sse'>
+export type DeviceOAuthRegistration = {
+  clientMetadataUrl?: string
+  authorizationServerUrl?: string
+  scopes?: string[]
+  clientId?: string
+  redirectUri?: string
+}
+
+export type DeviceCredentialView = {
+  id: string
+  displayName: string
+  kind: DeviceCredentialKind
+  status: 'stored' | 'connected' | 'disconnected'
+  resourceUri?: string
+  transport?: DeviceOAuthTransport
+  oauth?: DeviceOAuthRegistration
+  hasClientSecret?: boolean
+  consumerCount: number
+  consumerNames: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export type DeviceCredentialsSnapshot = { credentials: DeviceCredentialView[] }
+export type CreateDeviceCredentialResult = DeviceCredentialsSnapshot & {
+  createdCredential: DeviceCredentialView
+}
+
+export type CreateDeviceCredentialRequest =
+  | { displayName: string; kind: 'api_key' | 'token'; secret: string }
+  | {
+      displayName: string
+      kind: 'oauth'
+      resourceUri: string
+      transport: DeviceOAuthTransport
+      oauth: DeviceOAuthRegistration & {
+        clientSecret?: string
+      }
+    }
+
+export type UpdateDeviceCredentialRequest = {
+  id: string
+  displayName?: string
+  secret?: string
+}
+
+export type RemoveDeviceCredentialRequest = { id: string }
+export type DeviceCredentialAuthenticationRequest = { id: string }
+
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
   // Optional immutable local ID. Omission lets main infer one from `name` and fall back to a UUID.
@@ -1409,8 +1464,17 @@ export type AddCustomServerRequest = {
   command?: string
   args?: string[]
   env?: Record<string, string>
+  envCredentialIds?: Record<string, string>
   url?: string
   headers?: Record<string, string>
+  headerCredentialIds?: Record<string, string>
+  oauthCredentialId?: string
+  // Non-secret registration requirements checked against a selected shared OAuth credential.
+  // They are validation input only and are not persisted on the Connector.
+  oauthRequirements?: DeviceOAuthRegistration
+  // Request-only marker from an imported template. Main validates the selected shared credential;
+  // the marker is never persisted on the Connector.
+  requiresOAuthClientSecret?: boolean
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
@@ -1505,8 +1569,12 @@ export type UpdateCustomServerRequest = {
   command?: string
   args?: string[]
   env?: Record<string, string>
+  envCredentialIds?: Record<string, string>
   url?: string
   headers?: Record<string, string>
+  headerCredentialIds?: Record<string, string>
+  // Omitted retains the current shared OAuth binding; a value selects or replaces it.
+  oauthCredentialId?: string
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string

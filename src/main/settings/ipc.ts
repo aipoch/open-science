@@ -27,15 +27,19 @@ import {
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
   type AddCustomServerRequest,
+  type CreateDeviceCredentialRequest,
+  type DeviceCredentialAuthenticationRequest,
   type AuthenticateCustomServerRequest,
   type DisconnectCustomServerRequest,
   type ConnectorTemplateSelectionResult,
   type ExportCustomServerTemplateRequest,
   type ExportCustomServerTemplateResult,
   type RemoveCustomServerRequest,
+  type RemoveDeviceCredentialRequest,
   type SelectCustomServerTemplateRequest,
   type SetCustomServerEnabledRequest,
   type UpdateCustomServerRequest,
+  type UpdateDeviceCredentialRequest,
   type SetConnectorAutoAllowRequest,
   type SetConnectorEnabledRequest,
   type SetNcbiCredentialsRequest,
@@ -437,6 +441,39 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
     workflows.connectors.setNcbiCredentials(request)
+  )
+  ipcMainHandle('settings:list-device-credentials', () =>
+    workflows.connectors.listDeviceCredentials()
+  )
+  ipcMainHandle(
+    'settings:create-device-credential',
+    (_event, request: CreateDeviceCredentialRequest) =>
+      workflows.connectors.createDeviceCredential(request)
+  )
+  ipcMainHandle(
+    'settings:update-device-credential',
+    (_event, request: UpdateDeviceCredentialRequest) =>
+      workflows.connectors.updateDeviceCredential(request)
+  )
+  ipcMainHandle(
+    'settings:remove-device-credential',
+    (_event, request: RemoveDeviceCredentialRequest) =>
+      workflows.connectors.removeDeviceCredential(request)
+  )
+  ipcMainHandle(
+    'settings:authenticate-device-credential',
+    (_event, request: DeviceCredentialAuthenticationRequest) =>
+      workflows.connectors.authenticateDeviceCredential(request)
+  )
+  ipcMainHandle(
+    'settings:cancel-device-credential-authentication',
+    (_event, request: DeviceCredentialAuthenticationRequest) =>
+      workflows.connectors.cancelDeviceCredentialAuthentication(request)
+  )
+  ipcMainHandle(
+    'settings:disconnect-device-credential',
+    (_event, request: DeviceCredentialAuthenticationRequest) =>
+      workflows.connectors.disconnectDeviceCredential(request)
   )
   ipcMainHandle(
     'settings:set-openalex-credential',

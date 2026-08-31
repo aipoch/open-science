@@ -653,7 +653,7 @@ describe('ConnectorsPanel (groups)', () => {
             transport: 'streamable_http',
             enabled: true,
             url: 'https://mcp.example.test',
-            oauth: { hasTokens: true }
+            oauth: { hasTokens: true, sharedCredential: true }
           }
         ]
       })
@@ -673,6 +673,7 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => connectedStatus?.click())
     expect(document.body.textContent).toContain('Reauthenticate')
     expect(document.body.textContent).toContain('Disconnect')
+    expect(document.body.textContent).toContain('disables every Connector using this credential')
     await act(async () => clickButtonByText('Disconnect'))
     expect(useSettingsStore.getState().disconnectCustomServer).toHaveBeenCalledWith({
       id: 'oauth-mcp'

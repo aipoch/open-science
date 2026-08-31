@@ -65,8 +65,9 @@ export type ConnectorsView =
       kind: 'add'
       transport: 'local' | 'remote'
       template?: ConnectorTemplateDefinition
+      credentialView?: 'create'
     }
-  | { kind: 'edit'; id: string }
+  | { kind: 'edit'; id: string; credentialView?: 'create' }
   | { kind: 'import' }
   | { kind: 'export'; id: string }
 
@@ -1001,9 +1002,13 @@ export function ConnectorsPanel({
             </div>
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                {t(
-                  'Disconnect removes OAuth tokens from this app and disables the Connector. It does not revoke access on the service.'
-                )}
+                {oauthConnectionServer?.oauth?.sharedCredential
+                  ? t(
+                      'Disconnect removes the shared OAuth tokens from this app and disables every Connector using this credential. It does not revoke access on the service.'
+                    )
+                  : t(
+                      'Disconnect removes OAuth tokens from this app and disables the Connector. It does not revoke access on the service.'
+                    )}
               </AlertDialog.Description>
               {oauthConnectionError ? (
                 <p className="mt-3 text-sm text-status-failure">{oauthConnectionError}</p>

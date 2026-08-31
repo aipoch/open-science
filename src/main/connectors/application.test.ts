@@ -17,8 +17,10 @@ const createHarness = (): ConnectorApplicationHarness => {
   const settings = {
     getConnectors: vi.fn().mockResolvedValue({ customMcpServers: [] }),
     saveCustomServerOAuthState: vi.fn().mockResolvedValue(undefined),
+    resolveDeviceOAuthCredential: vi.fn().mockResolvedValue(undefined),
     setCustomServerRuntimeProjectionProvider: vi.fn(),
     setCustomServerAuthenticator: vi.fn(),
+    setDeviceCredentialAuthenticator: vi.fn(),
     previewSkillArchive: vi.fn(),
     importSkillArchiveBatch: vi.fn(),
     scanRepoSkills: vi.fn().mockResolvedValue({ skills: [] }),
@@ -104,6 +106,7 @@ describe('Connector application composition', () => {
     expect(application.skillImporter).toBeDefined()
     expect(settings.setCustomServerRuntimeProjectionProvider).toHaveBeenCalledOnce()
     expect(settings.setCustomServerAuthenticator).toHaveBeenCalledOnce()
+    expect(settings.setDeviceCredentialAuthenticator).toHaveBeenCalledOnce()
 
     await runtime.dispose()
     expect(mcpClientManager.closeAll).toHaveBeenCalledOnce()
@@ -134,6 +137,57 @@ describe('Connector application composition', () => {
     ) => Promise<void>
 
     await expect(authenticate('oauth-incomplete')).rejects.toThrow(/credential_unavailable/)
+    expect(mcpClientManager.authenticate).not.toHaveBeenCalled()
+
+    await module.dispose?.()
+  })
+
+  it('uses the device OAuth credential transport during authentication', async () => {
+    const { settings, mcpClientManager, deps } = createHarness()
+    settings.resolveDeviceOAuthCredential.mockResolvedValue({
+      id: 'shared-oauth',
+      resourceUri: 'https://mcp.example.test/',
+      transport: 'sse',
+      oauth: { scopes: ['read'] },
+      hasClientSecret: false
+    })
+    const module = await createConnectorApplicationModule(deps)
+    const authenticate = settings.setDeviceCredentialAuthenticator.mock.calls[0][0] as (
+      credentialId: string
+    ) => Promise<void>
+
+    await authenticate('shared-oauth')
+
+    expect(mcpClientManager.authenticate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'credential:shared-oauth',
+        transport: 'sse',
+        url: 'https://mcp.example.test/'
+      })
+    )
+    expect(mcpClientManager.close).toHaveBeenCalledWith('credential:shared-oauth')
+
+    await module.dispose?.()
+  })
+
+  it('fails closed before device OAuth authentication when its client secret cannot be decrypted', async () => {
+    const { settings, mcpClientManager, deps } = createHarness()
+    settings.resolveDeviceOAuthCredential.mockResolvedValue({
+      id: 'shared-oauth',
+      resourceUri: 'https://mcp.example.test/',
+      transport: 'streamable_http',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test/',
+        clientId: 'registered-client'
+      },
+      hasClientSecret: true
+    })
+    const module = await createConnectorApplicationModule(deps)
+    const authenticate = settings.setDeviceCredentialAuthenticator.mock.calls[0][0] as (
+      credentialId: string
+    ) => Promise<void>
+
+    await expect(authenticate('shared-oauth')).rejects.toThrow(/credential_unavailable/)
     expect(mcpClientManager.authenticate).not.toHaveBeenCalled()
 
     await module.dispose?.()

@@ -24,7 +24,7 @@ describe('SettingsService connector facade', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'osci-svc-connectors-facade-'))
     repository = new SettingsRepository(dir)
-    service = new SettingsService({ repository })
+    service = new SettingsService({ repository, storageRoot: dir })
     return async () => {
       await rm(dir, { recursive: true, force: true })
     }
@@ -39,6 +39,36 @@ describe('SettingsService connector facade', () => {
     expect(snapshot.ncbi).toEqual({ contactEmail: 'me@lab.org', hasApiKey: true })
     expect(JSON.stringify(snapshot)).not.toContain('secret-key')
     expect((await service.getConnectors())?.ncbiApiKeyRef).toMatch(/^enc:/)
+  })
+
+  it('owns device OAuth sign-in and disconnect through the Connector runtime adapter', async () => {
+    const authenticate = vi.fn(async (id: string) => {
+      await service.saveCustomServerOAuthState('credential:' + id, {
+        tokens: { access_token: 'oauth-token', token_type: 'bearer' }
+      })
+    })
+    const disconnect = vi.fn(async () => undefined)
+    service.setDeviceCredentialAuthenticator(authenticate, vi.fn(), disconnect)
+
+    const created = await service.createDeviceCredential({
+      displayName: 'Lab OAuth',
+      kind: 'oauth',
+      resourceUri: 'https://mcp.example.test/',
+      transport: 'streamable_http',
+      oauth: { scopes: ['read'] }
+    })
+    const credential = created.credentials[0]!
+
+    expect(authenticate).not.toHaveBeenCalled()
+    expect(credential.status).toBe('disconnected')
+
+    const connected = await service.authenticateDeviceCredential({ id: credential.id })
+    expect(authenticate).toHaveBeenCalledWith(credential.id)
+    expect(connected.credentials[0]?.status).toBe('connected')
+
+    const disconnected = await service.disconnectDeviceCredential({ id: credential.id })
+    expect(disconnect).toHaveBeenCalledWith(credential.id)
+    expect(disconnected.credentials[0]?.status).toBe('disconnected')
   })
 
   it('migrates a legacy NCBI key only through the existing whole-settings read path', async () => {
