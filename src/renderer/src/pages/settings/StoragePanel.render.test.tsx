@@ -48,7 +48,12 @@ const richInfo: StorageInfo = {
       },
       { key: 'uploads', bytes: 0 },
       { key: 'notebooks', bytes: 0 },
-      { key: 'execution-file-evidence', bytes: 8_300_000 }
+      { key: 'execution-file-evidence', bytes: 8_300_000 },
+      {
+        key: 'workspaces',
+        bytes: 17,
+        children: [{ name: 'workspace-id', bytes: 17 }]
+      }
     ],
     totalBytes: 3_731_000_125
   },
@@ -94,6 +99,10 @@ beforeEach(() => {
   root = createRoot(container)
 
   ;(window as unknown as { api: unknown }).api = {
+    platform: 'darwin',
+    localFs: {
+      openPath: vi.fn().mockResolvedValue('')
+    },
     storage: {
       getStatus: vi.fn().mockResolvedValue({
         dataRoot: '/home/u/.open-science',
@@ -140,6 +149,34 @@ afterEach(() => {
 })
 
 describe('StoragePanel', () => {
+  it('opens an individual retained Session workspace from its usage row', async () => {
+    useStorageInfoStore.setState({
+      status: richInfo,
+      info: richInfo,
+      scannedAt: Date.now(),
+      isLoading: false,
+      isRefreshing: false,
+      loadError: undefined
+    })
+
+    await act(async () => root.render(<StoragePanel />))
+    clickButton((button) => button.textContent?.includes('Session workspaces') ?? false)
+
+    const workspaceRow = Array.from(container.querySelectorAll<HTMLElement>('div')).find(
+      (element) => element.textContent?.includes('workspace-id')
+    )
+    const open = workspaceRow?.querySelector<HTMLButtonElement>('button[aria-label="Open folder"]')
+
+    expect(open).toBeDefined()
+    await act(async () => {
+      open?.click()
+      await Promise.resolve()
+    })
+    expect(window.api.localFs.openPath).toHaveBeenCalledWith(
+      '/home/u/.open-science/workspaces/workspace-id'
+    )
+  })
+
   it('shows the data location while the usage scan is still running', async () => {
     let finishScan!: (info: StorageInfo) => void
     vi.mocked(window.api.storage.getInfo).mockImplementationOnce(

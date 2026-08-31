@@ -3353,16 +3353,16 @@ describe('Korean safety copy', () => {
       '손상된 대화 {{count}}개를 별도 위치로 옮겼습니다. 상태를 확인할 수 없어 프로젝트 보관 기능은 계속 사용할 수 없습니다. 그래도 프로젝트를 영구 삭제할 수는 있습니다.'
     ],
     [
-      'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
-      '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+      'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in Session workspaces are not deleted and remain available in Settings → Storage. This action cannot be undone.',
+      '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 세션 워크스페이스의 파일은 삭제되지 않으며 설정 → 저장 공간에서 계속 사용할 수 있습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
     [
-      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone._other',
-      '이 작업을 실행하면 “{{name}}”과 세션 {{count}}개가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in Session workspaces are not deleted and remain available in Settings → Storage. This action cannot be undone._other',
+      '이 작업을 실행하면 “{{name}}”과 세션 {{count}}개가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 세션 워크스페이스의 파일은 삭제되지 않으며 설정 → 저장 공간에서 계속 사용할 수 있습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
     [
-      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
-      '이 작업을 실행하면 “{{name}}”이 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in Session workspaces are not deleted and remain available in Settings → Storage. This action cannot be undone.',
+      '이 작업을 실행하면 “{{name}}”이 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 세션 워크스페이스의 파일은 삭제되지 않으며 설정 → 저장 공간에서 계속 사용할 수 있습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
     [
       'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',

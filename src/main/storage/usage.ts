@@ -56,6 +56,38 @@ const fileSize = async (path: string, seen: Set<string>): Promise<number> => {
   return info.size
 }
 
+// Session workspaces are intentionally retained after Session/Project deletion. Report each
+// top-level directory so Settings can make those opaque UUID folders reachable without inventing
+// a Project/Session association that no longer exists. Empty directories remain visible; symlinks
+// are skipped rather than followed or offered as workspace roots.
+const workspaceUsage = async (dir: string): Promise<{ bytes: number; children: UsageChild[] }> => {
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch (error) {
+    if (isMissingPathError(error)) return { bytes: 0, children: [] }
+    throw error
+  }
+
+  const seen = new Set<string>()
+  const children: UsageChild[] = []
+  let looseBytes = 0
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      children.push({ name: entry.name, bytes: await dirSize(path, seen) })
+    } else if (entry.isFile()) {
+      looseBytes += await fileSize(path, seen)
+    }
+  }
+  children.sort((left, right) => right.bytes - left.bytes || left.name.localeCompare(right.name))
+  return {
+    bytes: looseBytes + children.reduce((sum, child) => sum + child.bytes, 0),
+    children
+  }
+}
+
 // Breaks the runtime dir into meaningful buckets for the Storage panel: `conda` (the shared package
 // cache + micromamba root) and one child per conda env under envs/ — with default-python/default-r
 // surfaced as `python`/`r` and named envs shown by their name. Sorted descending by bytes; each
@@ -134,6 +166,9 @@ export const computeStorageUsage = async (dataRoot: string): Promise<StorageUsag
     if (key === 'runtime') {
       const { bytes, children } = await runtimeUsage(dir)
       categories.push({ key, bytes, children })
+    } else if (key === 'workspaces') {
+      const { bytes, children } = await workspaceUsage(dir)
+      categories.push(children.length > 0 ? { key, bytes, children } : { key, bytes })
     } else if (key === 'execution-file-evidence') {
       const seen = new Set<string>()
       const bytes =

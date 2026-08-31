@@ -253,7 +253,9 @@ describe('home dialogs shared chrome', () => {
       'Generated artifacts and uploaded files stored by Open Science will also be deleted.'
     )
     expect(text).toContain('Deleting this project will stop its running tasks and notebooks.')
-    expect(text).toContain("Files in the project's working folder are not deleted.")
+    expect(text).toContain(
+      'Files in Session workspaces are not deleted and remain available in Settings → Storage.'
+    )
     expect(text).not.toContain('Generated artifacts remain on disk')
   })
 

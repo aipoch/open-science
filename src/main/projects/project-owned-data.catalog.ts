@@ -453,6 +453,17 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'managed-session-workspaces',
+    medium: 'filesystem',
+    resources: ['workspaces/<workspaceId>/'],
+    policy: {
+      kind: 'retained-history',
+      effect: 'retain',
+      retention: 'Retained until the user removes the workspace files.',
+      reason: 'Session and Project deletion preserve ordinary workspace files for user recovery.'
+    }
+  },
+  {
     id: 'artifact-bytes',
     medium: 'filesystem',
     resources: ['artifacts/<projectId>/'],
