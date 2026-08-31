@@ -11,6 +11,22 @@ export type ProcessTreeLogger = { error: (message: string, error?: unknown) => v
 // caller that must guarantee released file handles (the update-install gate) can refuse to proceed.
 export type ProcessTreeKillResult = { reaped: boolean }
 
+type OwnedPosixProcessGroup = Readonly<{
+  kind: 'owned-posix-process-group'
+  id: number
+}>
+
+// A detached POSIX child is the leader of a private process group whose stable id is its spawn pid.
+// Keep that ownership receipt on the child handle so teardown can still address the group after the
+// leader exits and its descendants are reparented. Unregistered children retain PPID-tree teardown.
+const ownedPosixProcessGroups = new WeakMap<ChildProcess, OwnedPosixProcessGroup>()
+
+export const registerOwnedPosixProcessGroup = (child: ChildProcess): void => {
+  const groupId = child.pid
+  if (groupId === undefined || !Number.isSafeInteger(groupId) || groupId <= 0) return
+  ownedPosixProcessGroups.set(child, { kind: 'owned-posix-process-group', id: groupId })
+}
+
 // Upper bound for awaiting a direct child's real exit (POSIX) or taskkill's own completion (Windows).
 // Bounded so a wedged process can never hang app teardown; the caller (before-quit) also time-bounds
 // the whole shutdown, this is a second, tighter guard scoped to a single tree.
@@ -19,6 +35,7 @@ const TERMINATE_GRACE_MS = 3_000
 // Shorter wait after escalating to SIGKILL: SIGKILL is uncatchable, so a process that survives it is a
 // kernel-level unkillable (uninterruptible sleep) we cannot do anything about — don't wait the full grace.
 const SIGKILL_GRACE_MS = 1_000
+const PROCESS_GROUP_POLL_MS = 25
 
 // Signals the direct child, tolerating an already-exited process or a handle with no pid. Skips a child
 // already signaled so a first, graceful pass is a no-op on retry; escalation uses forceKillChild instead.
@@ -63,6 +80,50 @@ const signalPids = (pids: number[], signal: NodeJS.Signals): void => {
     }
   }
 }
+
+// Negative POSIX pids address a process group. Treat every error except ESRCH as potentially alive so
+// permission or platform failures fail closed instead of claiming an owned group was reaped.
+const isProcessGroupAlive = (groupId: number): boolean => {
+  try {
+    process.kill(-groupId, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+const signalProcessGroup = (groupId: number, signal: NodeJS.Signals): void => {
+  try {
+    process.kill(-groupId, signal)
+  } catch {
+    // The group may already be gone or inaccessible. The subsequent liveness wait decides reaped.
+  }
+}
+
+const waitUntil = (condition: () => boolean, ms: number): Promise<boolean> =>
+  new Promise<boolean>((resolve) => {
+    const deadline = Date.now() + ms
+    const poll = (): void => {
+      if (condition()) {
+        resolve(true)
+        return
+      }
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) {
+        resolve(false)
+        return
+      }
+      const timer = setTimeout(poll, Math.min(PROCESS_GROUP_POLL_MS, remaining))
+      timer.unref?.()
+    }
+    poll()
+  })
+
+const waitForProcessGroupExit = (groupId: number, ms: number): Promise<boolean> =>
+  waitUntil(() => !isProcessGroupAlive(groupId), ms)
+
+const waitForPidsExit = (pids: number[], ms: number): Promise<boolean> =>
+  waitUntil(() => pids.every((pid) => !isProcessAlive(pid)), ms)
 
 // Resolves true once the child actually exits, or false once the grace elapses without an exit — so the
 // caller can decide whether to escalate. The timer is cleared on exit (and unref'd) so a settled wait
@@ -276,6 +337,47 @@ const terminatePosixTree = async (
   }
 }
 
+// An explicitly owned detached group is stronger identity than a live PPID relationship: it remains
+// addressable after the leader exits and descendants are reparented. Signal only the recorded private
+// group, never infer a group from an arbitrary child or from the application's own process state.
+const terminateOwnedPosixProcessGroup = async (
+  group: OwnedPosixProcessGroup,
+  signal: NodeJS.Signals | undefined,
+  log: ProcessTreeLogger | undefined
+): Promise<ProcessTreeKillResult> => {
+  const gracefulSignal = signal ?? 'SIGTERM'
+  // Snapshot before signaling the leader so descendants that created their own process group/session
+  // remain addressable even if the leader exits immediately. The owned group independently covers
+  // same-group descendants after reparenting, when PPID discovery can no longer find them.
+  const snapshot = await collectDescendantPids(group.id)
+  signalProcessGroup(group.id, gracefulSignal)
+  signalPids(snapshot.pids, gracefulSignal)
+  const gracefulExit = await Promise.all([
+    waitForProcessGroupExit(group.id, TERMINATE_GRACE_MS),
+    waitForPidsExit(snapshot.pids, TERMINATE_GRACE_MS)
+  ])
+  if (gracefulExit.every(Boolean)) return { reaped: snapshot.complete }
+
+  const survivors = snapshot.pids.filter(isProcessAlive)
+  if (isProcessGroupAlive(group.id)) {
+    log?.error(
+      `owned process group ${group.id} did not exit after ${gracefulSignal}; escalating to SIGKILL`
+    )
+  }
+  if (survivors.length > 0) {
+    log?.error(
+      `owned process tree left ${survivors.length} detached descendant(s) alive after ${gracefulSignal}; escalating to SIGKILL`
+    )
+  }
+  signalProcessGroup(group.id, 'SIGKILL')
+  signalPids(survivors, 'SIGKILL')
+  const forcedExit = await Promise.all([
+    waitForProcessGroupExit(group.id, SIGKILL_GRACE_MS),
+    waitForPidsExit(snapshot.pids, SIGKILL_GRACE_MS)
+  ])
+  return { reaped: snapshot.complete && forcedExit.every(Boolean) }
+}
+
 // Terminates a child process and every descendant it spawned, then waits for the direct child to actually
 // exit — escalating to SIGKILL anything still alive. On Windows the tree is reaped with taskkill /T /F
 // (with a direct-kill fallback); on POSIX descendants are found via `ps`, signaled, and SIGKILL-escalated.
@@ -290,5 +392,7 @@ export const terminateProcessTree = async (
   if (process.platform === 'win32') {
     return terminateWindowsTree(child, signal, log)
   }
+  const ownedGroup = ownedPosixProcessGroups.get(child)
+  if (ownedGroup) return terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
   return terminatePosixTree(child, signal, log)
 }

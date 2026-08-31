@@ -45,10 +45,11 @@ import { computeJobAnalysisStateMigration } from './migrations/0020-compute-job-
 import { computeJobAnalysisConstraintsMigration } from './migrations/0021-compute-job-analysis-constraints'
 import { memoryGlobalContentUniqueMigration } from './migrations/0022-memory-global-content-unique'
 import { computeJobOperationMigration } from './migrations/0023-compute-job-operation'
+import { computeJobFileEvidenceMigration } from './migrations/0024-compute-job-file-evidence'
 import {
   managedFileVersionFoundationCurrentSchemaAdoptionStatements,
   managedFileVersionFoundationMigration
-} from './migrations/0024-managed-file-version-foundation'
+} from './migrations/0025-managed-file-version-foundation'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -333,6 +334,12 @@ const MEMORY_GLOBAL_CONTENT_UNIQUE_CHECKSUM = checksumMigrationPayload(
   memoryGlobalContentUniqueMigration.verifiers,
   memoryGlobalContentUniqueMigration.operations
 )
+const COMPUTE_JOB_FILE_EVIDENCE_CHECKSUM = checksumMigrationPayload(
+  computeJobFileEvidenceMigration.id,
+  computeJobFileEvidenceMigration.statements,
+  computeJobFileEvidenceMigration.verifiers,
+  computeJobFileEvidenceMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
@@ -575,6 +582,12 @@ const MIGRATION_MANIFEST = [
   {
     ...computeJobOperationMigration,
     checksum: COMPUTE_JOB_OPERATION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeJobFileEvidenceMigration,
+    checksum: COMPUTE_JOB_FILE_EVIDENCE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   },
@@ -936,6 +949,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(client, computeJobAnalysisStateMigration.verifiers)
   await runMigrationVerifiers(client, computeJobAnalysisConstraintsMigration.verifiers)
   await runMigrationVerifiers(client, memoryGlobalContentUniqueMigration.verifiers)
+  await runMigrationVerifiers(client, computeJobFileEvidenceMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1728,6 +1742,11 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === computeJobOperationMigration.id &&
       candidate.checksum === COMPUTE_JOB_OPERATION_CHECKSUM
   )
+  const adoptsComputeJobFileEvidence = manifest.some(
+    (candidate) =>
+      candidate.id === computeJobFileEvidenceMigration.id &&
+      candidate.checksum === COMPUTE_JOB_FILE_EVIDENCE_CHECKSUM
+  )
   const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
@@ -1752,14 +1771,19 @@ const migrateApplicationDatabaseWithManifest = async (
       repairsPreviewStateForeignKeyViolations,
       allowedSuffixChecks,
       adoptsManagedFileVersionFoundation,
-      adoptsAgentMemoryProjectScope
-        ? {
-            tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
-            schemaObjects: MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
-              type === 'trigger' ? [{ type, name }] : []
-            )
-          }
-        : {}
+      {
+        ...(adoptsAgentMemoryProjectScope
+          ? {
+              tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
+              schemaObjects: MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
+                type === 'trigger' ? [{ type, name }] : []
+              )
+            }
+          : {}),
+        ...(adoptsComputeJobFileEvidence
+          ? { columns: { ComputeJob: ['producerRunId', 'fileEvidence'] } }
+          : {})
+      }
     )
     applied.push(baseline.id)
     nextIndex = 1

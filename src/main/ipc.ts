@@ -72,6 +72,7 @@ import { createComputeIpcModule } from './compute/ipc'
 import { createComputeArtifactResolver } from './compute/compute-service'
 import { bindComputeApprovalSessionLifecycle } from './compute/approval-session-lifecycle'
 import type { ComputeJobOwnerLiveness } from './compute/job-deletion-owner'
+import { hasImmutableExecutionFileEvidenceReference } from '../shared/execution-file-evidence'
 import { AgentComputeService } from './compute/agent-compute-service'
 import { createSessionCatalogHydration } from './compute/session-catalog-hydration'
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
@@ -161,6 +162,11 @@ import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
 import { NotebookRunRepository, getRuntimeRoot } from './notebook/repository'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import { createNotebookArtifactSourceScopeProvider } from './notebook/artifact-source-scope'
+import {
+  reconcileComputeJobFileEvidence,
+  recoverPublishedComputeJobFileEvidence,
+  settleComputeJobFileEvidence
+} from './notebook/working-file-observer'
 import { NotebookInputRegistry } from './notebook/input-registry'
 import { effectiveMirrorAsync } from './notebook/mirror-probe'
 import { createProductionProvisioner, type RuntimeProvisioner } from './notebook/provisioner'
@@ -1882,7 +1888,52 @@ const createApplicationModules = async (
       return {
         name: 'compute-job-runtime',
         capability: undefined,
-        start: () => jobPoller.start(),
+        start: async () => {
+          try {
+            const owners = await jobRepository.listOwners()
+            const jobs = (
+              await Promise.all(owners.map((owner) => jobRepository.findByOwner(owner)))
+            ).flat()
+            for (const [index, job] of jobs.entries()) {
+              if (
+                job.status !== 'error' ||
+                hasImmutableExecutionFileEvidenceReference(job.file_evidence)
+              ) {
+                continue
+              }
+              const fileEvidence = await recoverPublishedComputeJobFileEvidence({
+                storageRoot: dataRoot,
+                projectId: job.project_id,
+                sessionId: job.session_id,
+                jobId: job.job_id,
+                producerRunId: job.producer_run_id
+              })
+              if (!fileEvidence) continue
+              const updated = await jobRepository.update(job.job_id, { fileEvidence })
+              jobs[index] = updated
+              await settleComputeJobFileEvidence({
+                storageRoot: dataRoot,
+                projectId: job.project_id,
+                sessionId: job.session_id,
+                jobId: job.job_id,
+                producerRunId: job.producer_run_id,
+                fileEvidence
+              }).catch((error) =>
+                createLogger('compute:file-evidence').warn(
+                  'Recovered Compute Job file-evidence receipt remains for reconciliation.',
+                  { jobId: job.job_id, ...errorLogFields(error) }
+                )
+              )
+            }
+            await reconcileComputeJobFileEvidence(dataRoot, jobs)
+          } catch (error) {
+            createLogger('compute:file-evidence').warn(
+              'Compute Job file-evidence startup reconciliation failed closed.',
+              diagnosticErrorFields(error)
+            )
+          }
+          jobPoller.start()
+        },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         dispose: () => jobPoller.stop()
       }

@@ -549,6 +549,7 @@ const adaptMigrationOperationsForCurrentSchema = async (
 type LegacySchemaExtensions = {
   tableNames?: readonly string[]
   schemaObjects?: readonly { type: 'trigger' | 'view'; name: string }[]
+  columns?: Readonly<Record<string, readonly string[]>>
 }
 
 const classifyLegacySchema = async (
@@ -602,7 +603,8 @@ const classifyLegacySchema = async (
     if (!currentColumns) continue
     const allowedColumns = new Set([
       ...currentColumns,
-      ...(RETIRED_LEGACY_COLUMNS[tableName] ?? [])
+      ...(RETIRED_LEGACY_COLUMNS[tableName] ?? []),
+      ...(extensions.columns?.[tableName] ?? [])
     ])
     const columns = await migrationSqlExecutor.query<SqliteTableColumn[]>(
       client,

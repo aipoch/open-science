@@ -1,12 +1,14 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost, ComputeJob } from '../../shared/compute'
+import { beginComputeJobFileEvidence } from '../notebook/working-file-observer'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import { ComputeService } from './compute-service'
+import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import type { ConcurrencyManager } from './concurrency-manager'
 import type { CreateJobRequest, ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
@@ -376,5 +378,89 @@ describe('ComputeService job workflow facade', () => {
     expect(setSessionLimit).toHaveBeenCalledWith('session-1', 7)
     expect(concurrency).toMatchObject({ session_limit: 7, queued_count: 1 })
     expect(handleJobUpdated).toHaveBeenCalledWith(storedJob)
+  })
+
+  it('removes file-evidence staging when a queued Job is cancelled before submission', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'compute-cancel-evidence-'))
+    try {
+      const job: ComputeJob = {
+        job_id: 'job-queued',
+        provider_id: 'ssh:biowulf',
+        shape: 'direct_ssh',
+        session_id: 'session-1',
+        project_id: 'project-1',
+        status: 'failed',
+        intent: 'cancel before dispatch',
+        command: 'sleep 9999',
+        command_hash: 'hash',
+        environment: undefined,
+        resource_request: undefined,
+        input_manifest: undefined,
+        output_manifest: undefined,
+        harvest_config: undefined,
+        timeout_seconds: undefined,
+        remote_workdir: undefined,
+        remote_handle: undefined,
+        exit_code: undefined,
+        stdout_tail: undefined,
+        stderr_tail: undefined,
+        error_code: undefined,
+        created_at: 1,
+        submitted_at: undefined,
+        started_at: undefined,
+        finished_at: 2,
+        harvested_at: undefined
+      }
+      const jobRepository = {
+        get: vi.fn(async () => job)
+      } as unknown as ComputeJobRepository
+      const operationRepository = {
+        request: vi.fn(async () => ({
+          found: true,
+          jobStatus: 'failed',
+          record: { phase: 'settled', outcome: 'fulfilled' }
+        }))
+      } as unknown as ComputeJobOperationRepository
+      const runner = makeFakeRunner({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      const { repo } = makeRepo()
+      const evidenceRoot = join(storageRoot, 'execution-file-evidence', 'project-1', 'session-1')
+      const receiptPath = join(evidenceRoot, 'receipt-job-queued.json')
+      const stagingPath = join(evidenceRoot, 'staging-job-queued')
+      await beginComputeJobFileEvidence({
+        storageRoot,
+        projectId: job.project_id,
+        sessionId: job.session_id,
+        jobId: job.job_id,
+        inputs: []
+      })
+      await expect(access(receiptPath)).resolves.toBeUndefined()
+      await expect(access(stagingPath)).resolves.toBeUndefined()
+      const service = new ComputeService({
+        runner,
+        repository: repo,
+        jobRepository,
+        operationRepository,
+        storageRoot
+      })
+
+      await expect(
+        service.cancelJob(job.job_id, {
+          projectId: job.project_id,
+          sessionId: job.session_id,
+          providerId: job.provider_id
+        })
+      ).resolves.toMatchObject({ cancellation_status: 'cancelled' })
+
+      await expect(access(receiptPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(access(stagingPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
   })
 })

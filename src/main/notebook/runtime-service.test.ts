@@ -1375,8 +1375,8 @@ describe('notebook runtime service', () => {
       notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
       dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
       fileEvidenceStorageRoot: root,
-      fileEvidenceRoot: join(root, 'notebook-file-evidence', 'default-project', 'session-1'),
-      fileEvidenceStoragePrefix: 'notebook-file-evidence/default-project/session-1',
+      fileEvidenceRoot: join(root, 'execution-file-evidence', 'default-project', 'session-1'),
+      fileEvidenceStoragePrefix: 'execution-file-evidence/default-project/session-1',
       runtimeRoot: join(root, 'runtime')
     })
     expect(captureCompletedRun).toHaveBeenCalledWith(
@@ -2856,7 +2856,11 @@ describe('notebook runtime service', () => {
     }
     const fileEvidence = {
       schemaVersion: 1 as const,
+      activityKind: 'notebook-run' as const,
       state: 'partial' as const,
+      evidenceId: 'execution-file-evidence-runtime-service',
+      checksum: 'a'.repeat(64),
+      storageKey: 'execution-file-evidence/runtime-service/evidence.json',
       scientificOutputCount: 1,
       initialViewState: 'complete' as const,
       managedRootsFinalState: 'partial' as const,
@@ -2872,16 +2876,18 @@ describe('notebook runtime service', () => {
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
-        execute: async (request): Promise<NotebookExecutionResult> => ({
-          status: 'completed',
-          stdout: '',
-          stderr: '',
-          traceback: '',
-          cwdAfter: request.cwd,
-          outputs: [],
-          workingFiles: [writtenFile],
-          fileEvidence
-        }),
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [],
+            workingFiles: [writtenFile],
+            fileEvidence: { ...fileEvidence, activityId: request.runId }
+          }
+        },
         shutdown: async () => ({ reaped: true })
       })
     })
@@ -2893,11 +2899,12 @@ describe('notebook runtime service', () => {
     })
 
     expect(result.workingFiles).toMatchObject([{ relativePath: 'handoff/data.json' }])
-    expect(result.fileEvidence).toEqual(fileEvidence)
+    expect(result.fileEvidence).toMatchObject(fileEvidence)
+    expect(result.fileEvidence?.activityId).toEqual(expect.any(String))
 
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.runs[0].workingFiles).toMatchObject([{ relativePath: 'handoff/data.json' }])
-    expect(state.runs[0].fileEvidence).toEqual(fileEvidence)
+    expect(state.runs[0].fileEvidence).toEqual(result.fileEvidence)
   })
 
   describe('executeShell', () => {

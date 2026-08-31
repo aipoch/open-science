@@ -364,7 +364,7 @@ import type {
 import type { PackageMirror } from './mirror'
 import type { NetworkProxySettings } from './network-proxy'
 import type { NotebookNetworkSettings, NotebookNetworkStatus } from './notebook-network'
-import type { NetworkInfo } from './network'
+import { NETWORK_SYSTEM_RESUMED_CHANNEL, type NetworkInfo } from './network'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -1106,6 +1106,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'network.getInfo': callable<() => Promise<NetworkInfo>>()('network', [
     'network:get-info',
     ELECTRON
+  ]),
+  'network.onSystemResume': callable<(listener: () => void) => RemoveListener>()('network', [
+    NETWORK_SYSTEM_RESUMED_CHANNEL,
+    ELECTRON_EVENT
   ]),
   'notebook.appendCodeCell': callable<
     (request: AppendNotebookCodeCellRequest) => Promise<{

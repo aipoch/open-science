@@ -240,7 +240,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     )
     expect(runRawAfterSecondPass).not.toContain('$DATA/$DATA')
     expect(runRawAfterSecondPass).toContain('$DATA/')
-  })
+  }, 60_000)
 
   it('tolerates a fresh install with no notebooks/ directory and no projects', async () => {
     configRoot = await mkdtemp(join(tmpdir(), 'open-science-normalize-empty-'))

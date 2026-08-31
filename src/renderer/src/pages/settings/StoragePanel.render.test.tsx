@@ -48,7 +48,7 @@ const richInfo: StorageInfo = {
       },
       { key: 'uploads', bytes: 0 },
       { key: 'notebooks', bytes: 0 },
-      { key: 'notebook-file-evidence', bytes: 8_300_000 }
+      { key: 'execution-file-evidence', bytes: 8_300_000 }
     ],
     totalBytes: 3_731_000_125
   },
@@ -666,7 +666,7 @@ describe('StoragePanel', () => {
     expect(container.textContent).toContain('Compute cache')
     expect(container.textContent).toContain('Runtime')
     expect(container.textContent).toMatch(/3\.7 GB/)
-    expect(container.textContent).toContain('Notebook evidence')
+    expect(container.textContent).toContain('Execution evidence')
     expect(container.textContent).toMatch(/8\.3 MB/)
     expect(container.textContent).toContain('Total')
     expect(container.textContent).toContain('Available on disk')
@@ -674,7 +674,7 @@ describe('StoragePanel', () => {
     expect(container.querySelector('.bg-storage-artifacts')).not.toBeNull()
     expect(container.querySelector('.bg-storage-compute')).not.toBeNull()
     expect(container.querySelector('.bg-storage-runtime')).not.toBeNull()
-    expect(container.querySelector('.bg-storage-notebook-evidence')).not.toBeNull()
+    expect(container.querySelector('.bg-storage-execution-evidence')).not.toBeNull()
     expect(container.querySelector('.bg-sky-500')).toBeNull()
     expect(container.querySelector('.bg-violet-500')).toBeNull()
 
@@ -749,7 +749,7 @@ describe('StoragePanel', () => {
     // acting, not just the raw parent they picked.
     expect(container.textContent).toContain('Data will be stored in')
     expect(container.textContent).toContain('/mnt/data/OpenScience')
-    // Migration excludes runtime but includes the independently stored Notebook evidence.
+    // Migration excludes runtime but includes the independently stored execution evidence.
     expect(container.textContent).toContain('Your existing data (~31.0 MB) will be moved')
     expect(container.textContent).not.toContain('Your existing data (~3.7 GB)')
     expect(container.textContent).toContain(

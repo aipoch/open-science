@@ -26,15 +26,16 @@ const { join } = require('node:path')
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024
 const MAX_INTERNAL_JSON_BYTES = 64 * 1024 * 1024
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
+const ACTIVITY_KINDS = new Set(['notebook-run', 'compute-job'])
 const RECEIPT_NAME = /^receipt-[A-Za-z0-9][A-Za-z0-9._-]*\.json$/u
 const CAPTURE_FILE = 'capture.json'
-const RUN_BLOBS_DIRECTORY = 'blobs'
+const ACTIVITY_BLOBS_DIRECTORY = 'blobs'
 const ownershipFile = (token) => `.ownership-${assertSafeName(token)}`
 const projectOwnershipReceipt = (projectName) =>
   `.project-ownership-${assertSafeName(projectName)}.json`
 const projectDeletionTombstone = (ownershipToken) => `deleting-${assertSafeName(ownershipToken)}`
-const runDeletionTombstonePrefix = (ownershipToken, kind) =>
-  `deleting-run-${assertSafeName(ownershipToken)}-${kind}`
+const runDeletionTombstonePrefix = (ownershipToken, kind, legacyNotebook = false) =>
+  `${legacyNotebook ? 'deleting-run' : 'deleting-activity'}-${assertSafeName(ownershipToken)}-${kind}`
 const UUID_NAME = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u
 const BLOB_NAME = /^sha256-[a-f0-9]{64}$/u
 const BLOB_DELETION_TOMBSTONE_NAME =
@@ -63,6 +64,10 @@ const quarantineFingerprint = (value) => [value.dev, value.ino, value.size, valu
 const uniqueReasons = (values) => [...new Set([...BASELINE_REASONS, ...values])].sort()
 const assertSafeName = (value) => {
   if (!SAFE_NAME.test(value)) throw new Error(`Unsafe file-evidence name: ${value}`)
+  return value
+}
+const assertActivityKind = (value) => {
+  if (!ACTIVITY_KINDS.has(value)) throw new Error(`Unsafe file-evidence activity kind: ${value}`)
   return value
 }
 const assertReceiptName = (value) => {
@@ -160,7 +165,9 @@ const receiptShape = (value) => {
   if (!value || typeof value !== 'object' || value.schemaVersion !== 1) return false
   if (!['prepared', 'allocated', 'capturing', 'published'].includes(value.phase)) return false
   if (
-    typeof value.runId !== 'string' ||
+    typeof value.activityId !== 'string' ||
+    !ACTIVITY_KINDS.has(value.activityKind) ||
+    (value.parentActivityId !== undefined && typeof value.parentActivityId !== 'string') ||
     typeof value.evidenceId !== 'string' ||
     typeof value.storageKeyPrefix !== 'string' ||
     typeof value.ownershipToken !== 'string'
@@ -190,10 +197,84 @@ const receiptShape = (value) => {
   if (value.phase === 'published' && !validIdentity(value.finalIdentity)) return false
   return true
 }
+const LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS = [
+  'schemaVersion',
+  'phase',
+  'receiptName',
+  'stagingName',
+  'finalName',
+  'runId',
+  'evidenceId',
+  'storageKeyPrefix',
+  'ownershipToken'
+]
+const LEGACY_NOTEBOOK_RECEIPT_FIELDS_BY_PHASE = new Map([
+  ['prepared', new Set(LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS)],
+  ['allocated', new Set([...LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS, 'stagingIdentity'])],
+  [
+    'capturing',
+    new Set([...LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS, 'stagingIdentity', 'captureChecksum'])
+  ],
+  [
+    'published',
+    new Set([
+      ...LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS,
+      'stagingIdentity',
+      'captureChecksum',
+      'finalIdentity'
+    ])
+  ]
+])
+const legacyNotebookReceiptShape = (value) => {
+  const expectedFields =
+    value && typeof value === 'object'
+      ? LEGACY_NOTEBOOK_RECEIPT_FIELDS_BY_PHASE.get(value.phase)
+      : undefined
+  if (
+    !expectedFields ||
+    Object.keys(value).length !== expectedFields.size ||
+    Object.keys(value).some((field) => !expectedFields.has(field)) ||
+    value.schemaVersion !== 1
+  ) {
+    return false
+  }
+  if (
+    typeof value.runId !== 'string' ||
+    typeof value.evidenceId !== 'string' ||
+    typeof value.storageKeyPrefix !== 'string' ||
+    typeof value.ownershipToken !== 'string'
+  ) {
+    return false
+  }
+  try {
+    assertReceiptName(value.receiptName)
+    assertSafeName(value.stagingName)
+    assertSafeName(value.finalName)
+    assertSafeName(value.ownershipToken)
+    assertStorageKeyPrefix(value.storageKeyPrefix)
+  } catch {
+    return false
+  }
+  if (value.phase !== 'prepared' && !validIdentity(value.stagingIdentity)) return false
+  if (
+    (value.phase === 'capturing' || value.phase === 'published') &&
+    (typeof value.captureChecksum !== 'string' || !/^[a-f0-9]{64}$/u.test(value.captureChecksum))
+  ) {
+    return false
+  }
+  return value.phase !== 'published' || validIdentity(value.finalIdentity)
+}
 const readReceipt = (name) => {
   const value = readJson(assertReceiptName(name), MAX_REQUEST_BYTES)
   if (!receiptShape(value) || value.receiptName !== name) {
     throw new Error(`Invalid file-evidence recovery receipt: ${name}`)
+  }
+  return value
+}
+const readLegacyNotebookReceipt = (name) => {
+  const value = readJson(assertReceiptName(name), MAX_REQUEST_BYTES)
+  if (!legacyNotebookReceiptShape(value) || value.receiptName !== name) {
+    throw new Error(`Invalid legacy Notebook file-evidence recovery receipt: ${name}`)
   }
   return value
 }
@@ -231,11 +312,11 @@ const verifyOwnershipMarker = (directoryName, ownershipToken, ownerLabel) => {
 const removeRunTombstone = (name, expectedIdentity, ownershipToken) => {
   const actual = entryIdentity(name)
   if (!actual) {
-    if (entryExists(name)) throw new Error(`File-evidence Run quarantine is unsafe: ${name}`)
+    if (entryExists(name)) throw new Error(`File-evidence Activity quarantine is unsafe: ${name}`)
     return false
   }
   if (!sameIdentity(actual, expectedIdentity)) {
-    throw new Error(`File-evidence Run quarantine identity changed: ${name}`)
+    throw new Error(`File-evidence Activity quarantine identity changed: ${name}`)
   }
   const rootPath = process.cwd()
   const rootIdentity = identity(statSync('.'))
@@ -243,22 +324,22 @@ const removeRunTombstone = (name, expectedIdentity, ownershipToken) => {
   process.chdir(name)
   try {
     if (!sameIdentity(identity(statSync('.')), expectedIdentity)) {
-      throw new Error(`File-evidence Run quarantine identity changed: ${name}`)
+      throw new Error(`File-evidence Activity quarantine identity changed: ${name}`)
     }
     let entries = readdirSync('.')
     if (entries.includes(markerName)) {
-      verifyOwnershipMarker('.', ownershipToken, 'File-evidence Run')
+      verifyOwnershipMarker('.', ownershipToken, 'File-evidence Activity')
       for (const entry of entries) {
         if (entry !== markerName) rmSync(entry, { recursive: true, force: true })
       }
       syncDirectory()
-      verifyOwnershipMarker('.', ownershipToken, 'File-evidence Run')
+      verifyOwnershipMarker('.', ownershipToken, 'File-evidence Activity')
       rmSync(markerName)
       syncDirectory()
       entries = readdirSync('.')
     }
     if (entries.length !== 0) {
-      throw new Error('File-evidence Run quarantine lost its ownership marker.')
+      throw new Error('File-evidence Activity quarantine lost its ownership marker.')
     }
   } finally {
     process.chdir(rootPath)
@@ -266,14 +347,14 @@ const removeRunTombstone = (name, expectedIdentity, ownershipToken) => {
   assertBoundRoot(rootIdentity)
   const revalidated = entryIdentity(name)
   if (!revalidated || !sameIdentity(revalidated, expectedIdentity)) {
-    throw new Error(`File-evidence Run quarantine identity changed: ${name}`)
+    throw new Error(`File-evidence Activity quarantine identity changed: ${name}`)
   }
   rmdirSync(name)
   syncDirectory()
   return true
 }
-const findRunDeletionTombstone = (ownershipToken, kind) => {
-  const prefix = runDeletionTombstonePrefix(ownershipToken, kind)
+const findRunDeletionTombstone = (ownershipToken, kind, legacyNotebook = false) => {
+  const prefix = runDeletionTombstonePrefix(ownershipToken, kind, legacyNotebook)
   const matches = []
   for (const entry of readdirSync('.')) {
     if (entry !== prefix && !entry.startsWith(`${prefix}-`)) continue
@@ -288,11 +369,17 @@ const findRunDeletionTombstone = (ownershipToken, kind) => {
   }
   return matches[0]
 }
-const removeReceiptOwnedDirectory = (name, expectedIdentity, ownershipToken, kind) => {
+const removeReceiptOwnedDirectory = (
+  name,
+  expectedIdentity,
+  ownershipToken,
+  kind,
+  legacyNotebook = false
+) => {
   if (!validIdentity(expectedIdentity)) {
     throw new Error(`File-evidence owned directory identity is missing: ${name}`)
   }
-  const existingQuarantineName = findRunDeletionTombstone(ownershipToken, kind)
+  const existingQuarantineName = findRunDeletionTombstone(ownershipToken, kind, legacyNotebook)
   const actual = entryIdentity(name)
   const quarantineIdentity = existingQuarantineName
     ? entryIdentity(existingQuarantineName)
@@ -301,10 +388,10 @@ const removeReceiptOwnedDirectory = (name, expectedIdentity, ownershipToken, kin
     throw new Error(`File-evidence owned directory is unsafe: ${name}`)
   }
   if (existingQuarantineName && entryExists(existingQuarantineName) && !quarantineIdentity) {
-    throw new Error(`File-evidence Run quarantine is unsafe: ${existingQuarantineName}`)
+    throw new Error(`File-evidence Activity quarantine is unsafe: ${existingQuarantineName}`)
   }
   if (actual && quarantineIdentity) {
-    throw new Error('File-evidence Run cleanup source and quarantine both exist.')
+    throw new Error('File-evidence Activity cleanup source and quarantine both exist.')
   }
   if (existingQuarantineName && quarantineIdentity) {
     return removeRunTombstone(existingQuarantineName, expectedIdentity, ownershipToken)
@@ -313,8 +400,8 @@ const removeReceiptOwnedDirectory = (name, expectedIdentity, ownershipToken, kin
   if (!sameIdentity(actual, expectedIdentity)) {
     throw new Error(`File-evidence owned directory identity changed: ${name}`)
   }
-  verifyOwnershipMarker(name, ownershipToken, 'File-evidence Run')
-  const quarantineName = `${runDeletionTombstonePrefix(ownershipToken, kind)}-${randomUUID()}`
+  verifyOwnershipMarker(name, ownershipToken, 'File-evidence Activity')
+  const quarantineName = `${runDeletionTombstonePrefix(ownershipToken, kind, legacyNotebook)}-${randomUUID()}`
   renameSync(name, quarantineName)
   syncDirectory()
   return removeRunTombstone(quarantineName, expectedIdentity, ownershipToken)
@@ -492,9 +579,9 @@ const preparedStagingIdentity = (receipt) => {
   }
   return actual
 }
-const cleanupReceiptTargets = (receipt) => {
+const cleanupReceiptTargets = (receipt, legacyNotebook = false) => {
   let removedStagingEntries = 0
-  let removedRunEntries = 0
+  let removedActivityEntries = 0
   const stagingExpected =
     receipt.phase === 'prepared' ? preparedStagingIdentity(receipt) : receipt.stagingIdentity
   const stagingWasPresent = entryIdentity(receipt.stagingName) !== undefined
@@ -504,7 +591,8 @@ const cleanupReceiptTargets = (receipt) => {
       receipt.stagingName,
       stagingExpected,
       receipt.ownershipToken,
-      'staging'
+      'staging',
+      legacyNotebook
     )
   if (stagingRemoved) {
     removedStagingEntries += 1
@@ -513,12 +601,18 @@ const cleanupReceiptTargets = (receipt) => {
     receipt.finalIdentity ?? (!stagingWasPresent ? receipt.stagingIdentity : undefined)
   if (
     finalExpected &&
-    removeReceiptOwnedDirectory(receipt.finalName, finalExpected, receipt.ownershipToken, 'final')
+    removeReceiptOwnedDirectory(
+      receipt.finalName,
+      finalExpected,
+      receipt.ownershipToken,
+      'final',
+      legacyNotebook
+    )
   ) {
-    removedRunEntries += 1
+    removedActivityEntries += 1
   }
   removeReceipt(receipt.receiptName)
-  return { removedStagingEntries, removedRunEntries }
+  return { removedStagingEntries, removedActivityEntries }
 }
 
 const bindBlobPool = (request) => {
@@ -683,22 +777,22 @@ const sweepBlobPool = (blobPool) => {
   return quarantined.length + orphaned.length
 }
 const bindRunBlob = (blobPath, contentName, expectedSize, expectedChecksum) => {
-  if (!entryExists(RUN_BLOBS_DIRECTORY)) {
-    mkdirSync(RUN_BLOBS_DIRECTORY, { mode: 0o700 })
+  if (!entryExists(ACTIVITY_BLOBS_DIRECTORY)) {
+    mkdirSync(ACTIVITY_BLOBS_DIRECTORY, { mode: 0o700 })
     syncDirectory()
   }
-  const runBlobDirectory = entryIdentity(RUN_BLOBS_DIRECTORY)
-  if (!runBlobDirectory) throw new Error('File-evidence Run blob directory is unsafe.')
-  const runBlobPath = join(RUN_BLOBS_DIRECTORY, contentName)
+  const activityBlobDirectory = entryIdentity(ACTIVITY_BLOBS_DIRECTORY)
+  if (!activityBlobDirectory) throw new Error('File-evidence Activity blob directory is unsafe.')
+  const activityBlobPath = join(ACTIVITY_BLOBS_DIRECTORY, contentName)
   try {
-    linkSync(blobPath, runBlobPath)
-    syncDirectoryPath(RUN_BLOBS_DIRECTORY)
+    linkSync(blobPath, activityBlobPath)
+    syncDirectoryPath(ACTIVITY_BLOBS_DIRECTORY)
   } catch (error) {
     if (!error || error.code !== 'EEXIST') throw error
   }
-  verifyBlob(runBlobPath, expectedSize, expectedChecksum)
+  verifyBlob(activityBlobPath, expectedSize, expectedChecksum)
   const poolMetadata = lstatSync(blobPath)
-  const runMetadata = lstatSync(runBlobPath)
+  const runMetadata = lstatSync(activityBlobPath)
   if (
     poolMetadata.isSymbolicLink() ||
     runMetadata.isSymbolicLink() ||
@@ -706,9 +800,9 @@ const bindRunBlob = (blobPath, contentName, expectedSize, expectedChecksum) => {
     !runMetadata.isFile() ||
     !sameIdentity(identity(poolMetadata), identity(runMetadata))
   ) {
-    throw new Error('File-evidence Run blob does not match the Project CAS blob.')
+    throw new Error('File-evidence Activity blob does not match the Project CAS blob.')
   }
-  return runBlobPath
+  return activityBlobPath
 }
 const streamDescriptor = (sourceDescriptor, size, targetDescriptor) => {
   const hash = createHash('sha256')
@@ -767,7 +861,7 @@ const copyGeneration = (
     }
     if (
       before.size > request.maxGenerationBytes ||
-      runBytesUsed + before.size > request.maxRunBytes
+      runBytesUsed + before.size > request.maxActivityBytes
     ) {
       return { state: 'unavailable', reason: 'generation-budget-exceeded' }
     }
@@ -839,7 +933,7 @@ const copyGeneration = (
         relativePath,
         checksum,
         sizeBytes: before.size,
-        contentStorageKey: `${request.storageKeyPrefix}/${request.finalName}/${RUN_BLOBS_DIRECTORY}/${contentName}`,
+        contentStorageKey: `${request.storageKeyPrefix}/${request.finalName}/${ACTIVITY_BLOBS_DIRECTORY}/${contentName}`,
         capturedAt: generation.capturedAt
       }
     }
@@ -874,7 +968,11 @@ const begin = (request) => {
     receiptName,
     stagingName,
     finalName,
-    runId: request.runId,
+    activityId: request.activityId,
+    activityKind: assertActivityKind(request.activityKind),
+    ...(request.parentActivityId
+      ? { parentActivityId: assertSafeName(request.parentActivityId) }
+      : {}),
     evidenceId: request.evidenceId,
     storageKeyPrefix,
     ownershipToken: randomUUID()
@@ -919,10 +1017,10 @@ const begin = (request) => {
         existingBlobBytes
       )
       const relation = {
-        relation: 'available-before',
+        relation: item.relation === 'staged-input' ? 'staged-input' : 'present-before',
         relativePath: item.file.relativePath,
         pathPortability: 'relative',
-        authority: 'advisory'
+        authority: item.relation === 'staged-input' ? 'explicit-transfer' : 'advisory'
       }
       if (frozen.state === 'available') {
         relation.generation = frozen.generation
@@ -943,7 +1041,9 @@ const begin = (request) => {
     if (initialViewState !== 'complete') reasons.push('initial-file-generations-not-captured')
     const capture = {
       schemaVersion: 1,
-      runId: request.runId,
+      activityId: request.activityId,
+      activityKind: receipt.activityKind,
+      ...(receipt.parentActivityId ? { parentActivityId: receipt.parentActivityId } : {}),
       initialViewState,
       reasonCodes: [...new Set(reasons)].sort(),
       bytesUsed,
@@ -963,7 +1063,19 @@ const begin = (request) => {
     })
     return {
       ok: true,
-      capturedInitialGenerations: relations.filter((item) => item.generation).length
+      capturedInitialGenerations: relations.filter((item) => item.generation).length,
+      initialGenerations: relations.flatMap((item) =>
+        item.generation
+          ? [
+              {
+                relativePath: item.relativePath,
+                generationId: item.generation.generationId,
+                checksum: item.generation.checksum,
+                sizeBytes: item.generation.sizeBytes
+              }
+            ]
+          : []
+      )
     }
   } catch (error) {
     try {
@@ -982,6 +1094,37 @@ const begin = (request) => {
   }
 }
 
+const ensureCapture = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  bindBlobPool(request)
+  const receiptName = assertReceiptName(request.receiptName)
+  const stagingName = assertSafeName(request.stagingName)
+  const finalName = assertSafeName(request.finalName)
+  const activityKind = assertActivityKind(request.activityKind)
+  const storageKeyPrefix = assertStorageKeyPrefix(request.storageKeyPrefix)
+  if (entryExists(receiptName)) {
+    const receipt = readReceipt(receiptName)
+    if (
+      (receipt.phase !== 'capturing' && receipt.phase !== 'published') ||
+      receipt.stagingName !== stagingName ||
+      receipt.finalName !== finalName ||
+      receipt.activityId !== request.activityId ||
+      receipt.activityKind !== activityKind ||
+      receipt.parentActivityId !== request.parentActivityId ||
+      receipt.evidenceId !== request.evidenceId ||
+      receipt.storageKeyPrefix !== storageKeyPrefix
+    ) {
+      throw new Error('Compute recovery capture does not match its recovery receipt.')
+    }
+    return { ok: true, captureReady: true, initialized: false }
+  }
+  if (entryExists(finalName)) {
+    throw new Error('Published Compute file-evidence Activity has no recovery receipt.')
+  }
+  begin(request)
+  return { ok: true, captureReady: true, initialized: true }
+}
+
 const persist = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
@@ -991,14 +1134,73 @@ const persist = (request) => {
   }
   const receipt = readReceipt(request.receiptName)
   if (
-    receipt.phase !== 'capturing' ||
-    receipt.runId !== request.runId ||
+    (receipt.phase !== 'capturing' && receipt.phase !== 'published') ||
+    receipt.activityId !== request.activityId ||
+    receipt.activityKind !== request.activityKind ||
+    receipt.parentActivityId !== request.parentActivityId ||
     receipt.evidenceId !== request.evidenceId ||
     receipt.stagingName !== request.stagingName ||
     receipt.finalName !== request.finalName ||
     receipt.storageKeyPrefix !== request.storageKeyPrefix
   ) {
     throw new Error('File-evidence persistence does not match its recovery receipt.')
+  }
+  if (receipt.phase === 'published') {
+    const expectedIdentity = receipt.finalIdentity ?? receipt.stagingIdentity
+    const actualIdentity = entryIdentity(receipt.finalName)
+    if (!actualIdentity || !expectedIdentity || !sameIdentity(actualIdentity, expectedIdentity)) {
+      throw new Error('Published file-evidence directory identity mismatch.')
+    }
+    verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'File-evidence Activity')
+    process.chdir(receipt.finalName)
+    try {
+      const serialized = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
+      const sidecar = JSON.parse(serialized.toString('utf8'))
+      if (
+        sidecar.schemaVersion !== 1 ||
+        sidecar.activityId !== request.activityId ||
+        sidecar.activityKind !== request.activityKind ||
+        sidecar.parentActivityId !== request.parentActivityId ||
+        sidecar.evidenceId !== request.evidenceId ||
+        !Array.isArray(sidecar.relations) ||
+        !Array.isArray(sidecar.scientificOutputs) ||
+        !Array.isArray(sidecar.reasonCodes)
+      ) {
+        throw new Error('Invalid published file-evidence sidecar.')
+      }
+      return {
+        ok: true,
+        generations: [],
+        fileEvidence: {
+          schemaVersion: 1,
+          activityId: request.activityId,
+          activityKind: request.activityKind,
+          ...(request.parentActivityId ? { parentActivityId: request.parentActivityId } : {}),
+          evidenceId: request.evidenceId,
+          state: sidecar.state,
+          checksum: createHash('sha256').update(serialized).digest('hex'),
+          storageKey: `${request.storageKeyPrefix}/${receipt.finalName}/evidence.json`,
+          relationCount: sidecar.relations.length,
+          generationCount: sidecar.relations.filter((relation) => relation.generation).length,
+          scientificOutputCount: sidecar.scientificOutputs.length,
+          initialViewState: sidecar.initialViewState,
+          managedRootsFinalState: sidecar.managedRootsFinalState,
+          scientificOutputAnalysis:
+            sidecar.state === 'available'
+              ? 'complete'
+              : sidecar.managedRootsFinalState === 'unavailable'
+                ? 'unavailable'
+                : 'partial',
+          fileReads: sidecar.fileReads,
+          externalPaths: sidecar.externalPaths,
+          writerAttribution: sidecar.writerAttribution,
+          reasonCodes: sidecar.reasonCodes
+        }
+      }
+    } finally {
+      process.chdir('..')
+      assertBoundRoot(request.expectedRootIdentity)
+    }
   }
   const stagingIdentity = entryIdentity(receipt.stagingName)
   if (!stagingIdentity || !sameIdentity(stagingIdentity, receipt.stagingIdentity)) {
@@ -1017,7 +1219,9 @@ const persist = (request) => {
     const capture = JSON.parse(captureBytes.toString('utf8'))
     if (
       capture.schemaVersion !== 1 ||
-      capture.runId !== request.runId ||
+      capture.activityId !== request.activityId ||
+      capture.activityKind !== request.activityKind ||
+      capture.parentActivityId !== request.parentActivityId ||
       !Array.isArray(capture.relations)
     ) {
       throw new Error('Invalid file-evidence initial capture.')
@@ -1038,8 +1242,8 @@ const persist = (request) => {
       const relation = {
         relation: change.relation,
         relativePath: change.relativePath,
-        pathPortability: 'relative',
-        authority: 'advisory',
+        pathPortability: change.pathPortability === 'absolute' ? 'absolute' : 'relative',
+        authority: change.authority === 'explicit-transfer' ? 'explicit-transfer' : 'advisory',
         ...(change.before
           ? {
               before: {
@@ -1084,14 +1288,26 @@ const persist = (request) => {
     }
 
     const reasonCodes = uniqueReasons(reasons)
+    const evidenceState = ['available', 'partial', 'unavailable'].includes(request.evidenceState)
+      ? request.evidenceState
+      : request.rootsAvailable
+        ? 'partial'
+        : 'unavailable'
     const sidecar = {
       schemaVersion: 1,
       evidenceId: request.evidenceId,
-      runId: request.runId,
-      state: request.rootsAvailable ? 'partial' : 'unavailable',
+      activityId: request.activityId,
+      activityKind: request.activityKind,
+      ...(request.parentActivityId ? { parentActivityId: request.parentActivityId } : {}),
+      state: evidenceState,
       observedRoots: request.rootKinds,
       initialViewState: capture.initialViewState,
-      managedRootsFinalState: request.rootsAvailable ? 'partial' : 'unavailable',
+      managedRootsFinalState:
+        evidenceState === 'available'
+          ? 'complete'
+          : request.rootsAvailable
+            ? 'partial'
+            : 'unavailable',
       fileReads: 'unavailable',
       externalPaths: 'unavailable',
       writerAttribution: 'unavailable',
@@ -1101,7 +1317,7 @@ const persist = (request) => {
     }
     const serialized = `${JSON.stringify(sidecar, null, 2)}\n`
     if (
-      bytesUsed + Buffer.byteLength(serialized) > request.maxRunBytes ||
+      bytesUsed + Buffer.byteLength(serialized) > request.maxActivityBytes ||
       request.availableBytes - newBytesUsed - Buffer.byteLength(serialized) <
         request.diskReserveBytes
     ) {
@@ -1116,7 +1332,7 @@ const persist = (request) => {
     if (!sameIdentity(entryIdentity(receipt.stagingName), receipt.stagingIdentity)) {
       throw new Error('File-evidence staging directory identity changed before rename.')
     }
-    if (existsSync(receipt.finalName)) throw new Error('File-evidence Run already exists.')
+    if (existsSync(receipt.finalName)) throw new Error('File-evidence Activity already exists.')
     renameSync(receipt.stagingName, receipt.finalName)
     syncDirectory()
     replaceJson(receipt.receiptName, {
@@ -1129,6 +1345,9 @@ const persist = (request) => {
       generations,
       fileEvidence: {
         schemaVersion: 1,
+        activityId: request.activityId,
+        activityKind: request.activityKind,
+        ...(request.parentActivityId ? { parentActivityId: request.parentActivityId } : {}),
         evidenceId: request.evidenceId,
         state: sidecar.state,
         checksum: createHash('sha256').update(serialized).digest('hex'),
@@ -1138,7 +1357,12 @@ const persist = (request) => {
         scientificOutputCount: request.scientificOutputs.length,
         initialViewState: sidecar.initialViewState,
         managedRootsFinalState: sidecar.managedRootsFinalState,
-        scientificOutputAnalysis: request.rootsAvailable ? 'partial' : 'unavailable',
+        scientificOutputAnalysis:
+          evidenceState === 'available'
+            ? 'complete'
+            : request.rootsAvailable
+              ? 'partial'
+              : 'unavailable',
         fileReads: sidecar.fileReads,
         externalPaths: sidecar.externalPaths,
         writerAttribution: sidecar.writerAttribution,
@@ -1151,13 +1375,27 @@ const persist = (request) => {
   }
 }
 
+const recoverPublished = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const receiptName = assertReceiptName(request.receiptName)
+  if (!entryExists(receiptName)) {
+    return { ok: true, recoveredFileEvidence: null }
+  }
+  const receipt = readReceipt(receiptName)
+  if (receipt.phase !== 'published') {
+    return { ok: true, recoveredFileEvidence: null }
+  }
+  const result = persist({ ...request, operation: 'persist' })
+  return { ok: true, recoveredFileEvidence: result.fileEvidence }
+}
+
 const verifyPublishedEvidence = (receipt, expected) => {
   const expectedIdentity = receipt.finalIdentity ?? receipt.stagingIdentity
   const actualIdentity = entryIdentity(receipt.finalName)
   if (!actualIdentity || !expectedIdentity || !sameIdentity(actualIdentity, expectedIdentity)) {
     throw new Error('Published file-evidence directory identity mismatch.')
   }
-  verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'File-evidence Run')
+  verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'File-evidence Activity')
   process.chdir(receipt.finalName)
   try {
     const bytes = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
@@ -1167,7 +1405,9 @@ const verifyPublishedEvidence = (receipt, expected) => {
     const sidecar = JSON.parse(bytes.toString('utf8'))
     if (
       sidecar.schemaVersion !== 1 ||
-      sidecar.runId !== expected.runId ||
+      sidecar.activityId !== expected.activityId ||
+      sidecar.activityKind !== expected.activityKind ||
+      sidecar.parentActivityId !== expected.parentActivityId ||
       sidecar.evidenceId !== expected.evidenceId
     ) {
       throw new Error('Published file-evidence identity mismatch.')
@@ -1186,32 +1426,36 @@ const complete = (request) => {
   const receipt = readReceipt(request.receiptName)
   if (
     receipt.phase !== 'published' ||
-    receipt.runId !== request.runId ||
+    receipt.activityId !== request.activityId ||
+    receipt.activityKind !== request.activityKind ||
+    receipt.parentActivityId !== request.parentActivityId ||
     receipt.evidenceId !== request.evidenceId
   ) {
     throw new Error('File-evidence completion does not match its recovery receipt.')
   }
   verifyPublishedEvidence(receipt, request)
   removeReceipt(receipt.receiptName)
-  return { ok: true, removedStagingEntries: 0, removedRunEntries: 0 }
+  return { ok: true, removedStagingEntries: 0, removedActivityEntries: 0 }
 }
 
 const reconcile = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
-  const retained = new Map(request.retained.map((item) => [item.runId, item]))
+  const retained = new Map(request.retained.map((item) => [item.activityId, item]))
   let removedStagingEntries = 0
-  let removedRunEntries = 0
+  let removedActivityEntries = 0
   for (const entry of readdirSync('.', { withFileTypes: true })) {
     if (!RECEIPT_NAME.test(entry.name)) continue
     if (!entry.isFile()) throw new Error(`Unsafe file-evidence recovery receipt: ${entry.name}`)
     const receipt = readReceipt(entry.name)
-    const expected = retained.get(receipt.runId)
+    const expected = retained.get(receipt.activityId)
     if (expected) {
       if (
         expected.receiptName !== receipt.receiptName ||
         expected.finalName !== receipt.finalName ||
-        expected.evidenceId !== receipt.evidenceId
+        expected.evidenceId !== receipt.evidenceId ||
+        expected.activityKind !== receipt.activityKind ||
+        expected.parentActivityId !== receipt.parentActivityId
       ) {
         throw new Error('Retained file-evidence does not match its recovery receipt.')
       }
@@ -1222,14 +1466,90 @@ const reconcile = (request) => {
       removeReceipt(receipt.receiptName)
       continue
     }
+    if (
+      request.deferredActivityIds.includes(receipt.activityId) ||
+      request.deferredActivityKinds.includes(receipt.activityKind)
+    )
+      continue
     const removed = cleanupReceiptTargets(receipt)
     removedStagingEntries += removed.removedStagingEntries
-    removedRunEntries += removed.removedRunEntries
+    removedActivityEntries += removed.removedActivityEntries
   }
   return {
     ok: true,
     removedStagingEntries,
-    removedRunEntries,
+    removedActivityEntries,
+    removedBlobEntries: sweepBlobPool(blobPool)
+  }
+}
+
+const verifyLegacyNotebookPublishedEvidence = (receipt, expected) => {
+  const expectedIdentity = receipt.finalIdentity ?? receipt.stagingIdentity
+  const actualIdentity = entryIdentity(receipt.finalName)
+  if (!actualIdentity || !expectedIdentity || !sameIdentity(actualIdentity, expectedIdentity)) {
+    throw new Error('Published legacy Notebook file-evidence directory identity mismatch.')
+  }
+  verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'Notebook file-evidence Run')
+  process.chdir(receipt.finalName)
+  try {
+    const bytes = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
+    if (createHash('sha256').update(bytes).digest('hex') !== expected.checksum) {
+      throw new Error('Published legacy Notebook file-evidence checksum mismatch.')
+    }
+    const sidecar = JSON.parse(bytes.toString('utf8'))
+    if (
+      sidecar.schemaVersion !== 1 ||
+      sidecar.runId !== expected.runId ||
+      sidecar.evidenceId !== expected.evidenceId
+    ) {
+      throw new Error('Published legacy Notebook file-evidence identity mismatch.')
+    }
+  } finally {
+    process.chdir('..')
+  }
+  assertBoundRoot(expected.expectedRootIdentity)
+  const storageKey = `${receipt.storageKeyPrefix}/${receipt.finalName}/evidence.json`
+  if (storageKey !== expected.storageKey) {
+    throw new Error('Published legacy Notebook file-evidence storage key mismatch.')
+  }
+}
+
+const reconcileLegacyNotebook = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const blobPool = bindBlobPool(request)
+  const retained = new Map(request.retained.map((item) => [item.runId, item]))
+  let removedStagingEntries = 0
+  let removedActivityEntries = 0
+  for (const entry of readdirSync('.', { withFileTypes: true })) {
+    if (!RECEIPT_NAME.test(entry.name)) continue
+    if (!entry.isFile()) {
+      throw new Error(`Unsafe legacy Notebook file-evidence recovery receipt: ${entry.name}`)
+    }
+    const receipt = readLegacyNotebookReceipt(entry.name)
+    const expected = retained.get(receipt.runId)
+    if (expected) {
+      if (
+        expected.receiptName !== receipt.receiptName ||
+        expected.finalName !== receipt.finalName ||
+        expected.evidenceId !== receipt.evidenceId
+      ) {
+        throw new Error('Retained legacy Notebook evidence does not match its recovery receipt.')
+      }
+      verifyLegacyNotebookPublishedEvidence(receipt, {
+        ...expected,
+        expectedRootIdentity: request.expectedRootIdentity
+      })
+      removeReceipt(receipt.receiptName)
+      continue
+    }
+    const removed = cleanupReceiptTargets(receipt, true)
+    removedStagingEntries += removed.removedStagingEntries
+    removedActivityEntries += removed.removedActivityEntries
+  }
+  return {
+    ok: true,
+    removedStagingEntries,
+    removedActivityEntries,
     removedBlobEntries: sweepBlobPool(blobPool)
   }
 }
@@ -1238,9 +1558,13 @@ const cleanup = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
   const receiptName = assertReceiptName(request.receiptName)
-  const removed = entryExists(receiptName)
-    ? cleanupReceiptTargets(readReceipt(receiptName))
-    : { removedStagingEntries: 0, removedRunEntries: 0 }
+  let removed = { removedStagingEntries: 0, removedActivityEntries: 0 }
+  if (entryExists(receiptName)) {
+    const receipt = readReceipt(receiptName)
+    if (!request.preservePublished || !entryExists(receipt.finalName)) {
+      removed = cleanupReceiptTargets(receipt)
+    }
+  }
   return { ok: true, ...removed, removedBlobEntries: sweepBlobPool(blobPool) }
 }
 
@@ -1337,21 +1661,27 @@ process.stdin.on('end', () => {
     const result =
       request.operation === 'begin'
         ? begin(request)
-        : request.operation === 'ensure-project'
-          ? ensureProject(request)
-          : request.operation === 'persist'
-            ? persist(request)
-            : request.operation === 'complete'
-              ? complete(request)
-              : request.operation === 'cleanup'
-                ? cleanup(request)
-                : request.operation === 'delete-project'
-                  ? deleteProject(request)
-                  : request.operation === 'reconcile'
-                    ? reconcile(request)
-                    : (() => {
-                        throw new Error('Unsupported file-evidence worker operation.')
-                      })()
+        : request.operation === 'ensure-capture'
+          ? ensureCapture(request)
+          : request.operation === 'ensure-project'
+            ? ensureProject(request)
+            : request.operation === 'persist'
+              ? persist(request)
+              : request.operation === 'recover-published'
+                ? recoverPublished(request)
+                : request.operation === 'complete'
+                  ? complete(request)
+                  : request.operation === 'cleanup'
+                    ? cleanup(request)
+                    : request.operation === 'delete-project'
+                      ? deleteProject(request)
+                      : request.operation === 'reconcile'
+                        ? reconcile(request)
+                        : request.operation === 'reconcile-legacy-notebook'
+                          ? reconcileLegacyNotebook(request)
+                          : (() => {
+                              throw new Error('Unsupported file-evidence worker operation.')
+                            })()
     process.stdout.write(`${JSON.stringify(result)}\n`)
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error))

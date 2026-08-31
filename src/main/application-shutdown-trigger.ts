@@ -1,4 +1,4 @@
-export type ApplicationShutdownTrigger = 'quit' | 'update' | 'migration-relaunch'
+export type ApplicationShutdownTrigger = 'quit' | 'update' | 'migration-relaunch' | 'system'
 
 let requestedTrigger: ApplicationShutdownTrigger = 'quit'
 

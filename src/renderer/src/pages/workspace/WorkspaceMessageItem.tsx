@@ -1320,6 +1320,13 @@ const WorkspaceMessageItemImpl = ({
   const [isResendingEdit, setIsResendingEdit] = useState(false)
   // True while the destructive-resend confirmation dialog is open.
   const [isConfirmingEdit, setIsConfirmingEdit] = useState(false)
+  // content-visibility:auto uses contain-intrinsic-size 10rem until a size is remembered. A
+  // one-line streamed reply is ~44px; turning containment on at completion inflates it to 160px
+  // and pushes a live tool below it. Keep this row out of that path for the rest of the mount.
+  const skipContentVisibilityNow =
+    message.status === 'streaming' || isAssistantPresenting || isEditing
+  const [skipContentVisibility, setSkipContentVisibility] = useState(skipContentVisibilityNow)
+  if (skipContentVisibilityNow && !skipContentVisibility) setSkipContentVisibility(true)
   const copyResetTimeoutRef = useRef<number | null>(null)
   const editButtonRef = useRef<HTMLButtonElement | null>(null)
   const editDocRef = useRef(editDoc)
@@ -1468,7 +1475,7 @@ const WorkspaceMessageItemImpl = ({
     <MessageScrollerItem
       key={message.id}
       messageId={message.id}
-      disableContainment={message.status === 'streaming' || isAssistantPresenting || isEditing}
+      disableContainment={skipContentVisibilityNow || skipContentVisibility}
       scrollAnchor={message.role === 'user'}
       className="min-w-0"
     >

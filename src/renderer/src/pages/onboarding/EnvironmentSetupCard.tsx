@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { EnvironmentCheckId, EnvironmentCheckResult } from '../../../../shared/settings'
 import { EnvironmentCheckRow, PendingCheckRow } from '@/components/environment-check-row'
+import { localizeHostEnvironmentCheck } from './environment-check-presentation'
 
 type EnvironmentSetupCardProps = {
   environment: EnvironmentCheckResult | undefined
@@ -38,7 +39,9 @@ const EnvironmentSetupCard = ({
         aria-live="polite"
       >
         {environment
-          ? visibleChecks?.map((check) => <EnvironmentCheckRow key={check.id} check={check} />)
+          ? visibleChecks?.map((check) => (
+              <EnvironmentCheckRow key={check.id} check={localizeHostEnvironmentCheck(check, t)} />
+            ))
           : CHECK_LABELS.map((check) => (
               <PendingCheckRow key={check.id} id={check.id} label={t(check.label)} />
             ))}

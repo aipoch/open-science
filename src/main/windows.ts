@@ -18,7 +18,7 @@ import iconWindows from '../../resources/icon-light.ico?asset'
 import { createFrameNavigationGuard, isAllowedExternalNavigation } from './navigation-policy'
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
-import { createLogger } from './logger'
+import { createLogger, diagnosticErrorFields } from './logger'
 import { createSourcePreviewLoadMonitor } from './source-preview-load-monitor'
 import { createSourcePreviewEmbedPolicy } from './source-preview-embed-policy'
 import { registerSourcePreviewWebRequestOwner } from './source-preview-web-request-owner'
@@ -111,7 +111,9 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
 
   window.webContents.setWindowOpenHandler((details) => {
     if (isAllowedExternalNavigation(details.url)) {
-      void shell.openExternal(details.url)
+      void shell.openExternal(details.url).catch((error) => {
+        log.warn('external link open failed', diagnosticErrorFields(error))
+      })
     }
     return { action: 'deny' }
   })

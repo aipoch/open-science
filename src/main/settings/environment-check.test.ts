@@ -54,7 +54,12 @@ describe('runEnvironmentCheck', () => {
     expect(result.ready).toBe(false)
     expect(result.checks.find((check) => check.id === 'install-network')).toMatchObject({
       status: 'passed',
-      summary: expect.stringContaining('npmmirror')
+      summary: expect.stringContaining('npmmirror'),
+      presentation: {
+        kind: 'install-network-registry-available',
+        registry: 'npmmirror',
+        latencyMs: 42
+      }
     })
   })
 
@@ -71,7 +76,8 @@ describe('runEnvironmentCheck', () => {
     expect(result.canAutoInstall).toBe(false)
     expect(result.checks.find((check) => check.id === 'install-network')).toMatchObject({
       status: 'failed',
-      summary: expect.stringContaining('Neither the official registry')
+      summary: expect.stringContaining('Neither the official registry'),
+      presentation: { kind: 'install-network-unreachable' }
     })
   })
 
@@ -146,6 +152,11 @@ describe('runEnvironmentCheck', () => {
     expect(system?.status).toBe('passed')
     expect(system?.summary).toContain('baseline build')
     expect(system?.detail).toContain('AVX2')
+    expect(system?.presentation).toEqual({
+      kind: 'system-baseline-supported',
+      platform: 'Linux',
+      architecture: 'x64'
+    })
     // A non-AVX2 x64 host is still fully auto-installable via the baseline package.
     expect(result.canAutoInstall).toBe(true)
   })
@@ -165,7 +176,8 @@ describe('runEnvironmentCheck', () => {
     expect(result.canAutoInstall).toBe(false)
     expect(result.checks.find((check) => check.id === 'storage')).toMatchObject({
       status: 'failed',
-      detail: expect.stringContaining('EACCES')
+      detail: expect.stringContaining('EACCES'),
+      presentation: { kind: 'storage-unwritable' }
     })
   })
 
@@ -234,7 +246,10 @@ describe('runEnvironmentCheck', () => {
       deps: baseDeps()
     })
 
-    expect(result.checks.find((check) => check.id === 'secure-storage')?.status).toBe('warning')
+    expect(result.checks.find((check) => check.id === 'secure-storage')).toMatchObject({
+      status: 'warning',
+      presentation: { kind: 'secure-storage-unavailable' }
+    })
     expect(result.ready).toBe(true)
   })
 
@@ -257,7 +272,12 @@ describe('runEnvironmentCheck', () => {
     expect(result.canAutoInstall).toBe(false)
     expect(result.checks.find((check) => check.id === 'system')).toMatchObject({
       status: 'failed',
-      detail: expect.stringContaining('Unsupported platform')
+      detail: expect.stringContaining('Unsupported platform'),
+      presentation: {
+        kind: 'system-no-installer',
+        platform: 'freebsd',
+        architecture: 'x64'
+      }
     })
   })
 
@@ -282,7 +302,15 @@ describe('runEnvironmentCheck', () => {
       }
     })
 
-    expect(result.checks.find((check) => check.id === 'system')?.status).toBe('warning')
+    expect(result.checks.find((check) => check.id === 'system')).toMatchObject({
+      status: 'warning',
+      presentation: {
+        kind: 'system-detected-runtime',
+        platform: 'freebsd',
+        architecture: 'arm64',
+        runtime: 'Claude'
+      }
+    })
     expect(result.ready).toBe(true)
   })
 

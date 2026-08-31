@@ -25,6 +25,7 @@ import {
   MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
+import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import { ArtifactRepository } from './repository'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { defaultArtifactDurability, type ArtifactDurability } from './durability'
@@ -306,7 +307,56 @@ class ArtifactProvenanceRepository {
       inputAuthority,
       notebookRepository: this.notebookRepository,
       storageRoot: options.storageRoot,
-      createId: this.createId
+      createId: this.createId,
+      computeJobReader: {
+        findByProducer: async (projectId, sessionId, producerRunId) => {
+          const client = await options.getClient()
+          const jobs = await client.computeJob.findMany({
+            where: { projectId, sessionId, producerRunId },
+            select: {
+              id: true,
+              providerId: true,
+              shape: true,
+              status: true,
+              fileEvidence: true,
+              createdAt: true
+            },
+            orderBy: { createdAt: 'asc' },
+            take: 100
+          })
+          return jobs.map((job) => {
+            let fileEvidence
+            try {
+              fileEvidence = job.fileEvidence
+                ? parseOwnedExecutionFileEvidenceSummary(JSON.parse(job.fileEvidence), {
+                    activityId: job.id,
+                    activityKind: 'compute-job',
+                    parentActivityId: producerRunId,
+                    storageKey: `execution-file-evidence/${projectId}/${sessionId}/activity-${job.id}/evidence.json`
+                  })
+                : undefined
+            } catch {
+              fileEvidence = undefined
+            }
+            return {
+              activity_id: job.id,
+              provider_id: job.providerId,
+              shape: job.shape,
+              status: job.status as import('../../shared/compute').ComputeJobStatus,
+              file_evidence: {
+                state: fileEvidence?.state ?? 'unavailable',
+                ...(fileEvidence?.evidenceId ? { evidence_id: fileEvidence.evidenceId } : {}),
+                ...(fileEvidence?.checksum ? { checksum: fileEvidence.checksum } : {}),
+                ...(fileEvidence?.storageKey ? { storage_key: fileEvidence.storageKey } : {}),
+                ...(fileEvidence?.generationCount !== undefined
+                  ? { generation_count: fileEvidence.generationCount }
+                  : {}),
+                reason_codes: fileEvidence?.reasonCodes ?? ['evidence-persistence-failed']
+              }
+            }
+          })
+        }
+      }
     })
     this.messageFinalizer = new ArtifactProvenanceMessageFinalizer({
       getClient: options.getClient,

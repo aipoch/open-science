@@ -7,7 +7,7 @@ export const STORAGE_USAGE_CATEGORY_KEYS = [
   'uploads',
   'runtime',
   'notebooks',
-  'notebook-file-evidence',
+  'execution-file-evidence',
   'workspaces'
 ] as const
 export type UsageCategoryKey = (typeof STORAGE_USAGE_CATEGORY_KEYS)[number]

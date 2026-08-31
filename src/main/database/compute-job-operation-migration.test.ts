@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { computeJobOperationMigration } from './migrations/0023-compute-job-operation'
 
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
@@ -18,29 +17,30 @@ afterEach(async () => {
 })
 
 describe('Compute Job operation migration', () => {
-  it('applies the operation sidecar without rewriting ComputeJob', async () => {
+  it('replays an unledgered operation suffix without rewriting ComputeJob', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-operation-upgrade-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe(`DROP TABLE "ComputeJobOperation"`)
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation')`
+    )
     const [{ sql: computeJobSqlBefore }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
       `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
     )
 
-    for (const statement of computeJobOperationMigration.statements) {
-      await client.$executeRawUnsafe(statement)
-    }
+    await migrateApplicationDatabase(client)
 
     const [{ sql: computeJobSqlAfter }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
       `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
     )
     expect(computeJobSqlAfter).toBe(computeJobSqlBefore)
     await expect(
-      client.$queryRawUnsafe<Array<{ name: string }>>(
-        `SELECT "name" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJobOperation'`
+      client.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1`
       )
-    ).resolves.toEqual([{ name: 'ComputeJobOperation' }])
+    ).resolves.toEqual([{ id: '0025_managed_file_version_foundation' }])
   })
 
   it('adds a constrained operation sidecar without rebuilding historical ComputeJob rows', async () => {

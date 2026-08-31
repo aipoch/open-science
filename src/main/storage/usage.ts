@@ -134,6 +134,11 @@ export const computeStorageUsage = async (dataRoot: string): Promise<StorageUsag
     if (key === 'runtime') {
       const { bytes, children } = await runtimeUsage(dir)
       categories.push({ key, bytes, children })
+    } else if (key === 'execution-file-evidence') {
+      const seen = new Set<string>()
+      const bytes =
+        (await dirSize(dir, seen)) + (await dirSize(join(dataRoot, 'notebook-file-evidence'), seen))
+      categories.push({ key, bytes })
     } else {
       // Independent bucket: its own dedup set (no hard links cross data-category boundaries).
       categories.push({ key, bytes: await dirSize(dir, new Set()) })

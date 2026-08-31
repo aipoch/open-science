@@ -68,6 +68,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'managedFileVersions.saveTextEdit',
   'network.checkConnectivity',
   'network.getInfo',
+  'network.onSystemResume',
   'notifications.getDesktopAvailability',
   'notifications.onOpenSession',
   'notifications.onViewProbe',

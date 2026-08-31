@@ -1,4 +1,5 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { once } from 'node:events'
 import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -11,11 +12,129 @@ import {
   normalizeResponsesBaseUrl
 } from './codex'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
+import { terminateProcessTree } from '../process-tree'
 import { CODEX_VERSION } from '../settings/managed-codex'
 
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
 describe('codexFramework', () => {
+  it.runIf(process.platform !== 'win32')(
+    'reaps a descendant that leaves the owned ACP process group while its leader is alive',
+    async () => {
+      const framework = createCodexFramework()
+      const child = framework.spawn({
+        executablePath: process.execPath,
+        env: {},
+        args: [
+          '-e',
+          [
+            "const { spawn } = require('node:child_process')",
+            "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1_000)'], { detached: true, stdio: 'ignore' })",
+            'process.stdout.write(`${descendant.pid}\\n`)',
+            'setInterval(() => undefined, 1_000)'
+          ].join('\n')
+        ]
+      })
+      let descendantPid: number | undefined
+
+      try {
+        expect(child.pid).toBeTypeOf('number')
+        descendantPid = Number((await once(child.stdout, 'data'))[0].toString().trim())
+        expect(descendantPid).toBeGreaterThan(0)
+
+        const childProcessGroup = Number(
+          execFileSync('ps', ['-o', 'pgid=', '-p', String(child.pid)], { encoding: 'utf8' }).trim()
+        )
+        const descendantProcessGroup = Number(
+          execFileSync('ps', ['-o', 'pgid=', '-p', String(descendantPid)], {
+            encoding: 'utf8'
+          }).trim()
+        )
+        expect(descendantProcessGroup).toBe(descendantPid)
+        expect(descendantProcessGroup).not.toBe(childProcessGroup)
+
+        await expect(terminateProcessTree(child)).resolves.toEqual({ reaped: true })
+        expect(() => process.kill(descendantPid as number, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, 'exit')
+          child.kill('SIGKILL')
+          await exited
+        }
+        if (descendantPid !== undefined) {
+          try {
+            process.kill(descendantPid, 'SIGKILL')
+          } catch {
+            // The process-tree teardown already reaped it.
+          }
+        }
+      }
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'reaps the owned ACP process group after its leader exits and its grandchild is reparented',
+    async () => {
+      const framework = createCodexFramework()
+      const child = framework.spawn({
+        executablePath: process.execPath,
+        env: {},
+        args: [
+          '-e',
+          [
+            "const { spawn } = require('node:child_process')",
+            "const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1_000)'], { stdio: 'ignore' })",
+            'process.stdout.write(`${grandchild.pid}\\n`, () => process.exit(0))'
+          ].join('\n')
+        ]
+      })
+      let grandchildPid: number | undefined
+
+      try {
+        expect(child.pid).toBeTypeOf('number')
+        const childProcessGroup = Number(
+          execFileSync('ps', ['-o', 'pgid=', '-p', String(child.pid)], {
+            encoding: 'utf8'
+          }).trim()
+        )
+        const applicationProcessGroup = Number(
+          execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], {
+            encoding: 'utf8'
+          }).trim()
+        )
+
+        expect(childProcessGroup).not.toBe(applicationProcessGroup)
+        expect(childProcessGroup).toBe(child.pid)
+
+        const leaderExited = once(child, 'exit')
+        grandchildPid = Number((await once(child.stdout, 'data'))[0].toString().trim())
+        expect(grandchildPid).toBeGreaterThan(0)
+        await leaderExited
+        expect(() => process.kill(grandchildPid as number, 0)).not.toThrow()
+
+        await expect(terminateProcessTree(child)).resolves.toEqual({ reaped: true })
+        expect(() => process.kill(grandchildPid as number, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, 'exit')
+          child.kill('SIGKILL')
+          await exited
+        }
+        if (grandchildPid !== undefined) {
+          try {
+            process.kill(grandchildPid, 'SIGKILL')
+          } catch {
+            // The owned process-group teardown already reaped it.
+          }
+        }
+      }
+    }
+  )
+
   it('describes the base role as a general agent instead of narrowing every task to coding', () => {
     expect(codexNativeModelInstructions).toContain('You are an agent')
     expect(codexNativeModelInstructions).not.toContain('coding agent')
@@ -793,10 +912,24 @@ describe('codexFramework', () => {
           CODEX_HOME: '/data/codex',
           ELECTRON_RUN_AS_NODE: '1'
         }),
+        detached: true,
         shell: false,
         stdio: 'pipe',
         windowsHide: true
       })
+    )
+  })
+
+  it('does not request a detached Windows console for the ACP process', () => {
+    const spawnProcess = vi.fn().mockReturnValue(fakeChild)
+    const framework = createCodexFramework({ platform: 'win32', spawnProcess })
+
+    framework.spawn({ executablePath: 'C:\\codex-acp.exe', env: {}, args: [] })
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      'C:\\codex-acp.exe',
+      [],
+      expect.objectContaining({ detached: false })
     )
   })
 

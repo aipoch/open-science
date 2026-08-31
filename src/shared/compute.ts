@@ -377,6 +377,8 @@ export type ComputeJob = {
   environment: string | undefined
   resource_request: string | undefined
   input_manifest: string | undefined
+  producer_run_id?: string
+  file_evidence?: import('./execution-file-evidence').ExecutionFileEvidenceSummary
   output_manifest: string | undefined
   harvest_config: string | undefined
   timeout_seconds: number | undefined

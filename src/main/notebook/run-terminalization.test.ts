@@ -211,7 +211,9 @@ describe('NotebookRunTerminalizationOwner', () => {
     const harness = createHarness()
     const fileEvidence = {
       schemaVersion: 1 as const,
-      evidenceId: 'notebook-file-evidence-run-evidence',
+      activityId: 'run-evidence',
+      activityKind: 'notebook-run' as const,
+      evidenceId: 'execution-file-evidence-run-evidence',
       state: 'partial' as const,
       checksum: 'a'.repeat(64),
       storageKey: 'file-evidence/runs/run-evidence.json',

@@ -1040,6 +1040,62 @@ describe('computeCall RPC', () => {
     ])
   })
 
+  it('binds Compute lineage to the active trusted control Run', async () => {
+    const submitJob = vi.fn(async () => ({ job_id: 'job-trusted', status: 'queued' }))
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { submitJob } as never
+    })
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'run-trusted'
+    })
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: {
+            op: 'submit_job',
+            provider_id: 'ssh:cluster',
+            intent: 'analyze',
+            command: 'python analyze.py',
+            sessionId: 'forged-session',
+            projectId: 'forged-project',
+            producerRunId: 'forged-run'
+          }
+        })
+      })
+
+      expect(response.status).toBe(200)
+      expect(submitJob).toHaveBeenCalledWith(
+        {
+          sessionId: 'trusted-session',
+          projectId: 'trusted-project',
+          producerRunId: 'run-trusted'
+        },
+        'ssh:cluster',
+        'analyze',
+        'python analyze.py',
+        expect.any(Object),
+        expect.any(AbortSignal)
+      )
+    } finally {
+      endInvocation()
+      connection.release()
+    }
+  })
+
   it('reuses the first submit_job result when the same invocation is retried', async () => {
     const submitJob = vi
       .fn()

@@ -7,3 +7,5 @@ export type NetworkInfo = {
   connectionType: NetworkConnectionType
   ipAddress: string | null
 }
+
+export const NETWORK_SYSTEM_RESUMED_CHANNEL = 'network:system-resumed'

@@ -98,8 +98,12 @@ const EXPECTED_MIGRATION_LEDGER = [
     checksum: 'c625e336996c7dd1eba64da8ccd306104ccd68cf219e60ee2c3889749f86b079'
   },
   {
-    id: '0024_managed_file_version_foundation',
-    checksum: '358f0c2802ee72bc2170d77643adda2d3329a96a3f759bbf4baaa5328bb9be1f'
+    id: '0024_compute_job_file_evidence',
+    checksum: '438500a5ce6a1069ecc353c8fa60549dacf6d2eef6a0f572571b7261ea3a88bb'
+  },
+  {
+    id: '0025_managed_file_version_foundation',
+    checksum: 'e6f5810debdccba77634ed6a1baeab72d6bb1ff34b56ae5766e01ff4489f33c1'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

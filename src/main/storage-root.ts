@@ -8,7 +8,7 @@ import {
   PROD_SESSION_DIR_NAME,
   getSessionPersistenceDir
 } from './session-persistence/repository'
-import { RELOCATABLE_DATA_DIRS } from './storage/data-directories'
+import { MIGRATABLE_DATA_DIRS } from './storage/data-directories'
 
 const resolveE2eStorageRoot = (): string | undefined => {
   const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim()
@@ -73,7 +73,7 @@ const dataRootForPicked = (picked: string): string => {
   return isDataFolder ? resolved : join(resolved, folder)
 }
 
-// RELOCATABLE_DATA_DIRS also marks an existing (pre-§20) config root with user data. runtime/ is
+// Migratable directories also mark an existing (pre-§20) config root with user data. runtime/ is
 // excluded because it is rebuildable and remains behind after relocation; counting it would keep
 // the legacy fallback stuck on the config root after the user's real data had moved away.
 // Default data root for a fresh install is `~/OpenScience` (dev `~/OpenScience-DEV`). A legacy
@@ -94,7 +94,7 @@ const computeDefaultDataRoot = (): string => {
     samePath(configuredDataRoot, homeDefault) &&
     existsSync(homeDefault)
   const isLegacyInstall =
-    RELOCATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir))) &&
+    MIGRATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir))) &&
     !existsSync(join(configRoot, dataFolderName())) &&
     !homeDefaultIsCommitted
 

@@ -1,6 +1,7 @@
 import { dialog, type App } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
+import { currentApplicationShutdownTrigger } from '../application-shutdown-trigger'
 
 // Module-level state (not parameters) because the quit guard, the migrate IPC handler, and the
 // ACP/notebook write paths live in different modules but must agree on a single truth. The three
@@ -186,10 +187,11 @@ const defaultConfirmQuit = (translate: NativeTranslator): boolean =>
 // Installs a before-quit guard so an in-flight migration is not silently torn down by Cmd+Q / the
 // window close button. The move itself is crash-safe (copy → verify → commit → delete leaves either
 // the old or the new root fully intact), so this is about not making the user redo a move by
-// accident, not about preventing data loss. On confirmation the active command is aborted and
-// awaited before quit is re-issued. Pre-commit cancellation clears the flags; a command that commits
-// while being joined keeps the write gate and performs its mandatory relaunch. `confirmQuit` is
-// injectable for tests.
+// accident, not about preventing data loss. A system-owned shutdown skips the interactive choice and
+// uses the same safe cancel/join path because the OS request must not leave a latent shutdown trigger.
+// On confirmation/cancellation the active command is aborted and awaited before quit is re-issued.
+// Pre-commit cancellation clears the flags; a command that commits while being joined keeps the write
+// gate and performs its mandatory relaunch. `confirmQuit` is injectable for tests.
 export const installMigrationQuitGuard = (
   app: Pick<App, 'on' | 'quit'>,
   confirmQuit?: () => boolean,
@@ -200,7 +202,8 @@ export const installMigrationQuitGuard = (
     if (!isMigrationInProgress()) return
     event.preventDefault()
     if (quitCancellationPending) return
-    if ((confirmQuit ?? (() => defaultConfirmQuit(translate)))()) {
+    const systemShutdown = currentApplicationShutdownTrigger() === 'system'
+    if (systemShutdown || (confirmQuit ?? (() => defaultConfirmQuit(translate)))()) {
       quitCancellationPending = true
       void cancelMigrationForQuit().then(() => {
         quitCancellationPending = false

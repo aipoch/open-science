@@ -26,7 +26,7 @@ describe('LocalePreferenceOwner', () => {
   it('creates isolated native i18next instances with CLDR plurals and direct English fallback', async () => {
     const messages =
       (await import('./main-process-messages')) as typeof import('./main-process-messages') & {
-        createNativeI18n?: (locale: 'en' | 'es' | 'fr' | 'ru' | 'zh-Hans') => {
+        createNativeI18n?: (locale: 'de' | 'en' | 'es' | 'fr' | 'ru' | 'zh-Hans') => {
           t: (key: string, options?: Record<string, string | number>) => string
         }
       }
@@ -35,6 +35,7 @@ describe('LocalePreferenceOwner', () => {
     if (!messages.createNativeI18n) return
 
     const english = messages.createNativeI18n('en')
+    const german = messages.createNativeI18n('de')
     const spanish = messages.createNativeI18n('es')
     const french = messages.createNativeI18n('fr')
     const russian = messages.createNativeI18n('ru')
@@ -69,6 +70,10 @@ describe('LocalePreferenceOwner', () => {
     expect([1, 2].map((count) => simplifiedChinese.t(key, options(count)))).toEqual([
       '所选目录中已存在 1 个 Notebook。',
       '所选目录中已存在 2 个 Notebook。'
+    ])
+    expect([1, 2].map((count) => german.t(key, options(count)))).toEqual([
+      'Im ausgewählten Ordner ist bereits 1 Notebook vorhanden.',
+      'Im ausgewählten Ordner sind bereits 2 Notebooks vorhanden.'
     ])
     expect(
       french.t('Missing native translation for {{name}}.', {
@@ -140,7 +145,8 @@ describe('LocalePreferenceOwner', () => {
   it('rejects invalid renderer input and translates native messages with interpolation', async () => {
     const owner = new LocalePreferenceOwner(['en-US'], await createRepository())
 
-    expect(() => owner.setPreference('de')).toThrow('Invalid language preference')
+    expect(() => owner.setPreference('it')).toThrow('Invalid language preference')
+    expect(translateNativeMessage('de', 'Quit', { context: 'verb' })).toBe('Beenden')
     expect(translateNativeMessage('ja', 'Quit', { context: 'verb' })).toBe('終了')
     expect(translateNativeMessage('ko', 'Quit', { context: 'verb' })).toBe('종료')
     expect(translateNativeMessage('ru', 'Quit', { context: 'verb' })).toBe('Выйти')
@@ -177,6 +183,8 @@ describe('LocalePreferenceOwner', () => {
     expect(owner.t('Quit', { context: 'verb' })).toBe('Выйти')
     await owner.setPreference('fr')
     expect(owner.t('Quit', { context: 'verb' })).toBe('Quitter')
+    await owner.setPreference('de')
+    expect(owner.t('Quit', { context: 'verb' })).toBe('Beenden')
     await owner.setPreference('es')
     expect(owner.t('Quit', { context: 'verb' })).toBe('Salir')
   })

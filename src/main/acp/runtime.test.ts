@@ -4937,6 +4937,30 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().sessionId).toBeUndefined()
   })
 
+  it('does not report an in-flight prompt as a connection failure once quit teardown starts', async () => {
+    const process = new FakeAgentProcess()
+    const promptGate = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['quit-active-prompt-session'], {
+      onPrompt: () => promptGate.promise
+    })
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stay pending' })
+    void prompt.catch(() => undefined)
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+    await runtime.shutdownForQuit()
+
+    expect(events).not.toContainEqual(expect.objectContaining({ text: 'ACP connection closed' }))
+    promptGate.resolve()
+  })
+
   it('shutdownForQuit propagates a degraded reaped:false from the agent tree teardown', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['degraded-reap-session'])

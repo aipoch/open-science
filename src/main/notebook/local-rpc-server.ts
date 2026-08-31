@@ -1743,6 +1743,12 @@ class NotebookLocalRpcServer {
                   controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId
                 }
               : {}),
+            ...(method === 'computeCall'
+              ? {
+                  // Bound by beginControlInvocation; an agent-controlled body value is overwritten.
+                  producerRunId: sessionBinding.activeControlInvocation?.toolInvocationId
+                }
+              : {}),
             ...(method === 'agentsCall' || method === 'skillsCall'
               ? {
                   session_id: sessionBinding.sessionId,
@@ -2287,7 +2293,11 @@ class NotebookLocalRpcServer {
       const op = typeof params.op === 'string' ? params.op : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
-      const context = { sessionId, projectId }
+      const producerRunId =
+        typeof params.producerRunId === 'string' && params.producerRunId
+          ? params.producerRunId
+          : undefined
+      const context = { sessionId, projectId, producerRunId }
       if (op === 'call_command') {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const cmd = typeof params.cmd === 'string' ? params.cmd : ''

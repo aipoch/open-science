@@ -1,7 +1,7 @@
 import { netFetchStandard } from '../skills/net-fetch'
 import type { LocalizedReleaseNotes, PlatformDownload, UpdateManifest } from '../../shared/update'
 
-const LOCALIZED_NOTE_LOCALES = new Set(['zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru', 'es'])
+const LOCALIZED_NOTE_LOCALES = new Set(['zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru', 'de', 'es'])
 const DOWNLOAD_KEYS = new Set([
   'mac-arm64',
   'mac-x64',

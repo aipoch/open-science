@@ -7,7 +7,6 @@ import type {
   NotebookCell,
   NotebookLanguage,
   NotebookOutput,
-  NotebookRunFileEvidence,
   NotebookRunRecord,
   NotebookRunProvenanceContext,
   NotebookRunSource,
@@ -15,6 +14,7 @@ import type {
   NotebookWorkingFile,
   RunNotebookCellRequest
 } from '../../shared/notebook'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { Logger } from '../logger'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
@@ -646,7 +646,7 @@ class NotebookExecutionOwner {
           signal
         })
         let workingFiles: NotebookWorkingFile[] = []
-        let fileEvidence: NotebookRunFileEvidence | undefined
+        let fileEvidence: ExecutionFileEvidenceSummary | undefined
         const blockedMutation = detectManagedRuntimeMutation({
           source: request.command,
           surface: this.options.platform === 'win32' ? 'powershell' : 'bash',

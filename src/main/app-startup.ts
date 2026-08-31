@@ -20,6 +20,13 @@ export type SecondInstanceRelay = {
   bind: (handler: (argv: string[]) => void) => void
 }
 
+type SystemShutdownRelay = {
+  signal: () => void
+  bind: (handler: () => void) => void
+}
+
+const STARTUP_SYSTEM_SHUTDOWN_TIMEOUT_MS = 5_000
+
 type StartupWindowSurface = {
   focus: () => void
   isDestroyed: () => boolean
@@ -73,12 +80,49 @@ export const createSecondInstanceRelay = (): SecondInstanceRelay => {
   }
 }
 
+const createSystemShutdownRelay = (
+  forceExit?: () => void,
+  timeoutMs = STARTUP_SYSTEM_SHUTDOWN_TIMEOUT_MS
+): SystemShutdownRelay => {
+  let pending = false
+  let handler: (() => void) | undefined
+  let forceExitTimer: ReturnType<typeof setTimeout> | undefined
+
+  return {
+    signal: () => {
+      if (handler) handler()
+      else {
+        pending = true
+        // Startup preparation can block indefinitely before the bounded lifecycle owner exists.
+        // Preserve a short handoff window, then stop delaying the OS rather than hanging shutdown.
+        if (forceExit && !forceExitTimer) forceExitTimer = setTimeout(forceExit, timeoutMs)
+      }
+    },
+    bind: (next) => {
+      handler = next
+      if (forceExitTimer) {
+        clearTimeout(forceExitTimer)
+        forceExitTimer = undefined
+      }
+      if (!pending) return
+      pending = false
+      handler()
+    }
+  }
+}
+
 export type AppStartupDeps<Context> = {
   // Acquires the OS single-instance lock, wiring the relay's signal as the second-instance handler.
   // Returns false for a secondary launch (the caller must quit) and true for the primary.
   acquireSingleInstanceLock: (opts: { onSecondInstance: (argv: string[]) => void }) => boolean
   // Quits this launch when it is a secondary instance.
   quit: () => void
+  // Last-resort startup exit used only when preparation never reaches the bounded lifecycle owner.
+  forceExit?: () => void
+  startupSystemShutdownTimeoutMs?: number
+  // Installs signal/native shutdown sources immediately after the primary-instance lock. The supplied
+  // callback queues a request until the lifecycle's bounded shutdown owner exists.
+  installSystemShutdownListeners?: (requestSystemShutdown: () => void) => void
   // Heavy post-lock preparation (backend module imports, app.whenReady, logger, IPC registration). Runs
   // ONLY after the lock is held so a doomed secondary instance never imports the backend or spawns a
   // duplicate process tree. Returns the context the guard/lifecycle installers need.
@@ -88,7 +132,10 @@ export type AppStartupDeps<Context> = {
   installMigrationQuitGuard: (context: Context) => void
   // Installs the tray/window/quit lifecycle; returns the second-instance handler for the relay to drain.
   // The handler decides per forwarded argv whether to surface the window or start the web service.
-  installAppLifecycle: (context: Context) => { onSecondInstance: (argv: string[]) => void }
+  installAppLifecycle: (context: Context) => {
+    onSecondInstance: (argv: string[]) => void
+    onSystemShutdown?: () => void
+  }
   // Publishes renderer readiness only after lifecycle installation and adapter wiring complete.
   markReady?: (context: Context) => void
   diagnostics?: DiagnosticOperation
@@ -170,6 +217,10 @@ export const orchestrateAppStartup = async <Context>(
   deps: AppStartupDeps<Context>
 ): Promise<void> => {
   const relay = createSecondInstanceRelay()
+  const systemShutdownRelay = createSystemShutdownRelay(
+    deps.forceExit,
+    deps.startupSystemShutdownTimeoutMs
+  )
 
   try {
     deps.diagnostics?.phase('single-instance-lock')
@@ -179,12 +230,14 @@ export const orchestrateAppStartup = async <Context>(
       return
     }
 
+    deps.installSystemShutdownListeners?.(systemShutdownRelay.signal)
     deps.diagnostics?.phase('prepare-runtime')
     const context = await deps.prepare()
     deps.diagnostics?.phase('install-lifecycle')
     deps.installMigrationQuitGuard(context)
-    const { onSecondInstance } = deps.installAppLifecycle(context)
+    const { onSecondInstance, onSystemShutdown } = deps.installAppLifecycle(context)
     deps.markReady?.(context)
+    if (onSystemShutdown) systemShutdownRelay.bind(onSystemShutdown)
     relay.bind(onSecondInstance)
     deps.diagnostics?.complete({ instance: 'primary' })
   } catch (error) {

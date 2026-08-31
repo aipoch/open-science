@@ -11,13 +11,13 @@ import type {
   NotebookLiveEnvironmentOverlay,
   NotebookNamespaceVariable,
   NotebookOutput,
-  NotebookRunFileEvidence,
   NotebookRunEnvironmentCapture,
   NotebookRunSource,
   NotebookRunStatus,
   NotebookWorkingFile,
   NotebookWriteLock
 } from '../../shared/notebook'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
 import type { TransientViewImage } from './host-view-image-service'
@@ -84,7 +84,7 @@ export type NotebookSessionExecutionResult = {
   outputs: NotebookOutput[]
   truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
-  fileEvidence?: NotebookRunFileEvidence
+  fileEvidence?: ExecutionFileEvidenceSummary
   environmentOverlay?: NotebookLiveEnvironmentOverlay
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentManifest?: NotebookEnvironmentManifest

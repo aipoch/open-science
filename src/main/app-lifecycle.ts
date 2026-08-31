@@ -10,6 +10,7 @@ import { startDiagnosticOperation } from './diagnostics/operation'
 import {
   clearApplicationShutdownTrigger,
   currentApplicationShutdownTrigger,
+  markApplicationShutdownTrigger,
   type ApplicationShutdownTrigger
 } from './application-shutdown-trigger'
 import type {
@@ -79,6 +80,9 @@ export type AppLifecycleDeps = {
   countWindows: () => number
   // Headless web mode starts the backend and tray without opening a renderer window.
   createInitialWindow?: boolean
+  // Production binds the startup window before runtime composition and reuses the same tested,
+  // idempotent adapter here for later windows.
+  bindSystemShutdownWindow?: (window: BrowserWindow) => void
   // Overridable for tests; defaults to the host platform.
   platform?: NodeJS.Platform
   // Snapshot of sessions with running work (in-flight agent prompt or a notebook cell mid-execution),
@@ -107,6 +111,7 @@ export const installAppLifecycle = (
   showMainWindow: () => BrowserWindow
   getMainWindow: () => BrowserWindow | undefined
   isMainWindowHidden: () => boolean
+  onSystemShutdown: () => void
 } => {
   const platform = deps.platform ?? process.platform
   const logFlushTimeoutMs = deps.logFlushTimeoutMs ?? 1_000
@@ -122,6 +127,7 @@ export const installAppLifecycle = (
   // Latches make the async quit cleanup idempotent: once started, further quits are held until exit.
   let shutdownStarted = false
   let shutdownFinished = false
+  let systemShutdownRequested = false
   // Set once the user has confirmed a quit (via the dialog or a prior 'confirm' close), so a re-issued
   // before-quit skips straight to teardown instead of asking again.
   let quitConfirmed = false
@@ -174,6 +180,21 @@ export const installAppLifecycle = (
     confirmedDelegatedSessionKeys = new Set(delegated.map(delegatedSessionKey))
     deps.quit()
   }
+  const requestSystemShutdown = (): void => {
+    if (systemShutdownRequested || shutdownFinished) return
+    systemShutdownRequested = true
+    const rollbackTrigger = markApplicationShutdownTrigger('system')
+    // An ordinary quit may already be inside its abortable Renderer preflight. Keep the stronger
+    // system intent latched; its abort path will reissue quit through the same lifecycle owner.
+    if (shutdownStarted) return
+    try {
+      deps.quit()
+    } catch (error) {
+      systemShutdownRequested = false
+      rollbackTrigger()
+      throw error
+    }
+  }
 
   // Synchronous close classification, evaluated at close time. A mid-quit close is held so the
   // renderer survives persistence flushing; otherwise darwin keeps its dock convention (real close),
@@ -223,6 +244,7 @@ export const installAppLifecycle = (
     // taskbar attention can distinguish a legitimate minimized window from one hidden to the tray.
     window.on('hide', () => hiddenWindows.add(window))
     window.on('show', () => hiddenWindows.delete(window))
+    deps.bindSystemShutdownWindow?.(window)
     return window
   }
 
@@ -271,16 +293,20 @@ export const installAppLifecycle = (
       event.preventDefault()
       return
     }
+    const trigger = shutdownTrigger()
     if (event.defaultPrevented || deps.isMigrationInProgress()) {
       // This quit is being aborted (e.g. the migration guard cancelled it). Clear any prior
       // confirmation and shutdown trigger so neither leaks into a later close: otherwise a later
-      // ordinary quit could bypass its active-session confirmation.
-      clearApplicationShutdownTrigger()
+      // ordinary quit could bypass its active-session confirmation. A system request remains latched
+      // because the migration guard owns cancelling/joining the move and then reissues app.quit().
+      if (trigger !== 'system') {
+        clearApplicationShutdownTrigger()
+        systemShutdownRequested = false
+      }
       quitConfirmed = false
       confirmedDelegatedSessionKeys = new Set()
       return
     }
-    const trigger = shutdownTrigger()
     // Renderer persistence may cancel only an ordinary quit. Update and data-root relaunches pass a
     // producer-teardown + renderer-durability gate before committing their handoff; once app.quit()
     // runs, cancellation would leave the old process alive after the external pointer changed.
@@ -485,8 +511,15 @@ export const installAppLifecycle = (
           }
           shutdownStarted = false
           quitConfirmed = false
-          clearApplicationShutdownTrigger()
-          showMainWindow()
+          if (systemShutdownRequested) {
+            // A preventable OS shutdown arrived after this ordinary attempt began. Do not restore an
+            // interactive app: replay it with the already-latched system trigger so persistence is
+            // best-effort and cannot cancel the OS-owned exit.
+            deps.quit()
+          } else {
+            clearApplicationShutdownTrigger()
+            showMainWindow()
+          }
         } else {
           trayBox.current?.destroy()
           shutdownFinished = true
@@ -518,6 +551,7 @@ export const installAppLifecycle = (
     showMainWindow,
     // Attention effects may inspect the current window, but must never surface it as a side effect.
     getMainWindow: () => mainWindow,
-    isMainWindowHidden: () => Boolean(mainWindow && hiddenWindows.has(mainWindow))
+    isMainWindowHidden: () => Boolean(mainWindow && hiddenWindows.has(mainWindow)),
+    onSystemShutdown: requestSystemShutdown
   }
 }

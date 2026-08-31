@@ -57,6 +57,9 @@ const removeComputePasswordAuthSchema = async (client: PrismaClient): Promise<vo
 }
 
 const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> => {
+  await client.$executeRawUnsafe('DROP TABLE "ComputeJobOperation"')
+  await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
+  await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
   const [{ sql }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
     `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
   )
@@ -202,7 +205,8 @@ describe('application database (integration)', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_managed_file_version_foundation'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
 
@@ -823,7 +827,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0024_managed_file_version_foundation.backup`
+    const backupPath = `${databasePath}.before-0025_managed_file_version_foundation.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -863,7 +867,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0023_compute_job_operation' }])
+      ).resolves.toEqual([{ id: '0024_compute_job_file_evidence' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -1247,7 +1251,8 @@ describe('application database (integration)', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_managed_file_version_foundation'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
 

@@ -197,7 +197,7 @@
   --color-storage-runtime: var(--color-violet-500);
   --color-storage-uploads: var(--color-amber-500);
   --color-storage-notebooks: var(--color-emerald-500);
-  --color-storage-notebook-evidence: var(--color-indigo-500);
+  --color-storage-execution-evidence: var(--color-indigo-500);
   --color-storage-workspaces: var(--color-rose-500);
   --color-status-success-surface: var(--color-emerald-100);
   --color-status-success-foreground: var(--color-emerald-700);

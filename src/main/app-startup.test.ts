@@ -139,6 +139,62 @@ describe('orchestrateAppStartup', () => {
     expect(markReady).toHaveBeenCalledWith({ tag: 'ctx' })
   })
 
+  it('queues a system shutdown requested during prepare until the lifecycle owner is installed', async () => {
+    const events: string[] = []
+    const onSystemShutdown = vi.fn(() => events.push('shutdown'))
+    const onSecondInstance = vi.fn()
+    let requestSystemShutdown = (): void => {}
+    const installSystemShutdownListeners = vi.fn((request: () => void) => {
+      requestSystemShutdown = request
+    })
+    const deps = {
+      ...makeDeps({
+        prepare: vi.fn(async () => {
+          requestSystemShutdown()
+          expect(onSystemShutdown).not.toHaveBeenCalled()
+          return { tag: 'ctx' }
+        }),
+        installAppLifecycle: vi.fn(() => ({ onSecondInstance, onSystemShutdown })),
+        markReady: vi.fn(() => events.push('ready'))
+      }),
+      installSystemShutdownListeners
+    } as Parameters<typeof orchestrateAppStartup<{ tag: string }>>[0]
+
+    await orchestrateAppStartup(deps)
+
+    expect(installSystemShutdownListeners).toHaveBeenCalledOnce()
+    expect(onSystemShutdown).toHaveBeenCalledOnce()
+    expect(events).toEqual(['ready', 'shutdown'])
+    const listenersOrder = installSystemShutdownListeners.mock.invocationCallOrder[0]
+    const prepareOrder = vi.mocked(deps.prepare).mock.invocationCallOrder[0]
+    expect(listenersOrder).toBeLessThan(prepareOrder)
+  })
+
+  it('forces exit when system shutdown is requested while prepare remains blocked', async () => {
+    vi.useFakeTimers()
+    try {
+      const preparation = deferred<{ tag: string }>()
+      const forceExit = vi.fn()
+      let requestSystemShutdown = (): void => {}
+      const deps = {
+        ...makeDeps({ prepare: vi.fn(() => preparation.promise) }),
+        installSystemShutdownListeners: (request: () => void) => {
+          requestSystemShutdown = request
+        },
+        forceExit,
+        startupSystemShutdownTimeoutMs: 25
+      } as Parameters<typeof orchestrateAppStartup<{ tag: string }>>[0]
+
+      void orchestrateAppStartup(deps)
+      requestSystemShutdown()
+      await vi.advanceTimersByTimeAsync(25)
+
+      expect(forceExit).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('drains a second instance that arrives during startup, forwarding its argv', async () => {
     const onSecondInstance = vi.fn()
     let signalDuringStartup: (argv: string[]) => void = () => {}

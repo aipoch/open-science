@@ -976,12 +976,52 @@ export type EnvironmentCheckId =
 
 export type EnvironmentCheckStatus = 'passed' | 'warning' | 'failed'
 
+export type EnvironmentCheckPresentation =
+  | {
+      kind: 'system-supported'
+      platform: string
+      architecture: string
+    }
+  | {
+      kind: 'system-baseline-supported'
+      platform: string
+      architecture: string
+    }
+  | {
+      kind: 'system-detected-runtime'
+      platform: string
+      architecture: string
+      runtime: string
+    }
+  | {
+      kind: 'system-no-installer'
+      platform: string
+      architecture: string
+    }
+  | { kind: 'storage-writable' }
+  | { kind: 'storage-unwritable' }
+  | { kind: 'secure-storage-available' }
+  | { kind: 'secure-storage-unavailable' }
+  | {
+      kind: 'install-network-runtime-present'
+      runtime: string
+    }
+  | {
+      kind: 'install-network-registry-available'
+      registry: ManagedClaudeRegistry
+      latencyMs: number
+    }
+  | { kind: 'install-network-unreachable' }
+
 export type EnvironmentCheckItem = {
   id: EnvironmentCheckId
   label: string
   status: EnvironmentCheckStatus
   summary: string
   detail?: string
+  // Stable renderer-owned copy projection. The English strings above remain as a compatibility
+  // fallback and for technical diagnostics that must be shown verbatim.
+  presentation?: EnvironmentCheckPresentation
 }
 
 export type EnvironmentCheckResult = {
