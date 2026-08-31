@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from 'motion/react'
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 const PANEL_EXPAND_TRANSITION = { duration: 0.2, ease: [0.22, 1, 0.36, 1] } as const
 const PANEL_REDUCED_TRANSITION = { duration: 0.12, ease: 'linear' } as const
@@ -15,6 +15,24 @@ type WorkspaceCollapsiblePanelProps = {
 const CollapsiblePanelPresence = ({ children }: { children: ReactNode }): React.JSX.Element => {
   const isPresent = useIsPresent()
   const shouldReduceMotion = useReducedMotion()
+  const contentRef = useRef<HTMLDivElement>(null)
+  // Measuring the content box lets the panel tween its height whenever INNER disclosures
+  // (tool input/output <details>, late-loading figures) resize it after the enter animation
+  // finished — not just on mount/unmount. Skipped under reduced motion (instant 'auto').
+  const [contentHeight, setContentHeight] = useState<number | null>(null)
+
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content || shouldReduceMotion) return undefined
+    const observer = new ResizeObserver((entries) => {
+      const boxSize = entries[0]?.borderBoxSize?.[0]
+      setContentHeight(boxSize ? boxSize.blockSize : content.offsetHeight)
+    })
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [shouldReduceMotion])
+
+  const transition = shouldReduceMotion ? PANEL_REDUCED_TRANSITION : PANEL_EXPAND_TRANSITION
 
   return (
     <motion.div
@@ -22,19 +40,19 @@ const CollapsiblePanelPresence = ({ children }: { children: ReactNode }): React.
       inert={isPresent ? undefined : true}
       initial={shouldReduceMotion ? false : { height: 0, opacity: 0 }}
       animate={{
-        height: 'auto',
+        height: shouldReduceMotion ? 'auto' : (contentHeight ?? 'auto'),
         opacity: 1,
-        transition: shouldReduceMotion ? PANEL_REDUCED_TRANSITION : PANEL_EXPAND_TRANSITION
+        transition
       }}
-      exit={
-        shouldReduceMotion
-          ? { opacity: 0, transition: PANEL_REDUCED_TRANSITION }
-          : { height: 0, opacity: 0, transition: PANEL_EXPAND_TRANSITION }
-      }
+      exit={shouldReduceMotion ? { opacity: 0, transition } : { height: 0, opacity: 0, transition }}
       className="overflow-hidden"
       style={{ pointerEvents: isPresent ? 'auto' : 'none' }}
     >
-      {children}
+      {/* flow-root keeps the caller's margins inside the measured box so the px tween matches
+          the 'auto' height exactly (motion.div's overflow-hidden already establishes a BFC). */}
+      <div ref={contentRef} className="flow-root">
+        {children}
+      </div>
     </motion.div>
   )
 }
