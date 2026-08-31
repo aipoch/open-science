@@ -1019,14 +1019,24 @@ describe('Session Store architecture', () => {
         'src/renderer/src/stores/session-store-run-projection-owner.ts',
         'src/renderer/src/stores/session-store-run-output-helpers.ts',
         'src/renderer/src/stores/session-store-run-activity-helpers.ts',
-        'src/renderer/src/stores/session-store-run-terminal-helpers.ts'
+        'src/renderer/src/stores/session-store-run-terminal-helpers.ts',
+        'src/renderer/src/stores/session-job-store.ts'
       ],
-      interfacePaths: ['src/renderer/src/stores/session-store.ts'],
-      consumerModules: ['workspace_runtime', 'project_files_view', 'workspace_page'],
+      interfacePaths: [
+        'src/renderer/src/stores/session-store.ts',
+        'src/renderer/src/stores/session-job-store.ts'
+      ],
+      consumerModules: [
+        'workspace_runtime',
+        'project_files_view',
+        'compute_service',
+        'workspace_page'
+      ],
       testFiles: {
         owner: [
           'src/renderer/src/stores/session-store.test.ts',
-          'src/renderer/src/stores/session-store.architecture.test.ts'
+          'src/renderer/src/stores/session-store.architecture.test.ts',
+          'src/renderer/src/stores/session-job-store.test.ts'
         ],
         contract: ['src/shared/session-persistence.test.ts'],
         consumer: ['src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts']

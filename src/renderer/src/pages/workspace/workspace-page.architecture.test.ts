@@ -162,6 +162,7 @@ describe('workspace page architecture', () => {
     ])
     expect(importersOf(ownerPaths.messageQueue)).toEqual([
       'ApplicationPresentationHost.tsx',
+      'lib/compute/WorkspaceComputeRecoveryBridge.tsx',
       'pages/workspace/ComposerMessageQueue.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
     ])
@@ -314,6 +315,11 @@ describe('workspace page architecture', () => {
     for (const ownerPath of Object.values(ownerPaths)) {
       expect(workspacePage.ownerPaths).toContain(
         relative(repositoryRoot, ownerPath).replaceAll('\\', '/')
+      )
+    }
+    for (const internalPath of Object.values(queueInternalPaths)) {
+      expect(workspacePage.ownerPaths).not.toContain(
+        relative(repositoryRoot, internalPath).replaceAll('\\', '/')
       )
     }
     expect(workspacePage.testFiles.owner).toContain(architectureTestPath)

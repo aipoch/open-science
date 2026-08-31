@@ -156,6 +156,15 @@ const click = async (element: HTMLElement): Promise<void> => {
   })
 }
 
+const expectComputeCompletionEvent = (): void => {
+  expect(container.querySelector('[data-testid="compute-job-completion-event"]')).not.toBeNull()
+  expect(container.textContent).toContain('Remote job completed')
+  expect(container.textContent).toContain('Analysis started automatically')
+  expect(container.textContent).not.toContain('A remote job has finished')
+  expect(container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
+  expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
+}
+
 // Replaces the inline editor's text and lets the editor emit the updated doc, mimicking a typing pass.
 const typeIntoEditor = async (editor: HTMLElement, text: string): Promise<void> => {
   await act(async () => {
@@ -602,6 +611,36 @@ describe('WorkspaceMessageItem user message actions', () => {
 
     expect(container.querySelector('[data-slot="user-message-bubble"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Edit message"]')).not.toBeNull()
+  })
+
+  it('presents a Compute completion prompt as an automatic system event instead of a user bubble', async () => {
+    await renderItem(
+      createMessage({
+        content: 'A remote job has finished. Please analyze the results.',
+        attribution: {
+          kind: 'application',
+          feature: 'compute',
+          purpose: 'job-completion-analysis',
+          deliveryKey: 'compute_done:session-1:job-1',
+          jobIds: ['job-1']
+        }
+      }),
+      { canEditMessage: true }
+    )
+
+    expectComputeCompletionEvent()
+  })
+
+  it('keeps a reloaded Compute completion presentation out of the user bubble', async () => {
+    await renderItem(
+      createMessage({
+        content: 'A remote job has finished. Please analyze the results.',
+        presentation: { kind: 'compute-job-completion' }
+      }),
+      { canEditMessage: true }
+    )
+
+    expectComputeCompletionEvent()
   })
   it('keeps the normal Session transcript gutter by default', async () => {
     await renderItem(createMessage())

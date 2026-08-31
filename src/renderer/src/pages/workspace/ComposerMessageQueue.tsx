@@ -14,7 +14,10 @@ import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcem
 import type { WorkspaceMessageQueueController } from './workspace-message-queue-controller'
 import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
 
-type ComposerMessageQueueProps = Omit<WorkspaceMessageQueueController, 'lifecycle'>
+type ComposerMessageQueueProps = Omit<
+  WorkspaceMessageQueueController,
+  'lifecycle' | 'hasPendingWork'
+>
 type ComposerMessageQueueTriggerProps = Pick<ComposerMessageQueueProps, 'items'> & {
   expanded: boolean
   onExpandedChange: (expanded: boolean) => void

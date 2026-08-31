@@ -82,10 +82,11 @@ describe('notification attention metadata migration', () => {
         '0020_compute_job_analysis_state',
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
-        '0023_managed_file_version_foundation'
+        '0023_compute_job_operation',
+        '0024_managed_file_version_foundation'
       ],
       from: '0006_database_domain_constraints',
-      to: '0023_managed_file_version_foundation'
+      to: '0024_managed_file_version_foundation'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
@@ -116,12 +117,15 @@ describe('notification attention metadata migration', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0021_compute_job_analysis_constraints.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0022_memory_global_content_unique.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0023_compute_job_operation.backup`)
     ).resolves.toBeUndefined()
     await expect(
-      access(`${databasePath}.before-0017_managed_file_version_foundation.backup`)
+      access(`${databasePath}.before-0024_managed_file_version_foundation.backup`)
     ).resolves.toBeUndefined()
 
     await expect(

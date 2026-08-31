@@ -5,6 +5,7 @@ import { docToArtifactRefs } from './composer/composer-doc'
 import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import {
   WorkspaceMessageQueueOwner,
+  type ApplicationMessageQueueAdmission,
   type MessageQueueAdmission,
   type MessageQueueError,
   type MessageQueueItem,
@@ -39,6 +40,13 @@ const queueItemContextError = (
     return { kind: 'send' }
   }
   if (session.specialistId !== item.specialistId) return { kind: 'send' }
+  if (item.kind === 'application') {
+    if (session.agentFrameworkId !== item.agentFrameworkId) return { kind: 'send' }
+    if (session.agentBackendId !== item.agentBackendId) return { kind: 'send' }
+    if (JSON.stringify(session.agentConfiguration) !== JSON.stringify(item.agentConfiguration)) {
+      return { kind: 'send' }
+    }
+  }
   return undefined
 }
 
@@ -90,10 +98,10 @@ const queueItemIsBusy = (item: MessageQueueItem): boolean =>
 const queuedItemHasPayload = (item: MessageQueueItem): boolean =>
   Boolean(item.text.trim()) ||
   item.attachmentCount > 0 ||
-  (item.snapshot.annotations?.length ?? 0) > 0 ||
+  (item.snapshot?.annotations?.length ?? 0) > 0 ||
   item.forcedSkillIds.length > 0 ||
-  docToArtifactRefs(item.snapshot.doc).length > 0 ||
-  Boolean(item.snapshot.pdfContext)
+  Boolean(item.snapshot && docToArtifactRefs(item.snapshot.doc).length > 0) ||
+  Boolean(item.snapshot?.pdfContext)
 
 const isQueueLiveTurn = (session: ChatSession | undefined): boolean =>
   session?.status === 'running' ||
@@ -130,6 +138,7 @@ const enqueueQueuedMessage = (
     return false
   }
   const item: MessageQueueItem = {
+    kind: 'user',
     id: owner.createQueueItemId(),
     sessionId: session.id,
     ...identity,
@@ -145,8 +154,55 @@ const enqueueQueuedMessage = (
   return true
 }
 
+const enqueueApplicationMessage = (
+  owner: WorkspaceMessageQueueOwner,
+  admission: ApplicationMessageQueueAdmission
+): Promise<{ sessionId: string; messageId: string } | undefined> => {
+  const { session, text, messageId, attribution } = admission
+  const duplicate = owner
+    .itemsFor(session.id)
+    .find((item) => item.application?.attribution.deliveryKey === attribution.deliveryKey)
+  if (duplicate?.application) return duplicate.application.completion
+  const identity = activeBranchIdentity(session)
+  if (!identity) return Promise.resolve(undefined)
+  let resolve!: (result: { sessionId: string; messageId: string } | undefined) => void
+  const completion = new Promise<{ sessionId: string; messageId: string } | undefined>(
+    (promiseResolve) => {
+      resolve = promiseResolve
+    }
+  )
+  const item: MessageQueueItem = {
+    kind: 'application',
+    id: `application-message-${attribution.deliveryKey}`,
+    sessionId: session.id,
+    ...identity,
+    text,
+    attachmentCount: 0,
+    forcedSkillIds: [],
+    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+    specialistId: session.specialistId,
+    agentFrameworkId: session.agentFrameworkId,
+    agentBackendId: session.agentBackendId,
+    agentConfiguration: session.agentConfiguration,
+    projectId: session.projectId,
+    cwd: session.cwd,
+    phase: 'queued',
+    application: {
+      messageId: messageId ?? `application-message-${attribution.deliveryKey}`,
+      attribution,
+      completion,
+      resolve
+    }
+  }
+  owner.queues.set(session.id, [...owner.itemsFor(session.id), item])
+  owner.emit()
+  owner.requestDrain()
+  return completion
+}
+
 export {
   enqueueQueuedMessage,
+  enqueueApplicationMessage,
   isQueueLiveTurn,
   queueBlocksImmediateSend,
   queueErrorMessage,

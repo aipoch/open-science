@@ -513,6 +513,7 @@ const createPanelDefaults = (): PanelProps => ({
     queue: {
       items: [],
       announcement: '',
+      hasPendingWork: false,
       actions: {
         move: vi.fn(),
         moveTo: vi.fn(),
@@ -520,7 +521,8 @@ const createPanelDefaults = (): PanelProps => ({
         edit: vi.fn(),
         sendNow: vi.fn().mockResolvedValue(undefined)
       }
-    }
+    },
+    admitApplicationMessage: vi.fn().mockResolvedValue(undefined)
   },
   sideChat: {
     view: undefined,

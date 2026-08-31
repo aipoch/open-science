@@ -10,7 +10,7 @@
  *             §6 (enumeration), §9 (harvest_failed).
  */
 
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -27,7 +27,12 @@ import {
 } from './connection-broker'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import { HARVEST_FREE_DISK_RESERVE_BYTES, getJobHarvestDir, harvestJob } from './harvest-engine'
+import {
+  HARVEST_FREE_DISK_RESERVE_BYTES,
+  getJobHarvestDir,
+  harvestJob,
+  type HarvestDeps
+} from './harvest-engine'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
 // ---------------------------------------------------------------------------
@@ -39,6 +44,8 @@ const mkTmp = async (): Promise<string> => {
   await mkdir(base, { recursive: true })
   return base
 }
+
+const MIB_BYTES_FOR_TEST = 1024 * 1024
 
 const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
   job_id: 'job-1',
@@ -177,7 +184,7 @@ const makeHostRepo = (host: ReturnType<typeof sampleHost> | null): ComputeHostRe
 const makeJobRepo = (
   job: ComputeJob
 ): {
-  repo: Pick<ComputeJobRepository, 'update'>
+  repo: Pick<ComputeJobRepository, 'update' | 'claimNotification'>
   updates: { jobId: string; data: unknown }[]
 } => {
   const updates: { jobId: string; data: unknown }[] = []
@@ -185,8 +192,11 @@ const makeJobRepo = (
     update: vi.fn((jobId: string, data: unknown) => {
       updates.push({ jobId, data })
       return Promise.resolve({ ...job, ...(data as object) })
-    })
-  } as unknown as Pick<ComputeJobRepository, 'update'>
+    }),
+    claimNotification: vi.fn((_jobId: string, notifiedAt: Date) =>
+      Promise.resolve({ ...job, notified_at: notifiedAt.getTime() })
+    )
+  } as unknown as Pick<ComputeJobRepository, 'update' | 'claimNotification'>
   return { repo, updates }
 }
 
@@ -218,6 +228,66 @@ describe('getJobHarvestDir', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — clean harvest', () => {
+  it('excludes staged inputs from both current and legacy input manifests', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({
+      input_manifest: JSON.stringify([
+        { kind: 'upload', dstFilename: 'current-input.csv' },
+        { kind: 'upload', dest: 'legacy-input.csv' }
+      ])
+    })
+    const scp = makeScpRunner()
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(
+          findOutput([
+            { path: 'current-input.csv', size_bytes: 10 },
+            { path: 'legacy-input.csv', size_bytes: 10 },
+            { path: 'result.csv', size_bytes: 10 }
+          ])
+        ),
+        scp
+      ),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: makeJobRepo(job).repo,
+      storageRoot
+    })
+
+    expect(scp.calls.map(([remotePath]) => remotePath)).toEqual([
+      '~/.openscience/jobs/job-1/result.csv'
+    ])
+  })
+
+  it('publishes one complete replacement without stale files from an older harvest', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
+    await mkdir(join(harvestDir, 'featured'), { recursive: true })
+    await mkdir(join(harvestDir, 'hidden'), { recursive: true })
+    await writeFile(join(harvestDir, 'featured', 'stale.result'), 'old')
+    await writeFile(join(harvestDir, 'hidden', 'stale.log'), 'old')
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(findOutput([{ path: 'fresh.result', size_bytes: 10 }])),
+        makeWritingScpRunner()
+      ),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: makeJobRepo(job).repo,
+      storageRoot
+    })
+
+    await expect(readFile(join(harvestDir, 'featured', 'fresh.result'), 'utf8')).resolves.toBe(
+      'downloaded'
+    )
+    await expect(readFile(join(harvestDir, 'featured', 'stale.result'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(readFile(join(harvestDir, 'hidden', 'stale.log'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
   it('writes and reports harvest files from the data-root session workspace, never the config root', async () => {
     const configRoot = await mkTmp()
     const dataRoot = await mkTmp()
@@ -356,6 +426,73 @@ describe('harvestJob — data-root migration gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — harvest_failed', () => {
+  it('does not publish a partial attempt or delete user .partial files after a download failure', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
+    const userPartial = join(harvestDir, 'featured', 'user-history.partial')
+    await mkdir(dirname(userPartial), { recursive: true })
+    await writeFile(userPartial, 'user-owned')
+    const scp = makeScpRunner(2)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(
+        makeSshRunner(
+          findOutput([
+            { path: 'first.result', size_bytes: 10 },
+            { path: 'second.result', size_bytes: 10 }
+          ])
+        ),
+        scp
+      ),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: makeJobRepo(job).repo,
+      storageRoot
+    })
+
+    await expect(readFile(userPartial, 'utf8')).resolves.toBe('user-owned')
+    await expect(readFile(join(harvestDir, 'featured', 'first.result'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
+  it('restores the previous complete generation when publication is interrupted', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
+    const attemptDir = `${harvestDir}.harvest-attempt`
+    await mkdir(join(harvestDir, 'featured'), { recursive: true })
+    await writeFile(join(harvestDir, 'featured', 'old.result'), 'old complete generation')
+    let rejectPublish = true
+    const renameFn: typeof rename = async (source, destination) => {
+      if (rejectPublish && String(source) === attemptDir && String(destination) === harvestDir) {
+        rejectPublish = false
+        throw new Error('simulated publication interruption')
+      }
+      await rename(source, destination)
+    }
+
+    await expect(
+      harvestJob(job, {
+        connectionBroker: brokerFromRunners(
+          makeSshRunner(findOutput([{ path: 'fresh.result', size_bytes: 10 }])),
+          makeWritingScpRunner()
+        ),
+        hostRepository: makeHostRepo(sampleHost()),
+        jobRepository: makeJobRepo(job).repo,
+        storageRoot,
+        renameFn
+      })
+    ).rejects.toThrow('simulated publication interruption')
+
+    await expect(readFile(join(harvestDir, 'featured', 'old.result'), 'utf8')).resolves.toBe(
+      'old complete generation'
+    )
+    await expect(readFile(join(harvestDir, 'featured', 'fresh.result'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
   it('does not finalize a harvest cancelled during the initial free-space query', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob()
@@ -402,20 +539,31 @@ describe('harvestJob — harvest_failed', () => {
           .mockRejectedValueOnce(new ComputeConnectionError('authentication_failed'))
           .mockResolvedValueOnce(recoveredLease)
       }
+      const publishJobUpdated = vi.fn()
       const deps = {
         connectionBroker,
         hostRepository: makeHostRepo(sampleHost()),
         jobRepository: jobRepo,
-        storageRoot
+        storageRoot,
+        publishJobUpdated
       }
 
-      await harvestJob(job, deps)
+      await expect(harvestJob(job, deps)).rejects.toMatchObject({
+        code: 'authentication_failed'
+      })
 
-      expect(updates).toEqual([])
+      expect(updates[0]?.data).toEqual(
+        expect.objectContaining({ harvestError: 'harvest pending: authentication_failed' })
+      )
+      expect(updates[0]?.data).not.toHaveProperty('harvestedAt')
+      expect(publishJobUpdated).toHaveBeenCalledOnce()
+      expect(publishJobUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({ harvestError: 'harvest pending: authentication_failed' })
+      )
 
       // Simulate the restart scan selecting the still-unharvested row after credentials are repaired.
       await harvestJob(job, deps)
-      expect(updates[0]?.data).toEqual(
+      expect(updates.at(-1)?.data).toEqual(
         expect.objectContaining({ harvestedAt: expect.any(Date), harvestError: null })
       )
     }
@@ -636,8 +784,11 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
           notified_at: data.notifiedAt instanceof Date ? data.notifiedAt.getTime() : job.notified_at
         }
         return Promise.resolve(result)
-      })
-    } as unknown as Pick<ComputeJobRepository, 'update'>
+      }),
+      claimNotification: vi.fn((_jobId: string, notifiedAt: Date) =>
+        Promise.resolve({ ...job, notified_at: notifiedAt.getTime() })
+      )
+    } as unknown as Pick<ComputeJobRepository, 'update' | 'claimNotification'>
 
     const broadcast = vi.fn()
 
@@ -679,8 +830,11 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
           notified_at: data.notifiedAt instanceof Date ? data.notifiedAt.getTime() : job.notified_at
         }
         return Promise.resolve(result)
-      })
-    } as unknown as Pick<ComputeJobRepository, 'update'>
+      }),
+      claimNotification: vi.fn((_jobId: string, notifiedAt: Date) =>
+        Promise.resolve({ ...job, notified_at: notifiedAt.getTime() })
+      )
+    } as unknown as Pick<ComputeJobRepository, 'update' | 'claimNotification'>
 
     const broadcast = vi.fn()
 
@@ -721,6 +875,148 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
 })
 
 describe('harvestJob - bounded logs and disk reserve', () => {
+  it('allows small harvests on the same root to download concurrently', async () => {
+    const storageRoot = await mkTmp()
+    const jobs = [
+      makeJob({
+        job_id: 'job-concurrent-1',
+        remote_workdir: '~/.openscience/jobs/job-concurrent-1',
+        output_manifest: JSON.stringify(['*.result']),
+        harvest_config: JSON.stringify({ max_file_mb: 1, max_total_mb: 1 })
+      }),
+      makeJob({
+        job_id: 'job-concurrent-2',
+        remote_workdir: '~/.openscience/jobs/job-concurrent-2',
+        output_manifest: JSON.stringify(['*.result']),
+        harvest_config: JSON.stringify({ max_file_mb: 1, max_total_mb: 1 })
+      })
+    ]
+    let releaseDownloads!: () => void
+    const downloadsReleased = new Promise<void>((resolve) => {
+      releaseDownloads = resolve
+    })
+    let startedDownloads = 0
+    const connection = (filename: string): ComputeConnectionLease => ({
+      run: vi.fn(async () => ({
+        exitCode: 0,
+        stdout: findOutput([{ path: filename, size_bytes: 1 }]),
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })),
+      upload: vi.fn(async () => undefined),
+      download: vi.fn(async (_remotePath: string, localPath: string) => {
+        startedDownloads += 1
+        await downloadsReleased
+        await mkdir(dirname(localPath), { recursive: true })
+        await writeFile(localPath, filename)
+        return {
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 1,
+          exceeded: false
+        }
+      })
+    })
+    const connections = [connection('first.result'), connection('second.result')]
+    let acquired = 0
+    const deps = (job: ComputeJob): HarvestDeps => ({
+      connectionBroker: {
+        acquire: vi.fn(async () => connections[acquired++]!)
+      },
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: makeJobRepo(job).repo,
+      storageRoot,
+      getFreeDiskBytesFn: async () => HARVEST_FREE_DISK_RESERVE_BYTES + 2
+    })
+
+    const harvests = jobs.map((job) => harvestJob(job, deps(job)))
+    await vi.waitFor(() => expect(startedDownloads).toBe(2))
+    releaseDownloads()
+    await Promise.all(harvests)
+  })
+
+  it('uses one canonical budget for aliases of the same storage root', async () => {
+    const storageRoot = await mkTmp()
+    const aliasRoot = `${storageRoot}-alias`
+    await symlink(storageRoot, aliasRoot, 'dir')
+    const firstJob = makeJob({
+      job_id: 'job-budget-1',
+      remote_workdir: '~/.openscience/jobs/job-budget-1',
+      output_manifest: JSON.stringify(['*.result']),
+      harvest_config: JSON.stringify({ max_file_mb: 1, max_total_mb: 1 })
+    })
+    const secondJob = makeJob({
+      job_id: 'job-budget-2',
+      remote_workdir: '~/.openscience/jobs/job-budget-2',
+      output_manifest: JSON.stringify(['*.result']),
+      harvest_config: JSON.stringify({ max_file_mb: 1, max_total_mb: 1 })
+    })
+    let releaseFirst!: () => void
+    const firstReleased = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const firstDownload = vi.fn(async (_remotePath: string, localPath: string) => {
+      await firstReleased
+      await mkdir(dirname(localPath), { recursive: true })
+      await writeFile(localPath, 'first')
+      return {
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        bytesWritten: 5,
+        exceeded: false
+      }
+    })
+    const secondDownload = vi.fn(async () => ({
+      exitCode: 0,
+      stderr: '',
+      timedOut: false,
+      bytesWritten: 0,
+      exceeded: false
+    }))
+    const lease = (
+      filename: string,
+      sizeBytes: number,
+      download: ComputeConnectionLease['download']
+    ): ComputeConnectionLease => ({
+      run: vi.fn(async () => ({
+        exitCode: 0,
+        stdout: findOutput([{ path: filename, size_bytes: sizeBytes }]),
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })),
+      upload: vi.fn(async () => undefined),
+      download
+    })
+    const freeBytes = HARVEST_FREE_DISK_RESERVE_BYTES + MIB_BYTES_FOR_TEST
+    const firstHarvest = harvestJob(firstJob, {
+      connectionBroker: {
+        acquire: vi.fn(async () => lease('first.result', MIB_BYTES_FOR_TEST, firstDownload))
+      },
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: makeJobRepo(firstJob).repo,
+      storageRoot,
+      getFreeDiskBytesFn: async () => freeBytes
+    })
+    await vi.waitFor(() => expect(firstDownload).toHaveBeenCalledOnce())
+
+    await harvestJob(secondJob, {
+      connectionBroker: {
+        acquire: vi.fn(async () => lease('second.result', 1, secondDownload))
+      },
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: makeJobRepo(secondJob).repo,
+      storageRoot: aliasRoot,
+      getFreeDiskBytesFn: async () => freeBytes
+    })
+
+    expect(secondDownload).not.toHaveBeenCalled()
+    releaseFirst()
+    await firstHarvest
+  })
   it('fails closed when the remote copy runner cannot enforce a byte limit', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({
@@ -861,14 +1157,14 @@ describe('harvestJob - bounded logs and disk reserve', () => {
       expect.any(Object),
       expect.stringContaining('/growing.result'),
       expect.any(String),
-      100 * 1024 * 1024
+      1
     )
     const finalUpdate = updates[0]!.data as Record<string, unknown>
     expect(finalUpdate.harvestError).toContain('download exceeded the allowed byte budget')
     expect(JSON.parse(finalUpdate.leftOnRemote as string)).toEqual([
       expect.objectContaining({
         uri: expect.stringContaining('/growing.result'),
-        reason: 'exceeds_max_file_mb'
+        reason: 'exceeds_max_total_mb'
       })
     ])
   })

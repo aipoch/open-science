@@ -28,6 +28,16 @@ describe('module ownership and test impact manifest', () => {
     )
   })
 
+  it('rejects test evidence classified under more than one seam', () => {
+    const manifest = readManifest()
+    const duplicate = manifest.modules.workspace_runtime.testFiles.owner[0]
+    manifest.modules.workspace_runtime.testFiles.contract.push(duplicate)
+
+    expect(() => validateModuleImpactManifest(manifest)).toThrow(
+      `workspace_runtime.testFiles classifies ${duplicate} more than once`
+    )
+  })
+
   it('rejects unknown and cyclic module consumers', () => {
     const unknownManifest = readManifest()
     unknownManifest.modules.workspace_page.consumerModules = ['unknown_module']

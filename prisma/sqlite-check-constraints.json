@@ -561,6 +561,41 @@
       "expression": "\"access\" IN ('ro', 'rw')"
     },
     {
+      "tableName": "ComputeJobOperation",
+      "name": "ComputeJobOperation_kind_check",
+      "expression": "\"kind\" = 'cancel'"
+    },
+    {
+      "tableName": "ComputeJobOperation",
+      "name": "ComputeJobOperation_revision_check",
+      "expression": "\"revision\" >= 1"
+    },
+    {
+      "tableName": "ComputeJobOperation",
+      "name": "ComputeJobOperation_attemptCount_check",
+      "expression": "\"attemptCount\" >= 0"
+    },
+    {
+      "tableName": "ComputeJobOperation",
+      "name": "ComputeJobOperation_phase_check",
+      "expression": "\"phase\" IN ('active', 'settled')"
+    },
+    {
+      "tableName": "ComputeJobOperation",
+      "name": "ComputeJobOperation_lifecycle_check",
+      "expression": "(\"phase\" = 'active' AND \"outcome\" IS NULL AND \"settledAt\" IS NULL) OR (\"phase\" = 'settled' AND \"outcome\" IN ('fulfilled', 'superseded') AND \"settledAt\" IS NOT NULL)"
+    },
+    {
+      "tableName": "ComputeJobOperation",
+      "name": "ComputeJobOperation_claim_check",
+      "expression": "(\"claimToken\" IS NULL AND \"claimExpiresAt\" IS NULL) OR (\"phase\" = 'active' AND \"claimToken\" IS NOT NULL AND \"claimExpiresAt\" IS NOT NULL)"
+    },
+    {
+      "tableName": "ComputeJobOperation",
+      "name": "ComputeJobOperation_settled_implementation_check",
+      "expression": "\"phase\" = 'active' OR (\"eligibleAt\" IS NULL AND \"claimToken\" IS NULL AND \"claimExpiresAt\" IS NULL)"
+    },
+    {
       "tableName": "MemorySettings",
       "name": "MemorySettings_id_check",
       "expression": "\"id\" = 'memory-settings'"

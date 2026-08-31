@@ -56,7 +56,7 @@ describe('module test impact commands', () => {
       [{ path: 'src/main/compute/compute-job-lifecycle.ts', status: 'added' }],
       { status: 'current', testFiles: [] }
     )
-    expect(affected.modules).toEqual(['compute_service'])
+    expect(affected.modules).toEqual(['workspace_page', 'compute_service'])
     expect(affected.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/compute/compute-job-lifecycle.test.ts',
@@ -79,7 +79,7 @@ describe('module test impact commands', () => {
     })
 
     expect(affected.mode).toBe('selective')
-    expect(affected.modules).toEqual(['compute_service'])
+    expect(affected.modules).toEqual(['workspace_page', 'compute_service'])
     expect(affected.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/compute/compute-service.architecture.test.ts',

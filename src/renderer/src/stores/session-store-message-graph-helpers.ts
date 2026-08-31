@@ -39,6 +39,7 @@ export type AppendUserMessageInput = {
   annotations?: Annotation[]
   pdfContext?: PersistedChatMessage['pdfContext']
   turnIntent?: PersistedChatMessage['turnIntent']
+  attribution?: PersistedChatMessage['attribution']
   cwd?: string
   projectId?: string
   permissionProfile?: ChatSession['permissionProfile']

@@ -3,9 +3,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { JobSummary } from '../../../shared/compute'
 import { extractJobIdFromActivity, findActivitiesForJob } from './job-binding-utils'
 import type { ToolActivity } from '@/stores/session-store'
+import { makeJob as makeComputeJob } from '@/test-utils/compute-job'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -21,26 +21,21 @@ const makeActivity = (overrides: Partial<ToolActivity> = {}): ToolActivity => ({
   ...overrides
 })
 
-const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
-  job_id: 'job-abc',
-  provider_id: 'ssh:biowulf',
-  display_name: 'biowulf',
-  shape: 'direct_ssh',
-  session_id: 'sess-1',
-  status: 'running',
-  intent: 'Run EDA',
-  created_at: Date.now(),
-  started_at: Date.now(),
-  finished_at: undefined,
-  exit_code: undefined,
-  error_code: undefined,
-  remote_workdir: '/home/user/.openscience/jobs/job-abc',
-  stdout_tail: undefined,
-  stderr_tail: undefined,
-  notified_at: undefined,
-  notification_consumed_at: undefined,
-  ...overrides
-})
+const makeJob = (
+  overrides: Parameters<typeof makeComputeJob>[0] = {}
+): ReturnType<typeof makeComputeJob> => {
+  const now = Date.now()
+  return makeComputeJob({
+    job_id: 'job-abc',
+    session_id: 'sess-1',
+    status: 'running',
+    intent: 'Run EDA',
+    created_at: now,
+    started_at: now,
+    remote_workdir: '/home/user/.openscience/jobs/job-abc',
+    ...overrides
+  })
+}
 
 // ─── extractJobIdFromActivity ────────────────────────────────────────────────
 
@@ -164,7 +159,7 @@ afterEach(() => {
 
 describe('JobStatusBadge', () => {
   it.each([
-    ['submitted', 'Queued'],
+    ['submitted', 'Submitting'],
     ['running', 'Running'],
     ['success', 'Done'],
     ['failed', 'Failed'],
@@ -178,28 +173,43 @@ describe('JobStatusBadge', () => {
     expect(badge?.textContent).toBe(label)
   })
 
-  it('applies amber styling for running', () => {
+  it('applies semantic warning styling for running', () => {
     act(() => {
       root.render(<JobStatusBadge status="running" />)
     })
     const badge = container.querySelector('[data-testid="job-status-badge"]')
-    expect(badge?.className).toContain('amber')
+    expect(badge?.className).toContain('status-warning')
+    expect(badge?.className).not.toMatch(/\b(?:amber|slate|green|red)-/)
   })
 
-  it('applies green styling for success', () => {
+  it('applies semantic success styling for success', () => {
     act(() => {
       root.render(<JobStatusBadge status="success" />)
     })
     const badge = container.querySelector('[data-testid="job-status-badge"]')
-    expect(badge?.className).toContain('green')
+    expect(badge?.className).toContain('status-success')
+    expect(badge?.className).not.toMatch(/\b(?:amber|slate|green|red)-/)
   })
 
-  it('applies red styling for failed', () => {
+  it('applies semantic failure styling for failed', () => {
     act(() => {
       root.render(<JobStatusBadge status="failed" />)
     })
     const badge = container.querySelector('[data-testid="job-status-badge"]')
-    expect(badge?.className).toContain('red')
+    expect(badge?.className).toContain('status-failure')
+    expect(badge?.className).not.toMatch(/\b(?:amber|slate|green|red)-/)
+  })
+
+  it.each([
+    ['cancelling', 'status-warning'],
+    ['cancelled', 'bg-muted']
+  ] as const)('uses semantic styling for %s cancellation', (cancellationStatus, token) => {
+    act(() => {
+      root.render(<JobStatusBadge status="running" cancellationStatus={cancellationStatus} />)
+    })
+    const badge = container.querySelector('[data-testid="job-status-badge"]')
+    expect(badge?.className).toContain(token)
+    expect(badge?.className).not.toMatch(/\b(?:amber|slate|green|red)-/)
   })
 })
 
@@ -255,20 +265,30 @@ describe('RemoteJobRow', () => {
     expect(container.textContent).toContain('Run EDA analysis')
   })
 
-  it('shows "running" status text for running jobs', () => {
-    const job = makeJob({ status: 'running' })
+  it('distinguishes waiting, submitting, and running states', () => {
+    const queued = makeJob({ status: 'queued' })
     act(() => {
-      root.render(<RemoteJobRow job={job} onOpen={vi.fn()} />)
+      root.render(<RemoteJobRow job={queued} onOpen={vi.fn()} />)
     })
-    expect(container.textContent).toContain('running')
-  })
+    expect(container.textContent).toContain('Waiting in queue')
 
-  it('shows "queued" status text for submitted jobs', () => {
     const job = makeJob({ status: 'submitted' })
     act(() => {
       root.render(<RemoteJobRow job={job} onOpen={vi.fn()} />)
     })
-    expect(container.textContent).toContain('queued')
+    expect(container.textContent).toContain('Submitting')
+
+    act(() => {
+      root.render(<RemoteJobRow job={makeJob({ status: 'running' })} onOpen={vi.fn()} />)
+    })
+    expect(container.textContent).toContain('Running')
+  })
+
+  it('keeps a terminal job readable in its bound row', () => {
+    act(() => {
+      root.render(<RemoteJobRow job={makeJob({ status: 'success' })} onOpen={vi.fn()} />)
+    })
+    expect(container.textContent).toContain('finished')
   })
 
   it('calls onOpen when clicked', () => {

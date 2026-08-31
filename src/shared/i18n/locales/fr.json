@@ -4066,6 +4066,19 @@
     "Provider authentication": "Authentification du fournisseur",
     "No custom credentials yet.": "Aucune information d’identification personnalisée pour le moment.",
     "credentials": "informations d’identification",
-    "Manage GitHub credential": "Gérer les informations d’identification GitHub"
+    "Manage GitHub credential": "Gérer les informations d’identification GitHub",
+    "Unable to cancel remote job.": "Impossible d’annuler la tâche distante.",
+    "Cancelling": "Annulation en cours",
+    "Saved remote job data needs attention": "Les données enregistrées de la tâche distante nécessitent votre attention",
+    "This job remains visible, but automatic result analysis is paused because its saved state is incompatible.": "Cette tâche reste visible, mais l’analyse automatique des résultats est suspendue car son état enregistré est incompatible.",
+    "Unable to load remote jobs.": "Impossible de charger les tâches distantes.",
+    "Harvest pending. Open Science will retry automatically.": "La collecte est en attente. Open Science réessaiera automatiquement.",
+    "Harvest failed. Remote files were left untouched.": "La collecte a échoué. Les fichiers distants n’ont pas été modifiés.",
+    "Waiting in queue": "En attente dans la file",
+    "Submitting": "Envoi en cours",
+    "Remote job recovery needs attention": "La récupération des tâches distantes nécessite votre attention",
+    "Open Science could not check saved remote jobs. Retry to restore pending result analysis.": "Open Science n’a pas pu vérifier les tâches distantes enregistrées. Réessayez pour restaurer l’analyse des résultats en attente.",
+    "Remote job completed": "Tâche distante terminée",
+    "Analysis started automatically": "L’analyse a démarré automatiquement"
   }
 }

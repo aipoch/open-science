@@ -30,6 +30,32 @@ const removeAgentMemoryTriggers = async (client: PrismaClient): Promise<void> =>
   await client.$executeRawUnsafe('DROP TABLE "MemoryEntryFts"')
 }
 
+const removeComputePasswordAuthSchema = async (client: PrismaClient): Promise<void> => {
+  await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
+  await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
+  await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
+  await client.$executeRawUnsafe(`CREATE TABLE "ComputeHost" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "providerId" TEXT NOT NULL,
+    "displayName" TEXT NOT NULL,
+    "shape" TEXT NOT NULL DEFAULT 'direct_ssh',
+    "sshAlias" TEXT NOT NULL,
+    "sshOverrides" TEXT,
+    "scratchRoot" TEXT,
+    "scratchPinned" BOOLEAN NOT NULL DEFAULT false,
+    "concurrencyLimit" INTEGER,
+    "probeResult" TEXT,
+    "detailsDoc" TEXT NOT NULL DEFAULT '',
+    "detailsUpdatedAt" DATETIME,
+    "detailsUpdatedBy" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL
+  )`)
+  await client.$executeRawUnsafe(
+    'CREATE UNIQUE INDEX "ComputeHost_providerId_key" ON "ComputeHost"("providerId")'
+  )
+}
+
 const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> => {
   const [{ sql }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
     `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
@@ -175,7 +201,8 @@ describe('application database (integration)', () => {
         '0020_compute_job_analysis_state',
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
-        '0023_managed_file_version_foundation'
+        '0023_compute_job_operation',
+        '0024_managed_file_version_foundation'
       ]
     })
 
@@ -653,6 +680,7 @@ describe('application database (integration)', () => {
     // Simulate a current pre-ledger schema with the targeted legacy table shape.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
+    await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
 
@@ -737,6 +765,7 @@ describe('application database (integration)', () => {
     // Simulate a current pre-ledger schema with the targeted legacy table shape.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
+    await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
 
@@ -794,7 +823,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0023_managed_file_version_foundation.backup`
+    const backupPath = `${databasePath}.before-0024_managed_file_version_foundation.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -834,7 +863,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0022_memory_global_content_unique' }])
+      ).resolves.toEqual([{ id: '0023_compute_job_operation' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -1217,7 +1246,8 @@ describe('application database (integration)', () => {
         '0020_compute_job_analysis_state',
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
-        '0023_managed_file_version_foundation'
+        '0023_compute_job_operation',
+        '0024_managed_file_version_foundation'
       ]
     })
 

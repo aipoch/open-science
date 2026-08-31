@@ -602,13 +602,13 @@ const WorkspacePage = ({
   const canEditMessage = conversation.availability.revise
   useWorkspaceBranchSwitchGuard(
     activeSession?.id,
-    !canEditMessage || activeSessionSaveAsSkillPending || conversation.queue.items.length > 0
+    !canEditMessage || activeSessionSaveAsSkillPending || conversation.queue.hasPendingWork
   )
   const agentControlAvailability = resolveWorkspaceAgentControlAvailability(
     isSessionPersistenceReady &&
       !activeSessionHasRuntimeInteraction &&
       !activeSession?.compacting &&
-      conversation.queue.items.length === 0,
+      !conversation.queue.hasPendingWork,
     sessionController.view.specialist.barrierInFlight,
     activeSessionActionability?.actions
   )
@@ -617,7 +617,7 @@ const WorkspacePage = ({
     !activeSessionHasSendPreparation &&
     !activeSession?.compacting &&
     !awaitsHistoryReplay &&
-    conversation.queue.items.length === 0
+    !conversation.queue.hasPendingWork
   const canCompactContext =
     isSessionPersistenceReady &&
     activeSessionSupportsNativeCompaction &&

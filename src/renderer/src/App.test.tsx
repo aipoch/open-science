@@ -62,6 +62,7 @@ const mocks = vi.hoisted(() => {
       activeItemId: undefined as string | undefined,
       panelState: 'collapsed' as 'open' | 'collapsed'
     },
+    projects: [{ id: 'project-1', archivedAt: undefined }],
     loadProjects: vi.fn().mockResolvedValue(undefined),
     deepLinkNavigation: vi.fn(),
     lifecycleSync: vi.fn(() => ({
@@ -199,8 +200,12 @@ vi.mock('@/stores/compute-store', () => ({
   useComputeStore: <T,>(selector: (state: typeof mocks.compute) => T): T => selector(mocks.compute)
 }))
 vi.mock('@/stores/project-store', () => ({
-  useProjectStore: <T,>(selector: (state: { loadProjects: typeof mocks.loadProjects }) => T): T =>
-    selector({ loadProjects: mocks.loadProjects })
+  useProjectStore: <T,>(
+    selector: (state: {
+      projects: typeof mocks.projects
+      loadProjects: typeof mocks.loadProjects
+    }) => T
+  ): T => selector({ projects: mocks.projects, loadProjects: mocks.loadProjects })
 }))
 vi.mock('@/stores/settings-store', () => ({
   useSettingsStore: <T,>(selector: (state: typeof mocks.settings) => T): T =>
@@ -566,6 +571,10 @@ describe('App startup routing', () => {
         cwd: '/workspace/project-1',
         status: 'idle',
         messages: [],
+        conversationGraph: {
+          activeFrameId: 'frame-1',
+          frames: [{ id: 'frame-1', activeBranchId: 'branch-1' }]
+        },
         createdAt: 1,
         updatedAt: 1
       }
@@ -598,7 +607,11 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
     expect(mocks.compute.jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
     expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'session-1', preserveSelection: true })
+      expect.objectContaining({
+        sessionId: 'session-1',
+        requireExistingSession: true,
+        attribution: expect.objectContaining({ feature: 'compute' })
+      })
     )
   })
 

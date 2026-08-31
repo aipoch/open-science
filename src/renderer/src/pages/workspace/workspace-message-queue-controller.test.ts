@@ -1088,7 +1088,14 @@ describe('workspace message queue controller', () => {
       })
     )
     currentSession = { ...running, status: 'idle', specialistId: 'specialist-b' }
-    hook.rerender(options(currentSession, { ...input, getSession: () => currentSession }))
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession
+      })
+    )
 
     await vi.waitFor(() => expect(hook.result.current.items[0].phase).toBe('error'))
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
@@ -1109,7 +1116,14 @@ describe('workspace message queue controller', () => {
       })
     )
     currentSession = { ...running, status: 'idle', permissionProfile: 'auto' }
-    hook.rerender(options(currentSession, { ...input, getSession: () => currentSession }))
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession
+      })
+    )
 
     await vi.waitFor(() => expect(hook.result.current.items[0].phase).toBe('error'))
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
@@ -1787,5 +1801,292 @@ describe('workspace message queue controller', () => {
     })
     expect(input.runtime.cancelRun).not.toHaveBeenCalled()
     expect(hook.result.current.items).toEqual([])
+  })
+
+  it('admits automatic Compute analysis behind an earlier queued user Message', async () => {
+    let currentSession = session('running')
+    const sendMessage = vi.fn(async (input: { attribution?: { feature?: string } }) => {
+      currentSession = session('running')
+      return {
+        sessionId: 'session-a',
+        messageId: input.attribution ? 'compute-message' : 'user-message'
+      }
+    })
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('user queued first')))
+
+    let automatic!: Promise<{ sessionId: string; messageId: string } | undefined>
+    act(() => {
+      automatic = hook.result.current.lifecycle.enqueueApplication({
+        session: currentSession,
+        text: 'Analyze job-1.',
+        attribution: {
+          kind: 'application',
+          feature: 'compute',
+          purpose: 'job-completion-analysis',
+          deliveryKey: 'compute_done:session-a:job-1',
+          jobIds: ['job-1']
+        }
+      })
+    })
+    expect(hook.result.current.items.map((item) => item.text)).toEqual(['user queued first'])
+    expect(hook.result.current.hasPendingWork).toBe(true)
+
+    currentSession = session('idle')
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession
+      })
+    )
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
+    expect(sendMessage.mock.calls[0]?.[0].attribution).toBeUndefined()
+
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: ['session-a'],
+        getSession: () => currentSession
+      })
+    )
+    currentSession = session('idle')
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession
+      })
+    )
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2))
+    await expect(automatic).resolves.toEqual({
+      sessionId: 'session-a',
+      messageId: 'compute-message'
+    })
+    expect(sendMessage.mock.calls[1]?.[0]).toMatchObject({
+      attribution: { deliveryKey: 'compute_done:session-a:job-1' },
+      requireExistingSession: true
+    })
+  })
+
+  it('holds automatic Compute analysis behind an active turn and admits it once', async () => {
+    let currentSession = session('running')
+    const sendMessage = vi.fn(async () => ({
+      sessionId: 'session-a',
+      messageId: 'compute-message'
+    }))
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    const completion = hook.result.current.lifecycle.enqueueApplication({
+      session: currentSession,
+      text: 'Analyze job-1.',
+      attribution: {
+        kind: 'application',
+        feature: 'compute',
+        purpose: 'job-completion-analysis',
+        deliveryKey: 'compute_done:session-a:job-1',
+        jobIds: ['job-1']
+      }
+    })
+
+    await Promise.resolve()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.hasPendingWork).toBe(true)
+
+    currentSession = session('idle')
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession
+      })
+    )
+
+    await expect(completion).resolves.toEqual({
+      sessionId: 'session-a',
+      messageId: 'compute-message'
+    })
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an automatic delivery when its bound Message Branch changes before dispatch', async () => {
+    let currentSession = session('running')
+    const sendMessage = vi.fn(async () => ({
+      sessionId: 'session-a',
+      messageId: 'compute-message'
+    }))
+    const hook = renderController(
+      options(currentSession, {
+        getSession: () => currentSession,
+        runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+      })
+    )
+    mounted.push(hook)
+
+    let completion!: Promise<{ sessionId: string; messageId: string } | undefined>
+    act(() => {
+      completion = hook.result.current.lifecycle.enqueueApplication({
+        session: currentSession,
+        text: 'Analyze job-1.',
+        attribution: {
+          kind: 'application',
+          feature: 'compute',
+          purpose: 'job-completion-analysis',
+          deliveryKey: 'compute_done:session-a:job-1',
+          jobIds: ['job-1']
+        }
+      })
+    })
+    expect(hook.result.current.items).toEqual([])
+    expect(hook.result.current.hasPendingWork).toBe(true)
+
+    const graph = currentSession.conversationGraph!
+    currentSession = {
+      ...session('idle'),
+      conversationGraph: {
+        ...graph,
+        frames: graph.frames.map((frame) =>
+          frame.id === graph.activeFrameId ? { ...frame, activeBranchId: 'branch-b' } : frame
+        ),
+        branches: [
+          ...graph.branches,
+          {
+            id: 'branch-b',
+            agentFrameId: graph.activeFrameId,
+            headMessageId: 'message-b',
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ]
+      }
+    }
+    hook.rerender(
+      options(currentSession, {
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession,
+        runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+      })
+    )
+
+    await expect(completion).resolves.toBeUndefined()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.hasPendingWork).toBe(false)
+  })
+
+  it.each([
+    [
+      'permission profile',
+      (value: ChatSession): ChatSession => ({ ...value, permissionProfile: 'auto' })
+    ],
+    [
+      'Specialist',
+      (value: ChatSession): ChatSession => ({ ...value, specialistId: 'specialist-b' })
+    ],
+    [
+      'agent framework',
+      (value: ChatSession): ChatSession => ({ ...value, agentFrameworkId: 'claude-code' })
+    ],
+    [
+      'agent backend',
+      (value: ChatSession): ChatSession => ({ ...value, agentBackendId: 'backend-b' })
+    ],
+    [
+      'agent configuration',
+      (value: ChatSession): ChatSession => ({
+        ...value,
+        agentConfiguration: {
+          providerId: 'openai',
+          model: 'gpt-5',
+          reasoningEffort: 'high'
+        }
+      })
+    ]
+  ])('rejects automatic delivery after its captured %s changes', async (_label, mutate) => {
+    let currentSession = session('running')
+    const sendMessage = vi.fn(async () => ({
+      sessionId: 'session-a',
+      messageId: 'compute-message'
+    }))
+    const hook = renderController(
+      options(currentSession, {
+        getSession: () => currentSession,
+        runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+      })
+    )
+    mounted.push(hook)
+    const completion = hook.result.current.lifecycle.enqueueApplication({
+      session: currentSession,
+      text: 'Analyze job-1.',
+      attribution: {
+        kind: 'application',
+        feature: 'compute',
+        purpose: 'job-completion-analysis',
+        deliveryKey: 'compute_done:session-a:job-1',
+        jobIds: ['job-1']
+      }
+    })
+
+    currentSession = mutate({ ...currentSession, status: 'idle' })
+    hook.rerender(
+      options(currentSession, {
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession,
+        runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+      })
+    )
+
+    await expect(completion).resolves.toBeUndefined()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.hasPendingWork).toBe(false)
+  })
+
+  it('coalesces duplicate in-memory admission for the same Compute delivery key', async () => {
+    const idle = session('idle')
+    const sendMessage = vi.fn(async () => ({
+      sessionId: 'session-a',
+      messageId: 'compute-message'
+    }))
+    const hook = renderController(
+      options(idle, {
+        getSession: () => idle,
+        runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+      })
+    )
+    mounted.push(hook)
+    const application = {
+      session: idle,
+      text: 'Analyze job-1.',
+      attribution: {
+        kind: 'application' as const,
+        feature: 'compute' as const,
+        purpose: 'job-completion-analysis' as const,
+        deliveryKey: 'compute_done:session-a:job-1',
+        jobIds: ['job-1']
+      }
+    }
+
+    const first = hook.result.current.lifecycle.enqueueApplication(application)
+    const duplicate = hook.result.current.lifecycle.enqueueApplication(application)
+
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      { sessionId: 'session-a', messageId: 'compute-message' },
+      { sessionId: 'session-a', messageId: 'compute-message' }
+    ])
+    expect(sendMessage).toHaveBeenCalledOnce()
   })
 })

@@ -20,7 +20,7 @@ import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
 import { useApplicationStartup } from '@/hooks/useApplicationStartup'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
-import { JobAnalysisRuntimeBridge } from '@/lib/compute/useJobAnalysisEffect'
+import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRecoveryBridge'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { ComputeApprovalDialog } from '@/pages/settings/ComputeApprovalDialog'
@@ -196,8 +196,8 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           ? writeErrorAlert
           : null}
         <WorkspaceAgentRuntimeProvider>
-          <JobAnalysisRuntimeBridge enabled={sessions.isReady} />
           <WorkspaceMessageQueueProvider>
+            <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
             <WorkspaceMessageQueueRuntimeBridge />
             {events.navigation.view === 'home' ? (
               <HomePage

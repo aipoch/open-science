@@ -53,13 +53,13 @@ describe('JobStatusBadge', () => {
     expect(container.textContent).toBe('執行中')
   })
 
-  it('maps submitted and queued onto the same label', () => {
+  it('distinguishes dispatch from waiting in the remote queue', () => {
     switchTo('zh-Hans')
     render(<JobStatusBadge status="submitted" />)
-    expect(container.textContent).toBe('排队中')
+    expect(container.textContent).toBe('正在提交')
 
     render(<JobStatusBadge status="queued" />)
-    expect(container.textContent).toBe('排队中')
+    expect(container.textContent).toBe('正在队列中等待')
   })
 })
 

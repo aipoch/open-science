@@ -1,6 +1,7 @@
 import type { ComputeJob } from '../../shared/compute'
 
 export type ParsedPollObservation = {
+  status: 'complete'
   job: ComputeJob
   alive: boolean
   exitCode: number | null
@@ -9,56 +10,88 @@ export type ParsedPollObservation = {
   stderrTail: string
 }
 
-// Parses nonce-prefixed poll SSH stdout into per-job observations. Structural markers carry the
-// per-tick nonce so adversarial job tail content cannot collide with them.
+export type IncompletePollObservation = {
+  status: 'incomplete'
+  job: ComputeJob
+  reason: 'job' | 'alive' | 'exit' | 'stdout-end' | 'stderr-end'
+}
+
+export type ParsedPollResult = ParsedPollObservation | IncompletePollObservation
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const stripProtocolDelimiter = (value: string): string =>
+  value.endsWith('\r\n') ? value.slice(0, -2) : value.endsWith('\n') ? value.slice(0, -1) : value
+
+// Returns one explicit observation for every expected Job. A missing or malformed structural field
+// is retryable protocol incompleteness, never a negative/alive observation or an empty tail.
 export const parsePollOutput = (
   output: string,
   jobs: readonly ComputeJob[],
   nonce: string
-): ParsedPollObservation[] => {
-  const escapedNonce = nonce.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const sections = output.split(new RegExp(`^${escapedNonce}JOB_START:`, 'm'))
-  const parsedResults: ParsedPollObservation[] = []
+): ParsedPollResult[] => {
+  const escapedNonce = escapeRegExp(nonce)
+  const sections = output.split(new RegExp(`^${escapedNonce}JOB_START:`, 'm')).slice(1)
+  const bodies = new Map<string, string | null>()
 
   for (const section of sections) {
-    if (!section.trim()) continue
     const firstNewline = section.indexOf('\n')
     if (firstNewline === -1) continue
-    const jobId = section.slice(0, firstNewline).trim()
-    const body = section.slice(firstNewline + 1)
-
-    const job = jobs.find((candidate) => candidate.job_id === jobId)
-    if (!job) continue
-
-    const aliveMatch = body.match(new RegExp(`^${escapedNonce}alive:([01])`, 'm'))
-    const alive = aliveMatch?.[1] === '1'
-
-    const alivePrefix = `${nonce}alive:`
-    const lines = body.split('\n')
-    let exitCodeRaw = ''
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i]?.startsWith(alivePrefix)) {
-        exitCodeRaw = lines[i + 1]?.trim() ?? ''
-        break
-      }
-    }
-    const exitCode = exitCodeRaw.trim() === '' ? null : Number.parseInt(exitCodeRaw.trim(), 10)
-    const hasExitCode = exitCode !== null && Number.isFinite(exitCode)
-
-    const stdoutEndMarker = `${nonce}STDOUT_END:${jobId}`
-    const stderrEndMarker = `${nonce}STDERR_END:${jobId}`
-    const stdoutStart = body.indexOf('\n', body.indexOf('\n', body.indexOf('\n') + 1) + 1) + 1
-    const stdoutEnd = body.indexOf(stdoutEndMarker)
-    const stdoutTail =
-      stdoutEnd > stdoutStart ? body.slice(stdoutStart, stdoutEnd).replace(/\n$/, '') : ''
-
-    const stderrStart = body.indexOf('\n', stdoutEnd + stdoutEndMarker.length) + 1
-    const stderrEnd = body.indexOf(stderrEndMarker)
-    const stderrTail =
-      stderrEnd > stderrStart ? body.slice(stderrStart, stderrEnd).replace(/\n$/, '') : ''
-
-    parsedResults.push({ job, alive, exitCode, hasExitCode, stdoutTail, stderrTail })
+    const jobId = section.slice(0, firstNewline).replace(/\r$/, '').trim()
+    bodies.set(jobId, bodies.has(jobId) ? null : section.slice(firstNewline + 1))
   }
 
-  return parsedResults
+  return jobs.map((job): ParsedPollResult => {
+    const body = bodies.get(job.job_id)
+    if (body == null) return { status: 'incomplete', job, reason: 'job' }
+
+    const alive = new RegExp(`^${escapedNonce}alive:([01])\\r?\\n`).exec(body)
+    if (!alive) return { status: 'incomplete', job, reason: 'alive' }
+
+    const afterAlive = body.slice(alive[0].length)
+    const exit = new RegExp(`^${escapedNonce}exit:([^\\r\\n]*)\\r?\\n`).exec(afterAlive)
+    if (!exit) return { status: 'incomplete', job, reason: 'exit' }
+    const exitRaw = exit[1] ?? ''
+    let exitCode: number | null = null
+    if (exitRaw !== '') {
+      if (!/^\d+$/.test(exitRaw)) return { status: 'incomplete', job, reason: 'exit' }
+      const parsed = Number(exitRaw)
+      if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 255) {
+        return { status: 'incomplete', job, reason: 'exit' }
+      }
+      exitCode = parsed
+    }
+
+    const streams = afterAlive.slice(exit[0].length)
+    const stdoutMarker = new RegExp(
+      `^${escapedNonce}STDOUT_END:${escapeRegExp(job.job_id)}\\r?$`,
+      'm'
+    ).exec(streams)
+    if (!stdoutMarker) return { status: 'incomplete', job, reason: 'stdout-end' }
+    const stdoutMarkerEnd = stdoutMarker.index + stdoutMarker[0].length
+    if (streams[stdoutMarkerEnd] !== '\n') {
+      return { status: 'incomplete', job, reason: 'stderr-end' }
+    }
+
+    const stderrStart = stdoutMarkerEnd + 1
+    const stderrRegion = streams.slice(stderrStart)
+    const stderrMarker = new RegExp(
+      `^${escapedNonce}STDERR_END:${escapeRegExp(job.job_id)}\\r?$`,
+      'm'
+    ).exec(stderrRegion)
+    if (!stderrMarker) return { status: 'incomplete', job, reason: 'stderr-end' }
+    const trailing = stderrRegion.slice(stderrMarker.index + stderrMarker[0].length)
+    if (trailing !== '' && trailing !== '\n') {
+      return { status: 'incomplete', job, reason: 'stderr-end' }
+    }
+
+    return {
+      status: 'complete',
+      job,
+      alive: alive[1] === '1',
+      exitCode,
+      hasExitCode: exitCode !== null,
+      stdoutTail: stripProtocolDelimiter(streams.slice(0, stdoutMarker.index)),
+      stderrTail: stripProtocolDelimiter(stderrRegion.slice(0, stderrMarker.index))
+    }
+  })
 }

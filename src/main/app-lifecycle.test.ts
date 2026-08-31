@@ -1130,6 +1130,75 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
+  it('reissues quit when the delegated work recheck is confirmed', async () => {
+    let active: ActiveSessionInfo[] = []
+    let resolveFirst: ((choice: CloseConfirmChoice) => void) | undefined
+    const confirmClose = vi.fn(() => {
+      if (confirmClose.mock.calls.length === 1) {
+        return new Promise<CloseConfirmChoice>((resolve) => {
+          resolveFirst = resolve
+        })
+      }
+      return Promise.resolve('quit' as const)
+    })
+    const { app, quit, shutdownBackends } = setup({
+      detectActiveSessions: () => active,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    active = [{ projectId: 'demo', sessionId: 'child-live', kind: 'delegated' }]
+    resolveFirst?.('quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(quit).toHaveBeenCalledTimes(1)
+
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(shutdownBackends).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('rechecks delegated work added after the delegated confirmation', async () => {
+    let active: ActiveSessionInfo[] = []
+    let resolveFirst: ((choice: CloseConfirmChoice) => void) | undefined
+    const confirmClose = vi.fn(() => {
+      if (confirmClose.mock.calls.length === 1) {
+        return new Promise<CloseConfirmChoice>((resolve) => {
+          resolveFirst = resolve
+        })
+      }
+      return Promise.resolve<CloseConfirmChoice>(
+        confirmClose.mock.calls.length === 2 ? 'quit' : 'cancel'
+      )
+    })
+    const { app, quit, prepareForQuit, flushSessionPersistence, shutdownBackends } = setup({
+      detectActiveSessions: () => active,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    active = [{ projectId: 'demo', sessionId: 'child-1', kind: 'delegated' }]
+    resolveFirst?.('quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(quit).toHaveBeenCalledTimes(1)
+
+    active = [...active, { projectId: 'demo', sessionId: 'child-2', kind: 'delegated' }]
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledTimes(3)
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', active)
+    expect(prepareForQuit).not.toHaveBeenCalled()
+    expect(flushSessionPersistence).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
   it('rechecks after a saved close preference resolves and safely minimizes for new delegated work', async () => {
     let active: ActiveSessionInfo[] = []
     let resolveSavedPreference: ((choice: CloseConfirmChoice) => void) | undefined
@@ -1182,6 +1251,31 @@ describe('installAppLifecycle', () => {
     expect(flushSessionPersistence).not.toHaveBeenCalled()
     expect(shutdownBackends).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('reissues a confirmed Windows titlebar quit after delegated work is confirmed', async () => {
+    const delegated: ActiveSessionInfo[] = [
+      { projectId: 'demo', sessionId: 'child-live', kind: 'delegated' }
+    ]
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'quit')
+    const { app, closeOpts, quit, shutdownBackends } = setup({
+      platform: 'win32',
+      detectActiveSessions: () => delegated,
+      confirmClose
+    })
+
+    closeOpts[0].requestQuit(true)
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', delegated)
+    expect(quit).toHaveBeenCalledTimes(2)
+
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenCalledTimes(1)
+    expect(shutdownBackends).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
   })
 
   it('a titlebar X close-to-tray does not dispatch a second confirm while a quit-confirm is open', async () => {

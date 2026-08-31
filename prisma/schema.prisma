@@ -698,10 +698,35 @@ model ComputeJob {
   startedAt              DateTime?
   finishedAt             DateTime?
   harvestedAt            DateTime?
+  operations             ComputeJobOperation[]
 
   @@index([providerId])
   @@index([sessionId])
   @@index([status])
+}
+
+// Durable lifecycle operations keep requested intent outside the closed ComputeJob execution
+// status/error vocabulary. `eligibleAt = null` means an active operation is immediately ready.
+// Kinds and settled outcomes are closed by SQLite checks and exhaustive TypeScript codecs.
+model ComputeJobOperation {
+  id             String     @id
+  jobId          String
+  kind           String
+  phase          String     @default("active")
+  outcome        String?
+  revision       Int        @default(1)
+  attemptCount   Int        @default(0)
+  eligibleAt     DateTime?
+  claimToken     String?
+  claimExpiresAt DateTime?
+  createdAt      DateTime   @default(now())
+  settledAt      DateTime?
+  updatedAt      DateTime   @updatedAt
+  job            ComputeJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, kind])
+  @@index([kind, phase, eligibleAt, createdAt])
+  @@index([kind, phase, claimExpiresAt])
 }
 
 // A registered remote SSH compute host (Compute settings tab). Phase 1 (issue 01) manages the record

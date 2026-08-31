@@ -140,6 +140,8 @@ describe('ConcurrencyManager', () => {
   describe('enqueue - global queue limit', () => {
     it('returns queue_full when global queue >= 100', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(100)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 1 } as ComputeHost)
 
       const result = await manager.enqueue({
         jobId: 'job-1',
@@ -153,6 +155,8 @@ describe('ConcurrencyManager', () => {
 
     it('returns queue_full when global queue > 100', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(150)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 1 } as ComputeHost)
 
       const result = await manager.enqueue({
         jobId: 'job-1',
@@ -845,6 +849,8 @@ describe('ConcurrencyManager', () => {
 
     it('returns queue_full and does NOT call commit when global queue is at capacity', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(100)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 1 } as ComputeHost)
       const commit = vi.fn().mockResolvedValue(undefined)
 
       const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)

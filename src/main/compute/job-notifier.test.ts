@@ -97,8 +97,10 @@ describe('emitJobNotification', () => {
     })
 
     const updatedJob = { ...job, notified_at: Date.now() }
-    const mockUpdate = vi.fn().mockResolvedValue(updatedJob)
-    const jobRepo: Pick<ComputeJobRepository, 'update'> = { update: mockUpdate }
+    const mockClaim = vi.fn().mockResolvedValue(updatedJob)
+    const jobRepo: Pick<ComputeJobRepository, 'claimNotification'> = {
+      claimNotification: mockClaim
+    }
     const hostRepo = makeMockHostRepository()
     const broadcast = vi.fn()
 
@@ -110,9 +112,8 @@ describe('emitJobNotification', () => {
     })
 
     // notifiedAt should be written
-    expect(mockUpdate).toHaveBeenCalledOnce()
-    const updateArg = mockUpdate.mock.calls[0][1]
-    expect(updateArg.notifiedAt).toBeInstanceOf(Date)
+    expect(mockClaim).toHaveBeenCalledOnce()
+    expect(mockClaim.mock.calls[0][1]).toBeInstanceOf(Date)
 
     // broadcast should be called with a JobSummary carrying notification payload fields
     expect(broadcast).toHaveBeenCalledOnce()
@@ -131,7 +132,7 @@ describe('emitJobNotification', () => {
     expect(summary.notification_consumed_at).toBeUndefined()
   })
 
-  it('harvest_failed: sets notifiedAt, featured_files from partial harvest dir', async () => {
+  it('harvest_failed: never exposes files from an older or partial generation', async () => {
     const storageRoot = await mkTmp()
 
     // Only one file was harvested before error
@@ -142,14 +143,17 @@ describe('emitJobNotification', () => {
 
     const job = makeJob({
       status: 'failed',
+      cancellation_status: 'cancelled',
       exit_code: 1,
       harvest_error: 'harvest_failed: scp timed out for big.dat',
       harvested_at: Date.now()
     })
 
     const updatedJob = { ...job, notified_at: Date.now() }
-    const mockUpdate = vi.fn().mockResolvedValue(updatedJob)
-    const jobRepo: Pick<ComputeJobRepository, 'update'> = { update: mockUpdate }
+    const mockClaim = vi.fn().mockResolvedValue(updatedJob)
+    const jobRepo: Pick<ComputeJobRepository, 'claimNotification'> = {
+      claimNotification: mockClaim
+    }
     const hostRepo = makeMockHostRepository()
     const broadcast = vi.fn()
 
@@ -160,11 +164,13 @@ describe('emitJobNotification', () => {
       broadcast
     })
 
-    expect(mockUpdate).toHaveBeenCalledOnce()
+    expect(mockClaim).toHaveBeenCalledOnce()
     const summary = broadcast.mock.calls[0][0]
     expect(summary.status).toBe('failed')
-    expect(summary.featured_files).toEqual(['hpc/job-1/featured/partial.csv'])
-    expect(summary.featured_file_count).toBe(1)
+    expect(summary.cancellation_status).toBe('cancelled')
+    expect(summary.project_id).toBe('proj-1')
+    expect(summary.featured_files).toEqual([])
+    expect(summary.featured_file_count).toBe(0)
     expect(summary.notified_at).toBeDefined()
   })
 
@@ -181,8 +187,10 @@ describe('emitJobNotification', () => {
     })
 
     const updatedJob = { ...job, notified_at: Date.now() }
-    const mockUpdate = vi.fn().mockResolvedValue(updatedJob)
-    const jobRepo: Pick<ComputeJobRepository, 'update'> = { update: mockUpdate }
+    const mockClaim = vi.fn().mockResolvedValue(updatedJob)
+    const jobRepo: Pick<ComputeJobRepository, 'claimNotification'> = {
+      claimNotification: mockClaim
+    }
     const hostRepo = makeMockHostRepository()
     const broadcast = vi.fn()
 
@@ -193,7 +201,7 @@ describe('emitJobNotification', () => {
       broadcast
     })
 
-    expect(mockUpdate).toHaveBeenCalledOnce()
+    expect(mockClaim).toHaveBeenCalledOnce()
     const summary = broadcast.mock.calls[0][0]
     expect(summary.status).toBe('error')
     expect(summary.featured_files).toEqual([])
@@ -203,6 +211,35 @@ describe('emitJobNotification', () => {
     expect(summary.notified_at).toBeDefined()
   })
 
+  it('builds the notification from the row won by the delivery claim', async () => {
+    const storageRoot = await mkTmp()
+    const staleJob = makeJob({
+      left_on_remote: JSON.stringify([
+        { uri: 'ssh://biowulf/stale.dat', size_mb: 1, reason: 'stale' }
+      ])
+    })
+    const currentJob = {
+      ...staleJob,
+      notified_at: Date.now(),
+      left_on_remote: JSON.stringify([
+        { uri: 'ssh://biowulf/current.dat', size_mb: 20, reason: 'exceeds_max_file_mb' }
+      ])
+    }
+    const broadcast = vi.fn()
+
+    await emitJobNotification(staleJob, {
+      jobRepository: { claimNotification: vi.fn().mockResolvedValue(currentJob) },
+      hostRepository: makeMockHostRepository(),
+      storageRoot,
+      broadcast
+    })
+
+    expect(broadcast).toHaveBeenCalledOnce()
+    expect(broadcast.mock.calls[0][0].left_on_remote).toEqual([
+      { uri: 'ssh://biowulf/current.dat', size_mb: 20, reason: 'exceeds_max_file_mb' }
+    ])
+  })
+
   it('idempotent: already-notified job is not re-emitted', async () => {
     const storageRoot = await mkTmp()
 
@@ -210,8 +247,10 @@ describe('emitJobNotification', () => {
       notified_at: Date.now() - 1000 // already notified
     })
 
-    const mockUpdate = vi.fn()
-    const jobRepo: Pick<ComputeJobRepository, 'update'> = { update: mockUpdate }
+    const mockClaim = vi.fn()
+    const jobRepo: Pick<ComputeJobRepository, 'claimNotification'> = {
+      claimNotification: mockClaim
+    }
     const hostRepo: Pick<ComputeHostRepository, 'get'> = { get: vi.fn() }
     const broadcast = vi.fn()
 
@@ -223,7 +262,7 @@ describe('emitJobNotification', () => {
     })
 
     // Neither update nor broadcast should be called
-    expect(mockUpdate).not.toHaveBeenCalled()
+    expect(mockClaim).not.toHaveBeenCalled()
     expect(broadcast).not.toHaveBeenCalled()
   })
 
@@ -238,8 +277,10 @@ describe('emitJobNotification', () => {
     const job = makeJob({ status: 'success' })
 
     const updatedJob = { ...job, notified_at: Date.now() }
-    const mockUpdate = vi.fn().mockResolvedValue(updatedJob)
-    const jobRepo: Pick<ComputeJobRepository, 'update'> = { update: mockUpdate }
+    const mockClaim = vi.fn().mockResolvedValue(updatedJob)
+    const jobRepo: Pick<ComputeJobRepository, 'claimNotification'> = {
+      claimNotification: mockClaim
+    }
     const hostRepo = makeMockHostRepository()
     const broadcast = vi.fn()
 
