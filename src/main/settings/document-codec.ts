@@ -379,6 +379,15 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   const notebookManualInterpreters = sanitizeManualInterpreters(value.notebookManualInterpreters)
   if (notebookManualInterpreters) settings.notebookManualInterpreters = notebookManualInterpreters
 
+  if (isRecord(value.computeBookmarks)) {
+    const computeBookmarks: Record<string, string[]> = Object.fromEntries(
+      Object.entries(value.computeBookmarks).flatMap(([providerId, folders]) =>
+        Array.isArray(folders) ? [[providerId, asStringArray(folders)]] : []
+      )
+    )
+    if (Object.keys(computeBookmarks).length > 0) settings.computeBookmarks = computeBookmarks
+  }
+
   const computeGrants = Array.isArray(value.computeGrants)
     ? value.computeGrants
         .map(sanitizeComputeGrant)
