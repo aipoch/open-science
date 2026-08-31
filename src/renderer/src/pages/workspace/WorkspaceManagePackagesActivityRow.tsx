@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next'
 import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
+import { WorkspaceCollapsiblePanel } from './WorkspaceCollapsiblePanel'
 import type { ToolExecutionPhase } from './tool-execution-phase'
 import {
   getManagePackagesFallbackText,
@@ -341,7 +342,7 @@ const WorkspaceManagePackagesActivityRow = ({
           ›
         </span>
       </button>
-      {showDetails && packageDetails.length > 0 ? (
+      <WorkspaceCollapsiblePanel isOpen={showDetails && packageDetails.length > 0}>
         <div className="ml-[26px] border-y border-border-200" data-testid="manage-packages-details">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-b border-border-200 px-2.5 py-1.5 text-[11px] font-medium text-text-200 sm:grid-cols-[minmax(0,1fr)_minmax(76px,auto)_minmax(88px,auto)]">
             <span>{t('Package')}</span>
@@ -431,7 +432,7 @@ const WorkspaceManagePackagesActivityRow = ({
             })}
           </div>
         </div>
-      ) : null}
+      </WorkspaceCollapsiblePanel>
       {showDetails && relatedPackageDetails.length > 0 ? (
         <details
           ref={relatedChangesRef}

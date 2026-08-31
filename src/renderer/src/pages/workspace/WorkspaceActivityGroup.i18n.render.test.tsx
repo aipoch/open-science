@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
@@ -35,7 +36,10 @@ afterEach(async () => {
 
 describe('WorkspaceActivityGroup i18n', () => {
   it('renders active manage_packages progress inside its tool group', () => {
-    vi.useFakeTimers()
+    // Fake only Date: this test needs a frozen clock for the elapsed label, but faking
+    // setTimeout/setInterval strands jsdom's requestAnimationFrame and would stall Motion's
+    // frameloop for every later collapse-animation assertion in this file.
+    vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-08-24T00:02:05Z'))
     const createdAt = Date.now() - 65_000
 
@@ -669,7 +673,7 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(container.textContent).not.toContain('Command')
   })
 
-  it('lets the tool group collapse a figure that remains visible beside a collapsed tool row', () => {
+  it('lets the tool group collapse a figure that remains visible beside a collapsed tool row', async () => {
     const activity = {
       id: 'activity-notebook-1',
       kind: 'tool' as const,
@@ -728,6 +732,9 @@ describe('WorkspaceActivityGroup i18n', () => {
 
     act(() => renderGroup(false))
 
-    expect(container.querySelector('[data-testid="notebook-tool-figure-button"]')).toBeNull()
+    // The collapse animation keeps the panel mounted during its exit; assert the settled state.
+    await waitFor(() =>
+      expect(container.querySelector('[data-testid="notebook-tool-figure-button"]')).toBeNull()
+    )
   })
 })

@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 import type { Logger } from '../logger'
+import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
+import { STAGING_UPLOAD_SESSION_ID, UPLOADS_DIR } from '../uploads/storage-helpers'
 
 // Capture ipcMain.handle registrations; stub dialog/BrowserWindow/app so handlers can be invoked
 // directly without a real Electron runtime. isPackaged: true means dataFolderName() === 'OpenScience'.
@@ -408,6 +410,59 @@ describe('storage IPC handlers', () => {
     expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))
     expect(info.defaultParent).toBe('/home/user')
     expect(info.canAutoSelectDataDrive).toBe(true)
+  })
+
+  it('get-info permits auto-selection when startup created only the empty upload scaffold', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'ds-upload-scaffold-home-'))
+    electronHome.path = home
+    try {
+      await mkdir(
+        join(
+          home,
+          'OpenScience',
+          UPLOADS_DIR,
+          DEFAULT_UPLOAD_PROJECT_ID,
+          STAGING_UPLOAD_SESSION_ID
+        ),
+        { recursive: true }
+      )
+      initDataRoot(undefined)
+      registerStorageIpcHandlers(fakeDeps())
+
+      const info = (await invoke('storage:get-info')) as { canAutoSelectDataDrive: boolean }
+
+      expect(info.canAutoSelectDataDrive).toBe(true)
+    } finally {
+      electronHome.path = '/home/user'
+      initDataRoot(undefined)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('get-info suppresses auto-selection when the upload scaffold contains a staged file', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'ds-staged-upload-home-'))
+    electronHome.path = home
+    try {
+      const staging = join(
+        home,
+        'OpenScience',
+        UPLOADS_DIR,
+        DEFAULT_UPLOAD_PROJECT_ID,
+        STAGING_UPLOAD_SESSION_ID
+      )
+      await mkdir(staging, { recursive: true })
+      await writeFile(join(staging, 'transfer.part'), 'pending upload')
+      initDataRoot(undefined)
+      registerStorageIpcHandlers(fakeDeps())
+
+      const info = (await invoke('storage:get-info')) as { canAutoSelectDataDrive: boolean }
+
+      expect(info.canAutoSelectDataDrive).toBe(false)
+    } finally {
+      electronHome.path = '/home/user'
+      initDataRoot(undefined)
+      await rm(home, { recursive: true, force: true })
+    }
   })
 
   it('get-info fails closed when default-root emptiness cannot be proven', async () => {

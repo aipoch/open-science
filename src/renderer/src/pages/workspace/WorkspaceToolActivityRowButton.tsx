@@ -3,6 +3,7 @@ import type { ReactNode, Ref } from 'react'
 import type { ToolActivity } from '@/stores/session-store'
 
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
+import { WorkspaceCollapsiblePanel } from './WorkspaceCollapsiblePanel'
 import { isActivityActive } from './workspace-conversation-items'
 import { getActivitySurfaceClassName } from './workspace-tool-activity-style'
 import type { ToolExecutionPhase } from './tool-execution-phase'
@@ -77,11 +78,11 @@ const WorkspaceToolActivityRowButton = ({
           </span>
         ) : null}
       </button>
-      {canExpand && isExpanded ? (
+      <WorkspaceCollapsiblePanel isOpen={canExpand && isExpanded}>
         <div id={detailsDomId} data-testid={panelTestId} className={panelClassName}>
           {children}
         </div>
-      ) : null}
+      </WorkspaceCollapsiblePanel>
     </>
   )
 }
