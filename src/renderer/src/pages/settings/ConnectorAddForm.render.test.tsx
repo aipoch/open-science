@@ -176,6 +176,9 @@ describe('ConnectorAddForm (local command)', () => {
         url: 'https://mcp.example.test'
       })
     )
+    expect(
+      vi.mocked(useSettingsStore.getState().addCustomServer).mock.calls[0]?.[0]
+    ).not.toHaveProperty('oauth')
   })
 
   it('does not let an unbound hidden remote header draft block local submission', async () => {
@@ -527,6 +530,33 @@ describe('ConnectorAddForm (remote server)', () => {
     )
   })
 
+  it('adds static header credentials without legacy OAuth fields', async () => {
+    useSettingsStore.setState({ deviceCredentials: [staticCredential] })
+    act(() => {
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
+    })
+
+    setValue('Display name', 'Header MCP')
+    setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
+    selectOption('Authentication', 'Static headers')
+    setValue('Headers', 'Authorization:')
+    selectOption('Credential for Authorization', 'Example API token')
+    checkTrust()
+    await act(async () => addButton()?.click())
+
+    const request = vi.mocked(useSettingsStore.getState().addCustomServer).mock.calls[0]?.[0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        headerCredentialIds: { Authorization: staticCredential.id },
+        transport: 'streamable_http'
+      })
+    )
+    expect(request).not.toHaveProperty('oauth')
+  })
+
   it('reveals uncommon OAuth registration settings only when selected', () => {
     act(() => {
       root.render(
@@ -695,7 +725,6 @@ describe('ConnectorAddForm (remote server)', () => {
       description: undefined,
       transport: 'streamable_http',
       url: 'https://mcp.example.test',
-      oauth: null,
       oauthCredentialId: 'credential-oauth'
     })
     expect(useSettingsStore.getState().authenticateCustomServer).not.toHaveBeenCalled()
@@ -834,12 +863,9 @@ describe('ConnectorAddForm (remote server)', () => {
     expect(addButton()?.disabled).toBe(false)
 
     await act(async () => addButton()?.click())
-    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
-      expect.objectContaining({
-        oauth: null,
-        oauthCredentialId: 'credential-oauth'
-      })
-    )
+    const request = vi.mocked(useSettingsStore.getState().addCustomServer).mock.calls[0]?.[0]
+    expect(request).toEqual(expect.objectContaining({ oauthCredentialId: 'credential-oauth' }))
+    expect(request).not.toHaveProperty('oauth')
   })
 
   it('does not offer a shared OAuth credential without a required client secret', () => {

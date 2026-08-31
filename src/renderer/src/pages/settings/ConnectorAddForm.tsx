@@ -541,8 +541,7 @@ export function ConnectorAddForm({
               ...(parsedArgs.length > 0 ? { args: parsedArgs } : {})
             }
           : {
-              url: url.trim(),
-              ...(!isEdit ? { oauth: null } : oauth ? { oauth } : {})
+              url: url.trim()
             })
       }
 
