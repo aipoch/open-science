@@ -417,6 +417,8 @@ describe('settings preferences slice', () => {
     await store.getState().setNetworkProxy(proxy)
 
     expect(commands.setNetworkProxy).toHaveBeenCalledWith(proxy)
+    expect(commands.getSettings).toHaveBeenCalledOnce()
+    expect(reconcileSnapshot).toHaveBeenCalledOnce()
     expect(store.getState().networkProxy).toEqual(proxy)
 
     commands.setNetworkProxy = undefined as unknown as Mock
@@ -440,6 +442,8 @@ describe('settings preferences slice', () => {
       ...notebookNetwork,
       baseAllowedDomains: ['baseline.example.org']
     })
+    expect(commands.getSettings).toHaveBeenCalledOnce()
+    expect(reconcileSnapshot).toHaveBeenCalledOnce()
     expect(store.getState().notebookNetwork).toEqual(notebookNetwork)
 
     commands.setNotebookNetwork = undefined as unknown as Mock
