@@ -382,6 +382,7 @@ describe('pull request change classification', () => {
     ['Korean locale catalog', 'src/shared/i18n/locales/ko.json'],
     ['French locale catalog', 'src/shared/i18n/locales/fr.json'],
     ['Spanish locale catalog', 'src/shared/i18n/locales/es.json'],
+    ['German locale catalog', 'src/shared/i18n/locales/de.json'],
     ['shared contract', 'src/shared/acp.ts'],
     ['main runtime', 'src/main/notebook/runtime-service.ts']
   ])('selects the i18n catalog lane for a scanned %s change', (_label, path) => {
@@ -391,17 +392,19 @@ describe('pull request change classification', () => {
     expect(plan.bundles).toContain('static')
   })
 
-  it.each(['es', 'fr', 'ja', 'ko', 'ru', 'zh-Hans', 'zh-Hant'])(
-    'runs the build and functional Electron journey for a shared %s catalog change',
-    (locale) => {
-      const plan = classifyChanges([
-        { path: `src/shared/i18n/locales/${locale}.json`, status: 'modified' }
-      ])
+  it.each(
+    readdirSync(resolve('src/shared/i18n/locales'))
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => name.replace(/\.json$/u, ''))
+      .sort()
+  )('runs the build and functional Electron journey for a shared %s catalog change', (locale) => {
+    const plan = classifyChanges([
+      { path: `src/shared/i18n/locales/${locale}.json`, status: 'modified' }
+    ])
 
-      expect(plan.lanes).toEqual(expect.arrayContaining(['i18n', 'build', 'e2e_functional_macos']))
-      expect(plan.bundles).toEqual(expect.arrayContaining(['static', 'macos_e2e']))
-    }
-  )
+    expect(plan.lanes).toEqual(expect.arrayContaining(['i18n', 'build', 'e2e_functional_macos']))
+    expect(plan.bundles).toEqual(expect.arrayContaining(['static', 'macos_e2e']))
+  })
 
   it.each([
     ['documentation', 'README.md'],
