@@ -429,6 +429,39 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
+  it('replays a system shutdown that arrives while an ordinary quit is aborting', async () => {
+    let resolvePreflight: ((outcome: 'conflict') => void) | undefined
+    const flushSessionPersistence = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<'conflict'>((resolve) => {
+            resolvePreflight = resolve
+          })
+      )
+      .mockResolvedValue('conflict' as const)
+    const { app, closeOpts, windows, quit, confirmClose, shutdownBackends } = setup({
+      platform: 'win32',
+      flushSessionPersistence
+    })
+
+    closeOpts[0].requestQuit()
+    app.emit('before-quit')
+    expect(flushSessionPersistence).toHaveBeenCalledOnce()
+
+    windows[0].emit('query-session-end')
+    resolvePreflight?.('conflict')
+    await flush()
+
+    expect(quit).toHaveBeenCalledTimes(2)
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
   it.each(['SIGTERM', 'SIGINT'] as const)(
     'routes headless %s through the existing shutdown owner',
     async (signal) => {
@@ -479,6 +512,26 @@ describe('installAppLifecycle', () => {
     await flush()
     expect(shutdownBackends).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('preserves system shutdown intent until the migration guard reissues quit', async () => {
+    let migrationInProgress = true
+    const { app, windows, shutdownBackends, confirmClose } = setup({
+      platform: 'win32',
+      isMigrationInProgress: () => migrationInProgress
+    })
+
+    windows[0].emit('query-session-end')
+    app.emit('before-quit')
+    expect(shutdownBackends).not.toHaveBeenCalled()
+
+    migrationInProgress = false
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
   })
 
   it('respects a quit an earlier handler already cancelled (defaultPrevented)', async () => {

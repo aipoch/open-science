@@ -190,9 +190,12 @@ export const installAppLifecycle = (
     deps.quit()
   }
   const requestSystemShutdown = (): void => {
-    if (systemShutdownRequested || shutdownStarted || shutdownFinished) return
+    if (systemShutdownRequested || shutdownFinished) return
     systemShutdownRequested = true
     const rollbackTrigger = markApplicationShutdownTrigger('system')
+    // An ordinary quit may already be inside its abortable Renderer preflight. Keep the stronger
+    // system intent latched; its abort path will reissue quit through the same lifecycle owner.
+    if (shutdownStarted) return
     try {
       deps.quit()
     } catch (error) {
@@ -326,17 +329,20 @@ export const installAppLifecycle = (
       event.preventDefault()
       return
     }
+    const trigger = shutdownTrigger()
     if (event.defaultPrevented || deps.isMigrationInProgress()) {
       // This quit is being aborted (e.g. the migration guard cancelled it). Clear any prior
       // confirmation and shutdown trigger so neither leaks into a later close: otherwise a later
-      // ordinary quit could bypass its active-session confirmation.
-      clearApplicationShutdownTrigger()
-      systemShutdownRequested = false
+      // ordinary quit could bypass its active-session confirmation. A system request remains latched
+      // because the migration guard owns cancelling/joining the move and then reissues app.quit().
+      if (trigger !== 'system') {
+        clearApplicationShutdownTrigger()
+        systemShutdownRequested = false
+      }
       quitConfirmed = false
       confirmedDelegatedSessionKeys = new Set()
       return
     }
-    const trigger = shutdownTrigger()
     // Renderer persistence may cancel only an ordinary quit. Update and data-root relaunches pass a
     // producer-teardown + renderer-durability gate before committing their handoff; once app.quit()
     // runs, cancellation would leave the old process alive after the external pointer changed.
@@ -541,8 +547,15 @@ export const installAppLifecycle = (
           }
           shutdownStarted = false
           quitConfirmed = false
-          clearApplicationShutdownTrigger()
-          showMainWindow()
+          if (systemShutdownRequested) {
+            // A preventable OS shutdown arrived after this ordinary attempt began. Do not restore an
+            // interactive app: replay it with the already-latched system trigger so persistence is
+            // best-effort and cannot cancel the OS-owned exit.
+            deps.quit()
+          } else {
+            clearApplicationShutdownTrigger()
+            showMainWindow()
+          }
         } else {
           trayBox.current?.destroy()
           shutdownFinished = true
