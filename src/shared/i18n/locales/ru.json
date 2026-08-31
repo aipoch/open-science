@@ -4058,6 +4058,7 @@
     "The vendor returned a model ID longer than {{limit}} characters.": "Поставщик вернул идентификатор модели длиннее {{limit}} символов.",
     "Claude token must not exceed {{limit}} bytes.": "Токен Claude не должен превышать {{limit}} байт.",
     "Let the agent recall and save memory in this conversation.": "Разрешить агенту использовать и сохранять память в этом диалоге.",
+    "Memory is off in Settings. Turn it on to use Memory in this conversation.": "Память отключена в настройках. Включите её, чтобы использовать память в этом диалоге.",
     "A memory category with this name already exists.": "Категория памяти с таким названием уже существует.",
     "You can create up to {{limit}} memory categories.": "Можно создать не более {{limit}} категорий памяти.",
     "Memory category changed. Refresh and try again.": "Категория памяти была изменена. Обновите страницу и повторите попытку.",

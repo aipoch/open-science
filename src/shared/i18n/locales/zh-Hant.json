@@ -3636,6 +3636,7 @@
     "The vendor returned a model ID longer than {{limit}} characters.": "服務商傳回了長度超過 {{limit}} 個字元的模型 ID。",
     "Claude token must not exceed {{limit}} bytes.": "Claude 權杖不得超過 {{limit}} 位元組。",
     "Let the agent recall and save memory in this conversation.": "允許智能體在此工作階段中調用和儲存記憶。",
+    "Memory is off in Settings. Turn it on to use Memory in this conversation.": "設定中的記憶已關閉。開啟後才能在此工作階段中使用記憶。",
     "A memory category with this name already exists.": "已存在同名的記憶分類。",
     "You can create up to {{limit}} memory categories.": "最多可以建立 {{limit}} 個記憶分類。",
     "Memory category changed. Refresh and try again.": "記憶分類已變更。請重新整理後再試。",

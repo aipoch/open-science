@@ -3934,6 +3934,7 @@
     "The vendor returned a model ID longer than {{limit}} characters.": "Le fournisseur a renvoyé un identifiant de modèle de plus de {{limit}} caractères.",
     "Claude token must not exceed {{limit}} bytes.": "Le jeton Claude ne doit pas dépasser {{limit}} octets.",
     "Let the agent recall and save memory in this conversation.": "Autoriser l’agent à rappeler et enregistrer des souvenirs dans cette session.",
+    "Memory is off in Settings. Turn it on to use Memory in this conversation.": "La mémoire est désactivée dans les réglages. Activez-la pour l’utiliser dans cette session.",
     "A memory category with this name already exists.": "Une catégorie de mémoire portant ce nom existe déjà.",
     "You can create up to {{limit}} memory categories.": "Vous pouvez créer jusqu’à {{limit}} catégories de mémoire.",
     "Memory category changed. Refresh and try again.": "La catégorie de mémoire a été modifiée. Actualisez la page et réessayez.",

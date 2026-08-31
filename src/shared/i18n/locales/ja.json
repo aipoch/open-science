@@ -3636,6 +3636,7 @@
     "The vendor returned a model ID longer than {{limit}} characters.": "ベンダーから {{limit}} 文字を超えるモデル ID が返されました。",
     "Claude token must not exceed {{limit}} bytes.": "Claude トークンは {{limit}} バイト以内である必要があります。",
     "Let the agent recall and save memory in this conversation.": "このセッションでエージェントがメモリを呼び出して保存できるようにします。",
+    "Memory is off in Settings. Turn it on to use Memory in this conversation.": "設定でメモリがオフになっています。このセッションでメモリを使用するにはオンにしてください。",
     "A memory category with this name already exists.": "同じ名前のメモリカテゴリがすでに存在します。",
     "You can create up to {{limit}} memory categories.": "メモリカテゴリは最大 {{limit}} 件まで作成できます。",
     "Memory category changed. Refresh and try again.": "メモリカテゴリが変更されました。更新してから再試行してください。",

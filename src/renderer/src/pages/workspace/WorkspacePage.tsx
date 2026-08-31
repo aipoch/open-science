@@ -10,6 +10,7 @@ import {
 } from '@/lib/acp/useWorkspaceElicitation'
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
 import { deleteSession } from '@/lib/session-persistence/session-persistence'
+import { useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -129,6 +130,11 @@ const WorkspacePage = ({
   const catalogSkills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const memoryGloballyEnabled = useMemoryStore((state) => state.enabled)
+  const loadMemory = useMemoryStore((state) => state.load)
+  const listenForMemoryChanges = useMemoryStore((state) => state.listen)
+  // The store starts disabled, so new conversations fail closed until the global setting loads.
+  const isGlobalMemoryEnabled = memoryGloballyEnabled
   const scopedProjectId = activeProjectId ?? ''
   const activeProject = useProjectStore((state) =>
     state.projects.find((project) => project.id === scopedProjectId)
@@ -232,7 +238,11 @@ const WorkspacePage = ({
   // conversation starts disabled; the user can toggle it on before sending. On send it is stamped
   // onto the created session through the Conversation submit transaction.
   const [newConversationAutoReviewEnabled, setNewConversationAutoReviewEnabled] = useState(false)
-  const [newConversationMemoryEnabled, setNewConversationMemoryEnabled] = useState(true)
+  const [newConversationMemoryPreference, setNewConversationMemoryPreference] = useState<
+    boolean | undefined
+  >()
+  const newConversationMemoryEnabled =
+    isGlobalMemoryEnabled && (newConversationMemoryPreference ?? true)
   // Draft compute hosts for a not-yet-created conversation. Cleared when a new conversation draft
   // is started, and stamped onto the session by the Conversation submit transaction.
   const [newConversationEnabledComputeHosts, setNewConversationEnabledComputeHosts] = useState<
@@ -244,6 +254,11 @@ const WorkspacePage = ({
   const [notebookReferences, setNotebookReferences] = useState<
     Record<string, NotebookSessionReference>
   >({})
+
+  useEffect(() => {
+    void loadMemory()
+    return listenForMemoryChanges()
+  }, [listenForMemoryChanges, loadMemory])
 
   // The selected session is the only conversation rendered in the center panel. Selecting it by
   // id (instead of deriving it from the full list) keeps chunk commits for other sessions from
@@ -466,7 +481,7 @@ const WorkspacePage = ({
     ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
   const activeMemoryEnabled = activeSession
-    ? activeSession.memoryEnabled !== false
+    ? isGlobalMemoryEnabled && activeSession.memoryEnabled !== false
     : newConversationMemoryEnabled
   const computeHostAccess = createWorkspaceComputeHostAccessController({
     activeSession,
@@ -519,7 +534,7 @@ const WorkspacePage = ({
     setAutoReviewEnabled,
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
-      setNewConversationMemoryEnabled(true)
+      setNewConversationMemoryPreference(undefined)
       setNewConversationEnabledComputeHosts([])
       setNewConversationSelectedComputeHosts([])
       resetNewConversationConfiguration()
@@ -807,7 +822,7 @@ const WorkspacePage = ({
     setAttachmentError(null)
     setNewConversationPermissionProfile(defaultPermissionProfile)
     setNewConversationAutoReviewEnabled(false)
-    setNewConversationMemoryEnabled(true)
+    setNewConversationMemoryPreference(undefined)
     setNewConversationEnabledComputeHosts([])
     setNewConversationSelectedComputeHosts([])
     resetNewConversationConfiguration()
@@ -888,7 +903,8 @@ const WorkspacePage = ({
   }
 
   const changeMemoryEnabled = (enabled: boolean): void => {
-    if (!activeSession) return setNewConversationMemoryEnabled(enabled)
+    if (!isGlobalMemoryEnabled) return
+    if (!activeSession) return setNewConversationMemoryPreference(enabled)
 
     setAttachmentError(null)
     void runtime.setMemoryEnabled(activeSession.id, enabled).catch((error: unknown) => {
@@ -1180,11 +1196,15 @@ const WorkspacePage = ({
             }}
             agentControls={{
               ...agentControlAvailability,
+              canChangeMemory: agentControlAvailability.canChangeMemory && isGlobalMemoryEnabled,
               modelConfiguration: activeAgentConfiguration,
               modelUnavailable: agentConfigurationUnavailable,
               changeModelConfiguration: changeAgentConfiguration,
               autoReviewEnabled: activeAutoReviewEnabled,
               memoryEnabled: activeMemoryEnabled,
+              memoryDisabledReason: isGlobalMemoryEnabled
+                ? undefined
+                : t('Memory is off in Settings. Turn it on to use Memory in this conversation.'),
               enabledComputeHosts: computeHostAccess.enabledProviderIds,
               selectedComputeHosts: computeHostAccess.selectedProviderIds,
               toggleAutoReview: changeAutoReviewEnabled,

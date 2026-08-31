@@ -3634,6 +3634,7 @@
     "The vendor returned a model ID longer than {{limit}} characters.": "공급업체에서 {{limit}}자보다 긴 모델 ID를 반환했습니다.",
     "Claude token must not exceed {{limit}} bytes.": "Claude 토큰은 {{limit}}바이트를 초과할 수 없습니다.",
     "Let the agent recall and save memory in this conversation.": "이 대화에서 에이전트가 메모리를 불러오고 저장하도록 허용합니다.",
+    "Memory is off in Settings. Turn it on to use Memory in this conversation.": "설정에서 메모리가 꺼져 있습니다. 이 대화에서 메모리를 사용하려면 켜세요.",
     "A memory category with this name already exists.": "같은 이름의 메모리 카테고리가 이미 있습니다.",
     "You can create up to {{limit}} memory categories.": "메모리 카테고리는 최대 {{limit}}개까지 만들 수 있습니다.",
     "Memory category changed. Refresh and try again.": "메모리 카테고리가 변경되었습니다. 새로 고친 후 다시 시도하세요.",
