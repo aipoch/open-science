@@ -1176,11 +1176,14 @@ describe('mandatory product glossary', () => {
       home: de.renderer.Home,
       goHome: de.renderer['Go to home'],
       goHomeFolder: de.renderer['Go to home folder'],
+      grantWarning: de.renderer["Your home folder itself can't be granted — pick a subfolder."],
       jumpHome: de.renderer['Jump to Home, a drive, or a pinned folder']
     }).toEqual({
       home: 'Benutzerordner',
       goHome: 'Zum Benutzerordner',
       goHomeFolder: 'Zum Benutzerordner',
+      grantWarning:
+        'Der Benutzerordner selbst kann nicht freigegeben werden – wählen Sie einen Unterordner.',
       jumpHome:
         'Wechseln Sie zum Benutzerordner, zu einem Laufwerk oder zu einem angehefteten Ordner'
     })
