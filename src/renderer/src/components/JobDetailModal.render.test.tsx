@@ -4,8 +4,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { JobSummary } from '../../../shared/compute'
 import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
+import { makeJob as makeComputeJob } from '@/test-utils/compute-job'
 import { useSettingsStore } from '@/stores/settings-store'
 
 // Mock radix Dialog to avoid portal / overlay complexity in jsdom
@@ -40,9 +40,24 @@ vi.mock('radix-ui', () => {
     children: React.ReactElement
     asChild?: boolean
   }): React.JSX.Element => children
+  const TooltipRoot = ({ children }: { children: React.ReactNode }): React.JSX.Element => (
+    <>{children}</>
+  )
+  const TooltipTrigger = ({ children }: { children: React.ReactElement }): React.JSX.Element =>
+    children
+  const TooltipContent = ({ children }: { children?: React.ReactNode }): React.JSX.Element => (
+    <>{children}</>
+  )
 
   return {
-    Dialog: { Root, Portal, Overlay, Content, Close }
+    Dialog: { Root, Portal, Overlay, Content, Close },
+    Tooltip: {
+      Root: TooltipRoot,
+      Provider: TooltipRoot,
+      Portal: TooltipRoot,
+      Trigger: TooltipTrigger,
+      Content: TooltipContent
+    }
   }
 })
 
@@ -76,26 +91,24 @@ vi.mock('@/components/ui/button', () => ({
   )
 }))
 
-const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
-  job_id: 'job-abc',
-  provider_id: 'ssh:biowulf',
-  display_name: 'biowulf',
-  shape: 'direct_ssh',
-  session_id: 'sess-1',
-  status: 'running',
-  intent: 'Run EDA analysis',
-  created_at: Date.now(),
-  started_at: Date.now(),
-  finished_at: undefined,
-  exit_code: undefined,
-  error_code: undefined,
-  remote_workdir: '/home/user/.openscience/jobs/job-abc',
-  stdout_tail: 'stdout output line 1\nline 2',
-  stderr_tail: 'stderr output line 1',
-  notified_at: undefined,
-  notification_consumed_at: undefined,
-  ...overrides
-})
+const makeJob = (
+  overrides: Parameters<typeof makeComputeJob>[0] = {}
+): ReturnType<typeof makeComputeJob> => {
+  const now = Date.now()
+  return makeComputeJob({
+    job_id: 'job-abc',
+    session_id: 'sess-1',
+    project_id: 'project-1',
+    status: 'running',
+    intent: 'Run EDA analysis',
+    created_at: now,
+    started_at: now,
+    remote_workdir: '/home/user/.openscience/jobs/job-abc',
+    stdout_tail: 'stdout output line 1\nline 2',
+    stderr_tail: 'stderr output line 1',
+    ...overrides
+  })
+}
 
 let container: HTMLDivElement
 let root: Root
@@ -114,6 +127,132 @@ afterEach(() => {
 })
 
 describe('JobDetailModal — detail view', () => {
+  it('requests cancellation with the complete owner tuple and disables while cancelling', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob()
+    const jobsCancel = vi.fn(async () => ({
+      job_id: job.job_id,
+      status: job.status,
+      cancellation_status: 'cancelling' as const
+    }))
+    const jobsList = vi.fn(async () => [{ ...job, cancellation_status: 'cancelling' as const }])
+    ;(
+      window as unknown as {
+        api: { compute: { jobsCancel: typeof jobsCancel; jobsList: typeof jobsList } }
+      }
+    ).api = {
+      compute: { jobsCancel, jobsList }
+    }
+    useSessionJobStore.getState().applyUpdate(job)
+
+    act(() => {
+      root.render(
+        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
+      )
+    })
+    await act(async () => {
+      ;(container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).click()
+    })
+
+    expect(jobsCancel).toHaveBeenCalledWith({
+      jobId: job.job_id,
+      providerId: job.provider_id,
+      sessionId: job.session_id,
+      projectId: job.project_id
+    })
+    expect(
+      (container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).disabled
+    ).toBe(true)
+    expect(container.textContent).toContain('Cancelling')
+  })
+
+  it('refreshes details by fetching the Session job list', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({ status: 'running', stdout_tail: 'old output' })
+    const refreshed = makeJob({ status: 'success', stdout_tail: 'fresh output' })
+    const jobsList = vi.fn(async () => [refreshed])
+    ;(window as unknown as { api: { compute: { jobsList: typeof jobsList } } }).api = {
+      compute: { jobsList }
+    }
+    useSessionJobStore.getState().applyUpdate(job)
+
+    act(() => {
+      root.render(
+        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
+      )
+    })
+    await act(async () => {
+      ;(container.querySelector('[data-testid="job-detail-refresh"]') as HTMLButtonElement).click()
+    })
+
+    expect(jobsList).toHaveBeenCalledWith({ sessionId: 'sess-1' })
+    expect(container.textContent).toContain('fresh output')
+  })
+
+  it('offers a retry action after cancellation fails', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob()
+    const jobsCancel = vi.fn().mockRejectedValue(new Error('cancel unavailable'))
+    const jobsList = vi.fn(async () => [job])
+    ;(
+      window as unknown as {
+        api: { compute: { jobsCancel: typeof jobsCancel; jobsList: typeof jobsList } }
+      }
+    ).api = { compute: { jobsCancel, jobsList } }
+    useSessionJobStore.getState().applyUpdate(job)
+
+    act(() => {
+      root.render(
+        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
+      )
+    })
+    await act(async () => {
+      ;(container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).click()
+    })
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    await act(async () => retry?.click())
+
+    expect(container.textContent).toContain('Unable to cancel remote job.')
+    expect(jobsCancel).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows a retry control for hydration and harvest failures', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      status: 'success',
+      harvest_error: 'harvest pending: host_unreachable'
+    })
+    const state = useSessionJobStore.getState()
+    const jobsList = vi.fn(async () => [job])
+    ;(window as unknown as { api: { compute: { jobsList: typeof jobsList } } }).api = {
+      compute: { jobsList }
+    }
+    useSessionJobStore.setState({
+      ...state,
+      jobsById: new Map([[job.job_id, job]]),
+      loadErrorBySession: new Map([['sess-1', 'database busy']])
+    })
+
+    act(() => {
+      root.render(
+        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
+      )
+    })
+
+    expect(container.textContent).toContain('Unable to load remote jobs.')
+    expect(container.textContent).toContain(
+      'Harvest pending. Open Science will retry automatically.'
+    )
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => retry?.click())
+    expect(jobsList).toHaveBeenCalledWith({ sessionId: 'sess-1' })
+  })
+
   it('renders job meta info when opened with a job', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob({ intent: 'Run EDA analysis', display_name: 'biowulf' })
@@ -128,6 +267,36 @@ describe('JobDetailModal — detail view', () => {
     expect(container.textContent).toContain('Run EDA analysis')
     expect(container.textContent).toContain('biowulf')
     expect(container.textContent).toContain('job-abc')
+  })
+
+  it('keeps quarantined persisted jobs visible with an explicit diagnostic', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      status: 'error',
+      raw_status: 'future_state',
+      needs_attention: true,
+      integrity_issues: [
+        {
+          jobId: 'job-abc',
+          sessionId: 'sess-1',
+          projectId: 'project-1',
+          code: 'unknown-status',
+          disposition: 'quarantined',
+          rawStatus: 'future_state'
+        }
+      ]
+    })
+    useSessionJobStore.getState().applyUpdate(job)
+
+    act(() => {
+      root.render(
+        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
+      )
+    })
+
+    expect(container.textContent).toContain('Saved remote job data needs attention')
+    expect(container.textContent).toContain('unknown-status')
+    expect(container.textContent).toContain('future_state')
   })
 
   it('offers recovery for a background authentication failure', async () => {

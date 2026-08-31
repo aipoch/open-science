@@ -65,7 +65,7 @@ describe('contextUsageMcpSections', () => {
     ]
 
     // Baseline before deduplication was about 5.2k cl100k tokens (3.6k schema + 1.6k prompt).
-    // Package-progress schema (installer enum + Bioconductor/GitHub install docs) added ~30 tokens.
+    // Project Memory adds three bounded tools and their structured analysis contract (~305 tokens).
     for (const { frameworkId, codexBridgeAliases } of frameworks) {
       const [{ text: schema }] = contextUsageMcpSections(frameworkId, {
         artifacts: false,
@@ -76,7 +76,7 @@ describe('contextUsageMcpSections', () => {
       expect(
         tokenCount(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${schema}`) + bashHeadroom,
         `${frameworkId}${codexBridgeAliases ? ' (bridge aliases)' : ''}`
-      ).toBeLessThanOrEqual(3_600)
+      ).toBeLessThanOrEqual(3_950)
     }
   })
 

@@ -2,9 +2,12 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
+import { memoryAgentRememberResultSchema, memoryAgentResultSchema } from '../../../../shared/memory'
 import type { NotebookRunStatus } from '../../../../shared/notebook'
 import {
+  getNotebookMemoryToolDisplayName,
   isNotebookManagePackagesToolName,
+  matchNotebookMemoryTool,
   resolveNotebookLanguage,
   resolveNotebookRunToolName
 } from './notebook-tool-names'
@@ -14,6 +17,11 @@ import {
   getLoadedSkillName,
   isSkillLoadActivity
 } from './workspace-skill-load'
+import {
+  buildLiteratureToolSummary,
+  isLiteratureReadDocumentTool,
+  type LiteratureToolSummary
+} from './literature-tool-presentation'
 
 type ToolCodeSection = {
   kind: 'code'
@@ -46,7 +54,13 @@ type ToolImageSection = {
   sizeLabel?: string
 }
 
-type ToolDetailSection = ToolCodeSection | ToolDiffSection | ToolImageSection
+type ToolLiteratureSection = {
+  kind: 'literature'
+  summary: LiteratureToolSummary
+}
+
+type ToolDetailSection =
+  ToolCodeSection | ToolDiffSection | ToolImageSection | ToolLiteratureSection
 
 type ToolActivityDetails = {
   displayName: string
@@ -398,6 +412,21 @@ const buildGenericDetails = (activity: ToolActivity): ToolActivityDetails | unde
   }
 }
 
+const buildLiteratureDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+  if (!isLiteratureReadDocumentTool(activity.providerToolName, activity.title)) return undefined
+
+  const contentTexts = collectToolTexts(activity)
+  const summary = buildLiteratureToolSummary(
+    activity.rawInput,
+    contentTexts.length > 0 ? contentTexts : activity.rawOutput
+  )
+  return {
+    displayName: 'Reading',
+    subtitle: summary.query ?? summary.documentNames[0],
+    sections: [{ kind: 'literature', summary }]
+  }
+}
+
 const ARTIFACT_WRITE_ACTIVITY_IDENTITIES = new Set([
   'write_artifact_file',
   'write artifact file',
@@ -596,6 +625,88 @@ const getNotebookInput = (activity: ToolActivity): Record<string, unknown> => {
   // Codex preserves the MCP envelope on completed activities. The actual notebook input lives in
   // `arguments`, while other providers expose those arguments directly.
   return isRecord(activity.rawInput.arguments) ? activity.rawInput.arguments : activity.rawInput
+}
+
+const getMemoryToolSuffix = (activity: ToolActivity): string | undefined =>
+  matchNotebookMemoryTool(activity.providerToolName) ?? matchNotebookMemoryTool(activity.title)
+
+const getMemoryToolDisplayName = (activity: ToolActivity): string | undefined =>
+  getNotebookMemoryToolDisplayName(activity.providerToolName) ??
+  getNotebookMemoryToolDisplayName(activity.title)
+
+// Memory results can arrive directly, stringified, or wrapped by a known ACP/MCP result envelope.
+// Validate the complete receipt before surfacing any field from provider-controlled output.
+const parseMemoryResult = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
+  if (depth > 5) return undefined
+
+  if (typeof value === 'string') {
+    try {
+      return parseMemoryResult(JSON.parse(value) as unknown, depth + 1)
+    } catch {
+      return undefined
+    }
+  }
+
+  if (!isRecord(value)) return undefined
+  const parsed = memoryAgentResultSchema.safeParse(value)
+
+  if (parsed.success) return parsed.data
+  const rememberResult = memoryAgentRememberResultSchema.safeParse(value)
+  if (rememberResult.success && rememberResult.data.status !== 'rejected') {
+    return rememberResult.data.memory
+  }
+
+  for (const key of ['structuredContent', 'result', 'memory'] as const) {
+    const nestedResult = parseMemoryResult(value[key], depth + 1)
+
+    if (nestedResult) return nestedResult
+  }
+
+  if (Array.isArray(value.content)) {
+    for (const block of value.content) {
+      if (!isRecord(block) || block.type !== 'text' || typeof block.text !== 'string') continue
+
+      const nestedResult = parseMemoryResult(block.text, depth + 1)
+
+      if (nestedResult) return nestedResult
+    }
+  }
+
+  return undefined
+}
+
+const getSavedMemoryCategoryName = (activity: ToolActivity): string | undefined => {
+  for (const text of collectToolTexts(activity)) {
+    const categoryName = getRecordString(parseMemoryResult(text), 'categoryName')
+
+    if (categoryName) return categoryName
+  }
+
+  return getRecordString(parseMemoryResult(activity.rawOutput), 'categoryName')
+}
+
+// Keeps the familiar expandable Input/Output panel while replacing transport identities with the
+// action and the one useful context value already shown by comparable tool rows.
+const buildMemoryDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
+  const displayName = getMemoryToolDisplayName(activity)
+  const suffix = getMemoryToolSuffix(activity)
+
+  if (!displayName || !suffix) return undefined
+
+  const details = buildGenericDetails(activity)
+
+  if (!details) return undefined
+
+  const input = getNotebookInput(activity)
+  const query = suffix === 'search_memories' ? getRecordString(input, 'query') : undefined
+  const savedCategory =
+    suffix === 'remember_memory' ? getSavedMemoryCategoryName(activity) : undefined
+  const subtitle = savedCategory === 'About you' ? t('About you') : (savedCategory ?? query)
+
+  return { ...details, displayName, subtitle }
 }
 
 const isNotebookKernelRunActivity = (activity: ToolActivity): boolean =>
@@ -1119,6 +1230,8 @@ const buildToolActivityDetails = (
       ? { ...details, displayName: 'Skill', subtitle: getLoadedSkillName(activity) }
       : undefined
   }
+  const literatureDetails = buildLiteratureDetails(activity)
+  if (literatureDetails) return literatureDetails
   // Saved files show a metadata summary instead of dumping their (possibly base64) content.
   if (isArtifactWriteActivity(activity)) return buildArtifactDetails(activity)
   // File edits prefer a diff view, falling back to raw input/output when no diff is provided.
@@ -1127,6 +1240,10 @@ const buildToolActivityDetails = (
   // Package installs show which packages / installer and a cleaned log, not the raw result JSON.
   if (isManagePackagesActivity(activity)) {
     return buildManagePackagesDetails(activity, t) ?? buildGenericDetails(activity)
+  }
+  // Memory calls use concise actions and context instead of exposing their transport identities.
+  if (getMemoryToolSuffix(activity)) {
+    return buildMemoryDetails(activity, t) ?? buildGenericDetails(activity)
   }
   // Notebook runs (python/r cells, repl, bash) show their code and output, not the run-summary JSON.
   if (isNotebookKernelRunActivity(activity)) {
@@ -1157,5 +1274,6 @@ export type {
   ToolCodeSection,
   ToolDetailSection,
   ToolDiffSection,
-  ToolImageSection
+  ToolImageSection,
+  ToolLiteratureSection
 }

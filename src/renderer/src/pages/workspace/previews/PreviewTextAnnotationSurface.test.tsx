@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   Annotation,
   AnnotationValidationError,
+  PdfAnnotation,
   TextAnnotation
 } from '../../../../../shared/annotations'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
@@ -44,6 +45,16 @@ const annotation = (overrides: Partial<TextAnnotation> = {}): TextAnnotation => 
   ...overrides
 })
 
+const pdfSource = (): PdfAnnotation['source'] => ({
+  kind: 'artifact-version',
+  projectId: 'project-1',
+  sessionId: 'session-1',
+  versionId: 'version-7',
+  name: 'paper.pdf',
+  path: 'artifact-version:project-1/session-1/artifact-1/version-7',
+  checksum: 'a'.repeat(64)
+})
+
 describe('PreviewTextAnnotationSurface', () => {
   let container: HTMLDivElement
   let root: Root
@@ -77,12 +88,30 @@ describe('PreviewTextAnnotationSurface', () => {
         }
       }
     })
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [
+        {
+          left: 10,
+          right: 120,
+          top: 20,
+          bottom: 40,
+          width: 110,
+          height: 20,
+          x: 10,
+          y: 20,
+          toJSON: () => ({})
+        }
+      ]
+    })
   })
 
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
     window.getSelection()?.removeAllRanges()
+    Reflect.deleteProperty(navigator, 'clipboard')
+    vi.unstubAllGlobals()
   })
 
   const renderSurface = async ({
@@ -90,14 +119,20 @@ describe('PreviewTextAnnotationSurface', () => {
     onAddAnnotation = vi.fn(() => undefined),
     onUpdateAnnotationNote,
     onAnnotationError = vi.fn(),
+    onAnnotationAdded,
     previewItem = item(),
+    sourcePageNumber,
+    pdfEvidenceSource,
     content = 'Experiment result: confidence intervals overlap.'
   }: {
     activeAnnotations?: readonly Annotation[]
     onAddAnnotation?: (annotation: Annotation) => undefined
     onUpdateAnnotationNote?: (id: string, note: string) => undefined
     onAnnotationError?: (error: AnnotationValidationError) => void
+    onAnnotationAdded?: () => void
     previewItem?: PreviewFileItem
+    sourcePageNumber?: number
+    pdfEvidenceSource?: PdfAnnotation['source']
     content?: string
   } = {}): Promise<void> => {
     await act(async () => {
@@ -108,6 +143,10 @@ describe('PreviewTextAnnotationSurface', () => {
           onAddAnnotation={onAddAnnotation}
           onUpdateAnnotationNote={onUpdateAnnotationNote}
           onAnnotationError={onAnnotationError}
+          onAnnotationAdded={onAnnotationAdded}
+          sourcePageNumber={sourcePageNumber}
+          pdfEvidenceSource={pdfEvidenceSource}
+          pdfExtractorVersion={pdfEvidenceSource ? 'pdfjs-5.4.624' : undefined}
         >
           <p>{content}</p>
         </PreviewTextAnnotationSurface>
@@ -118,6 +157,13 @@ describe('PreviewTextAnnotationSurface', () => {
   const selectRange = async (start: number, end: number): Promise<void> => {
     const text = container.querySelector('p')?.firstChild
     if (!text) throw new Error('Preview text was not rendered')
+    const surface = container.querySelector<HTMLElement>(
+      '[data-preview-text-annotation-surface="true"]'
+    )
+    Object.defineProperty(surface, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, right: 400, bottom: 600, width: 400, height: 600 })
+    })
     const range = document.createRange()
     range.setStart(text, start)
     range.setEnd(text, end)
@@ -183,6 +229,223 @@ describe('PreviewTextAnnotationSurface', () => {
       })
     )
     expect(registeredRanges.size).toBe(1)
+  })
+
+  it('records the owning PDF page with a selected quote', async () => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    await renderSurface({
+      onAddAnnotation,
+      sourcePageNumber: 3,
+      pdfEvidenceSource: pdfSource()
+    })
+    await selectQuote()
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[data-selection-action="citate"]')
+        ?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    )
+
+    expect(onAddAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'pdf',
+        source: expect.objectContaining({ checksum: 'a'.repeat(64) }),
+        selector: expect.objectContaining({
+          kind: 'text',
+          pageNumber: 3,
+          exact: 'confidence intervals overlap',
+          extractorVersion: 'pdfjs-5.4.624'
+        })
+      })
+    )
+  })
+
+  it('cites selected PDF text directly from the selection menu', async () => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    const onAnnotationAdded = vi.fn()
+    await renderSurface({
+      onAddAnnotation,
+      onAnnotationAdded,
+      sourcePageNumber: 3,
+      pdfEvidenceSource: pdfSource()
+    })
+    await selectQuote()
+
+    const citate = document.querySelector<HTMLButtonElement>('[data-selection-action="citate"]')
+    expect(citate).not.toBeNull()
+    expect(citate?.textContent).toContain('Citate')
+    await act(async () =>
+      citate?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    )
+
+    const cited = onAddAnnotation.mock.calls[0]?.[0]
+    expect(cited).toEqual(
+      expect.objectContaining({
+        kind: 'pdf',
+        selector: expect.objectContaining({
+          kind: 'text',
+          pageNumber: 3,
+          exact: 'confidence intervals overlap'
+        })
+      })
+    )
+    expect(cited).not.toHaveProperty('note')
+    expect(onAnnotationAdded).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('textarea')).toBeNull()
+  })
+
+  it('keeps the PDF selection menu compact and avoids a competing Annotate action', async () => {
+    await renderSurface({ sourcePageNumber: 3, pdfEvidenceSource: pdfSource() })
+    await selectQuote()
+    const menu = document.querySelector<HTMLElement>('[data-selection-action-menu="true"]')
+
+    expect(menu).not.toBeNull()
+    expect(menu?.className).toContain('p-0.5')
+    expect(
+      Array.from(menu?.querySelectorAll('button') ?? []).every((button) =>
+        button.className.includes('h-6')
+      )
+    ).toBe(true)
+    expect(document.querySelector('[data-selection-action="annotate"]')).toBeNull()
+    expect(document.querySelectorAll('[data-selection-action]')).toHaveLength(4)
+    expect(document.querySelector('textarea')).toBeNull()
+  })
+
+  it.each([
+    ['explain', 'Explain this passage.'],
+    ['summarize', 'Summarize this passage.']
+  ])('adds PDF Evidence with the %s instruction', async (actionId, note) => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    await renderSurface({
+      onAddAnnotation,
+      sourcePageNumber: 3,
+      pdfEvidenceSource: pdfSource()
+    })
+    await selectQuote()
+
+    const action = document.querySelector<HTMLButtonElement>(
+      `[data-selection-action="${actionId}"]`
+    )
+    expect(action).not.toBeNull()
+    await act(async () =>
+      action?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    )
+
+    expect(onAddAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'pdf',
+        note,
+        selector: expect.objectContaining({
+          kind: 'text',
+          pageNumber: 3,
+          exact: 'confidence intervals overlap'
+        })
+      })
+    )
+    expect(document.querySelector('textarea')).toBeNull()
+  })
+
+  it('copies selected PDF text without creating Evidence', async () => {
+    const writeText = vi.fn<(_: string) => Promise<void>>().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    await renderSurface({
+      onAddAnnotation,
+      sourcePageNumber: 3,
+      pdfEvidenceSource: pdfSource()
+    })
+    await selectQuote()
+
+    const copy = document.querySelector<HTMLButtonElement>('[data-selection-action="copy"]')
+    expect(copy).not.toBeNull()
+    await act(async () =>
+      copy?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    )
+
+    expect(writeText).toHaveBeenCalledWith('confidence intervals overlap')
+    expect(onAddAnnotation).not.toHaveBeenCalled()
+  })
+
+  it('copies detected PDF superscripts and subscripts as plain and rich text', async () => {
+    class TestBlob {
+      constructor(
+        readonly parts: readonly unknown[],
+        readonly options?: BlobPropertyBag
+      ) {}
+    }
+    class TestClipboardItem {
+      constructor(readonly data: Readonly<Record<string, TestBlob>>) {}
+    }
+    vi.stubGlobal('Blob', TestBlob)
+    vi.stubGlobal('ClipboardItem', TestClipboardItem)
+    const write = vi.fn().mockResolvedValue(undefined)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { write, writeText }
+    })
+    await act(async () => {
+      root.render(
+        <PreviewTextAnnotationSurface
+          item={item()}
+          onAddAnnotation={vi.fn(() => undefined)}
+          onAnnotationError={vi.fn()}
+          sourcePageNumber={3}
+          pdfEvidenceSource={pdfSource()}
+          pdfExtractorVersion="pdfjs-5.4.624"
+        >
+          <div data-pdf-text-layer="true">
+            <span style={{ fontSize: 16 }}>x</span>
+            <span style={{ fontSize: 10 }}>2</span>
+            <span style={{ fontSize: 16 }}> H</span>
+            <span style={{ fontSize: 10 }}>2</span>
+            <span style={{ fontSize: 16 }}>O</span>
+          </div>
+        </PreviewTextAnnotationSurface>
+      )
+    })
+    const spans = Array.from(
+      container.querySelectorAll<HTMLSpanElement>('[data-pdf-text-layer] span')
+    )
+    const rects = [
+      { left: 0, right: 10, top: 0, bottom: 16, width: 10, height: 16 },
+      { left: 10, right: 16, top: 0, bottom: 10, width: 6, height: 10 },
+      { left: 16, right: 32, top: 0, bottom: 16, width: 16, height: 16 },
+      { left: 32, right: 38, top: 8, bottom: 18, width: 6, height: 10 },
+      { left: 38, right: 48, top: 0, bottom: 16, width: 10, height: 16 }
+    ]
+    spans.forEach((span, index) => {
+      Object.defineProperty(span, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({ ...rects[index], x: rects[index]?.left, y: rects[index]?.top })
+      })
+    })
+    const range = document.createRange()
+    range.setStart(spans[0]!.firstChild!, 0)
+    range.setEnd(spans.at(-1)!.firstChild!, 1)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    await act(async () => {
+      container
+        .querySelector('[data-preview-text-annotation-surface="true"]')
+        ?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    })
+
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[data-selection-action="copy"]')
+        ?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    )
+
+    expect(write).toHaveBeenCalledOnce()
+    const clipboardItem = write.mock.calls[0]?.[0]?.[0] as TestClipboardItem
+    expect(clipboardItem.data['text/plain']?.parts).toEqual(['x² H₂O'])
+    expect(clipboardItem.data['text/html']?.parts).toEqual([
+      '<span style="white-space: pre-wrap">x<sup>2</sup> H<sub>2</sub>O</span>'
+    ])
+    expect(writeText).not.toHaveBeenCalled()
   })
 
   it('renders the annotation editor above full-screen preview chrome', async () => {
@@ -357,6 +620,22 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(surviving).toBe(entry)
 
     await act(async () => surviving?.click())
+    expect(document.querySelector('textarea')).not.toBeNull()
+  })
+
+  it('opens the editor on pointerdown before PDF.js can cancel the later click', async () => {
+    await renderSurface()
+    await selectQuote()
+    const entry = document.querySelector<HTMLElement>('[data-annotation-trigger]')
+    expect(entry).toBeDefined()
+
+    // PDF.js updates its Text Layer from a document-level pointerup listener.
+    // That update can remove a portalled trigger before mouseup produces click,
+    // so primary-pointer activation must not wait for click.
+    await act(async () =>
+      entry!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    )
+
     expect(document.querySelector('textarea')).not.toBeNull()
   })
 

@@ -103,6 +103,7 @@ const ProjectFormDialog = ({
                 </label>
                 <Input
                   id="project-form-name"
+                  aria-required={true}
                   value={nameDraft}
                   onChange={(event) => onNameChange(event.target.value)}
                   placeholder={t('e.g. Reproduction of published research')}

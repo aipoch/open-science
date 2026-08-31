@@ -971,6 +971,62 @@ describe('workspace conversation items', () => {
     ).toBe('Using tool: Notebook restart')
   })
 
+  it('renders memory MCP tools as user-facing actions across provider identity forms', () => {
+    expect(
+      formatActivityTitle(
+        createActivity({
+          status: 'completed',
+          providerToolName: 'mcp__open-science-notebook__list_memory_categories',
+          toolKind: 'other'
+        }),
+        undefined,
+        t
+      )
+    ).toBe('Used tool: Memory categories')
+
+    expect(
+      formatActivityTitle(
+        createActivity({
+          status: 'in_progress',
+          providerToolName: 'mcp__open_science_notebook__remember_memory',
+          toolKind: 'other'
+        }),
+        undefined,
+        t
+      )
+    ).toBe('Using tool: Save memory')
+
+    expect(
+      formatActivityTitle(
+        createActivity({
+          title: 'mcp.open-science-notebook.search_memories',
+          status: 'completed',
+          toolKind: 'execute'
+        }),
+        undefined,
+        t
+      )
+    ).toBe('Used tool: Search memory')
+  })
+
+  it.each([
+    'mcp__open-science-notebook.remember_memory',
+    'mcp__open-science-notebook.REMEMBER_MEMORY',
+    'mcp__open-science-notebook__REMEMBER_MEMORY'
+  ])('keeps the raw activity title for the unsupported memory identity %s', (providerToolName) => {
+    expect(
+      formatActivityTitle(
+        createActivity({
+          status: 'completed',
+          providerToolName,
+          toolKind: 'other'
+        }),
+        undefined,
+        t
+      )
+    ).toBe(`Used tool: ${providerToolName}`)
+  })
+
   it.each([
     ['limit-reached', 'Execution limit reached: Notebook run'],
     ['cancelled', 'Cancelled: Notebook run'],

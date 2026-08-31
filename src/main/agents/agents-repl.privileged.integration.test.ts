@@ -16,7 +16,7 @@ import {
 } from '../notebook/kernel-protocol'
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
 import { passthroughApprovalGateway } from './passthrough-approval-gateway'
-import { createProfileService } from '../specialist/service'
+import { createSpecialistService } from '../specialist/service'
 import { SessionBindingService } from '../specialist/session-binding'
 import type { StoredConnectors } from '../settings/types'
 import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contract'
@@ -25,7 +25,7 @@ import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contra
 //
 // Proves the privileged Specialist-management slice end-to-end through the real
 // resources/notebook/repl_loop.js + NotebookLocalRpcServer, wired exactly the way production
-// (src/main/ipc.ts) composes it: a real ProfileService, the real SessionBindingService, the
+// (src/main/ipc.ts) composes it: a real SpecialistService, the real SessionBindingService, the
 // milestone's passthroughApprovalGateway (always-approved), a durable persisted-binding sink, the
 // SwitchNotifier broadcast, and the catalog-invalidation callback.
 //
@@ -136,15 +136,15 @@ const composeService = (opts: {
   invalidateCount: () => number
   approvalCount: () => number
 } => {
-  const profileService = createProfileService(opts.profileStorage)
-  const sessionBinding = new SessionBindingService(profileService)
+  const specialistService = createSpecialistService(opts.profileStorage)
+  const sessionBinding = new SessionBindingService(specialistService)
   const durableBindings = new Map<string, string | undefined>()
   const notified: Array<{ sessionId: string; targetName: string | null }> = []
   let invalidated = 0
   let approvals = 0
   const approvalGateway = opts.gateway ?? passthroughApprovalGateway
   const agentsService = new AgentsService({
-    profileService,
+    specialistService,
     catalog: stubCatalog,
     sessionBinding,
     approvalGateway: {
@@ -444,7 +444,7 @@ gate('host.agents repl privileged integration', () => {
       expect(updated.name).toBe('ATOM_PROBE')
       expect(updated.displayName).toBe('Atom Analyzer')
       expect(updated.description).toBe('after')
-      // Revision was bumped by the authoritative ProfileService, not echoed.
+      // Revision was bumped by the authoritative SpecialistService, not echoed.
       expect(updated.revision).toBe(created.revision + 1)
     })
   })

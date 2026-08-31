@@ -3,18 +3,23 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeApprovalRequest } from '../../../../shared/compute'
-import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
+import {
+  createInitialComputeState,
+  useComputeStore,
+  type ComputeApproval
+} from '@/stores/compute-store'
 import { ComputeApprovalDialog } from './ComputeApprovalDialog'
 
-const request: ComputeApprovalRequest = {
+const request: Extract<ComputeApproval, { operation: 'call_command' }> = {
   id: 'approval-1',
-  provider_id: 'ssh:cluster',
-  provider_name: 'Research cluster',
+  operation: 'call_command',
+  providerId: 'ssh:cluster',
+  providerName: 'Research cluster',
   shape: 'direct_ssh',
   intent: 'Inspect the remote environment',
-  command_preview: 'python ...',
-  command_full: 'python --version && pip list'
+  commandPreview: 'python ...',
+  commandFull: 'python --version && pip list',
+  willPersistUnencrypted: false
 }
 
 let container: HTMLDivElement
@@ -59,7 +64,7 @@ describe('ComputeApprovalDialog', () => {
 
   it('keeps approvals for the open Side chat parent queued without showing its dialog', () => {
     useComputeStore.setState({
-      pendingApprovals: [{ ...request, session_id: 'session-side' }]
+      pendingApprovals: [{ ...request, sessionId: 'session-side' }]
     })
 
     act(() => root.render(<ComputeApprovalDialog blockedSessionIds={new Set(['session-side'])} />))
@@ -96,6 +101,65 @@ describe('ComputeApprovalDialog', () => {
     expect(document.body.textContent).toContain('python ...')
   })
 
+  it('shows the remote path instead of an empty command for download approval', () => {
+    useComputeStore.setState({
+      pendingApprovals: [
+        {
+          id: 'approval-download',
+          operation: 'download',
+          providerId: 'ssh:cluster',
+          providerName: 'Research cluster',
+          shape: 'direct_ssh',
+          intent: 'Download remote file to session workspace',
+          remotePath: '/remote/private/results.csv',
+          willPersistUnencrypted: false
+        }
+      ]
+    })
+
+    act(() => root.render(<ComputeApprovalDialog />))
+
+    const dialogText = document.body.querySelector('[role="dialog"]')?.textContent
+    expect(dialogText).toContain('Allow remote file download?')
+    expect(dialogText).toContain('Remote path')
+    expect(dialogText).toContain('/remote/private/results.csv')
+    expect(dialogText).not.toContain('Command')
+  })
+
+  it('shows the complete execution envelope for job approval', () => {
+    useComputeStore.setState({
+      pendingApprovals: [
+        {
+          id: 'approval-job',
+          operation: 'submit_job',
+          providerId: 'ssh:cluster',
+          providerName: 'Research cluster',
+          shape: 'scheduler_cluster',
+          intent: 'Run the analysis',
+          commandPreview: 'python analysis.py',
+          commandFull: 'python analysis.py',
+          inputsSummary: '2 input files',
+          resources: '{"cpus":4,"memory":"16 GiB"}',
+          timeoutSeconds: 1,
+          remoteWorkdir: '/scratch/project/job-1',
+          willPersistUnencrypted: false
+        }
+      ]
+    })
+
+    act(() => root.render(<ComputeApprovalDialog />))
+
+    const dialogText = document.body.querySelector('[role="dialog"]')?.textContent
+    expect(dialogText).toContain('Allow remote job submission?')
+    expect(dialogText).toContain('Resources')
+    expect(dialogText).toContain('{"cpus":4,"memory":"16 GiB"}')
+    expect(dialogText).toContain('Timeout')
+    expect(dialogText).toContain('1 second')
+    expect(dialogText).not.toContain('1 seconds')
+    expect(dialogText).toContain('Remote workdir')
+    expect(dialogText).toContain('/scratch/project/job-1')
+  })
+
   it('warns without blocking approval when job data will be stored unencrypted', () => {
     useComputeStore.setState({
       pendingApprovals: [{ ...request, willPersistUnencrypted: true }]
@@ -119,11 +183,11 @@ describe('ComputeApprovalDialog', () => {
   })
 
   it('collapses the command when the approval queue advances to a new request', () => {
-    const nextRequest: ComputeApprovalRequest = {
+    const nextRequest: ComputeApproval = {
       ...request,
       id: 'approval-2',
-      command_preview: 'Rscript ...',
-      command_full: 'Rscript analysis.R --all'
+      commandPreview: 'Rscript ...',
+      commandFull: 'Rscript analysis.R --all'
     }
     useComputeStore.setState({ pendingApprovals: [request] })
     act(() => root.render(<ComputeApprovalDialog />))
@@ -139,7 +203,7 @@ describe('ComputeApprovalDialog', () => {
   it.each([
     ['Deny', 'deny'],
     ['Once', 'once'],
-    ['This session', 'conversation']
+    ['This session', 'session']
   ] as const)('keeps the %s approval decision', (label, decision) => {
     useComputeStore.setState({ pendingApprovals: [request] })
     act(() => root.render(<ComputeApprovalDialog />))

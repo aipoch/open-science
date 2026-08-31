@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
@@ -277,10 +278,51 @@ describe('protectManagedRuntimeWrites', () => {
     expect(protectedInvocation.args[1]).toContain(
       '(deny file-write* (literal "/tmp/open-science/runtime"))'
     )
+    expect(protectedInvocation.args[1]).toContain('(subpath "/tmp/open-science/runtime")')
     expect(protectedInvocation.args[1]).toContain(
-      '(deny file-write* (subpath "/tmp/open-science/runtime"))'
+      '(require-not (literal "/tmp/open-science/runtime/cache/notebook"))'
+    )
+    expect(protectedInvocation.args[1]).toContain(
+      '(require-not (subpath "/tmp/open-science/runtime/cache/notebook"))'
     )
   })
+
+  it.skipIf(process.platform !== 'darwin')(
+    'allows the workload cache while keeping the rest of runtime read-only on macOS',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-seatbelt-cache-'))
+      const runtimeRoot = join(root, 'runtime')
+      const cacheRoot = join(runtimeRoot, 'cache', 'notebook')
+      const cacheFile = join(cacheRoot, 'allowed.txt')
+      const blockedFile = join(runtimeRoot, 'blocked.txt')
+      await mkdir(cacheRoot, { recursive: true })
+
+      try {
+        const invocation = protectManagedRuntimeWrites(
+          {
+            executable: '/bin/sh',
+            args: [
+              '-c',
+              'printf cache > "$1"; printf blocked > "$2"',
+              'open-science-seatbelt-test',
+              cacheFile,
+              blockedFile
+            ]
+          },
+          runtimeRoot,
+          'darwin'
+        )
+        const result = spawnSync(invocation.executable, invocation.args, { encoding: 'utf8' })
+
+        expect(result.status).not.toBe(0)
+        expect(result.stderr).toMatch(/Operation not permitted/)
+        expect(await readFile(cacheFile, 'utf8')).toBe('cache')
+        await expect(stat(blockedFile)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('leaves the invocation unchanged where no native sandbox adapter exists', () => {
     expect(protectManagedRuntimeWrites(invocation, '/tmp/open-science/runtime', 'linux')).toBe(

@@ -11,6 +11,7 @@ import type {
   LoadAllSessionsResult,
   ListSessionSummariesResult,
   LoadSessionRequest,
+  OpenSessionRecoveryFolderRequest,
   DelegationPolicy,
   PersistedChatSession,
   SessionUsageProjection,
@@ -231,7 +232,8 @@ const registerSessionPersistenceIpcHandlers = (
     repository,
     reviewRepository
   ),
-  onSessionSaved?: (session: PersistedChatSession) => Promise<void> | void
+  onSessionSaved?: (session: PersistedChatSession) => Promise<void> | void,
+  openRecoveryFolder?: (request: OpenSessionRecoveryFolderRequest) => Promise<void>
 ): void => {
   // Keep persistence IPC separate from ACP runtime commands; it owns durable UI state only.
   // loadAll can replay pending deletions and every mutation can materialize provenance/upload bytes.
@@ -304,6 +306,12 @@ const registerSessionPersistenceIpcHandlers = (
   ipcMainHandle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     withDataRootWrite(() => handlers.saveManifest(request))
   )
+  if (openRecoveryFolder) {
+    ipcMainHandle(
+      'sessions:open-recovery-folder',
+      (_event, request: OpenSessionRecoveryFolderRequest) => openRecoveryFolder(request)
+    )
+  }
 }
 
 export {

@@ -72,6 +72,8 @@ type SessionStore = SessionStoreData &
     ) => void
     // Persists the per-session auto-review toggle. true = on; false = off (default).
     setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
+    // Persists whether this Session may receive recalled Memory and Memory tools.
+    setMemoryEnabled: (sessionId: string, enabled: boolean) => void
     // Mirrors Main's desired Specialist binding and its durable pending marker. Passing undefined
     // clears the binding (Main Agent); pending blocks sends until Main confirms runtime application.
     setSessionSpecialistId: (
@@ -205,6 +207,20 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
           ? {
               ...session,
               autoReviewEnabled: enabled,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  setMemoryEnabled: (sessionId, enabled) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              memoryEnabled: enabled,
               updatedAt: Date.now()
             }
           : session

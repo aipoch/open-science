@@ -6,6 +6,7 @@ import {
   type ComputeConnectionBrokerAcquirer
 } from './connection-broker'
 import type { ComputeHostRepository } from './repository'
+import { assertSafeScratchRoot } from './remote-path-security'
 
 const PROBE_TIMEOUT_MS = 30_000
 const PROBE_MAX_OUTPUT_BYTES = 4 * 1024
@@ -228,7 +229,15 @@ export class ComputeHostProfileOwner {
 
     await this.repository.updateProbeResult(providerId, result, shape)
     if (!host.scratchPinned && parsed.scratchEnv) {
-      await this.repository.updateScratchRoot(providerId, parsed.scratchEnv)
+      let safeScratchRoot: string | undefined
+      try {
+        safeScratchRoot = assertSafeScratchRoot(parsed.scratchEnv)
+      } catch {
+        // Ignore an unusable remote value without hiding persistence failures for valid paths.
+      }
+      if (safeScratchRoot !== undefined) {
+        await this.repository.updateScratchRoot(providerId, safeScratchRoot)
+      }
     }
     return result
   }
@@ -285,7 +294,12 @@ export class ComputeHostProfileOwner {
 
   async setScratchRoot(providerId: string, path: string): Promise<void> {
     if (!(await this.repository.get(providerId))) throw hostNotFound(providerId)
-    await this.repository.updateScratchPinned(providerId, path)
+    await this.repository.updateScratchPinned(providerId, assertSafeScratchRoot(path))
+  }
+
+  async clearScratchRoot(providerId: string): Promise<void> {
+    if (!(await this.repository.get(providerId))) throw hostNotFound(providerId)
+    await this.repository.clearScratchRoot(providerId)
   }
 
   async setConcurrencyLimit(providerId: string, limit: number): Promise<void> {

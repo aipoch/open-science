@@ -2,14 +2,20 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { basename, dirname, extname, relative, resolve } from 'node:path'
 
 import {
+  canHaveModifiers,
   createSourceFile,
   forEachChild,
+  getModifiers,
+  isArrowFunction,
   isCallExpression,
+  isClassDeclaration,
   isExportDeclaration,
   isIdentifier,
   isImportDeclaration,
   isImportTypeNode,
   isLiteralTypeNode,
+  isMethodDeclaration,
+  isPropertyDeclaration,
   isPropertyAccessExpression,
   isStringLiteralLike,
   ScriptKind,
@@ -35,6 +41,8 @@ const computePaths = {
   deletionOwner: resolve(mainRoot, 'compute/job-deletion-owner.ts'),
   jobLifecycle: resolve(mainRoot, 'compute/compute-job-lifecycle.ts'),
   jobRepository: resolve(mainRoot, 'compute/job-repository.ts'),
+  cancellationOwner: resolve(mainRoot, 'compute/compute-job-cancellation-owner.ts'),
+  operationRepository: resolve(mainRoot, 'compute/compute-job-operation-repository.ts'),
   concurrencyManager: resolve(mainRoot, 'compute/concurrency-manager.ts'),
   jobDispatcher: resolve(mainRoot, 'compute/job-dispatcher.ts'),
   jobPoller: resolve(mainRoot, 'compute/job-poller.ts'),
@@ -200,7 +208,42 @@ describe('Compute service architecture', () => {
     expect(ipc).not.toMatch(/new ComputeService\(\s*sshRunner,/)
   })
 
-  it('keeps lifecycle writes behind the narrow intent interface', () => {
+  it('keeps lifecycle state ownership behind the narrow intent interface', () => {
+    const lifecycle = sourceFileFor(computePaths.jobLifecycle).statements.find(
+      (statement) => isClassDeclaration(statement) && statement.name?.text === 'ComputeJobLifecycle'
+    )
+    expect(lifecycle && isClassDeclaration(lifecycle)).toBe(true)
+    if (!lifecycle || !isClassDeclaration(lifecycle)) return
+
+    const publicMethods = lifecycle.members
+      .flatMap((member) => {
+        if (
+          !isMethodDeclaration(member) ||
+          !isIdentifier(member.name) ||
+          getModifiers(member)?.some((modifier) => modifier.kind === SyntaxKind.PrivateKeyword) ===
+            true
+        ) {
+          return []
+        }
+        return [member.name.text]
+      })
+      .sort()
+    expect(publicMethods).toEqual(
+      [
+        'abortOwnerDeletion',
+        'beginOwnerDeletion',
+        'deleteOwnerRows',
+        'dispatchError',
+        'dispatchRunning',
+        'failRemoteHandleRecovery',
+        'finishPolled',
+        'observeRunning',
+        'promoteQueued',
+        'recordPollError',
+        'recoverRemoteHandle',
+        'recoverInterruptedDispatch'
+      ].sort()
+    )
     expect(calledMembersOn(computePaths.jobLifecycle, ['this', 'repository'])).toEqual(
       ['abortOwnerDeletion', 'beginOwnerDeletion', 'deleteByOwner', 'updateIfStatus'].sort()
     )
@@ -217,7 +260,8 @@ describe('Compute service architecture', () => {
       'src/main/compute/concurrency-manager.ts',
       'src/main/compute/job-deletion-owner.ts',
       'src/main/compute/job-dispatcher.ts',
-      'src/main/compute/job-poller.ts'
+      'src/main/compute/job-poller.ts',
+      'src/main/compute/submitted-job-recovery.ts'
     ])
 
     for (const calls of [
@@ -259,6 +303,11 @@ describe('Compute service architecture', () => {
       'await projectDeletionCoordinator.recoverPendingDeletions()',
       backgroundSessionRecovery
     )
+    const committedDeletionWake = source.indexOf(
+      "event.payload.status === 'cleanup-pending'",
+      backgroundProjectRecovery
+    )
+    const wakeCall = source.indexOf('projectDeletionRecovery.wake()', committedDeletionWake)
 
     expect(projectBarriers).toBeGreaterThan(-1)
     expect(jobBarriers).toBeGreaterThan(projectBarriers)
@@ -268,6 +317,8 @@ describe('Compute service architecture', () => {
     expect(backgroundOrphanRecovery).toBeGreaterThan(backgroundRecovery)
     expect(backgroundSessionRecovery).toBeGreaterThan(backgroundOrphanRecovery)
     expect(backgroundProjectRecovery).toBeGreaterThan(backgroundSessionRecovery)
+    expect(committedDeletionWake).toBeGreaterThan(backgroundProjectRecovery)
+    expect(wakeCall).toBeGreaterThan(committedDeletionWake)
   })
 
   it('gives Compute Job shutdown the transport cancellation budget', () => {
@@ -331,6 +382,66 @@ describe('Compute service architecture', () => {
     }
   })
 
+  it('locks the stable facade operation inventory and bound update sink', () => {
+    const facade = sourceFileFor(computePaths.facade).statements.find(
+      (statement) => isClassDeclaration(statement) && statement.name?.text === 'ComputeService'
+    )
+    expect(facade && isClassDeclaration(facade)).toBe(true)
+    if (!facade || !isClassDeclaration(facade)) return
+
+    const isPrivate = (member: (typeof facade.members)[number]): boolean =>
+      canHaveModifiers(member) &&
+      getModifiers(member)?.some((modifier) => modifier.kind === SyntaxKind.PrivateKeyword) === true
+    const publicOperations = facade.members
+      .flatMap((member) => {
+        if (
+          isPrivate(member) ||
+          (!isMethodDeclaration(member) && !isPropertyDeclaration(member)) ||
+          !isIdentifier(member.name)
+        ) {
+          return []
+        }
+        return [member.name.text]
+      })
+      .sort()
+
+    expect(publicOperations).toEqual(
+      [
+        'appendDetails',
+        'callCommand',
+        'cancelJob',
+        'clearScratchRoot',
+        'download',
+        'getDetails',
+        'getJobResult',
+        'getJobStatus',
+        'getSessionConcurrencyStatus',
+        'handleJobUpdated',
+        'handleJobCancellationConfirmed',
+        'list',
+        'listDir',
+        'probe',
+        'replaceDetails',
+        'setConcurrencyLimit',
+        'setScratchRoot',
+        'setSessionConcurrencyLimit',
+        'startQueueReconciliation',
+        'stopQueueReconciliation',
+        'submitJob'
+      ].sort()
+    )
+
+    const updateSink = facade.members.find(
+      (member) => isPropertyDeclaration(member) && member.name.getText() === 'handleJobUpdated'
+    )
+    const isBoundUpdateSink =
+      updateSink !== undefined &&
+      isPropertyDeclaration(updateSink) &&
+      updateSink.initializer !== undefined &&
+      isArrowFunction(updateSink.initializer)
+    expect(isBoundUpdateSink).toBe(true)
+  })
+
   it('keeps Electron, application commands and job updates on the facade seam', () => {
     expect(importedNamesFrom(computePaths.ipc, computePaths.facade)).toEqual([
       'ArtifactResolver',
@@ -344,7 +455,10 @@ describe('Compute service architecture', () => {
     ])
 
     expect(referencedMembersOn(computePaths.jobRuntime, ['deps', 'computeService'])).toEqual([
-      'handleJobUpdated'
+      'handleJobCancellationConfirmed',
+      'handleJobUpdated',
+      'startQueueReconciliation',
+      'stopQueueReconciliation'
     ])
   })
 
@@ -352,6 +466,7 @@ describe('Compute service architecture', () => {
     expect(calledMembersOn(computePaths.localRpc, ['this', 'computeService'])).toEqual([
       'appendDetails',
       'callCommand',
+      'cancelJob',
       'download',
       'getDetails',
       'getJobResult',
@@ -372,7 +487,7 @@ describe('Compute service architecture', () => {
     const computeContracts = RENDERER_CONTRACT_CATALOG.filter(
       ({ channel }) => channel?.startsWith('compute:') === true
     )
-    expect(computeContracts).toHaveLength(33)
+    expect(computeContracts).toHaveLength(36)
     const remoteRestricted = computeContracts.filter(
       ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
     )
@@ -399,6 +514,7 @@ describe('Compute service architecture', () => {
         compute_service: {
           ownerPaths: string[]
           interfacePaths: string[]
+          consumerModules: string[]
           testFiles: { owner: string[]; contract: string[]; consumer: string[] }
         }
       }
@@ -408,31 +524,55 @@ describe('Compute service architecture', () => {
     expect(computeService.ownerPaths).toEqual([
       'src/main/compute/approval-session-lifecycle.ts',
       'src/main/compute/agent-compute-service.ts',
+      'src/main/compute/bounded-child-termination.ts',
       'src/main/compute/compute-approval-broker.ts',
       'src/main/compute/compute-host-profile-owner.ts',
       'src/main/compute/compute-job-lifecycle.ts',
       'src/main/compute/job-deletion-owner.ts',
       'src/main/compute/compute-job-workflow-owner.ts',
+      'src/main/compute/compute-job-status.ts',
+      'src/main/compute/compute-job-cancellation-owner.ts',
+      'src/main/compute/compute-job-operation-repository.ts',
       'src/main/compute/compute-remote-operation-owner.ts',
       'src/main/compute/concurrency-manager.ts',
       'src/main/compute/job-dispatcher.ts',
       'src/main/compute/job-poller.ts',
       'src/main/compute/job-poll-output.ts',
+      'src/main/compute/job-runtime.ts',
+      'src/main/compute/job-notifier.ts',
+      'src/main/compute/job-harvest-scheduler.ts',
+      'src/main/compute/harvest-engine.ts',
+      'src/main/compute/compute-job-integrity.ts',
       'src/main/compute/job-repository.ts',
+      'src/main/compute/remote-job-process.ts',
+      'src/main/compute/remote-job-handle.ts',
+      'src/main/compute/remote-launch-recovery.ts',
+      'src/main/compute/submitted-job-recovery.ts',
       'src/main/compute/enabled-hosts-registry.ts',
       'src/main/compute/session-enabled-hosts-owner.ts',
       'src/main/compute/permission-grant-adapter.ts',
+      'src/main/compute/repository.ts',
+      'src/main/compute/scp-runner.ts',
+      'src/main/compute/session-cache-owner.ts',
+      'src/main/compute/ssh-runner.ts',
       'src/main/compute/compute-auth-owner.ts',
       'src/main/compute/connection-adapters.ts',
       'src/main/compute/credential-vault.ts',
-      'src/main/compute/compute-service.ts'
+      'src/main/compute/compute-service.ts',
+      'src/renderer/src/lib/compute/job-analysis-trigger.ts',
+      'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
+      'src/renderer/src/lib/compute/useSessionJobHydration.ts',
+      'src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.tsx',
+      'resources/skills/remote-compute-ssh/SKILL.md'
     ])
     expect(computeService.interfacePaths).toEqual([
       'src/main/compute/connection-broker.ts',
       'src/main/compute/compute-service.ts',
       'src/main/compute/ipc.ts',
-      'src/main/compute/electron-ipc-adapter.ts'
+      'src/main/compute/electron-ipc-adapter.ts',
+      'src/renderer/src/lib/compute/useJobAnalysisEffect.ts'
     ])
+    expect(computeService.consumerModules).toEqual(['workspace_page'])
     expect(computeService.testFiles.owner).toEqual(
       expect.arrayContaining([
         architectureTestPath,
@@ -445,12 +585,26 @@ describe('Compute service architecture', () => {
         'src/main/compute/session-enabled-hosts-owner.test.ts',
         'src/main/compute/compute-host-profile-owner.test.ts',
         'src/main/compute/compute-job-workflow-owner.test.ts',
+        'src/main/compute/compute-job-cancellation-owner.integration.test.ts',
         'src/main/compute/compute-remote-operation-owner.test.ts',
         'src/main/compute/permission-grant-adapter.test.ts',
+        'src/main/compute/repository.test.ts',
+        'src/main/compute/session-cache-owner.test.ts',
         'src/main/compute/compute-service.test.ts',
         'src/main/compute/compute-auth-owner.test.ts',
         'src/main/compute/credential-vault.test.ts',
-        'src/main/compute/compute-password-auth.architecture.test.ts'
+        'src/main/compute/compute-password-auth.architecture.test.ts',
+        'src/main/compute/ambiguous-dispatch-recovery.integration.test.ts',
+        'src/main/compute/job-poll-protocol.integration.test.ts',
+        'src/main/compute/job-notifier.integration.test.ts',
+        'src/main/compute/job-deletion-runtime-drain.test.ts',
+        'src/main/compute/job-deletion-runtime-isolation.test.ts',
+        'src/main/compute/harvest-engine.test.ts',
+        'src/main/compute/job-notifier.test.ts',
+        'src/main/compute/remote-compute-skill.test.ts',
+        'src/renderer/src/lib/compute/job-analysis-trigger.test.ts',
+        'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
+        'src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx'
       ])
     )
     expect(computeService.testFiles.contract).toEqual(
@@ -461,6 +615,8 @@ describe('Compute service architecture', () => {
         'src/main/compute/ipc.test.ts',
         'src/main/compute/job-dispatcher.test.ts',
         'src/main/compute/job-poller.test.ts',
+        'src/main/compute/job-poll-output.test.ts',
+        'src/main/compute/job-repository.test.ts',
         'src/main/notebook/local-rpc-server.mcpcall.test.ts',
         'src/main/notebook/local-rpc-server.test.ts'
       ])

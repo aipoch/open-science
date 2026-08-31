@@ -44,7 +44,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -106,16 +105,22 @@ const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
     !server.enabled
   )
 
+const cannotEnableCustomServer = (server: CustomServerView): boolean =>
+  requiresSignInBeforeEnable(server) ||
+  (!server.enabled && server.availability === 'credential_unavailable')
+
 type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void
   onOpenTag?: (tagId: string) => void
   onOpenSpecialist?: (usage: SpecialistUsage) => void
+  onOpenCredentials?: () => void
 }
 
 export function ConnectorsPanel({
   onNavigate,
   onOpenTag,
-  onOpenSpecialist
+  onOpenSpecialist,
+  onOpenCredentials
 }: ConnectorsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
@@ -127,8 +132,8 @@ export function ConnectorsPanel({
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
   const retryCustomServer = useSettingsStore((state) => state.retryCustomServer)
+  const disconnectCustomServer = useSettingsStore((state) => state.disconnectCustomServer)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
-  const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
 
@@ -140,11 +145,11 @@ export function ConnectorsPanel({
   const [collapsed, setCollapsed] = useState<
     Partial<Record<'featured' | 'directory' | 'custom', boolean>>
   >({})
-  const [editing, setEditing] = useState(false)
-  const [emailField, setEmailField] = useState('')
-  const [keyField, setKeyField] = useState('')
   const [retryingIds, setRetryingIds] = useState<Set<string>>(() => new Set())
   const [oauthSignInServer, setOAuthSignInServer] = useState<CustomServerView>()
+  const [oauthConnectionServer, setOAuthConnectionServer] = useState<CustomServerView>()
+  const [oauthConnectionBusy, setOAuthConnectionBusy] = useState(false)
+  const [oauthConnectionError, setOAuthConnectionError] = useState<string | null>(null)
   const [removal, setRemoval] = useState<{
     server: CustomServerView
     specialistNames?: string[]
@@ -173,6 +178,30 @@ export function ConnectorsPanel({
 
   const retryCatalog = (): void => {
     void loadCatalog()
+  }
+
+  const disconnectOAuth = async (reauthenticate: boolean): Promise<void> => {
+    if (!oauthConnectionServer || oauthConnectionBusy) return
+    const server = oauthConnectionServer
+    setOAuthConnectionBusy(true)
+    setOAuthConnectionError(null)
+    try {
+      await disconnectCustomServer({ id: server.id })
+      setOAuthConnectionServer(undefined)
+      if (reauthenticate) {
+        setOAuthSignInServer({
+          ...server,
+          enabled: false,
+          oauth: server.oauth ? { ...server.oauth, hasTokens: false } : undefined
+        })
+      }
+    } catch (error) {
+      setOAuthConnectionError(
+        error instanceof Error ? error.message : t('Failed to disconnect Connector.')
+      )
+    } finally {
+      setOAuthConnectionBusy(false)
+    }
   }
 
   useEffect(() => {
@@ -258,25 +287,6 @@ export function ConnectorsPanel({
       return [{ resource: server, usages }]
     })
   }, [customServers, query, specialistFilter, specialistItems, tagAssignments, tagFilter])
-
-  const startEditing = (): void => {
-    setEmailField(ncbi.contactEmail ?? '')
-    setKeyField('')
-    setEditing(true)
-  }
-
-  const save = async (): Promise<void> => {
-    await setNcbiCredentials({
-      contactEmail: emailField,
-      apiKey: keyField === '' ? undefined : keyField
-    })
-    setEditing(false)
-  }
-
-  const clearKey = async (): Promise<void> => {
-    await setNcbiCredentials({ contactEmail: emailField, apiKey: '' })
-    setKeyField('')
-  }
 
   const retry = async (id: string): Promise<void> => {
     setRetryingIds((current) => new Set(current).add(id))
@@ -511,59 +521,14 @@ export function ConnectorsPanel({
         )}
         className="mb-4 border-b border-border pb-4"
       >
-        {editing ? (
-          <div className="mt-3 flex flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <Input
-                type="email"
-                aria-label={t('Contact email')}
-                placeholder="you@example.com"
-                value={emailField}
-                onChange={(event) => setEmailField(event.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Input
-                type="password"
-                aria-label={t('NCBI API key')}
-                placeholder={ncbi.hasApiKey ? '••••••••' : t('Optional API key')}
-                value={keyField}
-                onChange={(event) => setKeyField(event.target.value)}
-              />
-              <span className="text-xs text-muted-foreground">
-                {t('Higher NCBI rate limits (optional).')}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button type="button" onClick={() => void save()}>
-                {t('Save')}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => setEditing(false)}>
-                {tCommon('Cancel')}
-              </Button>
-              {ncbi.hasApiKey ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void clearKey()}
-                  className="ml-auto text-muted-foreground hover:text-destructive"
-                >
-                  {t('Clear key')}
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        ) : (
-          <div className="mt-3 flex items-center gap-2">
-            <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-              {ncbi.contactEmail ?? t('Not set')}
-            </span>
-            <Button type="button" variant="outline" onClick={startEditing}>
-              {t('Edit')}
-            </Button>
-          </div>
-        )}
+        <div className="mt-3 flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+            {ncbi.contactEmail ?? t('Not set')}
+          </span>
+          <Button type="button" variant="outline" onClick={onOpenCredentials}>
+            {t('Manage credentials')}
+          </Button>
+        </div>
       </SettingsSection>
 
       <div
@@ -751,11 +716,13 @@ export function ConnectorsPanel({
                                   ? t('Checking…')
                                   : server.availability === 'unavailable'
                                     ? t('Unavailable')
-                                    : server.availability === 'unauthenticated'
-                                      ? t('Sign-in required')
-                                      : server.enabled
-                                        ? t('Connected')
-                                        : t('Disabled')}
+                                    : server.availability === 'credential_unavailable'
+                                      ? t('Credentials unavailable')
+                                      : server.availability === 'unauthenticated'
+                                        ? t('Sign-in required')
+                                        : server.enabled
+                                          ? t('Connected')
+                                          : t('Disabled')}
                             </span>
                             {server.enabled || usages.length > 0 ? (
                               <span className="inline-flex shrink-0 items-center gap-1">
@@ -793,7 +760,8 @@ export function ConnectorsPanel({
                             {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
                           </Button>
                         ) : null}
-                        {server.availability === 'unauthenticated' && !server.oauth ? (
+                        {(server.availability === 'unauthenticated' && !server.oauth) ||
+                        server.availability === 'credential_unavailable' ? (
                           <Button
                             type="button"
                             size="sm"
@@ -803,7 +771,7 @@ export function ConnectorsPanel({
                             {t('Configure')}
                           </Button>
                         ) : null}
-                        {server.oauth ? (
+                        {server.oauth && server.availability !== 'credential_unavailable' ? (
                           <Button
                             type="button"
                             size="sm"
@@ -812,10 +780,11 @@ export function ConnectorsPanel({
                                 ? 'outline'
                                 : 'default'
                             }
-                            disabled={
-                              server.oauth.hasTokens && server.availability !== 'unauthenticated'
+                            onClick={() =>
+                              server.oauth?.hasTokens && server.availability !== 'unauthenticated'
+                                ? setOAuthConnectionServer(server)
+                                : setOAuthSignInServer(server)
                             }
-                            onClick={() => setOAuthSignInServer(server)}
                           >
                             {server.oauth.hasTokens && server.availability !== 'unauthenticated'
                               ? t('Connected')
@@ -867,9 +836,9 @@ export function ConnectorsPanel({
                           <SettingsToggle
                             enabled={server.enabled}
                             aria-label={t('Toggle {{name}}', { name: server.displayName })}
-                            aria-disabled={requiresSignInBeforeEnable(server) || undefined}
+                            aria-disabled={cannotEnableCustomServer(server) || undefined}
                             className={
-                              requiresSignInBeforeEnable(server)
+                              cannotEnableCustomServer(server)
                                 ? 'cursor-not-allowed opacity-50'
                                 : undefined
                             }
@@ -881,7 +850,7 @@ export function ConnectorsPanel({
                                   : t('Unavailable to Main Agent')
                             }
                             onToggle={() => {
-                              if (requiresSignInBeforeEnable(server)) return
+                              if (cannotEnableCustomServer(server)) return
                               void saveToggle(async () => {
                                 await setCustomServerEnabled(server.id, !server.enabled)
                               })
@@ -1004,6 +973,62 @@ export function ConnectorsPanel({
                 onClick={() => void confirmRemoval()}
               >
                 {removing ? t('Removing…') : t('Remove Connector')}
+              </Button>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+      <AlertDialog.Root
+        open={oauthConnectionServer !== undefined}
+        onOpenChange={(open) => {
+          if (!open && !oauthConnectionBusy) {
+            setOAuthConnectionServer(undefined)
+            setOAuthConnectionError(null)
+          }
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <AlertDialog.Title className={dialogTitleClassName}>
+                {t('Manage “{{name}}” connection', {
+                  name: oauthConnectionServer?.displayName ?? ''
+                })}
+              </AlertDialog.Title>
+            </div>
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {t(
+                  'Disconnect removes OAuth tokens from this app and disables the Connector. It does not revoke access on the service.'
+                )}
+              </AlertDialog.Description>
+              {oauthConnectionError ? (
+                <p className="mt-3 text-sm text-status-failure">{oauthConnectionError}</p>
+              ) : null}
+            </div>
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" disabled={oauthConnectionBusy}>
+                  {tCommon('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={oauthConnectionBusy}
+                onClick={() => void disconnectOAuth(false)}
+              >
+                {t('Disconnect')}
+              </Button>
+              <Button
+                type="button"
+                disabled={oauthConnectionBusy}
+                onClick={() => void disconnectOAuth(true)}
+              >
+                {t('Reauthenticate')}
               </Button>
             </div>
           </AlertDialog.Content>

@@ -6,9 +6,14 @@ import type {
   ResetPasswordComputeHostRequest
 } from '../../shared/compute'
 import { computeProviderId, DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
+import {
+  HostConnectionProfileValidationError,
+  validateHostConnectionProfile
+} from '../../shared/compute-host-connection-profile'
 import type { PasswordSshAdapter } from './connection-adapters'
 import { ComputeConnectionError } from './connection-broker'
 import type { CredentialVault } from './credential-vault'
+import { assertSafeSshAlias } from './remote-path-security'
 
 type CreatePasswordHostPersistence = Readonly<{
   operationId: string
@@ -95,6 +100,32 @@ const requireValidTrimmedField = (value: string, label: string): string => {
   return result
 }
 
+const requireSafeSshAlias = (value: string): string => {
+  const alias = requireValidTrimmedField(value, 'SSH alias')
+  try {
+    return assertSafeSshAlias(alias)
+  } catch (error) {
+    throw new ComputeConnectionError(
+      'unsupported_auth_configuration',
+      error instanceof Error ? error.message : undefined
+    )
+  }
+}
+
+const requireValidHostConnectionProfile = (
+  input: Parameters<typeof validateHostConnectionProfile>[0],
+  options?: Parameters<typeof validateHostConnectionProfile>[1]
+): ReturnType<typeof validateHostConnectionProfile> => {
+  try {
+    return validateHostConnectionProfile(input, options)
+  } catch (error) {
+    if (error instanceof HostConnectionProfileValidationError) {
+      throw new ComputeConnectionError('unsupported_auth_configuration', error.message)
+    }
+    throw error
+  }
+}
+
 class ComputeAuthOwner {
   private readonly mutationTails = new Map<string, Promise<void>>()
 
@@ -144,18 +175,21 @@ class ComputeAuthOwner {
     if (request.authenticationMode !== 'password') {
       throw new ComputeConnectionError('unsupported_auth_configuration')
     }
-    const alias = requireValidTrimmedField(request.sshAlias, 'SSH alias')
-    const username = requireValidTrimmedField(request.username, 'Username')
+    const profile = requireValidHostConnectionProfile(
+      {
+        sshAlias: request.sshAlias,
+        displayName: request.displayName,
+        user: request.username,
+        port: request.port
+      },
+      { requireUser: true, requirePort: true }
+    )
+    const alias = requireSafeSshAlias(profile.sshAlias)
+    const username = profile.user!
     const operationId = requireValidTrimmedField(
       request.operationId,
       'Credential operation identifier'
     )
-    if (!Number.isInteger(request.port) || request.port < 1 || request.port > 65_535) {
-      throw new ComputeConnectionError(
-        'unsupported_auth_configuration',
-        'Port must be an integer from 1 through 65535.'
-      )
-    }
     if ((request.detailsDoc?.length ?? 0) > DETAILS_DOC_MAX_LENGTH) {
       throw new ComputeConnectionError(
         'unsupported_auth_configuration',
@@ -165,10 +199,10 @@ class ComputeAuthOwner {
     const requestFingerprint = await this.bindOperationIntent(operationId, [
       'create_password',
       alias,
-      request.displayName?.trim() || alias,
+      profile.displayName,
       request.detailsDoc ?? '',
       username,
-      request.port,
+      profile.port,
       request.password
     ])
     const prepared = await this.dependencies.repository.preparePasswordCreate({
@@ -182,9 +216,9 @@ class ComputeAuthOwner {
     const candidate = {
       id: `candidate:${operationId}`,
       providerId: computeProviderId(alias),
-      displayName: request.displayName?.trim() || alias,
+      displayName: profile.displayName,
       sshAlias: alias,
-      sshOverrides: { user: username, port: request.port },
+      sshOverrides: { user: username, port: profile.port! },
       authentication: {
         mode: 'password' as const,
         credentialStatus: 'configured' as const,
@@ -197,10 +231,10 @@ class ComputeAuthOwner {
       operationId,
       requestFingerprint,
       sshAlias: alias,
-      displayName: request.displayName,
+      displayName: profile.displayName,
       detailsDoc: request.detailsDoc,
       username,
-      port: request.port,
+      port: profile.port!,
       ciphertext,
       verifiedAt: (this.dependencies.now ?? (() => new Date()))()
     })

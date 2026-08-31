@@ -354,6 +354,7 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
     const process = new FakeAgentProcess()
     const shared = makeSharedSession(
       makeSession({
+        memoryEnabled: false,
         specialistId: 'specialist-new',
         specialistBindingPending: true
       })
@@ -447,6 +448,7 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
     expect(activitySpy).toHaveBeenCalledWith(
       {
         session: expect.objectContaining({
+          memoryEnabled: false,
           specialistId: 'specialist-new',
           specialistBindingPending: true,
           agentTarget: {

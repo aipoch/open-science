@@ -6,6 +6,11 @@ import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { z } from 'zod'
 
 import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from '../host-sdk/help'
+import {
+  memoryAgentRememberMcpOutputSchema,
+  memoryAgentRememberRequestSchema,
+  memoryAgentSearchRequestSchema
+} from '../../shared/memory'
 
 // Transport behavior has dedicated integration coverage. Keep this MCP suite on the observable
 // fetch boundary so long-running tool calls can be completed deterministically with fake timers.
@@ -47,11 +52,65 @@ import {
   createNotebookMcpEnvironmentFromProcess,
   createNotebookMcpServer,
   createNotebookMcpServerConfig,
+  notebookRpcToolsForEnvironment,
   resolveNotebookRpcFetch,
   serializeNotebookToolResult
 } from './mcp-server'
 
 const tokenizer = new Tiktoken(cl100kBase)
+
+const rememberMemoryArguments = {
+  content: 'Use channel A for this project.',
+  analysis: {
+    scope: 'project' as const,
+    durability: 'cross-session' as const,
+    evidence: 'project-observed' as const,
+    subject: 'Microscopy channel',
+    reason: 'Future sessions need the working channel.'
+  }
+}
+
+const callRememberMemoryThroughMcp = async (
+  rpcResult: Record<string, unknown>
+): Promise<{
+  result: Awaited<ReturnType<ModelContextProtocolClient['callTool']>>
+  rpcCallCount: number
+}> => {
+  const environment = {
+    endpoint: 'http://127.0.0.1:4567',
+    token: 'secret-token',
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    workspaceCwd: '/workspace',
+    memoryTools: true
+  }
+  const server = createNotebookMcpServer(environment)
+  const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  await client.connect(clientTransport)
+  const originalFetch = globalThis.fetch
+  const fetchRpc = vi.fn(
+    async () =>
+      ({
+        ok: true,
+        json: async () => ({ result: rpcResult })
+      }) as Response
+  )
+  globalThis.fetch = fetchRpc as typeof fetch
+
+  try {
+    const result = await client.callTool({
+      name: 'remember_memory',
+      arguments: rememberMemoryArguments
+    })
+    return { result, rpcCallCount: fetchRpc.mock.calls.length }
+  } finally {
+    globalThis.fetch = originalFetch
+    await client.close()
+    await server.close()
+  }
+}
 
 describe('notebook MCP server config', () => {
   it('builds an ACP stdio MCP server config scoped to the notebook runtime RPC endpoint', () => {
@@ -62,7 +121,8 @@ describe('notebook MCP server config', () => {
       token: 'secret-token',
       projectId: 'default-project',
       sessionId: 'session-1',
-      workspaceCwd: '/workspace'
+      workspaceCwd: '/workspace',
+      memoryTools: true
     })
 
     expect(config).toEqual({
@@ -75,7 +135,8 @@ describe('notebook MCP server config', () => {
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: 'secret-token' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: 'default-project' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: 'session-1' },
-        { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: '/workspace' }
+        { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: '/workspace' },
+        { name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS', value: '1' }
       ]
     })
   })
@@ -111,13 +172,38 @@ describe('notebook MCP server config', () => {
       token: 'secret-token',
       projectId: 'default-project',
       sessionId: 'session-1',
-      workspaceCwd: 'C:\\workspace'
+      workspaceCwd: 'C:\\workspace',
+      memoryTools: false
     })
 
     expect(config.env).toContainEqual({
       name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH',
       value: '\\\\.\\pipe\\open-science-notebook'
     })
+    expect(config.env).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
+      value: '0'
+    })
+  })
+
+  it('advertises memory tools only to an eligible main-agent environment', () => {
+    const base = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'token',
+      projectId: 'project',
+      sessionId: 'session',
+      workspaceCwd: '/workspace'
+    }
+    expect(
+      notebookRpcToolsForEnvironment({ ...base, memoryTools: true }).map(({ name }) => name)
+    ).toEqual(
+      expect.arrayContaining(['list_memory_categories', 'search_memories', 'remember_memory'])
+    )
+    expect(
+      notebookRpcToolsForEnvironment({ ...base, memoryTools: false }).map(({ name }) => name)
+    ).not.toEqual(
+      expect.arrayContaining(['list_memory_categories', 'search_memories', 'remember_memory'])
+    )
   })
 
   it('keeps notebook instructions scoped to the notebook tools', () => {
@@ -197,6 +283,10 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('notebook_execute')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('append code deltas')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('finish the cell')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('repeat kernelSkillIds per dependent cell')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call directly in code')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('never import')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toMatch(/host registry|injected exports|live kernel/i)
     const executeTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_execute')
     expect(executeTool?.description).toContain('producerRunId')
   })
@@ -225,8 +315,193 @@ describe('notebook MCP server config', () => {
       'notebook_shutdown',
       'inspect_packages',
       'manage_packages',
-      'manage_environments'
+      'manage_environments',
+      'list_memory_categories',
+      'search_memories',
+      'remember_memory'
     ])
+  })
+
+  it('exposes bounded memory discovery, search, and append-only agent tools', () => {
+    const tools = Object.fromEntries(NOTEBOOK_RPC_TOOLS.map((tool) => [tool.name, tool]))
+
+    expect(tools.list_memory_categories?.method).toBe('memoryListCategories')
+    expect(tools.search_memories?.method).toBe('memorySearch')
+    expect(tools.remember_memory?.method).toBe('memoryRemember')
+    expect(tools.remember_memory?.description).toContain('durable')
+    expect(tools.remember_memory?.description).toContain('current project')
+    expect(tools.remember_memory?.description).toContain('Do not retry')
+    expect(tools.remember_memory?.description).toContain('hidden agent-specific memory directories')
+    expect(tools.search_memories?.inputSchema).toBe(memoryAgentSearchRequestSchema.shape)
+    expect(tools.remember_memory?.inputSchema).toBe(memoryAgentRememberRequestSchema.shape)
+    expect(tools.remember_memory?.outputSchema).toBe(memoryAgentRememberMcpOutputSchema)
+    expect(tools.list_memory_categories?.mapResult).toBeUndefined()
+    expect(tools.search_memories?.mapResult).toBeUndefined()
+    expect(tools.remember_memory?.mapResult).toBeUndefined()
+    expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining(['update_memory', 'forget_memory', 'set_memory_enabled'])
+    )
+  })
+
+  it('publishes remember_memory with a root object output schema', async () => {
+    const environment = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      memoryTools: true
+    }
+    const server = createNotebookMcpServer(environment)
+    const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+    await client.connect(clientTransport)
+
+    try {
+      const { tools } = await client.listTools()
+      const rememberTool = tools.find(({ name }) => name === 'remember_memory')
+
+      expect(rememberTool?.outputSchema).toEqual(expect.objectContaining({ type: 'object' }))
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('returns a created memory through the real MCP client and calls RPC once', async () => {
+    const { result, rpcCallCount } = await callRememberMemoryThroughMcp({
+      status: 'created',
+      memory: {
+        id: 'entry-1',
+        categoryId: null,
+        categoryName: null,
+        scope: 'project',
+        content: 'Use channel A for this project.',
+        revision: 1,
+        provenance: { origin: 'agent', agentId: 'agent-1' },
+        updatedAt: 3
+      }
+    })
+
+    expect(result.content).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('_zod') })])
+    )
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toEqual({
+      status: 'created',
+      memory: {
+        id: 'entry-1',
+        categoryId: null,
+        categoryName: null,
+        scope: 'project',
+        content: 'Use channel A for this project.',
+        revision: 1,
+        provenance: { origin: 'agent', agentId: 'agent-1' },
+        updatedAt: 3
+      }
+    })
+    expect(rpcCallCount).toBe(1)
+  })
+
+  it('returns an existing memory through the real MCP client', async () => {
+    const { result, rpcCallCount } = await callRememberMemoryThroughMcp({
+      status: 'existing',
+      memory: {
+        id: 'entry-1',
+        categoryId: null,
+        categoryName: null,
+        scope: 'project',
+        content: 'Use channel A for this project.',
+        revision: 1,
+        provenance: { origin: 'agent', agentId: 'agent-1' },
+        updatedAt: 3
+      }
+    })
+
+    expect(result.content).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('_zod') })])
+    )
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toEqual({
+      status: 'existing',
+      memory: {
+        id: 'entry-1',
+        categoryId: null,
+        categoryName: null,
+        scope: 'project',
+        content: 'Use channel A for this project.',
+        revision: 1,
+        provenance: { origin: 'agent', agentId: 'agent-1' },
+        updatedAt: 3
+      }
+    })
+    expect(rpcCallCount).toBe(1)
+  })
+
+  it('returns rejected memory writes as structured non-retryable MCP errors', async () => {
+    const environment = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      memoryTools: true
+    }
+    const server = createNotebookMcpServer(environment)
+    const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+    await client.connect(clientTransport)
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            result: {
+              status: 'rejected',
+              retryable: false,
+              code: 'invalid_analysis',
+              reason: 'The note does not describe durable project knowledge.'
+            }
+          })
+        }) as Response
+    ) as typeof fetch
+
+    try {
+      const result = await client.callTool({
+        name: 'remember_memory',
+        arguments: {
+          content: 'Temporary output',
+          analysis: {
+            scope: 'project',
+            durability: 'cross-session',
+            evidence: 'project-observed',
+            subject: 'Temporary output',
+            reason: 'This should be rejected by the service.'
+          }
+        }
+      })
+
+      expect(result.isError).toBe(true)
+      expect(result.structuredContent).toEqual({
+        status: 'rejected',
+        retryable: false,
+        code: 'invalid_analysis',
+        reason: 'The note does not describe durable project knowledge.'
+      })
+      expect(result.content).toEqual([
+        expect.objectContaining({
+          type: 'text',
+          text: expect.stringContaining('The note does not describe durable project knowledge.')
+        })
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+      await client.close()
+      await server.close()
+    }
   })
 
   it('exposes manage_environments and explains named environments are separate namespaces', () => {
@@ -340,6 +615,46 @@ describe('notebook_execute tool', () => {
     expect(() => schema.parse({ code: 'x', language: 'julia' })).toThrow()
   })
 
+  it('accepts only stable kernel Skill IDs and never implementation descriptors', () => {
+    const schema = z.object(tool?.inputSchema ?? {})
+
+    expect(
+      schema.parse({ code: 'public_add(2)', kernelSkillIds: ['registered-test-helper'] })
+    ).toEqual({ code: 'public_add(2)', kernelSkillIds: ['registered-test-helper'] })
+    expect(() =>
+      schema.parse({
+        code: 'public_add(2)',
+        kernelSkillIds: [
+          { id: 'registered-test-helper', path: '/tmp/kernel.py', source: 'x', digest: 'x' }
+        ]
+      })
+    ).toThrow()
+    expect(schema.parse({ code: 'public_add(2)', helperModules: ['legacy-name'] })).toEqual({
+      code: 'public_add(2)'
+    })
+    expect(tool?.inputSchema.kernelSkillIds?.description).toContain('called functions')
+    expect(tool?.inputSchema.kernelSkillIds?.description).toContain('per dependent cell')
+    expect(tool?.inputSchema.kernelSkillIds?.description).toContain('call directly, never import')
+  })
+
+  it('accepts bounded Artifact Version identities as explicit Run inputs', () => {
+    const schema = z.object(tool?.inputSchema ?? {})
+
+    expect(
+      schema.parse({
+        code: 'compose_figure(...)',
+        artifactVersionInputs: ['panel-a-v1', 'panel-b-v1']
+      })
+    ).toEqual({
+      code: 'compose_figure(...)',
+      artifactVersionInputs: ['panel-a-v1', 'panel-b-v1']
+    })
+    expect(() =>
+      schema.parse({ code: 'x', artifactVersionInputs: [{ versionId: 'panel-a-v1' }] })
+    ).toThrow()
+    expect(tool?.description).toContain("this Run's provenance inputs")
+  })
+
   it('has no per-call environment param — the env is the session-bound runtime (v4)', () => {
     expect(tool).toBeDefined()
     // The env is the session's bound runtime (notebook_bind_runtime), not a per-call argument, so the
@@ -359,7 +674,7 @@ describe('notebook_execute tool', () => {
     expect(schema.parse({ code: 'print(1)', timeoutMs: 5 })).toEqual({ code: 'print(1)' })
   })
 
-  it('forwards the selected language straight through to the execute RPC call', async () => {
+  it('forwards language, helper IDs, and Artifact Version inputs to the execute RPC call', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
@@ -384,6 +699,8 @@ describe('notebook_execute tool', () => {
       {
         code: '1 + 1',
         language: 'r',
+        kernelSkillIds: ['registered-test-helper'],
+        artifactVersionInputs: ['panel-a-v1', 'panel-b-v1'],
         projectId: 'forged-project',
         sessionId: 'forged-session'
       },
@@ -393,9 +710,17 @@ describe('notebook_execute tool', () => {
     expect(result).toEqual({ ok: true })
     expect(fetchCalls).toHaveLength(1)
     const sentBody = JSON.parse(fetchCalls[0].body) as {
-      params: { language?: string; projectId?: string; sessionId?: string }
+      params: {
+        language?: string
+        kernelSkillIds?: string[]
+        artifactVersionInputs?: string[]
+        projectId?: string
+        sessionId?: string
+      }
     }
     expect(sentBody.params.language).toBe('r')
+    expect(sentBody.params.kernelSkillIds).toEqual(['registered-test-helper'])
+    expect(sentBody.params.artifactVersionInputs).toEqual(['panel-a-v1', 'panel-b-v1'])
     expect(sentBody.params.projectId).toBe('default-project')
     expect(sentBody.params.sessionId).toBe('session-1')
   })
@@ -1143,10 +1468,10 @@ describe('compactManagePackagesResult', () => {
 })
 
 describe('notebook control tool results', () => {
-  it('gives every notebook tool a purpose-specific projection and a global result budget', () => {
+  it('gives every notebook tool a global result budget and projects only results that need it', () => {
     for (const tool of NOTEBOOK_RPC_TOOLS) {
-      expect(tool.mapResult, tool.name).toBeTypeOf('function')
       expect(tool.resultLimitChars, tool.name).toBeGreaterThan(0)
+      if (!tool.name.includes('memor')) expect(tool.mapResult, tool.name).toBeTypeOf('function')
     }
   })
 

@@ -7,6 +7,7 @@ import type { DatabaseStartupErrorCode } from '../../shared/database-startup'
 import {
   RUNTIME_SCHEMA_BASELINE_CONTRACT,
   applyRuntimeSchemaBaseline,
+  normalizeSchemaObjectSql,
   prepareRuntimeSchemaBaseline,
   verifyCurrentRuntimeSchema,
   verifyRuntimeSchemaBaseline,
@@ -30,6 +31,17 @@ import { sessionProjectionMigration } from './migrations/0013-session-projection
 import { reviewQueryIndexesMigration } from './migrations/0014-review-query-indexes'
 import { sessionModelCallUsageMigration } from './migrations/0015-session-model-call-usage'
 import { computeJobSensitiveDataEncryptionMigration } from './migrations/0016-compute-job-sensitive-data-encryption'
+import {
+  agentMemoryProjectScopeMigration,
+  MEMORY_AUXILIARY_SCHEMA_OBJECTS,
+  MEMORY_AUXILIARY_TABLE_NAMES
+} from './migrations/0017-agent-memory-project-scope'
+import { sessionAuxiliaryTurnUsageMigration } from './migrations/0018-session-auxiliary-turn-usage'
+import { sessionUsageAttributionMigration } from './migrations/0019-session-usage-attribution'
+import { computeJobAnalysisStateMigration } from './migrations/0020-compute-job-analysis-state'
+import { computeJobAnalysisConstraintsMigration } from './migrations/0021-compute-job-analysis-constraints'
+import { memoryGlobalContentUniqueMigration } from './migrations/0022-memory-global-content-unique'
+import { computeJobOperationMigration } from './migrations/0023-compute-job-operation'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -75,6 +87,20 @@ type MigrationVerifierDescriptor =
       version: 1
       indexes: readonly { name: string; sql: string }[]
     }
+  | {
+      kind: 'sqlite-schema-objects-exist'
+      version: 1
+      objects: readonly { type: 'table' | 'trigger' | 'view'; name: string; sql: string }[]
+    }
+  | {
+      kind: 'table-value-equals'
+      version: 1
+      table: string
+      keyColumn: string
+      keyValue: string
+      valueColumn: string
+      expectedValue: string | number
+    }
 
 type MigrationVerifiers = readonly [MigrationVerifierDescriptor, ...MigrationVerifierDescriptor[]]
 
@@ -118,6 +144,21 @@ const serializeMigrationVerifier = (verifier: MigrationVerifierDescriptor): stri
     case 'indexes-exist':
       return `indexes-exist:v${verifier.version}:${verifier.indexes
         .flatMap(({ name, sql }) => [name, sql])
+        .map(lengthPrefixedChecksumText)
+        .join('')}`
+    case 'sqlite-schema-objects-exist':
+      return `sqlite-schema-objects-exist:v${verifier.version}:${verifier.objects
+        .flatMap(({ type, name, sql }) => [type, name, sql])
+        .map(lengthPrefixedChecksumText)
+        .join('')}`
+    case 'table-value-equals':
+      return `table-value-equals:v${verifier.version}:${[
+        verifier.table,
+        verifier.keyColumn,
+        verifier.keyValue,
+        verifier.valueColumn,
+        String(verifier.expectedValue)
+      ]
         .map(lengthPrefixedChecksumText)
         .join('')}`
   }
@@ -238,11 +279,53 @@ const SESSION_MODEL_CALL_USAGE_CHECKSUM = checksumMigrationPayload(
   sessionModelCallUsageMigration.verifiers,
   sessionModelCallUsageMigration.operations
 )
+const AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM = checksumMigrationPayload(
+  agentMemoryProjectScopeMigration.id,
+  agentMemoryProjectScopeMigration.statements,
+  agentMemoryProjectScopeMigration.verifiers,
+  agentMemoryProjectScopeMigration.operations
+)
+const SESSION_AUXILIARY_TURN_USAGE_CHECKSUM = checksumMigrationPayload(
+  sessionAuxiliaryTurnUsageMigration.id,
+  sessionAuxiliaryTurnUsageMigration.statements,
+  sessionAuxiliaryTurnUsageMigration.verifiers,
+  sessionAuxiliaryTurnUsageMigration.operations
+)
+const SESSION_USAGE_ATTRIBUTION_CHECKSUM = checksumMigrationPayload(
+  sessionUsageAttributionMigration.id,
+  sessionUsageAttributionMigration.statements,
+  sessionUsageAttributionMigration.verifiers,
+  sessionUsageAttributionMigration.operations
+)
+const COMPUTE_JOB_ANALYSIS_STATE_CHECKSUM = checksumMigrationPayload(
+  computeJobAnalysisStateMigration.id,
+  computeJobAnalysisStateMigration.statements,
+  computeJobAnalysisStateMigration.verifiers,
+  computeJobAnalysisStateMigration.operations
+)
+const COMPUTE_JOB_ANALYSIS_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
+  computeJobAnalysisConstraintsMigration.id,
+  computeJobAnalysisConstraintsMigration.statements,
+  computeJobAnalysisConstraintsMigration.verifiers,
+  computeJobAnalysisConstraintsMigration.operations
+)
+const MEMORY_GLOBAL_CONTENT_UNIQUE_CHECKSUM = checksumMigrationPayload(
+  memoryGlobalContentUniqueMigration.id,
+  memoryGlobalContentUniqueMigration.statements,
+  memoryGlobalContentUniqueMigration.verifiers,
+  memoryGlobalContentUniqueMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
   computeJobSensitiveDataEncryptionMigration.verifiers,
   computeJobSensitiveDataEncryptionMigration.operations
+)
+const COMPUTE_JOB_OPERATION_CHECKSUM = checksumMigrationPayload(
+  computeJobOperationMigration.id,
+  computeJobOperationMigration.statements,
+  computeJobOperationMigration.verifiers,
+  computeJobOperationMigration.operations
 )
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
@@ -297,6 +380,36 @@ const CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
       Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
     ])
 )
+const AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
+  Object.fromEntries(
+    agentMemoryProjectScopeMigration.verifiers
+      .filter((verifier) => verifier.kind === 'check-constraints-exist')
+      .flatMap((verifier) => verifier.tables)
+      .map(({ table, constraints }) => [
+        table,
+        Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+      ])
+  )
+const SESSION_AUXILIARY_TURN_USAGE_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
+  Object.fromEntries(
+    sessionAuxiliaryTurnUsageMigration.verifiers
+      .filter((verifier) => verifier.kind === 'check-constraints-exist')
+      .flatMap((verifier) => verifier.tables)
+      .map(({ table, constraints }) => [
+        table,
+        Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+      ])
+  )
+const COMPUTE_JOB_OPERATION_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
+  Object.fromEntries(
+    computeJobOperationMigration.verifiers
+      .filter((verifier) => verifier.kind === 'check-constraints-exist')
+      .flatMap((verifier) => verifier.tables)
+      .map(({ table, constraints }) => [
+        table,
+        Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+      ])
+  )
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
@@ -402,6 +515,48 @@ const MIGRATION_MANIFEST = [
   {
     ...computeJobSensitiveDataEncryptionMigration,
     checksum: COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...agentMemoryProjectScopeMigration,
+    checksum: AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionAuxiliaryTurnUsageMigration,
+    checksum: SESSION_AUXILIARY_TURN_USAGE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionUsageAttributionMigration,
+    checksum: SESSION_USAGE_ATTRIBUTION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeJobAnalysisStateMigration,
+    checksum: COMPUTE_JOB_ANALYSIS_STATE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeJobAnalysisConstraintsMigration,
+    checksum: COMPUTE_JOB_ANALYSIS_CONSTRAINTS_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...memoryGlobalContentUniqueMigration,
+    checksum: MEMORY_GLOBAL_CONTENT_UNIQUE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeJobOperationMigration,
+    checksum: COMPUTE_JOB_OPERATION_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -612,8 +767,66 @@ const runMigrationVerifiers = async (
         }
         break
       }
+      case 'sqlite-schema-objects-exist': {
+        const rows = await migrationSqlExecutor.query<
+          Array<{ type: string; name: string; sql: string | null }>
+        >(
+          client,
+          `SELECT "type", "name", "sql" FROM "sqlite_schema"
+           WHERE "name" IN (${verifier.objects.map(() => '?').join(', ')})`,
+          ...verifier.objects.map(({ name }) => name)
+        )
+        const actual = new Map(rows.map((row) => [row.name, row]))
+        for (const expected of verifier.objects) {
+          const row = actual.get(expected.name)
+          if (
+            !row ||
+            row.type !== expected.type ||
+            normalizeSchemaObjectSql(row.sql) !== normalizeSchemaObjectSql(expected.sql)
+          ) {
+            throw new Error(
+              `Migration verification found missing or incompatible schema object ${expected.name}.`
+            )
+          }
+        }
+        break
+      }
+      case 'table-value-equals': {
+        const table = quoteSqliteIdentifier(verifier.table)
+        const keyColumn = quoteSqliteIdentifier(verifier.keyColumn)
+        const valueColumn = quoteSqliteIdentifier(verifier.valueColumn)
+        const rows = await migrationSqlExecutor.query<
+          Array<{ value: bigint | number | string | null }>
+        >(
+          client,
+          `SELECT ${valueColumn} AS "value" FROM ${table} WHERE ${keyColumn} = ? LIMIT 2`,
+          verifier.keyValue
+        )
+        if (rows.length !== 1 || String(rows[0]?.value) !== String(verifier.expectedValue)) {
+          throw new Error(
+            `Migration verification found an incompatible value in ${verifier.table}.${verifier.valueColumn}.`
+          )
+        }
+        break
+      }
     }
   }
+}
+
+const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
+  const memoryTriggerNames = MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
+    type === 'trigger' ? [name] : []
+  )
+  await verifyCurrentRuntimeSchema(client, {
+    tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
+    triggerNames: memoryTriggerNames
+  })
+  await runMigrationVerifiers(client, agentMemoryProjectScopeMigration.verifiers)
+  await runMigrationVerifiers(client, sessionAuxiliaryTurnUsageMigration.verifiers)
+  await runMigrationVerifiers(client, sessionUsageAttributionMigration.verifiers)
+  await runMigrationVerifiers(client, computeJobAnalysisStateMigration.verifiers)
+  await runMigrationVerifiers(client, computeJobAnalysisConstraintsMigration.verifiers)
+  await runMigrationVerifiers(client, memoryGlobalContentUniqueMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1167,12 +1380,11 @@ const migrateApplicationDatabaseWithManifest = async (
   } catch (error) {
     throw classifyDatabaseFailure(error, 'open')
   }
-  const appliedCount = validateLedger(ledger, manifest)
-  const latest = manifest.at(-1)!
   const from = ledger.at(-1)?.id ?? null
+  const latest = manifest.at(-1)!
   const complete = async (result: SchemaMigrationResult): Promise<SchemaMigrationResult> => {
     try {
-      await verifyCurrentRuntimeSchema(client)
+      await verifyCurrentApplicationSchema(client)
     } catch (error) {
       throw classifyDatabaseFailure(error, 'validation', latest.id)
     }
@@ -1188,21 +1400,22 @@ const migrateApplicationDatabaseWithManifest = async (
     }
     return result
   }
-  if (appliedCount === manifest.length) {
-    return complete({ adoptedLegacy: false, applied: [], from, to: latest.id })
-  }
 
-  let hadApplicationTablesAtStart: boolean
-  try {
-    hadApplicationTablesAtStart = await hasApplicationTables(client)
-  } catch (error) {
-    throw classifyDatabaseFailure(error, 'open')
+  let hadApplicationTablesAtStart: boolean | undefined
+  const readHadApplicationTablesAtStart = async (): Promise<boolean> => {
+    if (hadApplicationTablesAtStart !== undefined) return hadApplicationTablesAtStart
+    try {
+      hadApplicationTablesAtStart = await hasApplicationTables(client)
+      return hadApplicationTablesAtStart
+    } catch (error) {
+      throw classifyDatabaseFailure(error, 'open')
+    }
   }
 
   const backupBeforeMigration = async (migration: MigrationManifestEntry): Promise<void> => {
     if (migration.backupOnApply !== 'required') return
     const migrationId = migration.id
-    if (!hadApplicationTablesAtStart) return
+    if (!(await readHadApplicationTablesAtStart())) return
     let backup: DatabaseMigrationBackup
     try {
       const databasePath = options.databasePath ?? (await readMainDatabasePath(client))
@@ -1223,6 +1436,14 @@ const migrateApplicationDatabaseWithManifest = async (
       includeDeleteAfterSuccess: false
     })
   }
+
+  const applied: string[] = []
+  const appliedCount = validateLedger(ledger, manifest)
+  if (appliedCount === manifest.length) {
+    return complete({ adoptedLegacy: false, applied, from, to: latest.id })
+  }
+
+  const hasExistingApplicationTables = await readHadApplicationTablesAtStart()
   const repairsPreviewStateForeignKeyViolations = manifest.some(
     (candidate) =>
       candidate.id === projectPreviewStateOwnerFkMigration.id &&
@@ -1257,15 +1478,32 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === crossResourceTagsMigration.id &&
       candidate.checksum === CROSS_RESOURCE_TAGS_CHECKSUM
   )
-  const applied: string[] = []
-  const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
+  const adoptsAgentMemoryProjectScope = manifest.some(
+    (candidate) =>
+      candidate.id === agentMemoryProjectScopeMigration.id &&
+      candidate.checksum === AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM
+  )
+  const adoptsSessionAuxiliaryTurnUsage = manifest.some(
+    (candidate) =>
+      candidate.id === sessionAuxiliaryTurnUsageMigration.id &&
+      candidate.checksum === SESSION_AUXILIARY_TURN_USAGE_CHECKSUM
+  )
+  const adoptsComputeJobOperation = manifest.some(
+    (candidate) =>
+      candidate.id === computeJobOperationMigration.id &&
+      candidate.checksum === COMPUTE_JOB_OPERATION_CHECKSUM
+  )
+  const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
     adoptsNotificationAttentionMetadata ? NOTIFICATION_ATTENTION_ALLOWED_SUFFIX_CHECKS : {},
     adoptsDatabaseJsonConstraints ? DATABASE_JSON_ALLOWED_SUFFIX_CHECKS : {},
     adoptsVisionEvidence ? VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS : {},
     adoptsComputePasswordAuth ? COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {},
+    adoptsAgentMemoryProjectScope ? AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS : {},
+    adoptsSessionAuxiliaryTurnUsage ? SESSION_AUXILIARY_TURN_USAGE_ALLOWED_SUFFIX_CHECKS : {},
+    adoptsComputeJobOperation ? COMPUTE_JOB_OPERATION_ALLOWED_SUFFIX_CHECKS : {}
   )
 
   let nextIndex = appliedCount
@@ -1308,12 +1546,17 @@ export {
   VISION_EVIDENCE_CHECKSUM,
   COMPUTE_PASSWORD_AUTH_CHECKSUM,
   TAG_ORDERING_CHECKSUM,
+  COMPUTE_JOB_OPERATION_CHECKSUM,
   REVIEW_QUERY_INDEXES_CHECKSUM,
+  AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
+  COMPUTE_JOB_ANALYSIS_CONSTRAINTS_CHECKSUM,
+  MEMORY_GLOBAL_CONTENT_UNIQUE_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,
   migrateApplicationDatabase,
   migrateApplicationDatabaseWithManifest,
+  verifyCurrentApplicationSchema,
   MIGRATION_MANIFEST
 }
 export type {

@@ -24,6 +24,7 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import { runReview } from './orchestrator'
 import { ReviewerHostServer } from './host-sdk'
 import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
+import type { FrozenReviewerTurnBlock, ReviewerCheckFixture } from './reviewer-mcp-test-client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 
 // Re-use the same FakeAgentProcess pattern from runtime.test.ts.
@@ -75,6 +76,75 @@ const makeSession = (overrides: Partial<PersistedChatSession> = {}): PersistedCh
   ...overrides
 })
 
+const makeSessionWithRequiredPlanOutput = (): PersistedChatSession => {
+  const base = makeSession({
+    messages: [
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: 'Produce the approved report.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1000,
+        updatedAt: 1000
+      },
+      {
+        id: 'msg-2',
+        role: 'agent',
+        content: 'Done.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 2000,
+        updatedAt: 2000
+      }
+    ]
+  })
+  const document = {
+    schema_version: 1 as const,
+    task_summary: 'Produce a report',
+    phases: [
+      {
+        name: 'Delivery',
+        delegations: [
+          { name: 'Writer', steps: [{ title: 'Write', description: 'Write the report.' }] }
+        ]
+      }
+    ],
+    desired_outputs: ['report.csv'],
+    feasibility: { confidence: 'high' as const, rationale: 'Inputs are available.' }
+  }
+  const projection = {
+    artifactId: 'plan-artifact',
+    artifactVersionId: 'plan-version',
+    artifactChecksum: 'plan-checksum',
+    originatingPromptMessageId: 'msg-1',
+    revision: 1,
+    approval: 'approved' as const,
+    lifecycle: 'in_progress' as const,
+    requiresExplicitContinuation: false,
+    document,
+    stepStatuses: { Write: { status: 'in_progress' as const, updatedAt: 1500 } },
+    stepStates: { Write: { status: 'in_progress' as const } },
+    counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 1 }
+  }
+  return {
+    ...base,
+    planHistoryProjections: [projection],
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      plan: {
+        artifactId: projection.artifactId,
+        artifactVersionId: projection.artifactVersionId,
+        artifactChecksum: projection.artifactChecksum,
+        originatingPromptMessageId: projection.originatingPromptMessageId,
+        approval: projection.approval,
+        stepStatuses: projection.stepStatuses
+      }
+    }
+  }
+}
+
 // Builds a fake ACP agent that immediately responds to any session/prompt with a simulated
 // reviewer turn. The reviewer "calls submit_findings" by posting to the HTTP MCP endpoint
 // identified from the mcpServers config.
@@ -88,15 +158,7 @@ const startFakeReviewerAgent = (
     // without submit_findings — exercising the gate-rejection incomplete-review path.
     emitRejectedToolCall?: boolean
     // v3: checks[] only — reasoning removed from submit_findings
-    checksToSubmit?: Array<{
-      status: 'pass' | 'warn' | 'fail'
-      claim: string
-      evidence: string
-      locator?: {
-        blockRef: { messageId?: string; activityId?: string; blockIndex: number }
-        contentHash: string
-      }
-    }>
+    checksToSubmit?: ReviewerCheckFixture
   } = {}
 ): {
   newSessions: Array<{ cwd: string; mcpServers: unknown[]; _meta?: unknown }>
@@ -440,6 +502,128 @@ describe('reviewer orchestrator', () => {
     expect(reloaded[0]?.checks).toHaveLength(1)
     expect(reloaded[0]?.checks[0]?.claim).toBe('Agent claimed 42 results')
 
+    await client.$disconnect()
+  })
+
+  it('reads the effective Plan and persists a fail for its missing required deliverable', async () => {
+    const process = new FakeAgentProcess()
+    let reviewedPlanBlock: FrozenReviewerTurnBlock | undefined
+    startFakeReviewerAgent(process, 'reviewer-session-1', {
+      simulateFindingsViaHttp: true,
+      checksToSubmit: (blocks) => {
+        reviewedPlanBlock = blocks.find((block) => block.turnPlan)
+        const agentBlock = blocks.find((block) => block.role === 'agent')
+        const plan = reviewedPlanBlock?.turnPlan?.content as
+          { desired_outputs?: string[] } | undefined
+        if (!agentBlock || !plan?.desired_outputs?.includes('report.csv')) return []
+        if ((agentBlock.artifactIds ?? []).length > 0) return []
+        return [
+          {
+            status: 'fail',
+            claim: 'The effective current-Turn Plan requires report.csv, but it is missing.',
+            evidence: 'read_turn exposed desired_outputs=["report.csv"] and no produced artifact.',
+            locator: {
+              blockRef: { blockIndex: agentBlock.blockIndex },
+              contentHash: agentBlock.contentHash
+            }
+          }
+        ]
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const client = createProjectDbClient(temporaryRoot!)
+    await migrateApplicationDatabase(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    const review = await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => makeSessionWithRequiredPlanOutput(),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!
+    })
+
+    expect(reviewedPlanBlock?.turnPlan).toMatchObject({
+      status: 'active',
+      binding: 'current-turn'
+    })
+    expect(review).toMatchObject({ lifecycle: 'complete', outcome: 'flagged' })
+    expect(review.checks).toEqual([
+      expect.objectContaining({ status: 'fail', claim: expect.stringContaining('report.csv') })
+    ])
+    const [stored] = await repository.getReviewsForSession('session-1')
+    expect(stored?.checks[0]).toMatchObject({ status: 'fail' })
+    await client.$disconnect()
+  })
+
+  it.each([
+    {
+      caseName: 'warns for a concrete reference explicitly newly retrieved in this Turn',
+      agentContent: 'I newly retrieved DOI 10.1000/current-turn for this answer.',
+      expectedOutcome: 'flagged' as const,
+      expectedChecks: 1
+    },
+    {
+      caseName: 'abstains for an identifier carried from earlier work without current retrieval',
+      agentContent: 'Use DOI 10.1000/earlier-turn from our earlier work.',
+      expectedOutcome: 'pass' as const,
+      expectedChecks: 0
+    }
+  ])('$caseName', async ({ agentContent, expectedOutcome, expectedChecks }) => {
+    const process = new FakeAgentProcess()
+    startFakeReviewerAgent(process, 'reviewer-session-1', {
+      simulateFindingsViaHttp: true,
+      checksToSubmit: (blocks) => {
+        const agentBlock = blocks.find((block) => block.role === 'agent')
+        if (!agentBlock?.content?.match(/DOI\s+10\./iu)) return []
+        if (!agentBlock.content.match(/newly retrieved|established in this Turn/iu)) return []
+        return [
+          {
+            status: 'warn',
+            claim: 'A concrete external reference was presented as newly retrieved in this Turn.',
+            evidence: 'The DOI traces nowhere in the current-Turn evidence.',
+            locator: {
+              blockRef: { blockIndex: agentBlock.blockIndex },
+              contentHash: agentBlock.contentHash
+            }
+          }
+        ]
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const client = createProjectDbClient(temporaryRoot!)
+    await migrateApplicationDatabase(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+
+    const review = await runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () =>
+        makeSession({
+          messages: [
+            makeSession().messages[0]!,
+            { ...makeSession().messages[1]!, content: agentContent }
+          ]
+        }),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!
+    })
+
+    expect(review).toMatchObject({ lifecycle: 'complete', outcome: expectedOutcome })
+    expect(review.checks).toHaveLength(expectedChecks)
+    if (expectedChecks > 0) expect(review.checks[0]?.status).toBe('warn')
     await client.$disconnect()
   })
 

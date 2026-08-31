@@ -135,10 +135,12 @@ describe('ComputeJob repository (SQLite integration)', () => {
     const updated = await repo.update('test-job-1', {
       status: 'running',
       remoteHandle: JSON.stringify({ pid: 1234, workdir: '~/.openscience/jobs/test-job-1' }),
+      remoteWorkdir: '/scratch/.openscience/jobs/test-job-1',
       startedAt: new Date()
     })
     expect(updated.status).toBe('running')
     expect(updated.started_at).toBeGreaterThan(0)
+    expect(updated.remote_workdir).toBe('/scratch/.openscience/jobs/test-job-1')
 
     // update to terminal.
     await repo.update('test-job-1', {
@@ -438,9 +440,17 @@ describe('ComputeJob repository (SQLite integration)', () => {
       )
     )
 
-    await expect(reader.get('unreadable-job')).rejects.toThrow(
-      'Protected application data cannot be decrypted on this system.'
-    )
+    await expect(reader.get('unreadable-job')).resolves.toMatchObject({
+      intent: '',
+      command: '',
+      needs_attention: true,
+      integrity_issues: [
+        expect.objectContaining({
+          code: 'sensitive-fields-unavailable',
+          disposition: 'needs-attention'
+        })
+      ]
+    })
   })
 
   it('findNonTerminalByProvider returns only jobs for the given provider', async () => {
@@ -552,6 +562,38 @@ describe('ComputeJob repository (SQLite integration)', () => {
     expect(cleared.notification_consumed_at).toBeUndefined()
   })
 
+  it('allows only one concurrent notification claim', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notification-claim-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    await repo.create({
+      id: 'job-claim',
+      providerId: 'ssh:test',
+      shape: 'direct_ssh',
+      sessionId: 's1',
+      projectId: 'p1',
+      intent: 'notification claim',
+      command: 'true',
+      commandHash: 'claim-hash',
+      allowUnencryptedPersistence: true
+    })
+    await repo.update('job-claim', {
+      status: 'error',
+      errorCode: 'dispatch_failed',
+      finishedAt: new Date()
+    })
+
+    const claims = await Promise.all([
+      repo.claimNotification('job-claim', new Date('2026-08-24T01:00:00Z')),
+      repo.claimNotification('job-claim', new Date('2026-08-24T01:00:01Z'))
+    ])
+
+    expect(claims.filter((claim) => claim !== null)).toHaveLength(1)
+    expect(claims.filter((claim) => claim === null)).toHaveLength(1)
+  })
+
   it('findTerminalUnharvested returns terminal jobs with null harvestedAt, excludes already-harvested and non-terminal', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-unharvested-'))
 
@@ -647,15 +689,22 @@ describe('ComputeJob repository (SQLite integration)', () => {
         projectId: 'p1',
         intent: id,
         command: 'echo ok',
-        commandHash: id
+        commandHash: id,
+        initialStatus: 'success'
       })
     }
 
     await mkJob('job-notified-unconsumed', 'sess-1')
-    await repo.update('job-notified-unconsumed', { notifiedAt: new Date('2026-01-01') })
+    await repo.update('job-notified-unconsumed', {
+      status: 'error',
+      errorCode: 'dispatch_failed',
+      notifiedAt: new Date('2026-01-01')
+    })
 
     await mkJob('job-notified-consumed', 'sess-1')
     await repo.update('job-notified-consumed', {
+      status: 'error',
+      errorCode: 'dispatch_failed',
       notifiedAt: new Date('2026-01-01'),
       notificationConsumedAt: new Date('2026-01-02')
     })
@@ -663,17 +712,262 @@ describe('ComputeJob repository (SQLite integration)', () => {
     await mkJob('job-not-notified', 'sess-1')
 
     await mkJob('job-other-session', 'sess-2')
-    await repo.update('job-other-session', { notifiedAt: new Date('2026-01-01') })
+    await repo.update('job-other-session', {
+      status: 'error',
+      errorCode: 'dispatch_failed',
+      notifiedAt: new Date('2026-01-01')
+    })
 
     const pending = await repo.findPendingNotifications('sess-1')
     expect(pending).toHaveLength(1)
     expect(pending[0]!.job_id).toBe('job-notified-unconsumed')
-
-    const allPending = await repo.findPendingNotifications()
-    expect(allPending.map((job) => job.job_id)).toEqual([
+    expect((await repo.findPendingNotifications()).map((job) => job.job_id)).toEqual([
       'job-notified-unconsumed',
       'job-other-session'
     ])
+  })
+
+  it('keeps notified non-terminal rows out of the pending analysis seam', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-pending-terminal-guard-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+
+    await repo.create({
+      id: 'job-running-notified',
+      providerId: 'ssh:test',
+      shape: 'direct_ssh',
+      sessionId: 'sess-1',
+      projectId: 'p1',
+      intent: 'still running',
+      command: 'sleep 60',
+      commandHash: 'running-notified',
+      allowUnencryptedPersistence: true
+    })
+    await repo.update('job-running-notified', {
+      status: 'running',
+      notifiedAt: new Date('2026-01-01')
+    })
+
+    expect(await repo.findPendingNotifications('sess-1')).toEqual([])
+    expect(await repo.findNonTerminal()).toEqual([])
+    expect(await repo.get('job-running-notified')).toMatchObject({
+      status: 'running',
+      notified_at: new Date('2026-01-01').getTime(),
+      needs_attention: true,
+      integrity_issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'notified-before-terminal',
+          disposition: 'quarantined'
+        })
+      ])
+    })
+  })
+
+  it('classifies valid encrypted active handles after decryption', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-encrypted-integrity-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+    const workdir = '/remote/jobs/encrypted-active'
+
+    await repo.create({
+      id: 'encrypted-active',
+      providerId: 'ssh:test',
+      shape: 'direct_ssh',
+      sessionId: 'sess-encrypted',
+      projectId: 'p1',
+      intent: 'encrypted integrity',
+      command: 'sleep 30',
+      commandHash: 'encrypted-active',
+      remoteWorkdir: workdir
+    })
+    await repo.update('encrypted-active', {
+      status: 'running',
+      remoteHandle: JSON.stringify({
+        pid: 321,
+        workdir,
+        exit_code_path: `${workdir}/exit_code`,
+        stdout_path: `${workdir}/stdout`,
+        stderr_path: `${workdir}/stderr`
+      })
+    })
+
+    expect(await repo.scanIntegrity()).toEqual([])
+    const encryptedJob = await repo.get('encrypted-active')
+    expect(encryptedJob).toMatchObject({
+      job_id: 'encrypted-active',
+      remote_workdir: workdir
+    })
+    expect(encryptedJob).not.toHaveProperty('needs_attention')
+    expect(await repo.findNonTerminal()).toHaveLength(1)
+  })
+
+  it('reports encrypted projection failures without exposing ciphertext', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-decrypt-failure-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const healthyRepo = makeJobRepository(client)
+    const workdir = '/remote/jobs/decrypt-failure'
+    await healthyRepo.create({
+      id: 'decrypt-failure',
+      providerId: 'ssh:test',
+      shape: 'direct_ssh',
+      sessionId: 'sess-encrypted',
+      projectId: 'p1',
+      intent: 'never leak this intent',
+      command: 'never leak this command',
+      commandHash: 'decrypt-failure',
+      remoteWorkdir: workdir
+    })
+    await healthyRepo.update('decrypt-failure', {
+      status: 'running',
+      remoteHandle: JSON.stringify({
+        pid: 321,
+        workdir,
+        exit_code_path: `${workdir}/exit_code`,
+        stdout_path: `${workdir}/stdout`,
+        stderr_path: `${workdir}/stderr`
+      })
+    })
+    await client.computeJobOperation.create({
+      data: {
+        id: 'cancel:decrypt-failure',
+        jobId: 'decrypt-failure',
+        kind: 'cancel',
+        phase: 'active',
+        updatedAt: new Date('2026-01-01')
+      }
+    })
+    const failingRepo = new ComputeJobRepository(
+      () => Promise.resolve(client),
+      protectedFields(
+        testCipher({
+          decryptString: () => {
+            throw new Error('secure storage unavailable')
+          }
+        })
+      )
+    )
+
+    const report = await failingRepo.scanIntegrity()
+    expect(report).toEqual([
+      expect.objectContaining({
+        jobId: 'decrypt-failure',
+        code: 'sensitive-fields-unavailable',
+        disposition: 'needs-attention'
+      })
+    ])
+    expect(JSON.stringify(report)).not.toContain('never leak')
+    expect(await failingRepo.get('decrypt-failure')).toMatchObject({
+      intent: '',
+      command: '',
+      remote_handle: undefined,
+      cancellation_status: 'cancelling',
+      needs_attention: true
+    })
+    expect(await failingRepo.findNonTerminal()).toEqual([])
+    const visibleJobs = await failingRepo.findBySession('sess-encrypted')
+    expect(visibleJobs).toEqual([
+      expect.objectContaining({
+        job_id: 'decrypt-failure',
+        intent: '',
+        command: '',
+        remote_workdir: undefined,
+        remote_handle: undefined,
+        cancellation_status: 'cancelling',
+        needs_attention: true,
+        integrity_issues: [expect.objectContaining({ code: 'sensitive-fields-unavailable' })]
+      })
+    ])
+    expect(JSON.stringify(visibleJobs)).not.toContain('never leak')
+  })
+
+  it('reports raw persistence incompatibilities without hiding unknown statuses', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-integrity-scan-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const create = async (id: string): Promise<void> => {
+      await repo.create({
+        id,
+        providerId: 'ssh:test',
+        shape: 'direct_ssh',
+        sessionId: 'sess-integrity',
+        projectId: 'p1',
+        intent: id,
+        command: 'true',
+        commandHash: id,
+        remoteWorkdir: `/remote/jobs/${id}`,
+        allowUnencryptedPersistence: true
+      })
+    }
+
+    await create('unknown-status')
+    await create('unknown-error')
+    await create('partial-handle')
+    await create('missing-handle')
+    await create('consumed-without-notified')
+    await client.$executeRawUnsafe('PRAGMA ignore_check_constraints = ON')
+    await client.$executeRawUnsafe(
+      `UPDATE ComputeJob SET status = 'future_state', notifiedAt = ? WHERE id = 'unknown-status'`,
+      new Date('2026-01-01').toISOString()
+    )
+    await client.$executeRawUnsafe(
+      `UPDATE ComputeJob SET status = 'failed', errorCode = 'future_error', finishedAt = ? WHERE id = 'unknown-error'`,
+      new Date('2026-01-01').toISOString()
+    )
+    await client.$executeRawUnsafe(
+      `UPDATE ComputeJob SET status = 'running', remoteHandle = ? WHERE id = 'partial-handle'`,
+      JSON.stringify({ pid: 321, workdir: '/remote/jobs/partial-handle' })
+    )
+    await client.$executeRawUnsafe(
+      `UPDATE ComputeJob SET status = 'running' WHERE id = 'missing-handle'`
+    )
+    await client.$executeRawUnsafe(
+      `UPDATE ComputeJob SET notificationConsumedAt = ? WHERE id = 'consumed-without-notified'`,
+      new Date('2026-01-02').toISOString()
+    )
+
+    const report = await repo.scanIntegrity()
+
+    expect(report).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          jobId: 'unknown-status',
+          code: 'unknown-status',
+          rawStatus: 'future_state',
+          disposition: 'quarantined'
+        }),
+        expect.objectContaining({
+          jobId: 'unknown-error',
+          code: 'unknown-error-code',
+          rawErrorCode: 'future_error',
+          disposition: 'needs-attention'
+        }),
+        expect.objectContaining({
+          jobId: 'partial-handle',
+          code: 'malformed-remote-handle',
+          disposition: 'recovery-required'
+        }),
+        expect.objectContaining({
+          jobId: 'missing-handle',
+          code: 'malformed-remote-handle',
+          disposition: 'recovery-required'
+        }),
+        expect.objectContaining({
+          jobId: 'consumed-without-notified',
+          code: 'consumed-without-notification',
+          disposition: 'quarantined'
+        })
+      ])
+    )
+    expect((await repo.get('unknown-status'))?.raw_status).toBe('future_state')
+    expect(await repo.findPendingNotifications('sess-integrity')).toEqual([])
   })
 
   it('markNotificationsConsumed sets notificationConsumedAt and is idempotent', async () => {
@@ -710,6 +1004,82 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
     // Empty array is a no-op.
     await expect(repo.markNotificationsConsumed('s1', [])).resolves.toBeUndefined()
+  })
+
+  it('persists and validates automatic-analysis transitions for a notified Job batch', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-analysis-state-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+
+    for (const id of ['job-success', 'job-failed']) {
+      await repo.create({
+        id,
+        providerId: 'ssh:test',
+        shape: 'direct_ssh',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        intent: id,
+        command: 'echo ok',
+        commandHash: id,
+        initialStatus: 'success'
+      })
+      await repo.update(id, { notifiedAt: new Date('2026-01-01') })
+    }
+
+    expect(await repo.get('job-success')).toMatchObject({
+      analysis_state: undefined,
+      analysis_message_id: undefined
+    })
+    await repo.transitionAnalysis({
+      sessionId: 'session-1',
+      jobIds: ['job-success'],
+      messageId: 'analysis-success',
+      state: 'dispatched'
+    })
+    await repo.transitionAnalysis({
+      sessionId: 'session-1',
+      jobIds: ['job-success'],
+      messageId: 'analysis-success',
+      state: 'succeeded'
+    })
+    expect(await repo.get('job-success')).toMatchObject({
+      analysis_state: 'succeeded',
+      analysis_message_id: 'analysis-success',
+      analysis_updated_at: expect.any(Number),
+      notification_consumed_at: expect.any(Number)
+    })
+
+    await repo.transitionAnalysis({
+      sessionId: 'session-1',
+      jobIds: ['job-failed'],
+      messageId: 'analysis-failed',
+      state: 'dispatched'
+    })
+    expect((await repo.findPendingNotifications()).map(({ job_id }) => job_id)).toEqual([
+      'job-failed'
+    ])
+    await repo.transitionAnalysis({
+      sessionId: 'session-1',
+      jobIds: ['job-failed'],
+      messageId: 'analysis-failed',
+      state: 'failed'
+    })
+    expect(await repo.get('job-failed')).toMatchObject({
+      analysis_state: 'failed',
+      analysis_message_id: 'analysis-failed',
+      notification_consumed_at: undefined
+    })
+    await expect(repo.findPendingNotifications()).resolves.toEqual([])
+    await expect(
+      repo.transitionAnalysis({
+        sessionId: 'session-1',
+        jobIds: ['job-failed'],
+        messageId: 'different-message',
+        state: 'succeeded'
+      })
+    ).rejects.toThrow(/does not match its durable dispatch/)
   })
 
   it('rejects a mixed-session, missing, or unnotified consumption batch atomically', async () => {
@@ -1093,7 +1463,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     await expect(create('late-job', 'project-1', 'session-1')).rejects.toThrow(/being deleted/i)
     expect((await repo.findNonTerminal()).map((item) => item.job_id)).toEqual(['survivor'])
     expect(await repo.findTerminalUnharvested()).toEqual([])
-    expect(await repo.findErrorUnnotified()).toEqual([])
+    expect(await repo.findNotificationReadyUnnotified()).toEqual([])
     expect((await repo.findByOwner(owner)).map((item) => item.job_id).sort()).toEqual([
       'owned-error',
       'owned-job',

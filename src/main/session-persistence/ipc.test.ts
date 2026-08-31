@@ -390,6 +390,84 @@ describe('session persistence IPC handlers', () => {
     expect(restored.messages[0]?.attribution).toEqual(correctionAttribution)
   })
 
+  it('keeps Compute completion presentation across history without trusting renderer attribution', async () => {
+    const computeAttribution = {
+      kind: 'application' as const,
+      feature: 'compute' as const,
+      purpose: 'job-completion-analysis' as const,
+      deliveryKey: 'compute_done:session-1:job-1',
+      jobIds: ['job-1']
+    }
+    const liveSession = materializeSessionConversationGraph({
+      ...createSession(),
+      messages: [
+        {
+          id: 'compute-delivery-message-1',
+          role: 'user',
+          content: 'A remote job has finished. Please analyze the results.',
+          status: 'complete',
+          eventIds: [],
+          attribution: computeAttribution,
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+    let durable: PersistedChatSession | undefined
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(async () => durable),
+      saveSession: vi.fn(async (session) => {
+        durable = session
+        return { created: false, session }
+      }),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const authority = new MainMessageAttributionAuthority()
+    const handlers = createSessionPersistenceHandlersWithAttributionAuthority(
+      repository,
+      createMockReviewRepository(),
+      authority
+    )
+
+    const presentationOnly = (await handlers.saveSession(liveSession)).session
+    expect(presentationOnly.messages[0]).not.toHaveProperty('attribution')
+    expect(presentationOnly.messages[0]?.presentation).toEqual({
+      kind: 'compute-job-completion'
+    })
+    expect(presentationOnly.conversationGraph?.messages[0]?.presentation).toEqual({
+      kind: 'compute-job-completion'
+    })
+
+    durable = presentationOnly
+    const presentationReload = (await handlers.saveSession(presentationOnly)).session
+    expect(presentationReload.messages[0]?.presentation).toEqual({
+      kind: 'compute-job-completion'
+    })
+
+    durable = undefined
+    authority.recordRuntimeEvent('project-a', {
+      id: 'compute-delivery-event-1',
+      timestamp: 2,
+      kind: 'message',
+      level: 'info',
+      sessionId: liveSession.id,
+      messageId: 'compute-delivery-message-1',
+      role: 'user',
+      text: 'A remote job has finished. Please analyze the results.',
+      attribution: computeAttribution
+    })
+    await handlers.saveSession(liveSession)
+    const historyReplay = await repository.loadOne({
+      projectId: 'project-a',
+      sessionId: 'session-1'
+    })
+
+    expect(historyReplay?.messages[0]?.attribution).toEqual(computeAttribution)
+    expect(historyReplay?.conversationGraph?.messages[0]?.attribution).toEqual(computeAttribution)
+  })
+
   it('does not report a successful session deletion when the repository fails', async () => {
     const repository = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
@@ -474,7 +552,14 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
     const reviewRepository = createMockReviewRepository()
-    registerSessionPersistenceIpcHandlers(repository, reviewRepository)
+    const openRecoveryFolder = vi.fn().mockResolvedValue(undefined)
+    registerSessionPersistenceIpcHandlers(
+      repository,
+      reviewRepository,
+      undefined,
+      undefined,
+      openRecoveryFolder
+    )
 
     expect([...ipcHandlers.keys()]).toEqual([
       'sessions:load-all',
@@ -483,7 +568,8 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-one',
       'sessions:save-session',
       'sessions:update-archive',
-      'sessions:save-manifest'
+      'sessions:save-manifest',
+      'sessions:open-recovery-folder'
     ])
 
     const deleteRequest = { projectId: 'project-a', sessionId: 'session-1' }
@@ -507,6 +593,7 @@ describe('session persistence IPC handlers', () => {
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
     await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
+    await ipcHandlers.get('sessions:open-recovery-folder')?.(event, { projectId: 'project-a' })
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
     expect(repository.loadOne).toHaveBeenCalledWith(deleteRequest)
@@ -514,6 +601,7 @@ describe('session persistence IPC handlers', () => {
     expect(repository.deleteSession).not.toHaveBeenCalled()
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
+    expect(openRecoveryFolder).toHaveBeenCalledWith({ projectId: 'project-a' })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:created', {
       session: durableSession,
       originClientId: 'electron:2'

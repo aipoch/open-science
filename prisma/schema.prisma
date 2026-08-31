@@ -20,20 +20,21 @@ datasource db {
 }
 
 model Project {
-  id          String   @id @default(cuid())
-  name        String
-  description String   @default("")
-  agentContext String  @default("")
-  isExample   Boolean  @default(false)
-  pinned      Boolean  @default(false)
-  archivedAt  DateTime?
-  deletedAt   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String               @id @default(cuid())
+  name             String
+  description      String               @default("")
+  agentContext     String               @default("")
+  isExample        Boolean              @default(false)
+  pinned           Boolean              @default(false)
+  archivedAt       DateTime?
+  deletedAt        DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
   permissionGrants PermissionGrant[]
   previewState     ProjectPreviewState?
   visionEvidence   VisionEvidence[]
   sessions         Session[]
+  memoryEntries    MemoryEntry[]
 }
 
 // Monotonic allocator for the app-wide human-facing Session number. The row is never deleted when
@@ -47,29 +48,29 @@ model SessionNumberSequence {
 // Session keeps this row as a tombstone after its JSON is removed.
 // The existing string `id` remains domain identity; `number` is an unreferenced alternate key.
 model Session {
-  id                    String    @id
-  number                Int       @unique
+  id                    String               @id
+  number                Int                  @unique
   projectId             String
   title                 String
   status                String
   presentedStatus       String
-  pinned                 Boolean   @default(false)
+  pinned                Boolean              @default(false)
   archivedAtMs          BigInt?
-  revision               BigInt    @default(0)
-  activeMessageCount     Int       @default(0)
-  artifactCount          Int       @default(0)
-  filesRevision          Int       @default(0)
-  createdAtMs            BigInt
-  updatedAtMs            BigInt
-  presentedActivityAtMs  BigInt?
-  needsStartupRecovery   Boolean   @default(false)
-  sourceByteLength       BigInt?
-  sourceMtimeMs          BigInt?
-  deletedAtMs            BigInt?
-  project                Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  turnUsage              SessionTurnUsage[]
-  runs                   SessionRun[]
-  artifactRefs           SessionArtifactRef[]
+  revision              BigInt               @default(0)
+  activeMessageCount    Int                  @default(0)
+  artifactCount         Int                  @default(0)
+  filesRevision         Int                  @default(0)
+  createdAtMs           BigInt
+  updatedAtMs           BigInt
+  presentedActivityAtMs BigInt?
+  needsStartupRecovery  Boolean              @default(false)
+  sourceByteLength      BigInt?
+  sourceMtimeMs         BigInt?
+  deletedAtMs           BigInt?
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  turnUsage             SessionTurnUsage[]
+  runs                  SessionRun[]
+  artifactRefs          SessionArtifactRef[]
 
   @@index([projectId, deletedAtMs, archivedAtMs, updatedAtMs, id])
   @@index([deletedAtMs, archivedAtMs, updatedAtMs, id])
@@ -99,6 +100,9 @@ model PendingSessionReconciliation {
 model SessionTurnUsage {
   sessionId         String
   messageId         String
+  frameworkId       String?
+  providerId        String?
+  model             String?
   completedAtMs     BigInt
   inputTokens       BigInt
   cacheTokens       BigInt
@@ -107,7 +111,7 @@ model SessionTurnUsage {
   outputTokens      BigInt
   modelCallCount    Int?
   isRootFrame       Boolean
-  session           Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session           Session                 @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   modelCalls        SessionModelCallUsage[]
 
   @@id([sessionId, messageId])
@@ -124,6 +128,7 @@ model SessionModelCallUsage {
   callIndex          Int
   sourceInvocationId String?
   frameworkId        String?
+  providerId         String?
   backendId          String?
   model              String?
   inputTokens        BigInt
@@ -137,6 +142,28 @@ model SessionModelCallUsage {
 
   @@id([sessionId, callId])
   @@unique([sessionId, messageId, callIndex])
+}
+
+// One provider-reported logical turn outside the durable Agent message graph. These facts have no
+// Session foreign key because a projection rebuild temporarily deletes and recreates live Session
+// rows; direct auxiliary consumption must survive that rebuild.
+model SessionAuxiliaryTurnUsage {
+  sessionId         String
+  eventId           String
+  source            String
+  frameworkId       String
+  providerId        String?
+  model             String?
+  completedAtMs     BigInt
+  inputTokens       BigInt
+  cacheTokens       BigInt
+  cachedReadTokens  BigInt?
+  cachedWriteTokens BigInt?
+  outputTokens      BigInt
+  modelCallCount    Int?
+
+  @@id([sessionId, eventId])
+  @@index([completedAtMs])
 }
 
 // One user-authored root-frame run, excluding hidden control and delegated caller messages.
@@ -208,21 +235,21 @@ model UnreadTaskSession {
 // instance. `sequence` is the atomic mark-all boundary and retention order; `dedupeKey` makes every
 // producer retry-safe without exposing provider payloads in the inbox.
 model NotificationInboxItem {
-  sequence    Int       @id @default(autoincrement())
-  id          String    @unique
-  dedupeKey   String    @unique
-  kind        String
-  source      String?
-  attentionReason String?
-  projectId   String?
-  sessionId   String?
-  originId    String
-  title       String
-  summary     String
-  createdAt   DateTime  @default(now())
-  readAt      DateTime?
-  actionState String?
-  settledAt   DateTime?
+  sequence            Int       @id @default(autoincrement())
+  id                  String    @unique
+  dedupeKey           String    @unique
+  kind                String
+  source              String?
+  attentionReason     String?
+  projectId           String?
+  sessionId           String?
+  originId            String
+  title               String
+  summary             String
+  createdAt           DateTime  @default(now())
+  readAt              DateTime?
+  actionState         String?
+  settledAt           DateTime?
   targetInvalidatedAt DateTime?
 
   @@index([readAt, sequence])
@@ -240,21 +267,21 @@ model NotificationInboxItem {
 // v3 (issue 13): replaced `reasoning` (self-authored prose) with `reviewerLog` (captured action stream
 // as JSON array of ReviewerLogEntry). submit_findings no longer accepts `reasoning`.
 model Review {
-  id            String    @id @default(cuid())
-  projectId     String
-  sessionId     String
-  turnMessageId String
-  scope         String    @default("{}")
-  lifecycle     String    @default("running")
-  outcome       String?
-  errorMessage  String?
-  model         String    @default("")
-  reviewerLog   String    @default("[]")
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  findings      Finding[]
+  id                 String                     @id @default(cuid())
+  projectId          String
+  sessionId          String
+  turnMessageId      String
+  scope              String                     @default("{}")
+  lifecycle          String                     @default("running")
+  outcome            String?
+  errorMessage       String?
+  model              String                     @default("")
+  reviewerLog        String                     @default("[]")
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  findings           Finding[]
   causedDispositions ReviewFindingDisposition[]
-  scopeSnapshot       ReviewScopeSnapshot?
+  scopeSnapshot      ReviewScopeSnapshot?
 
   @@index([projectId, sessionId, createdAt])
   @@index([sessionId])
@@ -265,19 +292,19 @@ model Review {
 // resolution is meaningful only for warn/fail checks. Cascade-deleted with its Review.
 // reflagCount (issue 15): number of times this claim was re-flagged in a Phase 3 fix loop; defaults to 0.
 model Finding {
-  id                String  @id @default(cuid())
-  reviewId          String
-  status            String  @default("pass")
-  resolution        String  @default("open")
-  claim             String  @default("")
-  evidence          String  @default("")
-  locator           String  @default("{}")
-  artifactVersionId String?
-  artifactBindingState String @default("legacy_unverified")
-  sortIndex         Int     @default(0)
-  reflagCount       Int     @default(0)
-  review            Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  dispositions      ReviewFindingDisposition[]
+  id                   String                     @id @default(cuid())
+  reviewId             String
+  status               String                     @default("pass")
+  resolution           String                     @default("open")
+  claim                String                     @default("")
+  evidence             String                     @default("")
+  locator              String                     @default("{}")
+  artifactVersionId    String?
+  artifactBindingState String                     @default("legacy_unverified")
+  sortIndex            Int                        @default(0)
+  reflagCount          Int                        @default(0)
+  review               Review                     @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  dispositions         ReviewFindingDisposition[]
 
   @@index([reviewId])
 }
@@ -336,12 +363,12 @@ model FileOriginSession {
   projectId             String
   sessionId             String
   titleSnapshot         String?
-  state                 String            @default("active")
+  state                 String                    @default("active")
   deletedAt             DateTime?
   deletionOperationId   String?
   retainedReviewIdsJson String?
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
   lineages              ArtifactLineage[]
   uploads               UploadFile[]
   messageSnapshots      ArtifactMessageSnapshot[]
@@ -453,12 +480,12 @@ model ArtifactMessageSnapshot {
 // One immutable generated Artifact save event. Evidence/content fields become immutable once the
 // staging row is published; finalize only advances state and message ownership.
 model ArtifactVersion {
-  id                             String          @id
+  id                             String                   @id
   artifactId                     String
   versionNumber                  Int
   filename                       String
   artifactRunId                  String
-  writeOperationId               String?         @unique
+  writeOperationId               String?                  @unique
   writeRequestChecksum           String?
   rootFrameId                    String
   agentFrameId                   String
@@ -470,7 +497,7 @@ model ArtifactVersion {
   producerRunIndex               Int?
   messageId                      String?
   messageSnapshotId              String?
-  state                          String          @default("staging")
+  state                          String                   @default("staging")
   contentStorageKey              String
   evidenceStorageKey             String
   contentType                    String?
@@ -478,17 +505,17 @@ model ArtifactVersion {
   checksum                       String
   evidenceJson                   String
   evidenceChecksum               String
-  evidenceSchemaVersion          Int             @default(1)
+  evidenceSchemaVersion          Int                      @default(1)
   executionSnapshotJson          String?
   executionSnapshotChecksum      String?
   executionSnapshotStorageKey    String?
   executionSnapshotSchemaVersion Int?
-  createdAt                      DateTime        @default(now())
-  updatedAt                      DateTime        @updatedAt
-  artifact                       ArtifactLineage @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  createdAt                      DateTime                 @default(now())
+  updatedAt                      DateTime                 @updatedAt
+  artifact                       ArtifactLineage          @relation(fields: [artifactId], references: [id], onDelete: Cascade)
   messageSnapshot                ArtifactMessageSnapshot? @relation(fields: [messageSnapshotId], references: [id], onDelete: SetNull)
-  inputs                         ArtifactVersionInput[] @relation("ProducedArtifactInputs")
-  sourceInputs                   ArtifactVersionInput[] @relation("ArtifactVersionSourceInputs")
+  inputs                         ArtifactVersionInput[]   @relation("ProducedArtifactInputs")
+  sourceInputs                   ArtifactVersionInput[]   @relation("ArtifactVersionSourceInputs")
 
   @@unique([artifactId, versionNumber])
   @@index([artifactId, createdAt])
@@ -517,9 +544,9 @@ model ArtifactVersionInput {
   checksum                String
   storageKey              String
   strongestAssociation    String
-  artifactVersion         ArtifactVersion  @relation("ProducedArtifactInputs", fields: [artifactVersionId], references: [id], onDelete: Cascade)
-  sourceArtifactVersion   ArtifactVersion? @relation("ArtifactVersionSourceInputs", fields: [sourceArtifactVersionId], references: [id], onDelete: Restrict)
-  sourceUploadVersion     UploadVersion?   @relation("UploadVersionSourceInputs", fields: [sourceUploadVersionId], references: [id], onDelete: Restrict)
+  artifactVersion         ArtifactVersion   @relation("ProducedArtifactInputs", fields: [artifactVersionId], references: [id], onDelete: Cascade)
+  sourceArtifactVersion   ArtifactVersion?  @relation("ArtifactVersionSourceInputs", fields: [sourceArtifactVersionId], references: [id], onDelete: Restrict)
+  sourceUploadVersion     UploadVersion?    @relation("UploadVersionSourceInputs", fields: [sourceUploadVersionId], references: [id], onDelete: Restrict)
   sourceOrigin            FileOriginSession @relation(fields: [sourceProjectId, sourceSessionId], references: [projectId, sessionId], onDelete: Restrict)
 
   @@unique([artifactVersionId, sourceKind, inputFileVersionId])
@@ -576,52 +603,81 @@ model ReviewScopeSnapshot {
 // Security: free-form execution data is encrypted when OS secure storage is available; commandHash
 // remains plaintext for deduplication. Credentials use the separate ComputeCredential store.
 model ComputeJob {
-  id              String    @id @default(cuid())
-  providerId      String
-  shape           String
-  sessionId       String
-  projectId       String
-  status          String    @default("submitted")
-  intent          String
-  command         String
-  commandHash     String
+  id                     String    @id @default(cuid())
+  providerId             String
+  shape                  String
+  sessionId              String
+  projectId              String
+  status                 String    @default("submitted")
+  intent                 String
+  command                String
+  commandHash            String
   // NULL marks historical plaintext rows; false marks disclosed plaintext fallback; true marks
   // rows whose free-form execution data must be decrypted through OS secure storage.
   sensitiveDataEncrypted Boolean?
-  environment     String?
-  resourceRequest String?
-  inputManifest   String?
-  outputManifest  String?
-  harvestConfig   String?
-  timeoutSeconds  Int?
-  remoteWorkdir   String?
-  remoteHandle    String?
-  exitCode        Int?
-  stdoutTail      String?
-  stderrTail      String?
-  errorCode       String?
+  environment            String?
+  resourceRequest        String?
+  inputManifest          String?
+  outputManifest         String?
+  harvestConfig          String?
+  timeoutSeconds         Int?
+  remoteWorkdir          String?
+  remoteHandle           String?
+  exitCode               Int?
+  stdoutTail             String?
+  stderrTail             String?
+  errorCode              String?
   // lastPollError: set when SSH connectivity fails during a poll tick (design.md §8 boundary 2).
   // The job status is NOT changed — this field surfaces the transient error to the UI.
   // Cleared on the next successful poll. retry_after_user_action is always true for this field.
-  lastPollError           String?
+  lastPollError          String?
   // 3b harvest columns (compute-harvest issue 01): pure-additive, null until Phase 3b fills them.
   // harvestError: summary of a harvest_failed outcome; non-null means harvest completed with errors.
-  harvestError            String?
+  harvestError           String?
   // leftOnRemote: JSON [{uri, size_mb, reason}] — files left on the remote side after harvest.
-  leftOnRemote            String?
+  leftOnRemote           String?
   // notifiedAt: set when the compute_done notification has been enqueued to the inbox.
-  notifiedAt              DateTime?
+  notifiedAt             DateTime?
   // notificationConsumedAt: set by wait_for_notification when the notification is consumed.
-  notificationConsumedAt  DateTime?
-  createdAt               DateTime  @default(now())
-  submittedAt             DateTime?
-  startedAt               DateTime?
-  finishedAt              DateTime?
-  harvestedAt             DateTime?
+  notificationConsumedAt DateTime?
+  // Durable automatic-analysis delivery state. NULL preserves historical pending/consumed rows.
+  analysisState           String?
+  analysisMessageId       String?
+  analysisUpdatedAt       DateTime?
+  createdAt              DateTime  @default(now())
+  submittedAt            DateTime?
+  startedAt              DateTime?
+  finishedAt             DateTime?
+  harvestedAt            DateTime?
+  operations             ComputeJobOperation[]
 
   @@index([providerId])
   @@index([sessionId])
   @@index([status])
+}
+
+// Durable lifecycle operations keep requested intent outside the closed ComputeJob execution
+// status/error vocabulary. `eligibleAt = null` means an active operation is immediately ready.
+// Kinds and settled outcomes are closed by SQLite checks and exhaustive TypeScript codecs.
+model ComputeJobOperation {
+  id             String     @id
+  jobId          String
+  kind           String
+  phase          String     @default("active")
+  outcome        String?
+  revision       Int        @default(1)
+  attemptCount   Int        @default(0)
+  eligibleAt     DateTime?
+  claimToken     String?
+  claimExpiresAt DateTime?
+  createdAt      DateTime   @default(now())
+  settledAt      DateTime?
+  updatedAt      DateTime   @updatedAt
+  job            ComputeJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, kind])
+  @@index([kind, phase, eligibleAt, createdAt])
+  @@index([kind, phase, claimExpiresAt])
 }
 
 // A registered remote SSH compute host (Compute settings tab). Phase 1 (issue 01) manages the record
@@ -630,25 +686,25 @@ model ComputeJob {
 // alias + optional non-secret overrides are stored;
 // no credentials or private keys ever land here (design.md §1/§3).
 model ComputeHost {
-  id               String    @id @default(cuid())
-  providerId       String    @unique // "ssh:<alias>"
-  displayName      String
-  shape            String    @default("direct_ssh") // direct_ssh | scheduler_cluster | bridge_runner
-  sshAlias         String
-  sshOverrides     String? // JSON: { user?, port?, identityFile? } — never credentials
-  authenticationMode String @default("ssh_config")
-  authenticationRevision Int @default(1)
-  lastVerifiedAt   DateTime?
-  scratchRoot      String?
-  scratchPinned    Boolean   @default(false)
-  concurrencyLimit Int? // stored but not enforced in Phase 1
-  probeResult      String? // JSON probe snapshot, written by a later issue
-  detailsDoc       String    @default("") // markdown notes, <= 32768 chars
-  detailsUpdatedAt DateTime?
-  detailsUpdatedBy String? // user | agent
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-  credential       ComputeCredential?
+  id                     String             @id @default(cuid())
+  providerId             String             @unique // "ssh:<alias>"
+  displayName            String
+  shape                  String             @default("direct_ssh") // direct_ssh | scheduler_cluster | bridge_runner
+  sshAlias               String
+  sshOverrides           String? // JSON: { user?, port?, identityFile? } — never credentials
+  authenticationMode     String             @default("ssh_config")
+  authenticationRevision Int                @default(1)
+  lastVerifiedAt         DateTime?
+  scratchRoot            String?
+  scratchPinned          Boolean            @default(false)
+  concurrencyLimit       Int? // stored but not enforced in Phase 1
+  probeResult            String? // JSON probe snapshot, written by a later issue
+  detailsDoc             String             @default("") // markdown notes, <= 32768 chars
+  detailsUpdatedAt       DateTime?
+  detailsUpdatedBy       String? // user | agent
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  credential             ComputeCredential?
 }
 
 // Main-process-only password ciphertext. The renderer has no query path to this record.
@@ -662,12 +718,12 @@ model ComputeCredential {
 
 // Makes a retried local create command return the already-created Host instead of duplicating it.
 model ComputeAuthOperation {
-  id             String   @id
-  providerId     String
-  operationKind  String
+  id                 String   @id
+  providerId         String
+  operationKind      String
   requestFingerprint String
-  resultRevision Int
-  createdAt      DateTime @default(now())
+  resultRevision     Int
+  createdAt          DateTime @default(now())
 
   @@index([providerId])
 }
@@ -715,4 +771,47 @@ model TagAssignment {
 
   @@id([tagId, resourceType, resourceId])
   @@index([resourceType, resourceId])
+}
+
+// Memory categories are profile-global, while entries may additionally belong to one Project.
+// Agent provenance stays main-process only; renderer views omit sourceSessionId and sourceAgentId.
+model MemorySettings {
+  id        String   @id
+  enabled   Boolean  @default(false)
+  revision  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MemoryCategory {
+  id         String        @id @default(cuid())
+  systemKey  String?       @unique
+  name       String?
+  nameKey    String?       @unique
+  guidance   String        @default("")
+  autoRecall Boolean       @default(false)
+  revision   Int           @default(1)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  entries    MemoryEntry[]
+}
+
+model MemoryEntry {
+  id              String          @id @default(cuid())
+  categoryId      String?
+  projectId       String?
+  content         String
+  contentKey      String
+  origin          String
+  sourceSessionId String?
+  sourceAgentId   String?
+  revision        Int             @default(1)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  category        MemoryCategory? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  project         Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, contentKey])
+  @@index([categoryId, updatedAt])
+  @@index([projectId, updatedAt])
 }

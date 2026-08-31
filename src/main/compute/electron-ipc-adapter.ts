@@ -1,16 +1,19 @@
 import type { IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 
-import type {
-  ChangeComputeHostAuthenticationRequest,
-  ComputeApprovalDecision,
-  ComputeJobsListFilter,
-  ComputeJobsPendingNotificationFilter,
-  CreateComputeHostRequest,
-  CreatePasswordComputeHostRequest,
-  DeleteComputeHostRequest,
-  DetailsAuthor,
-  ResetPasswordComputeHostRequest
+import {
+  normalizeComputeApprovalDecision,
+  type CancelComputeJobRequest,
+  type ChangeComputeHostAuthenticationRequest,
+  type ComputeApprovalDecisionInput,
+  type ComputeJobsListFilter,
+  type ComputeJobsPendingNotificationFilter,
+  type ComputeJobAnalysisTransition,
+  type CreateComputeHostRequest,
+  type CreatePasswordComputeHostRequest,
+  type DeleteComputeHostRequest,
+  type DetailsAuthor,
+  type ResetPasswordComputeHostRequest
 } from '../../shared/compute'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import type { DownloadDest, SerializableRemoteFsError } from '../../shared/remote-fs'
@@ -96,9 +99,9 @@ const downloadDestSchema = z.discriminatedUnion('kind', [
 const computeApprovalResponseSchema = z
   .object({
     id: z.string(),
-    decision: z.enum(['once', 'conversation', 'project', 'global', 'deny'])
+    decision: z.enum(['once', 'session', 'conversation', 'project', 'global', 'deny'])
   })
-  .strict() satisfies z.ZodType<{ id: string; decision: ComputeApprovalDecision }>
+  .strict() satisfies z.ZodType<{ id: string; decision: ComputeApprovalDecisionInput }>
 
 const computeJobsListFilterSchema = z.union([
   z.object({ sessionId: z.string(), status: stringArraySchema.optional() }).strict(),
@@ -109,6 +112,23 @@ const computeJobsPendingNotificationFilterSchema = z.union([
   z.string(),
   z.object({ allSessions: z.literal(true) }).strict()
 ]) satisfies z.ZodType<ComputeJobsPendingNotificationFilter>
+const computeJobAnalysisTransitionSchema = z
+  .object({
+    sessionId: z.string(),
+    jobIds: stringArraySchema,
+    messageId: z.string(),
+    state: z.enum(['dispatched', 'succeeded', 'failed', 'cancelled'])
+  })
+  .strict() satisfies z.ZodType<ComputeJobAnalysisTransition>
+
+const cancelComputeJobRequestSchema = z
+  .object({
+    jobId: z.string(),
+    providerId: z.string(),
+    sessionId: z.string(),
+    projectId: z.string()
+  })
+  .strict() satisfies z.ZodType<CancelComputeJobRequest>
 
 const computeIpcArgumentSchemas = Object.freeze({
   'compute:list': z.tuple([]),
@@ -125,6 +145,7 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:details:get': z.tuple([z.string()]),
   'compute:details:save': z.tuple([z.string(), z.string(), z.string(), detailsAuthorSchema]),
   'compute:scratch:set': z.tuple([z.string(), z.string()]),
+  'compute:scratch:clear': z.tuple([z.string()]),
   'compute:concurrency:set': z.tuple([z.string(), finiteNumberSchema]),
   'compute:session:set-concurrency-limit': z.tuple([z.string(), finiteNumberSchema]),
   'compute:session:status': z.tuple([z.string()]),
@@ -135,8 +156,10 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:approval-replay': z.tuple([z.string()]),
   'compute:approval-replay-pending': z.tuple([]),
   'compute:jobs:list': z.tuple([computeJobsListFilterSchema]),
+  'compute:jobs:cancel': z.tuple([cancelComputeJobRequestSchema]),
   'compute:jobs:pending-notification': z.tuple([computeJobsPendingNotificationFilterSchema]),
   'compute:jobs:mark-consumed': z.tuple([z.string(), stringArraySchema]),
+  'compute:jobs:transition-analysis': z.tuple([computeJobAnalysisTransitionSchema]),
   'compute:enabled-hosts:get': z.tuple([z.string()]),
   'compute:enabled-hosts:set': z.tuple([z.string(), stringArraySchema]),
   'compute:host-enabled:set': z.tuple([z.string(), z.string(), z.boolean()]),
@@ -205,6 +228,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   handleComputeIpc('compute:scratch:set', (_event, providerId, path) =>
     handlers.scratchSet(providerId, path)
   )
+  handleComputeIpc('compute:scratch:clear', (_event, providerId) =>
+    handlers.scratchClear(providerId)
+  )
   handleComputeIpc('compute:concurrency:set', (_event, providerId, limit) =>
     handlers.concurrencySet(providerId, limit)
   )
@@ -243,15 +269,16 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   handleComputeIpc('compute:reveal-in-folder', (_event, filePath) => {
     handlers.revealInFolder(filePath)
   })
-  // Renderer responds to an in-flight approval card (issue 04/05). Decision now carries the
-  // chosen scope: 'once' | 'conversation' | 'project' | 'global' | 'deny'.
+  // Renderer responds to an in-flight approval card. Legacy `conversation` input is normalized at
+  // this transport boundary; the broker only receives the canonical Session scope.
   handleComputeIpc('compute:approval-respond', (_event, request) => {
-    handlers.approvalRespond(request.id, request.decision)
+    handlers.approvalRespond(request.id, normalizeComputeApprovalDecision(request.decision))
   })
   handleComputeIpc('compute:approval-replay', (_event, id) => handlers.approvalReplay(id))
   handleComputeIpc('compute:approval-replay-pending', () => handlers.approvalReplayPending())
   // Returns a Session job feed or the global non-terminal activity projection.
   handleComputeIpc(COMPUTE_JOBS_LIST_CHANNEL, (_event, filter) => handlers.jobsList(filter))
+  handleComputeIpc('compute:jobs:cancel', (_event, request) => handlers.jobsCancel(request))
   // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null — issue 05).
   handleComputeIpc('compute:jobs:pending-notification', (_event, filter) =>
     handlers.jobsPendingNotification(filter)
@@ -259,6 +286,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   // Marks job ids as notification-consumed (analysis turn done — issue 05).
   handleComputeIpc('compute:jobs:mark-consumed', (_event, sessionId, jobIds) =>
     handlers.jobsMarkConsumed(sessionId, jobIds)
+  )
+  handleComputeIpc('compute:jobs:transition-analysis', (_event, request) =>
+    handlers.jobsTransitionAnalysis(request)
   )
 
   // Per-session enabled Compute Hosts. Main commits Session authority before updating the runtime

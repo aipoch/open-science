@@ -239,6 +239,27 @@ class SessionPersistenceStateOwner {
     )
     this.isSessionMetadataComplete = isComplete
   }
+  replaceProjectMetadata(projectId: string, sessions: readonly SessionMetadata[]): void {
+    const nextMetadata = new Map(this.sessionMetadata)
+    for (const [sessionId, metadata] of nextMetadata) {
+      if (metadata.projectId === projectId) nextMetadata.delete(sessionId)
+    }
+    for (const session of sessions) {
+      if (session.projectId !== projectId) {
+        throw new Error('Cannot replace Project metadata with a Session owned by another Project.')
+      }
+      const existing = nextMetadata.get(session.id)
+      if (existing && existing.projectId !== projectId) {
+        throw new Error('Cannot replace Project metadata with a duplicate Session identity.')
+      }
+      nextMetadata.set(session.id, {
+        id: session.id,
+        projectId: session.projectId,
+        title: session.title
+      })
+    }
+    this.sessionMetadata = nextMetadata
+  }
   recordSession(session: PersistedChatSession): void {
     this.sessionMetadata.set(session.id, {
       id: session.id,
@@ -318,7 +339,7 @@ class SessionPersistenceStateOwner {
     }
     if (
       Object.keys(patch).some(
-        (owner) => owner !== 'plan' && owner !== 'permission' && owner !== 'delegatedWork'
+        (owner) => !['plan', 'permission', 'delegatedWork', 'pdfContext'].includes(owner)
       )
     ) {
       throw new Error('Session runtime context patch contains an unknown authority owner.')

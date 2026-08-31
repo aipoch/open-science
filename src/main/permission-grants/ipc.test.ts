@@ -80,7 +80,7 @@ describe('permission grant IPC', () => {
     const registry = {
       subscribe: vi.fn(() => unsubscribe)
     } as unknown as PermissionGrantRegistry
-    registrationFailure.channel = 'permissions:restore'
+    registrationFailure.channel = 'permissions:restore-defaults'
 
     expect(() =>
       registerPermissionGrantIpcHandlers({
@@ -103,7 +103,7 @@ describe('permission grant IPC', () => {
         throw disposalError
       })
     } as unknown as PermissionGrantRegistry
-    registrationFailure.channel = 'permissions:restore'
+    registrationFailure.channel = 'permissions:restore-defaults'
     registrationFailure.error = registrationError
     let thrown: unknown
 
@@ -160,6 +160,7 @@ describe('permission grant IPC', () => {
     let listener: (() => void) | undefined
     const registry = {
       list: vi.fn().mockResolvedValue([]),
+      remember: vi.fn(),
       revoke: vi.fn().mockResolvedValue({ grants: [], conflicts: [] }),
       extendUndo: vi.fn().mockResolvedValue({
         undoToken: 'undo-1',
@@ -182,10 +183,12 @@ describe('permission grant IPC', () => {
 
     expect([...handlers.keys()]).toEqual([
       'permissions:list',
+      'permissions:restore-defaults',
       'permissions:revoke',
       'permissions:extend-undo',
       'permissions:restore'
     ])
+    await handlers.get('permissions:restore-defaults')?.(undefined)
     await handlers.get('permissions:revoke')?.(undefined, {
       grants: [{ id: 'grant-1', revision: 2 }]
     })

@@ -38,12 +38,26 @@ vi.mock('./ssh-runner', async (importOriginal) => {
 // Fixed nonce injected into the poller under test so fixtures can mirror the marker format the
 // poller emits. Production uses a random per-tick nonce (see JobPoller#makeNonce default).
 const NONCE = 'NONCE123_'
+const RECOVERED_STARTED_AT_SECONDS = 1_700_000_000
+const RECOVERED_STARTED_AT = new Date(RECOVERED_STARTED_AT_SECONDS * 1000)
 
 // Prefixes structural marker lines with the fixed nonce, mirroring what the poller emits/parses.
 const withNonce = (lines: string[]): string =>
   lines
-    .map((l) => (/^(JOB_START:|alive:|STDOUT_END:|STDERR_END:)/.test(l) ? NONCE + l : l))
+    .map((line, index) => {
+      if (/^(JOB_START:|alive:|STDOUT_END:|STDERR_END:)/.test(line)) return NONCE + line
+      if (index > 0 && lines[index - 1]?.startsWith('alive:')) return `${NONCE}exit:${line}`
+      return line
+    })
     .join('\n')
+
+const noLaunchRecoveryOutput = [
+  'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+  'workdir:0',
+  'exit_code:',
+  'pid:',
+  'cwd_match:0'
+].join('\n')
 
 const makeSshRunner = (result: Awaited<ReturnType<SshRunner['run']>>): SshRunner => ({
   run: vi.fn(() => Promise.resolve(result))
@@ -129,6 +143,43 @@ const sampleHost = (): import('../../shared/compute').ComputeHost => ({
 // ---------------------------------------------------------------------------
 
 describe('JobPoller', () => {
+  it('reports startup integrity issues once without preventing ordinary recovery ticks', async () => {
+    const integrityIssue = {
+      jobId: 'unknown-job',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      code: 'unknown-status' as const,
+      disposition: 'quarantined' as const,
+      rawStatus: 'future_state'
+    }
+    const jobRepo = {
+      scanIntegrity: vi.fn().mockResolvedValue([integrityIssue]),
+      findNonTerminal: vi.fn().mockResolvedValue([])
+    } as unknown as ComputeJobRepository
+    const onIntegrityIssues = vi.fn()
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(
+        makeSshRunner({
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+      ),
+      hostRepository: { get: vi.fn() } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      onIntegrityIssues
+    })
+
+    await poller.tick()
+    await poller.tick()
+
+    expect(jobRepo.scanIntegrity).toHaveBeenCalledOnce()
+    expect(onIntegrityIssues).toHaveBeenCalledWith([integrityIssue])
+    expect(jobRepo.findNonTerminal).toHaveBeenCalledTimes(2)
+  })
+
   it('pause waits for in-flight harvest work before deletion continues', async () => {
     let finishHarvest!: () => void
     const harvest = vi.fn(
@@ -139,7 +190,7 @@ describe('JobPoller', () => {
     )
     const jobRepo = {
       findTerminalUnharvested: vi.fn(async () => [makeJob({ status: 'success' })]),
-      findErrorUnnotified: vi.fn(async () => []),
+      findNotificationReadyUnnotified: vi.fn(async () => []),
       findNonTerminal: vi.fn(async () => [])
     } as unknown as ComputeJobRepository
     const poller = new JobPoller({
@@ -225,6 +276,48 @@ describe('JobPoller', () => {
     expect(onJobUpdated).toHaveBeenCalled()
   })
 
+  it('keeps lifecycle unchanged and records an automatic retry for truncated output', async () => {
+    const job = makeJob()
+    const update = vi.fn((_id: string, updates: unknown) =>
+      Promise.resolve({ ...job, ...(updates as object) })
+    )
+    const jobRepository = {
+      findNonTerminal: vi.fn(async () => [job]),
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: withNonce([
+        'JOB_START:job-1',
+        'alive:0',
+        '0',
+        'done',
+        'STDOUT_END:job-1',
+        '',
+        'STDERR_END:job-1'
+      ]),
+      stderr: '',
+      truncated: true,
+      timedOut: false
+    })
+
+    await new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: {} as ComputeHostRepository,
+      jobRepository,
+      makeNonce: () => NONCE
+    }).tick()
+
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        lastPollError: 'poll_protocol_incomplete',
+        retryAfterUserAction: false
+      })
+    )
+    expect(update).not.toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'success' }))
+  })
+
   it('parses protocol markers before redacting persisted job tails', async () => {
     const job = makeJob()
     const update = vi.fn((_id: string, updates: unknown) =>
@@ -278,12 +371,12 @@ describe('JobPoller', () => {
       expect.objectContaining({
         status: 'success',
         exitCode: 0,
-        stdoutTail: 'stdout contains [redacted]\n',
+        stdoutTail: 'existing first-line fixture\nstdout contains [redacted]\n',
         stderrTail: 'stderr contains [redacted]'
       })
     )
     expect(redactSensitiveOutputs).toHaveBeenCalledWith([
-      'stdout contains 1\n',
+      'existing first-line fixture\nstdout contains 1\n',
       'stderr contains 1'
     ])
   })
@@ -541,7 +634,7 @@ describe('JobPoller', () => {
     const pollOutput = [
       `${NONCE}JOB_START:job-1`,
       `${NONCE}alive:1`,
-      '0',
+      `${NONCE}exit:0`,
       'JOB_START:job-1', // adversarial line inside the stdout tail
       'alive:0', // adversarial line inside the stdout tail
       `${NONCE}STDOUT_END:job-1`,
@@ -756,92 +849,267 @@ describe('JobPoller', () => {
     )
   })
 
-  it('poller fallback: kills and marks timeout when elapsed > startedAt+timeout+60s grace', async () => {
-    // Started timeout+61 seconds ago; the remote timeout command may have been absent or failed.
-    // The poller should SSH-kill the pid and mark the job as timeout.
-    const now = Date.now()
-    const timeoutSecs = 10
-    const graceMs = (timeoutSecs + 61) * 1000 // well past grace
-    const job = makeJob({
-      timeout_seconds: timeoutSecs,
-      started_at: now - graceMs
-    })
-    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
-    const updateIfStatus = guardStatusUpdate(update)
-    const jobRepo = {
-      findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      get: vi.fn(() => Promise.resolve(job)),
-      update,
-      updateIfStatus
-    } as unknown as ComputeJobRepository
-    const hostRepo = {
-      get: vi.fn(() => Promise.resolve(sampleHost()))
-    } as unknown as ComputeHostRepository
+  it.each([
+    { ownership: 'mismatch', expectedSignals: 0, expectedOperations: 2 },
+    { ownership: 'owned', expectedSignals: 1, expectedOperations: 3 }
+  ] as const)(
+    'poller fallback: handles $ownership pid ownership safely and still marks timeout',
+    async ({ ownership, expectedSignals, expectedOperations }) => {
+      // Started timeout+61 seconds ago; the remote timeout command may have been absent or failed.
+      // The poller should SSH-kill the pid and mark the job as timeout.
+      const now = Date.now()
+      const timeoutSecs = 10
+      const graceMs = (timeoutSecs + 61) * 1000 // well past grace
+      const job = makeJob({
+        timeout_seconds: timeoutSecs,
+        started_at: now - graceMs
+      })
+      const update = vi.fn((_id: string, u: unknown) =>
+        Promise.resolve({ ...job, ...(u as object) })
+      )
+      const updateIfStatus = guardStatusUpdate(update)
+      const jobRepo = {
+        findNonTerminal: vi.fn(() => Promise.resolve([job])),
+        get: vi.fn(() => Promise.resolve(job)),
+        update,
+        updateIfStatus
+      } as unknown as ComputeJobRepository
+      const hostRepo = {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository
 
-    // Process is still alive, no exit_code — triggers the poller fallback kill path.
-    const pollOutput = withNonce([
-      'JOB_START:job-1',
-      'alive:1',
-      '',
-      '',
-      'STDOUT_END:job-1',
-      '',
-      'STDERR_END:job-1'
-    ])
+      // Process is still alive, no exit_code — triggers the poller fallback kill path.
+      const pollOutput = withNonce([
+        'JOB_START:job-1',
+        'alive:1',
+        '',
+        '',
+        'STDOUT_END:job-1',
+        '',
+        'STDERR_END:job-1'
+      ])
 
-    // runner.run is called twice: once for poll, once for kill.
-    const runFn = vi.fn()
-    runFn.mockResolvedValueOnce({
-      exitCode: 0,
-      stdout: pollOutput,
-      stderr: '',
-      truncated: false,
-      timedOut: false
-    })
-    runFn.mockResolvedValueOnce({
-      exitCode: 0,
-      stdout: '',
-      stderr: '',
-      truncated: false,
-      timedOut: false
-    })
-    const runner: SshRunner = { run: runFn }
-    const onJobUpdated = vi.fn()
+      const signals: number[] = []
+      const runFn = vi.fn(async (_target, command: string) => {
+        if (runFn.mock.calls.length === 1) {
+          return {
+            exitCode: 0,
+            stdout: pollOutput,
+            stderr: '',
+            truncated: false,
+            timedOut: false
+          }
+        }
+        // This fake models the SSH boundary semantically: signal operations mutate remote process
+        // state, while the ownership probe returns the configured remote observation.
+        if (/^kill [0-9]/.test(command) || command.includes('kill -TERM')) {
+          signals.push(1234)
+          return {
+            exitCode: 0,
+            stdout: 'terminated',
+            stderr: '',
+            truncated: false,
+            timedOut: false
+          }
+        }
+        return { exitCode: 0, stdout: ownership, stderr: '', truncated: false, timedOut: false }
+      })
+      const runner: SshRunner = { run: runFn }
+      const onJobUpdated = vi.fn()
 
-    const poller = new JobPoller({
-      connectionBroker: brokerFromRunner(runner),
-      hostRepository: hostRepo,
-      jobRepository: jobRepo,
-      onJobUpdated,
-      makeNonce: () => NONCE
-    })
-    await poller.tick()
+      const poller = new JobPoller({
+        connectionBroker: brokerFromRunner(runner),
+        hostRepository: hostRepo,
+        jobRepository: jobRepo,
+        onJobUpdated,
+        makeNonce: () => NONCE
+      })
+      await poller.tick()
 
-    // Must have been updated to timeout.
-    expect(update).toHaveBeenCalledWith(
-      'job-1',
-      expect.objectContaining({ status: 'timeout', errorCode: 'timeout' })
-    )
-    // Second run call should have been the kill command.
-    expect(runFn).toHaveBeenCalledTimes(2)
-    const pollCall = runFn.mock.calls[0]
-    const killCall = runFn.mock.calls[1]
-    expect(pollCall[1]).toContain('/proc/$pid/cwd')
-    expect(pollCall[1]).toContain('process_workdir')
-    expect(pollCall[1]).toContain('process_owned_by_workdir 1234 "$workdir" && kill -0 1234')
-    expect(killCall[1]).toContain('kill')
-    expect(killCall[1]).toContain('1234') // pid from makeJob
-    expect(killCall[1]).toContain('/proc/$pid/cwd')
-    expect(killCall[1]).toContain('process_workdir')
-    expect(killCall[1]).toContain('process_owned_by_workdir 1234 "$workdir" && kill 1234')
-    expect(killCall[1]).toContain('process_owned_by_workdir 1234 "$workdir" && kill -9 1234')
-    expect(runFn.mock.invocationCallOrder[1]).toBeLessThan(
-      updateIfStatus.mock.invocationCallOrder[0]
-    )
-    expect(updateIfStatus.mock.invocationCallOrder[0]).toBeLessThan(
-      onJobUpdated.mock.invocationCallOrder[0]
-    )
-  })
+      // Must have been updated to timeout.
+      expect(update).toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ status: 'timeout', errorCode: 'timeout' })
+      )
+      expect(signals).toHaveLength(expectedSignals)
+      expect(runFn).toHaveBeenCalledTimes(expectedOperations)
+      expect(runFn.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        updateIfStatus.mock.invocationCallOrder[0]
+      )
+      expect(updateIfStatus.mock.invocationCallOrder[0]).toBeLessThan(
+        onJobUpdated.mock.invocationCallOrder[0]
+      )
+    }
+  )
+
+  it.each(['unknown', 'unexpected-output'] as const)(
+    'poller fallback: keeps the job active when ownership is $ownership',
+    async (ownership) => {
+      const job = makeJob({ timeout_seconds: 10, started_at: Date.now() - 71_000 })
+      const update = vi.fn((_id: string, updates: unknown) =>
+        Promise.resolve({ ...job, ...(updates as object) })
+      )
+      const jobRepo = {
+        findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+        findNotificationReadyUnnotified: vi.fn(() => Promise.resolve([])),
+        findNonTerminal: vi.fn(() => Promise.resolve([job])),
+        get: vi.fn(() => Promise.resolve(job)),
+        update,
+        updateIfStatus: guardStatusUpdate(update)
+      } as unknown as ComputeJobRepository
+      const hostRepo = {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository
+      const pollOutput = withNonce([
+        'JOB_START:job-1',
+        'alive:1',
+        '',
+        '',
+        'STDOUT_END:job-1',
+        '',
+        'STDERR_END:job-1'
+      ])
+      const runFn = vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: pollOutput,
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: ownership,
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: pollOutput,
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'owned',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'terminated',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+      const harvestFn = vi.fn(async () => undefined)
+      const poller = new JobPoller({
+        connectionBroker: brokerFromRunner({ run: runFn }),
+        hostRepository: hostRepo,
+        jobRepository: jobRepo,
+        harvestFn,
+        makeNonce: () => NONCE
+      })
+
+      await poller.tick()
+
+      expect(update).toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ lastPollError: 'timeout_termination_unconfirmed' })
+      )
+      expect(update).not.toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ status: 'timeout' })
+      )
+      expect(runFn).toHaveBeenCalledTimes(2)
+      expect(harvestFn).not.toHaveBeenCalled()
+
+      await poller.tick()
+
+      expect(update).toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ status: 'timeout', errorCode: 'timeout' })
+      )
+      expect(runFn).toHaveBeenCalledTimes(5)
+      await vi.waitFor(() => expect(harvestFn).toHaveBeenCalledOnce())
+    }
+  )
+
+  it.each([
+    { failure: 'timeout', result: { exitCode: null, truncated: false, timedOut: true } },
+    { failure: 'truncated', result: { exitCode: 0, truncated: true, timedOut: false } },
+    { failure: 'nonzero', result: { exitCode: 1, truncated: false, timedOut: false } }
+  ] as const)(
+    'poller fallback: keeps the job active when guarded termination is $failure',
+    async ({ result }) => {
+      const job = makeJob({ timeout_seconds: 10, started_at: Date.now() - 71_000 })
+      const update = vi.fn((_id: string, updates: unknown) =>
+        Promise.resolve({ ...job, ...(updates as object) })
+      )
+      const jobRepo = {
+        findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+        findNotificationReadyUnnotified: vi.fn(() => Promise.resolve([])),
+        findNonTerminal: vi.fn(() => Promise.resolve([job])),
+        get: vi.fn(() => Promise.resolve(job)),
+        update,
+        updateIfStatus: guardStatusUpdate(update)
+      } as unknown as ComputeJobRepository
+      const hostRepo = {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository
+      const pollOutput = withNonce([
+        'JOB_START:job-1',
+        'alive:1',
+        '',
+        '',
+        'STDOUT_END:job-1',
+        '',
+        'STDERR_END:job-1'
+      ])
+      const runFn = vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: pollOutput,
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'owned',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+        .mockResolvedValueOnce({ ...result, stdout: '', stderr: '' })
+      const harvestFn = vi.fn(async () => undefined)
+      const poller = new JobPoller({
+        connectionBroker: brokerFromRunner({ run: runFn }),
+        hostRepository: hostRepo,
+        jobRepository: jobRepo,
+        harvestFn,
+        makeNonce: () => NONCE
+      })
+
+      await poller.tick()
+
+      expect(update).toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ lastPollError: 'timeout_termination_unconfirmed' })
+      )
+      expect(update).not.toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ status: 'timeout' })
+      )
+      expect(runFn).toHaveBeenCalledTimes(3)
+      expect(harvestFn).not.toHaveBeenCalled()
+    }
+  )
 
   it('does not mark timeout when shutdown cancels the fallback kill', async () => {
     const job = makeJob({ timeout_seconds: 10, started_at: Date.now() - 71_000 })
@@ -1011,8 +1279,8 @@ describe('JobPoller', () => {
   it.each(['ssh_config', 'password'] as const)(
     'marks a submitted %s job without pid as interrupted on restart',
     async () => {
-      // A submitted job with no remote_handle AND no in-flight dispatch = dispatch was interrupted by
-      // an app restart (the tracker is empty after a restart). Mark it error/dispatch_failed.
+      // The empty tracker identifies a restart candidate; the remote probe proves its deterministic
+      // workdir was never created, so it is safe to mark dispatch_failed.
       const job = makeJob({ status: 'submitted', remote_handle: undefined })
       const update = vi.fn((_id: string, u: unknown) =>
         Promise.resolve({ ...job, ...(u as object) })
@@ -1028,7 +1296,7 @@ describe('JobPoller', () => {
 
       const runner = makeSshRunner({
         exitCode: 0,
-        stdout: '',
+        stdout: noLaunchRecoveryOutput,
         stderr: '',
         truncated: false,
         timedOut: false
@@ -1043,6 +1311,12 @@ describe('JobPoller', () => {
 
       await poller.tick()
 
+      expect(runner.run).toHaveBeenCalledOnce()
+      expect(runner.run).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('job.pid'),
+        expect.anything()
+      )
       expect(update).toHaveBeenCalledWith(
         'job-1',
         expect.objectContaining({
@@ -1053,6 +1327,173 @@ describe('JobPoller', () => {
       )
     }
   )
+
+  it('recovers a detached submitted job from job.pid after restart', async () => {
+    const job = makeJob({ status: 'submitted', remote_handle: undefined })
+    const update = vi.fn((_id: string, updates: unknown) =>
+      Promise.resolve({ ...job, ...(updates as object) })
+    )
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update,
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: [
+        'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+        'workdir:1',
+        'exit_code:',
+        'pid:1234',
+        'cwd_match:1',
+        `started_at:${RECOVERED_STARTED_AT_SECONDS}`
+      ].join('\n'),
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    await new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker()
+    }).tick()
+
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('job_pid_is_owned "$RECOVERY_PID"'),
+      expect.anything()
+    )
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('/exit_code'),
+      expect.anything()
+    )
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        status: 'running',
+        remoteHandle: expect.stringContaining('"pid":1234'),
+        startedAt: RECOVERED_STARTED_AT
+      })
+    )
+    expect(update).not.toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
+    )
+  })
+
+  it('recovers a legacy submitted job by deriving its workdir from the host', async () => {
+    const job = makeJob({
+      status: 'submitted',
+      remote_workdir: undefined,
+      remote_handle: undefined
+    })
+    const update = vi.fn((_id: string, updates: unknown) =>
+      Promise.resolve({ ...job, ...(updates as object) })
+    )
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update,
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: `1234\n${RECOVERED_STARTED_AT_SECONDS}\n`,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    await new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve({ ...sampleHost(), scratchRoot: '/scratch' }))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker()
+    }).tick()
+
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('/scratch/.openscience/jobs/job-1/job.pid'),
+      expect.anything()
+    )
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        status: 'running',
+        remoteHandle: expect.stringContaining('/scratch/.openscience/jobs/job-1'),
+        remoteWorkdir: '/scratch/.openscience/jobs/job-1'
+      })
+    )
+  })
+
+  it('polls and harvests an already-finished job after recovering its pid', async () => {
+    let current = makeJob({
+      status: 'submitted',
+      remote_handle: undefined,
+      started_at: undefined
+    })
+    const updateIfStatus = vi.fn(
+      async (_id: string, _expectedStatuses: unknown, updates: Record<string, unknown>) => {
+        current = {
+          ...current,
+          ...(updates.status === undefined ? {} : { status: updates.status }),
+          ...(updates.remoteHandle === undefined ? {} : { remote_handle: updates.remoteHandle }),
+          ...(updates.startedAt instanceof Date ? { started_at: updates.startedAt.getTime() } : {}),
+          ...(updates.exitCode === undefined ? {} : { exit_code: updates.exitCode })
+        } as ComputeJob
+        return current
+      }
+    )
+    const jobRepo = {
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      findNonTerminal: vi.fn(() => Promise.resolve([current])),
+      updateIfStatus
+    } as unknown as ComputeJobRepository
+    const run = vi.fn().mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: [
+        'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+        'workdir:1',
+        'exit_code:0',
+        'pid:1234',
+        'cwd_match:0',
+        `started_at:${RECOVERED_STARTED_AT_SECONDS}`
+      ].join('\n'),
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const harvestFn = vi.fn(() => Promise.resolve())
+
+    await new JobPoller({
+      connectionBroker: brokerFromRunner({ run } as SshRunner),
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker(),
+      harvestFn,
+      makeNonce: () => NONCE
+    }).tick()
+
+    expect(run).toHaveBeenCalledOnce()
+    expect(updateIfStatus).toHaveBeenNthCalledWith(
+      1,
+      'job-1',
+      ['submitted', 'running'],
+      expect.objectContaining({
+        status: 'success',
+        exitCode: 0
+      })
+    )
+    expect(harvestFn).toHaveBeenCalledOnce()
+  })
 
   it('does NOT flag a submitted+no-handle job whose dispatch is still in flight', async () => {
     // A job staging large inputs sits in submitted+no-handle across many ticks. Because its dispatch
@@ -1224,6 +1665,48 @@ describe('JobPoller', () => {
 // ---------------------------------------------------------------------------
 
 describe('JobPoller — harvest wiring', () => {
+  it('backs off retryable harvest connection failures exponentially', async () => {
+    let now = 1_000
+    const terminalJob = makeJob({ status: 'success', harvested_at: undefined })
+    const harvestFn: HarvestFn = vi.fn(() =>
+      Promise.reject(new ComputeConnectionError('host_unreachable'))
+    )
+    const jobRepo = {
+      findTerminalUnharvested: vi.fn(async () => [terminalJob]),
+      findErrorUnnotified: vi.fn(async () => []),
+      findNonTerminal: vi.fn(async () => [])
+    } as unknown as ComputeJobRepository
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(
+        makeSshRunner({
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        })
+      ),
+      hostRepository: {} as ComputeHostRepository,
+      jobRepository: jobRepo,
+      harvestFn,
+      now: () => now
+    })
+
+    await poller.tick()
+    await vi.waitFor(() => expect(harvestFn).toHaveBeenCalledOnce())
+    await poller.tick()
+    expect(harvestFn).toHaveBeenCalledOnce()
+
+    now += 60_000
+    await poller.tick()
+    await vi.waitFor(() => expect(harvestFn).toHaveBeenCalledTimes(2))
+    await poller.tick()
+    expect(harvestFn).toHaveBeenCalledTimes(2)
+
+    now += 120_000
+    await poller.tick()
+    await vi.waitFor(() => expect(harvestFn).toHaveBeenCalledTimes(3))
+  })
   // Helper: builds a terminal poll output (exit_code=0 → success)
   const makeTerminalPollOutput = (jobId: string, exitCode = 0): string =>
     withNonce([
@@ -1339,7 +1822,7 @@ describe('JobPoller — harvest wiring', () => {
 
     const runner = makeSshRunner({
       exitCode: 0,
-      stdout: '',
+      stdout: noLaunchRecoveryOutput,
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1600,7 +2083,6 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
   it('emits notification for error/dispatch_failed job (broadcast + notifiedAt written)', async () => {
     const job = makeJob({ status: 'submitted', remote_handle: undefined })
 
-    // Track update calls: first call writes status=error, second writes notifiedAt (from emitJobNotification).
     const updatedJobWithError = {
       ...job,
       status: 'error' as const,
@@ -1610,16 +2092,15 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     }
     const updatedJobWithNotif = { ...updatedJobWithError, notified_at: Date.now() }
 
-    const update = vi
-      .fn()
-      .mockResolvedValueOnce(updatedJobWithError) // status=error write
-      .mockResolvedValueOnce(updatedJobWithNotif) // notifiedAt write
+    const update = vi.fn().mockResolvedValue(updatedJobWithError)
+    const claimNotification = vi.fn().mockResolvedValue(updatedJobWithNotif)
 
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-      findErrorUnnotified: vi.fn(() => Promise.resolve([])),
+      findNotificationReadyUnnotified: vi.fn(() => Promise.resolve([])),
       update,
+      claimNotification,
       updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
 
@@ -1629,7 +2110,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
 
     const runner = makeSshRunner({
       exitCode: 0,
-      stdout: '',
+      stdout: noLaunchRecoveryOutput,
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1656,10 +2137,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     )
 
     // Notification write (notifiedAt)
-    expect(update).toHaveBeenCalledWith(
-      'job-1',
-      expect.objectContaining({ notifiedAt: expect.any(Date) })
-    )
+    expect(claimNotification).toHaveBeenCalledWith('job-1', expect.any(Date))
 
     // Broadcast was called with the notification summary
     const summary = broadcast.mock.calls[0][0]
@@ -1675,12 +2153,12 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-      findErrorUnnotified: vi.fn(() => Promise.resolve([])),
+      findNotificationReadyUnnotified: vi.fn(() => Promise.resolve([])),
       updateIfStatus
     } as unknown as ComputeJobRepository
     const runner = makeSshRunner({
       exitCode: 0,
-      stdout: '',
+      stdout: noLaunchRecoveryOutput,
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1714,7 +2192,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
 
     const runner = makeSshRunner({
       exitCode: 0,
-      stdout: '',
+      stdout: noLaunchRecoveryOutput,
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1739,7 +2217,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
   it('emits notification for dispatcher-written error jobs via the recovery scan', async () => {
     // The dispatcher writes status='error' directly (dispatch_failed / host_unreachable) without
     // notifying. 'error' is excluded from findNonTerminal and findTerminalUnharvested, so only the
-    // findErrorUnnotified recovery scan surfaces it to notify→analyze.
+    // The notification-ready recovery scan surfaces it to notify→analyze.
     const errorJob = makeJob({
       status: 'error',
       error_code: 'host_unreachable',
@@ -1748,15 +2226,14 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
       notified_at: undefined
     })
     const notifiedJob = { ...errorJob, notified_at: Date.now() }
-    const update = vi.fn().mockResolvedValue(notifiedJob)
+    const claimNotification = vi.fn().mockResolvedValue(notifiedJob)
 
     const jobRepo = {
       // No non-terminal jobs and nothing to harvest — only the error job awaits notification.
       findNonTerminal: vi.fn(() => Promise.resolve([])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-      findErrorUnnotified: vi.fn(() => Promise.resolve([errorJob])),
-      update,
-      updateIfStatus: guardStatusUpdate(update)
+      findNotificationReadyUnnotified: vi.fn(() => Promise.resolve([errorJob])),
+      claimNotification
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -1782,10 +2259,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     // notifiedAt written and broadcast fired for the error job
-    expect(update).toHaveBeenCalledWith(
-      'job-1',
-      expect.objectContaining({ notifiedAt: expect.any(Date) })
-    )
+    expect(claimNotification).toHaveBeenCalledWith('job-1', expect.any(Date))
     expect(broadcast).toHaveBeenCalledOnce()
     expect(broadcast.mock.calls[0][0].status).toBe('error')
   })
@@ -1807,18 +2281,17 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     const updateGate = new Promise<void>((resolve) => {
       releaseUpdate = resolve
     })
-    const update = vi.fn(async (id: string, u: unknown) => {
+    const claimNotification = vi.fn(async (id: string, notifiedAt: Date) => {
       await updateGate
-      return { ...errorJob, job_id: id, ...(u as object) }
+      return { ...errorJob, job_id: id, notified_at: notifiedAt.getTime() }
     })
 
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
       // Both ticks see the row as still unnotified (write is gated).
-      findErrorUnnotified: vi.fn(() => Promise.resolve([errorJob])),
-      update,
-      updateIfStatus: guardStatusUpdate(update)
+      findNotificationReadyUnnotified: vi.fn(() => Promise.resolve([errorJob])),
+      claimNotification
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -1848,7 +2321,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     // Only ONE emit despite two overlapping ticks selecting the same unnotified row.
-    expect(update).toHaveBeenCalledTimes(1)
+    expect(claimNotification).toHaveBeenCalledTimes(1)
     expect(broadcast).toHaveBeenCalledOnce()
   })
 })
@@ -1858,6 +2331,7 @@ describe('JobPoller sub-batching (per-job output budget)', () => {
     const jobs = Array.from({ length: 10 }, (_, i) =>
       makeJob({
         job_id: `job-${i}`,
+        remote_workdir: `~/.openscience/jobs/job-${i}`,
         remote_handle: JSON.stringify({
           pid: 1000 + i,
           exit_code_path: `~/.openscience/jobs/job-${i}/exit_code`,
@@ -1917,6 +2391,7 @@ describe('JobPoller sub-batching (per-job output budget)', () => {
     const jobs = Array.from({ length: 10 }, (_, i) =>
       makeJob({
         job_id: `job-${i}`,
+        remote_workdir: `~/.openscience/jobs/job-${i}`,
         remote_handle: JSON.stringify({
           pid: 1000 + i,
           exit_code_path: `~/.openscience/jobs/job-${i}/exit_code`,

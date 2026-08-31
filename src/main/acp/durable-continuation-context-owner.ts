@@ -29,6 +29,7 @@ type DurableContinuationSessions = Pick<
 
 type DurableContinuationPreparation = Readonly<{
   provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
+  memoryEnabled: boolean
   referencedSessions?: AcpPromptRequest['referencedSessions']
   historyReplay?: SessionHistoryReplay
 }>
@@ -36,6 +37,7 @@ type DurableContinuationPreparation = Readonly<{
 type DurableElicitationContinuationPreparation = Readonly<{
   request: PendingElicitationRequest
   provenanceContext?: DurableContinuationPreparation['provenanceContext']
+  memoryEnabled?: boolean
   referencedSessions?: DurableContinuationPreparation['referencedSessions']
   historyReplay?: SessionHistoryReplay
 }>
@@ -353,6 +355,7 @@ class AcpDurableContinuationContextOwner {
     const referencedSessions = sanitizeSessionReferences(prompt.parts)
     return {
       provenanceContext: getActiveConversationContext(graph, promptMessageId),
+      memoryEnabled: session.memoryEnabled !== false,
       ...(referencedSessions.length > 0 ? { referencedSessions } : {}),
       ...(replay
         ? {

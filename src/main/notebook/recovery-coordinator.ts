@@ -3,16 +3,26 @@ import { lstat, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
+import { createLogger } from '../logger'
 import {
   operationJournalPath,
   readOperationChild,
   removeOperationChildSync,
-  RuntimeOperationJournal
+  RuntimeOperationJournal,
+  type RuntimeOperationRecord
 } from './operation-journal'
+import { micromambaCacheLockKey } from './micromamba-cache'
+import {
+  publishRecoveredMicromambaArchives,
+  type WorkingCacheArchivePublication,
+  type WorkingCacheFinalizationTarget
+} from './windows-micromamba-working-cache'
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
 import { verifyExecutable } from './provisioner-runtime'
 import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+
+const log = createLogger('notebook:recovery')
 
 const isPathInside = (root: string, candidate: string): boolean => {
   const nested = relative(root, candidate)
@@ -35,6 +45,18 @@ export type NotebookRecoverySnapshot = {
   lastFailure?: Error
 }
 
+type NotebookRecoveryCoordinatorDeps = {
+  finalizeWorkingCache?: (
+    runtimeRoot: string,
+    target: WorkingCacheFinalizationTarget
+  ) => Promise<boolean>
+  publishWorkingCacheArchives?: (
+    runtimeRoot: string,
+    publications: readonly WorkingCacheArchivePublication[]
+  ) => Promise<void>
+  workingCacheKey?: (path: string) => string
+}
+
 export class NotebookRecoveryCoordinator {
   private recoveryComplete: Promise<void> | undefined
   private recoveryInFlight: Promise<void> | undefined
@@ -55,7 +77,8 @@ export class NotebookRecoveryCoordinator {
     private readonly repairPolicy: Pick<
       NotebookRuntimeRepairPolicy,
       'recoveryMarker'
-    > = new NotebookRuntimeRepairPolicy(runtimeRoot)
+    > = new NotebookRuntimeRepairPolicy(runtimeRoot),
+    private readonly deps: NotebookRecoveryCoordinatorDeps = {}
   ) {}
 
   async recover(): Promise<void> {
@@ -164,15 +187,15 @@ export class NotebookRecoveryCoordinator {
   private async reconcile(): Promise<void> {
     const nextStartupBlockedPrefixes = new Set<string>()
     const nextStartupBlockedRuntimeIds = new Set<string>()
+    const publishedArchiveRecords: RuntimeOperationRecord[] = []
+    let recoveryIncomplete = false
 
     await rm(join(this.runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
       () => undefined
     )
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.runtimeRoot))
     if ((await journal.readState()) === 'corrupt') {
-      console.error(
-        '[notebook] operation journal is unreadable; blocking all runtime writes until recovery'
-      )
+      log.error('operation journal is unreadable; blocking all runtime writes until recovery')
       this.recoveryCorrupt = true
       return
     }
@@ -270,6 +293,15 @@ export class NotebookRecoveryCoordinator {
       blockUnknownChildTarget: async (record) => {
         if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
         if (record.targetPath) nextStartupBlockedPrefixes.add(record.targetPath)
+      },
+      publishArchives: async (record) => {
+        const publish = this.deps.publishWorkingCacheArchives ?? publishRecoveredMicromambaArchives
+        await publish(this.runtimeRoot, record.archivePublications ?? [])
+        publishedArchiveRecords.push(record)
+      },
+      deferArchiveCompletion: true,
+      onRetained: () => {
+        recoveryIncomplete = true
       }
     })
 
@@ -299,6 +331,70 @@ export class NotebookRecoveryCoordinator {
     this.recoveryCorrupt = false
     this.corruptResetAllowlist.clear()
 
-    for (const record of reconciled) removeOperationChildSync(this.runtimeRoot, record.operationId)
+    for (const record of reconciled) {
+      if (!record.archivePublications) {
+        removeOperationChildSync(this.runtimeRoot, record.operationId)
+      }
+    }
+    const retainedState = await journal.readState()
+    const finalizedWorkingRootKeys = new Set<string>()
+    const workingCacheKey = this.deps.workingCacheKey ?? micromambaCacheLockKey
+    if (
+      retainedState !== 'corrupt' &&
+      !retainedState.records.some((record) => record.archivePublicationPending === true)
+    ) {
+      const publishedOperationIds = new Set(
+        publishedArchiveRecords.map((record) => record.operationId)
+      )
+      const retainedWorkingRootKeys = new Set(
+        retainedState.records.flatMap((record) =>
+          publishedOperationIds.has(record.operationId)
+            ? []
+            : (record.archivePublications?.map((publication) =>
+                workingCacheKey(publication.workingRoot)
+              ) ?? [])
+        )
+      )
+      const publishedWorkingRoots = new Map<string, string>()
+      for (const record of publishedArchiveRecords) {
+        for (const publication of record.archivePublications ?? []) {
+          const key = workingCacheKey(publication.workingRoot)
+          if (!retainedWorkingRootKeys.has(key))
+            publishedWorkingRoots.set(key, publication.workingRoot)
+        }
+      }
+      for (const [key, workingRoot] of publishedWorkingRoots) {
+        const finalized = this.deps.finalizeWorkingCache
+          ? await this.deps.finalizeWorkingCache(this.runtimeRoot, {
+              mode: 'exact',
+              workingRoots: [workingRoot]
+            })
+          : true
+        if (finalized) {
+          finalizedWorkingRootKeys.add(key)
+        }
+      }
+      for (const record of publishedArchiveRecords) {
+        const recordKeys = (record.archivePublications ?? []).map((publication) =>
+          workingCacheKey(publication.workingRoot)
+        )
+        if (recordKeys.every((key) => finalizedWorkingRootKeys.has(key))) {
+          await journal.complete(record.operationId)
+          removeOperationChildSync(this.runtimeRoot, record.operationId)
+        } else {
+          recoveryIncomplete = true
+        }
+      }
+    } else if (retainedState === 'corrupt') {
+      recoveryIncomplete = true
+      this.recoveryCorrupt = true
+    }
+    if (
+      nextStartupBlockedPrefixes.size === 0 &&
+      nextStartupBlockedRuntimeIds.size === 0 &&
+      !recoveryIncomplete
+    ) {
+      await this.deps.finalizeWorkingCache?.(this.runtimeRoot, { mode: 'current-candidates' })
+    }
   }
 }

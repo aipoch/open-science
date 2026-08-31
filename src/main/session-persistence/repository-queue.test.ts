@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 
 const fsMock = vi.hoisted(() => ({
+  lstat: vi.fn(),
   mkdir: vi.fn(),
   open: vi.fn(),
   readFile: vi.fn(),
@@ -56,6 +57,15 @@ const createSession = (id: string, projectId = 'project-a'): PersistedChatSessio
 describe('session persistence repository save ordering', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    fsMock.lstat.mockImplementation((path: string) =>
+      path.endsWith('.json')
+        ? Promise.reject(Object.assign(new Error('not found'), { code: 'ENOENT' }))
+        : Promise.resolve({
+            isDirectory: () => true,
+            isFile: () => false,
+            isSymbolicLink: () => false
+          })
+    )
     fsMock.open.mockResolvedValue({
       close: vi.fn().mockResolvedValue(undefined),
       sync: vi.fn().mockResolvedValue(undefined)

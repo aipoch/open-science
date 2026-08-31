@@ -6,6 +6,7 @@ import { marked } from 'marked'
 import { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import { frontmatterFieldNames, parseSkillDocument } from './frontmatter'
 import { isUnsafeSkillArchivePath } from './zip-extract'
+import { validateSkillHelperPackage } from './registered-helper-catalog'
 
 const compareText = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0
@@ -146,6 +147,9 @@ export const inspectSkillPackage = async (root: string): Promise<SkillPackageFil
   }
 
   await visit(root, '', 0)
+  // Helper descriptors are executable package metadata. Validate the staged bytes before Personal
+  // or Imported transaction owners promote them into the live catalog.
+  await validateSkillHelperPackage(root)
   return files.sort((left, right) => compareText(left.relativePath, right.relativePath))
 }
 

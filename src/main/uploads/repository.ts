@@ -116,7 +116,8 @@ class UploadRepository {
   }
 
   async recoverStagingUploads(): Promise<void> {
-    return this.legacyRecoveryOwner.recoverStagingUploads()
+    await this.legacyRecoveryOwner.recoverStagingUploads()
+    await this.transferOwner.reconcileCrashOrphanedTransfers()
   }
 
   async deleteUpload(request: DeleteUploadRequest): Promise<void> {

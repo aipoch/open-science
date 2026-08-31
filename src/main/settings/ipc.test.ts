@@ -50,6 +50,7 @@ type FakeSettingsService = Record<
   | 'resolveActiveReasoningEffort'
   | 'resolveActiveModelChangeTarget'
   | 'setNotificationsEnabled'
+  | 'setShowNotificationContent'
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
   | 'setProjectFilesFilter'
@@ -145,6 +146,9 @@ const createFakeService = (): FakeSettingsService => ({
   setNotificationsEnabled: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], notificationsEnabled: false }),
+  setShowNotificationContent: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], showNotificationContent: false }),
   setConversationSkillImportEnabled: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], conversationSkillImportEnabled: false }),
@@ -1229,6 +1233,33 @@ describe('settings IPC handlers', () => {
       'Invalid notifications-enabled flag'
     )
     expect(service.setNotificationsEnabled).not.toHaveBeenCalled()
+  })
+
+  it('persists the native notification content preference on Electron IPC', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const snapshot = { claude: {}, providers: [], showNotificationContent: true }
+    service.setShowNotificationContent.mockResolvedValue(snapshot)
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    const result = await invoke('settings:set-show-notification-content', { enabled: true })
+
+    expect(service.setShowNotificationContent).toHaveBeenCalledWith(true)
+    expect(result).toBe(snapshot)
+  })
+
+  it('rejects a non-boolean native notification content flag without touching the service', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    await expect(
+      invoke('settings:set-show-notification-content', { enabled: 'yes' })
+    ).rejects.toThrow('Invalid show-notification-content flag')
+    await expect(invoke('settings:set-show-notification-content', {})).rejects.toThrow(
+      'Invalid show-notification-content flag'
+    )
+    expect(service.setShowNotificationContent).not.toHaveBeenCalled()
   })
 
   it('persists the conversation Skill import preference and reloads runtime tooling', async () => {

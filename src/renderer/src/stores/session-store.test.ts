@@ -21,7 +21,8 @@ import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
   SESSION_MANIFEST_VERSION,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type SessionPdfContext
 } from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
@@ -35,6 +36,7 @@ import {
   type ChatSession,
   type ToolActivity
 } from './session-store'
+import { mergePersistedRuntimeIdentityProjection } from './session-store-persistence-merge'
 
 const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   id: 'artifact-session-1:run-1:result.txt',
@@ -61,6 +63,25 @@ const createUploadAttachment = (
   mimeType: 'image/png',
   size: 1234,
   ...overrides
+})
+
+const createPdfContext = (): SessionPdfContext => ({
+  version: 1,
+  bindings: [
+    {
+      version: 1,
+      bindingId: 'binding-1',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
+      sourceVersionId: 'version-1',
+      sourceSessionId: 'source-session-1',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 1
+    }
+  ]
 })
 
 const createPlanProjection = (artifactVersionId: string): ActivePlanProjection => ({
@@ -99,6 +120,27 @@ describe('session store', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     useSessionStore.setState(createInitialSessionState())
+  })
+
+  it('keeps a newer runtime revision authoritative when Reading context was removed', () => {
+    const merged = mergePersistedRuntimeIdentityProjection(
+      {
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          pdfContext: createPdfContext()
+        }
+      },
+      {
+        runtimeContext: {
+          version: 1,
+          revision: 2
+        }
+      },
+      { incomingOwnsFrameConflicts: true }
+    )
+
+    expect(merged.runtimeContext).toEqual({ version: 1, revision: 2 })
   })
 
   it('starts empty so New can stay outside store state', () => {
@@ -164,6 +206,37 @@ describe('session store', () => {
     })
   })
 
+  it('projects runtime credential recovery as a non-persisted user interaction', () => {
+    const actionability = projectSessionActionability(
+      {
+        id: 'session-credential',
+        projectId: 'project-1',
+        title: 'Credential recovery',
+        cwd: '/workspace',
+        status: 'running',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      } as ChatSession,
+      {
+        credentialPending: true,
+        presentedWaitReason: 'waiting-for-user'
+      }
+    )
+
+    expect(actionability).toMatchObject({
+      presentedStatus: 'waiting-for-user',
+      activity: 'waiting',
+      attentionOwner: 'user',
+      blockingInteraction: 'credential',
+      actions: {
+        startTurn: { allowed: false, disabledReason: 'credential-pending' },
+        revise: { allowed: false, disabledReason: 'credential-pending' },
+        startSideChat: { allowed: false, disabledReason: 'credential-pending' }
+      }
+    })
+  })
+
   it('projects a pending Session as unavailable for a new Turn or Message branch', () => {
     const actionability = projectSessionActionability({
       id: 'session-pending',
@@ -182,11 +255,14 @@ describe('session store', () => {
       revise: { allowed: true },
       branchFromMessage: { allowed: false, disabledReason: 'session-pending' },
       startSideChat: { allowed: false, disabledReason: 'session-pending' },
-      changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
+      changeAgentControls: { allowed: false, disabledReason: 'session-pending' },
+      changeAutoReview: { allowed: false, disabledReason: 'session-pending' },
+      changeSpecialist: { allowed: false, disabledReason: 'session-pending' },
+      changeMemory: { allowed: false, disabledReason: 'session-pending' }
     })
   })
 
-  it('keeps a new Turn available while history replay is pending and blocks other Session actions', () => {
+  it('keeps replay-independent Session actions available while history replay is pending', () => {
     const actionability = projectSessionActionability({
       id: 'session-replay',
       projectId: 'project-1',
@@ -202,9 +278,12 @@ describe('session store', () => {
     expect(actionability.actions).toMatchObject({
       startTurn: { allowed: true },
       revise: { allowed: true },
-      branchFromMessage: { allowed: false, disabledReason: 'session-pending' },
+      branchFromMessage: { allowed: true },
       startSideChat: { allowed: false, disabledReason: 'session-pending' },
-      changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
+      changeAgentControls: { allowed: false, disabledReason: 'session-pending' },
+      changeAutoReview: { allowed: true },
+      changeSpecialist: { allowed: true },
+      changeMemory: { allowed: true }
     })
   })
 
@@ -1642,7 +1721,12 @@ describe('session store', () => {
       filesRevision: 1,
       createdAt: 1,
       updatedAt: 20,
-      runtimeContext: { version: 1, revision: 1, delegatedWork: { records: [] } },
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: { records: [] },
+        pdfContext: createPdfContext()
+      },
       conversationGraph: createLinearConversationGraph({
         sessionId: 'session-1',
         messages: [rootMessage],
@@ -1792,7 +1876,7 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       agentPromptInFlight: true,
       awaitingFirstAgentOutput: true,
-      runtimeContext: { revision: 2 },
+      runtimeContext: { revision: 2, pdfContext: createPdfContext() },
       filesRevision: 2,
       artifacts: [{ id: 'version-1' }]
     })
@@ -1805,6 +1889,49 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].conversationGraph?.activities).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'root-live-tool' })])
     )
+  })
+
+  it('preserves PDF context when delegated authority advances', () => {
+    const pdfContext = createPdfContext()
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Delegated work',
+        cwd: '/workspace',
+        status: 'running',
+        messages: [],
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: { records: [] },
+          pdfContext
+        },
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          delegatedWork: { records: [{ agentFrameId: 'child-frame', attempts: [] }] }
+        },
+        updatedAt: 3
+      },
+      mode: 'delegated-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0].runtimeContext).toMatchObject({
+      revision: 2,
+      delegatedWork: { records: [{ agentFrameId: 'child-frame' }] },
+      pdfContext
+    })
   })
 
   it('merges equal-timestamp higher runtime and files revisions without replacing another owner plan', () => {
@@ -1906,7 +2033,11 @@ describe('session store', () => {
       title: 'local',
       status: 'running',
       agentPromptInFlight: true,
-      runtimeContext: { revision: 2, plan: persistedPlan, delegatedWork: { records: [{}] } },
+      runtimeContext: {
+        revision: 2,
+        plan: persistedPlan,
+        delegatedWork: { records: [{}] }
+      },
       filesRevision: 2,
       artifacts: [{ id: 'old-version' }, { id: 'child-version' }]
     })
@@ -2528,6 +2659,30 @@ describe('session store', () => {
         ]
       })
     ])
+  })
+
+  it('deduplicates a caller-provided user message id', () => {
+    const input = {
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      content: 'Analyze the completed compute job',
+      cwd: '/workspace/project'
+    }
+
+    const first = useSessionStore.getState().appendUserMessage(input)
+    const duplicate = useSessionStore.getState().appendUserMessage(input)
+    const conflict = useSessionStore.getState().appendUserMessage({
+      ...input,
+      content: 'Different prompt with the same identity'
+    })
+
+    expect(first).toEqual({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1'
+    })
+    expect(duplicate).toEqual(first)
+    expect(conflict).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
   })
 
   it('creates a pending first message before a runtime session id exists', () => {
@@ -5423,6 +5578,7 @@ describe('session store public contract', () => {
         'removeSessionsForProject',
         'renameSession',
         'replaceMessageArtifacts',
+        'replaceMessagePdfContext',
         'replaceMessageUploads',
         'reviseSessionFromElicitation',
         'selectSession',
@@ -5438,6 +5594,7 @@ describe('session store public contract', () => {
         'setElicitationHistoryReplayRequest',
         'setElicitationPending',
         'setFixLoopActive',
+        'setMemoryEnabled',
         'setPermissionPending',
         'setPermissionProfile',
         'setSessionSpecialistId',
@@ -5474,6 +5631,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-memory-owner.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
       'src/renderer/src/lib/active-session-display.ts',
       'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
@@ -5520,6 +5678,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',
       'src/renderer/src/pages/workspace/preview-file-item.ts',
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
+      'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
@@ -5530,10 +5689,12 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
       'src/renderer/src/pages/workspace/session-wait-reason.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
+      'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
       'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts',
       'src/renderer/src/pages/workspace/visible-project-sessions.ts',
+      'src/renderer/src/pages/workspace/workspace-agent-control-availability.ts',
       'src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-items.ts',
@@ -5813,6 +5974,7 @@ describe('branchInNewSession', () => {
               contextUsage: { used: 500, size: 1_000 },
               pinned: true,
               autoReviewEnabled: true,
+              memoryEnabled: false,
               enabledComputeHosts: ['ssh:build'],
               filesRevision: 7,
               artifacts: [
@@ -5876,6 +6038,7 @@ describe('branchInNewSession', () => {
       agentBackendId: 'codex:shared',
       agentModel: 'gpt-5.4',
       autoReviewEnabled: true,
+      memoryEnabled: false,
       enabledComputeHosts: ['ssh:build'],
       branchSource: {
         sessionId: 'source-session',
@@ -6187,10 +6350,18 @@ describe('branchInNewSession', () => {
     expect(useSessionStore.getState().sessions).toEqual([sourceBefore])
   })
 
-  it('refuses a source that still needs history replay', () => {
-    useSessionStore.getState().appendUserMessage({
+  it('branches from persisted history while the source Provider still needs replay', () => {
+    const prompt = useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',
-      content: 'stable source'
+      content: 'stable source',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    const answer = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'source-stream',
+      eventId: 'source-event',
+      content: 'stable answer'
     })
     useSessionStore.getState().finishRun('source-session')
     useSessionStore.setState((state) => ({
@@ -6200,15 +6371,25 @@ describe('branchInNewSession', () => {
           : session
       )
     }))
-    const sourceBefore = structuredClone(useSessionStore.getState().sessions[0])
+    const result = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: 'source-session',
+      sourceMessageId: answer?.messageId ?? ''
+    })
 
+    expect(result).toEqual({ sessionId: expect.stringMatching(/^pending-session-/) })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: result?.sessionId,
+      isPending: true,
+      pendingHistoryReplay: { kind: 'all' },
+      messages: [
+        expect.objectContaining({ id: prompt?.messageId }),
+        expect.objectContaining({ id: answer?.messageId })
+      ]
+    })
     expect(
-      useSessionStore.getState().branchInNewSession({
-        sourceSessionId: 'source-session',
-        content: 'must not nest an unreplayed Session'
-      })
-    ).toBeUndefined()
-    expect(useSessionStore.getState().sessions).toEqual([sourceBefore])
+      useSessionStore.getState().sessions.find((session) => session.id === 'source-session')
+        ?.pendingHistoryReplay
+    ).toEqual({ kind: 'all' })
   })
 })
 

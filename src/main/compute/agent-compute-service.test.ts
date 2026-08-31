@@ -12,7 +12,7 @@ type AgentComputeHarness = Readonly<{
   service: AgentComputeService
 }>
 
-const host = (providerId: string): ComputeHost => ({
+const host = (providerId: string, overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: providerId,
   providerId,
   displayName: providerId,
@@ -27,7 +27,8 @@ const host = (providerId: string): ComputeHost => ({
   detailsUpdatedAt: undefined,
   detailsUpdatedBy: undefined,
   createdAt: 1,
-  updatedAt: 1
+  updatedAt: 1,
+  ...overrides
 })
 
 const createHarness = (
@@ -48,6 +49,7 @@ const createHarness = (
     })),
     getJobStatus: vi.fn(async () => ({})),
     getJobResult: vi.fn(async () => ({})),
+    cancelJob: vi.fn(async () => ({})),
     setSessionConcurrencyLimit: vi.fn(async () => undefined),
     getSessionConcurrencyStatus: vi.fn(async () => ({
       session_limit: null,
@@ -74,6 +76,27 @@ describe('AgentComputeService', () => {
     await expect(service.list('session-1')).resolves.toEqual([
       expect.objectContaining({ providerId: 'ssh:available' }),
       expect.objectContaining({ providerId: 'ssh:selected' })
+    ])
+  })
+
+  it('reports a successful Probe as historical evidence rather than a live connection', async () => {
+    const { raw, service } = createHarness({
+      enabled: ['ssh:selected'],
+      selected: ['ssh:selected']
+    })
+    raw.list.mockResolvedValueOnce([
+      host('ssh:selected', {
+        probeResult: {
+          ok: true,
+          probedAt: '2020-01-01T00:00:00.000Z',
+          exitCode: 0,
+          errorTail: null
+        }
+      })
+    ])
+
+    await expect(service.listHosts('session-1')).resolves.toEqual([
+      expect.objectContaining({ status: 'last_probe_ok' })
     ])
   })
 
@@ -170,5 +193,21 @@ describe('AgentComputeService', () => {
     })
     expect(raw.getJobStatus).toHaveBeenCalledTimes(1)
     expect(raw.getJobResult).toHaveBeenCalledTimes(1)
+  })
+
+  it('scopes cancellation to the trusted owner tuple without revealing disabled jobs', async () => {
+    const { raw, service } = createHarness()
+    const context = { sessionId: 'session-1', projectId: 'project-1' }
+
+    await service.cancelJob(context, 'ssh:available', 'job-1')
+    await expect(service.cancelJob(context, 'ssh:hidden', 'job-2')).rejects.toMatchObject({
+      code: 'host_unavailable'
+    })
+
+    expect(raw.cancelJob).toHaveBeenCalledTimes(1)
+    expect(raw.cancelJob).toHaveBeenCalledWith('job-1', {
+      ...context,
+      providerId: 'ssh:available'
+    })
   })
 })

@@ -27,6 +27,26 @@ export type RunProgress = {
   heartbeat: boolean
 }
 
+export type TaskEventIdentity = {
+  sequence: number
+  runId: string
+  sessionId: string
+  projectId: string
+}
+
+export type TaskEvent =
+  | (TaskEventIdentity & { type: 'run.progress'; data: RunProgress })
+  | (TaskEventIdentity & { type: 'run.event' | 'permission.requested'; data: unknown })
+  | {
+      type: 'stream.resync-required'
+      data: {
+        protocolVersion: 1
+        streamId: string
+        latestSequence: number
+        reason: 'stream-changed' | 'cursor-expired'
+      }
+    }
+
 export type Project = {
   id: string
   name: string
@@ -233,10 +253,7 @@ export class OpenScienceClient {
     idleTimeoutMs?: number
     signal?: AbortSignal
     WebSocket?: typeof globalThis.WebSocket
-  }): AsyncIterable<
-    | { type: 'run.progress'; data: RunProgress }
-    | { type: 'run.event' | 'permission.requested'; data: unknown }
-  > & { ready: Promise<void> }
+  }): AsyncIterable<TaskEvent> & { ready: Promise<void> }
 }
 
 export function connectToOpenScience(options?: {

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   requestAnnotationReveal,
+  annotationRevealScrollBehavior,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation
@@ -64,6 +65,14 @@ describe('annotation reveal', () => {
 
     vi.advanceTimersByTime(1_600)
     expect(Array.from(highlights.get('agent-annotation-reveal') ?? [])).toHaveLength(0)
+  })
+
+  it('avoids smooth reveal scrolling when reduced motion is requested', () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }))
+
+    expect(annotationRevealScrollBehavior()).toBe('auto')
+    revealTextAnnotationRange(textRange())
+    expect(paragraph.scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' })
   })
 
   it('replaces an earlier reveal instead of stacking ranges', () => {
@@ -128,6 +137,39 @@ describe('annotation reveal', () => {
 
     expect(listener).toHaveBeenCalledWith('annotation-late')
     unsubscribe()
+  })
+
+  it('keeps PDF page preparation available until the page text layer can mount', () => {
+    const annotation: Annotation = {
+      id: 'annotation-pdf-page',
+      kind: 'pdf',
+      target: 'agent',
+      source: {
+        kind: 'upload-version',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: 'upload-version:project-1/session-1/version-1',
+        name: 'paper.pdf',
+        versionId: 'version-1',
+        checksum: 'a'.repeat(64)
+      },
+      selector: {
+        kind: 'text',
+        pageNumber: 7,
+        exact: 'late PDF quote',
+        position: { start: 0, end: 14 },
+        quads: [{ x: 0.1, y: 0.1, width: 0.4, height: 0.03 }],
+        extractorVersion: 'pdfjs-5.4.624'
+      }
+    }
+
+    requestAnnotationReveal(annotation)
+    const listener = vi.fn()
+    const unsubscribe = subscribeAnnotationRevealPreparation(listener)
+
+    expect(listener).toHaveBeenCalledWith(annotation)
+    unsubscribe()
+    subscribeAnnotationReveal(() => true)()
   })
 
   it('keeps a pending reveal claimable after the visual highlight duration has elapsed', () => {

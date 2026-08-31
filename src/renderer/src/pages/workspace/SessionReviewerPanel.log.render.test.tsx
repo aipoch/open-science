@@ -173,9 +173,23 @@ describe('SessionReviewerPanel — Reviewer log section (issue 13/15)', () => {
     )
     expect(toolToggle).not.toBeNull()
     expect(toolToggle?.textContent).toContain('Bash')
+    expect(toolToggle?.tagName).toBe('BUTTON')
+    expect(toolToggle?.getAttribute('type')).toBe('button')
+    expect(toolToggle?.tabIndex).toBe(0)
+    expect(toolToggle?.className).toContain('focus-visible:ring-[3px]')
+    expect(toolToggle?.className).toContain('focus-visible:ring-ring/50')
+    expect(toolToggle?.className).toContain('motion-reduce:transition-none')
+    expect(toolToggle?.querySelector('svg')?.getAttribute('class')).toContain(
+      'motion-reduce:transition-none'
+    )
+    expect(toolToggle?.getAttribute('aria-expanded')).toBe('false')
+    expect(toolToggle?.getAttribute('aria-controls')).toBeTruthy()
 
     // Tool details should be collapsed by default (no details panel visible).
     expect(container.querySelector('[data-testid="tool-log-row-details"]')).toBeNull()
+
+    act(() => toolToggle?.focus())
+    expect(document.activeElement).toBe(toolToggle)
 
     // Expand the tool row.
     await act(async () => {
@@ -185,6 +199,8 @@ describe('SessionReviewerPanel — Reviewer log section (issue 13/15)', () => {
     // Now Input and Output should be visible.
     const details = container.querySelector('[data-testid="tool-log-row-details"]')
     expect(details).not.toBeNull()
+    expect(toolToggle?.getAttribute('aria-expanded')).toBe('true')
+    expect(details?.id).toBe(toolToggle?.getAttribute('aria-controls'))
     expect(details?.textContent).toContain('Input')
     expect(details?.textContent).toContain('python3 -c "import host')
     expect(details?.textContent).toContain('Output')

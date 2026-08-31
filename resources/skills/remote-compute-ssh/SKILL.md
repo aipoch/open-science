@@ -32,8 +32,9 @@ const candidates = selectedHosts.length > 0 ? selectedHosts : hosts
 ```
 
 Each list item is a compact summary with `provider_id`, `display_name`, `shape`, `status`, and `role`
-(`connected`, `probe_failed`, or `not_probed`). Knowledge documents and resource probe snapshots
-are deliberately excluded from discovery results.
+(`last_probe_ok`, `probe_failed`, or `not_probed`). `last_probe_ok` means the most recent persisted
+Probe succeeded; it does not assert live connectivity. Knowledge documents and resource probe
+snapshots are deliberately excluded from discovery results.
 
 ## API reference
 
@@ -83,7 +84,8 @@ are reported through the normal command result/error behavior.
 
 Use `submitJob` for long-running computations (minutes to hours). It returns immediately with a
 `job_id`; the job runs on the remote host in the background. When the job finishes, the app
-automatically harvests the outputs and initiates a new analysis turn — **you never poll or block**.
+automatically harvests the outputs and initiates a new analysis turn. Do not poll for completion;
+perform only the single bounded immediate-failure check below, then return control to the user.
 
 ```javascript
 // Reuse the `candidates` selected above from the Session catalog.
@@ -113,10 +115,24 @@ const job = await c.submitJob(
   }
 )
 // job → { job_id, provider_id, status: 'submitted', remote_workdir }
-print(job.job_id) // end the cell — kernel never blocks on compute
+// Give dispatch enough time to expose an immediately broken script, then fetch one result snapshot.
+await new Promise((resolve) => setTimeout(resolve, 2000))
+// result() is a non-blocking local DB/directory read in every state; it never waits for completion,
+// triggers SSH, or starts another harvest. Fetching it once exposes immediate stderr/error details.
+const initial = await c.attachJob(job.job_id).result()
+print(initial)
 ```
 
-**End the cell here. Do NOT write a polling loop.** The app runs the poller and harvest in the
+### Immediate failure check after submission
+
+Wait exactly once for 2 seconds (`setTimeout(..., 2000)`), then call `.result()` exactly once. The
+result read is non-blocking for `submitted` and `running` jobs and includes status, stdout, stderr,
+and error details already persisted by dispatch. This catches syntax errors, missing executables,
+and other scripts that fail as soon as they start without waiting for a long-running job or starting
+a second harvest. **Do not wait again** and do not turn this into a polling loop: after printing the
+snapshot, end the cell and let the app own the rest of the lifecycle.
+
+**End the cell after that one check. Do NOT write a polling loop.** The app runs the poller and harvest in the
 background. When the job finishes, the app automatically starts a new analysis turn in this
 conversation — the conversation is NOT locked while the job runs, so the user can keep chatting.
 
@@ -142,8 +158,16 @@ conversation — the conversation is NOT locked while the job runs, so the user 
 // Non-blocking DB read — no SSH. Use if you need a status snapshot mid-conversation.
 const handle = c.attachJob(job.job_id)
 const s = await handle.status()
-// s → { job_id, status, exit_code, stdout_tail, stderr_tail, remote_workdir }
+// s → { job_id, status, cancellation_status?, exit_code, stdout_tail, stderr_tail, remote_workdir }
 // status: 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
+```
+
+To stop one active job, request durable cancellation through the same handle:
+
+```javascript
+await c.attachJob(job.job_id).cancel()
+// cancellation_status is 'cancelling' until owned remote termination is confirmed,
+// then 'cancelled'. Repeating cancel() is safe.
 ```
 
 ### submitJob status values

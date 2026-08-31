@@ -121,6 +121,15 @@ export class CliUsageError extends Error {
   }
 }
 
+const parsePortOption = (value) => {
+  const normalized = value.trim()
+  const port = Number(normalized)
+  if (!/^\d+$/.test(normalized) || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new CliUsageError(`Invalid port: ${value}`)
+  }
+  return port
+}
+
 export const parseCliArgs = (argv) => {
   const args = [...argv]
   const command = args.shift()
@@ -179,11 +188,7 @@ export const parseCliArgs = (argv) => {
     }
   }
   if (options.port !== undefined) {
-    const port = Number.parseInt(options.port, 10)
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new CliUsageError(`Invalid port: ${options.port}`)
-    }
-    options.port = port
+    options.port = parsePortOption(options.port)
   }
   if (options.approvalProfile && !['ask', 'auto', 'full'].includes(options.approvalProfile)) {
     throw new CliUsageError(`Invalid approval profile: ${options.approvalProfile}`)
@@ -853,6 +858,7 @@ export const updateCommand = async (options, dependencies = {}) => {
   const quietLog = options.json ? () => {} : (...args) => console.log(...args)
   const deps = {
     ensureService: (startOptions) => startCommand(startOptions, { ...DEFAULT_DEPS, log: quietLog }),
+    stopService: (stopOptions) => stopCommand(stopOptions, { ...DEFAULT_DEPS, log: quietLog }),
     connect: (connectOptions) => connectToOpenScience(connectOptions),
     sleep,
     getBootstrap: updateBootstrap,
@@ -864,7 +870,7 @@ export const updateCommand = async (options, dependencies = {}) => {
     },
     ...dependencies
   }
-  await deps.ensureService({ ...options, open: false })
+  const serviceStart = await deps.ensureService({ ...options, open: false })
   const client = await deps.connect({ configRoot: options.configRoot })
   let result
 
@@ -934,6 +940,34 @@ export const updateCommand = async (options, dependencies = {}) => {
             throw new Error(`Update apply ended in an unexpected state: ${status.state}`)
           }
         }
+      }
+    }
+  }
+
+  if (result.outcome === 'manual-action-required' && result.installerPath) {
+    const attachedToDesktopApp = serviceStart?.state?.attached === true
+    const ownedConfigRoot = serviceStart?.state?.configRoot
+    const ownsService =
+      serviceStart?.started === true && !attachedToDesktopApp && typeof ownedConfigRoot === 'string'
+    let requiresManualStop = !ownsService
+    if (ownsService) {
+      try {
+        await deps.stopService({ ...options, configRoot: ownedConfigRoot })
+      } catch {
+        // Keep the verified installer handoff actionable even if graceful shutdown fails. The user
+        // can retry the existing stop command without downloading the installer again.
+        requiresManualStop = true
+      }
+    }
+    if (attachedToDesktopApp) {
+      result = {
+        ...result,
+        nextAction: `Quit the running Open Science app, then run the installer at ${result.installerPath} and start Open Science again.`
+      }
+    } else if (requiresManualStop) {
+      result = {
+        ...result,
+        nextAction: `Run "open-science stop", then run the installer at ${result.installerPath} and start Open Science again.`
       }
     }
   }
@@ -1023,6 +1057,10 @@ const resolveCliProjectId = async (client, selector) =>
 const emitRunEvent = (event, options, deps) => {
   if (options.jsonl) {
     deps.log(JSON.stringify(event))
+  } else if (event.type === 'stream.resync-required') {
+    deps.warn(
+      'Run event history could not be fully replayed. Final Run state will still be read from Open Science.'
+    )
   } else if (event.type === 'run.progress') {
     if (event.data?.heartbeat) {
       const seconds = Math.max(1, Math.round((event.data.elapsedMs ?? 0) / 1_000))
@@ -1057,15 +1095,20 @@ const emitRunEvent = (event, options, deps) => {
   }
 }
 
-const streamRunEvents = async (eventStream, sessionIdRef, options, deps, signal) => {
+const isEventForRun = (event, run) => {
+  if (event?.runId) return event.runId === run.runId
+  const sessionId = event?.sessionId ?? event?.data?.sessionId
+  return !sessionId || sessionId === run.sessionId
+}
+
+const streamRunEvents = async (eventStream, runRef, options, deps, signal) => {
   try {
     for await (const event of eventStream) {
-      const eventSessionId = event?.data?.sessionId
-      if (!sessionIdRef.current) {
-        sessionIdRef.pending.push(event)
+      if (!runRef.current) {
+        runRef.pending.push(event)
         continue
       }
-      if (eventSessionId && eventSessionId !== sessionIdRef.current) continue
+      if (!isEventForRun(event, runRef.current)) continue
       emitRunEvent(event, options, deps)
     }
   } catch (error) {
@@ -1194,7 +1237,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const projectId = await resolveCliProjectId(client, options.project)
     const prompt = await readPrompt(options, deps)
     if (!prompt) throw new CliUsageError('Prompt is required.')
-    const sessionIdRef = { current: options.session, pending: [] }
+    const runRef = { current: undefined, pending: [] }
     const abortController = new AbortController()
     const eventStream =
       options.wait && !options.json && typeof client.events === 'function'
@@ -1202,7 +1245,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         : undefined
     await eventStream?.ready
     const eventTask = eventStream
-      ? streamRunEvents(eventStream, sessionIdRef, options, deps, abortController.signal)
+      ? streamRunEvents(eventStream, runRef, options, deps, abortController.signal)
       : undefined
     let result
     try {
@@ -1221,12 +1264,9 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         ...(options.delegation ? { delegationPolicy: options.delegation } : {}),
         ...(options.computeHosts !== undefined ? { computeHostIds: options.computeHosts } : {})
       })
-      sessionIdRef.current = started.sessionId
-      for (const event of sessionIdRef.pending.splice(0)) {
-        const eventSessionId = event?.data?.sessionId
-        if (!eventSessionId || eventSessionId === sessionIdRef.current) {
-          emitRunEvent(event, options, deps)
-        }
+      runRef.current = { runId: started.id, sessionId: started.sessionId }
+      for (const event of runRef.pending.splice(0)) {
+        if (isEventForRun(event, runRef.current)) emitRunEvent(event, options, deps)
       }
       try {
         const waitOptions = {

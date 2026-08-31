@@ -11,7 +11,7 @@ export type ReviewerAcpRuntime = Pick<
   AcpRuntime,
   'buildReviewerSession' | 'disposeReviewerSession' | 'sendPrompt' | 'sendApplicationPrompt'
 > &
-  Partial<Pick<AcpRuntime, 'captureBackend'>> &
+  Partial<Pick<AcpRuntime, 'captureBackend' | 'beginProviderTurnObservation'>> &
   Partial<AcpRuntimeActivityOwner>
 
 export const withReviewerRuntimeActivity = <T>(

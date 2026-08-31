@@ -15,6 +15,7 @@ import type {
   SetClosePreferenceRequest,
   SetDefaultPermissionProfileRequest,
   SetNotificationsEnabledRequest,
+  SetShowNotificationContentRequest,
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
   SetProjectFilesFilterRequest,
@@ -38,6 +39,7 @@ import {
   readDefaultPermissionProfile,
   readGitHubToken,
   readNotificationsEnabled,
+  readShowNotificationContent,
   readProjectFilesFilter,
   readReviewerModel,
   readSessionDetailsModel,
@@ -81,6 +83,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setClosePreference'
   | 'setDefaultPermissionProfile'
   | 'setNotificationsEnabled'
+  | 'setShowNotificationContent'
   | 'setPackageMirror'
   | 'setNetworkProxy'
   | 'setProjectFilesFilter'
@@ -271,6 +274,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetNotificationsEnabledRequest],
     StoreResult<'setNotificationsEnabled'>
   >('settings:set-notifications-enabled'),
+  setShowNotificationContent: defineApplicationCommand<
+    'settings:set-show-notification-content',
+    readonly [request: SetShowNotificationContentRequest],
+    StoreResult<'setShowNotificationContent'>
+  >('settings:set-show-notification-content'),
   setPackageMirror: defineApplicationCommand<
     'settings:set-package-mirror',
     readonly [request: SetPackageMirrorRequest],
@@ -349,6 +357,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setClosePreference,
   settingsCoreApplicationCommands.setDefaultPermissionProfile,
   settingsCoreApplicationCommands.setNotificationsEnabled,
+  settingsCoreApplicationCommands.setShowNotificationContent,
   settingsCoreApplicationCommands.setPackageMirror,
   settingsCoreApplicationCommands.setNetworkProxy,
   settingsCoreApplicationCommands.setProjectFilesFilter,
@@ -462,6 +471,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:set-notifications-enabled': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-notifications-enabled')
         return dependencies.service.setNotificationsEnabled(readNotificationsEnabled(args[0]))
+      },
+      'settings:set-show-notification-content': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-show-notification-content')
+        return dependencies.service.setShowNotificationContent(readShowNotificationContent(args[0]))
       },
       'settings:set-package-mirror': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-package-mirror')

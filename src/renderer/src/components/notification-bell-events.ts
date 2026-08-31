@@ -4,6 +4,7 @@ export const NOTIFICATION_CENTER_OPENED_EVENT = 'open-science:notification-cente
 export type OpenNotificationCenterDetail = Readonly<{ bellId?: string }>
 
 export const isVisibleNotificationBell = (element: HTMLElement): boolean => {
+  if (element.closest('[inert], [aria-hidden="true"]')) return false
   const rect = element.getBoundingClientRect()
   const style = window.getComputedStyle(element)
   return (

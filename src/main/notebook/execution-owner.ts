@@ -7,6 +7,7 @@ import type {
   NotebookCell,
   NotebookLanguage,
   NotebookOutput,
+  NotebookRunFileEvidence,
   NotebookRunRecord,
   NotebookRunProvenanceContext,
   NotebookRunSource,
@@ -14,6 +15,7 @@ import type {
   NotebookWorkingFile,
   RunNotebookCellRequest
 } from '../../shared/notebook'
+import type { Logger } from '../logger'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import {
@@ -31,6 +33,7 @@ import type {
   NotebookSessionResolvedInterpreter,
   NotebookSessionRuntimeBinding
 } from './session-aggregate'
+import { notebookInterpreterIdentity } from './session-aggregate'
 import {
   NotebookShellProcessAdapter,
   type NotebookShellProcess,
@@ -43,10 +46,19 @@ import {
   type NotebookDependencyInterpreter,
   type NotebookDependencyProjection
 } from './dependency-analysis'
+import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
+import { getNotebookFileEvidenceLocation } from './repository'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
-  'status' | 'stdout' | 'stderr' | 'traceback' | 'outputs' | 'truncated' | 'workingFiles'
+  | 'status'
+  | 'stdout'
+  | 'stderr'
+  | 'traceback'
+  | 'outputs'
+  | 'truncated'
+  | 'workingFiles'
+  | 'fileEvidence'
 > & { viewImages?: readonly TransientViewImage[] }
 
 type NotebookControlCompletionInterceptor = {
@@ -85,6 +97,7 @@ type McpRpcConnectionResolver = (
 
 type NotebookExecutionOwnerOptions = {
   configRoot: string
+  storageRoot: string
   runTerminalization: NotebookRunTerminalizationOwner
   dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   environmentStateTracker: Pick<EnvironmentStateTracker, 'prepareRun' | 'captureCompletedRun'>
@@ -111,6 +124,11 @@ type NotebookExecutionOwnerOptions = {
     run: NotebookRunRecord,
     interpreter?: NotebookDependencyInterpreter
   ) => Promise<NotebookDependencyProjection>
+  helperModules: Pick<
+    NotebookHelperModuleHost,
+    'preflight' | 'plan' | 'commitInitialized' | 'loadedEvidence'
+  >
+  logger: Pick<Logger, 'error'>
   platform?: NodeJS.Platform
   shellProcess?: NotebookShellProcess
 }
@@ -151,6 +169,24 @@ class NotebookExecutionOwner {
     this.shellProcess = options.shellProcess ?? new NotebookShellProcessAdapter(options.platform)
   }
 
+  private fileEvidenceLocation(session: NotebookSessionAggregate): {
+    fileEvidenceStorageRoot: string
+    fileEvidenceRoot: string
+    fileEvidenceStoragePrefix: string
+  } {
+    const location = getNotebookFileEvidenceLocation(
+      this.options.storageRoot,
+      session.projectId,
+      session.sessionId,
+      session.lane
+    )
+    return {
+      fileEvidenceStorageRoot: this.options.storageRoot,
+      fileEvidenceRoot: location.root,
+      fileEvidenceStoragePrefix: location.storageKeyPrefix
+    }
+  }
+
   setControlCompletionInterceptor(
     interceptor: NotebookControlCompletionInterceptor | undefined
   ): void {
@@ -159,7 +195,8 @@ class NotebookExecutionOwner {
   async executeDataCell(
     session: NotebookSessionAggregate,
     request: RunNotebookCellRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    helperModuleIds?: readonly string[]
   ): Promise<{ run: NotebookRunRecord; dependencyProjection: NotebookDependencyProjection }> {
     const cell = session.cellView(request.cellId)
     if (session.isCellReceiving(cell.id)) {
@@ -168,7 +205,7 @@ class NotebookExecutionOwner {
     const route = this.options.dataExecutionAdmission.route(session, cell.language)
     return session.enqueueExecution(
       route.processKey,
-      () => this.executeDataCellExclusive(session, cell, request, signal),
+      () => this.executeDataCellExclusive(session, cell, request, signal, helperModuleIds),
       signal
     )
   }
@@ -176,7 +213,8 @@ class NotebookExecutionOwner {
     session: NotebookSessionAggregate,
     cell: Readonly<NotebookCell>,
     request: RunNotebookCellRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    helperModuleIds?: readonly string[]
   ): Promise<{ run: NotebookRunRecord; dependencyProjection: NotebookDependencyProjection }> {
     this.options.notifyAvailable(session, request.source ?? 'agent')
     const { runId } = this.options.runTerminalization.allocateRunIdentity()
@@ -190,7 +228,26 @@ class NotebookExecutionOwner {
       session.isKernelTerminated(processKey) ||
       session.kernelStatus(processKey) === 'terminated' ||
       session.hasDurableKernelTermination(processKey)
-    const kernelEpochId = session.kernelEpochId(processKey, kernelWasTerminated)
+    const kernelEpoch = session.kernelEpoch(
+      processKey,
+      kernelWasTerminated,
+      notebookInterpreterIdentity(resolvedInterpreter)
+    )
+    const kernelEpochId = kernelEpoch.id
+    const helperModuleScope: NotebookHelperModuleScope = {
+      projectId: request.projectId,
+      sessionId: request.sessionId,
+      ...(request.executionInvocationId && request.registeredHelperSkillIds
+        ? { allowedSkillIds: request.registeredHelperSkillIds }
+        : {})
+    }
+    const helperRequest = await this.options.helperModules.preflight(
+      cell.language,
+      helperModuleIds,
+      kernelEpoch,
+      helperModuleScope
+    )
+    const helperPlan = await this.options.helperModules.plan(kernelEpoch, helperRequest)
     session.markCellRunning(cell.id, runId, executionCount)
     const runningRun: NotebookRunRecord = {
       runId,
@@ -218,9 +275,9 @@ class NotebookExecutionOwner {
       inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
     }
     if (!existsSync(cwdBefore)) {
-      console.error(
-        `[notebook] Session cwd is missing before execution, the kernel may run in an unexpected directory: ${cwdBefore}`
-      )
+      this.options.logger.error('session working directory is missing before execution', {
+        sessionId: session.sessionId
+      })
     }
     const kernelMarkedRunning = admission.rejection === undefined
     if (kernelMarkedRunning) {
@@ -255,14 +312,20 @@ class NotebookExecutionOwner {
           reachedExecutor = true
           const executionResult = await session
             .execute({
+              runId,
               code: cell.code,
+              ...(helperPlan.injections.length ? { helperModules: helperPlan.injections } : {}),
               cwd: cwdBefore,
               language: cell.language,
               environment,
               notebookSessionRoot: session.notebookSessionRoot,
               dataRoot: session.dataRoot,
+              ...this.fileEvidenceLocation(session),
               runtimeRoot: session.runtimeRoot,
-              protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+              protectedDirs: [
+                getAppClaudeConfigDir(this.options.configRoot),
+                ...helperPlan.protectedGenerationRoots
+              ],
               timeoutMs: request.timeoutMs,
               signal,
               resolvedInterpreter,
@@ -275,10 +338,18 @@ class NotebookExecutionOwner {
                 : errorToExecutionResult(error, cwdBefore)
               return { ...fallback, kernelDispatched: true }
             })
+          this.options.helperModules.commitInitialized(
+            kernelEpoch,
+            executionResult.helperModulesInitialized ?? []
+          )
+          const resultWithEvidence = {
+            ...executionResult,
+            ...this.options.helperModules.loadedEvidence(kernelEpoch)
+          }
           const result =
-            executionResult.kernelDispatched === undefined
-              ? { ...executionResult, kernelDispatched: true }
-              : executionResult
+            resultWithEvidence.kernelDispatched === undefined
+              ? { ...resultWithEvidence, kernelDispatched: true }
+              : resultWithEvidence
           if (result.status !== 'completed') return result
           try {
             const capture = await this.options.environmentStateTracker.captureCompletedRun(
@@ -477,11 +548,13 @@ class NotebookExecutionOwner {
               })
               return session
                 .execute({
+                  runId,
                   code: request.code,
                   kind: 'repl',
                   cwd: session.cwd,
                   notebookSessionRoot: session.notebookSessionRoot,
                   dataRoot: session.dataRoot,
+                  ...this.fileEvidenceLocation(session),
                   runtimeRoot: session.runtimeRoot,
                   protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
                   timeoutMs: request.timeoutMs,
@@ -518,7 +591,8 @@ class NotebookExecutionOwner {
       traceback: result.traceback,
       outputs: result.outputs,
       ...(result.truncated ? { truncated: true } : {}),
-      workingFiles: result.workingFiles
+      workingFiles: result.workingFiles,
+      fileEvidence: result.fileEvidence
     }
   }
 
@@ -555,16 +629,24 @@ class NotebookExecutionOwner {
       session,
       runningRun,
       invoke: async () => {
-        const workingFileObservation = await startWorkingFileObservation(session)
+        const workingFileObservation = await startWorkingFileObservation({
+          dataRoot: session.dataRoot,
+          notebookSessionRoot: session.notebookSessionRoot,
+          ...this.fileEvidenceLocation(session),
+          runId,
+          signal
+        })
         let workingFiles: NotebookWorkingFile[] = []
+        let fileEvidence: NotebookRunFileEvidence | undefined
         const blockedMutation = detectManagedRuntimeMutation({
           source: request.command,
           surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
           runtimeRoot: session.runtimeRoot,
           cwd: session.cwd
         })
-        const shellResult = await (
-          blockedMutation
+        let shellResult: NotebookShellResult | undefined
+        try {
+          shellResult = await (blockedMutation
             ? Promise.resolve<NotebookShellResult>({
                 stdout: '',
                 stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
@@ -577,10 +659,20 @@ class NotebookExecutionOwner {
                 runtimeRoot: session.runtimeRoot,
                 timeoutMs: request.timeoutMs,
                 signal
-              })
-        ).finally(async () => {
-          workingFiles = await workingFileObservation.finish()
-        })
+              }))
+        } finally {
+          const observation = await workingFileObservation.finish(
+            shellResult === undefined ||
+              signal?.aborted ||
+              shellResult.cancelled ||
+              shellResult.exitCode === null
+              ? AbortSignal.abort()
+              : signal
+          )
+          workingFiles = observation.workingFiles
+          fileEvidence = observation.fileEvidence
+        }
+        if (!shellResult) throw new Error('Notebook shell execution completed without a result.')
         const status: NotebookRunStatus = shellResult.cancelled
           ? 'cancelled'
           : shellResult.exitCode === 0
@@ -606,6 +698,7 @@ class NotebookExecutionOwner {
           outputs,
           truncated: shellResult.truncated,
           workingFiles,
+          fileEvidence,
           exitCode: shellResult.exitCode
         }
       }

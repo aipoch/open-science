@@ -3,13 +3,19 @@ import type {
   ApprovalDecision,
   AuthenticateCustomServerRequest,
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConnectorDetailView,
   ConnectorView,
   CustomServerView,
+  DisconnectCustomServerRequest,
   NcbiCredentialsView,
+  OpenAlexCredentialView,
+  OpenAlexCredentialValidation,
   SetNcbiCredentialsRequest,
+  SetOpenAlexCredentialRequest,
   ToolPermission,
-  UpdateCustomServerRequest
+  UpdateCustomServerRequest,
+  ValidateOpenAlexCredentialRequest
 } from '../../../shared/settings'
 
 import { createOptimisticBooleanCoordinator } from './settings-optimistic-boolean'
@@ -19,6 +25,11 @@ type SettingsConnectorsProjection = {
   customServers: CustomServerView[]
   reservedCustomServerIds?: string[]
   ncbi: NcbiCredentialsView
+  openAlex?: OpenAlexCredentialView
+}
+
+type NormalizedSettingsConnectorsProjection = Omit<SettingsConnectorsProjection, 'openAlex'> & {
+  openAlex: OpenAlexCredentialView
 }
 
 export type ConnectorAuthNotice = Readonly<{
@@ -26,9 +37,10 @@ export type ConnectorAuthNotice = Readonly<{
   displayName: string
 }>
 
-export type SettingsConnectorsState = SettingsConnectorsProjection & {
+export type SettingsConnectorsState = NormalizedSettingsConnectorsProjection & {
   connectorsLoaded: boolean
   pendingApprovals: ConnectorApprovalRequest[]
+  pendingCredentialRequests: ConnectorCredentialRequest[]
   connectorAuthNotice?: ConnectorAuthNotice
 }
 
@@ -38,10 +50,15 @@ export type SettingsConnectorsActions = {
   setConnectorAutoAllow: (id: string, autoAllow: boolean) => Promise<void>
   setToolPermission: (toolId: string, permission: ToolPermission) => Promise<ConnectorDetailView>
   setNcbiCredentials: (request: SetNcbiCredentialsRequest) => Promise<void>
+  setOpenAlexCredential: (request: SetOpenAlexCredentialRequest) => Promise<void>
+  validateOpenAlexCredential: (
+    request: ValidateOpenAlexCredentialRequest
+  ) => Promise<OpenAlexCredentialValidation>
   addCustomServer: (request: AddCustomServerRequest) => Promise<CustomServerView>
   updateCustomServer: (request: UpdateCustomServerRequest) => Promise<void>
   authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
   cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
+  disconnectCustomServer: (request: DisconnectCustomServerRequest) => Promise<void>
   retryCustomServer: (id: string) => Promise<void>
   setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
   removeCustomServer: (id: string) => Promise<void>
@@ -49,6 +66,9 @@ export type SettingsConnectorsActions = {
   enqueueApproval: (request: ConnectorApprovalRequest) => void
   dismissApproval: (id: string) => void
   respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
+  enqueueCredentialRequest: (request: ConnectorCredentialRequest) => void
+  dismissCredentialRequest: (id: string) => void
+  respondCredentialRequest: (id: string, configured: boolean) => Promise<void>
 }
 
 type SettingsConnectorsCommands = Pick<
@@ -58,15 +78,19 @@ type SettingsConnectorsCommands = Pick<
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
   | 'setNcbiCredentials'
+  | 'setOpenAlexCredential'
+  | 'validateOpenAlexCredential'
   | 'addCustomServer'
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'disconnectCustomServer'
   | 'retryCustomServer'
   | 'onConnectorRuntimeChanged'
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
   | 'respondConnectorApproval'
+  | 'respondConnectorCredentialRequest'
 >
 
 type SettingsConnectorsSliceOptions = {
@@ -85,8 +109,10 @@ export const createInitialSettingsConnectorsState = (): SettingsConnectorsState 
   reservedCustomServerIds: [],
   connectorsLoaded: false,
   pendingApprovals: [],
+  pendingCredentialRequests: [],
   connectorAuthNotice: undefined,
-  ncbi: { hasApiKey: false }
+  ncbi: { hasApiKey: false },
+  openAlex: { hasApiKey: false }
 })
 
 // Owns the renderer projection for Connector catalogs, custom servers, NCBI credentials, and the
@@ -103,8 +129,9 @@ export const createSettingsConnectorsSlice = ({
   const projectOptimisticToggles = (
     projection: SettingsConnectorsProjection,
     generation: number
-  ): SettingsConnectorsProjection => ({
+  ): NormalizedSettingsConnectorsProjection => ({
     ...projection,
+    openAlex: projection.openAlex ?? { hasApiKey: false },
     reservedCustomServerIds: projection.reservedCustomServerIds ?? [],
     connectors: projection.connectors.map((connector) => ({
       ...connector,
@@ -299,6 +326,9 @@ export const createSettingsConnectorsSlice = ({
       getCommands().setToolPermission({ toolId, permission }),
     setNcbiCredentials: (request) =>
       reconcileMutation(() => getCommands().setNcbiCredentials(request)),
+    setOpenAlexCredential: (request) =>
+      reconcileMutation(() => getCommands().setOpenAlexCredential(request)),
+    validateOpenAlexCredential: (request) => getCommands().validateOpenAlexCredential(request),
     addCustomServer: async (request) => {
       const projection = await runMutation(() =>
         reconcile(() => getCommands().addCustomServer(request))
@@ -322,6 +352,8 @@ export const createSettingsConnectorsSlice = ({
       }),
     cancelCustomServerAuthentication: (request) =>
       getCommands().cancelCustomServerAuthentication(request),
+    disconnectCustomServer: (request) =>
+      reconcileMutation(() => getCommands().disconnectCustomServer(request)),
     retryCustomServer: (id) => reconcileMutation(() => getCommands().retryCustomServer({ id })),
     setCustomServerEnabled: async (id, enabled) => {
       const key = customServerEnabledKey(id)
@@ -379,6 +411,35 @@ export const createSettingsConnectorsSlice = ({
       await getCommands().respondConnectorApproval({ id, decision })
       setState((state) => ({
         pendingApprovals: state.pendingApprovals.filter((request) => request.id !== id)
+      }))
+    },
+    enqueueCredentialRequest: (request) => {
+      setState((state) =>
+        state.pendingCredentialRequests.some(({ id }) => id === request.id)
+          ? state
+          : { pendingCredentialRequests: [...state.pendingCredentialRequests, request] }
+      )
+    },
+    dismissCredentialRequest: (id) => {
+      setState((state) => ({
+        pendingCredentialRequests: state.pendingCredentialRequests.filter(
+          (request) => request.id !== id
+        )
+      }))
+    },
+    respondCredentialRequest: async (id, configured) => {
+      const credentialId = getState().pendingCredentialRequests.find(
+        (request) => request.id === id
+      )?.credentialId
+      const respond = getCommands().respondConnectorCredentialRequest
+      if (!respond) return
+      await respond({ id, configured })
+      setState((state) => ({
+        pendingCredentialRequests: state.pendingCredentialRequests.filter(
+          (request) =>
+            request.id !== id &&
+            !(configured && credentialId && request.credentialId === credentialId)
+        )
       }))
     }
   }

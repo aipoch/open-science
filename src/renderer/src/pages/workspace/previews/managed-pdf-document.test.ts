@@ -58,6 +58,25 @@ describe('createManagedPdfLoadingTask', () => {
     )
   })
 
+  it('restores Uint8Array data serialized by the web RPC bridge', async () => {
+    vi.mocked(window.api.previewResources.readRange).mockResolvedValue({
+      begin: 0,
+      end: 4,
+      total: resource.size,
+      data: { 0: 37, 1: 80, 2: 68, 3: 70 } as unknown as Uint8Array
+    })
+    const getDocument = vi.fn().mockReturnValue({ promise: Promise.resolve({}), destroy: vi.fn() })
+
+    createManagedPdfLoadingTask(resource, getDocument)
+    const range = getDocument.mock.calls[0]?.[0].range
+    const onDataRange = vi.spyOn(range, 'onDataRange')
+
+    range.requestDataRange(0, 4)
+    await vi.waitFor(() => expect(onDataRange).toHaveBeenCalled())
+
+    expect(onDataRange).toHaveBeenCalledWith(0, new Uint8Array([37, 80, 68, 70]))
+  })
+
   it('splits a large PDF.js range into bounded IPC chunks before delivering it', async () => {
     const chunkBytes = 1024 * 1024
     vi.mocked(window.api.previewResources.readRange).mockImplementation(async ({ begin, end }) => ({

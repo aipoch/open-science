@@ -32,6 +32,356 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
+  it.each([
+    { globalEnabled: true, sessionEnabled: true, expected: '1' },
+    { globalEnabled: true, sessionEnabled: false, expected: '0' },
+    { globalEnabled: false, sessionEnabled: true, expected: '0' },
+    { globalEnabled: false, sessionEnabled: false, expected: '0' }
+  ])(
+    'enables Memory tools only when global=$globalEnabled and session=$sessionEnabled',
+    async ({ globalEnabled, sessionEnabled, expected }) => {
+      const getRpcConnection = vi.fn(async () => ({
+        endpoint: 'http://127.0.0.1:1',
+        token: 'notebook'
+      }))
+      const owner = createOwner({
+        artifacts: undefined,
+        skillImport: undefined,
+        notebook: {
+          projectId: 'project',
+          mcpEntryPath: '/app/main.js',
+          isMemoryEnabled: async () => globalEnabled,
+          getRpcConnection
+        }
+      })
+
+      const provision = await owner.provision({
+        stableAppSessionId: 'session-1',
+        framework: opencodeFramework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectId: 'project',
+        memoryEnabled: sessionEnabled
+      })
+      const notebook = provision.mcpServers.find(
+        (server) => server.name === 'open_science_notebook'
+      )
+
+      expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
+        name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
+        value: expected
+      })
+      expect(getRpcConnection).toHaveBeenCalledWith(
+        expect.objectContaining({ memoryTools: expected === '1' })
+      )
+    }
+  )
+
+  it('fails closed without blocking capability provisioning when the global Memory gate cannot be read', async () => {
+    const getRpcConnection = vi.fn(async () => ({
+      endpoint: 'http://127.0.0.1:1',
+      token: 'notebook'
+    }))
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      notebook: {
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        isMemoryEnabled: async () => {
+          throw new Error('settings unavailable')
+        },
+        getRpcConnection
+      }
+    })
+
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project',
+      memoryEnabled: true
+    })
+    const notebook = provision.mcpServers.find((server) => server.name === 'open_science_notebook')
+
+    expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
+      value: '0'
+    })
+    expect(getRpcConnection).toHaveBeenCalledWith(expect.objectContaining({ memoryTools: false }))
+  })
+
+  it('marks delegated Notebook MCP processes as ineligible for memory tools', async () => {
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      notebook: {
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        memoryTools: false,
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1', token: 'delegate' })
+      }
+    })
+    const provision = await owner.provision({
+      stableAppSessionId: 'delegate-session',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace/delegate',
+      projectId: 'project'
+    })
+    const notebook = provision.mcpServers.find((server) => server.name === 'open_science_notebook')
+
+    expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
+      value: '0'
+    })
+  })
+
+  it('binds first-turn Literature routing to the provider Session after session/new', async () => {
+    const registerLiterature = vi.fn()
+    const handlerFor = vi.fn(() => ({ readDocument: vi.fn() }))
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerLiterature,
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      literature: {
+        isEnabled: vi.fn(async () => false),
+        handlerFor
+      },
+      mcpHttpHost: host
+    })
+
+    const provision = await owner.provision({
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1',
+      literatureEnabled: true
+    })
+    provision.commit('session-1')
+
+    expect(provision.descriptor.capabilities).toContain('literature')
+    expect(handlerFor).toHaveBeenLastCalledWith('session-1', 'project-1')
+    expect(registerLiterature).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps concurrent first-turn Literature routes distinct within one millisecond', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_234)
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerLiterature: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      literature: {
+        isEnabled: vi.fn(async () => false),
+        handlerFor: () => ({ readDocument: vi.fn() })
+      },
+      mcpHttpHost: host
+    })
+    const request = {
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1',
+      literatureEnabled: true
+    } as const
+
+    const [first, second] = await Promise.all([owner.provision(request), owner.provision(request)])
+
+    expect(() => first.commit('session-1')).not.toThrow()
+    expect(() => second.commit('session-2')).not.toThrow()
+  })
+
+  it.each([
+    [claudeCodeFramework, 'open-science-literature'],
+    [codexFramework, 'open-science-literature'],
+    [opencodeFramework, 'open_science_literature']
+  ] as const)(
+    'mounts Literature once enabled and keeps it in the capability descriptor for %s',
+    async (framework, modelFacingName) => {
+      const registerLiterature = vi.fn()
+      const host = {
+        ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+        registerLiterature,
+        urlFor: vi.fn(
+          (kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`
+        ),
+        unregister: vi.fn(),
+        clear: vi.fn(),
+        close: vi.fn()
+      } as unknown as AgentMcpHttpHost
+      const owner = createOwner({
+        artifacts: undefined,
+        notebook: undefined,
+        skillImport: undefined,
+        literature: {
+          isEnabled: vi.fn(async () => false),
+          handlerFor: () => ({ readDocument: vi.fn() })
+        },
+        mcpHttpHost: host
+      })
+
+      const disabled = await owner.provision({
+        stableAppSessionId: 'session-1',
+        framework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectId: 'project-1'
+      })
+      expect(disabled.mcpServers).toEqual([])
+      expect(owner.enableLiterature('session-1')).toBe(true)
+
+      const enabled = await owner.provision({
+        stableAppSessionId: 'session-1',
+        framework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectId: 'project-1'
+      })
+
+      expect(enabled.descriptor).toMatchObject({
+        capabilities: ['literature'],
+        canonicalMcpServerNames: ['open-science-literature'],
+        modelFacingMcpServerNames: [modelFacingName]
+      })
+      expect(enabled.mcpServers).toEqual([
+        expect.objectContaining({ type: 'http', name: modelFacingName })
+      ])
+      expect(registerLiterature).toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ readDocument: expect.any(Function) })
+      )
+    }
+  )
+
+  it('removes Literature from the next provider capability projection when disabled', async () => {
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerLiterature: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      literature: {
+        isEnabled: vi.fn(async () => false),
+        handlerFor: () => ({ readDocument: vi.fn() })
+      },
+      mcpHttpHost: host
+    })
+    const enabled = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: codexFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1',
+      literatureEnabled: true
+    })
+    enabled.commit('session-1')
+
+    expect(owner.disableLiterature('session-1')).toBe(true)
+    const disabled = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: codexFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+
+    expect(disabled.descriptor.capabilities).not.toContain('literature')
+    expect(disabled.mcpServers).toEqual([])
+  })
+
+  it('restores the committed Literature route when replacement provisioning is released', async () => {
+    const registerLiterature = vi.fn()
+    const unregister = vi.fn()
+    const handlerFor = vi.fn(() => ({ readDocument: vi.fn() }))
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerLiterature,
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`),
+      unregister,
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      literature: { isEnabled: vi.fn(async () => false), handlerFor },
+      mcpHttpHost: host
+    })
+    const enabled = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: codexFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1',
+      literatureEnabled: true
+    })
+    enabled.commit('session-1')
+    registerLiterature.mockClear()
+
+    expect(owner.disableLiterature('session-1')).toBe(true)
+    const replacement = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: codexFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+    replacement.release({ ownsStableIdentity: true })
+
+    expect(unregister).toHaveBeenCalledWith('session-1')
+    expect(registerLiterature).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ readDocument: expect.any(Function) })
+    )
+    expect(handlerFor).toHaveBeenLastCalledWith('session-1', 'project-1')
+  })
+
   it('uses an execution-owned Artifact handoff file for a delegated runtime', async () => {
     const owner = createOwner({
       artifacts: {

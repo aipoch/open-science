@@ -85,6 +85,16 @@ describe('parseSshConfigHostAliases', () => {
     expect(parseSshConfigHostAliases(config)).toEqual(['real-host'])
   })
 
+  it('excludes aliases that cannot pass the compute Host creation boundary', () => {
+    const config = [
+      'Host safe-host -legacy-option foo%bar path/alias path\\alias',
+      'Host . ..',
+      'Host another-safe-host'
+    ].join('\n')
+
+    expect(parseSshConfigHostAliases(config)).toEqual(['safe-host', 'another-safe-host'])
+  })
+
   it('excludes aliases declared inside a Match block', () => {
     const config = [
       'Host keep-me',

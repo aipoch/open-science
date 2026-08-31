@@ -293,7 +293,10 @@ const findTypeScriptFiles = (directory: string): string[] =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = resolve(directory, entry.name)
     if (entry.isDirectory()) return findTypeScriptFiles(path)
-    return entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')
+    return entry.isFile() &&
+      entry.name.endsWith('.ts') &&
+      !entry.name.endsWith('.test.ts') &&
+      !entry.name.endsWith('.test-support.ts')
       ? [path]
       : []
   })
@@ -668,7 +671,7 @@ describe('Session persistence coordinator architecture', () => {
         'setSessionEnabledComputeHosts',
         'updateArchive'
       ],
-      runSessionThenGlobal: ['deleteSession'],
+      runSessionThenGlobalIfNeeded: ['deleteSession'],
       runSessionIdentity: ['sessionProjectId']
     }
     const expectedSchedulerRoute = new Map(
@@ -860,6 +863,7 @@ describe('Session persistence coordinator architecture', () => {
         'removeProject',
         'removeSession',
         'replaceMetadata',
+        'replaceProjectMetadata',
         'saveSession',
         'saveSessionSpecialistBinding',
         'sessionProjectId',
@@ -880,6 +884,7 @@ describe('Session persistence coordinator architecture', () => {
         'getProjectSessionDeletionState',
         'listLegacyProjectSessionTombstones',
         'markCommittedProjectSessionsPrepared',
+        'reconcileProjectSessionDeletion',
         'reconcileSessionDeletion',
         'updateArchive'
       ].sort()
@@ -931,7 +936,12 @@ describe('Session persistence coordinator architecture', () => {
         'deletionOwner.deleteProjectSessions',
         'deletionOwner.getProjectSessionDeletionState'
       ],
-      deleteSession: ['deletionOwner.deleteSession', 'deletionOwner.reconcileSessionDeletion'],
+      deleteSession: [
+        'deletionOwner.deleteSession',
+        'deletionOwner.reconcileProjectSessionDeletion',
+        'deletionOwner.reconcileSessionDeletion',
+        'stateOwner.metadataSnapshot'
+      ],
       getProjectSessionDeletionState: ['deletionOwner.getProjectSessionDeletionState'],
       listLegacyProjectSessionTombstones: ['deletionOwner.listLegacyProjectSessionTombstones'],
       loadPersistedSideChats: ['sideChatOwner.loadCatalog'],

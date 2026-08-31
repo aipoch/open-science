@@ -49,6 +49,10 @@ type ApplicationEventProjection = Readonly<{
   webEventConnectionPhase: WebEventConnectionPhase
   blockedApprovalSessionIds: ReadonlySet<string>
   lifecycle: ReturnType<typeof useLifecycleSync>
+  notification: Readonly<{
+    unavailableToken: number | undefined
+    dismissUnavailable: () => void
+  }>
   allowsArchiveUndoShortcut: () => boolean
   navigation: Readonly<{
     view: NavigationView
@@ -87,12 +91,16 @@ const useApplicationEventBindings = ({
   )
   const enqueueConnectorApproval = useSettingsStore((state) => state.enqueueApproval)
   const dismissConnectorApproval = useSettingsStore((state) => state.dismissApproval)
+  const hasSessionlessCredentialRequest = useSettingsStore((state) =>
+    state.pendingCredentialRequests.some((request) => !request.sessionId)
+  )
+  const enqueueCredentialRequest = useSettingsStore((state) => state.enqueueCredentialRequest)
+  const dismissCredentialRequest = useSettingsStore((state) => state.dismissCredentialRequest)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
   const dismissComputeApproval = useComputeStore((state) => state.dismissApproval)
   const hasComputeApproval = useComputeStore((state) =>
     state.pendingApprovals.some(
-      (candidate) =>
-        !candidate.session_id || !openSideChatParentSessionIds.has(candidate.session_id)
+      (candidate) => !candidate.sessionId || !openSideChatParentSessionIds.has(candidate.sessionId)
     )
   )
   const enqueueSkillImport = useSkillImportStore((state) => state.enqueue)
@@ -111,6 +119,7 @@ const useApplicationEventBindings = ({
   const listenForNotificationChanges = useNotificationInboxStore((state) => state.listen)
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false)
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
+  const [unavailableNotificationToken, setUnavailableNotificationToken] = useState<number>()
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
   const notificationOpenIntent = useRef<NotificationOpenIntent>({
@@ -141,6 +150,7 @@ const useApplicationEventBindings = ({
           update: isUpdateDialogOpen,
           computeApproval: hasComputeApproval,
           connectorApproval: hasConnectorApproval,
+          credentialRequest: hasSessionlessCredentialRequest,
           skillImportApproval: hasSkillImportApproval,
           globalSearch: isGlobalSearchOpen,
           settings: isSettingsOpen,
@@ -150,6 +160,7 @@ const useApplicationEventBindings = ({
     [
       hasComputeApproval,
       hasConnectorApproval,
+      hasSessionlessCredentialRequest,
       hasDataRootRecovery,
       hasLegacyDataMove,
       hasSkillImportApproval,
@@ -285,6 +296,20 @@ const useApplicationEventBindings = ({
     }
   }, [dismissConnectorApproval, enqueueConnectorApproval])
 
+  useEffect(() => {
+    const removeRequest =
+      window.api.settings.onConnectorCredentialRequest?.(enqueueCredentialRequest) ??
+      (() => undefined)
+    const removeSettled =
+      window.api.settings.onConnectorCredentialSettled?.(dismissCredentialRequest) ??
+      (() => undefined)
+    void window.api.settings.replayPendingConnectorCredentialRequests?.().catch(() => undefined)
+    return () => {
+      removeSettled()
+      removeRequest()
+    }
+  }, [dismissCredentialRequest, enqueueCredentialRequest])
+
   useEffect(
     () => window.api.settings.onSkillImportApprovalRequest(enqueueSkillImport),
     [enqueueSkillImport]
@@ -333,11 +358,15 @@ const useApplicationEventBindings = ({
         }
         if (
           intent.generation !== notificationOpenIntent.current.generation ||
-          !sessionExists ||
           useNavigationStore.getState().userNavigationRevision !== intent.userNavigationRevision
         ) {
           return
         }
+        if (!sessionExists) {
+          setUnavailableNotificationToken(consumed.token)
+          return
+        }
+        setUnavailableNotificationToken(undefined)
         useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
       }
 
@@ -410,6 +439,10 @@ const useApplicationEventBindings = ({
     webEventConnectionPhase,
     blockedApprovalSessionIds: openSideChatParentSessionIds,
     lifecycle,
+    notification: {
+      unavailableToken: unavailableNotificationToken,
+      dismissUnavailable: () => setUnavailableNotificationToken(undefined)
+    },
     allowsArchiveUndoShortcut,
     navigation: { view },
     globalSearch: { open: openGlobalSearch, setOpen: setGlobalSearchOpen },

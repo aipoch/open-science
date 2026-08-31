@@ -110,7 +110,8 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
   softDeleteProject: vi.fn(async () => 'project-delete-token'),
   reconcileActiveSessions: vi.fn(async () => undefined),
   markReconciliationIncomplete: vi.fn(),
-  ...overrides
+  ...overrides,
+  reconcileProjectSessions: overrides.reconcileProjectSessions ?? vi.fn(async () => undefined)
 })
 
 describe('SessionPersistenceCoordinator contracts', () => {

@@ -72,7 +72,8 @@ describe('production Electron runtime wiring', () => {
       runtime,
       workflows,
       undefined,
-      sessionAdmission
+      sessionAdmission,
+      undefined
     )
     expect(order).toEqual(['notifications', 'compute', 'connectors', 'acp', 'settings'])
   })

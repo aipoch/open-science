@@ -10,11 +10,13 @@ import {
   ConversationGraphMaterializationError,
   decodeSessionFile,
   materializeSessionConversationGraph,
+  isComputeJobCompletionAttribution,
   isReviewerCorrectionAttribution,
   sanitizeActivityGroup,
   normalizeSessionFile,
   sanitizeMessageAttribution,
   sanitizeMessageImages,
+  sanitizeSessionPdfContext,
   sanitizeSessionRuntimeContext,
   sanitizeToolActivity,
   type PersistedChatMessage,
@@ -275,6 +277,7 @@ describe('conversation graph materialization diagnostics', () => {
       updatedAt: 1
     })
     conversationGraph.runtimeSegments[0].frameworkId = 'future-acp'
+    conversationGraph.runtimeSegments[0].providerId = 'provider-1'
 
     const decoded = decodeSessionFile({
       version: SESSION_FILE_VERSION,
@@ -289,7 +292,7 @@ describe('conversation graph materialization diagnostics', () => {
       status: 'ok',
       session: {
         conversationGraph: {
-          runtimeSegments: [{ frameworkId: 'future-acp' }]
+          runtimeSegments: [{ frameworkId: 'future-acp', providerId: 'provider-1' }]
         }
       }
     })
@@ -519,6 +522,123 @@ describe('message attribution persistence', () => {
     })
   })
 
+  it('preserves a Compute completion delivery identity through Session JSON and Conversation Graph projection', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'compute-delivery-message-1',
+          role: 'user',
+          content: 'Analyze completed remote jobs.',
+          status: 'complete',
+          eventIds: [],
+          attribution: {
+            kind: 'application',
+            feature: 'compute',
+            purpose: 'job-completion-analysis',
+            deliveryKey: 'compute_done:session-1:job-1,job-2',
+            jobIds: ['job-1', 'job-2']
+          },
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    const attribution = {
+      kind: 'application',
+      feature: 'compute',
+      purpose: 'job-completion-analysis',
+      deliveryKey: 'compute_done:session-1:job-1,job-2',
+      jobIds: ['job-1', 'job-2']
+    }
+    expect(session?.messages[0]?.attribution).toEqual(attribution)
+    expect(isComputeJobCompletionAttribution(session?.messages[0]?.attribution)).toBe(true)
+    expect(
+      session &&
+        materializeSessionConversationGraph(session).conversationGraph?.messages[0]?.attribution
+    ).toEqual(attribution)
+  })
+
+  it('preserves a non-authoritative Compute completion presentation through Session JSON', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'compute-presentation-message-1',
+          role: 'user',
+          content: 'Analyze completed remote jobs.',
+          status: 'complete',
+          eventIds: [],
+          presentation: { kind: 'compute-job-completion' },
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]?.presentation).toEqual({ kind: 'compute-job-completion' })
+    expect(
+      session &&
+        materializeSessionConversationGraph(session).conversationGraph?.messages[0]?.presentation
+    ).toEqual({ kind: 'compute-job-completion' })
+  })
+
+  it.each([
+    [
+      'an extended marker',
+      'user',
+      'Analyze completed remote jobs.',
+      { kind: 'compute-job-completion', rendererClaim: true }
+    ],
+    [
+      'a marker from an Agent message',
+      'agent',
+      'Analysis result.',
+      { kind: 'compute-job-completion' }
+    ]
+  ] as const)('drops %s', (_label, role, content, presentation) => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'compute-presentation-message-1',
+          role,
+          content,
+          status: 'complete',
+          eventIds: [],
+          presentation,
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]?.presentation).toBeUndefined()
+  })
+
+  it('rejects malformed or extended Compute delivery attribution', () => {
+    expect(
+      sanitizeMessageAttribution({
+        kind: 'application',
+        feature: 'compute',
+        purpose: 'job-completion-analysis',
+        deliveryKey: 'compute_done:session-1:job-1',
+        jobIds: []
+      })
+    ).toBeUndefined()
+    expect(
+      sanitizeMessageAttribution({
+        kind: 'application',
+        feature: 'compute',
+        purpose: 'job-completion-analysis',
+        deliveryKey: 'compute_done:session-1:job-1',
+        jobIds: ['job-1'],
+        rendererClaim: true
+      })
+    ).toBeUndefined()
+  })
+
   it('drops malformed or extended attribution without dropping the Message', () => {
     expect(
       sanitizeMessageAttribution({
@@ -679,6 +799,28 @@ describe('message part persistence', () => {
                 messageId: 'agent-message-1'
               }
             },
+            {
+              id: 'pdf-1',
+              kind: 'pdf',
+              target: 'agent',
+              source: {
+                kind: 'upload-version',
+                projectId: 'project-1',
+                sessionId: 'session-1',
+                versionId: 'version-1',
+                name: 'paper.pdf',
+                path: 'upload-version:project-1/session-1/version-1',
+                checksum: 'a'.repeat(64)
+              },
+              selector: {
+                kind: 'text',
+                pageNumber: 2,
+                exact: 'PDF evidence',
+                position: { start: 5, end: 17 },
+                quads: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.04 }],
+                extractorVersion: 'pdfjs-5.4.624'
+              }
+            },
             { kind: 'unknown' }
           ],
           createdAt: 1,
@@ -698,6 +840,28 @@ describe('message part persistence', () => {
           kind: 'agent-message',
           sessionId: 'session-1',
           messageId: 'agent-message-1'
+        }
+      },
+      {
+        id: 'pdf-1',
+        kind: 'pdf',
+        target: 'agent',
+        source: {
+          kind: 'upload-version',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          versionId: 'version-1',
+          name: 'paper.pdf',
+          path: 'upload-version:project-1/session-1/version-1',
+          checksum: 'a'.repeat(64)
+        },
+        selector: {
+          kind: 'text',
+          pageNumber: 2,
+          exact: 'PDF evidence',
+          position: { start: 5, end: 17 },
+          quads: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.04 }],
+          extractorVersion: 'pdfjs-5.4.624'
         }
       }
     ])
@@ -1107,6 +1271,64 @@ describe('message image persistence', () => {
     expect(restoredImages.reduce((total, image) => total + image.byteLength, 0)).toBe(
       MAX_ACP_SESSION_IMAGE_BYTES
     )
+  })
+
+  it('counts persisted PDF region Evidence against the aggregate session image budget', () => {
+    const data = 'A'.repeat(4 * 1024 * 1024)
+    const bytesPerImage = (data.length * 3) / 4
+    const messageCount = MAX_ACP_SESSION_IMAGE_BYTES / bytesPerImage
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'PDF Evidence',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: Array.from({ length: messageCount }, (_, index) => ({
+        id: `message-${index}`,
+        role: index === 0 ? 'user' : 'agent',
+        content: '',
+        images: [{ id: `image-${index}`, mimeType: 'image/png', data }],
+        ...(index === 0
+          ? {
+              annotations: [
+                {
+                  id: 'pdf-region-1',
+                  kind: 'pdf',
+                  target: 'agent',
+                  source: {
+                    kind: 'upload-version',
+                    projectId: 'project-a',
+                    sessionId: 'session-1',
+                    versionId: 'version-1',
+                    name: 'paper.pdf',
+                    path: 'upload-version:project-a/session-1/version-1',
+                    checksum: 'a'.repeat(64)
+                  },
+                  selector: {
+                    kind: 'region',
+                    pageNumber: 1,
+                    rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+                    pageRotation: 0,
+                    image: { mimeType: 'image/png', data }
+                  }
+                }
+              ]
+            }
+          : {}),
+        createdAt: index,
+        updatedAt: index
+      })),
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    const restoredImages = restored?.messages.flatMap((message) => message.images ?? []) ?? []
+    const region = restored?.messages[0]?.annotations?.[0]
+    expect(region?.kind === 'pdf' && region.selector.kind === 'region').toBe(true)
+    expect(restoredImages).toHaveLength(messageCount - 1)
+    expect(
+      restoredImages.reduce((total, image) => total + image.byteLength, 0) + bytesPerImage
+    ).toBe(MAX_ACP_SESSION_IMAGE_BYTES)
   })
 
   it('sanitizes images that exist only on an inactive conversation branch before writing', () => {
@@ -2665,6 +2887,7 @@ describe('normalizeSessionFile with activities', () => {
           id: 'side-chat-123',
           lifecycle: 'interrupted',
           frameworkId: 'codex',
+          providerId: 'provider-1',
           backendId: 'codex-responses',
           providerSessionId: 'provider-session-1',
           providerContinuityToken: 'bridge-token-1',
@@ -2691,6 +2914,7 @@ describe('normalizeSessionFile with activities', () => {
         id: 'side-chat-123',
         lifecycle: 'interrupted',
         frameworkId: 'codex',
+        providerId: 'provider-1',
         backendId: 'codex-responses',
         providerSessionId: 'provider-session-1',
         providerContinuityToken: 'bridge-token-1',
@@ -3613,6 +3837,19 @@ describe('normalizeSessionFile with activities', () => {
     expect(corrupt?.autoReviewEnabled).toBe(false)
   })
 
+  it('round-trips the Memory toggle and defaults older or malformed sessions to enabled', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined }
+    const disabled = normalizeSessionFile({ ...base, memoryEnabled: false })
+    const enabled = normalizeSessionFile({ ...base, memoryEnabled: true })
+    const legacy = normalizeSessionFile(base)
+    const malformed = normalizeSessionFile({ ...base, memoryEnabled: 'nope' })
+
+    expect(disabled?.memoryEnabled).toBe(false)
+    expect(enabled?.memoryEnabled).toBe(true)
+    expect(legacy?.memoryEnabled).toBe(true)
+    expect(malformed?.memoryEnabled).toBe(true)
+  })
+
   it('round-trips delegation policy and defaults historical or malformed values to allow', () => {
     const base = { ...createSessionWithActivity(undefined), activities: undefined }
     const denied = normalizeSessionFile({ ...base, delegationPolicy: 'deny' })
@@ -4145,5 +4382,89 @@ describe('normalizeSessionFile with activities', () => {
     })
 
     expect(restored?.sessionDetailsGeneration).toBeUndefined()
+  })
+
+  it('accepts only bounded immutable PDF context snapshots', () => {
+    const binding = {
+      version: 1,
+      bindingId: 'binding-1',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload-1',
+      sourceVersionId: 'version-1',
+      sourceSessionId: 'source-session-1',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 10
+    }
+    const snapshot = { version: 1, bindings: [binding] }
+
+    expect(sanitizeSessionPdfContext(snapshot)).toEqual(snapshot)
+    expect(
+      sanitizeSessionPdfContext({ version: 1, bindings: [{ ...binding, sourceKind: 'local' }] })
+    ).toBeUndefined()
+    expect(
+      sanitizeSessionPdfContext({
+        version: 1,
+        bindings: [{ ...binding, checksum: 'not-a-checksum' }]
+      })
+    ).toBeUndefined()
+    expect(
+      sanitizeSessionPdfContext({
+        version: 1,
+        bindings: [{ ...binding, name: 'x'.repeat(4097) }]
+      })
+    ).toBeUndefined()
+    expect(
+      sanitizeSessionPdfContext({ version: 1, bindings: [binding, binding, binding, binding] })
+    ).toBeUndefined()
+  })
+
+  it('preserves a valid PDF reading position only on the immutable user Message snapshot', () => {
+    const binding = {
+      version: 1,
+      bindingId: 'binding-1',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload-1',
+      sourceVersionId: 'version-1',
+      sourceSessionId: 'source-session-1',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 10
+    }
+    const pdfContext = {
+      version: 1,
+      bindings: [binding],
+      activeBindingId: binding.bindingId,
+      readingPosition: { pageNumber: 7, pageCount: 14 }
+    }
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Reading',
+      cwd: '/workspace',
+      status: 'idle',
+      runtimeContext: { version: 1, revision: 1, pdfContext },
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Which page am I reading?',
+          status: 'complete',
+          eventIds: [],
+          pdfContext,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.runtimeContext?.pdfContext).toEqual({ version: 1, bindings: [binding] })
+    expect(restored?.messages[0].pdfContext).toMatchObject({
+      readingPosition: { pageNumber: 7, pageCount: 14 }
+    })
   })
 })

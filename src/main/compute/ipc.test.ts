@@ -100,6 +100,38 @@ const approvalBrokerFrom = (service: ComputeService): ComputeApprovalBroker =>
   ).remoteOperations.approvalBroker
 
 describe('compute handlers', () => {
+  it('passes the complete renderer owner tuple to cancellation', async () => {
+    const cancelJob = vi.fn(async () => ({
+      job_id: 'job-1',
+      status: 'running' as const,
+      cancellation_status: 'cancelling' as const,
+      exit_code: undefined,
+      stdout_tail: undefined,
+      stderr_tail: undefined,
+      remote_workdir: undefined,
+      harvest_error: undefined
+    }))
+    const computeHandlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ cancelJob })
+    )
+    const request = {
+      jobId: 'job-1',
+      providerId: 'ssh:test',
+      sessionId: 'session-1',
+      projectId: 'project-1'
+    }
+
+    await computeHandlers.jobsCancel(request)
+
+    expect(cancelJob).toHaveBeenCalledWith('job-1', {
+      providerId: 'ssh:test',
+      sessionId: 'session-1',
+      projectId: 'project-1'
+    })
+  })
+
   it('list delegates to the repository', async () => {
     const list = vi.fn(() => Promise.resolve([sampleHost()]))
     const handlers = createComputeHandlers(mockRepository({ list }))
@@ -477,11 +509,13 @@ describe('compute handlers', () => {
 
     const decision = await approvalBroker.requestWithContext(
       {
+        operation: 'call_command',
         provider_id: current.providerId,
         provider_name: current.displayName,
         shape: current.shape ?? 'direct_ssh',
         intent: 'call_command',
-        command_preview: 'hostname'
+        command_preview: 'hostname',
+        command_full: 'hostname'
       },
       {
         sessionId: 'session-1',
@@ -599,6 +633,7 @@ describe('compute handlers', () => {
     )
     const broker = approvalBrokerFrom(computeHandlers.computeService)
     const request = {
+      operation: 'call_command' as const,
       provider_id: 'ssh:biowulf',
       provider_name: 'biowulf',
       shape: 'direct_ssh' as const,
@@ -609,7 +644,7 @@ describe('compute handlers', () => {
     const context = {
       sessionId: 'session-1',
       projectId: 'project-1',
-      operation: 'call_command',
+      operation: 'call_command' as const,
       ownerId: 'host-1'
     }
 
@@ -827,6 +862,55 @@ describe('compute handlers — jobsList', () => {
     expect(findBySession).toHaveBeenCalledWith('sess-1', undefined)
   })
 
+  it('retains a safe needs-attention projection in the renderer jobs list', async () => {
+    const findBySession = vi.fn().mockResolvedValue([
+      makeJob({
+        job_id: 'unreadable-job',
+        session_id: 'sess-1',
+        intent: '',
+        remote_workdir: undefined,
+        remote_handle: undefined,
+        cancellation_status: 'cancelling',
+        needs_attention: true,
+        integrity_issues: [
+          {
+            jobId: 'unreadable-job',
+            sessionId: 'sess-1',
+            projectId: 'proj-1',
+            code: 'sensitive-fields-unavailable',
+            disposition: 'needs-attention',
+            rawStatus: 'running'
+          }
+        ]
+      })
+    ])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockResolvedValue([]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findBySession }),
+      undefined,
+      undefined,
+      '/tmp/test-storage'
+    )
+
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        job_id: 'unreadable-job',
+        intent: '',
+        remote_workdir: undefined,
+        cancellation_status: 'cancelling',
+        needs_attention: true,
+        integrity_issues: [expect.objectContaining({ code: 'sensitive-fields-unavailable' })]
+      })
+    ])
+    expect(JSON.stringify(result)).not.toContain('ciphertext')
+  })
+
   it('returns all persisted non-terminal jobs for the renderer activity projection', async () => {
     const host = sampleHost({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' })
     const list = vi.fn().mockResolvedValue([host])
@@ -879,6 +963,25 @@ describe('compute handlers — jobsList', () => {
     )
 
     const result = await handlers.jobsList({ sessionId: 'sess-1' })
+    expect(result[0]!.display_name).toBe('ssh:biowulf')
+  })
+
+  it('keeps the Job feed available when the Host catalog cannot be decoded', async () => {
+    const findBySession = vi.fn().mockResolvedValue([makeJob()])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockRejectedValue(new Error('unsupported Host row')) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findBySession }),
+      undefined,
+      undefined,
+      '/tmp/test-storage'
+    )
+
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+
     expect(result[0]!.display_name).toBe('ssh:biowulf')
   })
 })
@@ -1499,6 +1602,20 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
     expect(summary.featured_file_count).toBe(2)
   })
 
+  it('does not project stale featured files for a failed replacement harvest', async () => {
+    const featuredDir = featuredDirFor('proj-1', 'sess-1', 'job-harvest')
+    await mkdir(featuredDir, { recursive: true })
+    await writeFile(join(featuredDir, 'old.csv'), 'older successful generation')
+
+    const summary = await toJobSummary(
+      sampleJob({ harvest_error: 'harvest_failed: connection reset', harvested_at: 10 }),
+      'Biowulf HPC',
+      storageRoot
+    )
+
+    expect(summary.featured_files).toEqual([])
+  })
+
   it('scans the relocated data-root workspace rather than a separate config root', async () => {
     const configRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-config-root-'))
     const dataRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-data-root-'))
@@ -1720,7 +1837,24 @@ describe('createJobUpdatedBroadcaster', () => {
     remove()
   })
 
-  it('broadcasts a persisted update when the Job existence lookup fails transiently', async () => {
+  it('re-reads the current row and never broadcasts an older status snapshot', async () => {
+    const current = sampleJob({ status: 'success', finished_at: 2, exit_code: 0 })
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get: vi.fn(async () => sampleHost()) }),
+      storageRoot,
+      { get: vi.fn(async () => current) }
+    )
+
+    const captured = captureNextBroadcast()
+    broadcaster(sampleJob({ status: 'running' }))
+
+    await expect(captured).resolves.toMatchObject({
+      channel: COMPUTE_JOB_UPDATED_CHANNEL,
+      payload: expect.objectContaining({ status: 'success', finished_at: 2, exit_code: 0 })
+    })
+  })
+
+  it('does not broadcast an unverified snapshot when the current-row lookup fails', async () => {
     const sink = vi.fn()
     const remove = addRendererBroadcastSink(sink)
     const jobRepository = {
@@ -1735,13 +1869,8 @@ describe('createJobUpdatedBroadcaster', () => {
     )
 
     broadcaster(sampleJob({ status: 'success' }))
-
-    await vi.waitFor(() =>
-      expect(sink).toHaveBeenCalledWith(
-        COMPUTE_JOB_UPDATED_CHANNEL,
-        expect.objectContaining({ job_id: 'job-bcast', status: 'success' })
-      )
-    )
+    await vi.waitFor(() => expect(jobRepository.get).toHaveBeenCalled())
+    expect(sink).not.toHaveBeenCalled()
     remove()
   })
 
@@ -1992,6 +2121,142 @@ describe('compute handlers — jobsPendingNotification', () => {
     const result = await handlers.jobsPendingNotification('sess-1')
     expect(result[0]!.display_name).toBe('ssh:biowulf')
   })
+
+  it('keeps notification recovery available when the Host catalog cannot be decoded', async () => {
+    const findPendingNotifications = vi.fn().mockResolvedValue([makeJob()])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockRejectedValue(new Error('unsupported Host row')) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ findPendingNotifications }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    const result = await handlers.jobsPendingNotification('sess-1')
+
+    expect(result[0]!.display_name).toBe('ssh:biowulf')
+  })
+
+  it('persists an analysis transition and returns the updated Job summaries', async () => {
+    const request = {
+      sessionId: 'sess-1',
+      jobIds: ['job-pending'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    const transitionAnalysis = vi.fn(async () => [
+      makeJob({
+        analysis_state: 'dispatched',
+        analysis_message_id: request.messageId,
+        analysis_updated_at: 2_000
+      })
+    ])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn(async () => [sampleHost()]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ transitionAnalysis }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    await expect(handlers.jobsTransitionAnalysis(request)).resolves.toEqual([
+      expect.objectContaining({
+        job_id: 'job-pending',
+        analysis_state: 'dispatched',
+        analysis_message_id: 'analysis-message-1',
+        analysis_updated_at: 2_000
+      })
+    ])
+    expect(transitionAnalysis).toHaveBeenCalledWith(request)
+  })
+
+  it('publishes persisted analysis transitions through the shared Job update path', async () => {
+    const request = {
+      sessionId: 'sess-1',
+      jobIds: ['job-pending'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    const transitionedJob = makeJob({
+      analysis_state: 'dispatched',
+      analysis_message_id: request.messageId,
+      analysis_updated_at: 2_000
+    })
+    const onJobUpdated = vi.fn()
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn(async () => [sampleHost()]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ transitionAnalysis: vi.fn(async () => [transitionedJob]) }),
+      onJobUpdated,
+      undefined,
+      storageRoot
+    )
+
+    await handlers.jobsTransitionAnalysis(request)
+
+    expect(onJobUpdated).toHaveBeenCalledOnce()
+    expect(onJobUpdated).toHaveBeenCalledWith(transitionedJob)
+  })
+
+  it('returns provider fallback summaries when host lookup fails after an analysis transition', async () => {
+    const request = {
+      sessionId: 'sess-1',
+      jobIds: ['job-pending'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    const transitionAnalysis = vi.fn(async () => [
+      makeJob({
+        analysis_state: 'dispatched',
+        analysis_message_id: request.messageId,
+        analysis_updated_at: 2_000
+      })
+    ])
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockRejectedValue(new Error('host lookup unavailable')) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ transitionAnalysis }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    await expect(handlers.jobsTransitionAnalysis(request)).resolves.toEqual([
+      expect.objectContaining({
+        job_id: 'job-pending',
+        display_name: 'ssh:biowulf',
+        analysis_state: 'dispatched'
+      })
+    ])
+    expect(transitionAnalysis).toHaveBeenCalledWith(request)
+  })
+
+  it('rejects an analysis transition when durable Job persistence is unavailable', async () => {
+    const handlers = createComputeHandlers(mockRepository({}))
+
+    await expect(
+      handlers.jobsTransitionAnalysis({
+        sessionId: 'sess-1',
+        jobIds: ['job-pending'],
+        messageId: 'analysis-message-1',
+        state: 'dispatched'
+      })
+    ).rejects.toThrow(/persistence is unavailable/i)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -2108,6 +2373,7 @@ describe('installComputeIpcHandlers', () => {
       'compute:details:get',
       'compute:details:save',
       'compute:scratch:set',
+      'compute:scratch:clear',
       'compute:concurrency:set',
       'compute:session:set-concurrency-limit',
       'compute:session:status',
@@ -2117,9 +2383,11 @@ describe('installComputeIpcHandlers', () => {
       'compute:approval-respond',
       'compute:approval-replay',
       'compute:approval-replay-pending',
+      'compute:jobs:cancel',
       COMPUTE_JOBS_LIST_CHANNEL,
       'compute:jobs:pending-notification',
       'compute:jobs:mark-consumed',
+      'compute:jobs:transition-analysis',
       'compute:enabled-hosts:get',
       'compute:enabled-hosts:set',
       'compute:host-enabled:set',
@@ -2150,6 +2418,7 @@ describe('installComputeIpcHandlers', () => {
       settleAuthorization: vi.fn(() => Promise.resolve())
     })
     const request = {
+      operation: 'call_command' as const,
       provider_id: 'ssh:biowulf',
       provider_name: 'biowulf',
       shape: 'direct_ssh' as const,
@@ -2160,7 +2429,7 @@ describe('installComputeIpcHandlers', () => {
     const context = {
       sessionId: 'session-1',
       projectId: 'project-1',
-      operation: 'call_command',
+      operation: 'call_command' as const,
       ownerId: 'host-1'
     }
 
@@ -2222,6 +2491,7 @@ describe('installComputeIpcHandlers', () => {
       }
     })
     const decision = broker.request({
+      operation: 'call_command',
       provider_id: 'ssh:biowulf',
       provider_name: 'biowulf',
       shape: 'direct_ssh',
@@ -2243,6 +2513,46 @@ describe('installComputeIpcHandlers', () => {
 
     await invokeHandler('compute:approval-respond', { id: 'approval-1', decision: 'deny' })
     await expect(decision).resolves.toBe('deny')
+  })
+
+  it('normalizes the legacy conversation approval scope at the Electron boundary', async () => {
+    const broker = new ComputeApprovalBroker({
+      broadcast: vi.fn(),
+      generateId: () => 'approval-1',
+      setTimer: vi.fn(() => 1 as never),
+      clearTimer: vi.fn()
+    })
+    const computeHandlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({}),
+      broker
+    )
+    installComputeIpcHandlers({
+      handlers: computeHandlers,
+      enabledHosts: {
+        get: vi.fn(() => []),
+        set: vi.fn(),
+        setHostEnabled: vi.fn(),
+        setHostSelected: vi.fn()
+      }
+    })
+    const decision = broker.request({
+      operation: 'call_command',
+      provider_id: 'ssh:biowulf',
+      provider_name: 'biowulf',
+      shape: 'direct_ssh',
+      intent: 'Inspect the environment',
+      command_preview: 'env',
+      command_full: 'env'
+    })
+
+    await invokeHandler('compute:approval-respond', {
+      id: 'approval-1',
+      decision: 'conversation'
+    })
+
+    await expect(decision).resolves.toBe('session')
   })
 
   it('routes enabled-hosts IPC through the authoritative owner and publishes its result', async () => {

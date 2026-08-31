@@ -1,7 +1,8 @@
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
 import type { ArtifactFile } from '../../../../shared/artifacts'
-import type { MessagePart } from '../../../../shared/session-persistence'
+import type { MessagePart, SessionPdfBinding } from '../../../../shared/session-persistence'
+import { sessionPdfBindingToFileReference } from '../../../../shared/session-pdf-context'
 import {
   createArtifactVersionLocator,
   parseArtifactVersionLocator,
@@ -162,6 +163,31 @@ export const createPreviewFileItemFromUpload = (
     name: attachmentName,
     mimeType: attachment.mimeType,
     size: attachment.size
+  })
+}
+
+// Reopens the exact immutable Version captured by a Session PDF binding.
+export const createPreviewFileItemFromPdfContext = (
+  context: SessionPdfBinding,
+  projectId: string
+): PreviewFileItem => {
+  const reference = sessionPdfBindingToFileReference(projectId, context)
+  if (reference.source === 'linked-folder') {
+    throw new Error('Session PDF context must resolve to a managed file Version.')
+  }
+  const isArtifact = context.sourceKind === 'artifact-version'
+
+  return createPreviewFileItem({
+    id: isArtifact ? context.sourceFileId : `upload:${context.sourceFileId}`,
+    projectId,
+    sessionId: context.sourceSessionId,
+    path: reference.path,
+    name: context.name,
+    mimeType: context.mimeType,
+    size: context.sizeBytes,
+    source: isArtifact ? undefined : 'upload',
+    artifactId: isArtifact ? context.sourceFileId : undefined,
+    selectedVersionId: isArtifact ? context.sourceVersionId : undefined
   })
 }
 

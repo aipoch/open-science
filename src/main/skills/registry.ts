@@ -6,6 +6,7 @@ import { createLogger } from '../logger'
 import { parseFrontmatter } from './frontmatter'
 import { resolveBundledSkillsRoot } from './resource-path'
 import { skillPackageCompatibility } from './skill-package-compatibility'
+import { readSkillHelperDescriptors, type SkillHelperDescriptor } from './registered-helper-catalog'
 
 const log = createLogger('skills')
 
@@ -32,6 +33,8 @@ export type BundledSkill = {
   // and Specialist picker surface. The source remains `featured`; exposure is a presentation rule,
   // not a fourth persisted Skill source.
   exposure?: 'catalog' | 'internal'
+  // Host-private executable descriptor metadata. Renderer projections deliberately omit this field.
+  helpers?: readonly SkillHelperDescriptor[]
 }
 
 type ManifestEntry = {
@@ -116,7 +119,8 @@ class SkillRegistry {
           thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty,
           category: fields.category,
           requirements: fields.requirements,
-          exposure: entry.exposure
+          exposure: entry.exposure,
+          helpers: await readSkillHelperDescriptors(sourceDir)
         })
       } catch (error) {
         log.warn('skipping bundled skill with unreadable SKILL.md', { id: entry.id, error })

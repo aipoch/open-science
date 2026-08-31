@@ -336,6 +336,150 @@ const projectToolContent = (
       : item
   )
 
+const literaturePresentationText = (value: unknown): string | undefined => {
+  if (typeof value !== 'string' || value.length > MAX_RUNTIME_RAW_PAYLOAD_CHARS) return undefined
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return undefined
+  }
+  if (!isRecord(parsed) || !isRecord(parsed.openScienceLiteraturePresentation)) return undefined
+
+  const source = parsed.openScienceLiteraturePresentation
+  const documentNames = Array.isArray(source.documentNames)
+    ? source.documentNames
+        .filter(
+          (name): name is string =>
+            typeof name === 'string' &&
+            name.trim().length > 0 &&
+            name.length <= 512 &&
+            !containsControlCharacter(name)
+        )
+        .slice(0, 3)
+        .map((name) => name.trim())
+    : []
+  const positiveInteger = (candidate: unknown): number | undefined =>
+    typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate > 0
+      ? candidate
+      : undefined
+  const retrievalMode =
+    source.retrievalMode === 'bm25' || source.retrievalMode === 'fallback'
+      ? source.retrievalMode
+      : undefined
+  const passageCount = positiveInteger(source.passageCount)
+  const pageStart = positiveInteger(source.pageStart)
+  const pageEnd = positiveInteger(source.pageEnd)
+  const hasMore = typeof source.hasMore === 'boolean' ? source.hasMore : undefined
+  const presentation = {
+    ...(retrievalMode ? { retrievalMode } : {}),
+    ...(documentNames.length > 0 ? { documentNames } : {}),
+    ...(passageCount ? { passageCount } : {}),
+    ...(pageStart ? { pageStart } : {}),
+    ...(pageEnd ? { pageEnd } : {}),
+    ...(hasMore !== undefined ? { hasMore } : {})
+  }
+
+  return Object.keys(presentation).length > 0
+    ? JSON.stringify({ openScienceLiteraturePresentation: presentation })
+    : undefined
+}
+
+const isLiteratureReadDocumentUpdate = (update: ToolCallUpdate): boolean =>
+  [extractProviderToolName(update), trimProviderValue(update.title)].some((identity) => {
+    if (!identity) return false
+    const normalized = identity
+      .toLowerCase()
+      .split(/[^a-z0-9]+/u)
+      .filter(Boolean)
+      .join('/')
+    return normalized.endsWith('open/science/literature/read/document')
+  })
+
+const literatureResultPresentationText = (value: unknown): string | undefined => {
+  if (typeof value !== 'string' || value.length > 128_000) return undefined
+
+  let result: unknown
+  try {
+    result = JSON.parse(value)
+  } catch {
+    return undefined
+  }
+  if (!isRecord(result) || !['full-document', 'relevant-passages'].includes(String(result.scope))) {
+    return undefined
+  }
+
+  const documents = Array.isArray(result.documents)
+    ? result.documents.filter(isRecord)
+    : isRecord(result.document)
+      ? [result.document]
+      : []
+  const passages = Array.isArray(result.passages)
+    ? result.passages.filter(isRecord)
+    : isRecord(result.passage)
+      ? [result.passage]
+      : []
+  const pageStarts = passages.flatMap((passage) =>
+    typeof passage.pageStart === 'number' ? [passage.pageStart] : []
+  )
+  const pageEnds = passages.flatMap((passage) =>
+    typeof passage.pageEnd === 'number' ? [passage.pageEnd] : []
+  )
+  const presentation = {
+    ...(result.retrievalMode === 'bm25' || result.retrievalMode === 'fallback'
+      ? { retrievalMode: result.retrievalMode }
+      : {}),
+    documentNames: documents.flatMap((document) =>
+      typeof document.name === 'string' ? [document.name] : []
+    ),
+    ...(result.scope === 'relevant-passages' && passages.length > 0
+      ? { passageCount: passages.length }
+      : {}),
+    ...(pageStarts.length > 0 ? { pageStart: Math.min(...pageStarts) } : {}),
+    ...(pageEnds.length > 0 ? { pageEnd: Math.max(...pageEnds) } : {}),
+    ...('nextCursor' in result ? { hasMore: result.nextCursor !== null } : {})
+  }
+
+  return literaturePresentationText(
+    JSON.stringify({ openScienceLiteraturePresentation: presentation })
+  )
+}
+
+const extractContentLiteraturePresentation = (
+  update: ToolCallUpdate,
+  content: ToolCallContent[] | undefined
+): ToolCallContent | undefined => {
+  if (!isLiteratureReadDocumentUpdate(update)) return undefined
+
+  for (const item of content ?? []) {
+    if (item.type !== 'content' || item.content.type !== 'text') continue
+    const text =
+      literaturePresentationText(item.content.text) ??
+      literatureResultPresentationText(item.content.text)
+    if (text) return { type: 'content', content: { type: 'text', text } }
+  }
+
+  return undefined
+}
+
+// Native Responses and some MCP adapters expose successful tool content only through the raw
+// result envelope. Recover just the bounded Literature presentation block before the full passage
+// payload is dropped; document ids and passage bodies never enter runtime IPC or Session JSON.
+const extractRawLiteraturePresentation = (rawOutput: unknown): ToolCallContent | undefined => {
+  if (!isRecord(rawOutput) || !isRecord(rawOutput.result)) return undefined
+  const content = rawOutput.result.content
+  if (!Array.isArray(content)) return undefined
+
+  for (const item of content) {
+    if (!isRecord(item) || item.type !== 'text') continue
+    const text = literaturePresentationText(item.text)
+    if (text) return { type: 'content', content: { type: 'text', text } }
+  }
+
+  return undefined
+}
+
 const hasToolImageContent = (content: ToolCallContent[] | null | undefined): boolean =>
   content?.some((item) => item.type === 'content' && item.content.type === 'image') === true
 
@@ -344,11 +488,30 @@ const projectToolDetailPayload = (update: ToolCallUpdate): Partial<AcpRuntimeEve
   if (isNativeSkillToolUpdate(update)) return {}
 
   const containsStructuredImage = hasToolImageContent(update.content)
+  const projectedContent = projectToolContent(update.content)
+  const literaturePresentation =
+    extractContentLiteraturePresentation(update, projectedContent) ??
+    extractRawLiteraturePresentation(update.rawOutput)
+  const literaturePresentationContentText =
+    literaturePresentation?.type === 'content' && literaturePresentation.content.type === 'text'
+      ? literaturePresentation.content.text
+      : undefined
+  const toolContent = literaturePresentation
+    ? [
+        literaturePresentation,
+        ...(projectedContent?.filter(
+          (item) =>
+            item.type !== 'content' ||
+            item.content.type !== 'text' ||
+            item.content.text !== literaturePresentationContentText
+        ) ?? [])
+      ]
+    : projectedContent
   const rawOutput = containsStructuredImage ? undefined : sanitizeRawToolPayload(update.rawOutput)
   const containsImage = containsStructuredImage || hasRawImagePayload(rawOutput)
 
   return {
-    toolContent: projectToolContent(update.content),
+    toolContent,
     toolLocations: update.locations ?? undefined,
     rawInput: sanitizeRawToolPayload(update.rawInput),
     // ACP adapters may expose an image only in rawOutput or echo the complete structured result.

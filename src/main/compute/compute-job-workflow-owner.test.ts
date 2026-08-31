@@ -233,7 +233,7 @@ const makeJobRepo = (
 }
 
 describe('ComputeJobWorkflowOwner.submitJob', () => {
-  it('does not misclassify an unexpected live dispatch failure as restart recovery', async () => {
+  it('keeps an unexpected live dispatch failure recoverable when launch state is unknown', async () => {
     const jobs = new Map<string, import('../../shared/compute').ComputeJob>()
     const runner: SshRunner = { run: vi.fn(() => Promise.reject(new Error('transport crashed'))) }
     const { repo: jobRepo } = makeJobRepo(jobs)
@@ -284,9 +284,8 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     await poller.tick()
 
     expect(jobs.get(submitted.job_id)).toMatchObject({
-      status: 'error',
-      error_code: 'dispatch_failed',
-      stderr_tail: 'The remote Compute Job dispatch failed unexpectedly.',
+      status: 'submitted',
+      error_code: undefined,
       started_at: undefined,
       remote_handle: undefined
     })
@@ -310,6 +309,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     let handoffWait: Promise<void> | undefined
     const concurrencyManager = {
       enqueue: vi.fn(async () => 'can_dispatch' as const),
+      handleJobUpdated: vi.fn(),
       admit: vi.fn(
         async (
           _params: { sessionId: string; providerId: string },
@@ -388,6 +388,36 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     expect(createCalls).toHaveBeenCalledOnce()
   })
 
+  it('publishes the committed submitted row immediately after creation', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo } = makeJobRepo()
+    const { repo } = makeRepo()
+    const publish = vi.fn()
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(async () => 'once' as const),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    await makeOwner(runner, repo, broker, jobRepo, publish).submitJob(
+      'ssh:biowulf',
+      'visible immediately',
+      'echo ready',
+      {},
+      { sessionId: 'sess-1', projectId: 'proj-1' }
+    )
+
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: 'sess-1', status: 'submitted' })
+    )
+  })
+
   it('throws approval_denied and does NOT create a DB row when approval is denied', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
@@ -428,7 +458,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     const { repo: jobRepo } = makeJobRepo()
     const { repo } = makeRepo()
 
-    const requestWithContext = vi.fn(() => Promise.resolve('conversation' as const))
+    const requestWithContext = vi.fn(() => Promise.resolve('session' as const))
     const broker = {
       request: vi.fn(),
       requestWithContext,
@@ -442,13 +472,18 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
       'ssh:biowulf',
       'test',
       'echo hi',
-      {},
+      { resourceRequest: '{"cpus":4}', timeoutSeconds: 120 },
       { sessionId: 's1', projectId: 'p1' },
       signal
     )
 
     expect(requestWithContext).toHaveBeenCalledWith(
-      expect.anything(),
+      expect.objectContaining({
+        operation: 'submit_job',
+        resources: '{"cpus":4}',
+        timeout_seconds: 120,
+        remote_workdir: expect.stringContaining('/.openscience/jobs/')
+      }),
       expect.objectContaining({ operation: 'submit_job' }),
       signal
     )
@@ -558,6 +593,25 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
 })
 
 describe('ComputeJobWorkflowOwner.getJobStatus', () => {
+  it.each(['getJobStatus', 'getJobResult'] as const)(
+    '%s reports the shared missing-repository requirement accurately',
+    async (method) => {
+      const runner = makeFakeRunner({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      const { repo } = makeRepo()
+      const service = makeOwner(runner, repo)
+
+      await expect(service[method]('job-42')).rejects.toThrow(
+        'ComputeJobRepository is required to read Compute Jobs.'
+      )
+    }
+  )
+
   it('returns status shape from DB without SSH', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
@@ -589,6 +643,7 @@ describe('ComputeJobWorkflowOwner.getJobStatus', () => {
       stdout_tail: 'hi\n',
       stderr_tail: '',
       error_code: undefined,
+      harvest_error: 'harvest pending: authentication_failed',
       created_at: 1,
       submitted_at: 1,
       started_at: 1,
@@ -607,6 +662,7 @@ describe('ComputeJobWorkflowOwner.getJobStatus', () => {
     expect(status.exit_code).toBe(0)
     expect(status.stdout_tail).toBe('hi\n')
     expect(status.remote_workdir).toBe('~/.openscience/jobs/job-42')
+    expect(status.harvest_error).toBe('harvest pending: authentication_failed')
 
     await expect(
       service.getJobStatus('job-42', {
@@ -1055,12 +1111,17 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
   })
 
   it('terminal but harvest not done: returns empty file lists without error', async () => {
-    const job = baseJob({ status: 'success', harvested_at: undefined })
+    const job = baseJob({
+      status: 'success',
+      harvested_at: undefined,
+      harvest_error: 'harvest pending: host_unreachable'
+    })
     const service = makeServiceWithStorageRoot(job, tmpDir)
     const result = await service.getJobResult('job-result-1')
     expect(result.status).toBe('success')
     expect(result.featured_files).toEqual([])
     expect(result.output_files).toEqual([])
+    expect(result.harvest_error).toBe('harvest pending: host_unreachable')
   })
 
   it('clean harvest: returns full file lists with workspace-relative paths', async () => {
@@ -1117,7 +1178,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     }
   })
 
-  it('harvest_failed: partial files returned, remote_workdir preserved', async () => {
+  it('harvest_failed: does not expose stale local files and preserves remote_workdir', async () => {
     const harvestDir = join(tmpDir, 'notebooks', 'proj-1', 'sess-1', 'hpc', 'job-result-1')
     await mkdir(join(harvestDir, 'featured'), { recursive: true })
     await writeFile(join(harvestDir, 'featured', 'partial.result'), 'partial')
@@ -1135,7 +1196,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     const result = await service.getJobResult('job-result-1')
 
     expect(result.status).toBe('success')
-    expect(result.featured_files).toContain('hpc/job-result-1/featured/partial.result')
+    expect(result.featured_files).toEqual([])
     expect(result.remote_workdir).toBe('~/.openscience/jobs/job-result-1')
     expect(result.left_on_remote).toHaveLength(1)
     expect(result.left_on_remote[0].uri).toBe('ssh://biowulf/tmp/big.bin')

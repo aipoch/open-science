@@ -72,6 +72,7 @@ import {
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useSessionJobStore } from '@/stores/session-job-store'
+import { useSessionJobHydration } from '@/lib/compute/useSessionJobHydration'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
 import type { SendEditedMessage } from './workspace-edited-message'
 import type {
@@ -100,6 +101,7 @@ import type { AnnotationPort } from './annotations/annotation-port'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
+  credentialPending?: boolean
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: SendEditedMessage
@@ -388,6 +390,7 @@ const EditableWorkspaceMessageItem = (
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScrollerImpl = ({
   activeSession,
+  credentialPending = false,
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
@@ -481,15 +484,7 @@ const WorkspaceMessageScrollerImpl = ({
 
   // Job store for binding and CompletedJobCard rendering
   const jobsById = useSessionJobStore((s) => s.jobsById)
-  const hydrateJobs = useSessionJobStore((s) => s.hydrate)
-
-  // Hydrate the job store when the active session changes
-  useEffect(() => {
-    // Guard against test environments where window.api.compute may not be available
-    if (currentSessionId && typeof window.api?.compute?.jobsList === 'function') {
-      void hydrateJobs(currentSessionId)
-    }
-  }, [currentSessionId, hydrateJobs])
+  const jobHydration = useSessionJobHydration(currentSessionId)
 
   // Job detail modal state
   const [modalOpen, setModalOpen] = useState(false)
@@ -915,7 +910,7 @@ const WorkspaceMessageScrollerImpl = ({
       )
     )
   }, [conversationItems])
-  const agentLoadingPhase = getAgentLoadingPhase(activeSession)
+  const agentLoadingPhase = getAgentLoadingPhase(activeSession, { credentialPending })
   const [terminalAnnouncement, setTerminalAnnouncement] = useState<
     TerminalAnnouncement | undefined
   >()
@@ -1319,6 +1314,22 @@ const WorkspaceMessageScrollerImpl = ({
                   </div>
                 </MessageScrollerItem>
               ) : null}
+              {jobHydration.error ? (
+                <MessageScrollerItem
+                  messageId={`job-load-error-${currentSessionId ?? 'unknown'}`}
+                  className="min-w-0"
+                >
+                  <div
+                    role="alert"
+                    className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg bg-danger-900 px-3 py-2 text-xs text-danger-000 ring-1 ring-inset ring-danger-000/25 md:mx-6"
+                  >
+                    <span>{t('Unable to load remote jobs.')}</span>
+                    <Button type="button" variant="ghost" size="xs" onClick={jobHydration.retry}>
+                      {t('Retry')}
+                    </Button>
+                  </div>
+                </MessageScrollerItem>
+              ) : null}
               <VisibleMessageSnapshotCommit
                 scopeId={currentPresentationScopeId}
                 messageIdsKey={visibleMessageIdsKey}
@@ -1375,6 +1386,7 @@ const WorkspaceMessageScrollerImpl = ({
                   }
                   const messageItemProps: EditableWorkspaceMessageItemProps = {
                     message: item.message,
+                    projectId: currentProjectId,
                     onPreviewArtifact,
                     onPreviewArtifactModal,
                     onPreviewUploadAttachment,
@@ -1706,6 +1718,7 @@ const WorkspaceMessageScrollerImpl = ({
               {optimisticMessage ? (
                 <WorkspaceMessageItem
                   message={optimisticMessage}
+                  projectId={currentProjectId}
                   onPreviewArtifact={onPreviewArtifact}
                   onPreviewArtifactModal={onPreviewArtifactModal}
                   onPreviewUploadAttachment={onPreviewUploadAttachment}
@@ -1851,6 +1864,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  (previous.credentialPending ?? false) === (next.credentialPending ?? false) &&
   previous.optimisticMessage === next.optimisticMessage &&
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&

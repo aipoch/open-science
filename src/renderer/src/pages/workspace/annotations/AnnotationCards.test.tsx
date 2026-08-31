@@ -40,11 +40,73 @@ const annotations: Annotation[] = [
   }
 ]
 
+const pdfAnnotations: Annotation[] = [
+  {
+    id: 'pdf-text-1',
+    kind: 'pdf',
+    target: 'agent',
+    note: 'Explain why this matters.',
+    source: {
+      kind: 'upload-version',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      versionId: 'pdf-version-1',
+      name: 'paper.pdf',
+      path: 'upload-version:project-1/session-1/pdf-version-1',
+      checksum: 'a'.repeat(64)
+    },
+    selector: {
+      kind: 'text',
+      pageNumber: 6,
+      exact: 'Evidence from the paper.',
+      position: { start: 20, end: 44 },
+      quads: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.03 }],
+      extractorVersion: 'pdfjs-5.4.624'
+    }
+  },
+  {
+    id: 'pdf-region-1',
+    kind: 'pdf',
+    target: 'agent',
+    source: {
+      kind: 'artifact-version',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      versionId: 'pdf-version-2',
+      name: 'results.pdf',
+      path: 'artifact-version:project-1/session-1/pdf-version-2',
+      checksum: 'b'.repeat(64)
+    },
+    selector: {
+      kind: 'region',
+      pageNumber: 9,
+      rect: { x: 0.2, y: 0.3, width: 0.5, height: 0.25 },
+      pageRotation: 0,
+      text: 'Figure 2 compares the retrieval methods.',
+      image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+    }
+  }
+]
+
 describe('AnnotationCards image projection', () => {
   let container: HTMLDivElement
   let root: Root
+  let notifyResize: (() => void) | undefined
+  const originalResizeObserver = globalThis.ResizeObserver
 
   beforeEach(() => {
+    globalThis.ResizeObserver = class {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(): void {
+        notifyResize = () => this.callback([], this as unknown as ResizeObserver)
+      }
+      disconnect(): void {
+        notifyResize = undefined
+      }
+      unobserve(): void {
+        notifyResize = undefined
+      }
+    }
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -54,6 +116,9 @@ describe('AnnotationCards image projection', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    notifyResize = undefined
+    if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver
+    else delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver
   })
 
   it('keeps mixed annotation image numbering and pixels on sent cards', async () => {
@@ -62,6 +127,60 @@ describe('AnnotationCards image projection', () => {
     expect(container.textContent).toContain('Image point 1')
     expect(container.textContent).toContain('Point 1 at 500, 100')
     expect(container.textContent).toContain('Inspect the peak.')
+  })
+
+  it('renders PDF quotes and regions as distinct sent evidence cards that reveal their source', async () => {
+    const onReveal = vi.fn()
+    await act(async () =>
+      root.render(<AnnotationMessageCards annotations={pdfAnnotations} onReveal={onReveal} />)
+    )
+
+    const quote = container.querySelector<HTMLElement>('[data-sent-annotation-kind="pdf-text"]')
+    const region = container.querySelector<HTMLElement>('[data-sent-annotation-kind="pdf-region"]')
+    expect(quote?.textContent).toContain('PDF quote')
+    expect(quote?.textContent).toContain('Evidence from the paper.')
+    expect(quote?.textContent).toContain('paper.pdf · Page 6')
+    expect(quote?.textContent).toContain('Explain why this matters.')
+    expect(region?.textContent).toContain('PDF area')
+    expect(region?.textContent).toContain('Figure 2 compares the retrieval methods.')
+    expect(region?.textContent).toContain('results.pdf · Page 9')
+    expect(region?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AQID')
+
+    await act(async () => quote?.querySelector('button')?.click())
+    await act(async () => region?.querySelector('button')?.click())
+    expect(onReveal).toHaveBeenNthCalledWith(1, pdfAnnotations[0])
+    expect(onReveal).toHaveBeenNthCalledWith(2, pdfAnnotations[1])
+  })
+
+  it('clamps only overflowing PDF quotes to three lines and expands them on demand', async () => {
+    const baseQuote = pdfAnnotations[0]
+    if (baseQuote.kind !== 'pdf' || baseQuote.selector.kind !== 'text') {
+      throw new Error('Expected PDF text fixture')
+    }
+    const longQuote = {
+      ...baseQuote,
+      selector: {
+        ...baseQuote.selector,
+        exact: 'A long PDF quote. '.repeat(30)
+      }
+    } as Annotation
+    await act(async () =>
+      root.render(<AnnotationMessageCards annotations={[longQuote]} onReveal={vi.fn()} />)
+    )
+
+    const quote = container.querySelector<HTMLQuoteElement>('blockquote')
+    Object.defineProperties(quote, {
+      clientHeight: { configurable: true, value: 60 },
+      scrollHeight: { configurable: true, value: 180 }
+    })
+    await act(async () => notifyResize?.())
+
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Show more"]')
+    expect(quote?.classList.contains('line-clamp-3')).toBe(true)
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => toggle?.click())
+    expect(quote?.classList.contains('line-clamp-3')).toBe(false)
+    expect(container.querySelector('[aria-label="Show less"]')).not.toBeNull()
   })
 
   it('omits the source line from draft chips', async () => {
@@ -357,6 +476,48 @@ describe('AnnotationCards image projection', () => {
       (label) => label.textContent
     )
     expect(labels).toEqual(['Prefer this annotation label', 'Compare this sentence.'])
+  })
+
+  it('shows the PDF page in the annotation source label', async () => {
+    await act(async () =>
+      root.render(
+        <AnnotationDraftCards
+          annotations={[
+            {
+              id: 'pdf-quote',
+              kind: 'pdf',
+              target: 'agent',
+              source: {
+                kind: 'upload-version',
+                projectId: 'project-1',
+                sessionId: 'session-1',
+                path: 'upload-version:project-1/session-1/version-1',
+                name: 'paper.pdf',
+                versionId: 'version-1',
+                checksum: 'a'.repeat(64)
+              },
+              selector: {
+                kind: 'text',
+                pageNumber: 6,
+                exact: 'Evidence from the paper.',
+                position: { start: 0, end: 24 },
+                quads: [{ x: 0.1, y: 0.1, width: 0.4, height: 0.03 }],
+                extractorVersion: 'pdfjs-5.4.624'
+              }
+            }
+          ]}
+          disabled={false}
+          onUpdateNote={vi.fn()}
+          onRemove={vi.fn()}
+        />
+      )
+    )
+
+    expect(
+      container
+        .querySelector('[data-annotation-hover-label]')
+        ?.getAttribute('data-annotation-hover-label')
+    ).toContain('paper.pdf · Page 6')
   })
 
   it('activates an existing file preview before revealing its image pin', async () => {

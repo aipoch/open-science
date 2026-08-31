@@ -1,5 +1,12 @@
 import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
-import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
+import type {
+  ComputeJob,
+  ComputeJobAnalysisState,
+  ComputeJobAnalysisTransition,
+  ComputeJobIntegrityIssue,
+  ComputeJobStatus
+} from '../../shared/compute'
+import { classifyComputeJobIntegrity, isKnownComputeJobStatus } from './compute-job-integrity'
 import {
   OptionalSecureStorageStringProtection,
   type ProtectedJsonContainer
@@ -8,6 +15,9 @@ import {
 // Only ComputeJob persistence and a transaction wrapper are needed.
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
 type ComputeJobClientProvider = () => Promise<ComputeJobClient>
+type PrismaComputeJobWithOperation = PrismaComputeJob & {
+  operations?: Array<{ phase: string; outcome: string | null }>
+}
 type ComputeJobFieldProtection = Pick<
   OptionalSecureStorageStringProtection,
   'isAvailable' | 'protect' | 'protectJson' | 'reveal' | 'revealJson'
@@ -39,16 +49,14 @@ const sessionOwnerKey = (projectId: string, sessionId: string): string =>
   JSON.stringify([projectId, sessionId])
 
 const asStatus = (value: string): ComputeJobStatus => {
-  const valid: ComputeJobStatus[] = [
-    'queued',
-    'submitted',
-    'running',
-    'success',
-    'failed',
-    'timeout',
-    'error'
-  ]
-  return valid.includes(value as ComputeJobStatus) ? (value as ComputeJobStatus) : 'error'
+  return isKnownComputeJobStatus(value) ? value : 'error'
+}
+
+const asAnalysisState = (value: string | null): ComputeJobAnalysisState | undefined => {
+  const valid: ComputeJobAnalysisState[] = ['dispatched', 'succeeded', 'failed', 'cancelled']
+  return valid.includes(value as ComputeJobAnalysisState)
+    ? (value as ComputeJobAnalysisState)
+    : undefined
 }
 
 export type CreateJobRequest = {
@@ -74,6 +82,7 @@ export type CreateJobRequest = {
 export type UpdateJobRequest = {
   status?: ComputeJobStatus
   remoteHandle?: string
+  remoteWorkdir?: string
   exitCode?: number | null
   stdoutTail?: string | null
   stderrTail?: string | null
@@ -97,6 +106,24 @@ export type UpdateJobRequest = {
 
 type ComputeJobUpdateData = Parameters<ComputeJobClient['computeJob']['update']>[0]['data']
 type ComputeJobCreateData = Parameters<ComputeJobClient['computeJob']['create']>[0]['data']
+
+type SensitiveJobProjection = Readonly<{
+  intent: string
+  command: string
+  environment: string | undefined
+  resourceRequest: string | undefined
+  inputManifest: string | undefined
+  outputManifest: string | undefined
+  harvestConfig: string | undefined
+  remoteWorkdir: string | undefined
+  remoteHandle: string | undefined
+  stdoutTail: string | undefined
+  stderrTail: string | undefined
+  lastPollError: string | undefined
+  harvestError: string | undefined
+  leftOnRemote: string | undefined
+  unavailable: boolean
+}>
 
 // Owns ComputeJob reads/writes. Follows the same lazy-provider pattern as ComputeHostRepository.
 export class ComputeJobRepository {
@@ -148,6 +175,7 @@ export class ComputeJobRepository {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
       where: ownerWhere(owner),
+      include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
     })
     return rows.map(this.toJob)
@@ -217,14 +245,20 @@ export class ComputeJobRepository {
         }
       }
 
-      const row = await client.computeJob.create({ data })
+      const row = await client.computeJob.create({
+        data,
+        include: { operations: { where: { kind: 'cancel' } } }
+      })
       return this.toJob(row)
     })
   }
 
   async get(jobId: string): Promise<ComputeJob | null> {
     const client = await this.getClient()
-    const row = await client.computeJob.findUnique({ where: { id: jobId } })
+    const row = await client.computeJob.findUnique({
+      where: { id: jobId },
+      include: { operations: { where: { kind: 'cancel' } } }
+    })
     return row ? this.toJob(row) : null
   }
 
@@ -232,10 +266,14 @@ export class ComputeJobRepository {
   async findNonTerminal(): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
-      where: { status: { in: ['queued', 'submitted', 'running'] } },
+      where: {
+        status: { in: ['queued', 'submitted', 'running'] },
+        operations: { none: { kind: 'cancel' } }
+      },
+      include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(rows.map(this.toJob))
+    return this.excludeDeletingOwners(this.toLifecycleJobs(rows))
   }
 
   // Returns all terminal jobs (success/failed/timeout) that have not yet been harvested.
@@ -247,36 +285,43 @@ export class ComputeJobRepository {
         status: { in: ['success', 'failed', 'timeout'] },
         harvestedAt: null
       },
+      include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(rows.map(this.toJob))
+    return this.excludeDeletingOwners(this.toLifecycleJobs(rows))
   }
 
-  // Returns error-state jobs that have not yet emitted a compute_done notification.
-  // 'error' is a terminal resting state written by the dispatcher (dispatch_failed / host_unreachable)
-  // and is excluded from both findNonTerminal and findTerminalUnharvested — so without this scan an
-  // error job would never reach the notify→analyze flow. The poller uses it as a recovery scan;
-  // emitJobNotification is idempotent (guards on notified_at), so re-scanning a row is a no-op.
-  async findErrorUnnotified(): Promise<ComputeJob[]> {
+  // Returns every final resting state ready for notification. Harvested execution outcomes and
+  // dispatch errors share one restart-recovery entrance; the notifier CAS decides the sole emitter.
+  async findNotificationReadyUnnotified(): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
       where: {
-        status: 'error',
-        notifiedAt: null
+        notifiedAt: null,
+        OR: [
+          { status: 'error' },
+          { status: { in: ['success', 'failed', 'timeout'] }, harvestedAt: { not: null } }
+        ]
       },
+      include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(rows.map(this.toJob))
+    return this.excludeDeletingOwners(this.toLifecycleJobs(rows))
   }
 
   // Returns all non-terminal jobs for a given provider (used by per-host batch polling).
   async findNonTerminalByProvider(providerId: string): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
-      where: { providerId, status: { in: ['queued', 'submitted', 'running'] } },
+      where: {
+        providerId,
+        status: { in: ['queued', 'submitted', 'running'] },
+        operations: { none: { kind: 'cancel' } }
+      },
+      include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(this.toJob)
+    return this.toLifecycleJobs(rows)
   }
 
   async update(jobId: string, updates: UpdateJobRequest): Promise<ComputeJob> {
@@ -284,9 +329,32 @@ export class ComputeJobRepository {
     const current = await client.computeJob.findUnique({ where: { id: jobId } })
     const row = await client.computeJob.update({
       where: { id: jobId },
-      data: this.toUpdateData(updates, current?.sensitiveDataEncrypted === true)
+      data: this.toUpdateData(updates, current?.sensitiveDataEncrypted === true),
+      include: { operations: { where: { kind: 'cancel' } } }
     })
     return this.toJob(row)
+  }
+
+  // Atomically claims the right to emit a notification. Stale callers may all hold a projection
+  // with notified_at unset; only the transaction that changes NULL to a timestamp may broadcast.
+  async claimNotification(jobId: string, notifiedAt: Date): Promise<ComputeJob | null> {
+    return this.runMutation(async () => {
+      const client = await this.getClient()
+      return client.$transaction(async (transaction) => {
+        const current = await transaction.computeJob.findUnique({ where: { id: jobId } })
+        if (!current || !this.isOwnerMutable(current.projectId, current.sessionId)) return null
+        const claimed = await transaction.computeJob.updateMany({
+          where: { id: jobId, notifiedAt: null },
+          data: { notifiedAt }
+        })
+        if (claimed.count === 0) return null
+        const row = await transaction.computeJob.findUnique({
+          where: { id: jobId },
+          include: { operations: { where: { kind: 'cancel' } } }
+        })
+        return row ? this.toJob(row) : null
+      })
+    })
   }
 
   async updateIfStatus(
@@ -301,18 +369,26 @@ export class ComputeJobRepository {
         if (!current || !this.isOwnerMutable(current.projectId, current.sessionId)) return null
 
         const applied = await transaction.computeJob.updateMany({
-          where: { id: jobId, status: { in: [...expectedStatuses] } },
+          where: {
+            id: jobId,
+            status: { in: [...expectedStatuses] },
+            operations: { none: { kind: 'cancel' } }
+          },
           data: this.toUpdateData(updates, current.sensitiveDataEncrypted === true)
         })
         if (applied.count === 0) return null
 
-        const row = await transaction.computeJob.findUnique({ where: { id: jobId } })
+        const row = await transaction.computeJob.findUnique({
+          where: { id: jobId },
+          include: { operations: { where: { kind: 'cancel' } } }
+        })
         return row ? this.toJob(row) : null
       })
     })
   }
 
-  // Returns all jobs for a session, newest-first. Optionally filtered by status values.
+  // Observational projection for renderer lists and concurrency status. Unlike lifecycle scans,
+  // this retains quarantined/needs-attention rows so users can inspect durable state safely.
   async findBySession(sessionId: string, statuses?: string[]): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
@@ -320,6 +396,7 @@ export class ComputeJobRepository {
         sessionId,
         ...(statuses && statuses.length > 0 ? { status: { in: statuses } } : {})
       },
+      include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'desc' }
     })
     return rows.map(this.toJob)
@@ -329,7 +406,11 @@ export class ComputeJobRepository {
   async hasActiveJobsForProvider(providerId: string): Promise<boolean> {
     const client = await this.getClient()
     const count = await client.computeJob.count({
-      where: { providerId, status: { in: ['queued', 'submitted', 'running'] } }
+      where: {
+        providerId,
+        status: { in: ['queued', 'submitted', 'running'] },
+        operations: { none: { kind: 'cancel' } }
+      }
     })
     return count > 0
   }
@@ -359,19 +440,31 @@ export class ComputeJobRepository {
     })
   }
 
-  // Returns notified jobs that have not yet been consumed, optionally scoped to one Session.
-  // The App-level analysis owner uses the global form for restart recovery.
+  // Returns notified jobs whose automatic analysis is still pending or dispatched, optionally
+  // scoped to one Session. Failed/cancelled outcomes stay unconsumed but are terminal and observable
+  // through normal Job reads, so the restart scan does not repeatedly requeue them.
   async findPendingNotifications(sessionId?: string): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
       where: {
         ...(sessionId === undefined ? {} : { sessionId }),
+        status: { in: ['success', 'failed', 'timeout', 'error'] },
         notifiedAt: { not: null },
-        notificationConsumedAt: null
+        notificationConsumedAt: null,
+        OR: [{ analysisState: null }, { analysisState: 'dispatched' }]
       },
+      include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(this.toJob)
+    return this.toLifecycleJobs(rows)
+  }
+
+  // Detect-only startup seam over raw rows. It never guesses a future enum value and never mutates
+  // historical jobs; operational scans quarantine unknown status and notification-invariant rows.
+  async scanIntegrity(): Promise<ComputeJobIntegrityIssue[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({ orderBy: { createdAt: 'asc' } })
+    return rows.flatMap((row) => this.integrityIssues(row, this.projectSensitiveFields(row)))
   }
 
   // Marks a batch of jobs as notification-consumed by setting notificationConsumedAt to now.
@@ -404,6 +497,59 @@ export class ComputeJobRepository {
     })
   }
 
+  async transitionAnalysis(request: ComputeJobAnalysisTransition): Promise<ComputeJob[]> {
+    const sessionId = request.sessionId.trim()
+    const messageId = request.messageId.trim()
+    const jobIds = [...new Set(request.jobIds.map((jobId) => jobId.trim()).filter(Boolean))]
+    if (!sessionId || !messageId || jobIds.length === 0) {
+      throw new Error('Compute analysis transition requires a Session, Jobs, and Message identity.')
+    }
+
+    const client = await this.getClient()
+    await client.$transaction(async (transaction) => {
+      const rows = await transaction.computeJob.findMany({ where: { id: { in: jobIds } } })
+      if (
+        rows.length !== jobIds.length ||
+        rows.some((row) => row.sessionId !== sessionId || row.notifiedAt === null)
+      ) {
+        throw new Error('Cannot transition compute analysis outside the requested Session.')
+      }
+
+      const transitionAllowed = rows.every((row) => {
+        if (request.state === 'dispatched') {
+          return (
+            row.notificationConsumedAt === null &&
+            (row.analysisState === null ||
+              (row.analysisState === 'dispatched' && row.analysisMessageId === messageId))
+          )
+        }
+        return (
+          row.analysisMessageId === messageId &&
+          (row.analysisState === 'dispatched' || row.analysisState === request.state)
+        )
+      })
+      if (!transitionAllowed) {
+        throw new Error('Compute analysis transition does not match its durable dispatch.')
+      }
+
+      await transaction.computeJob.updateMany({
+        where: { sessionId, id: { in: jobIds } },
+        data: {
+          analysisState: request.state,
+          analysisMessageId: messageId,
+          analysisUpdatedAt: new Date(),
+          ...(request.state === 'succeeded' ? { notificationConsumedAt: new Date() } : {})
+        }
+      })
+    })
+
+    const rows = await client.computeJob.findMany({
+      where: { sessionId, id: { in: jobIds } },
+      orderBy: { createdAt: 'asc' }
+    })
+    return rows.map(this.toJob)
+  }
+
   // Counts non-terminal jobs (queued, submitted, running) across all sessions for a given provider.
   // Used by ConcurrencyManager to enforce provider ceilings.
   async countNonTerminalByProvider(providerId: string): Promise<number> {
@@ -411,7 +557,8 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         providerId,
-        status: { in: ['queued', 'submitted', 'running'] }
+        status: { in: ['queued', 'submitted', 'running'] },
+        operations: { none: { kind: 'cancel' } }
       }
     })
   }
@@ -423,7 +570,8 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         sessionId,
-        status: { in: ['queued', 'submitted', 'running'] }
+        status: { in: ['queued', 'submitted', 'running'] },
+        operations: { none: { kind: 'cancel' } }
       }
     })
   }
@@ -435,7 +583,8 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         sessionId,
-        status: { in: ['submitted', 'running'] }
+        status: { in: ['submitted', 'running'] },
+        operations: { none: { kind: 'cancel' } }
       }
     })
   }
@@ -447,7 +596,8 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         providerId,
-        status: { in: ['submitted', 'running'] }
+        status: { in: ['submitted', 'running'] },
+        operations: { none: { kind: 'cancel' } }
       }
     })
   }
@@ -457,7 +607,7 @@ export class ComputeJobRepository {
   async countQueuedJobs(): Promise<number> {
     const client = await this.getClient()
     return await client.computeJob.count({
-      where: { status: 'queued' }
+      where: { status: 'queued', operations: { none: { kind: 'cancel' } } }
     })
   }
 
@@ -466,69 +616,136 @@ export class ComputeJobRepository {
   async findQueuedJobs(): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
-      where: { status: 'queued' },
+      where: { status: 'queued', operations: { none: { kind: 'cancel' } } },
+      include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(this.toJob)
+    return this.toLifecycleJobs(rows)
   }
 
-  private readonly toJob = (row: PrismaComputeJob): ComputeJob => ({
-    job_id: row.id,
-    provider_id: row.providerId,
-    shape: row.shape,
-    session_id: row.sessionId,
-    project_id: row.projectId,
-    status: asStatus(row.status),
-    intent: this.reveal(row.intent, row.sensitiveDataEncrypted === true),
-    command: this.reveal(row.command, row.sensitiveDataEncrypted === true),
-    command_hash: row.commandHash,
-    environment: this.revealOptional(row.environment, row.sensitiveDataEncrypted === true),
-    resource_request: this.revealJsonOptional(
-      row.resourceRequest,
-      'object',
-      row.sensitiveDataEncrypted === true
-    ),
-    input_manifest: this.revealJsonOptional(
-      row.inputManifest,
-      'array',
-      row.sensitiveDataEncrypted === true
-    ),
-    output_manifest: this.revealJsonOptional(
-      row.outputManifest,
-      'array',
-      row.sensitiveDataEncrypted === true
-    ),
-    harvest_config: this.revealJsonOptional(
-      row.harvestConfig,
-      'object',
-      row.sensitiveDataEncrypted === true
-    ),
-    timeout_seconds: row.timeoutSeconds ?? undefined,
-    remote_workdir: this.revealOptional(row.remoteWorkdir, row.sensitiveDataEncrypted === true),
-    remote_handle: this.revealJsonOptional(
-      row.remoteHandle,
-      'object',
-      row.sensitiveDataEncrypted === true
-    ),
-    exit_code: row.exitCode ?? undefined,
-    stdout_tail: this.revealOptional(row.stdoutTail, row.sensitiveDataEncrypted === true),
-    stderr_tail: this.revealOptional(row.stderrTail, row.sensitiveDataEncrypted === true),
-    error_code: row.errorCode ?? undefined,
-    last_poll_error: this.revealOptional(row.lastPollError, row.sensitiveDataEncrypted === true),
-    harvest_error: this.revealOptional(row.harvestError, row.sensitiveDataEncrypted === true),
-    left_on_remote: this.revealJsonOptional(
-      row.leftOnRemote,
-      'array',
-      row.sensitiveDataEncrypted === true
-    ),
-    notified_at: row.notifiedAt?.getTime(),
-    notification_consumed_at: row.notificationConsumedAt?.getTime(),
-    created_at: row.createdAt.getTime(),
-    submitted_at: row.submittedAt?.getTime(),
-    started_at: row.startedAt?.getTime(),
-    finished_at: row.finishedAt?.getTime(),
-    harvested_at: row.harvestedAt?.getTime()
-  })
+  private readonly toJob = (row: PrismaComputeJobWithOperation): ComputeJob => {
+    const sensitive = this.projectSensitiveFields(row)
+    const integrityIssues = this.integrityIssues(row, sensitive)
+    return {
+      job_id: row.id,
+      provider_id: row.providerId,
+      shape: row.shape,
+      session_id: row.sessionId,
+      project_id: row.projectId,
+      status: asStatus(row.status),
+      ...(!isKnownComputeJobStatus(row.status) ? { raw_status: row.status } : {}),
+      ...(integrityIssues.length > 0
+        ? { integrity_issues: integrityIssues, needs_attention: true }
+        : {}),
+      cancellation_status:
+        row.operations?.[0]?.phase === 'active'
+          ? 'cancelling'
+          : row.operations?.[0]?.outcome === 'fulfilled'
+            ? 'cancelled'
+            : undefined,
+      intent: sensitive.intent,
+      command: sensitive.command,
+      command_hash: row.commandHash,
+      environment: sensitive.environment,
+      resource_request: sensitive.resourceRequest,
+      input_manifest: sensitive.inputManifest,
+      output_manifest: sensitive.outputManifest,
+      harvest_config: sensitive.harvestConfig,
+      timeout_seconds: row.timeoutSeconds ?? undefined,
+      remote_workdir: sensitive.remoteWorkdir,
+      remote_handle: sensitive.remoteHandle,
+      exit_code: row.exitCode ?? undefined,
+      stdout_tail: sensitive.stdoutTail,
+      stderr_tail: sensitive.stderrTail,
+      error_code: row.errorCode ?? undefined,
+      last_poll_error: sensitive.lastPollError,
+      harvest_error: sensitive.harvestError,
+      left_on_remote: sensitive.leftOnRemote,
+      notified_at: row.notifiedAt?.getTime(),
+      notification_consumed_at: row.notificationConsumedAt?.getTime(),
+      analysis_state: asAnalysisState(row.analysisState),
+      analysis_message_id: row.analysisMessageId ?? undefined,
+      analysis_updated_at: row.analysisUpdatedAt?.getTime(),
+      created_at: row.createdAt.getTime(),
+      submitted_at: row.submittedAt?.getTime(),
+      started_at: row.startedAt?.getTime(),
+      finished_at: row.finishedAt?.getTime(),
+      harvested_at: row.harvestedAt?.getTime()
+    }
+  }
+
+  private projectSensitiveFields(row: PrismaComputeJob): SensitiveJobProjection {
+    const encrypted = row.sensitiveDataEncrypted === true
+    let unavailable = false
+    const safely = <Value>(operation: () => Value, fallback: Value): Value => {
+      try {
+        return operation()
+      } catch {
+        unavailable = true
+        return fallback
+      }
+    }
+    return {
+      intent: safely(() => this.reveal(row.intent, encrypted), ''),
+      command: safely(() => this.reveal(row.command, encrypted), ''),
+      environment: safely(() => this.revealOptional(row.environment, encrypted), undefined),
+      resourceRequest: safely(
+        () => this.revealJsonOptional(row.resourceRequest, 'object', encrypted),
+        undefined
+      ),
+      inputManifest: safely(
+        () => this.revealJsonOptional(row.inputManifest, 'array', encrypted),
+        undefined
+      ),
+      outputManifest: safely(
+        () => this.revealJsonOptional(row.outputManifest, 'array', encrypted),
+        undefined
+      ),
+      harvestConfig: safely(
+        () => this.revealJsonOptional(row.harvestConfig, 'object', encrypted),
+        undefined
+      ),
+      remoteWorkdir: safely(() => this.revealOptional(row.remoteWorkdir, encrypted), undefined),
+      remoteHandle: safely(
+        () => this.revealJsonOptional(row.remoteHandle, 'object', encrypted),
+        undefined
+      ),
+      stdoutTail: safely(() => this.revealOptional(row.stdoutTail, encrypted), undefined),
+      stderrTail: safely(() => this.revealOptional(row.stderrTail, encrypted), undefined),
+      lastPollError: safely(() => this.revealOptional(row.lastPollError, encrypted), undefined),
+      harvestError: safely(() => this.revealOptional(row.harvestError, encrypted), undefined),
+      leftOnRemote: safely(
+        () => this.revealJsonOptional(row.leftOnRemote, 'array', encrypted),
+        undefined
+      ),
+      get unavailable() {
+        return unavailable
+      }
+    }
+  }
+
+  private integrityIssues(
+    row: PrismaComputeJob,
+    sensitive: SensitiveJobProjection
+  ): ComputeJobIntegrityIssue[] {
+    return classifyComputeJobIntegrity(row, {
+      remoteWorkdir: sensitive.remoteWorkdir ?? null,
+      remoteHandle: sensitive.remoteHandle ?? null,
+      unavailable: sensitive.unavailable
+    })
+  }
+
+  private toLifecycleJobs(rows: PrismaComputeJobWithOperation[]): ComputeJob[] {
+    return rows
+      .map(this.toJob)
+      .filter(
+        (job) =>
+          !job.integrity_issues?.some(
+            (issue) =>
+              issue.disposition === 'quarantined' || issue.code === 'sensitive-fields-unavailable'
+          )
+      )
+  }
 
   private toUpdateData(
     updates: UpdateJobRequest,
@@ -539,6 +756,8 @@ export class ComputeJobRepository {
     if (updates.status !== undefined) data.status = updates.status
     if (updates.remoteHandle !== undefined)
       data.remoteHandle = this.protectJson(updates.remoteHandle, 'object', sensitiveDataEncrypted)
+    if (updates.remoteWorkdir !== undefined)
+      data.remoteWorkdir = this.protectOptional(updates.remoteWorkdir, sensitiveDataEncrypted)
     if ('exitCode' in updates) data.exitCode = updates.exitCode
     if ('stdoutTail' in updates)
       data.stdoutTail =

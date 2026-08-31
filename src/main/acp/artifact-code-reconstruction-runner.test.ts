@@ -145,6 +145,70 @@ describe('Artifact code reconstruction backend profiles', () => {
 })
 
 describe('ArtifactCodeReconstructionRunner cleanup', () => {
+  it('records provider-reported Artifact reconstruction usage', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-usage-'))
+    const usage = { inputTokens: 13, cacheTokens: 3, outputTokens: 5, turnCount: 1 }
+    vi.spyOn(RestrictedInferenceRunner.prototype, 'run').mockResolvedValue({
+      text: 'result',
+      frameworkId: 'claude-code',
+      model: 'model-a',
+      stopReason: 'end_turn',
+      usage
+    })
+    const recordUsage = vi.fn(async () => undefined)
+    const runner = new ArtifactCodeReconstructionRunner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(),
+      resolveTarget: vi.fn(),
+      recordUsage
+    })
+
+    await runner.run(
+      'evidence',
+      { ...target, frameworkId: 'claude-code' },
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      }
+    )
+
+    expect(recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        source: 'artifact-code-reconstruction',
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: 'model-a',
+        usage
+      })
+    )
+  })
+
+  it('records provider usage attached to an ordinary reconstruction error', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-error-usage-'))
+    const usage = { inputTokens: 7, cacheTokens: 1, outputTokens: 2, turnCount: 1 }
+    vi.spyOn(RestrictedInferenceRunner.prototype, 'run').mockRejectedValue(
+      Object.assign(new Error('provider failed'), { usage })
+    )
+    const recordUsage = vi.fn(async () => undefined)
+    const runner = new ArtifactCodeReconstructionRunner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(),
+      resolveTarget: vi.fn(),
+      recordUsage
+    })
+
+    await expect(
+      runner.run('evidence', target, { projectId: 'project-1', sessionId: 'session-1' })
+    ).rejects.toThrow('provider failed')
+    expect(recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'artifact-code-reconstruction', usage })
+    )
+  })
+
   it('keeps Artifact output unbounded at the restricted inference Seam', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-output-'))
     const text = 'x'.repeat(300 * 1024)

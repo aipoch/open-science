@@ -1,4 +1,14 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -18,10 +28,16 @@ import {
 } from './repository'
 
 let storageRoot: string | undefined
+let externalRoot: string | undefined
 
 const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-sessions-'))
   return storageRoot
+}
+
+const createExternalRoot = async (): Promise<string> => {
+  externalRoot = await mkdtemp(join(tmpdir(), 'open-science-sessions-external-'))
+  return externalRoot
 }
 
 const createSession = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSession => ({
@@ -63,9 +79,23 @@ afterEach(async () => {
     await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
   }
+  if (externalRoot) {
+    await rm(externalRoot, { recursive: true, force: true })
+    externalRoot = undefined
+  }
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it('resolves recovery folders inside the managed Session tree', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+
+    expect(repository.recoveryFolderPath('project-a')).toBe(join(root, 'sessions', 'project-a'))
+    expect(() => repository.recoveryFolderPath('../outside')).toThrow(
+      /unsafe session path segment/i
+    )
+  })
+
   it('preserves a running Session when its runtime is live before a prompt becomes active', async () => {
     const repository = new SessionRepository(await createStorageRoot(), {
       hasActiveRuntimePrompt: () => false,
@@ -1289,6 +1319,251 @@ describe('session persistence repository (per-session files)', () => {
     expect(readDirectoryEntries).toHaveBeenCalledWith(projectDir)
   })
 
+  it('rejects saving through a symbolic link at the active sessions root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await symlink(
+      outside,
+      join(root, 'sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const repository = new SessionRepository(root)
+
+    const saveRejected = await repository.saveSession(createSession()).then(
+      () => false,
+      () => true
+    )
+    const escaped = await readFile(join(outside, 'project-a', 'session-1.json'), 'utf8').then(
+      () => true,
+      () => false
+    )
+
+    expect({ saveRejected, escaped }).toEqual({ saveRejected: true, escaped: false })
+  })
+
+  it('rejects saving through a symbolic link at an active Project directory', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    await symlink(
+      outside,
+      join(root, 'sessions', 'project-a'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const repository = new SessionRepository(root)
+
+    const saveRejected = await repository.saveSession(createSession()).then(
+      () => false,
+      () => true
+    )
+    const escaped = await readFile(join(outside, 'session-1.json'), 'utf8').then(
+      () => true,
+      () => false
+    )
+
+    expect({ saveRejected, escaped }).toEqual({ saveRejected: true, escaped: false })
+  })
+
+  it('rejects saving committed Project authority through a linked deletion root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await mkdir(join(outside, 'project-a'), { recursive: true })
+    await symlink(
+      outside,
+      join(root, 'deleted-sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const repository = new SessionRepository(root)
+
+    const saveRejected = await repository.saveCommittedProjectSession(createSession()).then(
+      () => false,
+      () => true
+    )
+    const escaped = await readFile(join(outside, 'project-a', 'session-1.json'), 'utf8').then(
+      () => true,
+      () => false
+    )
+
+    expect({ saveRejected, escaped }).toEqual({ saveRejected: true, escaped: false })
+  })
+
+  it('marks committed Project authority incomplete through a linked deletion root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await mkdir(join(outside, 'project-a'), { recursive: true })
+    await writeFile(
+      join(outside, 'project-a', 'session-1.json'),
+      JSON.stringify({ version: 2, session: createSession() }),
+      'utf8'
+    )
+    await symlink(
+      outside,
+      join(root, 'deleted-sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const loaded = await new SessionRepository(root).loadCommittedProjectWithDiagnostics(
+      'project-a'
+    )
+
+    expect(loaded).toEqual({ sessions: [], isComplete: false })
+  })
+
+  it('rejects moving live Project authority through a linked deletion root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    const session = createSession()
+    const repository = new SessionRepository(root)
+    await repository.saveSession(session)
+    await symlink(
+      outside,
+      join(root, 'deleted-sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const deletionRejected = await repository.deleteProjectSessions(session.projectId).then(
+      () => false,
+      () => true
+    )
+    const escaped = await readFile(
+      join(outside, session.projectId, `${session.id}.json`),
+      'utf8'
+    ).then(
+      () => true,
+      () => false
+    )
+    const liveRemains = await readFile(
+      join(root, 'sessions', session.projectId, `${session.id}.json`),
+      'utf8'
+    ).then(
+      () => true,
+      () => false
+    )
+
+    expect({ deletionRejected, escaped, liveRemains }).toEqual({
+      deletionRejected: true,
+      escaped: false,
+      liveRemains: true
+    })
+  })
+
+  it('rejects completing Project deletion through a linked deletion root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    const externalProject = join(outside, 'project-a')
+    const externalAuthority = join(externalProject, 'keep.json')
+    await mkdir(externalProject, { recursive: true })
+    await writeFile(externalAuthority, 'external authority', 'utf8')
+    await symlink(
+      outside,
+      join(root, 'deleted-sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const repository = new SessionRepository(root)
+
+    const completionRejected = await repository.completeProjectSessionDeletion('project-a').then(
+      () => false,
+      () => true
+    )
+    const externalRemains = await readFile(externalAuthority, 'utf8').then(
+      () => true,
+      () => false
+    )
+
+    expect({ completionRejected, externalRemains }).toEqual({
+      completionRejected: true,
+      externalRemains: true
+    })
+  })
+
+  it('rejects classifying Project deletion authority through a linked deletion root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await mkdir(join(outside, 'project-a'), { recursive: true })
+    await symlink(
+      outside,
+      join(root, 'deleted-sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(
+      new SessionRepository(root).getProjectSessionDeletionState('project-a')
+    ).rejects.toThrow(/Deleted Session root/i)
+  })
+
+  it('rejects listing Project deletion authority through a linked deletion root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await symlink(
+      outside,
+      join(root, 'deleted-sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(new SessionRepository(root).listLegacyProjectSessionTombstones()).rejects.toThrow(
+      /Deleted Session root/i
+    )
+  })
+
+  it('marks the active Session scan incomplete for a symbolic-link Project entry', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    await writeFile(
+      join(outside, 'session-1.json'),
+      JSON.stringify({ version: 2, session: createSession() }),
+      'utf8'
+    )
+    await symlink(
+      outside,
+      join(root, 'sessions', 'project-a'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const scan = await new SessionRepository(root).loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+  })
+
+  it('marks the active Session scan incomplete for a symbolic-link sessions root', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    await mkdir(join(outside, 'project-a'), { recursive: true })
+    await writeFile(
+      join(outside, 'project-a', 'session-1.json'),
+      JSON.stringify({ version: 2, session: createSession() }),
+      'utf8'
+    )
+    await symlink(
+      outside,
+      join(root, 'sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const scan = await new SessionRepository(root).loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+  })
+
+  it('marks the active Session scan incomplete for a symbolic-link JSON entry', async () => {
+    const root = await createStorageRoot()
+    const outside = await createExternalRoot()
+    const projectDir = join(root, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await symlink(
+      outside,
+      join(projectDir, 'session-1.json'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    const scan = await new SessionRepository(root).loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+  })
+
   it('distinguishes an unreadable Session from an absent Session for terminal mutations', async () => {
     const root = await createStorageRoot()
     const session = createSession()
@@ -1935,7 +2210,9 @@ describe('session persistence repository (per-session files)', () => {
   })
 
   it('rejects ownership checks when the durable Session catalog is unreadable', async () => {
-    const repository = new SessionRepository(await createStorageRoot(), {
+    const root = await createStorageRoot()
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    const repository = new SessionRepository(root, {
       readDirectoryEntries: vi
         .fn()
         .mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }))

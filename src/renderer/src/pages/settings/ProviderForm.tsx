@@ -227,6 +227,7 @@ const ProviderForm = ({
     key: string
   }>()
   const keyVisible = revealedKeyDraft?.kind === selectedKey && revealedKeyDraft.key === value.key
+  const keyRequired = needsKey || !hasStoredKey
 
   const advancedVisible =
     advancedOpen || Boolean(errors.maxInputTokens) || Boolean(errors.maxOutputTokens)
@@ -264,6 +265,9 @@ const ProviderForm = ({
         <Input
           id="provider-key"
           aria-label={t('API key')}
+          aria-required={keyRequired || undefined}
+          aria-invalid={Boolean(needsKey || errors.key) || undefined}
+          aria-describedby={needsKey || errors.key ? 'provider-key-error' : undefined}
           type={keyVisible ? 'text' : 'password'}
           value={value.key}
           disabled={disabled}
@@ -299,11 +303,11 @@ const ProviderForm = ({
         </button>
       </div>
       {needsKey ? (
-        <p className={fieldErrorClassName} role="alert">
+        <p id="provider-key-error" className={fieldErrorClassName} role="alert">
           {t('The stored key could not be decrypted. Enter it again to continue.')}
         </p>
       ) : errors.key ? (
-        <p className={fieldErrorClassName} role="alert">
+        <p id="provider-key-error" className={fieldErrorClassName} role="alert">
           {t(errors.key)}
         </p>
       ) : null}
@@ -518,13 +522,16 @@ const ProviderForm = ({
             <Input
               id="provider-base-url"
               aria-label={t('Base URL')}
+              aria-required="true"
+              aria-invalid={Boolean(errors.baseUrl) || undefined}
+              aria-describedby={errors.baseUrl ? 'provider-base-url-error' : undefined}
               value={value.baseUrl}
               disabled={disabled}
               placeholder={t('https://gateway.example')}
               onChange={(event) => onChange({ baseUrl: event.target.value })}
             />
             {errors.baseUrl ? (
-              <p className={fieldErrorClassName} role="alert">
+              <p id="provider-base-url-error" className={fieldErrorClassName} role="alert">
                 {t(errors.baseUrl)}
               </p>
             ) : null}
@@ -569,13 +576,16 @@ const ProviderForm = ({
             <Input
               id="provider-model"
               aria-label={t('Model')}
+              aria-required="true"
+              aria-invalid={Boolean(errors.model) || undefined}
+              aria-describedby={errors.model ? 'provider-model-error' : undefined}
               value={value.model}
               disabled={disabled}
               placeholder={t('e.g. deepseek-v4-flash')}
               onChange={(event) => onChange({ model: event.target.value })}
             />
             {errors.model ? (
-              <p className={fieldErrorClassName} role="alert">
+              <p id="provider-model-error" className={fieldErrorClassName} role="alert">
                 {t(errors.model)}
               </p>
             ) : null}

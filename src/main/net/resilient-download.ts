@@ -33,6 +33,8 @@ export type ResilientDownloadOpts = {
   // ceiling, including response metadata and each streamed chunk. If this and Content-Length are
   // absent, a silently truncated stream cannot be distinguished from a complete unknown-size body.
   expectedSize?: number
+  // When set, every final response URL must remain on this origin after fetch follows redirects.
+  expectedOrigin?: string
   maxRetries?: number
   stallTimeoutMs?: number
   signal?: AbortSignal
@@ -318,6 +320,18 @@ export const resilientDownload = async (
 
       armStall()
       const res = await fetchImpl(url, { headers, signal: combined })
+
+      if (opts.expectedOrigin) {
+        let responseOrigin = ''
+        try {
+          responseOrigin = new URL(res.url).origin
+        } catch {
+          // Invalid/missing final URL fails closed below.
+        }
+        if (responseOrigin !== opts.expectedOrigin) {
+          throw new DownloadResponseIntegrityError('Download response left the trusted origin')
+        }
+      }
 
       if (res.status >= 500) throw new Error(`server error ${res.status}`)
       if (res.status >= 400 && res.status < 500) {

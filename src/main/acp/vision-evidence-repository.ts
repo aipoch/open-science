@@ -27,7 +27,10 @@ type VisionEvidencePersistence = Readonly<{
   save(input: SaveVisionEvidenceInput): Promise<void>
 }>
 
-type VisionEvidenceClient = Pick<PrismaClient, '$transaction' | 'project' | 'visionEvidence'>
+type VisionEvidenceClient = Pick<
+  PrismaClient,
+  '$transaction' | 'project' | 'uploadVersion' | 'visionEvidence'
+>
 type VisionEvidenceClientProvider = () => Promise<VisionEvidenceClient>
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -37,13 +40,20 @@ class VisionEvidenceRepository implements VisionEvidencePersistence {
 
   async find(input: FindVisionEvidenceInput): Promise<string | undefined> {
     const client = await this.clientProvider()
-    const row = await client.visionEvidence.findUnique({ where: { id: input.identityKey } })
+    const row = await client.visionEvidence.findUnique({
+      where: { id: input.identityKey },
+      include: { uploadVersion: { include: { uploadFile: true } } }
+    })
     if (
       !row ||
       row.imageChecksum !== input.imageChecksum ||
       row.extractorFingerprint !== input.extractorFingerprint ||
       row.evidenceSchemaVersion !== input.evidenceSchemaVersion ||
-      row.evidenceChecksum !== sha256(row.evidenceJson)
+      row.evidenceChecksum !== sha256(row.evidenceJson) ||
+      (row.sourceKind === 'upload-version' &&
+        (row.uploadVersion === null ||
+          row.uploadVersion.uploadFile.projectId !== row.projectId ||
+          row.uploadVersion.uploadFile.sessionId !== row.sessionId))
     ) {
       return undefined
     }
@@ -83,6 +93,16 @@ class VisionEvidenceRepository implements VisionEvidencePersistence {
         select: { id: true }
       })
       if (!owner) return
+      if (input.source.kind === 'upload-version') {
+        const source = await transaction.uploadVersion.findFirst({
+          where: {
+            id: input.source.uploadVersionId,
+            uploadFile: { projectId: input.projectId, sessionId: input.sessionId }
+          },
+          select: { id: true }
+        })
+        if (!source) return
+      }
       await transaction.visionEvidence.upsert({
         where: { id: input.identityKey },
         create: { id: input.identityKey, ...data },

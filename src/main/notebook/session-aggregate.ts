@@ -3,12 +3,15 @@ import { randomUUID } from 'node:crypto'
 import type {
   NotebookCell,
   NotebookEnvironmentManifest,
+  NotebookHelperModuleEvidence,
+  NotebookHelperEvidenceStatus,
   NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookLiveEnvironmentOverlay,
   NotebookNamespaceVariable,
   NotebookOutput,
+  NotebookRunFileEvidence,
   NotebookRunEnvironmentCapture,
   NotebookRunSource,
   NotebookRunStatus,
@@ -20,6 +23,7 @@ import type { TrustedControlInvocationIdentity } from '../../shared/agents-contr
 import type { TransientViewImage } from './host-view-image-service'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
+import type { NotebookHelperModuleInjection } from './helper-module-host'
 
 export type NotebookSessionResolvedInterpreter = {
   command: string
@@ -27,16 +31,30 @@ export type NotebookSessionResolvedInterpreter = {
   condaPrefix?: string
 }
 
+export const notebookInterpreterIdentity = (
+  interpreter: NotebookSessionResolvedInterpreter | undefined
+): string =>
+  interpreter
+    ? [interpreter.command, ...(interpreter.args ?? []), interpreter.condaPrefix ?? ''].join('\n')
+    : ''
+
 export type NotebookSessionRuntimeBinding = NotebookRuntimeBinding & {
   resolvedInterpreter?: NotebookSessionResolvedInterpreter
   envName?: string
 }
 
 export type NotebookSessionExecutionRequest = {
+  // App-owned identity used to seal per-run file evidence. Optional keeps injected executors and
+  // direct tests source-compatible; production execution always supplies it.
+  runId?: string
   code: string
+  helperModules?: readonly NotebookHelperModuleInjection[]
   cwd: string
   notebookSessionRoot: string
   dataRoot: string
+  fileEvidenceStorageRoot?: string
+  fileEvidenceRoot?: string
+  fileEvidenceStoragePrefix?: string
   runtimeRoot: string
   protectedDirs?: string[]
   timeoutMs?: number
@@ -65,6 +83,7 @@ export type NotebookSessionExecutionResult = {
   outputs: NotebookOutput[]
   truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
+  fileEvidence?: NotebookRunFileEvidence
   environmentOverlay?: NotebookLiveEnvironmentOverlay
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentManifest?: NotebookEnvironmentManifest
@@ -72,6 +91,11 @@ export type NotebookSessionExecutionResult = {
   // Internal execution evidence persisted onto data runs. Optional keeps injected/legacy executors
   // source-compatible; the execution owner treats a missing value after dispatch conservatively.
   kernelDispatched?: boolean
+  // Exact helper initializations acknowledged by the persistent loop before producer dispatch.
+  // The host uses this even when the producer later fails, so same-epoch retries stay idempotent.
+  helperModulesInitialized?: readonly string[]
+  helperModules?: NotebookHelperModuleEvidence[]
+  helperEvidenceStatus?: NotebookHelperEvidenceStatus
 }
 
 export type NotebookSessionNamespaceRequest = {
@@ -103,6 +127,19 @@ export type NotebookSessionExecutor<
 }
 
 export type NotebookSessionExecutorGeneration = symbol
+
+// Stable object identity owned by the Aggregate for exactly one concrete process epoch. Host-owned
+// kernel extensions key their volatile state by this object, so retiring a process cannot accidentally
+// reuse loaded state even if a caller retains the printable UUID.
+export type NotebookKernelEpochOwnership = Readonly<{
+  id: string
+  processKey: string
+}>
+
+type NotebookKernelEpochSlot = {
+  ownership: NotebookKernelEpochOwnership
+  interpreterIdentity?: string
+}
 
 export type NotebookSessionOwnedExecutor<
   Request = NotebookSessionExecutionRequest,
@@ -209,7 +246,7 @@ export class NotebookSessionAggregate<
   private durableUnknownKernelTermination: boolean
   private readonly runtimeBindings = new Map<NotebookLanguage, NotebookSessionRuntimeBinding>()
   private readonly forceStoppedKeys = new Set<string>()
-  private readonly kernelEpochIds = new Map<string, string>()
+  private readonly kernelEpochs = new Map<string, NotebookKernelEpochSlot>()
 
   constructor(init: NotebookSessionAggregateInit<Request, Result>) {
     this.id = `notebook-session-${init.sessionId}`
@@ -423,7 +460,7 @@ export class NotebookSessionAggregate<
     this.kernelStatuses.delete(processKey)
     this.terminatedKernels.delete(processKey)
     this.executionQueues.delete(processKey)
-    this.kernelEpochIds.delete(processKey)
+    this.kernelEpochs.delete(processKey)
   }
 
   kernelStatus(processKey: string): NotebookKernelMetadata['lastKnownStatus'] | undefined {
@@ -512,20 +549,35 @@ export class NotebookSessionAggregate<
   }
 
   kernelEpochId(processKey: string, reset = false): string {
-    if (reset) this.kernelEpochIds.delete(processKey)
-    const existing = this.kernelEpochIds.get(processKey)
-    if (existing) return existing
-    const epochId = randomUUID()
-    this.kernelEpochIds.set(processKey, epochId)
-    return epochId
+    return this.kernelEpoch(processKey, reset).id
+  }
+
+  kernelEpoch(
+    processKey: string,
+    reset = false,
+    interpreterIdentity?: string
+  ): NotebookKernelEpochOwnership {
+    if (reset) this.kernelEpochs.delete(processKey)
+    const existing = this.kernelEpochs.get(processKey)
+    if (existing) {
+      if (interpreterIdentity === undefined) return existing.ownership
+      if (existing.interpreterIdentity === undefined) {
+        existing.interpreterIdentity = interpreterIdentity
+        return existing.ownership
+      }
+      if (existing.interpreterIdentity === interpreterIdentity) return existing.ownership
+    }
+    const ownership = { id: randomUUID(), processKey }
+    this.kernelEpochs.set(processKey, { ownership, interpreterIdentity })
+    return ownership
   }
 
   currentKernelEpochId(processKey: string): string | undefined {
-    return this.kernelEpochIds.get(processKey)
+    return this.kernelEpochs.get(processKey)?.ownership.id
   }
 
   retireKernelEpoch(processKey: string): void {
-    this.kernelEpochIds.delete(processKey)
+    this.kernelEpochs.delete(processKey)
   }
 
   ownsExecutorGeneration(generation: NotebookSessionExecutorGeneration): boolean {
@@ -552,7 +604,7 @@ export class NotebookSessionAggregate<
   terminateExecutor(kind: 'python' | 'r' | 'repl', env: string): Promise<void> {
     const processKey = kind === 'repl' ? 'repl' : `${kind}:${env}`
     return (this.executorValue.terminate?.(kind, env) ?? Promise.resolve()).then(() => {
-      this.kernelEpochIds.delete(processKey)
+      this.kernelEpochs.delete(processKey)
     })
   }
 
@@ -561,7 +613,7 @@ export class NotebookSessionAggregate<
   ): Promise<void> {
     if (this.executorValue.restart) {
       await this.executorValue.restart()
-      this.kernelEpochIds.clear()
+      this.kernelEpochs.clear()
       return
     }
     this.executorGenerationActive = false
@@ -572,7 +624,7 @@ export class NotebookSessionAggregate<
     this.executorValue = next.executor
     this.executorGenerationValue = next.generation
     this.executorGenerationActive = true
-    this.kernelEpochIds.clear()
+    this.kernelEpochs.clear()
   }
 
   shutdownExecutor(): Promise<{ reaped: boolean }> {

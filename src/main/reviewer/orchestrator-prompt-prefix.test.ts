@@ -94,6 +94,7 @@ type SubmittedCheck = {
   status: 'pass' | 'warn' | 'fail'
   claim: string
   evidence: string
+  sourceFindingId?: string
   locator?: { blockRef: { messageId?: string; blockIndex: number }; contentHash: string }
 }
 
@@ -333,7 +334,7 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
 // scoped re-review of the correction turn. We drive that real path here (stubbing the runtime so the
 // prefix branch can be exercised) and assert the scoped re-review's prompt carries the prefix.
 describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-review)', () => {
-  it('prepends the promptPrefix to the scoped re-review prompt when the framework returns one (opencode)', async () => {
+  it('completes a tracked scoped re-review while preserving the framework promptPrefix (opencode)', async () => {
     const scopedPrefix = 'OPENCODE-RUBRIC-PREFIX: apply this rubric to the scoped re-review.'
     const scopedPromptSink: string[] = []
 
@@ -370,7 +371,34 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
           }
           return { session: initialSession, promptPrefix: undefined }
         }
-        return { session: makeFakeReviewerSession(scopedPromptSink), promptPrefix: scopedPrefix }
+        const mcp = extractReviewerMcp(request.mcpServers)
+        let submitDone: Promise<void> | null = null
+        const scopedSession = {
+          sessionId: 'reviewer-scoped',
+          prompt: (blocks: PromptBlock[]) => {
+            const prompt = blocks
+              .map((block) => (block.type === 'text' ? (block.text ?? '') : ''))
+              .join('')
+            scopedPromptSink.push(prompt)
+            const sourceFindingId = prompt.match(/"sourceFindingId":"([^"]+)"/u)?.[1]
+            if (!sourceFindingId)
+              throw new Error('tracked re-review prompt omitted sourceFindingId')
+            submitDone = callSubmitFindings(mcp.url, mcp.token, [
+              {
+                status: 'pass',
+                claim: 'The correction now verifies the result count.',
+                evidence: 'The correction Turn explicitly records the verification.',
+                sourceFindingId
+              }
+            ])
+          },
+          nextUpdate: async () => {
+            if (submitDone) await submitDone
+            return { kind: 'stop', stopReason: 'end_turn' }
+          },
+          dispose: () => {}
+        }
+        return { session: scopedSession, promptPrefix: scopedPrefix }
       },
       disposeReviewerSession: () => ({ rejectedToolCalls: 0, reviewerBridgeScoped: undefined })
     } as unknown as AcpRuntime
@@ -428,14 +456,35 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
     // The initial review + exactly one scoped re-review each built a reviewer session.
     expect(buildCall).toBe(2)
     // The scoped re-review prompt carries the prefix ahead of the reviewer prompt for the correction
-    // turn (msg-4-correction); its one recovery prompt remains a separate protocol instruction.
-    expect(scopedPromptSink).toHaveLength(2)
+    // turn (msg-4-correction), submits a tracked pass, and therefore needs no recovery prompt.
+    expect(scopedPromptSink).toHaveLength(1)
     const scopedHead = 'You are reviewing turn: msg-4-correction'
     const sent = scopedPromptSink[0]!
     expect(sent.startsWith(`${scopedPrefix}\n\n`)).toBe(true)
     expect(sent).toContain(scopedHead)
     expect(sent.startsWith(`${scopedPrefix}\n\n${scopedHead}`)).toBe(true)
-    expect(scopedPromptSink[1]).toContain(RECOVERY_PROMPT_HEAD)
+
+    const reviews = await repository.getReviewsForSession('session-1')
+    expect(reviews).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          lifecycle: 'complete',
+          outcome: 'pass',
+          submittedChecks: [
+            expect.objectContaining({
+              kind: 'tracked',
+              assessment: expect.objectContaining({ status: 'pass' }),
+              dispositionOutcome: 'resolved',
+              sourceFindingId: expect.any(String)
+            })
+          ]
+        })
+      ])
+    )
+    const sourceReview = reviews.find((review) =>
+      review.checks.some((check) => check.claim === warnCheck.claim)
+    )
+    expect(sourceReview?.checks[0]).toMatchObject({ resolution: 'resolved' })
 
     await client.$disconnect()
   })

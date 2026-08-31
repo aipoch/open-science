@@ -22,10 +22,12 @@ import { resolveProjectId } from '../../shared/project-scope'
 import type { ProjectIdScope } from '../../shared/project-scope'
 import { ARTIFACT_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc } from '../local-rpc-transport'
+import { createLogger } from '../logger'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { ArtifactRepository } from './repository'
 
 const ARTIFACT_MCP_SERVER_NAME = 'open-science-artifacts'
+const log = createLogger('artifacts:mcp')
 
 type ArtifactMcpEnvironment = ProjectIdScope & {
   storageRoot: string
@@ -442,7 +444,7 @@ const writeArtifactFileForCurrentRun = async (
     !context.promptMessageId ? 'promptMessageId' : undefined
   ].filter((field): field is string => field !== undefined)
   if (missingProvenanceContext.length > 0) {
-    console.warn('[artifacts:mcp] writing a legacy pending file without durable Provenance', {
+    log.warn('writing a legacy pending file without durable Provenance', {
       artifactRunId: context.artifactRunId,
       missingContext: missingProvenanceContext
     })

@@ -1,6 +1,6 @@
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { WEB_RPC_PROTOCOL_VERSION, isWebRpcEventChannel } from '../../shared/web-rpc-contract'
-import type { TaskRunProgressEvent } from '../../shared/task-api'
+import type { TaskRunIdentity, TaskRunProgressEvent } from '../../shared/task-api'
 import type { ApplicationEvent } from '../application-events'
 
 type WebRendererEvent = {
@@ -9,13 +9,20 @@ type WebRendererEvent = {
   payload: unknown
 }
 
-type PublicTaskEvent =
-  | { type: 'run.event'; data: AcpRuntimeEvent }
-  | {
-      type: 'permission.requested'
-      data: Extract<ApplicationEvent, { channel: 'acp:permission-request' }>['payload']
-    }
-  | { type: 'run.progress'; data: TaskRunProgressEvent }
+type PublicTaskEvent = TaskRunIdentity &
+  (
+    | { type: 'run.event'; data: AcpRuntimeEvent }
+    | {
+        type: 'permission.requested'
+        data: Extract<ApplicationEvent, { channel: 'acp:permission-request' }>['payload']
+      }
+    | { type: 'run.progress'; data: TaskRunProgressEvent }
+  )
+
+type ResolveActiveTaskRun = (
+  sessionId: string,
+  promptMessageId?: string
+) => TaskRunIdentity | undefined
 
 const projectWebRendererEvent = (event: ApplicationEvent): WebRendererEvent | undefined =>
   isWebRpcEventChannel(event.channel)
@@ -26,20 +33,34 @@ const projectWebRendererEvent = (event: ApplicationEvent): WebRendererEvent | un
       }
     : undefined
 
-const projectPublicTaskEvents = (event: ApplicationEvent): PublicTaskEvent[] => {
+const projectPublicTaskEvents = (
+  event: ApplicationEvent,
+  resolveActiveRun: ResolveActiveTaskRun = () => undefined
+): PublicTaskEvent[] => {
   if (event.channel === 'acp:event') {
-    return event.payload.map((item) => ({ type: 'run.event' as const, data: item }))
+    return event.payload.flatMap((item) => {
+      const run = item.sessionId
+        ? resolveActiveRun(item.sessionId, item.promptMessageId)
+        : undefined
+      return run ? [{ ...run, type: 'run.event' as const, data: item }] : []
+    })
   }
   if (event.channel === 'acp:permission-request') {
-    return [{ type: 'permission.requested', data: event.payload }]
+    const run = resolveActiveRun(event.payload.sessionId)
+    return run ? [{ ...run, type: 'permission.requested', data: event.payload }] : []
   }
   return []
 }
 
-const projectPublicTaskEvent = (event: ApplicationEvent): PublicTaskEvent | undefined =>
-  projectPublicTaskEvents(event)[0]
+const projectPublicTaskEvent = (
+  event: ApplicationEvent,
+  resolveActiveRun?: ResolveActiveTaskRun
+): PublicTaskEvent | undefined => projectPublicTaskEvents(event, resolveActiveRun)[0]
 
 const projectPublicTaskProgressEvent = (event: TaskRunProgressEvent): PublicTaskEvent => ({
+  runId: event.runId,
+  sessionId: event.sessionId,
+  projectId: event.projectId,
   type: 'run.progress',
   data: event
 })
@@ -58,4 +79,4 @@ export {
   projectTaskRuntimeEvents,
   projectWebRendererEvent
 }
-export type { PublicTaskEvent, WebRendererEvent }
+export type { PublicTaskEvent, ResolveActiveTaskRun, WebRendererEvent }

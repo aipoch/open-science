@@ -272,6 +272,7 @@ describe('workspace Agent Runtime hook contract', () => {
         'resolveSessionRuntimeSelection',
         'respondToPermission',
         'setPermissionProfile',
+        'setMemoryEnabled',
         'revokePermissionGrant'
       ].sort()
     )
@@ -781,12 +782,13 @@ describe('workspace Agent Runtime hook contract', () => {
     await act(async () => Promise.resolve())
 
     expect(runtime.resumeSession).toHaveBeenCalledOnce()
-    expect(runtime.resumeSession.mock.calls[0]?.at(-1)).toEqual({
+    expect(runtime.resumeSession.mock.calls[0]?.at(-2)).toEqual({
       frameworkId: 'claude-code',
       providerId: 'session-provider',
       model: 'session-model',
       reasoningEffort: 'high'
     })
+    expect(runtime.resumeSession.mock.calls[0]?.at(-1)).toBe(true)
     expect(latest.sendPreparationInFlightSessionIds).toEqual(['session-1'])
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
@@ -984,7 +986,8 @@ describe('workspace Agent Runtime hook contract', () => {
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      true
     )
     expect(runtime.respondToPermission).toHaveBeenCalledWith('permission-restored', 'allow-once', {
       sessionId: 'session-1',

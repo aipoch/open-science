@@ -142,10 +142,15 @@ let mockJobsById: Map<string, JobSummary> = new Map()
 
 vi.mock('@/stores/session-job-store', () => ({
   useSessionJobStore: (
-    selector: (s: { jobsById: Map<string, JobSummary>; hydrate: () => Promise<void> }) => unknown
+    selector: (s: {
+      jobsById: Map<string, JobSummary>
+      loadErrorBySession: Map<string, string>
+      hydrate: () => Promise<void>
+    }) => unknown
   ) =>
     selector({
       jobsById: mockJobsById,
+      loadErrorBySession: new Map(),
       hydrate: () => Promise.resolve()
     })
 }))
@@ -199,13 +204,18 @@ const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAtta
 
 const renderScroller = async (
   session: ChatSession,
-  props: { isResumingSession?: boolean; optimisticMessage?: ChatMessage } = {}
+  props: {
+    credentialPending?: boolean
+    isResumingSession?: boolean
+    optimisticMessage?: ChatMessage
+  } = {}
 ): Promise<string> => {
   const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
 
   return renderToStaticMarkup(
     <WorkspaceMessageScroller
       activeSession={session}
+      credentialPending={props.credentialPending}
       isResumingSession={props.isResumingSession}
       optimisticMessage={props.optimisticMessage}
       onSendEditedMessage={vi.fn()}
@@ -353,6 +363,23 @@ describe('WorkspaceMessageScroller Reviewer Correction lifecycle', () => {
     expect(html).toContain('Handed off to the Agent · response started')
     expect(html).not.toContain('animate-spin')
     expect(html).not.toContain(correction.content)
+  })
+
+  it('keeps a reloaded Compute completion as a system event', async () => {
+    const compute = createMessage({
+      id: 'compute-completion-1',
+      content: 'A remote job has finished. Please analyze the results.',
+      presentation: { kind: 'compute-job-completion' }
+    })
+    const html = await renderScroller(
+      createSession({ status: 'idle', activeRun: undefined, messages: [compute] })
+    )
+
+    expect(html).toContain('data-testid="compute-job-completion-event"')
+    expect(html).toContain('Remote job completed')
+    expect(html).toContain('Analysis started automatically')
+    expect(html).not.toContain(compute.content)
+    expect(html).not.toContain('data-slot="user-message-bubble"')
   })
 })
 
@@ -1357,6 +1384,22 @@ describe('WorkspaceMessageScroller loading render', () => {
       ).resolves.toContain(`>${label}</span>`)
     }
   )
+
+  it('renders credential recovery as waiting for a response', async () => {
+    await expect(
+      renderScroller(
+        createSession({
+          status: 'running',
+          activeRun: {
+            promptMessageId: 'prompt-1',
+            startedAt: 1710000000100
+          },
+          messages: [createMessage({ id: 'prompt-1' })]
+        }),
+        { credentialPending: true }
+      )
+    ).resolves.toContain('>Waiting for your response</span>')
+  })
 
   it('renders the loading row for a follow-up prompt after a tool-calling turn', async () => {
     const html = await renderScroller(

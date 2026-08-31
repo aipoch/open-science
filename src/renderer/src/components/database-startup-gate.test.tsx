@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
@@ -253,7 +253,7 @@ describe('DatabaseStartupGate', () => {
     expect(retry).toHaveBeenCalledOnce()
   })
 
-  it('renders per-error guidance and opens a pre-filled GitHub issue draft', async () => {
+  it('renders per-error guidance and requires review before exposing the GitHub issue URL', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     render(
       <DatabaseStartupGate>
@@ -281,11 +281,36 @@ describe('DatabaseStartupGate', () => {
 
     await act(async () => screen.getByRole('button', { name: /Create an issue for help/ }).click())
 
-    expect(open).toHaveBeenCalledOnce()
-    const [url, target] = open.mock.calls[0] as unknown as [string, string]
+    expect(open).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    const details = screen.getByLabelText('Error details') as HTMLTextAreaElement
+    expect(details.value).toContain('Error: boom')
+    const issueLink = document.body.querySelector<HTMLAnchorElement>('a[aria-disabled]')!
+    expect(issueLink.textContent).toContain('Open GitHub issue')
+    expect(issueLink.getAttribute('aria-disabled')).toBe('true')
+    expect(issueLink.getAttribute('href')).toBeNull()
+
+    fireEvent.change(details, { target: { value: 'Error: reviewed and edited' } })
+    await act(async () => screen.getByRole('checkbox').click())
+
+    expect(issueLink.getAttribute('aria-disabled')).toBe('false')
+    const url = issueLink.getAttribute('href') ?? ''
     expect(url).toContain('https://github.com/aipoch/open-science/issues/new?title=')
     expect(decodeURIComponent(url)).toContain('Startup blocked: database_newer_than_app')
-    expect(decodeURIComponent(url)).toContain('Error: boom')
-    expect(target).toBe('_blank')
+    expect(decodeURIComponent(url)).toContain('Error: reviewed and edited')
+
+    fireEvent.change(details, { target: { value: '' } })
+    expect(issueLink.getAttribute('aria-disabled')).toBe('true')
+    expect(issueLink.getAttribute('href')).toBeNull()
+
+    await act(async () => screen.getByRole('checkbox').click())
+    const clearedUrl = issueLink.getAttribute('href') ?? ''
+    expect(issueLink.getAttribute('aria-disabled')).toBe('false')
+    expect(decodeURIComponent(clearedUrl)).not.toContain('Error: boom')
+    expect(decodeURIComponent(clearedUrl)).not.toContain('## Error stack')
+
+    fireEvent.change(details, { target: { value: 'Error: edited again' } })
+    expect(issueLink.getAttribute('aria-disabled')).toBe('true')
+    expect(issueLink.getAttribute('href')).toBeNull()
   })
 })

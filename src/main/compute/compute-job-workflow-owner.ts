@@ -13,6 +13,7 @@ import { ComputeHostUnavailableError } from '../../shared/compute'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
+import { projectJobStatus } from './compute-job-status'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
 import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
@@ -258,6 +259,7 @@ export class ComputeJobWorkflowOwner {
         ? `${command.slice(0, COMMAND_PREVIEW_MAX_LEN)}…`
         : command
     const approvalInfo = {
+      operation: 'submit_job' as const,
       provider_id: host.providerId,
       provider_name: host.displayName,
       shape: host.shape,
@@ -265,13 +267,14 @@ export class ComputeJobWorkflowOwner {
       command_preview: commandPreview,
       command_full: command,
       inputs_summary: inputsSummary || undefined,
+      resources: options.resourceRequest,
       timeout_seconds: timeoutSeconds,
       remote_workdir: remoteWorkdir
     }
     const approvalContext = {
       sessionId: context.sessionId,
       projectId: context.projectId,
-      operation: 'submit_job',
+      operation: 'submit_job' as const,
       ownerId: host.id
     }
 
@@ -310,7 +313,7 @@ export class ComputeJobWorkflowOwner {
         sharedDispatchTracker.begin(jobId)
         dispatchHandoffHeld = true
       }
-      await jobRepository.create({
+      const created = await jobRepository.create({
         id: jobId,
         providerId: host.providerId,
         shape: host.shape,
@@ -329,6 +332,7 @@ export class ComputeJobWorkflowOwner {
         initialStatus,
         allowUnencryptedPersistence
       })
+      this.handleJobUpdated(created)
     }
 
     let initialStatus: 'submitted' | 'queued' = 'submitted'
@@ -382,8 +386,13 @@ export class ComputeJobWorkflowOwner {
   }
 
   async getJobStatus(jobId: string, scope?: ComputeJobReadScope): Promise<JobStatusResult> {
+    const job = await this.getJob(jobId, scope)
+    return projectJobStatus(job, job.cancellation_status)
+  }
+
+  async getJob(jobId: string, scope?: ComputeJobReadScope): Promise<ComputeJob> {
     if (!this.jobRepository) {
-      throw new Error('ComputeJobRepository is required to call getJobStatus.')
+      throw new Error('ComputeJobRepository is required to read Compute Jobs.')
     }
     const job = await this.jobRepository.get(jobId)
     if (!job) {
@@ -398,33 +407,11 @@ export class ComputeJobWorkflowOwner {
     ) {
       throw new ComputeHostUnavailableError()
     }
-    return {
-      job_id: job.job_id,
-      status: job.status,
-      exit_code: job.exit_code,
-      stdout_tail: job.stdout_tail,
-      stderr_tail: job.stderr_tail,
-      remote_workdir: job.remote_workdir
-    }
+    return job
   }
 
   async getJobResult(jobId: string, scope?: ComputeJobReadScope): Promise<JobResult> {
-    if (!this.jobRepository) {
-      throw new Error('ComputeJobRepository is required to call getJobResult.')
-    }
-    const job = await this.jobRepository.get(jobId)
-    if (!job) {
-      if (scope) throw new ComputeHostUnavailableError()
-      throw new Error(`No compute job found with id "${jobId}".`)
-    }
-    if (
-      scope &&
-      (job.project_id !== scope.projectId ||
-        job.session_id !== scope.sessionId ||
-        job.provider_id !== scope.providerId)
-    ) {
-      throw new ComputeHostUnavailableError()
-    }
+    const job = await this.getJob(jobId, scope)
 
     let leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = []
     if (job.left_on_remote) {
@@ -439,6 +426,9 @@ export class ComputeJobWorkflowOwner {
       return jobResultWithFiles(job, [], [], [])
     }
     if (!this.storageRoot) {
+      return jobResultWithFiles(job, [], [], leftOnRemote)
+    }
+    if (job.harvest_error) {
       return jobResultWithFiles(job, [], [], leftOnRemote)
     }
 
@@ -493,6 +483,7 @@ const jobResultWithFiles = (
 ): JobResult => ({
   job_id: job.job_id,
   status: job.status,
+  cancellation_status: job.cancellation_status,
   exit_code: job.exit_code,
   featured_files: featuredFiles,
   hidden_files: hiddenFiles,
@@ -500,7 +491,8 @@ const jobResultWithFiles = (
   left_on_remote: leftOnRemote,
   remote_workdir: job.remote_workdir,
   stdout_tail: job.stdout_tail,
-  stderr_tail: job.stderr_tail
+  stderr_tail: job.stderr_tail,
+  harvest_error: job.harvest_error
 })
 
 async function scanDirRelative(dir: string, workspaceCwd: string): Promise<string[]> {

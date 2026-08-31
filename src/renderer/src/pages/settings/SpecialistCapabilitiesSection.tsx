@@ -17,7 +17,7 @@ type ConnectorRow = {
   description?: string
   mainEnabled: boolean
   available: boolean
-  availability?: 'unavailable' | 'unauthenticated'
+  availability?: 'unavailable' | 'unauthenticated' | 'credential_unavailable'
 }
 
 type SkillRow = {

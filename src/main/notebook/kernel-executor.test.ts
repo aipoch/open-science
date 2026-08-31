@@ -17,11 +17,8 @@ import {
 } from './runtime-paths'
 import { TimeoutController } from './timeout-controller'
 import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
-import type { NotebookExecutionRequest } from './runtime-service'
-import {
-  startWorkingFileObservation,
-  toPortableNotebookRelativePath
-} from './working-file-observer'
+import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtime-service'
+import { NotebookHelperModuleHost } from './helper-module-host'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -292,7 +289,8 @@ const abortOnNextStdinWrite = (
   child: ChildProcessWithoutNullStreams,
   cancellation: AbortController
 ): void => {
-  const originalWrite = child.stdin.write.bind(child.stdin)
+  const originalWrite = child.stdin.write
+  const write = originalWrite.bind(child.stdin)
   let abortOnWrite = true
   child.stdin.write = ((
     chunk: string | Uint8Array,
@@ -301,10 +299,10 @@ const abortOnNextStdinWrite = (
   ) => {
     const result =
       typeof encoding === 'function'
-        ? originalWrite(chunk, encoding)
+        ? write(chunk, encoding)
         : encoding === undefined
-          ? originalWrite(chunk, cb)
-          : originalWrite(chunk, encoding, cb)
+          ? write(chunk, cb)
+          : write(chunk, encoding, cb)
     if (abortOnWrite) {
       abortOnWrite = false
       child.stdin.write = originalWrite
@@ -399,90 +397,6 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       else process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG = previousHang
       await executor.shutdown()
     }
-  })
-
-  it('normalizes persisted working-file paths across operating systems', () => {
-    expect(
-      toPortableNotebookRelativePath(
-        win32.relative('C:\\session', 'C:\\session\\data\\plot.png'),
-        win32.sep
-      )
-    ).toBe('data/plot.png')
-    expect(toPortableNotebookRelativePath('data/literal\\name.png')).toBe('data/literal\\name.png')
-  })
-
-  it('falls back to a bounded snapshot when the file watcher cannot start', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-working-file-fallback-'))
-    const sessionRoot = join(cwdDir, 'nb')
-    const dataRoot = join(sessionRoot, 'data')
-    await mkdir(dataRoot, { recursive: true })
-    const observation = await startWorkingFileObservation(
-      { dataRoot, notebookSessionRoot: sessionRoot },
-      {
-        watchDirectory: () => {
-          throw Object.assign(new Error('watch unavailable'), { code: 'ENOSPC' })
-        }
-      }
-    )
-
-    await writeFile(join(dataRoot, 'fallback.csv'), 'x,y\n1,2\n')
-
-    expect(await observation.finish()).toEqual([
-      expect.objectContaining({
-        path: resolve(dataRoot, 'fallback.csv'),
-        relativePath: 'data/fallback.csv',
-        size: 8
-      })
-    ])
-  })
-
-  it('ignores watcher startup noise for files that existed before execution', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-working-file-startup-noise-'))
-    const sessionRoot = join(cwdDir, 'nb')
-    const dataRoot = join(sessionRoot, 'data')
-    await mkdir(dataRoot, { recursive: true })
-    await writeFile(join(dataRoot, 'input.csv'), 'sample,value\na,1\n')
-    const watcher = {
-      close: vi.fn(),
-      on: vi.fn().mockReturnThis()
-    }
-
-    const observation = await startWorkingFileObservation(
-      { dataRoot, notebookSessionRoot: sessionRoot },
-      {
-        watchDirectory: ((_path, _options, listener) => {
-          if (typeof listener === 'function') listener('rename', 'input.csv')
-          return watcher
-        }) as never
-      }
-    )
-
-    await expect(observation.finish()).resolves.toEqual([])
-  })
-
-  it('falls back to a final snapshot when the watcher misses a file event', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-working-file-missed-event-'))
-    const sessionRoot = join(cwdDir, 'nb')
-    const dataRoot = join(sessionRoot, 'data')
-    await mkdir(dataRoot, { recursive: true })
-    const watcher = {
-      close: vi.fn(),
-      on: vi.fn().mockReturnThis()
-    }
-    const observation = await startWorkingFileObservation(
-      { dataRoot, notebookSessionRoot: sessionRoot },
-      { watchDirectory: (() => watcher) as never }
-    )
-
-    await writeFile(join(dataRoot, 'generated.csv'), 'x,y\n1,2\n')
-
-    await expect(observation.finish()).resolves.toEqual([
-      expect.objectContaining({
-        path: resolve(dataRoot, 'generated.csv'),
-        relativePath: 'data/generated.csv',
-        size: 8
-      })
-    ])
   })
 
   it('runs a cell, echoes stdout, and reports the working directory', async () => {
@@ -1206,6 +1120,529 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 })
 
 posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
+  it('injects a registered helper on a private frame before the unchanged producer frame', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) =>
+        id === 'registered-test-helper'
+          ? {
+              id,
+              language: 'python',
+              source: [
+                'import math as private_math',
+                'PRIVATE_CONSTANT = 40',
+                'def private_helper(value):',
+                '    return private_math.floor(value)',
+                'def public_add(value):',
+                '    return PRIVATE_CONSTANT + private_helper(value)'
+              ].join('\n'),
+              exports: ['public_add']
+            }
+          : undefined
+    })
+    const helperModules = (
+      await helperHost.plan(
+        { id: 'test-epoch', processKey: 'python:default-python' },
+        await helperHost.preflight('python', ['registered-test-helper'])
+      )
+    ).injections
+
+    try {
+      await executor.execute({ ...request, code: 'warmup_value = 1', language: 'python' })
+      const child = procFor(executor, 'python')?.child as ChildProcessWithoutNullStreams
+      const originalWrite = child.stdin.write.bind(child.stdin)
+      const frames: string[] = []
+      child.stdin.write = ((chunk: string | Uint8Array, ...args: unknown[]) => {
+        frames.push(String(chunk))
+        return originalWrite(chunk, ...(args as []))
+      }) as typeof child.stdin.write
+
+      const producerCode = [
+        'producer_state = public_add(2.9)',
+        'print(producer_state)',
+        "private_names = ['private_math', 'PRIVATE_CONSTANT', 'private_helper', '__os_private', '__os_names', '__os_missing', '__os_target', '__os_target_globals', '__os_collisions', '__os_staged']",
+        'print(all(name not in globals() for name in private_names))'
+      ].join('\n')
+      const result = await executor.execute({
+        ...request,
+        code: producerCode,
+        language: 'python',
+        helperModules
+      })
+      const persisted = await executor.execute({
+        ...request,
+        code: 'print(producer_state)',
+        language: 'python'
+      })
+
+      expect(result).toMatchObject({ status: 'completed', stdout: '42\nTrue\n' })
+      expect(persisted).toMatchObject({ status: 'completed', stdout: '42\n' })
+      expect(frames).toHaveLength(3)
+      expect(JSON.parse(frames[0] ?? '{}')).not.toMatchObject({ code: producerCode })
+      expect(JSON.parse(frames[1] ?? '{}')).toMatchObject({ code: producerCode })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('protects the registered generation parent while injected exports remain usable', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-protected-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const generationRoot = join(cwdDir, 'registered', 'generation-1')
+    const sourcePath = join(generationRoot, 'kernel.py')
+    const source = 'def protected_answer():\n    return 42'
+    await mkdir(generationRoot, { recursive: true })
+    await writeFile(sourcePath, source)
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) => ({
+        id,
+        language: 'python',
+        source,
+        exports: ['protected_answer'],
+        registeredGeneration: 'generation-1',
+        generationRoot
+      })
+    })
+    const ownership = { id: 'protected-epoch', processKey: 'python:default-python' }
+    const plan = await helperHost.plan(
+      ownership,
+      await helperHost.preflight('python', ['protected-helper'])
+    )
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+
+    try {
+      await executor.execute({
+        ...request,
+        language: 'python',
+        code: 'kernel_warmed_before_helper = True'
+      })
+      const blocked = await executor.execute({
+        ...request,
+        language: 'python',
+        helperModules: plan.injections,
+        protectedDirs: [...plan.protectedGenerationRoots],
+        code: `open(${JSON.stringify(sourcePath)}).read()`
+      })
+      helperHost.commitInitialized(ownership, blocked.helperModulesInitialized ?? [])
+      const helperFreePlan = await helperHost.plan(
+        ownership,
+        await helperHost.preflight('python', undefined, ownership)
+      )
+      const attack = await executor.execute({
+        ...request,
+        language: 'python',
+        protectedDirs: [...helperFreePlan.protectedGenerationRoots],
+        code: [
+          'import __main__',
+          'normal_persistent_global = 41',
+          'policy_factory_visible = "_install_protected_paths_policy" in globals()',
+          'policy_updater_visible = hasattr(__main__, "_extend_protected_dirs")',
+          'try:',
+          '    _protected_dirs.clear()',
+          'except Exception:',
+          '    pass',
+          'globals()["_protected_dirs"] = []',
+          'globals()["_extend_protected_dirs"] = lambda entries: None',
+          'setattr(__main__, "_protected_dirs", [])',
+          'setattr(__main__, "_extend_protected_dirs", lambda entries: None)',
+          'for candidate_name in ("_protected_paths_audit", "_install_protected_paths_policy", "_extend_protected_dirs"):',
+          '    candidate = globals().get(candidate_name, getattr(__main__, candidate_name, None))',
+          '    for reflected in (getattr(candidate, "__defaults__", None) or ()):',
+          '        if hasattr(reflected, "clear"):',
+          '            reflected.clear()',
+          '    for cell in (getattr(candidate, "__closure__", None) or ()):',
+          '        reflected = cell.cell_contents',
+          '        if hasattr(reflected, "clear"):',
+          '            reflected.clear()',
+          'print(policy_factory_visible, policy_updater_visible)'
+        ].join('\n')
+      })
+      const attempts = [
+        `open(${JSON.stringify(sourcePath)}).read()`,
+        [
+          'import importlib.util',
+          `spec = importlib.util.spec_from_file_location("protected_kernel", ${JSON.stringify(sourcePath)})`,
+          'module = importlib.util.module_from_spec(spec)',
+          'spec.loader.exec_module(module)'
+        ].join('\n'),
+        `import shutil; shutil.copyfile(${JSON.stringify(sourcePath)}, ${JSON.stringify(join(cwdDir, 'copied.py'))})`
+      ]
+      const blockedFollowups: NotebookExecutionResult[] = []
+      for (const code of attempts) {
+        blockedFollowups.push(
+          await executor.execute({
+            ...request,
+            language: 'python',
+            protectedDirs: [...helperFreePlan.protectedGenerationRoots],
+            code
+          })
+        )
+      }
+      const usable = await executor.execute({
+        ...request,
+        language: 'python',
+        protectedDirs: [...helperFreePlan.protectedGenerationRoots],
+        code: 'print(protected_answer())'
+      })
+
+      expect(blocked).toMatchObject({
+        status: 'failed',
+        helperModulesInitialized: ['protected-helper']
+      })
+      expect(blocked.traceback).toContain('Access to protected application files is not allowed')
+      expect(blocked.traceback).not.toContain(source)
+      expect(helperFreePlan.protectedGenerationRoots).toEqual([generationRoot])
+      expect(attack).toMatchObject({ status: 'completed', stdout: 'False False\n' })
+      expect(blockedFollowups).toHaveLength(3)
+      for (const followup of blockedFollowups) {
+        expect(followup.status).toBe('failed')
+        expect(followup.traceback).toContain('Access to protected application files is not allowed')
+        expect(followup.traceback).not.toContain(source)
+      }
+      expect(usable).toMatchObject({ status: 'completed', stdout: '42\n' })
+      const persistent = await executor.execute({
+        ...request,
+        language: 'python',
+        protectedDirs: [...helperFreePlan.protectedGenerationRoots],
+        code: 'print(normal_persistent_global + 1)'
+      })
+      expect(persistent).toMatchObject({ status: 'completed', stdout: '42\n' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('fails helper initialization atomically without dispatching the producer sentinel', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-failure-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) => ({
+        id,
+        language: 'python',
+        source: 'def staged_export():\n    return 42',
+        exports: ['staged_export', 'missing_export']
+      })
+    })
+    const helperModules = (
+      await helperHost.plan(
+        { id: 'test-epoch', processKey: 'python:default-python' },
+        await helperHost.preflight('python', ['registered-test-helper'])
+      )
+    ).injections
+    const sentinel = join(cwdDir, 'producer-sentinel.txt')
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        language: 'python',
+        helperModules,
+        code: `open(${JSON.stringify(sentinel)}, "w").write("ran")`
+      })
+      const healthy = await executor.execute({
+        ...request,
+        language: 'python',
+        code: `print("staged_export" in globals(), "missing_export" in globals())`
+      })
+
+      expect(result).toMatchObject({ status: 'failed', kernelDispatched: false })
+      expect(result.traceback).toMatch(/HELPER_MISSING_EXPORT.*registered-test-helper/s)
+      expect(result.traceback).not.toContain('missing_export')
+      expect(existsSync(sentinel)).toBe(false)
+      expect(healthy).toMatchObject({ status: 'completed', stdout: 'False False\n' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('preserves a sanitized missing dependency diagnostic without dispatching producer code', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-missing-dependency-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) => ({
+        id,
+        language: 'python',
+        source: [
+          'import open_science_definitely_missing_dependency',
+          'def dependency_export():',
+          '    return 42'
+        ].join('\n'),
+        exports: ['dependency_export']
+      })
+    })
+    const plan = await helperHost.plan(
+      { id: 'missing-dependency-epoch', processKey: 'python:default-python' },
+      await helperHost.preflight('python', ['dependency-helper'])
+    )
+    const sentinel = join(cwdDir, 'missing-dependency-producer-sentinel.txt')
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        language: 'python',
+        helperModules: plan.injections,
+        code: `open(${JSON.stringify(sentinel)}, "w").write("ran")`
+      })
+      const globals = await executor.execute({
+        ...request,
+        language: 'python',
+        code: 'print("dependency_export" in globals())'
+      })
+
+      expect(result).toMatchObject({ status: 'failed', kernelDispatched: false })
+      expect(result.traceback).toContain(
+        'Python ModuleNotFoundError: No module named "open_science_definitely_missing_dependency".'
+      )
+      expect(result.traceback).toContain('inspect_packages')
+      expect(result.traceback).toContain('manage_packages')
+      expect(result.traceback).not.toContain('def dependency_export')
+      expect(result.helperModulesInitialized).toBeUndefined()
+      expect(existsSync(sentinel)).toBe(false)
+      expect(globals).toMatchObject({ status: 'completed', stdout: 'False\n' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('fails closed when an initialization exception carries an unsafe module name and secrets', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-sanitized-error-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    const secret = 'helper-secret-token-123'
+    const protectedPath = '/private/registered/generation/kernel.py'
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) => ({
+        id,
+        language: 'python',
+        source: `raise ModuleNotFoundError(${JSON.stringify(`${secret} at ${protectedPath}`)}, name=${JSON.stringify(protectedPath)})\ndef never_published():\n    return 1`,
+        exports: ['never_published']
+      })
+    })
+    const plan = await helperHost.plan(
+      { id: 'sanitized-error-epoch', processKey: 'python:default-python' },
+      await helperHost.preflight('python', ['sanitized-helper'])
+    )
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        language: 'python',
+        helperModules: plan.injections,
+        code: 'never_published()'
+      })
+      const globals = await executor.execute({
+        ...request,
+        language: 'python',
+        code: 'print("never_published" in globals())'
+      })
+
+      expect(result).toMatchObject({ status: 'failed', kernelDispatched: false })
+      expect(result.traceback).toMatch(/HELPER_INITIALIZATION_FAILED.*sanitized-helper/)
+      expect(result.traceback).toContain('Python ModuleNotFoundError.')
+      expect(result.traceback).not.toContain('No module named')
+      expect(result.traceback).not.toContain(secret)
+      expect(result.traceback).not.toContain(protectedPath)
+      expect(result.traceback).not.toContain('never_published')
+      expect(result.helperModulesInitialized).toBeUndefined()
+      expect(globals).toMatchObject({ status: 'completed', stdout: 'False\n' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('rolls back every staged export when a later helper is missing an export', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-plan-failure-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) =>
+        id === 'first-helper'
+          ? {
+              id,
+              language: 'python',
+              source: 'def first_export():\n    return 1',
+              exports: ['first_export']
+            }
+          : id === 'later-helper'
+            ? {
+                id,
+                language: 'python',
+                source: 'def sibling_export():\n    return 2',
+                exports: ['sibling_export', 'missing_export']
+              }
+            : undefined
+    })
+    const plan = await helperHost.plan(
+      { id: 'plan-failure-epoch', processKey: 'python:default-python' },
+      await helperHost.preflight('python', ['first-helper', 'later-helper'])
+    )
+    const sentinel = join(cwdDir, 'plan-failure-producer-sentinel.txt')
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        language: 'python',
+        helperModules: plan.injections,
+        code: `open(${JSON.stringify(sentinel)}, "w").write("ran")`
+      })
+      const globals = await executor.execute({
+        ...request,
+        language: 'python',
+        code: `print([name for name in ["first_export", "sibling_export", "missing_export"] if name in globals()])`
+      })
+
+      expect(result).toMatchObject({
+        status: 'failed',
+        kernelDispatched: false
+      })
+      expect(result.traceback).toMatch(/HELPER_MISSING_EXPORT.*later-helper/)
+      expect(result.helperModulesInitialized).toBeUndefined()
+      expect(existsSync(sentinel)).toBe(false)
+      expect(globals).toMatchObject({ status: 'completed', stdout: '[]\n' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('validates a later helper collision before executing any helper or producer code', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-plan-collision-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    const helperSentinel = join(cwdDir, 'plan-collision-helper-sentinel.txt')
+    const producerSentinel = join(cwdDir, 'plan-collision-producer-sentinel.txt')
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) =>
+        id === 'first-helper'
+          ? {
+              id,
+              language: 'python',
+              source: [
+                `open(${JSON.stringify(helperSentinel)}, "w").write("ran")`,
+                'def first_export():',
+                '    return 1'
+              ].join('\n'),
+              exports: ['first_export']
+            }
+          : id === 'later-helper'
+            ? {
+                id,
+                language: 'python',
+                source: 'def occupied_export():\n    return 2',
+                exports: ['occupied_export']
+              }
+            : undefined
+    })
+    const plan = await helperHost.plan(
+      { id: 'plan-collision-epoch', processKey: 'python:default-python' },
+      await helperHost.preflight('python', ['first-helper', 'later-helper'])
+    )
+
+    try {
+      await executor.execute({ ...request, language: 'python', code: 'occupied_export = 7' })
+      const result = await executor.execute({
+        ...request,
+        language: 'python',
+        helperModules: plan.injections,
+        code: `open(${JSON.stringify(producerSentinel)}, "w").write("ran")`
+      })
+      const globals = await executor.execute({
+        ...request,
+        language: 'python',
+        code: 'print(occupied_export, "first_export" in globals())'
+      })
+
+      expect(result).toMatchObject({ status: 'failed', kernelDispatched: false })
+      expect(result.traceback).toMatch(/HELPER_EXPORT_COLLISION.*later-helper/)
+      expect(result.helperModulesInitialized).toBeUndefined()
+      expect(existsSync(helperSentinel)).toBe(false)
+      expect(existsSync(producerSentinel)).toBe(false)
+      expect(globals).toMatchObject({ status: 'completed', stdout: '7 False\n' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('rejects an initial global collision without publishing sibling exports or producer code', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-collision-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) => ({
+        id,
+        language: 'python',
+        source: [
+          'def sibling_export():',
+          '    return 42',
+          'def collision_export():',
+          '    return 99'
+        ].join('\n'),
+        exports: ['sibling_export', 'collision_export']
+      })
+    })
+    const plan = await helperHost.plan(
+      { id: 'collision-epoch', processKey: 'python:default-python' },
+      await helperHost.preflight('python', ['collision-helper'])
+    )
+    const sentinel = join(cwdDir, 'collision-producer-sentinel.txt')
+
+    try {
+      await executor.execute({ ...request, language: 'python', code: 'collision_export = 7' })
+      const result = await executor.execute({
+        ...request,
+        language: 'python',
+        helperModules: plan.injections,
+        code: `open(${JSON.stringify(sentinel)}, "w").write("ran")`
+      })
+      const healthy = await executor.execute({
+        ...request,
+        language: 'python',
+        code: 'print(collision_export, "sibling_export" in globals())'
+      })
+
+      expect(result).toMatchObject({ status: 'failed', kernelDispatched: false })
+      expect(result.traceback).toMatch(/HELPER_EXPORT_COLLISION.*collision-helper/)
+      expect(existsSync(sentinel)).toBe(false)
+      expect(healthy).toMatchObject({ status: 'completed', stdout: '7 False\n' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it('bounds producer output before it crosses the loop protocol', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-output-limit-'))
     const request = baseRequest(cwdDir)
@@ -1609,6 +2046,65 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
   )
 
   it.skipIf(process.platform === 'win32')(
+    'preserves a fully read R request when SIGINT lands before dispatch',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-frame-cancel-'))
+      const request = baseRequest(cwdDir)
+      await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+      const sourcePath = join(__dirname, '../../../resources/notebook/r_loop.R')
+      const loopPath = join(cwdDir, 'r_loop.R')
+      const frameDecoded = 'code <- if (n > 0L) rawToChar(acc, multiple = FALSE) else ""'
+      const marker = '__OPEN_SCIENCE_R_FRAME_DECODED__'
+      const loop = await readFile(sourcePath, 'utf8')
+      expect(loop).toContain(frameDecoded)
+      await writeFile(
+        loopPath,
+        loop.replace(
+          frameDecoded,
+          `${frameDecoded}\n      if (identical(code, "Sys.sleep(30)")) {\n        cat("${marker}\\n")\n        flush(stdout())\n        Sys.sleep(0.5)\n      }`
+        )
+      )
+      const executor = new NotebookKernelExecutor({ rLoopPath: loopPath, platform: 'linux' })
+
+      try {
+        await expect(
+          executor.execute({ ...request, code: 'preserved_after_cancel <- 41', language: 'r' })
+        ).resolves.toMatchObject({ status: 'completed' })
+        const child = procFor(executor, 'r')?.child as ChildProcessWithoutNullStreams
+        const frameDecodedByR = new Promise<void>((resolve) => {
+          const onData = (chunk: Buffer): void => {
+            if (!chunk.toString().includes(marker)) return
+            child.stdout.off('data', onData)
+            resolve()
+          }
+          child.stdout.on('data', onData)
+        })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...request,
+          code: 'Sys.sleep(30)',
+          language: 'r',
+          signal: cancellation.signal
+        })
+
+        await frameDecodedByR
+        cancellation.abort()
+        await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+        const next = await executor.execute({
+          ...request,
+          code: 'cat(preserved_after_cancel + 1)',
+          language: 'r'
+        })
+        expect(next).toMatchObject({ status: 'completed', stdout: '42', traceback: '' })
+        expect(procFor(executor, 'r')?.child).toBe(child)
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
+  it.skipIf(process.platform === 'win32')(
     'preserves the R namespace across an in-eval cancel and 50 dispatch cancels',
     async () => {
       cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-cancel-stress-'))
@@ -1640,14 +2136,16 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
         for (let i = 0; i < 50; i++) {
           const cancellation = new AbortController()
           abortOnNextStdinWrite(child, cancellation)
-          await expect(
-            executor.execute({
-              ...request,
-              code: 'Sys.sleep(30)',
-              language: 'r',
-              signal: cancellation.signal
-            })
-          ).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+          const result = await executor.execute({
+            ...request,
+            code: 'Sys.sleep(1)',
+            language: 'r',
+            signal: cancellation.signal
+          })
+          expect(result, `dispatch cancellation ${i + 1}`).toMatchObject({
+            status: 'cancelled',
+            traceback: ''
+          })
         }
 
         const next = await executor.execute({
@@ -2293,6 +2791,25 @@ describe('NotebookKernelExecutor spawn env', () => {
     expect(buildEnv('python', request, '/tmp/figs').OPEN_SCIENCE_HANDOFF_DIR).toBe(expected)
     expect(buildEnv('r', request, '/tmp/figs').OPEN_SCIENCE_HANDOFF_DIR).toBe(expected)
     expect(buildEnv('repl', request, '/tmp/figs').OPEN_SCIENCE_HANDOFF_DIR).toBe(expected)
+  })
+
+  it('projects cache-only Data Storage paths for every kernel language', () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
+    const request = { ...baseRequest('/tmp/os-cache-env'), code: 'x' }
+    const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+    const cacheRoot = join(request.runtimeRoot, 'cache', 'notebook')
+
+    for (const kind of ['python', 'r', 'repl'] as const) {
+      expect(buildEnv(kind, request, '/tmp/figs')).toMatchObject({
+        OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
+        PIP_CACHE_DIR: join(cacheRoot, 'pip'),
+        UV_CACHE_DIR: join(cacheRoot, 'uv'),
+        HF_HUB_CACHE: join(cacheRoot, 'huggingface', 'hub'),
+        HF_XET_CACHE: join(cacheRoot, 'huggingface', 'xet'),
+        HF_ASSETS_CACHE: join(cacheRoot, 'huggingface', 'assets'),
+        TORCH_HOME: join(cacheRoot, 'torch')
+      })
+    }
   })
 
   it('gives the repl kernel ELECTRON_RUN_AS_NODE plus the connector RPC endpoint/token', () => {

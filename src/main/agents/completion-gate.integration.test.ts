@@ -11,8 +11,8 @@ import {
   runCompletionGatedTool
 } from './completion-gate'
 import type { ApprovalResult } from '../../shared/agents-contract'
-import type { SpecialistProfileView } from '../../shared/specialist'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistView } from '../../shared/specialist'
+import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
 import {
@@ -37,7 +37,7 @@ import {
   type CompletionGateAgentHarness
 } from './completion-gate.test-harness'
 
-const specialist: SpecialistProfileView = approvedSpecialist()
+const specialist: SpecialistView = approvedSpecialist()
 const catalog: AgentsCatalogSource = {
   listSkillCatalog: async () => [],
   getConnectors: async () => ({ enabledIds: [], autoAllowIds: [] })
@@ -1000,12 +1000,12 @@ describe('completion gate tracer bullet', () => {
     })
     const coordinator = new CompletionGateCoordinator(runtime)
     const agents = new AgentsService({
-      profileService: {
+      specialistService: {
         getByName: vi.fn(async () => specialist),
         resolveRunnableByName: vi.fn(async () => specialist),
         resolveRunnableById: vi.fn(async () => specialist),
         list: vi.fn(async () => [specialist])
-      } as unknown as ProfileService,
+      } as unknown as SpecialistService,
       catalog,
       approvalGateway: { decide: vi.fn(async () => ({ status: 'approved' as const })) },
       sessionBinding: {

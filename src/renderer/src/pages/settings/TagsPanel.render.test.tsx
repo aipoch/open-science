@@ -73,7 +73,9 @@ describe('TagsPanel', () => {
   it('aggregates tagged resources and opens their owning Settings detail', async () => {
     const onOpenResource = vi.fn()
     await act(async () => {
-      root.render(<TagsPanel onOpenResource={onOpenResource} />)
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={onOpenResource} />
+      )
     })
 
     expect(container.textContent).toContain('Favorites')
@@ -90,13 +92,112 @@ describe('TagsPanel', () => {
     })
   })
 
+  it('opens create as a Settings sub-view and returns to the created Tag', async () => {
+    const onNavigate = vi.fn()
+    const createTag = vi.fn().mockResolvedValue('tag-research')
+    useTagStore.setState({ create: createTag })
+
+    await act(async () => {
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={onNavigate} onOpenResource={vi.fn()} />
+      )
+    })
+
+    const newTag = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'New Tag'
+    )
+    act(() => newTag?.click())
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'create' })
+
+    await act(async () => {
+      root.render(
+        <TagsPanel view={{ kind: 'create' }} onNavigate={onNavigate} onOpenResource={vi.fn()} />
+      )
+    })
+    const name = container.querySelector<HTMLInputElement>('#tag-form-name')
+    act(() => {
+      if (!name) return
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        name,
+        'Research'
+      )
+      name.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      container.querySelector<HTMLFormElement>('[data-slot="tag-form"]')?.requestSubmit()
+    })
+
+    expect(createTag).toHaveBeenCalledWith({
+      name: 'Research',
+      iconKey: 'tag',
+      colorKey: 'blue'
+    })
+    expect(onNavigate).toHaveBeenLastCalledWith({ kind: 'list', tagId: 'tag-research' })
+  })
+
+  it('edits a custom Tag in the Settings sub-view', async () => {
+    const onNavigate = vi.fn()
+    const updateTag = vi.fn().mockResolvedValue(undefined)
+    useTagStore.setState({
+      update: updateTag,
+      tags: [
+        {
+          id: 'tag-research',
+          name: 'Research',
+          iconKey: 'book-open',
+          colorKey: 'purple',
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(
+        <TagsPanel
+          view={{ kind: 'edit', tagId: 'tag-research' }}
+          onNavigate={onNavigate}
+          onOpenResource={vi.fn()}
+        />
+      )
+    })
+
+    const name = container.querySelector<HTMLInputElement>('#tag-form-name')
+    expect(name?.value).toBe('Research')
+    expect(container.querySelector('[aria-label="Book"][aria-pressed="true"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Purple"][aria-pressed="true"]')).not.toBeNull()
+
+    act(() => {
+      if (!name) return
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        name,
+        'Literature'
+      )
+      name.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      container.querySelector<HTMLFormElement>('[data-slot="tag-form"]')?.requestSubmit()
+    })
+
+    expect(updateTag).toHaveBeenCalledWith({
+      id: 'tag-research',
+      expectedUpdatedAt: 2,
+      name: 'Literature',
+      iconKey: 'book-open',
+      colorKey: 'purple'
+    })
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'list', tagId: 'tag-research' })
+  })
+
   it('omits the secondary line when a resource has no description', async () => {
     useSettingsStore.setState((state) => ({
       skills: state.skills.map((skill) => ({ ...skill, description: '' }))
     }))
 
     await act(async () => {
-      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
     })
 
     const resourceRow = container.querySelector('[data-slot="tag-resource-row"]')
@@ -135,7 +236,9 @@ describe('TagsPanel', () => {
     })
 
     await act(async () => {
-      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
     })
 
     expect(
@@ -321,7 +424,9 @@ describe('TagsPanel', () => {
     useTagStore.setState({ setAssignment })
 
     await act(async () => {
-      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
     })
 
     const removeResource = container.querySelector<HTMLButtonElement>(
@@ -400,7 +505,9 @@ describe('TagsPanel', () => {
     })
 
     await act(async () => {
-      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
     })
 
     const groupButtons = Array.from(
@@ -465,7 +572,9 @@ describe('TagsPanel', () => {
     })
 
     await act(async () => {
-      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
     })
 
     const tagRows = Array.from(
@@ -477,8 +586,10 @@ describe('TagsPanel', () => {
 
     expect(tagRows).toHaveLength(2)
     expect(masterDetail?.classList.contains('grid-cols-1')).toBe(true)
-    expect(masterDetail?.classList.contains('md:grid-cols-[15rem_minmax(0,1fr)]')).toBe(true)
+    expect(masterDetail?.classList.contains('md:grid-cols-[220px_minmax(0,1fr)]')).toBe(true)
+    expect(masterDetail?.classList.contains('min-h-0')).toBe(true)
     expect(tagList?.classList.contains('border-b')).toBe(true)
+    expect(tagList?.classList.contains('bg-muted/20')).toBe(true)
     expect(tagList?.classList.contains('md:border-b-0')).toBe(true)
     expect(tagList?.classList.contains('md:border-r')).toBe(true)
     expect(tagRows.every((row) => row.classList.contains('flex-1'))).toBe(true)
@@ -524,7 +635,9 @@ describe('TagsPanel', () => {
     })
 
     await act(async () => {
-      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
     })
 
     expect(container.querySelector('[aria-label="System Tags stay first"]')).not.toBeNull()
@@ -564,7 +677,9 @@ describe('TagsPanel', () => {
       ]
     })
     await act(async () => {
-      root.render(<TagsPanel onOpenResource={vi.fn()} />)
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
     })
 
     const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-reorderable-tag-id]'))

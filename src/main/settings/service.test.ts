@@ -27,7 +27,7 @@ import type {
   ClaudeIsolatedAuthStatus
 } from './claude-isolated-auth'
 import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
-import type { UserSkillRepository } from '../skills/user-skill-repository'
+import type { UserSkillRepository as UserSkillRepositoryType } from '../skills/user-skill-repository'
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '../logger'
@@ -61,6 +61,7 @@ const { SkillRegistry } = await import('../skills/registry')
 const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
 const { netFetch } = await import('../skills/net-fetch')
+const { UserSkillRepository } = await import('../skills/user-skill-repository')
 const { UserSkillSpecialistPackageAdapter } = await import('../skills/specialist-package-adapter')
 const { opencodeConfigDir, opencodeTransportProviderId } =
   await import('../agent-framework/opencode')
@@ -196,6 +197,7 @@ const createService = (
     userClaudeDir?: string
     userCodexDir?: string
     userAgentsDir?: string
+    userSkills?: UserSkillRepositoryType
     log?: Logger
   } = {}
 ): InstanceType<typeof SettingsService> =>
@@ -208,6 +210,7 @@ const createService = (
     userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
     userCodexDir: options.userCodexDir ?? join(storageRoot, 'no-user-codex'),
     userAgentsDir: options.userAgentsDir ?? join(storageRoot, 'no-user-agents'),
+    userSkills: options.userSkills,
     executeClaudeProbe: options.executeClaudeProbe,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedClaudeImpl: options.installManagedClaudeImpl as any,
@@ -373,6 +376,31 @@ describe('SettingsService: custom MCP OAuth', () => {
 
     await service.cancelCustomServerAuthentication(id)
     expect(cancel).toHaveBeenCalledWith(id)
+  })
+
+  it('disconnects locally by closing runtime access and removing stored OAuth tokens', async () => {
+    const service = createService()
+    const added = await service.addCustomServer({
+      name: 'oauth-mcp',
+      displayName: 'OAuth MCP',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { scopes: ['openid'] }
+    })
+    const id = added.customServers[0].id
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'access', token_type: 'Bearer' }
+    })
+    const disconnectRuntime = vi.fn(async () => undefined)
+    service.setCustomServerAuthenticator(vi.fn(), vi.fn(), disconnectRuntime)
+
+    const snapshot = await service.disconnectCustomServer(id)
+
+    expect(disconnectRuntime).toHaveBeenCalledWith(id)
+    expect(snapshot.customServers[0]).toMatchObject({ enabled: false, oauth: { hasTokens: false } })
+    expect(
+      (await repository.getSettings()).connectors?.customMcpServers?.[0].oauthRef
+    ).toBeUndefined()
   })
 })
 
@@ -1166,7 +1194,7 @@ describe('SettingsService: providers', () => {
 
     const view = snapshot.providers[0]
     expect(view.hasKey).toBe(true)
-    expect(view.maskedKey).toBe('sk-s…cret')
+    expect(view.maskedKey).toBe('••••cret')
     expect(JSON.stringify(view)).not.toContain('sk-super-secret')
 
     // The stored record holds ciphertext, not the plaintext key.
@@ -2677,6 +2705,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(await service.getPreflight()).toMatchObject({ activeProviderReady: true })
     const backend = await resolveActiveBackend(service)
 
+    expect(backend.providerId).toBe(CODEX_SUBSCRIPTION_PROVIDER_ID)
     expect(backend.backendId).toBe('codex:builtin-codex-isolated')
     expect(backend.sessionModel).toBe('gpt-5.6-terra')
     expect(backend.sessionModelRequired).toBe(true)
@@ -2705,6 +2734,20 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
     )
+
+    await service.setSubagentModel({ mode: 'inherit' })
+    await expect(
+      service.resolveSubagentExecutionModel('codex', {
+        providerId: backend.providerId,
+        backendId: backend.backendId,
+        modelRoute: backend.modelRoute,
+        model: backend.sessionModel,
+        reasoningEffort: backend.sessionEffort
+      })
+    ).resolves.toMatchObject({
+      providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      backendId: 'codex:builtin-codex-isolated'
+    })
 
     const fallbackService = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
@@ -4362,7 +4405,7 @@ describe('SettingsService: skills', () => {
               sourceDir: join(storageRoot, 'skills', 'imported', 'data-explorer')
             }
           ])
-      } as unknown as UserSkillRepository
+      } as unknown as UserSkillRepositoryType
     })
 
     expect(await service.skillNudgeNamesForIds(['imported-data-explorer'])).toEqual([
@@ -5814,6 +5857,18 @@ describe('SettingsService: notifications preference', () => {
     expect(snapshot.notificationsEnabled).toBe(false)
     expect((await repository.getSettings()).notificationsEnabled).toBe(false)
   })
+
+  it('defaults native notification content to hidden and persists an explicit opt-in', async () => {
+    const service = createService()
+
+    expect((await service.getSettingsView()).showNotificationContent).toBe(false)
+    expect(await service.getShowNotificationContent()).toBe(false)
+
+    const snapshot = await service.setShowNotificationContent(true)
+
+    expect(snapshot.showNotificationContent).toBe(true)
+    expect((await repository.getSettings()).showNotificationContent).toBe(true)
+  })
 })
 
 describe('SettingsService: conversation Skill import preference', () => {
@@ -7070,6 +7125,8 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
     await rename(original, canonical)
     await symlink(canonical, original)
 
+    await service.migrateAgentHomeSkillIdentities()
+
     expect(await service.listAgentHomeSkills()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -7113,6 +7170,11 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
     await rm(join(userClaudeDir, 'skills'), { recursive: true })
     await symlink(join(userAgentsDir, 'skills'), join(userClaudeDir, 'skills'))
 
+    // Startup migration must include inactive framework roots. The old identity is Claude-owned,
+    // while the selected framework exposes only the shared Agent Home root.
+    await repository.setAgentFramework('opencode')
+    await service.migrateAgentHomeSkillIdentities()
+
     expect(await service.listAgentHomeSkills()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -7123,14 +7185,98 @@ describe('SettingsService: importAgentHomeSkills realpath containment', () => {
       ])
     )
 
-    await repository.setAgentFramework('opencode')
-    expect(await service.listAgentHomeSkills()).toEqual(
+    await expect(
+      readFile(join(storageRoot, 'skills', 'imported', 'real-skill', '.source.json'), 'utf8').then(
+        JSON.parse
+      )
+    ).resolves.toMatchObject({ agentHome: { source: 'agents', slug: 'real-skill' } })
+  })
+
+  it('does not rewrite imported metadata while listing Agent Home Skills', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-list-symlink-root-alias-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-list-symlink-root-shared-'))
+    const original = await seedSkill(userClaudeDir, 'real-skill')
+    const service = createService(undefined, { userClaudeDir, userAgentsDir })
+    await repository.setAgentFramework('claude-code')
+
+    expect(
+      (
+        await service.importAgentHomeSkills({
+          skills: [{ source: 'claude', slug: 'real-skill' }]
+        })
+      ).results[0]
+    ).toMatchObject({ status: 'imported', id: 'imported-real-skill' })
+
+    const importedSource = join(storageRoot, 'skills', 'imported', 'real-skill', '.source.json')
+    const metadataBeforeList = await readFile(importedSource, 'utf8')
+    const sharedSkill = join(userAgentsDir, 'skills', 'real-skill')
+    await mkdir(join(userAgentsDir, 'skills'), { recursive: true })
+    await rename(original, sharedSkill)
+    await rm(join(userClaudeDir, 'skills'), { recursive: true })
+    await symlink(join(userAgentsDir, 'skills'), join(userClaudeDir, 'skills'))
+
+    await expect(service.listAgentHomeSkills()).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           source: 'agents',
           slug: 'real-skill',
           alreadyImported: true
         })
+      ])
+    )
+
+    await expect(readFile(importedSource, 'utf8')).resolves.toBe(metadataBeforeList)
+  })
+
+  it('keeps startup available when Agent Home identity migration cannot scan its roots', async () => {
+    const invalidHome = join(storageRoot, 'agent-home-file')
+    await writeFile(invalidHome, 'not a directory')
+    const service = createService(undefined, {
+      userAgentsDir: invalidHome,
+      userClaudeDir: invalidHome,
+      userCodexDir: invalidHome
+    })
+
+    await expect(service.migrateAgentHomeSkillIdentities()).resolves.toBeUndefined()
+  })
+
+  it('keeps a failed Agent Home identity migration selectable for manual repair', async () => {
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'os-migration-failure-legacy-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'os-migration-failure-shared-'))
+    const original = await seedSkill(userClaudeDir, 'real-skill')
+    const userSkills = new UserSkillRepository(storageRoot)
+    const service = createService(undefined, { userClaudeDir, userAgentsDir, userSkills })
+    await repository.setAgentFramework('claude-code')
+    await service.importAgentHomeSkills({
+      skills: [{ source: 'claude', slug: 'real-skill' }]
+    })
+
+    await mkdir(join(userAgentsDir, 'skills'), { recursive: true })
+    await rename(original, join(userAgentsDir, 'skills', 'real-skill'))
+    await rm(join(userClaudeDir, 'skills'), { recursive: true })
+    await symlink(join(userAgentsDir, 'skills'), join(userClaudeDir, 'skills'))
+    vi.spyOn(userSkills, 'importAgentHomeSkill').mockRejectedValueOnce(
+      new Error('simulated migration write failure')
+    )
+
+    await service.migrateAgentHomeSkillIdentities()
+
+    await expect(service.listAgentHomeSkills()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'agents',
+          slug: 'real-skill',
+          alreadyImported: false
+        })
+      ])
+    )
+
+    await expect(
+      service.importAgentHomeSkills({ skills: [{ source: 'agents', slug: 'real-skill' }] })
+    ).resolves.toMatchObject({ results: [{ status: 'updated', id: 'imported-real-skill' }] })
+    await expect(service.listAgentHomeSkills()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'agents', slug: 'real-skill', alreadyImported: true })
       ])
     )
   })

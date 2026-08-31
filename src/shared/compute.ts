@@ -67,7 +67,7 @@ export type ProbeGpu = {
   count: number
 }
 
-// Structured probe snapshot (drives Connected / Probe failed chrome). Written by the probe in a later
+// Structured probe snapshot (drives Last probe succeeded / Probe failed chrome). Written by the probe in a later
 // issue; Phase 1 only reads it back if present.
 export type ProbeResult = {
   ok: boolean
@@ -122,7 +122,7 @@ export type ComputeHostSummary = {
   provider_id: string
   display_name: string
   shape: ComputeHostShape
-  status: 'connected' | 'probe_failed' | 'not_probed'
+  status: 'last_probe_ok' | 'probe_failed' | 'not_probed'
 }
 
 // Canonical Agent-facing catalog entry. Disabled hosts are omitted entirely; an enabled host is
@@ -163,7 +163,7 @@ export const computeHostSummary = (host: ComputeHost): ComputeHostSummary => ({
     host.probeResult === undefined
       ? 'not_probed'
       : host.probeResult.ok
-        ? 'connected'
+        ? 'last_probe_ok'
         : 'probe_failed'
 })
 
@@ -268,43 +268,93 @@ export type ComputeCallError = {
   retry_after_user_action: boolean
 }
 
-// Broker-owned durable scopes. `conversation` remains the wire value for compatibility, but is
-// presented and persisted as a Session grant; Agent ACP adapters still receive only allow-once.
-export type ComputeApprovalScope = 'once' | 'conversation' | 'project' | 'global'
+// Broker-owned durable scopes. Legacy clients may still submit `conversation`; transport adapters
+// normalize it to `session` before the decision enters the broker.
+export type ComputeApprovalScope = 'once' | 'session' | 'project' | 'global'
 export type ComputeApprovalDecision = ComputeApprovalScope | 'deny'
+export type ComputeApprovalDecisionInput = ComputeApprovalDecision | 'conversation'
 
-// Approval request broadcast from main to the renderer for a compute:call_command invocation.
-// provider_name is the human-readable display name; shape is the host topology string.
-// For call_command: command_preview + command_full are set.
-// For download: remote_path is set instead of command fields.
-// For submit_job (Phase 3a): command_preview + command_full + submit_job-specific fields are set.
-export type ComputeApprovalRequest = {
-  id: string
-  // Renderer-only ownership hint used to defer this dialog while its Session has Side chat open.
-  // Main's approval broker remains authoritative and keeps the request pending.
-  session_id?: string
+export const normalizeComputeApprovalDecision = (
+  decision: ComputeApprovalDecisionInput
+): ComputeApprovalDecision => (decision === 'conversation' ? 'session' : decision)
+
+export type ComputeApprovalOperation = 'call_command' | 'submit_job' | 'download'
+
+type ComputeApprovalRequestBase = {
   provider_id: string
   provider_name: string
   shape: string
   intent: string
-  // call_command fields (present for op=call_command).
-  command_preview?: string
-  command_full?: string
-  // download field (present for op=download).
-  remote_path?: string
-  // submit_job fields (present for op=submit_job, Phase 3a).
-  inputs_summary?: string
-  resources?: string
-  timeout_seconds?: number
-  remote_workdir?: string
   // Transient approval disclosure; this is never persisted as Compute Job state.
   willPersistUnencrypted?: boolean
+}
+
+// Operation-specific disclosure broadcast from main to the renderer. The discriminator keeps a
+// malformed optional-field bag from silently presenting the wrong authorization object.
+export type ComputeApprovalRequestInfo = ComputeApprovalRequestBase &
+  (
+    | {
+        operation: 'call_command'
+        command_preview: string
+        command_full: string
+      }
+    | {
+        operation: 'download'
+        remote_path: string
+      }
+    | {
+        operation: 'submit_job'
+        command_preview: string
+        command_full: string
+        inputs_summary?: string
+        resources?: string
+        timeout_seconds: number
+        remote_workdir: string
+      }
+  )
+
+export type ComputeApprovalRequest = ComputeApprovalRequestInfo & {
+  id: string
+  // Renderer-only ownership hint used to defer this dialog while its Session has Side chat open.
+  // Main's approval broker remains authoritative and keeps the request pending.
+  session_id?: string
 }
 
 // Job status values, including concurrency-managed queued work.
 export type ComputeJobStatus =
   'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
 
+export type ComputeJobAnalysisState = 'dispatched' | 'succeeded' | 'failed' | 'cancelled'
+
+export type ComputeJobAnalysisTransition = Readonly<{
+  sessionId: string
+  jobIds: string[]
+  messageId: string
+  state: ComputeJobAnalysisState
+}>
+
+export type ComputeJobIntegrityIssueCode =
+  | 'unknown-status'
+  | 'unknown-error-code'
+  | 'sensitive-fields-unavailable'
+  | 'malformed-remote-handle'
+  | 'consumed-without-notification'
+  | 'consumed-before-notified'
+  | 'notified-before-terminal'
+
+export type ComputeJobIntegrityIssue = Readonly<{
+  jobId: string
+  sessionId: string
+  projectId: string
+  code: ComputeJobIntegrityIssueCode
+  disposition: 'quarantined' | 'needs-attention' | 'recovery-required'
+  rawStatus: string
+  rawErrorCode?: string
+}>
+
+// Additive logical projection. Existing clients can continue reading `status`; cancellation-aware
+// clients use this field to distinguish durable intent from confirmed termination.
+export type ComputeJobCancellationStatus = 'cancelling' | 'cancelled'
 // A compute job record, normalized for cross-process sharing (main → renderer via IPC, main → repl
 // via JSON RPC). Timestamps are epoch milliseconds; JSON columns are parsed at the repository
 // boundary to their respective types.
@@ -315,6 +365,12 @@ export type ComputeJob = {
   session_id: string
   project_id: string
   status: ComputeJobStatus
+  // Additive compatibility diagnostics. Unknown persisted status values keep their raw spelling and
+  // are quarantined from lifecycle scans; status remains the legacy closed projection for callers.
+  raw_status?: string
+  integrity_issues?: ComputeJobIntegrityIssue[]
+  needs_attention?: boolean
+  cancellation_status?: ComputeJobCancellationStatus
   intent: string
   command: string
   command_hash: string
@@ -343,6 +399,11 @@ export type ComputeJob = {
   notified_at?: number
   // notification_consumed_at: epoch ms when wait_for_notification consumed the notification.
   notification_consumed_at?: number
+  // Durable automatic-analysis lifecycle. Historical notified/unconsumed rows omit these fields and
+  // are interpreted as pending; consumed historical rows remain successful compatibility records.
+  analysis_state?: ComputeJobAnalysisState
+  analysis_message_id?: string
+  analysis_updated_at?: number
   created_at: number
   submitted_at: number | undefined
   started_at: number | undefined
@@ -355,10 +416,12 @@ export type ComputeJob = {
 export type JobStatusResult = {
   job_id: string
   status: ComputeJobStatus
+  cancellation_status?: ComputeJobCancellationStatus
   exit_code: number | undefined
   stdout_tail: string | undefined
   stderr_tail: string | undefined
   remote_workdir: string | undefined
+  harvest_error: string | undefined
 }
 
 // Full job result shape returned by attach_job().result() (spec §11.4, design §9).
@@ -367,6 +430,7 @@ export type JobStatusResult = {
 export type JobResult = {
   job_id: string
   status: ComputeJobStatus
+  cancellation_status?: ComputeJobCancellationStatus
   exit_code: number | undefined
   // Workspace-relative paths of featured output files (hpc/<jobId>/featured/*).
   featured_files: string[]
@@ -380,6 +444,7 @@ export type JobResult = {
   remote_workdir: string | undefined
   stdout_tail: string | undefined
   stderr_tail: string | undefined
+  harvest_error: string | undefined
 }
 
 // Result returned by submit_job (immediate, before dispatch completes). remote_workdir is
@@ -390,6 +455,13 @@ export type SubmitJobResult = {
   status: 'queued' | 'submitted'
   remote_workdir: string
 }
+
+export type CancelComputeJobRequest = Readonly<{
+  jobId: string
+  providerId: string
+  sessionId: string
+  projectId: string
+}>
 
 // Error codes for compute jobs (Phase 3a subset of spec §12).
 export type ComputeJobErrorCode =
@@ -414,7 +486,12 @@ export type JobSummary = {
   shape: string
   // Session the job was submitted in — needed for the renderer store to filter by active session.
   session_id: string
+  project_id?: string
   status: ComputeJobStatus
+  raw_status?: string
+  integrity_issues?: ComputeJobIntegrityIssue[]
+  needs_attention?: boolean
+  cancellation_status?: ComputeJobCancellationStatus
   intent: string
   created_at: number
   started_at: number | undefined
@@ -428,6 +505,9 @@ export type JobSummary = {
   // Phase 3b: inbox timestamps — renderer uses these to decide whether to start an analysis turn.
   notified_at: number | undefined
   notification_consumed_at: number | undefined
+  analysis_state?: ComputeJobAnalysisState
+  analysis_message_id?: string
+  analysis_updated_at?: number
   // Phase 3b: compute_done payload fields (spec §11.3). Present when notified_at is set.
   featured_files?: string[]
   featured_file_count?: number

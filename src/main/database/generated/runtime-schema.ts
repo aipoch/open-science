@@ -59,6 +59,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
   `CREATE TABLE IF NOT EXISTS "SessionTurnUsage" (
     "sessionId" TEXT NOT NULL,
     "messageId" TEXT NOT NULL,
+    "frameworkId" TEXT,
+    "providerId" TEXT,
+    "model" TEXT,
     "completedAtMs" BIGINT NOT NULL,
     "inputTokens" BIGINT NOT NULL,
     "cacheTokens" BIGINT NOT NULL,
@@ -79,6 +82,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "callIndex" INTEGER NOT NULL,
     "sourceInvocationId" TEXT,
     "frameworkId" TEXT,
+    "providerId" TEXT,
     "backendId" TEXT,
     "model" TEXT,
     "inputTokens" BIGINT NOT NULL,
@@ -93,6 +97,26 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "SessionModelCallUsage_sessionId_messageId_fkey" FOREIGN KEY ("sessionId", "messageId") REFERENCES "SessionTurnUsage" ("sessionId", "messageId") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "SessionModelCallUsage_identity_check" CHECK (length(trim("messageId")) > 0 AND length(trim("callId")) > 0 AND "callIndex" >= 0 AND ("sourceInvocationId" IS NULL OR length(trim("sourceInvocationId")) > 0) AND ("frameworkId" IS NULL OR length(trim("frameworkId")) > 0) AND ("backendId" IS NULL OR length(trim("backendId")) > 0) AND ("model" IS NULL OR length(trim("model")) > 0)),
     CONSTRAINT "SessionModelCallUsage_nonnegative_check" CHECK ("inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("contextUsedTokens" IS NULL OR "contextUsedTokens" >= 0) AND ("contextWindowSize" IS NULL OR "contextWindowSize" > 0))
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionAuxiliaryTurnUsage" (
+    "sessionId" TEXT NOT NULL,
+    "eventId" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "frameworkId" TEXT NOT NULL,
+    "providerId" TEXT,
+    "model" TEXT,
+    "completedAtMs" BIGINT NOT NULL,
+    "inputTokens" BIGINT NOT NULL,
+    "cacheTokens" BIGINT NOT NULL,
+    "cachedReadTokens" BIGINT,
+    "cachedWriteTokens" BIGINT,
+    "outputTokens" BIGINT NOT NULL,
+    "modelCallCount" INTEGER,
+
+    PRIMARY KEY ("sessionId", "eventId"),
+    CONSTRAINT "SessionAuxiliaryTurnUsage_identity_check" CHECK (length(trim("sessionId")) > 0 AND length(trim("eventId")) > 0 AND length(trim("frameworkId")) > 0 AND ("model" IS NULL OR length(trim("model")) > 0)),
+    CONSTRAINT "SessionAuxiliaryTurnUsage_source_check" CHECK ("source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction')),
+    CONSTRAINT "SessionAuxiliaryTurnUsage_nonnegative_check" CHECK ("completedAtMs" >= 0 AND "inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("modelCallCount" IS NULL OR "modelCallCount" > 0))
 );`,
   `CREATE TABLE IF NOT EXISTS "SessionRun" (
     "sessionId" TEXT NOT NULL,
@@ -481,6 +505,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "leftOnRemote" TEXT,
     "notifiedAt" DATETIME,
     "notificationConsumedAt" DATETIME,
+    "analysisState" TEXT,
+    "analysisMessageId" TEXT,
+    "analysisUpdatedAt" DATETIME,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "submittedAt" DATETIME,
     "startedAt" DATETIME,
@@ -491,6 +518,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeJob_errorCode_check" CHECK ("errorCode" IS NULL OR "errorCode" IN ('approval_denied', 'credential_required', 'credential_conflict', 'credential_unavailable', 'secure_storage_unavailable', 'authentication_failed', 'host_key_unknown', 'host_key_changed', 'host_unreachable', 'unsupported_auth_configuration', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')),
     CONSTRAINT "ComputeJob_timeoutSeconds_check" CHECK ("timeoutSeconds" IS NULL OR "timeoutSeconds" BETWEEN 1 AND 604800),
     CONSTRAINT "ComputeJob_notification_check" CHECK ("notificationConsumedAt" IS NULL OR "notifiedAt" IS NOT NULL),
+    CONSTRAINT "ComputeJob_analysisState_check" CHECK ("analysisState" IS NULL OR "analysisState" IN ('dispatched', 'succeeded', 'failed', 'cancelled')),
+    CONSTRAINT "ComputeJob_analysisBundle_check" CHECK ((("analysisState" IS NULL AND "analysisMessageId" IS NULL AND "analysisUpdatedAt" IS NULL) OR ("analysisState" IS NOT NULL AND "analysisMessageId" IS NOT NULL AND length(trim("analysisMessageId")) > 0 AND "analysisUpdatedAt" IS NOT NULL))),
+    CONSTRAINT "ComputeJob_analysisConsumption_check" CHECK ("analysisState" IS NULL OR "analysisState" <> 'succeeded' OR "notificationConsumedAt" IS NOT NULL),
     CONSTRAINT "ComputeJob_harvestPayload_check" CHECK (("harvestError" IS NULL AND "leftOnRemote" IS NULL) OR "harvestedAt" IS NOT NULL),
     CONSTRAINT "ComputeJob_harvestState_check" CHECK ("harvestedAt" IS NULL OR "status" IN ('success', 'failed', 'timeout')),
     CONSTRAINT "ComputeJob_errorState_check" CHECK ((("errorCode" IS NULL OR "status" IN ('failed', 'timeout', 'error')) AND ("status" <> 'error' OR "errorCode" IS NOT NULL))),
@@ -500,6 +530,29 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeJob_harvestConfigJson_check" CHECK ("harvestConfig" IS NULL OR (json_valid("harvestConfig") AND json_type("harvestConfig") = 'object')),
     CONSTRAINT "ComputeJob_remoteHandleJson_check" CHECK ("remoteHandle" IS NULL OR (json_valid("remoteHandle") AND json_type("remoteHandle") = 'object')),
     CONSTRAINT "ComputeJob_leftOnRemoteJson_check" CHECK ("leftOnRemote" IS NULL OR (json_valid("leftOnRemote") AND json_type("leftOnRemote") = 'array'))
+);`,
+  `CREATE TABLE IF NOT EXISTS "ComputeJobOperation" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "jobId" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "phase" TEXT NOT NULL DEFAULT 'active',
+    "outcome" TEXT,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "attemptCount" INTEGER NOT NULL DEFAULT 0,
+    "eligibleAt" DATETIME,
+    "claimToken" TEXT,
+    "claimExpiresAt" DATETIME,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "settledAt" DATETIME,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ComputeJobOperation_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "ComputeJob" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ComputeJobOperation_kind_check" CHECK ("kind" = 'cancel'),
+    CONSTRAINT "ComputeJobOperation_revision_check" CHECK ("revision" >= 1),
+    CONSTRAINT "ComputeJobOperation_attemptCount_check" CHECK ("attemptCount" >= 0),
+    CONSTRAINT "ComputeJobOperation_phase_check" CHECK ("phase" IN ('active', 'settled')),
+    CONSTRAINT "ComputeJobOperation_lifecycle_check" CHECK (("phase" = 'active' AND "outcome" IS NULL AND "settledAt" IS NULL) OR ("phase" = 'settled' AND "outcome" IN ('fulfilled', 'superseded') AND "settledAt" IS NOT NULL)),
+    CONSTRAINT "ComputeJobOperation_claim_check" CHECK (("claimToken" IS NULL AND "claimExpiresAt" IS NULL) OR ("phase" = 'active' AND "claimToken" IS NOT NULL AND "claimExpiresAt" IS NOT NULL)),
+    CONSTRAINT "ComputeJobOperation_settled_implementation_check" CHECK ("phase" = 'active' OR ("eligibleAt" IS NULL AND "claimToken" IS NULL AND "claimExpiresAt" IS NULL))
 );`,
   `CREATE TABLE IF NOT EXISTS "ComputeHost" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -583,6 +636,54 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     PRIMARY KEY ("tagId", "resourceType", "resourceId"),
     CONSTRAINT "TagAssignment_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "Tag" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "TagAssignment_resourceId_check" CHECK (length(trim("resourceId")) BETWEEN 1 AND 256)
+);`,
+  `CREATE TABLE IF NOT EXISTS "MemorySettings" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "enabled" BOOLEAN NOT NULL DEFAULT false,
+    "revision" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "MemorySettings_id_check" CHECK ("id" = 'memory-settings'),
+    CONSTRAINT "MemorySettings_enabled_check" CHECK ("enabled" IN (false, true)),
+    CONSTRAINT "MemorySettings_revision_check" CHECK ("revision" >= 0)
+);`,
+  `CREATE TABLE IF NOT EXISTS "MemoryCategory" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "systemKey" TEXT,
+    "name" TEXT,
+    "nameKey" TEXT,
+    "guidance" TEXT NOT NULL DEFAULT '',
+    "autoRecall" BOOLEAN NOT NULL DEFAULT false,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "MemoryCategory_shape_check" CHECK ((("systemKey" = 'about-you' AND "name" IS NULL AND "nameKey" IS NULL AND "guidance" = '' AND "autoRecall" = true) OR ("systemKey" IS NULL AND "name" IS NOT NULL AND "nameKey" IS NOT NULL))),
+    CONSTRAINT "MemoryCategory_name_check" CHECK ("name" IS NULL OR length(trim("name")) BETWEEN 1 AND 64),
+    CONSTRAINT "MemoryCategory_nameKey_check" CHECK ("nameKey" IS NULL OR length("nameKey") BETWEEN 1 AND 64),
+    CONSTRAINT "MemoryCategory_guidance_check" CHECK (length("guidance") <= 1000),
+    CONSTRAINT "MemoryCategory_autoRecall_check" CHECK ("autoRecall" IN (false, true)),
+    CONSTRAINT "MemoryCategory_revision_check" CHECK ("revision" >= 1)
+);`,
+  `CREATE TABLE IF NOT EXISTS "MemoryEntry" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "categoryId" TEXT,
+    "projectId" TEXT,
+    "content" TEXT NOT NULL,
+    "contentKey" TEXT NOT NULL,
+    "origin" TEXT NOT NULL,
+    "sourceSessionId" TEXT,
+    "sourceAgentId" TEXT,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "MemoryEntry_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "MemoryCategory" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "MemoryEntry_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "MemoryEntry_content_check" CHECK (length(trim("content")) BETWEEN 1 AND 4000),
+    CONSTRAINT "MemoryEntry_contentKey_check" CHECK (length("contentKey") BETWEEN 1 AND 4000),
+    CONSTRAINT "MemoryEntry_origin_check" CHECK ("origin" IN ('user', 'agent')),
+    CONSTRAINT "MemoryEntry_scope_check" CHECK ("categoryId" IS NOT NULL OR "projectId" IS NOT NULL),
+    CONSTRAINT "MemoryEntry_source_check" CHECK (("origin" = 'user' AND "sourceSessionId" IS NULL AND "sourceAgentId" IS NULL) OR ("origin" = 'agent' AND "sourceSessionId" IS NOT NULL AND "projectId" IS NOT NULL)),
+    CONSTRAINT "MemoryEntry_revision_check" CHECK ("revision" >= 1)
 );`
 ] as const
 
@@ -594,6 +695,7 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "PendingSessionReconciliation_projectId_idx" ON "PendingSessionReconciliation"("projectId");`,
   `CREATE INDEX IF NOT EXISTS "SessionTurnUsage_completedAtMs_idx" ON "SessionTurnUsage"("completedAtMs");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "SessionModelCallUsage_sessionId_messageId_callIndex_key" ON "SessionModelCallUsage"("sessionId", "messageId", "callIndex");`,
+  `CREATE INDEX IF NOT EXISTS "SessionAuxiliaryTurnUsage_completedAtMs_idx" ON "SessionAuxiliaryTurnUsage"("completedAtMs");`,
   `CREATE INDEX IF NOT EXISTS "SessionRun_createdAtMs_idx" ON "SessionRun"("createdAtMs");`,
   `CREATE INDEX IF NOT EXISTS "SessionArtifactRef_artifactId_artifactCreatedAtMs_idx" ON "SessionArtifactRef"("artifactId", "artifactCreatedAtMs");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "PermissionGrant_fingerprint_key" ON "PermissionGrant"("fingerprint");`,
@@ -647,13 +749,22 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "ComputeJob_providerId_idx" ON "ComputeJob"("providerId");`,
   `CREATE INDEX IF NOT EXISTS "ComputeJob_sessionId_idx" ON "ComputeJob"("sessionId");`,
   `CREATE INDEX IF NOT EXISTS "ComputeJob_status_idx" ON "ComputeJob"("status");`,
+  `CREATE INDEX IF NOT EXISTS "ComputeJobOperation_kind_phase_eligibleAt_createdAt_idx" ON "ComputeJobOperation"("kind", "phase", "eligibleAt", "createdAt");`,
+  `CREATE INDEX IF NOT EXISTS "ComputeJobOperation_kind_phase_claimExpiresAt_idx" ON "ComputeJobOperation"("kind", "phase", "claimExpiresAt");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeJobOperation_jobId_kind_key" ON "ComputeJobOperation"("jobId", "kind");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ComputeHost_providerId_key" ON "ComputeHost"("providerId");`,
   `CREATE INDEX IF NOT EXISTS "ComputeAuthOperation_providerId_idx" ON "ComputeAuthOperation"("providerId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "GrantedLocalRoot_path_key" ON "GrantedLocalRoot"("path");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_systemKey_key" ON "Tag"("systemKey");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_nameKey_key" ON "Tag"("nameKey");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Tag_sortOrder_key" ON "Tag"("sortOrder");`,
-  `CREATE INDEX IF NOT EXISTS "TagAssignment_resourceType_resourceId_idx" ON "TagAssignment"("resourceType", "resourceId");`
+  `CREATE INDEX IF NOT EXISTS "TagAssignment_resourceType_resourceId_idx" ON "TagAssignment"("resourceType", "resourceId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_systemKey_key" ON "MemoryCategory"("systemKey");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_nameKey_key" ON "MemoryCategory"("nameKey");`,
+  `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt");`,
+  `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [
@@ -669,6 +780,7 @@ const RUNTIME_SCHEMA_TABLES = [
   'PendingSessionReconciliation',
   'SessionTurnUsage',
   'SessionModelCallUsage',
+  'SessionAuxiliaryTurnUsage',
   'SessionRun',
   'SessionArtifactRef',
   'PermissionGrant',
@@ -692,12 +804,16 @@ const RUNTIME_SCHEMA_TABLES = [
   'ReviewFindingDisposition',
   'ReviewScopeSnapshot',
   'ComputeJob',
+  'ComputeJobOperation',
   'ComputeHost',
   'ComputeCredential',
   'ComputeAuthOperation',
   'GrantedLocalRoot',
   'Tag',
-  'TagAssignment'
+  'TagAssignment',
+  'MemorySettings',
+  'MemoryCategory',
+  'MemoryEntry'
 ] as const
 
 export {

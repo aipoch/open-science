@@ -817,6 +817,10 @@ describe('settings store: onboarding completion', () => {
 })
 
 describe('settings store: startup loading', () => {
+  it('defaults secure storage to unavailable until the capability probe succeeds', () => {
+    expect(useSettingsStore.getState().encryptionAvailable).toBe(false)
+  })
+
   it('publishes the settings snapshot before startup probes finish', async () => {
     let resolvePreflight:
       ((value: { claudeReady: boolean; activeProviderReady: boolean }) => void) | undefined
@@ -868,19 +872,23 @@ describe('settings store: startup loading', () => {
     })
   })
 
-  it('refreshes only the lightweight settings snapshot after startup', async () => {
+  it('rechecks secure storage without rerunning startup-only runtime probes', async () => {
     api.getSettings
       .mockResolvedValueOnce({ ...snapshot([]), onboardingCompletedAt: 111 })
       .mockResolvedValueOnce({ ...snapshot([]), onboardingCompletedAt: 222 })
+    api.isEncryptionAvailable.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
 
     await useSettingsStore.getState().load()
     await useSettingsStore.getState().load()
 
     expect(api.getSettings).toHaveBeenCalledTimes(2)
     expect(api.getPreflight).toHaveBeenCalledOnce()
-    expect(api.isEncryptionAvailable).toHaveBeenCalledOnce()
+    expect(api.isEncryptionAvailable).toHaveBeenCalledTimes(2)
     expect(api.isNpmAvailable).toHaveBeenCalledOnce()
-    expect(useSettingsStore.getState().onboardingCompletedAt).toBe(222)
+    expect(useSettingsStore.getState()).toMatchObject({
+      onboardingCompletedAt: 222,
+      encryptionAvailable: true
+    })
   })
 
   it('keeps startup blocked after a Settings authority failure and recovers on retry', async () => {
@@ -911,13 +919,15 @@ describe('settings store: startup loading', () => {
     const rawError = new Error('runtime probe unavailable')
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     api.getPreflight.mockRejectedValueOnce(rawError)
+    api.isEncryptionAvailable.mockResolvedValueOnce(false)
 
     await expect(useSettingsStore.getState().load()).resolves.toBe(true)
 
     expect(useSettingsStore.getState()).toMatchObject({
       isLoaded: true,
       isLoading: false,
-      loadError: undefined
+      loadError: undefined,
+      encryptionAvailable: false
     })
     expect(warn).toHaveBeenCalledWith('Settings loading failed', rawError)
   })

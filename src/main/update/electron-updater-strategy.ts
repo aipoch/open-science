@@ -8,7 +8,7 @@ import { isNewer, type UpdateApplyOptions, type UpdateStatus } from '../../share
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
 import { fetchManifest } from './manifest'
-import type { InstallGate, UpdateStrategy } from './strategy'
+import { canStartUpdateDownload, type InstallGate, type UpdateStrategy } from './strategy'
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
@@ -195,9 +195,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private applying = false
   private installerStarted = false
   private pendingInstallRollback?: () => void
-  // In-flight manifest notes fetch for the current update, awaited by check() so the returned
-  // status reflects the hydrated notes.
-  private notesHydration?: Promise<void>
   // Pre-install backend-shutdown gate, owned immutably for the strategy lifetime.
   private readonly installGate?: InstallGate
   private readonly markUpdateShutdown: () => () => void
@@ -261,7 +258,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       // electron-updater's *.yml feed carries no release notes, so the dialog would only get a
       // GitHub link. Hydrate the notes from the CDN manifest (the same version.json the installer
       // flow reads) so the "What's new" section renders in-app.
-      if (i.version) this.notesHydration = this.hydrateNotes(i.version)
+      if (i.version) void this.hydrateNotes(i.version)
     })
     this.updater.on('update-not-available', (info) => {
       if (this.readyCheckStatus && this.status === this.readyCheckStatus) return
@@ -396,8 +393,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
             })
           }
         }
-        // Wait for the notes fetch triggered by update-available so the returned status carries them.
-        await this.notesHydration
         providerFailure ??= this.readyCheckError
         if (providerFailure) {
           operation.fail(providerFailure, { result: 'error' })
@@ -430,8 +425,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // including the Windows upgrade-smoke harness talking to 0.18.0+. Wait for the check, then start.
     if (this.checkLifecycle) await this.checkLifecycle
     if (this.applying || this.downloadToken) return this.status
-    if (this.status.state === 'ready') return this.status
-    if (this.status.state !== 'available') return this.status
+    if (!canStartUpdateDownload(this.status)) return this.status
 
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-download',
@@ -448,7 +442,15 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     const generation = ++this.downloadGeneration
     const token = this.createCancellationToken()
     this.downloadToken = token
-    this.setStatus({ ...this.status, state: 'downloading', progress: 0, downloadedBytes: 0 })
+    this.setStatus({
+      ...this.status,
+      state: 'downloading',
+      progress: 0,
+      downloadedBytes: 0,
+      downloadProgress: undefined,
+      error: undefined,
+      blockedBy: undefined
+    })
 
     const lifecycle = (async () => {
       try {
@@ -473,6 +475,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         // rejects and can't poison the next download()'s drain.
         if (!token.cancelled) {
           this.setStatus({
+            ...this.status,
             state: 'error',
             error: error instanceof Error ? error.message : 'Download failed'
           })

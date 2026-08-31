@@ -14,6 +14,9 @@ import type { EditAnnotationTarget } from './WorkspaceMessageItem'
 import type { Annotation, TextAnnotation } from '../../../../shared/annotations'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 
+const { requestPdfReadingReveal } = vi.hoisted(() => ({ requestPdfReadingReveal: vi.fn() }))
+vi.mock('./pdf-reading-reveal', () => ({ requestPdfReadingReveal }))
+
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 // Keep the transcript row and markdown surface as thin wrappers so the test never loads Shiki.
@@ -85,6 +88,7 @@ const renderItem = async (
     root.render(
       <WorkspaceMessageItem
         message={message}
+        projectId="project-1"
         onPreviewArtifact={noop}
         onPreviewUploadAttachment={noop}
         onOpenSkillMention={noop}
@@ -152,6 +156,15 @@ const click = async (element: HTMLElement): Promise<void> => {
   })
 }
 
+const expectComputeCompletionEvent = (): void => {
+  expect(container.querySelector('[data-testid="compute-job-completion-event"]')).not.toBeNull()
+  expect(container.textContent).toContain('Remote job completed')
+  expect(container.textContent).toContain('Analysis started automatically')
+  expect(container.textContent).not.toContain('A remote job has finished')
+  expect(container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
+  expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
+}
+
 // Replaces the inline editor's text and lets the editor emit the updated doc, mimicking a typing pass.
 const typeIntoEditor = async (editor: HTMLElement, text: string): Promise<void> => {
   await act(async () => {
@@ -187,6 +200,7 @@ beforeEach(() => {
     }
   }
   writeText.mockClear()
+  requestPdfReadingReveal.mockClear()
   Object.defineProperty(window.navigator, 'clipboard', {
     value: { writeText },
     configurable: true
@@ -213,6 +227,40 @@ afterEach(() => {
 })
 
 describe('WorkspaceMessageItem user message actions', () => {
+  it('shows a passive current-page Reading marker and reopens the captured page', async () => {
+    const binding = {
+      version: 1 as const,
+      bindingId: 'binding-1',
+      sourceKind: 'upload-version' as const,
+      sourceFileId: 'upload-1',
+      sourceVersionId: 'version-1',
+      sourceSessionId: 'session-1',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf' as const,
+      sizeBytes: 1024,
+      checksum: 'checksum-1',
+      linkedAt: 1710000000000
+    }
+    const pdfContext = {
+      version: 1 as const,
+      bindings: [binding],
+      activeBindingId: binding.bindingId,
+      readingPosition: { pageNumber: 7, pageCount: 14 }
+    }
+
+    await renderItem(createMessage({ content: '解释这一页', pdfContext }))
+    const marker = getButton('Reading · Page 7')
+    expect(marker.title).toBe('paper.pdf')
+    await click(marker)
+    expect(requestPdfReadingReveal).toHaveBeenCalledWith('project-1', binding, 7)
+
+    await renderItem(createMessage({ content: '全文总结一下', pdfContext }))
+    expect(container.querySelector('[data-slot="message-pdf-reading-context"]')).toBeNull()
+
+    await renderItem(createMessage({ content: 'CRAG 的优势是什么？', pdfContext }))
+    expect(container.querySelector('[data-slot="message-pdf-reading-context"]')).toBeNull()
+  })
+
   it('creates a text annotation only after the two-step confirmation', async () => {
     const onAddTextAnnotation = vi.fn(() => undefined)
     await renderItem(createMessage({ role: 'agent', content: 'Quoted Agent evidence' }), {
@@ -563,6 +611,36 @@ describe('WorkspaceMessageItem user message actions', () => {
 
     expect(container.querySelector('[data-slot="user-message-bubble"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Edit message"]')).not.toBeNull()
+  })
+
+  it('presents a Compute completion prompt as an automatic system event instead of a user bubble', async () => {
+    await renderItem(
+      createMessage({
+        content: 'A remote job has finished. Please analyze the results.',
+        attribution: {
+          kind: 'application',
+          feature: 'compute',
+          purpose: 'job-completion-analysis',
+          deliveryKey: 'compute_done:session-1:job-1',
+          jobIds: ['job-1']
+        }
+      }),
+      { canEditMessage: true }
+    )
+
+    expectComputeCompletionEvent()
+  })
+
+  it('keeps a reloaded Compute completion presentation out of the user bubble', async () => {
+    await renderItem(
+      createMessage({
+        content: 'A remote job has finished. Please analyze the results.',
+        presentation: { kind: 'compute-job-completion' }
+      }),
+      { canEditMessage: true }
+    )
+
+    expectComputeCompletionEvent()
   })
   it('keeps the normal Session transcript gutter by default', async () => {
     await renderItem(createMessage())

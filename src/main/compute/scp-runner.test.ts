@@ -38,9 +38,10 @@ vi.mock('node:child_process', () => ({ execFile: execFileMock, spawn: spawnMock 
 // Controllable ChildProcess double matching execFile's surface used by
 // SystemScpRunner: stderr is an EventEmitter, kill() records the signal.
 class FakeChild extends EventEmitter {
-  stdout = new EventEmitter()
-  stderr = new EventEmitter()
+  stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() })
+  stderr = Object.assign(new EventEmitter(), { destroy: vi.fn() })
   kill = vi.fn(() => true)
+  unref = vi.fn(() => this)
 }
 
 // ---------------------------------------------------------------------------
@@ -573,6 +574,60 @@ describe('SystemScpRunner', () => {
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
   })
 
+  it('force-kills and settles when a timed-out child ignores SIGTERM and never closes', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const settled = vi.fn()
+
+    void runner
+      .copy('/usr/bin/scp', ['biowulf:/remote/big.bin', '/tmp/big.bin'], 1000)
+      .then(settled, settled)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(child.kill.mock.calls).toEqual([['SIGTERM']])
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(settled).toHaveBeenCalledOnce()
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ timedOut: true }))
+  })
+
+  it('force-kills and settles when a size-limited download ignores SIGTERM', async () => {
+    vi.useFakeTimers()
+    const dir = await mkdtemp(join(tmpdir(), 'scp-bounded-test-'))
+    const child = new FakeChild()
+    spawnMock.mockReturnValueOnce(child as unknown as ReturnType<typeof spawnMock>)
+    const settled = vi.fn()
+
+    try {
+      void runner
+        .copyFromRemoteBounded(
+          { sshBinary: '/usr/bin/ssh', host: 'cluster', extraArgs: [] },
+          '/remote/growing.log',
+          join(dir, 'bounded.log'),
+          3
+        )
+        .then(settled, settled)
+
+      child.stdout.emit('data', Buffer.from('abcd'))
+      expect(child.kill.mock.calls).toEqual([['SIGTERM']])
+
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
+      expect(settled).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(settled).toHaveBeenCalledWith(expect.objectContaining({ exceeded: true }))
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('forwards child.on("error") as exitCode=null and stderr=err.message', async () => {
     const child = new FakeChild()
     execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
@@ -595,12 +650,70 @@ describe('SystemScpRunner', () => {
     const promise = runner.copy('/usr/bin/scp', ['biowulf:/remote/x', '/tmp/x'], 10_000, {
       signal: controller.signal
     })
-    const abortError = Object.assign(new Error('The operation was aborted.'), {
-      name: 'AbortError'
-    })
-    child.emit('error', abortError)
+    controller.abort()
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    child.emit('close', null)
 
-    await expect(promise).rejects.toBe(abortError)
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('force-kills and settles cancellation when the child ignores SIGTERM', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const controller = new AbortController()
+    const settled = vi.fn()
+
+    void runner
+      .copy('/usr/bin/scp', ['biowulf:/remote/x', '/tmp/x'], 10_000, {
+        signal: controller.signal
+      })
+      .then(settled, settled)
+
+    controller.abort()
+    expect(child.kill.mock.calls).toEqual([['SIGTERM']])
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
+    expect(settled).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(settled).toHaveBeenCalledOnce()
+    expect(settled.mock.calls[0]?.[0]).toMatchObject({ name: 'AbortError' })
+  })
+
+  it('force-kills and settles when the output stream fails and the child never closes', async () => {
+    vi.useFakeTimers()
+    const dir = await mkdtemp(join(tmpdir(), 'scp-output-error-test-'))
+    const child = new FakeChild()
+    spawnMock.mockReturnValueOnce(child as unknown as ReturnType<typeof spawnMock>)
+    const settled = vi.fn()
+
+    try {
+      void runner
+        .copyFromRemoteBounded(
+          { sshBinary: '/usr/bin/ssh', host: 'cluster', extraArgs: [] },
+          '/remote/result.csv',
+          join(dir, 'missing', 'result.csv'),
+          1024
+        )
+        .then(settled, settled)
+
+      await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGTERM'))
+      expect(settled).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
+      expect(settled).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(settled).toHaveBeenCalledWith(
+        expect.objectContaining({ exitCode: null, stderr: expect.stringContaining('ENOENT') })
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   it('drops stderr chunks once the running total is already over the 8 KB cap', async () => {

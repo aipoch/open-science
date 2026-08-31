@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 
+import { createLogger, errorLogFields } from '../logger'
 import type { RuntimeOperationJournal, RuntimeOperationRecord } from './operation-journal'
+
+const log = createLogger('notebook:recovery')
 
 // Injected side-effects for reconciling ONE interrupted runtime operation, so the startup-recovery
 // orchestration is unit-tested without real processes, filesystem, or provisioner. See
@@ -39,8 +42,19 @@ export type OperationRecoveryDeps = {
   // journal entry only helps the NEXT boot; THIS session would still race the orphan once recovery
   // "completes" and the barrier opens.
   blockUnknownChildTarget: (record: RuntimeOperationRecord) => Promise<void>
+  // A record carrying archivePublications has already committed its runtime mutation. Recovery must
+  // publish those transaction-authorized archives before clearing the journal; it must not rerun the
+  // normal interrupted-operation action (notably, a successful install must not be marked broken).
+  publishArchives?: (record: RuntimeOperationRecord) => Promise<void>
+  // The coordinator defers clearing successfully published records until their exact disposable cache
+  // roots are also removed. Keeping the record durable makes a transient cleanup failure retryable even
+  // when the recorded TEMP fallback is no longer one of the current process's candidates.
+  deferArchiveCompletion?: boolean
   // Observed reconcile outcome per record (telemetry/tests). action is the branch taken.
   onReconciled?: (record: RuntimeOperationRecord, action: RecoveryAction) => void
+  // Reports a record left pending because its child is unconfirmed or its recovery action failed.
+  // Startup uses this to retain shared disposable state without rereading the journal.
+  onRetained?: (record: RuntimeOperationRecord) => void
   // Fills in a record's childPid/childStartedAt from the SYNCHRONOUS PID sidecar when the journal's
   // async childPid update was lost to a crash. Returns the record enriched (or unchanged). This is what
   // makes a missing childPid provably mean "never spawned" (safe to reconcile) rather than a guess.
@@ -95,17 +109,51 @@ export const reconcileInterruptedOperations = async (
         // journal entry so a LATER startup — when the pid is provably gone — reconciles it. The env
         // self-heals on a subsequent boot; we never destroy data on a guess.
         await deps.blockUnknownChildTarget(record)
+        deps.onRetained?.(record)
         deps.onReconciled?.(record, 'skipped-child-unknown')
+        continue
+      }
+      if (record.archivePublicationPending) {
+        // The mutation may have committed, but the process died before immutable archive authority was
+        // persisted. Normal interrupted-operation repair could be safe for the prefix yet must not also
+        // authorize deletion of the only retained archive bytes. Keep both target and working cache
+        // blocked; an explicit repair can discard them, but recovery never guesses whether to publish.
+        // A protected interpreter change is independent, stronger evidence and must remain durable too.
+        if (record.kind === 'install' && record.repairReason === 'protected-identity-change') {
+          await deps.markRepairRequired(record)
+        }
+        await deps.blockUnknownChildTarget(record)
+        deps.onRetained?.(record)
+        continue
+      }
+      if (record.archivePublications) {
+        if (!deps.publishArchives) {
+          throw new Error('archive publication recovery is not configured')
+        }
+        await deps.publishArchives(record)
+        if (!deps.deferArchiveCompletion) await journal.complete(record.operationId)
+        reconciled.push(record)
         continue
       }
       await runReconcileAction(record, deps)
       await journal.complete(record.operationId)
       reconciled.push(record)
     } catch (error) {
-      console.error(
-        `[notebook] operation recovery failed for ${raw.operationId}; leaving journal entry`,
-        error
-      )
+      if (raw.archivePublications) {
+        try {
+          await deps.blockUnknownChildTarget(raw)
+        } catch (blockError) {
+          log.error('could not block cache publication recovery', {
+            operationId: raw.operationId,
+            ...errorLogFields(blockError)
+          })
+        }
+      }
+      deps.onRetained?.(raw)
+      log.error('operation recovery failed; leaving journal entry', {
+        operationId: raw.operationId,
+        ...errorLogFields(error)
+      })
     }
   }
 

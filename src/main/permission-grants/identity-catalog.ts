@@ -33,7 +33,8 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-activity/begin_activity_group',
     'mcp:open-science-skills/request_skill_import',
     'mcp:open-science-plan/generate_plan',
-    'mcp:open-science-plan/update_step_status'
+    'mcp:open-science-plan/update_step_status',
+    'mcp:open-science-literature/read_document'
   ],
   execution: ['exec:local/python', 'exec:local/bash'],
   file_operation: [

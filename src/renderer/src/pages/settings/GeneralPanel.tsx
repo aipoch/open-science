@@ -14,7 +14,12 @@ import { errorDetail } from '@/lib/error-detail'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
+import type { LogFileStatus } from '../../../../shared/logs'
 import { APP } from '../../../../shared/app-config'
+import type {
+  NotificationDesktopAvailability,
+  NotificationTestResult
+} from '../../../../shared/notifications'
 import { AppIconSection } from './AppIconSection'
 import { AppVersionSection } from './AppVersionSection'
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
@@ -25,7 +30,7 @@ const socialLinkClassName =
   'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-2 text-xs font-medium text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground'
 
 type GeneralActionError = {
-  action: 'cli' | 'open-log' | 'reveal-log'
+  action: 'cli' | 'cli-status' | 'open-log' | 'reveal-log'
   detail?: string
 }
 
@@ -33,6 +38,8 @@ const generalActionErrorCopy = (error: GeneralActionError, t: TFunction): string
   switch (error.action) {
     case 'cli':
       return t('Could not update the command-line tool.')
+    case 'cli-status':
+      return t('Could not check the command-line tool.')
     case 'open-log':
       return t('Could not open the log file.')
     case 'reveal-log':
@@ -59,21 +66,68 @@ const XMark = ({ className }: { className?: string }): React.JSX.Element => (
 const GeneralPanel = (): React.JSX.Element => {
   const { t } = useTranslation()
   const isMac = window.api.platform === 'darwin'
-  const [logPath, setLogPath] = useState<string | null>(null)
+  const [logStatus, setLogStatus] = useState<LogFileStatus | null>(null)
   const [message, setMessage] = useState<GeneralActionError | undefined>(undefined)
   const [isOpening, setIsOpening] = useState(false)
   const [cli, setCli] = useState<CliLauncherStatus | null>(null)
   const [isUpdatingCli, setIsUpdatingCli] = useState(false)
   const [cliError, setCliError] = useState<GeneralActionError | undefined>(undefined)
+  const [notificationAvailability, setNotificationAvailability] =
+    useState<NotificationDesktopAvailability>('unavailable')
+  const [notificationTestResult, setNotificationTestResult] = useState<NotificationTestResult>()
+  const [isTestingNotification, setIsTestingNotification] = useState(false)
   const notificationsEnabled = useSettingsStore((state) => state.notificationsEnabled)
   const setNotificationsEnabled = useSettingsStore((state) => state.setNotificationsEnabled)
+  const showNotificationContent = useSettingsStore((state) => state.showNotificationContent)
+  const setShowNotificationContent = useSettingsStore((state) => state.setShowNotificationContent)
   const closePreference = useSettingsStore((state) => state.closePreference)
   const setClosePreference = useSettingsStore((state) => state.setClosePreference)
 
+  const checkCliStatus = async (): Promise<void> => {
+    setIsUpdatingCli(true)
+
+    try {
+      setCli(await window.api.cli.getStatus())
+      setCliError(undefined)
+    } catch (error) {
+      setCliError({ action: 'cli-status', detail: errorDetail(error) })
+    } finally {
+      setIsUpdatingCli(false)
+    }
+  }
+
   useEffect(() => {
-    void window.api.logs.getPath().then(setLogPath)
-    void window.api.cli.getStatus().then(setCli)
+    void window.api.logs.getStatus().then(setLogStatus, () => setLogStatus(null))
+    void window.api.cli.getStatus().then(setCli, (error) => {
+      setCliError({ action: 'cli-status', detail: errorDetail(error) })
+    })
+    const getAvailability = window.api.notifications.getDesktopAvailability
+    if (getAvailability) {
+      void getAvailability()
+        .then(setNotificationAvailability)
+        .catch(() => {
+          setNotificationAvailability('unavailable')
+        })
+    }
   }, [])
+
+  const logPath = logStatus?.path ?? null
+  const logExists = logStatus?.existing === true
+
+  const handleTestNotification = async (): Promise<void> => {
+    const sendTest = window.api.notifications.sendTest
+    if (!sendTest) return
+
+    setIsTestingNotification(true)
+    setNotificationTestResult(undefined)
+    try {
+      setNotificationTestResult(await sendTest())
+    } catch {
+      setNotificationTestResult('failed')
+    } finally {
+      setIsTestingNotification(false)
+    }
+  }
 
   const handleCli = async (action: 'install' | 'uninstall'): Promise<void> => {
     setIsUpdatingCli(true)
@@ -230,6 +284,54 @@ const GeneralPanel = (): React.JSX.Element => {
           </div>
         </SettingsRow>
 
+        <SettingsRow
+          label={t('Show task content in system notifications')}
+          description={t(
+            'Include task names and request details. Provider errors are always hidden.'
+          )}
+        >
+          <div className="flex justify-end">
+            <SettingsToggle
+              enabled={showNotificationContent}
+              disabled={!notificationsEnabled}
+              aria-label={t('Toggle task content in system notifications')}
+              onToggle={() => void setShowNotificationContent(!showNotificationContent)}
+            />
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
+          label={t('System notification status')}
+          description={
+            notificationAvailability === 'supported'
+              ? t('System notifications are supported on this device.')
+              : t('System notifications are unavailable on this device.')
+          }
+        >
+          <div className="flex flex-col items-end gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={notificationAvailability !== 'supported' || isTestingNotification}
+              onClick={() => void handleTestNotification()}
+            >
+              {isTestingNotification ? t('Sending test…') : t('Send test notification')}
+            </Button>
+            {notificationTestResult ? (
+              <p className="text-right text-xs text-muted-foreground" role="status">
+                {notificationTestResult === 'shown'
+                  ? t('Test notification shown.')
+                  : notificationTestResult === 'failed'
+                    ? t('Test notification failed.')
+                    : notificationTestResult === 'unconfirmed'
+                      ? t('Test notification sent, but display could not be confirmed.')
+                      : t('System notifications are unavailable on this device.')}
+              </p>
+            ) : null}
+          </div>
+        </SettingsRow>
+
         <p className="mt-1 text-xs text-muted-foreground">
           {t(
             "Notifications only appear while you're using another app. Tasks you cancel and failures the app retries automatically stay silent. Your operating system may ask for notification permission the first time one appears."
@@ -259,7 +361,7 @@ const GeneralPanel = (): React.JSX.Element => {
               type="button"
               variant="outline"
               onClick={() => void handleReveal()}
-              disabled={!logPath}
+              disabled={!logExists}
             >
               <FolderOpen className="size-4" aria-hidden="true" />
               {t('Reveal')}
@@ -268,7 +370,7 @@ const GeneralPanel = (): React.JSX.Element => {
               type="button"
               variant="outline"
               onClick={() => void handleOpenLog()}
-              disabled={isOpening || !logPath}
+              disabled={isOpening || !logExists}
             >
               <ExternalLink className="size-4" aria-hidden="true" />
               {isOpening ? t('Opening…') : t('Open')}
@@ -282,6 +384,12 @@ const GeneralPanel = (): React.JSX.Element => {
         >
           {logPath ?? t('Not available yet.')}
         </pre>
+
+        {logStatus?.lastWriteSucceeded === false ? (
+          <p className="mt-2 text-xs text-destructive" role="status">
+            {t('The app could not write to the log file during its most recent attempt.')}
+          </p>
+        ) : null}
 
         {message ? (
           <div className="mt-2">
@@ -356,6 +464,18 @@ const GeneralPanel = (): React.JSX.Element => {
               {generalActionErrorCopy(cliError, t)}
             </p>
             <DiagnosticDetails detail={cliError.detail} />
+            {cliError.action === 'cli-status' ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={isUpdatingCli}
+                onClick={() => void checkCliStatus()}
+              >
+                {isUpdatingCli ? t('Checking…') : t('Check again')}
+              </Button>
+            ) : null}
           </div>
         ) : null}
 

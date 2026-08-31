@@ -485,7 +485,7 @@ export class SpecialistRepository {
 
   // Atomically replaces the document only when no owner mutation has changed it
   // since the caller took its snapshot. Package transactions use this after their
-  // asynchronous preparation work so a successful ProfileService mutation can
+  // asynchronous preparation work so a successful SpecialistService mutation can
   // never be overwritten by a stale whole-document snapshot.
   async replaceAllIfUnchanged(
     expected: StoredSpecialists,

@@ -62,7 +62,7 @@ export class ProviderModelCatalogOwner {
     const models = isXaiSubscriptionProvider(stored.type)
       ? result.models.filter((model) => model.startsWith('grok-'))
       : result.models
-    await this.repository.upsertProvider({ ...stored, fetchedModels: models })
+    await this.repository.updateProviderModelCatalogIfTargetMatches(stored, models)
     return { ok: true, category: 'ok', models }
   }
 }

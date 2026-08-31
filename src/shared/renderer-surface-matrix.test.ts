@@ -49,6 +49,7 @@ const permissionPaths = [
   'permissions.extendUndo',
   'permissions.list',
   'permissions.restore',
+  'permissions.restoreDefaults',
   'permissions.revoke'
 ] as const
 
@@ -71,9 +72,11 @@ const computePaths = [
   'compute.get',
   'compute.hostEnabledSet',
   'compute.hostSelectedSet',
+  'compute.jobsCancel',
   'compute.jobsList',
   'compute.jobsMarkConsumed',
   'compute.jobsPendingNotification',
+  'compute.jobsTransitionAnalysis',
   'compute.list',
   'compute.listDir',
   'compute.passwordCapability',
@@ -83,6 +86,7 @@ const computePaths = [
   'compute.resetPassword',
   'compute.respondApproval',
   'compute.revealInFolder',
+  'compute.scratchClear',
   'compute.scratchSet',
   'compute.sshConfigAliases'
 ] as const
@@ -199,6 +203,7 @@ describe('renderer surface compatibility matrix', () => {
       'permissions:extend-undo',
       'permissions:list',
       'permissions:restore',
+      'permissions:restore-defaults',
       'permissions:revoke'
     ])
     expect(permissionPaths.map((path) => WEB_INVOKE_CHANNELS[path]).every(isWebRpcChannel)).toBe(
@@ -329,7 +334,16 @@ describe('renderer surface compatibility matrix', () => {
     expect(projected.electronPayload).toEqual([TERMINAL_EVENT_FIXTURE])
     expect(projected.webPayload).toEqual([TERMINAL_EVENT_FIXTURE])
     expect(projectTaskRuntimeEvent(event)).toEqual(TERMINAL_EVENT_FIXTURE)
-    expect(projectPublicTaskEvent(event)).toEqual({
+    expect(
+      projectPublicTaskEvent(event, (sessionId) => ({
+        runId: 'run-1',
+        sessionId,
+        projectId: 'project-1'
+      }))
+    ).toEqual({
+      runId: 'run-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
       type: 'run.event',
       data: TERMINAL_EVENT_FIXTURE
     })

@@ -121,6 +121,57 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(formatNotebookRunOutputLineMeta(failedRun, i18next.t)).toBe('2 lines of output')
   })
 
+  it('renders one framework-neutral Literature result summary', async () => {
+    const activity = createActivity({
+      title: 'open_science_literature_read_document',
+      rawInput: { query: 'CRAG comparison scores' },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                retrievalMode: 'bm25',
+                documentNames: ['paper.pdf'],
+                passageCount: 4,
+                pageStart: 4,
+                pageEnd: 13
+              }
+            })
+          }
+        },
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: '{"passages":[{"documentId":"private-binding-id","content":"truncated…'
+          }
+        }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('BM25')
+    expect(container.textContent).toContain('4 passages')
+    expect(container.textContent).toContain('Sources')
+    expect(container.textContent).toContain('paper.pdf')
+    expect(container.textContent).toContain('CRAG comparison scores')
+    expect(container.textContent).not.toContain('private-binding-id')
+  })
+
   it('renders an image artifact-write result as an inline image preview', async () => {
     const readPreview = vi.fn().mockResolvedValue({
       content: 'aGVsbG8=',
@@ -436,7 +487,7 @@ describe('WorkspaceToolDetailsRow', () => {
 
     await act(async () => {
       intersectionCallback?.(
-        [{ isIntersecting: true } as IntersectionObserverEntry],
+        [{ isIntersecting: true, target: figureButton } as unknown as IntersectionObserverEntry],
         {} as IntersectionObserver
       )
     })
@@ -446,7 +497,7 @@ describe('WorkspaceToolDetailsRow', () => {
 
     await act(async () => {
       intersectionCallback?.(
-        [{ isIntersecting: false } as IntersectionObserverEntry],
+        [{ isIntersecting: false, target: figureButton } as unknown as IntersectionObserverEntry],
         {} as IntersectionObserver
       )
     })
@@ -658,6 +709,70 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.textContent).toContain('正在等待你的批准')
     expect(container.textContent).toContain('输出')
     expect(container.textContent).toContain('provider payload')
+
+    await act(async () => {
+      await i18next.changeLanguage('en')
+    })
+  })
+
+  it('renders a localized memory action without exposing its MCP identity', async () => {
+    const saveActivity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__remember_memory',
+      toolKind: 'other',
+      rawInput: {
+        categoryId: 'memory-category-about-you',
+        content: 'Prefers concise status updates.'
+      },
+      rawOutput: {
+        status: 'created',
+        memory: {
+          id: 'memory-entry-1',
+          categoryId: 'memory-category-about-you',
+          categoryName: 'About you',
+          scope: 'project',
+          content: 'Prefers concise status updates.',
+          revision: 1,
+          provenance: { origin: 'agent' },
+          updatedAt: 1710000000000
+        }
+      }
+    })
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+    const saveDetails = buildToolActivityDetails(saveActivity, i18next.t)
+    const listActivity = createActivity({
+      id: 'tool-2',
+      providerToolName: 'mcp__open-science-notebook__list_memory_categories',
+      toolKind: 'other',
+      rawOutput: [{ id: 'memory-category-about-you', name: 'About you' }]
+    })
+    const listDetails = buildToolActivityDetails(listActivity, i18next.t)
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <>
+          <WorkspaceToolDetailsRow
+            activity={listActivity}
+            details={listDetails!}
+            isExpanded={false}
+            onToggle={vi.fn()}
+          />
+          <WorkspaceToolDetailsRow
+            activity={saveActivity}
+            details={saveDetails!}
+            isExpanded={false}
+            onToggle={vi.fn()}
+          />
+        </>
+      )
+    })
+
+    expect(container.textContent).toContain('记忆分类')
+    expect(container.textContent).toContain('保存记忆')
+    expect(container.textContent).toContain('关于你')
+    expect(container.textContent).not.toContain('mcp__')
 
     await act(async () => {
       await i18next.changeLanguage('en')

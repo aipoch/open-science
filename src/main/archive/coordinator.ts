@@ -174,16 +174,18 @@ class ArchiveCoordinator {
   }
 
   assertSessionAvailableById(sessionId: string): Promise<void> {
-    return this.enqueue(() => this.assertSessionAvailableByIdNow(sessionId))
+    return this.enqueue(async () => {
+      await this.assertSessionAvailableByIdNow(sessionId)
+    })
   }
 
   withSessionAvailableById<Result>(
     sessionId: string,
-    operation: () => Promise<Result>
+    operation: (projectId: string) => Promise<Result>
   ): Promise<Result> {
     return this.enqueue(async () => {
-      await this.assertSessionAvailableByIdNow(sessionId)
-      return operation()
+      const projectId = await this.assertSessionAvailableByIdNow(sessionId)
+      return operation(projectId)
     })
   }
 
@@ -222,7 +224,7 @@ class ArchiveCoordinator {
     await this.sessions.assertSessionAvailable(ownerProjectId, sessionId)
   }
 
-  private async assertSessionAvailableByIdNow(sessionId: string): Promise<void> {
+  private async assertSessionAvailableByIdNow(sessionId: string): Promise<string> {
     const projectId =
       (await this.sessions.sessionProjectId(sessionId)) ??
       this.runtime.liveSessionProjectId(sessionId)
@@ -231,6 +233,7 @@ class ArchiveCoordinator {
     }
     await this.activeProject(projectId)
     await this.sessions.assertSessionAvailable(projectId, sessionId)
+    return projectId
   }
 
   private assertProjectDeletionAvailable(projectId: string): void {

@@ -113,7 +113,18 @@ const options = (
     newConversationAutoReviewEnabled: false,
     newConversationEnabledComputeHosts: [],
     composer: {
-      view: { doc, annotations: [], attachments: [], transfers: [] },
+      view: {
+        doc,
+        annotations: [],
+        attachments: [],
+        transfers: [],
+        readingContext: {
+          bindings: [],
+          pendingBindingId: undefined,
+          isPending: false,
+          automaticAttachmentCount: 0
+        }
+      },
       actions: { setError: vi.fn() },
       lifecycle: {
         captureSend: vi.fn(() => ({
@@ -577,7 +588,7 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
 
-  it('keeps send available and blocks branch while history replay is pending', () => {
+  it('keeps send and message branching available while history replay is pending', () => {
     const replaySession = session({ pendingHistoryReplay: { kind: 'all' } })
     const startSideChat = vi.fn(async () => true)
     const input = options({
@@ -590,14 +601,19 @@ describe('workspace conversation controller', () => {
 
     expect(hook.result.current.availability).toMatchObject({
       submit: true,
-      branch: false
+      branch: true
     })
     act(() => hook.result.current.actions.branch('agent-message-a'))
     act(() => hook.result.current.actions.sideChat.start())
-    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [], mode: 'branch' }))
-    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchSourceSessionId: 'session-a',
+        branchSourceMessageId: 'agent-message-a'
+      })
+    )
     expect(startSideChat).not.toHaveBeenCalled()
 
+    vi.mocked(input.runtime.sendMessage).mockClear()
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -660,6 +676,31 @@ describe('workspace conversation controller', () => {
       expect.objectContaining({ text: 'hello', phase: 'queued' })
     ])
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('blocks sending and queueing while a Reading context mutation is pending', () => {
+    const idleInput = options()
+    Object.assign(idleInput.composer.view, {
+      readingContext: { bindings: [], pendingBindingId: 'binding-1', isPending: true }
+    })
+    const idleHook = renderController(idleInput)
+    mounted.push(idleHook)
+
+    expect(idleHook.result.current.availability.submit).toBe(false)
+
+    const running = runningSession()
+    const runningInput = options({
+      activeSession: running,
+      promptInFlightSessionIds: [running.id],
+      getSession: () => running
+    })
+    Object.assign(runningInput.composer.view, {
+      readingContext: { bindings: [], pendingBindingId: 'binding-1', isPending: true }
+    })
+    const runningHook = renderController(runningInput)
+    mounted.push(runningHook)
+
+    expect(runningHook.result.current.availability.submit).toBe(false)
   })
 
   it('queues without dispatching while the selected Specialist is not ready', () => {
@@ -1021,11 +1062,12 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.optimisticMessage).toBeUndefined()
   })
 
-  it('includes new-Session Compute intent in creation and stamps Review after submit succeeds', async () => {
+  it('includes new-Session Memory and Compute intent and stamps Review after submit succeeds', async () => {
     const input = options({
       activeSession: undefined,
       currentDraftKey: 'new:project-a',
       newConversationAutoReviewEnabled: true,
+      newConversationMemoryEnabled: false,
       newConversationEnabledComputeHosts: ['ssh:lab', 'ssh:available'],
       newConversationSelectedComputeHosts: ['ssh:lab']
     })
@@ -1049,6 +1091,7 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         agentConfiguration: input.agentConfiguration,
+        memoryEnabled: false,
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab']
       })

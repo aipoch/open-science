@@ -121,19 +121,22 @@ type ArtifactTurnOwnerOptions = {
   writeHandoffFile?: (filePath: string, content: string) => Promise<void>
   notebookArtifactSourceScope?: NotebookArtifactSourceScopeProvider
   notebook?: {
-    setArtifactProvenanceContext?: (
+    setArtifactTurnBinding?: (
       sessionId: string,
-      context:
-        | {
-            rootFrameId: string
-            agentFrameId: string
-            messageBranchId: string
-            runtimeSegmentId: string
-            promptMessageId: string
-            originMessageId?: string
-          }
-        | undefined
+      binding: {
+        ownerExecutionId: string
+        projectId: string
+        provenanceContext: {
+          rootFrameId: string
+          agentFrameId: string
+          messageBranchId: string
+          runtimeSegmentId: string
+          promptMessageId: string
+          originMessageId?: string
+        }
+      }
     ) => void
+    clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
   }
 }
 
@@ -238,13 +241,17 @@ class ArtifactTurnOwner {
         await this.writeHandoffFile(turn.currentRunFile, runContext)
         handoffWritten = true
         if (turn.updatesSessionNotebookContext) {
-          this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, {
-            rootFrameId: turn.rootFrameId,
-            agentFrameId: turn.agentFrameId,
-            messageBranchId: turn.messageBranchId,
-            runtimeSegmentId: turn.runtimeSegmentId,
-            promptMessageId: turn.promptMessageId,
-            ...(turn.originMessageId ? { originMessageId: turn.originMessageId } : {})
+          this.options.notebook?.setArtifactTurnBinding?.(turn.appSessionId, {
+            ownerExecutionId: turn.executionId,
+            projectId: turn.projectId,
+            provenanceContext: {
+              rootFrameId: turn.rootFrameId,
+              agentFrameId: turn.agentFrameId,
+              messageBranchId: turn.messageBranchId,
+              runtimeSegmentId: turn.runtimeSegmentId,
+              promptMessageId: turn.promptMessageId,
+              ...(turn.originMessageId ? { originMessageId: turn.originMessageId } : {})
+            }
           })
         }
       } catch (error) {
@@ -263,7 +270,7 @@ class ArtifactTurnOwner {
           }
           if (turn.updatesSessionNotebookContext) {
             try {
-              this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
+              this.options.notebook?.clearArtifactTurnBinding?.(turn.appSessionId, turn.executionId)
             } catch {
               // The original activation failure remains the caller-visible error.
             }
@@ -620,8 +627,8 @@ class ArtifactTurnOwner {
         cleanupErrors.push(error)
       }
       try {
-        if (ownsHandoff && turn.updatesSessionNotebookContext) {
-          this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
+        if (turn.updatesSessionNotebookContext) {
+          this.options.notebook?.clearArtifactTurnBinding?.(turn.appSessionId, turn.executionId)
         }
       } catch (error) {
         cleanupErrors.push(error)

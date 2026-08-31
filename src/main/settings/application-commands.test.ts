@@ -51,6 +51,7 @@ const expectedChannels = [
   'settings:set-close-preference',
   'settings:set-default-permission-profile',
   'settings:set-notifications-enabled',
+  'settings:set-show-notification-content',
   'settings:set-package-mirror',
   'settings:set-network-proxy',
   'settings:set-project-files-filter',
@@ -204,7 +205,7 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({ providerId: 'provider-1' })
   })
 
-  it('rejects all fourteen local-only commands before an owner can run', async () => {
+  it('rejects all sixteen local-only commands before an owner can run', async () => {
     const { appearance, dependencies, serviceMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerCoreSettingsApplicationCommands(router.registrar, dependencies)
@@ -223,6 +224,7 @@ describe('Settings core application commands', () => {
       [settingsCoreApplicationCommands.setClosePreference, [{ preference: 'quit' }]],
       [settingsCoreApplicationCommands.setDefaultPermissionProfile, [{ profile: 'auto' }]],
       [settingsCoreApplicationCommands.setNotificationsEnabled, [{ enabled: true }]],
+      [settingsCoreApplicationCommands.setShowNotificationContent, [{ enabled: true }]],
       [settingsCoreApplicationCommands.setPackageMirror, [{}]],
       [settingsCoreApplicationCommands.setNetworkProxy, [{ mode: 'direct' }]]
     ] as const
@@ -245,6 +247,7 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('setClosePreference')).not.toHaveBeenCalled()
     expect(serviceMethod('setDefaultPermissionProfile')).not.toHaveBeenCalled()
     expect(serviceMethod('setNotificationsEnabled')).not.toHaveBeenCalled()
+    expect(serviceMethod('setShowNotificationContent')).not.toHaveBeenCalled()
     expect(serviceMethod('setPackageMirror')).not.toHaveBeenCalled()
   })
 
@@ -322,6 +325,10 @@ describe('Settings core application commands', () => {
       settingsCoreApplicationCommands.setNotificationsEnabled,
       invocation([{ enabled: false }] as const)
     )
+    await router.dispatcher.invoke(
+      settingsCoreApplicationCommands.setShowNotificationContent,
+      invocation([{ enabled: true }] as const)
+    )
     const mirror = { pypiIndex: 'https://pypi.example/simple' }
     await router.dispatcher.invoke(
       settingsCoreApplicationCommands.setPackageMirror,
@@ -358,6 +365,7 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('setClosePreference')).toHaveBeenCalledWith(undefined)
     expect(serviceMethod('setDefaultPermissionProfile')).toHaveBeenCalledWith('auto')
     expect(serviceMethod('setNotificationsEnabled')).toHaveBeenCalledWith(false)
+    expect(serviceMethod('setShowNotificationContent')).toHaveBeenCalledWith(true)
     expect(serviceMethod('setPackageMirror')).toHaveBeenCalledWith(mirror)
     expect(serviceMethod('setNetworkProxy')).toHaveBeenCalledWith(networkProxy)
   })
@@ -391,10 +399,17 @@ describe('Settings core application commands', () => {
         invocation([{ enabled: 'yes' } as never] as const)
       )
     ).rejects.toThrow('Invalid notifications-enabled flag: yes')
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.setShowNotificationContent,
+        invocation([{ enabled: 'yes' } as never] as const)
+      )
+    ).rejects.toThrow('Invalid show-notification-content flag: yes')
 
     expect(appearance).not.toHaveBeenCalled()
     expect(serviceMethod('setClosePreference')).not.toHaveBeenCalled()
     expect(serviceMethod('setDefaultPermissionProfile')).not.toHaveBeenCalled()
     expect(serviceMethod('setNotificationsEnabled')).not.toHaveBeenCalled()
+    expect(serviceMethod('setShowNotificationContent')).not.toHaveBeenCalled()
   })
 })

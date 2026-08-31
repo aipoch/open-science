@@ -80,7 +80,13 @@ const cookieToken = (request: IncomingMessage): string | undefined => {
   const cookies = request.headers.cookie?.split(';') ?? []
   for (const cookie of cookies) {
     const [name, ...value] = cookie.trim().split('=')
-    if (name === COOKIE_NAME) return decodeURIComponent(value.join('='))
+    if (name === COOKIE_NAME) {
+      try {
+        return decodeURIComponent(value.join('='))
+      } catch {
+        return undefined
+      }
+    }
   }
   return undefined
 }

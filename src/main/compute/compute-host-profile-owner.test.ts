@@ -56,12 +56,14 @@ const makeRepo = (
   updateScratchRoot: ReturnType<typeof vi.fn>
   updateDetails: ReturnType<typeof vi.fn>
   updateScratchPinned: ReturnType<typeof vi.fn>
+  clearScratchRoot: ReturnType<typeof vi.fn>
   updateConcurrencyLimit: ReturnType<typeof vi.fn>
 } => {
   const updateProbeResult = vi.fn(() => Promise.resolve())
   const updateScratchRoot = vi.fn(() => Promise.resolve())
   const updateDetails = vi.fn(() => Promise.resolve())
   const updateScratchPinned = vi.fn(() => Promise.resolve())
+  const clearScratchRoot = vi.fn(() => Promise.resolve())
   const updateConcurrencyLimit = vi.fn(() => Promise.resolve())
   const repo: ComputeHostRepository = {
     get: vi.fn(() => Promise.resolve(host)),
@@ -72,6 +74,7 @@ const makeRepo = (
     updateScratchRoot,
     updateDetails,
     updateScratchPinned,
+    clearScratchRoot,
     updateConcurrencyLimit
   } as unknown as ComputeHostRepository
   return {
@@ -80,6 +83,7 @@ const makeRepo = (
     updateScratchRoot,
     updateDetails,
     updateScratchPinned,
+    clearScratchRoot,
     updateConcurrencyLimit
   }
 }
@@ -510,6 +514,31 @@ describe('ComputeHostProfileOwner.probe', () => {
     expect(updateScratchRoot).not.toHaveBeenCalled()
   })
 
+  it('does NOT persist an invalid $SCRATCH value from a successful probe', async () => {
+    const stdout = [
+      'os=Linux',
+      'cpus=8',
+      'mem_mib=16000',
+      'gpus=',
+      'sbatch=no',
+      'qsub=no',
+      'bsub=no',
+      'scratch=../../$(touch /tmp/not-approved)'
+    ].join('\n')
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo, updateScratchRoot } = makeRepo()
+    const service = new ComputeHostProfileOwner(runner, repo)
+
+    await expect(service.probe('ssh:biowulf')).resolves.toMatchObject({ ok: true })
+    expect(updateScratchRoot).not.toHaveBeenCalled()
+  })
+
   it('does NOT write detailsDoc', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
@@ -698,6 +727,50 @@ describe('ComputeHostProfileOwner.setScratchRoot', () => {
     const service = new ComputeHostProfileOwner(fakeRunner, repo)
     await service.setScratchRoot('ssh:biowulf', '/my/scratch')
     expect(updateScratchPinned).toHaveBeenCalledWith('ssh:biowulf', '/my/scratch')
+  })
+
+  it('accepts a canonical home-relative scratch root', async () => {
+    const { repo, updateScratchPinned } = makeRepo()
+    const service = new ComputeHostProfileOwner(fakeRunner, repo)
+
+    await service.setScratchRoot('ssh:biowulf', '~/scratch path/$literal')
+
+    expect(updateScratchPinned).toHaveBeenCalledWith('ssh:biowulf', '~/scratch path/$literal')
+  })
+
+  it.each([
+    'relative/path',
+    '/scratch/../other',
+    '/scratch/./other',
+    '/scratch//other',
+    '/scratch/other/',
+    '/scratch\nother',
+    `/${'a'.repeat(4096)}`
+  ])('rejects an invalid scratch root before persistence: %j', async (path) => {
+    const { repo, updateScratchPinned } = makeRepo()
+    const service = new ComputeHostProfileOwner(fakeRunner, repo)
+
+    await expect(service.setScratchRoot('ssh:biowulf', path)).rejects.toThrow(/scratch root/i)
+    expect(updateScratchPinned).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty scratch root instead of creating an empty pinned state', async () => {
+    const { repo, updateScratchPinned } = makeRepo()
+    const service = new ComputeHostProfileOwner(fakeRunner, repo)
+
+    await expect(service.setScratchRoot('ssh:biowulf', '   ')).rejects.toThrow(/scratch root/i)
+    expect(updateScratchPinned).not.toHaveBeenCalled()
+  })
+
+  it('clears a pinned scratch root through an explicit operation', async () => {
+    const { repo, clearScratchRoot } = makeRepo(
+      sampleHost({ scratchRoot: '', scratchPinned: true })
+    )
+    const service = new ComputeHostProfileOwner(fakeRunner, repo)
+
+    await service.clearScratchRoot('ssh:biowulf')
+
+    expect(clearScratchRoot).toHaveBeenCalledWith('ssh:biowulf')
   })
 
   it('throws when the host does not exist', async () => {

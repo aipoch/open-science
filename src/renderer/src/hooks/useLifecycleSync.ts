@@ -139,11 +139,11 @@ const useLifecycleSync = ({
         }
       })
     })
-    const removeProjectDeleted = window.api.projects.onDeleted(({ projectId }) => {
+    const removeProjectDeleted = window.api.projects.onDeleted(({ projectId, status }) => {
       applyOrQueue(
         `project:${projectId}`,
         () => {
-          useProjectStore.getState().removeProject(projectId)
+          useProjectStore.getState().removeProject(projectId, { status })
           useSessionStore.getState().removeSessionsForProject(projectId)
           if (useNavigationStore.getState().activeProjectId === projectId) {
             useNavigationStore.getState().goHome('automatic')

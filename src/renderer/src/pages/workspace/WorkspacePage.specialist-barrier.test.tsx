@@ -322,6 +322,78 @@ describe('WorkspacePage fail-closed send gate', () => {
     })
   })
 
+  it('keeps replay pending while an idle Specialist switch rebuilds provider context', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        createSession({
+          specialistId: 'spec-a',
+          pendingHistoryReplay: { kind: 'all' }
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Analyst'), makeSpecialist('spec-b', 'Researcher')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    window.api = apiStub({
+      setSessionSpecialist: vi.fn(() =>
+        Promise.resolve({ status: 'applied' as const, contextReset: true })
+      )
+    })
+
+    await renderPage(root)
+    expect(conversationProps.agentControls.canChangeSpecialist).toBe(true)
+
+    await act(async () => {
+      conversationProps.specialist.actions.selectSpecialist('spec-b')
+      await Promise.resolve()
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      specialistId: 'spec-b',
+      pendingHistoryReplay: { kind: 'all' },
+      specialistSwitchResetRequired: true
+    })
+  })
+
+  it('locks provider controls while an idle Specialist switch is in flight', async () => {
+    setupBase()
+    const switchRequest = Promise.withResolvers<{
+      status: 'applied'
+      contextReset: boolean
+    }>()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Analyst'), makeSpecialist('spec-b', 'Researcher')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    window.api = apiStub({
+      setSessionSpecialist: vi.fn(() => switchRequest.promise)
+    })
+    await renderPage(root)
+
+    act(() => conversationProps.specialist.actions.selectSpecialist('spec-b'))
+
+    expect(conversationProps.agentControls.canChange).toBe(false)
+    expect(conversationProps.agentControls.canChangeMemory).toBe(false)
+    expect(conversationProps.agentControls.canChangeSpecialist).toBe(false)
+    expect(conversationProps.agentControls.canChangeAutoReview).toBe(true)
+
+    await act(async () => {
+      switchRequest.resolve({ status: 'applied', contextReset: false })
+      await switchRequest.promise
+    })
+  })
+
   it('applies a pending switch to Main Agent before sending', async () => {
     setupBase()
     const setSessionSpecialist = vi.fn(() =>

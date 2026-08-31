@@ -303,9 +303,11 @@ describe('AcpSessionInteractionOwner', () => {
     const reservation = owner.reservePrompt({
       sessionId: 'session-1',
       kind: 'prompt',
-      promptMessageId: 'prompt-message-1'
+      promptMessageId: 'prompt-message-1',
+      memoryEnabled: false
     })
     expect(reservation.signal.aborted).toBe(false)
+    expect(reservation.memoryEnabled).toBe(false)
     expect(owner.current('session-1')).toBe(active)
     expect(owner.has('session-1')).toBe(true)
     expect(() => owner.activatePrompt(reservation)).toThrow(/already running/)

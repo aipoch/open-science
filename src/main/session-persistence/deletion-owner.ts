@@ -66,6 +66,7 @@ type SessionDeletionFileIndex = {
     token: ManagedFileSoftDeleteToken
   ): Promise<void>
   softDeleteProject(projectId: string): Promise<ManagedFileSoftDeleteToken>
+  reconcileProjectSessions(projectId: string, sessions: PersistedChatSession[]): Promise<void>
   reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void>
   markReconciliationIncomplete(): void
 }
@@ -511,6 +512,49 @@ class SessionPersistenceDeletionOwner {
       kind: receiptKind === 'retained' ? 'upsert' : 'delete'
     })
     await this.notifySessionsDeleted([sessionId])
+  }
+
+  async reconcileProjectSessionDeletion(
+    projectId: string,
+    sessionId: string,
+    receiptKind: SessionDeletionReceipt['kind']
+  ): Promise<boolean> {
+    const survivorChanges: Array<{ sessionId: string; sources: ProjectFileSource[] }> = []
+    try {
+      const scan = await this.repository.loadProjectWithDiagnostics(projectId)
+      if (!scan.isComplete || !this.stateOwner.metadataSnapshot().isComplete) return false
+      for (const session of scan.sessions) {
+        const changedSources = await this.fileIndex.syncSession(session).catch(() => undefined)
+        if (changedSources?.length) {
+          survivorChanges.push({ sessionId: session.id, sources: changedSources })
+        }
+      }
+      await this.fileIndex.reconcileProjectSessions(projectId, scan.sessions)
+      if (!this.stateOwner.metadataSnapshot().isComplete) return false
+      this.stateOwner.replaceProjectMetadata(projectId, scan.sessions)
+      this.stateOwner.invalidateBindingTopology(projectId, sessionId)
+    } catch {
+      this.stateOwner.markMetadataIncomplete()
+      this.fileIndex.markReconciliationIncomplete()
+      return false
+    }
+
+    for (const change of survivorChanges) {
+      this.notifyFilesChanged({
+        projectId,
+        sessionId: change.sessionId,
+        sources: change.sources,
+        kind: 'upsert'
+      })
+    }
+    this.notifyFilesChanged({
+      projectId,
+      sessionId,
+      sources: ['artifact', 'upload'],
+      kind: receiptKind === 'retained' ? 'upsert' : 'delete'
+    })
+    await this.notifySessionsDeleted([sessionId])
+    return true
   }
 }
 

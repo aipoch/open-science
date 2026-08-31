@@ -30,6 +30,7 @@ type ReviewerModelRuntimeAdmission = Readonly<{
 
 type ReviewerModelRuntimeOwnerOptions = Readonly<{
   appVersion: string
+  isDataRootHandoffActive?: () => boolean
   captureModel: () => Promise<CapturedReviewerModel>
   resolveTarget: (
     target: ExplicitAgentBackendTarget,
@@ -72,6 +73,13 @@ class ReviewerModelRuntimeOwner {
   }
 
   admit(): Promise<ReviewerModelRuntimeAdmission> {
+    if (this.options.isDataRootHandoffActive?.()) {
+      return Promise.reject(
+        new Error(
+          'Reviewer cannot start while Open Science is moving data. Retry after it finishes.'
+        )
+      )
+    }
     if (this.updateGatePromise) {
       return Promise.reject(
         new Error(

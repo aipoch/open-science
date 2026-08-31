@@ -43,6 +43,49 @@ describe('createIpcHandlerRegistry', () => {
     expect(handler).toHaveBeenCalledOnce()
   })
 
+  it('replaces a native surface lease when a new main-frame document starts navigating', () => {
+    const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+    const registry = createIpcHandlerRegistry({
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        nativeHandlers.set(channel, handler)
+    } as never)
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
+    const on = (name: string, listener: (...args: unknown[]) => void): void => {
+      const registered = listeners.get(name) ?? new Set()
+      registered.add(listener)
+      listeners.set(name, registered)
+    }
+    const sender = {
+      id: 42,
+      on,
+      once: on,
+      removeListener: (name: string, listener: (...args: unknown[]) => void): void => {
+        listeners.get(name)?.delete(listener)
+      }
+    }
+    const emit = (name: string, ...args: unknown[]): void => {
+      for (const listener of [...(listeners.get(name) ?? [])]) listener(...args)
+    }
+    registry.ipcMainHandle('projects:list', (event) => callerLeaseForEvent(event))
+
+    const first = nativeHandlers.get('projects:list')?.({ sender }) as ApplicationCallerLease
+    const staleNavigationListener = [...(listeners.get('did-start-navigation') ?? [])][0]
+    emit('did-start-navigation', { isMainFrame: false, isSameDocument: false })
+    expect(nativeHandlers.get('projects:list')?.({ sender })).toBe(first)
+    emit('did-start-navigation', { isMainFrame: true, isSameDocument: true })
+    expect(nativeHandlers.get('projects:list')?.({ sender })).toBe(first)
+
+    emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    expect(first.signal.aborted).toBe(true)
+
+    const replacement = nativeHandlers.get('projects:list')?.({ sender }) as ApplicationCallerLease
+    expect(replacement.generation).toBeGreaterThan(first.generation)
+    expect(replacement.signal.aborted).toBe(false)
+
+    staleNavigationListener?.({ isMainFrame: true, isSameDocument: false })
+    expect(replacement.signal.aborted).toBe(false)
+  })
+
   it('renews a crashed WebContents lease but keeps destroyed terminal', () => {
     const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
     const registry = createIpcHandlerRegistry({

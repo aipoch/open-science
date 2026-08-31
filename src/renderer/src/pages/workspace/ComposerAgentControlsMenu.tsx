@@ -18,6 +18,7 @@ import type { AcpPermissionGrant } from '../../../../shared/acp'
 import {
   AlertTriangle,
   ArrowRight,
+  BrainCircuit,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -76,9 +77,14 @@ type ComposerAgentControlsMenuProps = {
   profileState?: SessionPermissionProfileState
   grants?: AcpPermissionGrant[]
   autoReviewEnabled: boolean
+  memoryEnabled?: boolean
   // Read-only while a session is running: the menu stays openable and the permission
   // submenu still expands on hover, but profiles, auto-review, and compute stay immutable.
   readOnly?: boolean
+  // Memory may be reconfigured again after context replacement while transcript replay is pending.
+  memoryReadOnly?: boolean
+  // Auto-review is a durable preference and does not depend on the provider transcript state.
+  autoReviewReadOnly?: boolean
   // Permission mode remains independently editable during a running prompt.
   permissionProfileReadOnly?: boolean
   // Grant revocation remains independently available while a turn is running.
@@ -86,6 +92,7 @@ type ComposerAgentControlsMenuProps = {
   autoReviewDisabled?: boolean
   onProfileChange: (profile: PermissionProfileId) => void
   onAutoReviewChange: (enabled: boolean) => void
+  onMemoryChange?: (enabled: boolean) => void
   onRevokeGrant?: (categoryKey: string) => void
   onClearGrants?: () => void
   // Compute hosts: the SSH section is appended below auto-review. Optional so the menu still
@@ -96,7 +103,7 @@ type ComposerAgentControlsMenuProps = {
   onComputeHostSelectedChange?: (providerId: string, selected: boolean) => void
   // Specialist submenu: shown when showSpecialist is true (the composer decides, mirroring the
   // old standalone picker's visibility rule). specialistReadOnly marks a bound session whose
-  // identity is fixed; the menu's readOnly (session running) also locks it down.
+  // identity is fixed. It defaults to the menu's general read-only state for isolated consumers.
   showSpecialist?: boolean
   specialistId?: string
   specialistUnavailable?: boolean
@@ -151,12 +158,16 @@ const ComposerAgentControlsMenu = ({
   profileState,
   grants,
   autoReviewEnabled,
+  memoryEnabled = true,
   readOnly = false,
+  memoryReadOnly = readOnly,
+  autoReviewReadOnly = readOnly,
   permissionProfileReadOnly = readOnly,
   grantActionsReadOnly = readOnly,
   autoReviewDisabled = false,
   onProfileChange,
   onAutoReviewChange,
+  onMemoryChange = () => undefined,
   onRevokeGrant,
   onClearGrants,
   enabledComputeHosts,
@@ -166,7 +177,7 @@ const ComposerAgentControlsMenu = ({
   showSpecialist = false,
   specialistId,
   specialistUnavailable = false,
-  specialistReadOnly = false,
+  specialistReadOnly = readOnly,
   onSpecialistChange,
   openRequest,
   computeOpenRequest
@@ -185,7 +196,7 @@ const ComposerAgentControlsMenu = ({
   // Ask grants stay visible across profile switches so changing Auto/Full never appears to lose them.
   const hasGrants = (grants?.length ?? 0) > 0
   // Anything other than the defaults (ask + auto-review off) gets a dot on the trigger.
-  const isNonDefault = profile !== DEFAULT_PERMISSION_PROFILE || autoReviewEnabled
+  const isNonDefault = profile !== DEFAULT_PERMISSION_PROFILE || autoReviewEnabled || !memoryEnabled
 
   useEffect(() => {
     if (openRequest === undefined || openRequest === previousOpenRequest.current) return
@@ -462,7 +473,7 @@ const ComposerAgentControlsMenu = ({
 
               {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
               <DropdownMenuItem
-                disabled={readOnly || autoReviewDisabled}
+                disabled={autoReviewReadOnly || autoReviewDisabled}
                 className="items-center gap-2 px-2 py-1.5"
                 onSelect={(event) => {
                   event.preventDefault()
@@ -491,6 +502,34 @@ const ComposerAgentControlsMenu = ({
                 />
               </DropdownMenuItem>
 
+              <DropdownMenuItem
+                disabled={memoryReadOnly}
+                className="items-center gap-2 px-2 py-1.5"
+                onSelect={(event) => {
+                  event.preventDefault()
+                  onMemoryChange(!memoryEnabled)
+                }}
+              >
+                <BrainCircuit
+                  className="size-4 shrink-0 text-text-200"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium leading-5">{t('Memory')}</span>
+                  <span className="block text-[11px] leading-4 text-text-300">
+                    {t('Let the agent recall and save memory in this conversation.')}
+                  </span>
+                </span>
+                <Switch
+                  size="sm"
+                  checked={memoryEnabled}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="pointer-events-none"
+                />
+              </DropdownMenuItem>
+
               {/* Specialist + Compute are one resource-selection group: a single divider leads
                   the group (above Specialist when present, above Compute otherwise), so the two
                   hover submenus stay adjacent with nothing between them. */}
@@ -501,7 +540,7 @@ const ComposerAgentControlsMenu = ({
                     selectedId={specialistId}
                     onChange={onSpecialistChange ?? (() => undefined)}
                     unavailable={specialistUnavailable}
-                    readOnly={specialistReadOnly || readOnly}
+                    readOnly={specialistReadOnly}
                   />
                 </>
               ) : (

@@ -264,10 +264,6 @@ const WorkspaceActivityGroup = ({
                     const jobId = extractJobIdFromActivity(activity)
                     const boundJob = jobId ? jobsByActivityId?.get(jobId) : undefined
                     if (!boundJob) return null
-                    // Only show RemoteJobRow for active (non-terminal) jobs
-                    const isActive =
-                      boundJob.status === 'running' || boundJob.status === 'submitted'
-                    if (!isActive) return null
                     return (
                       <RemoteJobRow
                         key={`job-row-${boundJob.job_id}`}

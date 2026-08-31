@@ -8,9 +8,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import { APP } from '../../../../shared/app-config'
 import type { ProviderView } from '../../../../shared/settings'
-import type { SpecialistProfileView } from '../../../../shared/specialist'
+import type { SpecialistView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
+import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
@@ -56,6 +58,7 @@ beforeAll(async () => {
     import('./ConnectorImportView'),
     import('./ConnectorsPanel'),
     import('./GeneralPanel'),
+    import('./MemoryPanel'),
     import('./NetworkPanel'),
     import('./PermissionsPanel'),
     import('./RemoteControlPanel'),
@@ -178,10 +181,17 @@ const installApi = (): void => {
       onChanged: vi.fn().mockReturnValue(() => undefined)
     },
     logs: {
-      getPath: vi.fn().mockResolvedValue('/Users/x/Library/Logs/Open Science/main.log'),
+      getStatus: vi.fn().mockResolvedValue({
+        configured: true,
+        path: '/Users/x/Library/Logs/Open Science/main.log',
+        existing: true,
+        lastWriteSucceeded: true,
+        lastFailureCategory: null
+      }),
       openFile: vi.fn().mockResolvedValue({ opened: true }),
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     },
+    notifications: {},
     storage: {
       getStatus: vi.fn().mockResolvedValue({
         dataRoot: '/Users/x/.open-science',
@@ -202,6 +212,9 @@ const installApi = (): void => {
         availableBytes: 1_000_000_000
       })
     },
+    sessions: {
+      openRecoveryFolder: vi.fn().mockResolvedValue(undefined)
+    },
     cli: {
       getStatus: vi.fn().mockResolvedValue({
         installed: false,
@@ -213,6 +226,16 @@ const installApi = (): void => {
     },
     remoteAccess: {
       getSnapshot: vi.fn().mockResolvedValue({
+        canManage: true,
+        canManagePairing: true,
+        mode: 'off',
+        enabled: false,
+        lifecycle: 'disabled',
+        remoteIt: { installed: false, loggedIn: false, registered: false },
+        pendingRequests: [],
+        trustedBrowsers: []
+      }),
+      probe: vi.fn().mockResolvedValue({
         canManage: true,
         canManagePairing: true,
         mode: 'off',
@@ -251,6 +274,33 @@ const installApi = (): void => {
     compute: {
       list: vi.fn().mockResolvedValue([])
     },
+    memory: {
+      snapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        enabled: false,
+        categories: [
+          {
+            id: 'memory-category-about-you',
+            systemKey: 'about-you',
+            autoRecall: true,
+            revision: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            entries: []
+          }
+        ],
+        projects: []
+      }),
+      setEnabled: vi.fn(),
+      createCategory: vi.fn(),
+      updateCategory: vi.fn(),
+      deleteCategory: vi.fn(),
+      createEntry: vi.fn(),
+      updateEntry: vi.fn(),
+      deleteEntry: vi.fn(),
+      clearAll: vi.fn(),
+      onChanged: vi.fn(() => vi.fn())
+    },
     tags: {
       snapshot: vi.fn().mockResolvedValue({
         revision: 1,
@@ -266,8 +316,10 @@ beforeEach(() => {
   installApi()
   useSettingsStore.setState(createInitialSettingsState())
   useProjectStore.setState(createInitialProjectState())
+  useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
   useSessionStore.setState(createInitialSessionState())
   useComputeStore.setState(createInitialComputeState())
+  useMemoryStore.setState(createInitialMemoryState())
   useTagStore.setState(createInitialTagState())
   useRuntimeSettingsStore.setState({
     envs: null,
@@ -389,6 +441,159 @@ const installCustomProviderSnapshot = (): ProviderView => {
 }
 
 describe('SettingsPage layout', () => {
+  it('gives Memory a definite-height owner so its note list scrolls internally', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Memory')?.click())
+
+    const panel = document.body.querySelector<HTMLElement>('[data-slot="memory-panel"]')
+    expect(panel).not.toBeNull()
+    expect(panel?.parentElement?.className.split(/\s+/)).toContain('h-full')
+  })
+
+  it('refreshes Memory from the backend every time its navigation option opens', async () => {
+    const readMemory = vi.mocked(window.api.memory.snapshot)
+    readMemory.mockResolvedValue({
+      revision: 2,
+      enabled: true,
+      categories: [
+        {
+          id: 'memory-category-about-you',
+          systemKey: 'about-you',
+          autoRecall: true,
+          revision: 2,
+          createdAt: 1,
+          updatedAt: 2,
+          entries: [
+            {
+              id: 'memory-entry-first',
+              categoryId: 'memory-category-about-you',
+              categoryName: null,
+              projectId: 'project-a',
+              projectName: 'Project A',
+              content: 'First server memory',
+              origin: 'agent',
+              revision: 1,
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ]
+        }
+      ],
+      projects: []
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Memory')?.click())
+    await waitFor(() => expect(document.body.textContent).toContain('First server memory'))
+    await act(async () => navButton('General')?.click())
+
+    readMemory.mockResolvedValue({
+      revision: 3,
+      enabled: true,
+      categories: [
+        {
+          id: 'memory-category-about-you',
+          systemKey: 'about-you',
+          autoRecall: true,
+          revision: 3,
+          createdAt: 1,
+          updatedAt: 3,
+          entries: [
+            {
+              id: 'memory-entry-latest',
+              categoryId: 'memory-category-about-you',
+              categoryName: null,
+              projectId: 'project-a',
+              projectName: 'Project A',
+              content: 'Latest agent-created memory',
+              origin: 'agent',
+              revision: 1,
+              createdAt: 3,
+              updatedAt: 3
+            }
+          ]
+        }
+      ],
+      projects: []
+    })
+    await act(async () => navButton('Memory')?.click())
+
+    await waitFor(() => expect(document.body.textContent).toContain('Latest agent-created memory'))
+  })
+
+  it('switches to a project from its Memory container and closes Settings', async () => {
+    const onClose = vi.fn()
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-a',
+          name: 'Project A',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
+      isLoaded: true
+    })
+    vi.mocked(window.api.memory.snapshot).mockResolvedValue({
+      revision: 2,
+      enabled: true,
+      categories: [
+        {
+          id: 'memory-category-about-you',
+          systemKey: 'about-you',
+          autoRecall: true,
+          revision: 2,
+          createdAt: 1,
+          updatedAt: 2,
+          entries: []
+        }
+      ],
+      projects: [
+        {
+          projectId: 'project-a',
+          name: 'Project A',
+          archived: false,
+          entries: [
+            {
+              id: 'project-memory',
+              categoryId: null,
+              categoryName: null,
+              projectId: 'project-a',
+              projectName: 'Project A',
+              content: 'Project memory',
+              origin: 'agent',
+              revision: 1,
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ]
+        }
+      ]
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await act(async () => navButton('Memory')?.click())
+    await waitFor(() => expect(document.body.textContent).toContain('Project A'))
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.includes('Project A'))
+        ?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Open project')
+        ?.click()
+    )
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: 'project-a'
+    })
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {
     vi.mocked(window.api.tags.snapshot).mockResolvedValue({
       revision: 2,
@@ -427,6 +632,40 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('nav [aria-current="page"]')?.textContent?.trim()).toBe(
       'Skills'
     )
+  })
+
+  it('opens Tag creation as a breadcrumb-backed Settings sub-view', async () => {
+    vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+      revision: 1,
+      tags: [{ id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 }],
+      assignments: []
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Tags')?.click())
+    await waitFor(() =>
+      expect(document.body.querySelector('[data-slot="tags-panel"]')).not.toBeNull()
+    )
+
+    const panel = document.body.querySelector<HTMLElement>('[data-slot="tags-panel"]')
+    expect(panel?.parentElement?.className.split(/\s+/)).toContain('h-full')
+
+    const newTag = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'New Tag'
+    )
+    await act(async () => newTag?.click())
+
+    expect(document.body.querySelector('[data-slot="tag-form"]')).not.toBeNull()
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back to tags"]')
+    ).not.toBeNull()
+    expect(document.body.textContent).toContain('New Tag')
+
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+    expect(document.body.querySelector('[data-slot="tags-panel"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-slot="tag-form"]')).toBeNull()
   })
 
   it('restores the Tag selected by a Settings history entry', async () => {
@@ -647,25 +886,32 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to archived"]')).toBeNull()
   })
 
-  it('anchors Feedback above Archived at the bottom of Settings navigation', async () => {
+  it('keeps Feedback in a fixed footer and Archived in the scrollable Workspace group', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
 
     const archived = navButton('Archived')
     const feedback = document.body.querySelector<HTMLAnchorElement>(
       `nav[aria-label="Settings"] a[href="${APP.links.githubFeedback}"]`
     )
-    const remote = navButton('Remote')
-    const navItems = Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] li'))
+    const scroll = document.body.querySelector<HTMLElement>(
+      '[data-slot="settings-navigation-scroll"]'
+    )
+    const footer = document.body.querySelector<HTMLElement>(
+      '[data-slot="settings-navigation-footer"]'
+    )
+    const workspaceGroup = Array.from(
+      scroll?.querySelectorAll<HTMLElement>(':scope > div') ?? []
+    ).find((group) => group.firstElementChild?.textContent?.trim() === 'Workspace')
 
-    expect(archived?.parentElement?.parentElement?.parentElement?.className).toContain('mt-auto')
+    expect(scroll?.className).toContain('min-h-0')
+    expect(scroll?.className).toContain('overflow-y-auto')
+    expect(workspaceGroup?.contains(archived ?? null)).toBe(true)
     expect(feedback?.textContent?.trim()).toBe('Feedback')
     expect(feedback?.target).toBe('_blank')
-    expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeGreaterThan(
-      navItems.indexOf(remote?.parentElement as HTMLLIElement)
-    )
-    expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeLessThan(
-      navItems.indexOf(archived?.parentElement as HTMLLIElement)
-    )
+    expect(footer?.className).toContain('shrink-0')
+    expect(footer?.className).toContain('border-t')
+    expect(footer?.contains(feedback ?? null)).toBe(true)
+    expect(scroll?.nextElementSibling).toBe(footer)
   })
 
   it('shows and dismisses a settings write failure above the scrolling content', async () => {
@@ -729,38 +975,44 @@ describe('SettingsPage layout', () => {
     expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
     expect(dialog?.className).toContain('overscroll-contain')
 
-    // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
-    // and Workspace (Model, Agent, Tags, Permissions, Runtimes, Storage, Remote, Usage, General).
-    // Feedback and Archived are anchored at the navigation bottom.
+    // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Memory, Compute, Network)
+    // and Workspace (Model, Agent, Tags, Permissions, Credentials, Runtimes, Storage, Remote,
+    // Usage, General, Archived). Feedback remains a separate fixed footer action.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
     expect(nav?.className).toContain('md:w-48')
     expect(nav?.className).toContain('w-[min(86vw,320px)]')
-    expect(nav?.className).toContain('overflow-y-auto')
-    expect(nav?.className).toContain('md:overflow-y-visible')
+    expect(nav?.className).toContain('min-h-0')
+    expect(nav?.className).toContain('overflow-hidden')
+    const navScroll = nav?.querySelector<HTMLElement>('[data-slot="settings-navigation-scroll"]')
+    const navFooter = nav?.querySelector<HTMLElement>('[data-slot="settings-navigation-footer"]')
+    expect(navScroll?.className).toContain('overflow-y-auto')
+    expect(navFooter?.className).toContain('border-t')
     expect(nav?.parentElement?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     expect(nav?.textContent).not.toContain('Remote access')
-    const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(16)
+    const navItems = navScroll?.querySelectorAll('li') ?? []
+    expect(navItems).toHaveLength(17)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
-    expect(navItems[3]?.textContent).toContain('Compute')
-    expect(navItems[4]?.textContent).toContain('Network')
-    expect(navItems[5]?.textContent).toContain('Model')
-    expect(navItems[6]?.textContent).toContain('Agent')
-    expect(navItems[7]?.textContent).toContain('Tags')
-    expect(navItems[8]?.textContent).toContain('Permissions')
-    expect(navItems[9]?.textContent).toContain('Runtimes')
-    expect(navItems[10]?.textContent).toContain('Storage')
-    expect(navItems[11]?.textContent?.trim()).toBe('Remote')
-    expect(navItems[12]?.textContent).toContain('Usage')
-    expect(navItems[13]?.textContent).toContain('General')
-    expect(navItems[14]?.textContent).toContain('Feedback')
-    expect(navItems[15]?.textContent).toContain('Archived')
+    expect(navItems[3]?.textContent).toContain('Memory')
+    expect(navItems[4]?.textContent).toContain('Compute')
+    expect(navItems[5]?.textContent).toContain('Network')
+    expect(navItems[6]?.textContent).toContain('Model')
+    expect(navItems[7]?.textContent).toContain('Agent')
+    expect(navItems[8]?.textContent).toContain('Tags')
+    expect(navItems[9]?.textContent).toContain('Permissions')
+    expect(navItems[10]?.textContent).toContain('Credentials')
+    expect(navItems[11]?.textContent).toContain('Runtimes')
+    expect(navItems[12]?.textContent).toContain('Storage')
+    expect(navItems[13]?.textContent?.trim()).toBe('Remote')
+    expect(navItems[14]?.textContent).toContain('Usage')
+    expect(navItems[15]?.textContent).toContain('General')
+    expect(navItems[16]?.textContent).toContain('Archived')
+    expect(navFooter?.textContent).toContain('Feedback')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()
@@ -1753,6 +2005,38 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalledTimes(1)
   })
 
+  it('does not enable log actions for a configured path whose file does not exist', async () => {
+    const logs = (
+      window as unknown as {
+        api: {
+          logs: {
+            getStatus: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.logs
+    logs.getStatus.mockResolvedValueOnce({
+      configured: true,
+      path: '/Users/x/Library/Logs/Open Science/main.log',
+      existing: false,
+      lastWriteSucceeded: null,
+      lastFailureCategory: null
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('General')?.click())
+
+    const buttons = Array.from(document.body.querySelectorAll('button'))
+    const openButton = buttons.find((button) => /^open$/i.test((button.textContent ?? '').trim()))
+    const revealButton = buttons.find((button) =>
+      /^reveal$/i.test((button.textContent ?? '').trim())
+    )
+    expect(openButton?.disabled).toBe(true)
+    expect(revealButton?.disabled).toBe(true)
+  })
+
   it('opens the Remote panel with three scenario-based access modes', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -1805,10 +2089,18 @@ describe('SettingsPage layout', () => {
     expect(modeGrid?.className).toContain('sm:grid-cols-3')
     expect(document.body.textContent).not.toContain('route on exit')
     expect(document.body.textContent).not.toContain('service on exit')
-    expect(
-      (window as unknown as { api: { remoteAccess: { detect: ReturnType<typeof vi.fn> } } }).api
-        .remoteAccess.detect
-    ).toHaveBeenCalledOnce()
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            probe: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    expect(remoteAccess.probe).toHaveBeenCalledOnce()
+    expect(remoteAccess.detect).not.toHaveBeenCalled()
   })
 
   it('exits loading when the initial remote access snapshot fails', async () => {
@@ -1874,13 +2166,13 @@ describe('SettingsPage layout', () => {
     )
   })
 
-  it('does not detect after leaving the Remote panel during the initial snapshot load', async () => {
+  it('does not probe after leaving the Remote panel during the initial snapshot load', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -1914,16 +2206,16 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
 
-    expect(remoteAccess.detect).not.toHaveBeenCalled()
+    expect(remoteAccess.probe).not.toHaveBeenCalled()
   })
 
-  it('does not detect after leaving the Remote panel during an initial-load retry', async () => {
+  it('does not probe after leaving the Remote panel during an initial-load retry', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -1962,7 +2254,7 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
 
-    expect(remoteAccess.detect).not.toHaveBeenCalled()
+    expect(remoteAccess.probe).not.toHaveBeenCalled()
   })
 
   it('reuses the remote access snapshot when the panel is reopened within 60 seconds', async () => {
@@ -1971,7 +2263,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -1987,7 +2279,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(manageableSnapshot)
-    remoteAccess.detect.mockResolvedValue(manageableSnapshot)
+    remoteAccess.probe.mockResolvedValue(manageableSnapshot)
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Remote')?.click())
@@ -1995,7 +2287,7 @@ describe('SettingsPage layout', () => {
     await act(async () => navButton('Remote')?.click())
 
     expect(remoteAccess.getSnapshot).toHaveBeenCalledOnce()
-    expect(remoteAccess.detect).toHaveBeenCalledOnce()
+    expect(remoteAccess.probe).toHaveBeenCalledOnce()
   })
 
   it('invalidates the remote access cache when a pairing request arrives while the panel is closed', async () => {
@@ -2049,13 +2341,13 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).toContain('654321')
   })
 
-  it('does not let an older initial detection overwrite a newer lifecycle snapshot', async () => {
+  it('does not let an older initial probe overwrite a newer lifecycle snapshot', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
             onChanged: ReturnType<typeof vi.fn>
           }
         }
@@ -2078,20 +2370,20 @@ describe('SettingsPage layout', () => {
       lifecycle: 'running',
       remoteIt: { installed: true, loggedIn: true, registered: true }
     }
-    let finishInitialDetection!: (snapshot: typeof initialSnapshot) => void
+    let finishInitialProbe!: (snapshot: typeof initialSnapshot) => void
     remoteAccess.getSnapshot
       .mockResolvedValueOnce(initialSnapshot)
       .mockResolvedValueOnce(eventSnapshot)
-    remoteAccess.detect.mockImplementationOnce(
+    remoteAccess.probe.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          finishInitialDetection = resolve
+          finishInitialProbe = resolve
         })
     )
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Remote')?.click())
-    expect(remoteAccess.detect).toHaveBeenCalledOnce()
+    expect(remoteAccess.probe).toHaveBeenCalledOnce()
 
     const lifecycleListener = remoteAccess.onChanged.mock.calls[0]?.[0] as (() => void) | undefined
     await act(async () => {
@@ -2104,7 +2396,7 @@ describe('SettingsPage layout', () => {
     )
 
     await act(async () => {
-      finishInitialDetection(initialSnapshot)
+      finishInitialProbe(initialSnapshot)
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -2121,6 +2413,7 @@ describe('SettingsPage layout', () => {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
             setMode: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
             detect: ReturnType<typeof vi.fn>
             onChanged: ReturnType<typeof vi.fn>
           }
@@ -2248,7 +2541,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2265,7 +2558,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(staleOffSnapshot)
-    remoteAccess.detect.mockResolvedValue(staleOffSnapshot)
+    remoteAccess.probe.mockResolvedValue(staleOffSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2284,7 +2577,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2301,7 +2594,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(appErrorSnapshot)
-    remoteAccess.detect.mockResolvedValue(appErrorSnapshot)
+    remoteAccess.probe.mockResolvedValue(appErrorSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2344,7 +2637,7 @@ describe('SettingsPage layout', () => {
           api: {
             remoteAccess: {
               getSnapshot: ReturnType<typeof vi.fn>
-              detect: ReturnType<typeof vi.fn>
+              probe: ReturnType<typeof vi.fn>
             }
           }
         }
@@ -2397,7 +2690,7 @@ describe('SettingsPage layout', () => {
       ).toBe(true)
       expect(settingsSection(currentSection)).not.toBeUndefined()
       expect(settingsSection(otherSection)).toBeUndefined()
-      expect(remoteAccess.detect).not.toHaveBeenCalled()
+      expect(remoteAccess.probe).not.toHaveBeenCalled()
     }
   )
 
@@ -2407,7 +2700,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2435,7 +2728,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(remoteItSnapshot)
-    remoteAccess.detect.mockResolvedValue(remoteItSnapshot)
+    remoteAccess.probe.mockResolvedValue(remoteItSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2474,7 +2767,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2501,7 +2794,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(readySnapshot)
-    remoteAccess.detect.mockResolvedValue(readySnapshot)
+    remoteAccess.probe.mockResolvedValue(readySnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2523,7 +2816,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2553,7 +2846,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(publicSnapshot)
-    remoteAccess.detect.mockResolvedValue(publicSnapshot)
+    remoteAccess.probe.mockResolvedValue(publicSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2590,7 +2883,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2613,7 +2906,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(publicSnapshot)
-    remoteAccess.detect.mockResolvedValue(publicSnapshot)
+    remoteAccess.probe.mockResolvedValue(publicSnapshot)
     const writeText = vi.fn().mockRejectedValue(new Error('Clipboard permission denied'))
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
 
@@ -2642,7 +2935,7 @@ describe('SettingsPage layout', () => {
         api: {
           remoteAccess: {
             getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
           }
         }
       }
@@ -2664,7 +2957,7 @@ describe('SettingsPage layout', () => {
       trustedBrowsers: []
     }
     remoteAccess.getSnapshot.mockResolvedValue(setupSnapshot)
-    remoteAccess.detect.mockResolvedValue(setupSnapshot)
+    remoteAccess.probe.mockResolvedValue(setupSnapshot)
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2997,7 +3290,7 @@ describe('SettingsPage layout', () => {
   it('opens directly on a specialist editor when the store has a pending specialist', async () => {
     // The switch approval card deep-links to one specialist's editor: the intent is published
     // before the dialog opens, and the catalog resolves that profile.
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-1',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3039,7 +3332,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('navigates from a specialist capability row to the skill detail and back', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-1',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3092,7 +3385,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('navigates from a Skill usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-usage',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3145,7 +3438,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('navigates from a Connector usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-connector-usage',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3196,7 +3489,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('routes connector capability rows to detail or edit by server kind', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-2',
       name: 'RESEARCHER',
       displayName: 'Researcher',
@@ -3317,7 +3610,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('keeps unsaved specialist edits across a capability detail round trip', async () => {
-    const researcher: SpecialistProfileView = {
+    const researcher: SpecialistView = {
       id: 'spc-3',
       name: 'RESEARCHER',
       displayName: 'Researcher',

@@ -41,6 +41,11 @@ const shellRequest = (sessionId: string): RequestPermissionRequest => ({
   ]
 })
 
+const retainedSessionCancellationKeys = (owner: object): unknown[] =>
+  Object.entries(owner).flatMap(([name, value]) =>
+    name.includes('sessionCancellation') && value instanceof Map ? Array.from(value.keys()) : []
+  )
+
 const registeredToolRequest = (toolName: string): RequestPermissionRequest => ({
   sessionId: 'session-registered',
   toolCall: {
@@ -240,7 +245,7 @@ describe('ACP permission broker with durable grants', () => {
     }
   )
 
-  it('cancels a request while its durable grant lookup is still pending', async () => {
+  it('releases cleared Session cancellation state after a durable grant lookup settles', async () => {
     let finishResolve: (() => void) | undefined
     const registry = {
       resolve: vi.fn(
@@ -266,12 +271,13 @@ describe('ACP permission broker with durable grants', () => {
       profile: 'ask',
       projectId: 'project-1'
     })
-    broker.cancelForSession('session-1')
+    broker.clearSession('session-1')
     finishResolve?.()
 
     await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
     expect(emitted).toEqual([])
     expect(broker.hasPendingForSession('session-1')).toBe(false)
+    expect(retainedSessionCancellationKeys(broker)).not.toContain('session-1')
   })
 
   it('re-evaluates a request when grant lookup crosses a live profile change', async () => {
@@ -931,7 +937,7 @@ describe('ACP permission broker with durable grants', () => {
     )
   })
 
-  it('uses a default Global customization grant without prompting', async () => {
+  it('uses default Global grants without prompting', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-default-grant-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
@@ -946,6 +952,22 @@ describe('ACP permission broker with durable grants', () => {
         profile: 'ask',
         projectId: 'project-1'
       })
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
+    await expect(
+      broker.requestPermission(registeredToolRequest('skill'), {
+        profile: 'ask',
+        projectId: 'project-1'
+      })
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
+    await expect(
+      broker.requestPermission(
+        mcpRequest('session-literature', 'mcp__open_science_literature__read_document'),
+        {
+          profile: 'ask',
+          projectId: 'project-1',
+          mcpServerNames: ['open-science-literature']
+        }
+      )
     ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
     expect(emitted).toEqual([])
   })

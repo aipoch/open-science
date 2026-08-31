@@ -12,7 +12,7 @@ describe('buildStartupDiagnostics', () => {
     const result = buildStartupDiagnostics(error)
 
     expect(result).toContain('Error: database is locked')
-    expect(result).toContain('at open (/app/dist/main.js:10:5)')
+    expect(result).toContain('at open (<absolute-path>/main.js:10:5)')
   })
 
   it('redacts the home directory from messages and stack frames', () => {
@@ -26,6 +26,174 @@ describe('buildStartupDiagnostics', () => {
     expect(result).not.toContain(home)
   })
 
+  it('redacts configured roots and remaining cross-platform absolute paths', () => {
+    const error = new Error(
+      [
+        'config=/Volumes/Config Space/.open-science/open-science.db',
+        'data=/mnt/research/OpenScience/notebook/run.json',
+        'other=/srv/customer/private.db',
+        'file=file:///Volumes/External/private.db',
+        String.raw`windows=D:\Clients\Acme\private.db`,
+        String.raw`network=\\fileserver\research-share\private.db`,
+        'forwardNetwork=//forward-fileserver/research-share/private.db'
+      ].join(' ')
+    )
+
+    const result = buildStartupDiagnostics(error, {
+      home: '/Users/alice',
+      configRoot: '/Volumes/Config Space/.open-science/',
+      dataRoot: '/mnt/research/OpenScience/'
+    })
+
+    expect(result).toContain('<config-root>/open-science.db')
+    expect(result).toContain('<data-root>/notebook/run.json')
+    expect(result).toContain('other=<absolute-path>')
+    expect(result).not.toContain('<absolute-path><absolute-path>')
+    expect(result).not.toContain('/Volumes/Config Space')
+    expect(result).not.toContain('/mnt/research')
+    expect(result).not.toContain('/srv/customer')
+    expect(result).not.toContain('/Volumes/External')
+    expect(result).not.toContain('D:\\Clients')
+    expect(result).not.toContain('fileserver')
+    expect(result).not.toContain('forward-fileserver')
+    expect(result).not.toContain('research-share')
+  })
+
+  it('does not apply a configured-root marker to a sibling path prefix', () => {
+    const error = new Error('cannot open /data/project-old/secret.db')
+
+    const result = buildStartupDiagnostics(error, {
+      home: '/Users/alice',
+      dataRoot: '/data/project/'
+    })
+
+    expect(result).toContain('<absolute-path>')
+    expect(result).not.toContain('<data-root>-old')
+    expect(result).not.toContain('project-old')
+    expect(result).not.toContain('secret.db')
+  })
+
+  it.each([
+    ['POSIX', 'endpoint:https://example.test/public path:/srv/private.db', '/srv/private.db'],
+    [
+      'drive-letter',
+      String.raw`endpoint:https://example.test/public path:D:\Clients\private.db`,
+      String.raw`D:\Clients\private.db`
+    ]
+  ])(
+    'redacts a colon-prefixed %s path without treating a URL as a path',
+    (_kind, message, path) => {
+      const result = buildStartupDiagnostics(new Error(message), { home: '/Users/alice' })
+
+      expect(result).toContain('endpoint:https://example.test/public')
+      expect(result).toContain('path:<absolute-path>')
+      expect(result).not.toContain(path)
+    }
+  )
+
+  it.each([
+    ['POSIX', '[/srv/customer/secret.db]', '/srv/customer/secret.db'],
+    ['drive-letter', String.raw`[D:\Clients\Acme\secret.db]`, String.raw`D:\Clients\Acme\secret.db`]
+  ])('redacts a bracket-delimited %s path', (_kind, message, path) => {
+    const result = buildStartupDiagnostics(new Error(`cannot open ${message}`), {
+      home: '/Users/alice'
+    })
+
+    expect(result).toContain('cannot open [<absolute-path>]')
+    expect(result).not.toContain(path)
+  })
+
+  it.each([
+    ['POSIX', 'relative.db,/srv/customer/secret.db', '/srv/customer/secret.db'],
+    [
+      'drive-letter',
+      String.raw`relative.db,D:\Clients\Acme\secret.db`,
+      String.raw`D:\Clients\Acme\secret.db`
+    ],
+    [
+      'forward-slash UNC',
+      'relative.db,//fileserver/research-share/secret.db',
+      '//fileserver/research-share/secret.db'
+    ]
+  ])('redacts a comma-delimited %s path', (_kind, message, path) => {
+    const result = buildStartupDiagnostics(new Error(`cannot open ${message}`), {
+      home: '/Users/alice'
+    })
+
+    expect(result).toContain('cannot open relative.db,<absolute-path>')
+    expect(result).not.toContain(path)
+  })
+
+  it.each([
+    '/srv/customer/Private Study/patient.db',
+    String.raw`D:\Clients\Private Study\patient.db`,
+    String.raw`\\fileserver\Private Study\patient.db`,
+    'file://fileserver/Private%20Study/patient.db'
+  ])('fully redacts an unquoted path containing spaces: %s', (path) => {
+    const error = new Error(`cannot open ${path} because the file is locked`)
+
+    const result = buildStartupDiagnostics(error, { home: '/Users/alice' })
+
+    expect(result).toContain('<absolute-path>')
+    expect(result).not.toContain('Private Study')
+    expect(result).not.toContain('Private%20Study')
+    expect(result).not.toContain('patient.db')
+    expect(result).not.toContain('fileserver')
+  })
+
+  it('keeps a useful file suffix for a delimited stack path containing spaces', () => {
+    const error = new Error('failed')
+    error.stack = 'Error: failed\n    at open (/srv/customer/Private Study/patient.db:10:5)'
+
+    const result = buildStartupDiagnostics(error, { home: '/Users/alice' })
+
+    expect(result).toContain('at open (<absolute-path>/patient.db:10:5)')
+    expect(result).not.toContain('Private Study')
+  })
+
+  it('does not end a stack path at a parenthesis inside a directory name', () => {
+    const error = new Error('failed')
+    error.stack = 'Error: failed\n    at open (/srv/Research (2026)/patient.db:10:5)'
+
+    const result = buildStartupDiagnostics(error, { home: '/Users/alice' })
+
+    expect(result).toContain('at open (<absolute-path>/patient.db:10:5)')
+    expect(result).not.toContain('Research (2026)')
+  })
+
+  it('reuses the diagnostic credential policy before diagnostics cross IPC', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzdGFydHVwIn0.signaturevalue123'
+    const signedUrlSecret = 'signed-url-opaque-7319'
+    const quotedSecretParts = ['quoted-left-opaque-7319', 'quoted-right-opaque-7319']
+    const quotedSecret = quotedSecretParts.join(' ')
+    const unquotedSecretParts = ['unquoted-left-opaque-7319', 'unquoted-right-opaque-7319']
+    const unquotedSecret = unquotedSecretParts.join(' ')
+    const error = new Error(
+      `request failed: Bearer bearer-opaque-7319; apiKey=key-opaque-7319; password="${quotedSecret}"; credential=${unquotedSecret}; status=denied; jwt=${jwt}; ` +
+        'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&ok=1; ' +
+        `https://bucket.example.test/private?X-Amz-Signature=${signedUrlSecret}&version=7`
+    )
+
+    const result = buildStartupDiagnostics(error, { home: '/Users/alice' })
+
+    for (const secret of [
+      'bearer-opaque-7319',
+      'key-opaque-7319',
+      jwt,
+      'alice',
+      'password-opaque-7319',
+      'query-opaque-7319',
+      signedUrlSecret,
+      ...quotedSecretParts,
+      ...unquotedSecretParts
+    ]) {
+      expect(result).not.toContain(secret)
+    }
+    expect(result).toContain('[redacted]')
+    expect(result).toContain('status=denied')
+    expect(result).toContain('version=7')
+  })
+
   it('walks the cause chain with Caused by separators', () => {
     const root = new Error('disk I/O error')
     root.stack = 'Error: disk I/O error\n    at write (/x.js:1:1)'
@@ -36,7 +204,7 @@ describe('buildStartupDiagnostics', () => {
 
     expect(result).toContain('Error: migration failed')
     expect(result).toContain('Caused by: Error: disk I/O error')
-    expect(result).toContain('at write (/x.js:1:1)')
+    expect(result).toContain('at write (<absolute-path>/x.js:1:1)')
   })
 
   it('returns undefined when nothing describable was thrown', () => {
@@ -63,7 +231,7 @@ describe('buildStartupDiagnostics', () => {
     const result = buildStartupDiagnostics(outer)
 
     expect(result).toContain('Caused by: Error: root cause')
-    expect(result).toContain('at f19 (/f.js:19:1)')
+    expect(result).toContain('at f19 (<absolute-path>/f.js:19:1)')
   })
 
   it('marks frames dropped by the frame budget instead of hiding them', () => {
@@ -73,8 +241,8 @@ describe('buildStartupDiagnostics', () => {
 
     const result = buildStartupDiagnostics(error)
 
-    expect(result).toContain('at f31 (/f.js:31:1)')
-    expect(result).not.toContain('at f32 (/f.js:32:1)')
+    expect(result).toContain('at f31 (<absolute-path>/f.js:31:1)')
+    expect(result).not.toContain('at f32 (<absolute-path>/f.js:32:1)')
     expect(result).toContain('… 8 more frames')
   })
 

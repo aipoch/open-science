@@ -44,7 +44,25 @@ export const localizeConnectorError = (message: string, t: TFunction): string =>
       return t('OAuth redirect URI requires a pre-registered client ID.')
     case 'Secure credential storage is unavailable. Unlock the system keychain and retry.':
       return t('Secure credential storage is unavailable. Unlock the system keychain and retry.')
+    case 'Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.':
+      return t(
+        'Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.'
+      )
+    case 'args appears to contain a credential.':
+      return t('args appears to contain a credential.')
+    case 'Duplicate credential names are not allowed on this platform.':
+      return t('Duplicate credential names are not allowed on this platform.')
+    case 'Remote MCP server URL must use HTTPS or loopback HTTP.':
+      return t('Remote MCP server URL must use HTTPS or loopback HTTP.')
     default:
+      if (
+        /^(?:Connector|OAuth).+ must not exceed \d+ (?:characters|entries|bytes)\.$/u.test(message)
+      ) {
+        return t('Connector configuration exceeds the allowed size.')
+      }
+      if (/^Custom Connector limit of \d+ reached\.$/u.test(message)) {
+        return t('The maximum number of custom Connectors has been reached.')
+      }
       return message
   }
 }

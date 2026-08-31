@@ -44,6 +44,7 @@ describe('Web RPC contract', () => {
       'permissions.extendUndo',
       'permissions.list',
       'permissions.restore',
+      'permissions.restoreDefaults',
       'permissions.revoke'
     ])
     expect(
@@ -76,9 +77,11 @@ describe('Web RPC contract', () => {
       'compute.get',
       'compute.hostEnabledSet',
       'compute.hostSelectedSet',
+      'compute.jobsCancel',
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',
+      'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
       'compute.passwordCapability',
@@ -88,6 +91,7 @@ describe('Web RPC contract', () => {
       'compute.resetPassword',
       'compute.respondApproval',
       'compute.revealInFolder',
+      'compute.scratchClear',
       'compute.scratchSet',
       'compute.sshConfigAliases'
     ])

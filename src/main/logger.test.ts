@@ -1,8 +1,17 @@
+import { readdirSync, readFileSync } from 'node:fs'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const renameFile = vi.hoisted(() => vi.fn())
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs/promises')>()
+  renameFile.mockImplementation(original.rename)
+  return { ...original, rename: renameFile }
+})
 
 import {
   createLogger,
@@ -10,6 +19,7 @@ import {
   errorLogFields,
   flushLogs,
   formatLine,
+  getLogFileStatus,
   initLogger,
   runWithDiagnosticCorrelation,
   writeFatalLogSync
@@ -27,6 +37,26 @@ afterEach(async () => {
     await rm(logDir, { recursive: true, force: true })
     logDir = undefined
   }
+})
+
+const productionTypeScriptFiles = (directory: string): string[] =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) return productionTypeScriptFiles(path)
+    if (!entry.isFile() || !/\.tsx?$/.test(entry.name)) return []
+    if (/\.(?:test|integration|certification)\.tsx?$/.test(entry.name)) return []
+    return path.endsWith(`${join('src', 'main', 'logger.ts')}`) ? [] : [path]
+  })
+
+describe('logger: main-process boundary', () => {
+  it('keeps the central logger as the only production console adapter', () => {
+    const directConsoleCalls = productionTypeScriptFiles(__dirname).flatMap((path) => {
+      const source = readFileSync(path, 'utf8')
+      return /\bconsole\s*(?:\.|\[)/.test(source) ? [path.slice(__dirname.length + 1)] : []
+    })
+
+    expect(directConsoleCalls).toEqual([])
+  })
 })
 
 describe('logger: formatLine', () => {
@@ -136,6 +166,14 @@ describe('logger: formatLine', () => {
       { text: 'Cookie: session=cookie-opaque-7319; Path=/', secrets: ['cookie-opaque-7319'] },
       { text: 'apiKey="json-opaque-7319"', secrets: ['json-opaque-7319'] },
       {
+        text: 'apiKey="quoted-left-opaque-7319 quoted-right-opaque-7319"',
+        secrets: ['quoted-left-opaque-7319', 'quoted-right-opaque-7319']
+      },
+      {
+        text: 'password=unquoted-left-opaque-7319 unquoted-right-opaque-7319; status=denied',
+        secrets: ['unquoted-left-opaque-7319', 'unquoted-right-opaque-7319']
+      },
+      {
         text: 'token=comma-token-opaque-7319,remaining-token-opaque-7319',
         secrets: ['comma-token-opaque-7319', 'remaining-token-opaque-7319']
       },
@@ -148,11 +186,23 @@ describe('logger: formatLine', () => {
         secrets: ['compound-camel-opaque-7319']
       },
       {
+        text: "providerApiKey='compound-left-opaque-7319 compound-right-opaque-7319'",
+        secrets: ['compound-left-opaque-7319', 'compound-right-opaque-7319']
+      },
+      {
+        text: 'providerApiKey=compound-left-opaque-7319 compound-right-opaque-7319; status=denied',
+        secrets: ['compound-left-opaque-7319', 'compound-right-opaque-7319']
+      },
+      {
         text: 'openai_api_key=compound-lower-opaque-7319',
         secrets: ['compound-lower-opaque-7319']
       },
       { text: 'OPENAI_API_KEY=env-opaque-7319', secrets: ['env-opaque-7319'] },
       { text: '--api-key cli-opaque-7319', secrets: ['cli-opaque-7319'] },
+      {
+        text: '--api-key "cli-left-opaque-7319 cli-right-opaque-7319"',
+        secrets: ['cli-left-opaque-7319', 'cli-right-opaque-7319']
+      },
       {
         text: '--authorization Bearer cli-scheme-opaque-7319',
         secrets: ['cli-scheme-opaque-7319']
@@ -170,6 +220,14 @@ describe('logger: formatLine', () => {
       {
         text: 'https://alice:malformed-url-opaque-7319@example.test:99999/path',
         secrets: ['alice', 'malformed-url-opaque-7319']
+      },
+      {
+        text: 'https://bucket.example.test/private?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=aws-signature-opaque-7319&version=7',
+        secrets: ['aws-signature-opaque-7319']
+      },
+      {
+        text: 'https://storage.example.test/private?sv=2024-11-04&sig=azure-signature-opaque-7319&version=7',
+        secrets: ['azure-signature-opaque-7319']
       },
       { text: 'sk-1234567890abcdef', secrets: ['sk-1234567890abcdef'] },
       { text: 'github_pat_1234567890abcdef', secrets: ['github_pat_1234567890abcdef'] },
@@ -1339,6 +1397,28 @@ describe('logger: fatal process diagnostics', () => {
 })
 
 describe('logger: rotation (auto-cleanup)', () => {
+  it('reports file existence and the most recent successful write', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
+    initLogger({ logDir, fileName: 'main.log', mirrorToConsole: false })
+
+    await expect(getLogFileStatus()).resolves.toMatchObject({
+      configured: true,
+      path: join(logDir, 'main.log'),
+      existing: false,
+      lastWriteSucceeded: null,
+      lastFailureCategory: null
+    })
+
+    createLogger('test').info('created')
+    await flushLogs()
+
+    await expect(getLogFileStatus()).resolves.toMatchObject({
+      existing: true,
+      lastWriteSucceeded: true,
+      lastFailureCategory: null
+    })
+  })
+
   it('caps total files, rotating oldest out so logs never grow unbounded', async () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
 
@@ -1372,5 +1452,42 @@ describe('logger: rotation (auto-cleanup)', () => {
     const files = (await readdir(logDir)).filter((name) => name.startsWith('main'))
 
     expect(files).toEqual(['main.log'])
+  })
+
+  it('does not append past the cap while replacing the live file keeps failing', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
+    const runId = 'rotation-failure-run'
+    const firstLineBytes =
+      Buffer.byteLength(formatLine('info', 'test', 'seed', undefined, runId)) + 1
+
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      maxBytes: firstLineBytes + 1,
+      maxFiles: 2,
+      mirrorToConsole: false,
+      runId
+    })
+    const log = createLogger('test')
+    log.info('seed')
+    await flushLogs()
+
+    renameFile.mockClear()
+    renameFile.mockRejectedValue(new Error('simulated Windows file lock'))
+
+    log.info('blocked-1')
+    log.info('blocked-2')
+    log.info('blocked-3')
+    await flushLogs()
+
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8')).trim().split('\n')
+    expect(renameFile).toHaveBeenCalledTimes(3)
+    expect(records).toHaveLength(1)
+    expect(JSON.parse(records[0]!) as { msg: string }).toMatchObject({ msg: 'seed' })
+    await expect(getLogFileStatus()).resolves.toMatchObject({
+      existing: true,
+      lastWriteSucceeded: false,
+      lastFailureCategory: 'rotation'
+    })
   })
 })

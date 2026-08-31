@@ -75,9 +75,15 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     setGrantedRootAccess: vi.fn(async () => [])
   },
   logs: {
-    getPath: vi.fn(() => '/logs/main.log'),
+    getStatus: vi.fn(async () => ({
+      configured: true,
+      path: '/logs/main.log',
+      existing: true,
+      lastWriteSucceeded: true,
+      lastFailureCategory: null
+    })),
     openFile: vi.fn(async () => ({ opened: true })),
-    revealInFolder: vi.fn(() => ({ revealed: true }))
+    revealInFolder: vi.fn(async () => ({ revealed: true }))
   },
   notifications: {
     getSnapshot: vi.fn(async () => ({
@@ -95,6 +101,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
   remoteAccess: {
     snapshot: vi.fn(() => remoteSnapshot),
     detect: vi.fn(async () => remoteSnapshot),
+    probe: vi.fn(async () => remoteSnapshot),
     setMode: vi.fn(async () => remoteSnapshot),
     disable: vi.fn(async () => remoteSnapshot),
     approve: vi.fn(async () => remoteSnapshot),
@@ -108,13 +115,15 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     abortFixLoop: vi.fn(() => undefined)
   },
   storage: {
+    acknowledgeDataRootHandoffFlush: vi.fn(() => undefined),
     getStatus: vi.fn(async () => ({
       dataRoot: '/data',
       isDefault: true,
       defaultDataRoot: '/data',
       defaultParent: '/',
       dataRootMissing: false,
-      legacyDataMovePrompt: false
+      legacyDataMovePrompt: false,
+      cleanupPending: false
     })),
     getInfo: vi.fn(async () => ({
       dataRoot: '/data',
@@ -123,6 +132,8 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
       defaultParent: '/',
       dataRootMissing: false,
       legacyDataMovePrompt: false,
+      cleanupPending: false,
+      canAutoSelectDataDrive: false,
       usage: { categories: [], totalBytes: 0 },
       availableBytes: 100
     })),
@@ -175,14 +186,16 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 53 request channels in their existing capability groups', () => {
+  it('defines the exact 55 Electron request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
       const rendererChannels = contracts
         .filter(
           ({ kind, surfaceInstallation }) =>
-            kind === 'method' && surfaceInstallation.localWeb === 'web-rpc'
+            kind === 'method' &&
+            (surfaceInstallation.localWeb === 'web-rpc' ||
+              (capability === 'remote-access' && surfaceInstallation.electron === 'preload'))
         )
         .map(({ channel }) => channel)
         .filter((channel): channel is string => channel !== null)
@@ -193,7 +206,7 @@ describe('Host application commands', () => {
       }
     })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(53)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(55)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -209,7 +222,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(53)
+    expect(router.dispatcher.commandNames()).toHaveLength(55)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -228,6 +241,7 @@ describe('Host application commands', () => {
     const reviewSession = { projectId: 'project-1', appSessionId: 'session-1' }
     const parent = { parent: '/target' }
     const root = { parent: '/target', markOnboarding: true }
+    const flushResponse = { requestId: 'flush-1', status: 'completed' as const }
     const markReadRequest = { ids: ['message-1'] }
     const markAllReadRequest = { throughSequence: 7 }
     const markSessionCompletionsReadRequest = { sessionIds: ['session-1'] }
@@ -261,7 +275,7 @@ describe('Host application commands', () => {
       hostApplicationCommands.localFs.setGrantedRootAccess,
       invocation([{ id: 'root-1', access: 'rw' }])
     )
-    await router.dispatcher.invoke(hostApplicationCommands.logs.getPath, invocation([]))
+    await router.dispatcher.invoke(hostApplicationCommands.logs.getStatus, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.logs.openFile, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.logs.revealInFolder, invocation([]))
     await router.dispatcher.invoke(
@@ -293,6 +307,7 @@ describe('Host application commands', () => {
       invocation([{ requestId: 'pair-1', decision: 'once' }])
     )
     await router.dispatcher.invoke(hostApplicationCommands.remoteAccess.detect, invocation([]))
+    await router.dispatcher.invoke(hostApplicationCommands.remoteAccess.probe, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.remoteAccess.disable, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.remoteAccess.getSnapshot, invocation([]))
     await router.dispatcher.invoke(
@@ -320,6 +335,10 @@ describe('Host application commands', () => {
       invocation([reviewSession])
     )
     await router.dispatcher.invoke(hostApplicationCommands.reviewer.run, invocation([reviewRun]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.acknowledgeDataRootHandoffFlush,
+      invocation([flushResponse])
+    )
     await router.dispatcher.invoke(hostApplicationCommands.storage.cancelMigrate, invocation([]))
     await router.dispatcher.invoke(
       hostApplicationCommands.storage.commitAndRelaunch,
@@ -377,14 +396,24 @@ describe('Host application commands', () => {
       true,
       true
     )
+    expect(dependencies.remoteAccess.detect).toHaveBeenCalledOnce()
+    expect(dependencies.remoteAccess.probe).toHaveBeenCalledOnce()
     expect(dependencies.remoteAccess.reject).toHaveBeenCalledWith('pair-2', true, true)
     expect(dependencies.remoteAccess.revoke).toHaveBeenCalledWith('browser-1', true, true)
     expect(dependencies.remoteAccess.setMode).toHaveBeenCalledWith('remoteit')
     expect(dependencies.reviewer.run).toHaveBeenCalledWith(reviewRun)
     expect(dependencies.reviewer.getForSession).toHaveBeenCalledWith(reviewSession)
     expect(dependencies.reviewer.abort).toHaveBeenCalledWith(reviewSession)
-    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent)
-    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root)
+    expect(dependencies.storage.acknowledgeDataRootHandoffFlush).toHaveBeenCalledWith(
+      flushResponse,
+      'electron:7'
+    )
+    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent, {
+      surface: 'electron-renderer'
+    })
+    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root, {
+      surface: 'electron-renderer'
+    })
     expect(dependencies.update.apply).toHaveBeenCalledWith({ relaunch: false })
     expect(dependencies.update.download).toHaveBeenCalledWith({ nonInteractive: true })
 
@@ -392,6 +421,42 @@ describe('Host application commands', () => {
     expect(
       ownerMethods.filter(vi.isMockFunction).every((method) => method.mock.calls.length === 1)
     ).toBe(true)
+  })
+
+  it('routes local Web data-root handoffs to the post-teardown renderer handshake', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerHostApplicationCommands(router.registrar, dependencies)
+    const caller = createWebCallerContext('local-web')
+    const parent = { parent: '/target' }
+    const root = { ...parent, markOnboarding: true }
+
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.migrate,
+      invocation([parent], caller)
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.commitAndRelaunch,
+      invocation([parent], caller)
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.setDataRootAndRelaunch,
+      invocation([root], caller)
+    )
+    const flushResponse = { requestId: 'web-flush-1', status: 'completed' as const }
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.acknowledgeDataRootHandoffFlush,
+      invocation([flushResponse], caller)
+    )
+
+    const target = { surface: 'web-renderer', lifecycleClientId: 'web:local-web' }
+    expect(dependencies.storage.migrate).toHaveBeenCalledWith(parent, target)
+    expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent, target)
+    expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root, target)
+    expect(dependencies.storage.acknowledgeDataRootHandoffFlush).toHaveBeenCalledWith(
+      flushResponse,
+      'web:local-web'
+    )
   })
 
   it('rejects the exact local-only host inventory before entering an owner', async () => {
@@ -402,6 +467,7 @@ describe('Host application commands', () => {
     const previewRequest = { path: '/data/result.txt', encoding: 'utf8' as const }
     const parent = { parent: '/target' }
     const argsByChannel: Readonly<Record<string, readonly unknown[]>> = {
+      'storage:ack-data-root-handoff-flush': [{ requestId: 'flush-1', status: 'completed' }],
       'local-fs:grant-root': [{ path: '/data', access: 'ro' }],
       'local-fs:granted-roots:remove': [{ id: 'root-1' }],
       'local-fs:granted-roots:set-access': [{ id: 'root-1', access: 'rw' }],
@@ -429,7 +495,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(26)
+    expect(localOnlyChannels).toHaveLength(29)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(
@@ -443,6 +509,50 @@ describe('Host application commands', () => {
     expect(
       ownerMethods.filter(vi.isMockFunction).every((method) => method.mock.calls.length === 0)
     ).toBe(true)
+  })
+
+  it('rejects every logs command from a remote Web caller before entering the owner', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerHostApplicationCommands(router.registrar, dependencies)
+    const remoteCaller = createWebCallerContext('remote-browser', { location: 'remote' })
+    const channels =
+      RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'logs')?.contracts.flatMap(
+        ({ channel }) => (channel === null ? [] : [channel])
+      ) ?? []
+
+    expect(channels.length).toBeGreaterThan(0)
+    for (const channel of channels) {
+      await expect(
+        router.dispatcher.invoke(commandByName(channel), invocation([], remoteCaller))
+      ).rejects.toThrow(`Channel only available from the local app: ${channel}`)
+    }
+
+    expect(dependencies.logs.getStatus).not.toHaveBeenCalled()
+    expect(dependencies.logs.openFile).not.toHaveBeenCalled()
+    expect(dependencies.logs.revealInFolder).not.toHaveBeenCalled()
+  })
+
+  it('keeps the read-only Remote Access probe available only to local callers', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerHostApplicationCommands(router.registrar, dependencies)
+    const localCaller = createWebCallerContext('local-browser')
+    const remoteCaller = createWebCallerContext('remote-browser', { location: 'remote' })
+
+    await expect(
+      router.dispatcher.invoke(
+        hostApplicationCommands.remoteAccess.probe,
+        invocation([], localCaller)
+      )
+    ).resolves.toBe(remoteSnapshot)
+    await expect(
+      router.dispatcher.invoke(
+        hostApplicationCommands.remoteAccess.probe,
+        invocation([], remoteCaller)
+      )
+    ).rejects.toThrow('Channel only available from the local app: remote-access:probe')
+    expect(dependencies.remoteAccess.probe).toHaveBeenCalledOnce()
   })
 
   it('preserves the five-state Remote Access authority and freshness matrix', async () => {
@@ -503,7 +613,45 @@ describe('Host application commands', () => {
         invocation([], currentManager)
       )
     ).rejects.toThrow('This action must be approved from the Open Science desktop app.')
+    await expect(
+      router.dispatcher.invoke(
+        hostApplicationCommands.remoteAccess.probe,
+        invocation([], currentManager)
+      )
+    ).rejects.toThrow('Channel only available from the local app: remote-access:probe')
     expect(dependencies.remoteAccess.detect).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.probe).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed Remote Access arguments before entering an owner', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerHostApplicationCommands(router.registrar, dependencies)
+    const cases: Array<readonly [string, readonly unknown[]]> = [
+      ['remote-access:approve', [undefined]],
+      ['remote-access:detect', [{}]],
+      ['remote-access:probe', [{}]],
+      ['remote-access:disable', [{}]],
+      ['remote-access:get-snapshot', [{}]],
+      ['remote-access:reject', [undefined]],
+      ['remote-access:revoke-browser', [undefined]],
+      ['remote-access:set-mode', [{ mode: 'invalid' }]]
+    ]
+
+    for (const [channel, args] of cases) {
+      await expect(
+        router.dispatcher.invoke(commandByName(channel), invocation(args))
+      ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+    }
+
+    expect(dependencies.remoteAccess.approve).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.detect).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.probe).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.disable).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.snapshot).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.reject).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.revoke).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.setMode).not.toHaveBeenCalled()
   })
 
   it('keeps pending-notification token validation ahead of owner mutation', async () => {

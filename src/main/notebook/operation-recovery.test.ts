@@ -80,6 +80,122 @@ describe('reconcileInterruptedOperations', () => {
     expect(await journal.pending()).toEqual([])
   })
 
+  it('publishes a committed archive intent without replaying interrupted-install recovery', async () => {
+    const journal = await newJournal()
+    const committed = record({
+      kind: 'install',
+      archivePublications: [
+        {
+          workingRoot: '/working-cache',
+          authorizations: [{ file: 'numpy-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
+        }
+      ]
+    })
+    await journal.begin(committed)
+    const deps = makeDeps({ publishArchives: vi.fn().mockResolvedValue(undefined) })
+
+    await expect(reconcileInterruptedOperations(journal, deps)).resolves.toEqual([committed])
+
+    expect(deps.publishArchives).toHaveBeenCalledWith(committed)
+    expect(deps.markRepairRequired).not.toHaveBeenCalled()
+    expect(deps.operationChildLiveness).not.toHaveBeenCalled()
+    expect(await journal.pending()).toEqual([])
+  })
+
+  it('blocks the target when recovered archive publication fails', async () => {
+    const journal = await newJournal()
+    const committed = record({
+      kind: 'install',
+      targetPath: '/runtime/envs/analysis',
+      archivePublications: [
+        {
+          workingRoot: '/working-cache',
+          authorizations: [{ file: 'numpy-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
+        }
+      ]
+    })
+    await journal.begin(committed)
+    const deps = makeDeps({
+      publishArchives: vi.fn().mockRejectedValue(new Error('disk full')),
+      onRetained: vi.fn()
+    })
+
+    await expect(reconcileInterruptedOperations(journal, deps)).resolves.toEqual([])
+
+    expect(deps.blockUnknownChildTarget).toHaveBeenCalledWith(committed)
+    expect(deps.onRetained).toHaveBeenCalledWith(committed)
+    expect(await journal.pending()).toEqual([committed])
+  })
+
+  it('retains a committed archive intent while its hydrated child evidence is unconfirmed', async () => {
+    const journal = await newJournal()
+    await journal.begin(
+      record({
+        kind: 'install',
+        archivePublications: [
+          {
+            workingRoot: '/working-cache',
+            authorizations: [{ file: 'numpy-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
+          }
+        ]
+      })
+    )
+    const deps = makeDeps({
+      hydrateInterruptedChild: (pending) => ({ ...pending, spawnAttempted: true }),
+      publishArchives: vi.fn().mockResolvedValue(undefined),
+      onRetained: vi.fn()
+    })
+
+    await expect(reconcileInterruptedOperations(journal, deps)).resolves.toEqual([])
+
+    expect(deps.blockUnknownChildTarget).toHaveBeenCalledOnce()
+    expect(deps.publishArchives).not.toHaveBeenCalled()
+    expect(deps.onRetained).toHaveBeenCalledOnce()
+    expect(await journal.pending()).toHaveLength(1)
+  })
+
+  it('blocks and retains a cache whose post-mutation publication authority was never persisted', async () => {
+    const journal = await newJournal()
+    const ambiguous = record({
+      kind: 'install',
+      targetPath: '/runtime/envs/analysis',
+      archivePublicationPending: true
+    })
+    await journal.begin(ambiguous)
+    const deps = makeDeps({
+      publishArchives: vi.fn().mockResolvedValue(undefined),
+      onRetained: vi.fn(),
+      onReconciled: vi.fn()
+    })
+
+    await expect(reconcileInterruptedOperations(journal, deps)).resolves.toEqual([])
+
+    expect(deps.blockUnknownChildTarget).toHaveBeenCalledWith(ambiguous)
+    expect(deps.markRepairRequired).not.toHaveBeenCalled()
+    expect(deps.publishArchives).not.toHaveBeenCalled()
+    expect(deps.onRetained).toHaveBeenCalledWith(ambiguous)
+    expect(await journal.pending()).toEqual([ambiguous])
+  })
+
+  it('persists a protected repair reason before retaining ambiguous archive evidence', async () => {
+    const journal = await newJournal()
+    const ambiguous = record({
+      kind: 'install',
+      targetPath: '/runtime/envs/analysis',
+      repairReason: 'protected-identity-change',
+      archivePublicationPending: true
+    })
+    await journal.begin(ambiguous)
+    const deps = makeDeps({ onRetained: vi.fn() })
+
+    await expect(reconcileInterruptedOperations(journal, deps)).resolves.toEqual([])
+
+    expect(deps.markRepairRequired).toHaveBeenCalledWith(ambiguous)
+    expect(deps.blockUnknownChildTarget).toHaveBeenCalledWith(ambiguous)
+    expect(deps.onRetained).toHaveBeenCalledWith(ambiguous)
+    expect(await journal.pending()).toEqual([ambiguous])
+  })
+
   it('BLOCKS (never kills or reconciles) a surviving orphan child instead of signalling it', async () => {
     // Design: recovery never auto-signals a possibly-live orphan (no strict "safe to kill" guarantee).
     // A live child surfaces as liveness 'unknown', so the op is blocked and its entry is LEFT for a

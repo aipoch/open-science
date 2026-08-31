@@ -56,7 +56,12 @@ describe('project application command contracts', () => {
     expect(projectApplicationCommandContracts.delete.args.parse([{ id: 'project-1' }])).toEqual([
       { id: 'project-1' }
     ])
-    expect(projectApplicationCommandContracts.delete.result.parse(undefined)).toBeUndefined()
+    expect(projectApplicationCommandContracts.delete.result.parse({ status: 'deleted' })).toEqual({
+      status: 'deleted'
+    })
+    expect(
+      projectApplicationCommandContracts.delete.result.parse({ status: 'cleanup-pending' })
+    ).toEqual({ status: 'cleanup-pending' })
   })
 
   it('rejects malformed and surplus public fields', () => {

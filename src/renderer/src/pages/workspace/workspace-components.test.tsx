@@ -115,7 +115,9 @@ describe('workspace page component boundaries', () => {
     expect(startupSource).toContain('const sessions = useSessionPersistence()')
     expect(hostSource).toContain('useApplicationStartup()')
     expect(hostSource).toContain('isSessionPersistenceReady={sessions.isReady}')
+    expect(hostSource).toContain('<WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />')
     expect(appSource).not.toContain('useSessionPersistence')
+    expect(workspacePageSource).not.toContain('useJobAnalysisEffect')
 
     expect(workspacePageSource).toContain('isSessionPersistenceReady')
     expect(workspacePageSource).toContain('isSessionPersistenceReady &&')
@@ -648,7 +650,7 @@ describe('conversation message scroller integration', () => {
       "import { getAgentLoadingPhase } from './agent-loading-message'"
     )
     expect(workspaceMessageScrollerSource).toContain(
-      'const agentLoadingPhase = getAgentLoadingPhase(activeSession)'
+      'const agentLoadingPhase = getAgentLoadingPhase(activeSession, { credentialPending })'
     )
     expect(workspaceMessageScrollerSource).toContain('<WorkspaceAgentLoadingRow')
     expect(workspaceAgentLoadingRowSource).toContain('role="status"')

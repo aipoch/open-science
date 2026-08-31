@@ -8,6 +8,7 @@ import {
   SelectLabel,
   SelectTrigger
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import {
   buildConfiguredModelCatalog,
@@ -15,6 +16,7 @@ import {
 } from '../../../../shared/configured-model-catalog'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
+import { modelUnavailableReason } from '../workspace/composer-model-picker-utils'
 
 // The single "active model" selector for settings: one selected model, grouped and tagged by its
 // source provider. Mirrors the composer picker (both drive activeProviderId + activeModel), so
@@ -29,7 +31,11 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
   const activeModel = useSettingsStore((state) => state.activeModel)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+  const frameworkName =
+    agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
+    agentFrameworkId
 
   const options = buildConfiguredModelCatalog({
     providers,
@@ -95,20 +101,55 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 )}
               </SelectLabel>
               {group.options.map((option) => {
+                if (option.selectable) {
+                  return (
+                    <SelectItem
+                      key={option.key}
+                      value={option.key}
+                      icon={
+                        <ProviderKindIcon
+                          kindKey={providerKindKey(option.providerType, option.vendorId)}
+                          className="size-4"
+                        />
+                      }
+                    >
+                      {option.model || option.providerName}
+                    </SelectItem>
+                  )
+                }
+
+                const reason = modelUnavailableReason(
+                  option,
+                  group.provider,
+                  frameworkName,
+                  frameworkEndpoints,
+                  t
+                )
+
                 return (
-                  <SelectItem
-                    key={option.key}
-                    value={option.key}
-                    disabled={!option.selectable}
-                    icon={
-                      <ProviderKindIcon
-                        kindKey={providerKindKey(option.providerType, option.vendorId)}
-                        className="size-4"
-                      />
-                    }
-                  >
-                    {option.model || option.providerName}
-                  </SelectItem>
+                  <TooltipProvider key={option.key} delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <SelectItem
+                          value={option.key}
+                          disabled
+                          aria-label={reason}
+                          className="data-[disabled]:pointer-events-auto data-[disabled]:cursor-not-allowed"
+                          icon={
+                            <ProviderKindIcon
+                              kindKey={providerKindKey(option.providerType, option.vendorId)}
+                              className="size-4"
+                            />
+                          }
+                        >
+                          {option.model || option.providerName}
+                        </SelectItem>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-72 leading-5">
+                        {reason}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )
               })}
             </SelectGroup>

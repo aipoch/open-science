@@ -76,6 +76,7 @@ const runBounded = async (
   log?: BackendShutdownDeps['log']
 ): Promise<ShutdownOutcome> => {
   let reaped = false
+  const settled = { runtime: false, notebook: false }
   const logFailure = (backend: 'runtime' | 'notebook', error: unknown): void => {
     try {
       log?.error('backend shutdown failed', {
@@ -86,9 +87,25 @@ const runBounded = async (
       // Shutdown progress is authoritative; diagnostics are best-effort.
     }
   }
+  const logTimeout = (backend: 'runtime' | 'notebook'): void => {
+    try {
+      log?.error('backend shutdown timed out', {
+        backend,
+        errorCategory: 'timeout'
+      })
+    } catch {
+      // Shutdown progress is authoritative; diagnostics are best-effort.
+    }
+  }
 
   // allSettled ensures one rejection never short-circuits the other.
-  const settleAll = Promise.allSettled([runtimeTeardown, notebookTeardown]).then(
+  const trackedRuntimeTeardown = runtimeTeardown.finally(() => {
+    settled.runtime = true
+  })
+  const trackedNotebookTeardown = notebookTeardown.finally(() => {
+    settled.notebook = true
+  })
+  const settleAll = Promise.allSettled([trackedRuntimeTeardown, trackedNotebookTeardown]).then(
     ([runtimeResult, notebookResult]) => {
       if (runtimeResult.status === 'rejected') {
         logFailure('runtime', runtimeResult.reason)
@@ -118,6 +135,10 @@ const runBounded = async (
   if (timer) clearTimeout(timer)
 
   const completed = result === 'done'
+  if (!completed) {
+    if (!settled.runtime) logTimeout('runtime')
+    if (!settled.notebook) logTimeout('notebook')
+  }
   return { completed, reaped: completed && reaped }
 }
 

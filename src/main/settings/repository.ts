@@ -36,10 +36,12 @@ import {
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
+import { assertCustomServerCapacity } from './connector-resource-limits'
 import {
   appendCustomServer,
   beginCustomServerDeletion,
-  completeCustomServerDeletion
+  completeCustomServerDeletion,
+  customServerSecurityFingerprint
 } from './custom-server-identity'
 import {
   buildReviewerModelMutation,
@@ -87,6 +89,38 @@ class SettingsRepository {
           : {})
       }
     })
+  }
+
+  // Records a fetched catalog only while the provider still points at the target that produced it.
+  // The patch is applied to the current record so unrelated edits made during the network request
+  // are preserved, and a deleted provider can never be recreated by a stale completion.
+  async updateProviderModelCatalogIfTargetMatches(
+    expectedProvider: StoredProvider,
+    fetchedModels: string[]
+  ): Promise<boolean> {
+    let applied = false
+
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex((provider) => provider.id === expectedProvider.id)
+      if (index < 0) return settings
+
+      const currentProvider = settings.providers[index]
+      if (
+        currentProvider.type !== expectedProvider.type ||
+        currentProvider.vendorId !== expectedProvider.vendorId ||
+        currentProvider.region !== expectedProvider.region ||
+        currentProvider.keyRef !== expectedProvider.keyRef
+      ) {
+        return settings
+      }
+
+      const providers = [...settings.providers]
+      providers[index] = { ...currentProvider, fetchedModels }
+      applied = true
+      return { ...settings, providers }
+    })
+
+    return applied
   }
 
   // Updates the single claude-isolated provider record (id is fixed at builtin-claude-isolated).
@@ -313,6 +347,10 @@ class SettingsRepository {
   }
   async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
+  }
+
+  async setShowNotificationContent(enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, showNotificationContent: enabled }))
   }
 
   async setConversationSkillImportEnabled(enabled: boolean): Promise<StoredSettings> {
@@ -586,6 +624,14 @@ class SettingsRepository {
     })
   }
 
+  // Sets or clears the OpenAlex API-key reference. Plaintext is encrypted by the Connector settings
+  // owner before this repository boundary.
+  async setOpenAlexCredential(apiKeyRef: string | undefined): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      connectors.openAlexApiKeyRef = apiKeyRef || undefined
+    })
+  }
+
   async setGitHubToken(
     tokenRef: string | undefined,
     tokenMask: string | undefined
@@ -600,6 +646,7 @@ class SettingsRepository {
   // Appends a fully-formed custom MCP server record.
   async addCustomServer(server: StoredCustomMcpServer): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
+      assertCustomServerCapacity(connectors.customMcpServers?.length ?? 0)
       connectors.customMcpServers = appendCustomServer(
         connectors.customMcpServers,
         server,
@@ -634,6 +681,27 @@ class SettingsRepository {
         throw new Error(`Unknown custom connector: ${id}`)
       connectors.customMcpServers = servers?.map((stored) => (stored.id === id ? server : stored))
     })
+  }
+
+  async updateCustomServerOAuthState(
+    id: string,
+    expectedConfigurationFingerprint: string,
+    expectedOAuthClientSecretRef: string | undefined,
+    oauthRef: string | undefined
+  ): Promise<boolean> {
+    let updated = false
+    await this.mutateConnectors((connectors) => {
+      const server = connectors.customMcpServers?.find((candidate) => candidate.id === id)
+      if (!server) throw new Error(`Unknown custom connector: ${id}`)
+      if (
+        customServerSecurityFingerprint(server) !== expectedConfigurationFingerprint ||
+        server.oauthClientSecretRef !== expectedOAuthClientSecretRef
+      )
+        return
+      server.oauthRef = oauthRef
+      updated = true
+    })
+    return updated
   }
 
   // Sets the bookmark folders for a provider_id in settings.computeBookmarks. Replaces the full

@@ -26,7 +26,7 @@ import {
   type CreateSpecialistInput,
   type UpdateSpecialistInput,
   type SpecialistFieldError,
-  type SpecialistProfileView
+  type SpecialistView
 } from '../../../../shared/specialist'
 import { SpecialistAvatar } from './specialist-avatar'
 import { AVATAR_COLORS, SPECIALIST_COLOR_OPTIONS } from './specialist-icons'
@@ -42,12 +42,12 @@ type SpecialistEditorProps = {
   // Edit mode: when provided, the form is prefilled from this profile and Save
   // calls onSaveEdit (with id + revision for optimistic concurrency) instead of
   // onSave.
-  editSpecialist?: SpecialistProfileView
+  editSpecialist?: SpecialistView
   initialInput?: CreateSpecialistInput
   onSaveEdit?: (input: UpdateSpecialistInput) => Promise<void>
   // Called when the user clicks "Reload" after a revision conflict.
   // Should fetch the latest profile from the store and return it.
-  onReload?: () => Promise<SpecialistProfileView | undefined>
+  onReload?: () => Promise<SpecialistView | undefined>
   // Called when a selected Skill row is clicked to view that Skill in Settings.
   onOpenSkillDetail?: (skillId: string) => void
   // Called when a selected Connector row is clicked to view that Connector in

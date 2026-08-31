@@ -2,21 +2,79 @@ import { dialog, type App } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
-// Two module-level flags (not parameters) because the quit guard, the migrate IPC handler, and the
-// ACP/notebook write paths live in different modules but must agree on a single truth.
+// Module-level state (not parameters) because the quit guard, the migrate IPC handler, and the
+// ACP/notebook write paths live in different modules but must agree on a single truth. The three
+// flags describe the migration/write gates; activeQuitOperation joins a confirmed quit to the
+// command that owns those flags.
+//   - `preparing` drives the before-quit guard while target validation and durable handoff preparation
+//     await, without closing the write gate before a copy is ready to start.
 //   - `copying`  drives the before-quit guard: true only while runDataRootMigration is actively copying.
 //   - `pending`  drives the write-gate: true from the moment the copy starts until the switch is
 //     committed (and the app relaunches) or the copy is cancelled/discarded. It stays true across the
 //     copy→commit window — the exact interval during which a prompt or notebook cell writing to the
 //     OLD root would be silently discarded by the commit's delete step.
+let preparing = false
 let copying = false
 let pending = false
+type MigrationQuitOperation = {
+  controller: AbortController
+  settled: Promise<void>
+  committed: boolean
+  markCommitted: () => void
+  finish: () => void
+}
+let activeQuitOperation: MigrationQuitOperation | undefined
 let activeDataRootWriters = 0
 const writerDrainWaiters = new Set<() => void>()
 const dataRootWriteContext = new AsyncLocalStorage<boolean>()
 
-// Marks the start of a migration copy. Sets both flags. Pair with endMigrationCopy() in a finally.
+// Reserves the lifecycle quit guard before the command's first asynchronous validation/preparation
+// boundary. This intentionally leaves `pending` false so ordinary writes remain available until the
+// copy is ready to start. The returned handle must be finished when the owning command settles.
+export type MigrationPreparationOperation = {
+  signal: AbortSignal
+  markCommitted: () => void
+  finish: () => void
+}
+
+export const beginMigrationPreparation = (
+  controller = new AbortController()
+): MigrationPreparationOperation => {
+  preparing = true
+  let resolveSettled: (() => void) | undefined
+  const operation: MigrationQuitOperation = {
+    controller,
+    committed: false,
+    settled: new Promise<void>((resolve) => {
+      resolveSettled = resolve
+    }),
+    markCommitted: () => {
+      operation.committed = true
+    },
+    finish: () => {
+      if (activeQuitOperation !== operation) return
+      activeQuitOperation = undefined
+      resolveSettled?.()
+    }
+  }
+  activeQuitOperation = operation
+  return {
+    signal: controller.signal,
+    markCommitted: operation.markCommitted,
+    finish: operation.finish
+  }
+}
+
+// A recovered commit temporarily enters the copy/write gate while it drains writers, then returns
+// to preparation without starting a second quit-cancellable operation.
+export const resumeMigrationPreparation = (): void => {
+  preparing = true
+}
+
+// Marks the start of a migration copy. Transitions preparation into the copy + write gates. Pair
+// with endMigrationCopy() in a finally.
 export const beginMigration = (): void => {
+  preparing = false
   copying = true
   pending = true
 }
@@ -24,23 +82,37 @@ export const beginMigration = (): void => {
 // The copy finished (success, failure, or cancel): relax the quit guard, but leave `pending` untouched
 // so a successful-but-uncommitted copy keeps blocking writes until commit or discard resolves it.
 export const endMigrationCopy = (): void => {
+  preparing = false
   copying = false
 }
 
 // The migration is fully resolved without committing (copy failed/cancelled, discarded, or a
 // switchover failure left the app on the old root): clear both flags so normal writes resume.
 export const clearMigrationPending = (): void => {
+  preparing = false
   pending = false
   copying = false
 }
 
-// Clears both flags. Used by the quit-guard confirm path (the user is quitting anyway).
+// Clears all migration/write flags after the quit guard has joined the cancelled command.
 export const endMigration = (): void => {
+  preparing = false
   copying = false
   pending = false
 }
 
-export const isMigrationInProgress = (): boolean => copying
+// Quit-anyway must cancel and join the command that owns the preparation flag before the lifecycle
+// reissues app.quit(). Clearing flags alone would let that command resume and persist a new pointer
+// concurrently with ordinary shutdown. Once the command marks its pointer committed, retain the
+// write gate: that path owns a mandatory relaunch/terminal handoff even though cancellation arrived.
+export const cancelMigrationForQuit = async (): Promise<void> => {
+  const operation = activeQuitOperation
+  operation?.controller.abort()
+  await operation?.settled
+  if (!operation?.committed) endMigration()
+}
+
+export const isMigrationInProgress = (): boolean => preparing || copying
 
 // True whenever a copy is staged-but-not-yet-committed; gates ACP prompts and notebook cell runs so
 // they can't write into the old root during the copy→commit window.
@@ -114,19 +186,26 @@ const defaultConfirmQuit = (translate: NativeTranslator): boolean =>
 // Installs a before-quit guard so an in-flight migration is not silently torn down by Cmd+Q / the
 // window close button. The move itself is crash-safe (copy → verify → commit → delete leaves either
 // the old or the new root fully intact), so this is about not making the user redo a move by
-// accident, not about preventing data loss. On confirmation the flag is cleared and quit re-issued,
-// so the second pass falls straight through. `confirmQuit` is injectable for tests.
+// accident, not about preventing data loss. On confirmation the active command is aborted and
+// awaited before quit is re-issued. Pre-commit cancellation clears the flags; a command that commits
+// while being joined keeps the write gate and performs its mandatory relaunch. `confirmQuit` is
+// injectable for tests.
 export const installMigrationQuitGuard = (
   app: Pick<App, 'on' | 'quit'>,
   confirmQuit?: () => boolean,
   translate: NativeTranslator = englishNativeTranslator
 ): void => {
+  let quitCancellationPending = false
   app.on('before-quit', (event) => {
     if (!isMigrationInProgress()) return
     event.preventDefault()
+    if (quitCancellationPending) return
     if ((confirmQuit ?? (() => defaultConfirmQuit(translate)))()) {
-      endMigration()
-      app.quit()
+      quitCancellationPending = true
+      void cancelMigrationForQuit().then(() => {
+        quitCancellationPending = false
+        app.quit()
+      })
     }
   })
 }

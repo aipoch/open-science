@@ -622,7 +622,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         providerId: 'main',
         apiType: 'anthropic',
         baseUrl: backend.env.ANTHROPIC_BASE_URL,
-        headers: { authorization: `Bearer ${backend.env.ANTHROPIC_AUTH_TOKEN}` }
+        headers: { 'x-api-key': backend.env.ANTHROPIC_AUTH_TOKEN }
       })
       expect(backend.env).not.toHaveProperty('ANTHROPIC_CUSTOM_MODEL_OPTION')
     } finally {
@@ -888,6 +888,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
 
     expect(target).toEqual({
       frameworkId: 'codex',
+      providerId: 'provider-a',
       backendId: 'codex:provider-a',
       route: 'codex-bridge',
       model: 'model-a',

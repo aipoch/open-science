@@ -143,6 +143,22 @@ describe('database domain constraints', () => {
         sql: `UPDATE "ComputeJob" SET "notificationConsumedAt" = CURRENT_TIMESTAMP WHERE "id" = 'base-job'`
       },
       {
+        name: 'ComputeJob analysis state',
+        sql: `UPDATE "ComputeJob" SET "analysisState" = 'unknown' WHERE "id" = 'base-job'`
+      },
+      {
+        name: 'ComputeJob partial analysis identity',
+        sql: `UPDATE "ComputeJob" SET "analysisState" = 'dispatched' WHERE "id" = 'base-job'`
+      },
+      {
+        name: 'ComputeJob blank analysis Message identity',
+        sql: `UPDATE "ComputeJob" SET "analysisState" = 'dispatched', "analysisMessageId" = ' ', "analysisUpdatedAt" = CURRENT_TIMESTAMP WHERE "id" = 'base-job'`
+      },
+      {
+        name: 'ComputeJob succeeded analysis consumption',
+        sql: `UPDATE "ComputeJob" SET "notifiedAt" = CURRENT_TIMESTAMP, "analysisState" = 'succeeded', "analysisMessageId" = 'analysis-message', "analysisUpdatedAt" = CURRENT_TIMESTAMP, "notificationConsumedAt" = NULL WHERE "id" = 'base-job'`
+      },
+      {
         name: 'ComputeJob harvest payload',
         sql: `UPDATE "ComputeJob" SET "harvestError" = 'failed' WHERE "id" = 'base-job'`
       },

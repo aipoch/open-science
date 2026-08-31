@@ -3306,7 +3306,7 @@ const hostCompute = {
   //
   // submitJob: non-blocking job submission — returns {job_id, provider_id, status:'submitted',
   // remote_workdir} immediately, before any SSH. Background dispatch runs the job detached.
-  // attachJob: returns a handle with .status() to read job state from DB without SSH.
+  // attachJob: returns a handle with status/result reads and durable cancellation.
   create(providerId) {
     return {
       provider_id: providerId,
@@ -3404,6 +3404,9 @@ const hostCompute = {
           job_id: jobId,
           async status() {
             return computeRpc({ op: 'job_status', provider_id: providerId, job_id: jobId })
+          },
+          async cancel() {
+            return computeRpc({ op: 'job_cancel', provider_id: providerId, job_id: jobId })
           },
           async result() {
             return computeRpc({ op: 'job_result', provider_id: providerId, job_id: jobId })

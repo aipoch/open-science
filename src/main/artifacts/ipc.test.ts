@@ -3,7 +3,10 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
+import {
+  createArtifactVersionLocator,
+  type ArtifactVersionFile
+} from '../../shared/artifact-provenance'
 import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
@@ -177,6 +180,51 @@ describe('artifact IPC handlers', () => {
       [finalizedArtifact]
     ])
     expect(repository.listMessageFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves provenance Version identity when a finalized claim is retried', async () => {
+    const compatibilityArtifact = createFinalizedArtifact()
+    const provenanceArtifact = {
+      ...compatibilityArtifact,
+      id: 'version-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1',
+      versionNumber: 1,
+      checksum: 'a'.repeat(64),
+      createdAt: '2026-08-30T00:00:00.000Z'
+    } satisfies ArtifactVersionFile
+    const repository = {
+      finalizeRunArtifacts: vi.fn().mockResolvedValue([compatibilityArtifact]),
+      listMessageFiles: vi.fn().mockResolvedValue([compatibilityArtifact])
+    } as unknown as ArtifactRepository
+    const provenance = {
+      finalizeRun: vi.fn().mockResolvedValue([provenanceArtifact]),
+      listRunVersions: vi.fn().mockResolvedValue([provenanceArtifact])
+    }
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectId: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1',
+      artifactVersionIds: ['version-1']
+    })
+    const handlers = createArtifactHandlers(repository, runRegistry, {
+      provenance: provenance as never
+    })
+
+    const firstResult = await handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
+    const retryResult = await handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
+
+    const identityOf = (artifacts: ArtifactFile[]): Array<Pick<ArtifactFile, 'id' | 'versionId'>> =>
+      artifacts.map(({ id, versionId }) => ({ id, versionId }))
+    expect(identityOf(firstResult)).toEqual([{ id: 'version-1', versionId: 'version-1' }])
+    expect(identityOf(retryResult)).toEqual(identityOf(firstResult))
   })
 
   it('finalizes compatibility files and provenance inside the shared Session mutation', async () => {
@@ -614,9 +662,14 @@ describe('artifact IPC handlers', () => {
       get: vi.fn(),
       generate: vi.fn(
         () =>
-          new Promise<{ state: 'ready'; language: 'python'; sourceTruncated: false }>((resolve) => {
+          new Promise<{
+            state: 'ready'
+            origin: 'llm'
+            language: 'python'
+            sourceTruncated: false
+          }>((resolve) => {
             releaseGeneration = () =>
-              resolve({ state: 'ready', language: 'python', sourceTruncated: false })
+              resolve({ state: 'ready', origin: 'llm', language: 'python', sourceTruncated: false })
           })
       )
     }
@@ -642,6 +695,7 @@ describe('artifact IPC handlers', () => {
     releaseGeneration?.()
     await expect(generationPromise).resolves.toEqual({
       state: 'ready',
+      origin: 'llm',
       language: 'python',
       sourceTruncated: false
     })
@@ -1065,12 +1119,14 @@ describe('artifact IPC handler registration', () => {
     }
     const get = vi.fn().mockResolvedValue({
       state: 'ready',
+      origin: 'llm',
       language: 'python',
       sourceTruncated: false
     })
     const generate = vi.fn().mockResolvedValue({
       state: 'cached',
       value: {
+        origin: 'llm',
         code: 'print(1)',
         language: 'python',
         generatedAt: '2026-08-06T00:00:00.000Z',

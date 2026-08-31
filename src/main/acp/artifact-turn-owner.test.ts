@@ -54,6 +54,32 @@ const openRootExecution = (
 ): ReturnType<ArtifactTurnOwner['openRootExecution']> =>
   owner.openRootExecution({ ...request, executionId: `root-execution-${++executionSequence}` })
 
+const recordNotebookContexts = (
+  contexts: unknown[]
+): {
+  setArtifactTurnBinding(
+    sessionId: string,
+    binding: { ownerExecutionId: string; provenanceContext: unknown }
+  ): void
+  clearArtifactTurnBinding(sessionId: string, ownerExecutionId: string): void
+} => {
+  const owners = new Map<string, string>()
+  return {
+    setArtifactTurnBinding: (
+      sessionId: string,
+      binding: { ownerExecutionId: string; provenanceContext: unknown }
+    ) => {
+      owners.set(sessionId, binding.ownerExecutionId)
+      contexts.push(binding.provenanceContext)
+    },
+    clearArtifactTurnBinding: (sessionId: string, ownerExecutionId: string) => {
+      if (owners.get(sessionId) !== ownerExecutionId) return
+      owners.delete(sessionId)
+      contexts.push(undefined)
+    }
+  }
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -347,9 +373,7 @@ describe('ArtifactTurnOwner', () => {
         revoked.push(token)
       },
       notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
-      notebook: {
-        setArtifactProvenanceContext: (_sessionId, context) => notebookContexts.push(context)
-      }
+      notebook: recordNotebookContexts(notebookContexts)
     })
     const root = await owner.openRootExecution({
       executionId: 'root-execution',
@@ -406,9 +430,7 @@ describe('ArtifactTurnOwner', () => {
         return 'secret-capability'
       },
       notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
-      notebook: {
-        setArtifactProvenanceContext: (_sessionId, context) => notebookContexts.push(context)
-      }
+      notebook: recordNotebookContexts(notebookContexts)
     })
 
     const turn = await openRootExecution(owner, {
@@ -643,6 +665,7 @@ describe('ArtifactTurnOwner', () => {
   it('does not let stale cleanup erase a replacement turn owned by the same Session', async () => {
     const dataRoot = await createRoot()
     const notebookContexts: Array<{ sessionId: string; context: unknown }> = []
+    const notebookOwners = new Map<string, string>()
     const revoked: string[] = []
     let capabilitySequence = 0
     let now = 1_000
@@ -657,8 +680,14 @@ describe('ArtifactTurnOwner', () => {
       },
       notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
       notebook: {
-        setArtifactProvenanceContext: (sessionId, context) => {
-          notebookContexts.push({ sessionId, context })
+        setArtifactTurnBinding: (sessionId, binding) => {
+          notebookOwners.set(sessionId, binding.ownerExecutionId)
+          notebookContexts.push({ sessionId, context: binding.provenanceContext })
+        },
+        clearArtifactTurnBinding: (sessionId, ownerExecutionId) => {
+          if (notebookOwners.get(sessionId) !== ownerExecutionId) return
+          notebookOwners.delete(sessionId)
+          notebookContexts.push({ sessionId, context: undefined })
         }
       }
     })
@@ -757,9 +786,7 @@ describe('ArtifactTurnOwner', () => {
         .mockRejectedValueOnce(new Error('revoke failed'))
         .mockResolvedValue(undefined),
       notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
-      notebook: {
-        setArtifactProvenanceContext: (_sessionId, context) => notebookContexts.push(context)
-      }
+      notebook: recordNotebookContexts(notebookContexts)
     })
     const turn = await openRootExecution(owner, {
       appSessionId: 'session-1',
@@ -940,10 +967,11 @@ describe('ArtifactTurnOwner', () => {
       },
       notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
       notebook: {
-        setArtifactProvenanceContext: (_sessionId, context) => {
-          contexts.push(context)
-          if (context) throw new Error('Notebook context failed')
-        }
+        setArtifactTurnBinding: (_sessionId, binding) => {
+          contexts.push(binding.provenanceContext)
+          throw new Error('Notebook context failed')
+        },
+        clearArtifactTurnBinding: () => contexts.push(undefined)
       }
     })
     const currentRunFile = getArtifactCurrentRunFilePath(
@@ -975,9 +1003,7 @@ describe('ArtifactTurnOwner', () => {
       repository: new ArtifactRepository(dataRoot),
       runRegistry: new ArtifactRunRegistry(),
       notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
-      notebook: {
-        setArtifactProvenanceContext: (_sessionId, context) => contexts.push(context)
-      }
+      notebook: recordNotebookContexts(contexts)
     })
     const turn = await openRootExecution(owner, {
       appSessionId: 'session-1',

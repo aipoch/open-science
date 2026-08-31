@@ -20,13 +20,11 @@ import type {
   SpecialistDeleteCardPayload,
   SpecialistSwitchCardPayload
 } from '../../shared/agents-contract'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 
 // Renders the delete card (prototype scene 8). Bound conversations resolve as unavailable and are
 // NOT silently switched to Main Agent (design.md §10).
-export const mapDeleteApprovalCard = (
-  current: SpecialistProfileView
-): SpecialistDeleteCardPayload => ({
+export const mapDeleteApprovalCard = (current: SpecialistView): SpecialistDeleteCardPayload => ({
   kind: 'delete',
   name: current.name,
   boundConversationsUnavailable: true

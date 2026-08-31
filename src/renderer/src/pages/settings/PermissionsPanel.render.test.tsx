@@ -15,6 +15,7 @@ let setDefaultPermissionProfile: ReturnType<typeof vi.fn>
 const snapshot: PermissionGrantSnapshot = {
   version: 1,
   incompleteStores: [],
+  missingDefaultGlobalGrantCount: 1,
   grants: [
     {
       id: 'grant-1',
@@ -43,14 +44,18 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   usePermissionGrantsStore.setState({
+    version: 0,
     grants: [],
     counts: { all: 0, global: 0, project: 0, session: 0 },
     incompleteStores: [],
+    missingDefaultGlobalGrantCount: undefined,
     status: 'idle',
     error: undefined,
     undo: undefined,
     undoQueue: [],
-    isRestoring: false
+    isRestoring: false,
+    restoreDefaultsState: 'idle',
+    loadedAt: null
   })
   useSettingsStore.setState({ defaultPermissionProfile: 'ask', settingsWriteError: undefined })
   setDefaultPermissionProfile = vi.fn(({ profile }: { profile: 'ask' | 'auto' | 'full' }) =>
@@ -163,6 +168,66 @@ describe('PermissionsPanel', () => {
     expect(emptyStatus?.textContent).toContain('No remembered permissions for this scope.')
     expect(emptyStatus?.classList.contains('sr-only')).toBe(true)
     expect(document.body.querySelector('.border-dashed')).toBeNull()
+  })
+
+  it('restores missing defaults without hiding other remembered permissions', async () => {
+    const defaultGrant: PermissionGrantSnapshot['grants'][number] = {
+      id: 'default-grant',
+      revision: 1,
+      family: 'skills',
+      capabilityKind: 'skill_operation',
+      capabilityLabel: 'Use Skills',
+      scopeKind: 'global',
+      scopeLabel: 'Global'
+    }
+    const restoreDefaults = vi.fn().mockResolvedValue({
+      ...snapshot,
+      version: 2,
+      grants: [...snapshot.grants, defaultGrant],
+      counts: { all: 2, global: 1, project: 0, session: 1 },
+      missingDefaultGlobalGrantCount: 0,
+      restoredCount: 1
+    })
+    setPermissionApi({
+      list: vi.fn().mockResolvedValue(snapshot),
+      restoreDefaults
+    })
+
+    await act(async () => root.render(<PermissionsPanel />))
+    expect(document.body.textContent).toContain(
+      'Restore missing default Global permissions without changing other remembered permissions.'
+    )
+
+    const restore = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Restore defaults"]'
+    )
+    await act(async () => restore?.click())
+
+    await vi.waitFor(() => {
+      expect(restoreDefaults).toHaveBeenCalledOnce()
+      expect(
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Defaults restored"]')?.disabled
+      ).toBe(true)
+      expect(document.body.textContent).toContain('Shell')
+      expect(document.body.textContent).toContain('Use Skills')
+    })
+  })
+
+  it('disables restore when every default Global permission is already present', async () => {
+    const restoreDefaults = vi.fn()
+    setPermissionApi({
+      list: vi.fn().mockResolvedValue({ ...snapshot, missingDefaultGlobalGrantCount: 0 }),
+      restoreDefaults
+    })
+
+    await act(async () => root.render(<PermissionsPanel />))
+
+    const restore = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Defaults restored"]'
+    )
+    expect(restore?.disabled).toBe(true)
+    restore?.click()
+    expect(restoreDefaults).not.toHaveBeenCalled()
   })
 
   it('uses the shared Settings danger banner for load failures', async () => {

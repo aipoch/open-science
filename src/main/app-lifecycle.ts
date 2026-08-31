@@ -1,10 +1,8 @@
 import type { App, BrowserWindow, Tray } from 'electron'
 
 import type { ActiveSessionInfo } from '../shared/storage'
-import {
-  rendererSessionPersistenceFlushBlocksShutdown,
-  type RendererSessionPersistenceFlushOutcome
-} from './session-persistence/renderer-flush'
+import type { SessionPersistenceFlushAbortReason } from '../shared/session-persistence-flush'
+import { type RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
 import type { ShutdownStepOutcome } from './lifecycle-shutdown'
 import { flushDiagnosticsWithTimeout } from './diagnostics/flush'
 import { diagnosticErrorFields, type Logger } from './logger'
@@ -59,7 +57,7 @@ export type AppLifecycleDeps = {
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
   // Reopens Main/renderer admission when persistence prevents an orderly quit from committing.
-  abortQuitPreparation: () => Promise<void> | void
+  abortQuitPreparation: (reason: SessionPersistenceFlushAbortReason) => Promise<void> | void
   // Drains renderer runtime events and its ordered Session write queue before the window disappears.
   flushSessionPersistence: (
     timeoutMs?: number
@@ -73,7 +71,7 @@ export type AppLifecycleDeps = {
   rendererFlushTimeoutMs?: number
   // Classifies an orderly shutdown without changing its cleanup sequence.
   shutdownTrigger?: () => ApplicationShutdownTrigger
-  // True while a data-root migration is copying; a quit during it is owned by the migration guard.
+  // True while a data-root handoff is validating, preparing, or copying; its quit guard owns exits.
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void
@@ -86,10 +84,16 @@ export type AppLifecycleDeps = {
   // Snapshot of sessions with running work (in-flight agent prompt or a notebook cell mid-execution),
   // used to populate the confirmation list and to skip the quit dialog when nothing is running.
   detectActiveSessions: () => ActiveSessionInfo[]
+  // Reviewer activity has no ActiveSessionInfo row, but still requires the ordinary-quit warning.
+  hasActiveReviewerWork: () => boolean
   // Builds the close-confirm coordinator bound to the current main window (recreated on demand).
   createConfirmClose: (
     getWindow: () => BrowserWindow | undefined
-  ) => (variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => Promise<CloseConfirmChoice>
+  ) => (
+    variant: CloseConfirmVariant,
+    sessions: ActiveSessionInfo[],
+    reviewerActive?: boolean
+  ) => Promise<CloseConfirmChoice>
 }
 
 // Installs the tray, the first window, and the quit/activate/window-all-closed handlers. Returns
@@ -121,6 +125,10 @@ export const installAppLifecycle = (
   // Set once the user has confirmed a quit (via the dialog or a prior 'confirm' close), so a re-issued
   // before-quit skips straight to teardown instead of asking again.
   let quitConfirmed = false
+  // A delegated confirmation authorizes only the Sessions visible in that dialog. The final
+  // before-quit boundary rechecks this snapshot so work admitted between confirmation and the
+  // re-issued quit cannot inherit an unrelated confirmation.
+  let confirmedDelegatedSessionKeys = new Set<string>()
   // Shared across both confirm-dispatching paths (titlebar X and tray/Ctrl+Q quit) so only one
   // confirmation modal is ever open at a time. The renderer holds a single request slot; a second
   // dispatch would silently overwrite the first and strand its promise forever (see app-lifecycle.test.ts).
@@ -137,6 +145,10 @@ export const installAppLifecycle = (
     if (outcome === 'renderer-gone') return 'degraded'
     return 'completed'
   }
+  const rendererPersistenceAbortReason = (
+    outcome: RendererSessionPersistenceFlushOutcome
+  ): SessionPersistenceFlushAbortReason | undefined =>
+    outcome === 'conflict' || outcome === 'renderer-failed' ? outcome : undefined
   const shutdownTrigger = (): ApplicationShutdownTrigger => {
     try {
       return deps.shutdownTrigger?.() ?? currentApplicationShutdownTrigger()
@@ -146,8 +158,22 @@ export const installAppLifecycle = (
   }
 
   const confirmClose = deps.createConfirmClose(() => mainWindow)
+  const confirmResearchClose = (
+    variant: CloseConfirmVariant,
+    sessions: ActiveSessionInfo[]
+  ): Promise<CloseConfirmChoice> =>
+    deps.hasActiveReviewerWork()
+      ? confirmClose(variant, sessions, true)
+      : confirmClose(variant, sessions)
   const detectDelegatedWork = (): ActiveSessionInfo[] =>
     deps.detectActiveSessions().filter((session) => session.kind === 'delegated')
+  const delegatedSessionKey = (session: ActiveSessionInfo): string =>
+    JSON.stringify([session.projectId, session.sessionId])
+  const requestConfirmedQuit = (delegated: readonly ActiveSessionInfo[] = []): void => {
+    quitConfirmed = true
+    confirmedDelegatedSessionKeys = new Set(delegated.map(delegatedSessionKey))
+    deps.quit()
+  }
 
   // Synchronous close classification, evaluated at close time. A mid-quit close is held so the
   // renderer survives persistence flushing; otherwise darwin keeps its dock convention (real close),
@@ -168,10 +194,10 @@ export const installAppLifecycle = (
     if (confirmInFlight) return 'cancel'
     confirmInFlight = true
     try {
-      const choice = await confirmClose('close-to-tray', deps.detectActiveSessions())
+      const choice = await confirmResearchClose('close-to-tray', deps.detectActiveSessions())
       if (choice !== 'quit') return choice
       const delegated = detectDelegatedWork()
-      return delegated.length > 0 ? await confirmClose('close-to-tray', delegated) : choice
+      return delegated.length > 0 ? await confirmResearchClose('close-to-tray', delegated) : choice
     } finally {
       confirmInFlight = false
     }
@@ -181,7 +207,10 @@ export const installAppLifecycle = (
     classifyClose,
     resolveCloseAction,
     requestQuit: (confirmed = true) => {
-      quitConfirmed = confirmed
+      // A caller's earlier confirmation cannot authorize delegated work that is already live at the
+      // final boundary. Leave that case unconfirmed so before-quit performs the delegated-work recheck.
+      quitConfirmed = confirmed && detectDelegatedWork().length === 0
+      confirmedDelegatedSessionKeys = new Set()
       deps.quit()
     },
     ...(deps.onAppearanceChanged ? { onAppearanceChanged: deps.onAppearanceChanged } : {})
@@ -248,44 +277,59 @@ export const installAppLifecycle = (
       // ordinary quit could bypass its active-session confirmation.
       clearApplicationShutdownTrigger()
       quitConfirmed = false
+      confirmedDelegatedSessionKeys = new Set()
       return
     }
     const trigger = shutdownTrigger()
+    // Renderer persistence may cancel only an ordinary quit. Update and data-root relaunches pass a
+    // producer-teardown + renderer-durability gate before committing their handoff; once app.quit()
+    // runs, cancellation would leave the old process alive after the external pointer changed.
+    const ordinaryQuit = trigger === 'quit'
+    const delegatedWorkBlocksShutdown = ordinaryQuit
 
-    // Final synchronous resource-safety boundary. A delegated Attempt may start after an earlier
-    // confirmation snapshot (or after a saved close preference was read), and requestQuit(true) can
-    // arrive directly from the Windows titlebar path. Never enter preparation/flush/teardown while
-    // such work exists; clear confirmation/trigger state and show the hard-blocking prompt instead.
+    // Final synchronous delegated-work safety boundary. A delegated Attempt may start after an earlier
+    // confirmation snapshot (or after a saved close preference was read). Storage commands quiesce and
+    // await all producers before marking migration-relaunch, and the updater does the same before
+    // quitAndInstall. Once either committed handoff invokes app.quit(), it must continue; cancelling
+    // there would strand the already-started installer or a process cached on the old data root.
     const delegatedAtShutdownBoundary = detectDelegatedWork()
-    if (delegatedAtShutdownBoundary.length > 0) {
+    const hasUnconfirmedDelegatedWork = delegatedAtShutdownBoundary.some(
+      (session) => !confirmedDelegatedSessionKeys.has(delegatedSessionKey(session))
+    )
+    if (delegatedWorkBlocksShutdown && hasUnconfirmedDelegatedWork) {
       event.preventDefault()
       quitConfirmed = false
+      confirmedDelegatedSessionKeys = new Set()
       clearApplicationShutdownTrigger()
       if (confirmInFlight) return
       confirmInFlight = true
-      void confirmClose('quit', delegatedAtShutdownBoundary).finally(() => {
-        confirmInFlight = false
-      })
+      void confirmResearchClose('quit', delegatedAtShutdownBoundary)
+        .then((choice) => {
+          if (choice === 'quit') requestConfirmedQuit(delegatedAtShutdownBoundary)
+        })
+        .finally(() => {
+          confirmInFlight = false
+        })
       return
     }
 
     // Confirmation gate: unless the user already confirmed (e.g. Windows X -> Quit), confirm the
-    // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.
-    if (!quitConfirmed && trigger === 'quit') {
+    // quit. An empty active-session list with no Reviewer work resolves 'quit' with no modal.
+    if (!quitConfirmed && ordinaryQuit) {
       event.preventDefault()
       if (confirmInFlight) return
       confirmInFlight = true
-      void confirmClose('quit', deps.detectActiveSessions())
+      void confirmResearchClose('quit', deps.detectActiveSessions())
         .then(async (choice) => {
           if (choice === 'quit') {
             const delegated = detectDelegatedWork()
             if (delegated.length > 0) {
               quitConfirmed = false
-              await confirmClose('quit', delegated)
+              const delegatedChoice = await confirmResearchClose('quit', delegated)
+              if (delegatedChoice === 'quit') requestConfirmedQuit(delegated)
               return
             }
-            quitConfirmed = true
-            deps.quit()
+            requestConfirmedQuit()
             return
           }
           // Cancel with no tray and no surviving window would strand the app with no UI (no-tray
@@ -320,7 +364,7 @@ export const installAppLifecycle = (
       let rendererFlushOutcome: RendererSessionPersistenceFlushOutcome
       let rendererFlushResult: ShutdownStepOutcome
       let backendTeardownResult: ShutdownStepOutcome
-      let shutdownAbortedForRendererPersistence = false
+      let shutdownAbortReason: SessionPersistenceFlushAbortReason | undefined
       const flushRendererSessionPersistence = async (
         phase: 'renderer-session-preflight' | 'renderer-session-flush',
         timeoutMs: number
@@ -346,11 +390,9 @@ export const installAppLifecycle = (
         )
         rendererPreflightOutcome = preflight.outcome
         rendererPreflightResult = preflight.result
-        if (
-          trigger !== 'update' &&
-          rendererSessionPersistenceFlushBlocksShutdown(rendererPreflightOutcome)
-        ) {
-          shutdownAbortedForRendererPersistence = true
+        const preflightAbortReason = rendererPersistenceAbortReason(rendererPreflightOutcome)
+        if (ordinaryQuit && preflightAbortReason) {
+          shutdownAbortReason = preflightAbortReason
           diagnostics?.complete({
             degraded: true,
             rendererPreflightOutcome,
@@ -383,11 +425,9 @@ export const installAppLifecycle = (
         )
         rendererFlushOutcome = finalFlush.outcome
         rendererFlushResult = finalFlush.result
-        if (
-          trigger !== 'update' &&
-          rendererSessionPersistenceFlushBlocksShutdown(rendererFlushOutcome)
-        ) {
-          shutdownAbortedForRendererPersistence = true
+        const finalAbortReason = rendererPersistenceAbortReason(rendererFlushOutcome)
+        if (ordinaryQuit && finalAbortReason) {
+          shutdownAbortReason = finalAbortReason
           diagnostics?.complete({
             degraded: true,
             rendererPreflightResult,
@@ -430,12 +470,12 @@ export const installAppLifecycle = (
 
         if (deps.flushLogs) {
           const result = await flushDiagnosticsWithTimeout(deps.flushLogs, logFlushTimeoutMs)
-          if (result === 'timeout') console.warn('[shutdown] final log flush timed out')
+          if (result === 'timeout') deps.log?.warn('final log flush timed out')
         }
       } finally {
-        if (shutdownAbortedForRendererPersistence) {
+        if (shutdownAbortReason) {
           try {
-            await deps.abortQuitPreparation()
+            await deps.abortQuitPreparation(shutdownAbortReason)
           } catch (error) {
             try {
               deps.log?.error('quit preparation rollback failed', diagnosticErrorFields(error))

@@ -15,7 +15,7 @@ import { UserSkillRepository } from '../../skills/user-skill-repository'
 import type { FetchLike } from '../../skills/github-import'
 import { SettingsRepository } from '../../settings/repository'
 import { SpecialistRepository } from '../repository'
-import { ProfileService } from '../service'
+import { SpecialistService } from '../service'
 import { MarketplaceOperationCoordinator } from '../marketplace/operation-coordinator'
 import { SpecialistPackageService, specialistExportFileName } from './service'
 import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT, type SpecialistPackageSkillPort } from './skill-port'
@@ -771,7 +771,7 @@ describe('SpecialistPackageService', () => {
       })
     )
 
-    const profiles = new ProfileService(repository)
+    const profiles = new SpecialistService(repository)
     const bumped = await profiles.update({
       id: 'research-synth',
       revision: 4,
@@ -1222,7 +1222,9 @@ describe('SpecialistPackageService', () => {
         origin: 'imported'
       }
     })
-    await expect(new ProfileService(repository).getById('research-synth')).resolves.toMatchObject({
+    await expect(
+      new SpecialistService(repository).getById('research-synth')
+    ).resolves.toMatchObject({
       systemPrompt: 'Private imported instructions.',
       enabled: false,
       revision: 5,
@@ -1252,7 +1254,7 @@ describe('SpecialistPackageService', () => {
       'specialist.overwrite-same-version'
     )
 
-    await new ProfileService(repository).update({
+    await new SpecialistService(repository).update({
       id: 'research-synth',
       revision: 1,
       description: 'Locally edited.'
@@ -1345,7 +1347,7 @@ describe('SpecialistPackageService', () => {
       status: 'installed',
       specialist: { origin: 'marketplace', enabled: true }
     })
-    await new ProfileService(repository).update({
+    await new SpecialistService(repository).update({
       id: 'research-synth',
       revision: 1,
       iconKey: 'dna',
@@ -1363,7 +1365,9 @@ describe('SpecialistPackageService', () => {
       undefined,
       { activateAfterInstall: true, origin: 'marketplace' }
     )
-    await expect(new ProfileService(repository).getById('research-synth')).resolves.toMatchObject({
+    await expect(
+      new SpecialistService(repository).getById('research-synth')
+    ).resolves.toMatchObject({
       origin: 'marketplace',
       packageVersion: '1.4.0',
       description: 'Publisher update.',
@@ -1390,7 +1394,7 @@ describe('SpecialistPackageService', () => {
     const initial = await service.preview(validZip())
     await service.install({ candidateToken: initial.candidateToken })
 
-    await new ProfileService(repository).update({
+    await new SpecialistService(repository).update({
       id: 'research-synth',
       revision: 1,
       iconKey: 'dna',
@@ -1402,7 +1406,7 @@ describe('SpecialistPackageService', () => {
       expect.objectContaining({ code: 'specialist.overwrite-local-modifications' })
     )
 
-    await new ProfileService(repository).update({
+    await new SpecialistService(repository).update({
       id: 'research-synth',
       revision: 2,
       capabilityMode: 'full',
@@ -1503,7 +1507,7 @@ describe('SpecialistPackageService', () => {
       catalog: async () => catalog
     })
     const preview = await service.preview(validZip())
-    await new ProfileService(repository).update({
+    await new SpecialistService(repository).update({
       id: 'research-synth',
       revision: 2,
       systemPrompt: 'Concurrent edit must survive.'
@@ -1512,7 +1516,9 @@ describe('SpecialistPackageService', () => {
     await expect(
       service.install({ candidateToken: preview.candidateToken, confirmOverwrite: true })
     ).resolves.toEqual({ status: 'failed', code: 'revision-conflict' })
-    await expect(new ProfileService(repository).getById('research-synth')).resolves.toMatchObject({
+    await expect(
+      new SpecialistService(repository).getById('research-synth')
+    ).resolves.toMatchObject({
       systemPrompt: 'Concurrent edit must survive.',
       revision: 3
     })
@@ -1557,7 +1563,7 @@ describe('SpecialistPackageService', () => {
       code: 'stale-candidate'
     })
 
-    const restarted = new ProfileService(new SpecialistRepository(storageDir))
+    const restarted = new SpecialistService(new SpecialistRepository(storageDir))
     await expect(restarted.getById('research-synth')).resolves.toMatchObject({
       name: 'Research Synthesizer',
       systemPrompt: 'Private imported instructions.',
@@ -1603,7 +1609,9 @@ describe('SpecialistPackageService', () => {
         setupPending: false
       }
     })
-    await expect(new ProfileService(repository).getById('research-synth')).resolves.toMatchObject({
+    await expect(
+      new SpecialistService(repository).getById('research-synth')
+    ).resolves.toMatchObject({
       enabled: true,
       setupPending: false
     })
@@ -1611,7 +1619,7 @@ describe('SpecialistPackageService', () => {
 
   it('does not erase a profile created while package Skill preparation is paused', async () => {
     const repository = new SpecialistRepository(storageDir)
-    const profiles = new ProfileService(repository)
+    const profiles = new SpecialistService(repository)
     let preparationStarted!: () => void
     let resumePreparation!: () => void
     const started = new Promise<void>((resolve) => {
@@ -1652,7 +1660,7 @@ describe('SpecialistPackageService', () => {
 
   it('does not erase a profile update made while package Skill preparation is paused', async () => {
     const repository = new SpecialistRepository(storageDir)
-    const profiles = new ProfileService(repository)
+    const profiles = new SpecialistService(repository)
     const existing = await profiles.create({
       name: 'EXISTING_PROFILE',
       description: 'Before concurrent update.'
@@ -1739,7 +1747,7 @@ describe('SpecialistPackageService', () => {
 
   it('preserves old durable state and blocks later package mutation when recovery cannot complete', async () => {
     const repository = new SpecialistRepository(storageDir)
-    const profiles = new ProfileService(repository)
+    const profiles = new SpecialistService(repository)
     const existing = await profiles.create({
       name: 'EXISTING_SPECIALIST',
       systemPrompt: 'Keep me.'
@@ -1769,7 +1777,7 @@ describe('SpecialistPackageService', () => {
 
   it('rolls back a failed Specialist document swap without changing the old durable state', async () => {
     const repository = new SpecialistRepository(storageDir)
-    const profiles = new ProfileService(repository)
+    const profiles = new SpecialistService(repository)
     const existing = await profiles.create({
       name: 'EXISTING_SPECIALIST',
       systemPrompt: 'Keep me.'
@@ -1821,7 +1829,7 @@ describe('SpecialistPackageService', () => {
 
   it('rolls back an interrupted Specialist transaction on restart before accepting a new mutation', async () => {
     const repository = new SpecialistRepository(storageDir)
-    const profiles = new ProfileService(repository)
+    const profiles = new SpecialistService(repository)
     const existing = await profiles.create({ name: 'EXISTING_SPECIALIST' })
     const before = await repository.getAll()
     const partial = {
@@ -1854,7 +1862,7 @@ describe('SpecialistPackageService', () => {
       status: 'installed'
     })
 
-    const recoveredProfiles = new ProfileService(new SpecialistRepository(storageDir))
+    const recoveredProfiles = new SpecialistService(new SpecialistRepository(storageDir))
     await expect(recoveredProfiles.getById(existing.id)).resolves.toBeDefined()
     await expect(recoveredProfiles.getById('partial-specialist')).rejects.toThrow(/not found/i)
     await expect(recoveredProfiles.getById('research-synth')).resolves.toBeDefined()
@@ -2050,7 +2058,7 @@ describe('SpecialistPackageService', () => {
         deleteSkillIds: ['exclusive']
       })
     ).resolves.toEqual({ status: 'deleted' })
-    await expect(new ProfileService(repository).getById('research-synth')).rejects.toThrow(
+    await expect(new SpecialistService(repository).getById('research-synth')).rejects.toThrow(
       /not found/i
     )
     await expect(new UserSkillRepository(storageDir).list()).resolves.toEqual([
@@ -2112,7 +2120,7 @@ describe('SpecialistPackageService', () => {
 
     expect(deletionSettled).toBe(false)
     await expect(
-      new ProfileService(repository).getById('managed-specialist')
+      new SpecialistService(repository).getById('managed-specialist')
     ).resolves.toBeDefined()
 
     releaseOperation?.()
@@ -2173,7 +2181,7 @@ describe('SpecialistPackageService', () => {
         deleteSkillIds: [skillId]
       })
     ).resolves.toEqual({ status: 'deleted' })
-    await expect(new ProfileService(repository).getById('research-synth')).rejects.toThrow(
+    await expect(new SpecialistService(repository).getById('research-synth')).rejects.toThrow(
       /not found/i
     )
     await expect(userSkills.list()).resolves.toEqual([])
@@ -2275,7 +2283,7 @@ describe('SpecialistPackageService', () => {
       })
     })
     const preview = await service.previewSpecialistDelete({ id: 'owner' })
-    await new ProfileService(repository).update({
+    await new SpecialistService(repository).update({
       id: 'concurrent',
       revision: 1,
       selectedCapabilities: {
@@ -2292,7 +2300,7 @@ describe('SpecialistPackageService', () => {
         deleteSkillIds: ['linked-skill']
       })
     ).resolves.toEqual({ status: 'failed', code: 'stale-preview' })
-    await expect(new ProfileService(repository).getById('owner')).resolves.toBeDefined()
+    await expect(new SpecialistService(repository).getById('owner')).resolves.toBeDefined()
   })
 
   it('rejects a selected deletion when the Main Agent starts using the Skill', async () => {
@@ -2338,7 +2346,7 @@ describe('SpecialistPackageService', () => {
         deleteSkillIds: ['linked-skill']
       })
     ).resolves.toEqual({ status: 'failed', code: 'stale-preview' })
-    await expect(new ProfileService(repository).getById('owner')).resolves.toBeDefined()
+    await expect(new SpecialistService(repository).getById('owner')).resolves.toBeDefined()
   })
 
   it('rechecks Main Agent usage after acquiring the Skill mutation lock', async () => {
@@ -2392,7 +2400,7 @@ describe('SpecialistPackageService', () => {
       })
     ).resolves.toEqual({ status: 'failed', code: 'stale-preview' })
     expect(prepareDeletion).not.toHaveBeenCalled()
-    await expect(new ProfileService(repository).getById('owner')).resolves.toBeDefined()
+    await expect(new SpecialistService(repository).getById('owner')).resolves.toBeDefined()
   })
 
   it('completes deletion when the live catalog shares the Skill mutation owner', async () => {
@@ -2441,7 +2449,7 @@ describe('SpecialistPackageService', () => {
         deleteSkillIds: [skillId]
       })
     ).resolves.toEqual({ status: 'deleted' })
-    await expect(new ProfileService(repository).getById('owner')).rejects.toThrow(/not found/i)
+    await expect(new SpecialistService(repository).getById('owner')).rejects.toThrow(/not found/i)
     await expect(userSkills.list()).resolves.toEqual([])
   }, 2_000)
 
@@ -2576,7 +2584,7 @@ describe('SpecialistPackageService', () => {
         deleteSkillIds: ['rollback-skill']
       })
     ).resolves.toEqual({ status: 'failed', code: 'commit-failed' })
-    await expect(new ProfileService(repository).getById('rollback-owner')).resolves.toBeDefined()
+    await expect(new SpecialistService(repository).getById('rollback-owner')).resolves.toBeDefined()
     await expect(skillPort.snapshot()).resolves.toEqual([
       expect.objectContaining({ id: 'rollback-skill', ownerIds: ['rollback-owner'] })
     ])

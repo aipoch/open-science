@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "helpers": [
+    {
+      "id": "paper-narrative",
+      "language": "python",
+      "interfaceRevision": 1,
+      "implementation": "kernel.py",
+      "exports": ["paper_brief_schema", "narrative_review_schema", "narrative_review_task"],
+      "dependencies": []
+    }
+  ]
+}

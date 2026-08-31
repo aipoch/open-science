@@ -1,5 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { ConnectorService } from '../connectors/service'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
@@ -16,8 +18,32 @@ const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 const makeExecutor = (): NotebookKernelExecutor =>
   new NotebookKernelExecutor({ replLoopPath: REPL_LOOP })
 
-// Base repl-cell request; the notebook roots are unused by these host.mcp cases. kind 'repl' routes to
-// the control-plane kernel, the only kind buildEnv forwards the connector RPC endpoint/token to.
+const notebookRoots: string[] = []
+afterEach(() => {
+  for (const root of notebookRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+const makeNotebookRoots = (): {
+  cwd: string
+  notebookSessionRoot: string
+  dataRoot: string
+  runtimeRoot: string
+} => {
+  const root = mkdtempSync(join(tmpdir(), 'os-host-mcp-'))
+  notebookRoots.push(root)
+  return {
+    cwd: process.cwd(),
+    notebookSessionRoot: join(root, 'nb'),
+    dataRoot: join(root, 'nb', 'data'),
+    runtimeRoot: join(root, 'runtime')
+  }
+}
+
+// Base repl-cell request; kind 'repl' routes to the control-plane kernel, the only kind buildEnv
+// forwards the connector RPC endpoint/token to. Spawn still prepares the Notebook workload cache
+// from runtimeRoot, so these cases use a disposable root rather than an empty path.
 const baseRequest = (
   overrides: Partial<{
     code: string
@@ -41,11 +67,8 @@ const baseRequest = (
   projectId?: string
 } => ({
   code: '',
-  cwd: process.cwd(),
   kind: 'repl',
-  notebookSessionRoot: '',
-  dataRoot: '',
-  runtimeRoot: '',
+  ...makeNotebookRoots(),
   ...overrides
 })
 

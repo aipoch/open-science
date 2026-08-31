@@ -14,6 +14,9 @@ import {
   type ComputeConnectionLease
 } from './connection-broker'
 import type { ComputeHostRepository } from './repository'
+import { quoteRemotePath } from './remote-path-security'
+import type { SessionCacheOwner } from './session-cache-owner'
+import { withDataRootWrite } from '../storage/migration-state'
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
@@ -78,7 +81,8 @@ export class ComputeRemoteOperationOwner {
     private readonly connectionBroker: ComputeConnectionBrokerAcquirer,
     private readonly repository: ComputeHostRepository,
     private readonly approvalBroker: ComputeApprovalBroker | undefined,
-    private readonly overrideDownloadsDir?: string
+    private readonly overrideDownloadsDir?: string,
+    private readonly sessionCacheOwner?: SessionCacheOwner
   ) {}
 
   async listDir(providerId: string, path: string): Promise<DirListing> {
@@ -92,11 +96,7 @@ export class ComputeRemoteOperationOwner {
       throw remoteConnectionError(error)
     }
 
-    const expandedPath =
-      path === '~' ? '$HOME' : path.startsWith('~/') ? `$HOME/${path.slice(2)}` : path
-    const quotedPath = expandedPath.startsWith('$HOME')
-      ? expandedPath
-      : shellSingleQuote(expandedPath)
+    const quotedPath = quoteRemotePath(path)
     const remoteCommand = [
       `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
       `cd ${quotedPath} || exit 1`,
@@ -184,6 +184,7 @@ export class ComputeRemoteOperationOwner {
     const commandPreview =
       cmd.length > COMMAND_PREVIEW_MAX_LEN ? `${cmd.slice(0, COMMAND_PREVIEW_MAX_LEN)}…` : cmd
     const approvalInfo = {
+      operation: 'call_command' as const,
       provider_id: host.providerId,
       provider_name: host.displayName,
       shape: host.shape,
@@ -197,7 +198,7 @@ export class ComputeRemoteOperationOwner {
           {
             sessionId: context.sessionId,
             projectId: context.projectId,
-            operation: 'call_command',
+            operation: 'call_command' as const,
             ownerId: host.id
           },
           signal
@@ -227,7 +228,7 @@ export class ComputeRemoteOperationOwner {
     }
 
     const cwdExpression = host.scratchRoot
-      ? `cd ${JSON.stringify(host.scratchRoot)} 2>/dev/null || cd ~`
+      ? `cd ${quoteRemotePath(host.scratchRoot)} 2>/dev/null || cd ~`
       : 'cd ~'
     const wrappedCommand = `${cwdExpression}; ${cmd}`
     const timeoutMs =
@@ -301,6 +302,42 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
+    const filename = basename(remotePath)
+    if (dest.kind === 'session-cache') {
+      if (!this.approvalBroker) {
+        throw new Error('ComputeApprovalBroker is required for session-cache downloads.')
+      }
+      if (!context || !this.sessionCacheOwner) {
+        throw new Error('Session cache downloads require an owning Project and Session.')
+      }
+      const approvalInfo = {
+        operation: 'download' as const,
+        provider_id: host.providerId,
+        provider_name: host.displayName,
+        shape: host.shape,
+        intent: 'Download remote file to session workspace',
+        remote_path: remotePath
+      }
+      const decision = await this.approvalBroker.requestWithContext(
+        approvalInfo,
+        {
+          sessionId: context.sessionId,
+          projectId: context.projectId,
+          operation: 'download',
+          ownerId: host.id
+        },
+        signal
+      )
+
+      if (decision === 'deny') {
+        const error = new Error(
+          `Download approval was denied for "${remotePath}" on host "${host.displayName}".`
+        ) as Error & { code: string }
+        error.code = 'download_denied'
+        throw error
+      }
+    }
+
     let connection
     try {
       connection = await this.connectionBroker.acquire(providerId, {
@@ -311,7 +348,6 @@ export class ComputeRemoteOperationOwner {
       throw remoteConnectionError(error)
     }
 
-    const filename = basename(remotePath)
     if (dest.kind === 'os-downloads') {
       return this.downloadToOsDownloads(host, connection, remotePath, filename)
     }
@@ -319,38 +355,9 @@ export class ComputeRemoteOperationOwner {
       return this.downloadToArtifact(host, connection, remotePath, filename)
     }
 
-    if (!this.approvalBroker) {
-      throw new Error('ComputeApprovalBroker is required for session-cache downloads.')
-    }
-    const approvalInfo = {
-      provider_id: host.providerId,
-      provider_name: host.displayName,
-      shape: host.shape,
-      intent: 'Download remote file to session workspace',
-      remote_path: remotePath
-    }
-    const decision = context
-      ? await this.approvalBroker.requestWithContext(
-          approvalInfo,
-          {
-            sessionId: context.sessionId,
-            projectId: context.projectId,
-            operation: 'download',
-            ownerId: host.id
-          },
-          signal
-        )
-      : await this.approvalBroker.request(approvalInfo, undefined, signal)
-
-    if (decision === 'deny') {
-      const error = new Error(
-        `Download approval was denied for "${remotePath}" on host "${host.displayName}".`
-      ) as Error & { code: string }
-      error.code = 'download_denied'
-      throw error
-    }
-
-    return this.downloadToSessionCache(connection, remotePath, filename)
+    return withDataRootWrite(() =>
+      this.downloadToSessionCache(host, connection, remotePath, filename, context!)
+    )
   }
 
   private async downloadToOsDownloads(
@@ -359,7 +366,7 @@ export class ComputeRemoteOperationOwner {
     remotePath: string,
     filename: string
   ): Promise<LocalFile> {
-    const remoteSize = await this.statRemoteSize(host, connection, remotePath)
+    const remoteSize = await this.statRemoteFile(host, connection, remotePath)
     if (remoteSize > MAX_DOWNLOAD_BYTES) {
       const fsError = new Error(
         `File exceeds 2 GiB download limit (${remoteSize} bytes)`
@@ -378,18 +385,24 @@ export class ComputeRemoteOperationOwner {
     const stagingPath = `${destPath}.${randomUUID()}.partial`
     try {
       await this.transferDownload(connection, remotePath, stagingPath, MAX_DOWNLOAD_BYTES)
+      const localSize = await this.verifyStableDownload(
+        host,
+        connection,
+        remotePath,
+        stagingPath,
+        remoteSize
+      )
       await rename(stagingPath, destPath)
+
+      return {
+        path: destPath,
+        name: destName,
+        size: localSize,
+        mimeType: inferMimeType(filename)
+      }
     } catch (error) {
       await rm(stagingPath, { force: true }).catch(() => undefined)
       throw error
-    }
-
-    const fileStat = await fsStat(destPath)
-    return {
-      path: destPath,
-      name: destName,
-      size: fileStat.size,
-      mimeType: inferMimeType(filename)
     }
   }
 
@@ -411,17 +424,7 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
-    const { fileType, size: remoteSize } = await this.statRemote(host, connection, remotePath)
-    if (fileType !== 'f') {
-      const fsError = new Error(`Remote path is not a regular file: ${remotePath}`) as Error & {
-        remoteFsError: RemoteFsError
-      }
-      fsError.remoteFsError = {
-        detail: fileType === 'd' ? 'Path is a directory.' : 'Path is not a regular file.',
-        remoteKind: 'not_a_file'
-      }
-      throw fsError
-    }
+    const remoteSize = await this.statRemoteFile(host, connection, remotePath)
     if (remoteSize === 0) {
       const fsError = new Error(`Remote file is empty: ${remotePath}`) as Error & {
         remoteFsError: RemoteFsError
@@ -447,23 +450,18 @@ export class ComputeRemoteOperationOwner {
     const tempPath = join(tempDir, filename)
     try {
       await this.transferDownload(connection, remotePath, tempPath, MAX_IMPORT_BYTES)
-      const localStat = await fsStat(tempPath)
-      if (localStat.size > remoteSize) {
-        const fsError = new Error(`File grew during transfer: ${remotePath}`) as Error & {
-          remoteFsError: RemoteFsError
-        }
-        fsError.remoteFsError = {
-          detail: 'File size changed during transfer — import rejected.',
-          remoteKind: 'not_a_file'
-        }
-        await rm(tempDir, { recursive: true, force: true })
-        throw fsError
-      }
+      const localSize = await this.verifyStableDownload(
+        host,
+        connection,
+        remotePath,
+        tempPath,
+        remoteSize
+      )
 
       return {
         path: tempPath,
         name: filename,
-        size: localStat.size,
+        size: localSize,
         mimeType: inferMimeType(filename),
         artifactId: `${randomUUID()}|ssh:${host.displayName}:${remotePath}`
       }
@@ -474,20 +472,54 @@ export class ComputeRemoteOperationOwner {
   }
 
   private async downloadToSessionCache(
+    host: ComputeHost,
     connection: ComputeConnectionLease,
     remotePath: string,
-    filename: string
+    filename: string,
+    context: { sessionId: string; projectId: string }
   ): Promise<LocalFile> {
-    const tempDir = await mkdtemp(join(tmpdir(), 'cs-session-'))
-    const destPath = join(tempDir, filename)
-    await this.transferDownload(connection, remotePath, destPath, MAX_DOWNLOAD_BYTES)
+    const remoteSize = await this.statRemoteFile(host, connection, remotePath)
+    if (remoteSize > MAX_DOWNLOAD_BYTES) {
+      const fsError = new Error(
+        `File exceeds 2 GiB download limit (${remoteSize} bytes)`
+      ) as Error & { remoteFsError: RemoteFsError }
+      fsError.remoteFsError = {
+        detail: `File size ${remoteSize} bytes exceeds the 2 GiB download limit.`,
+        remoteKind: 'too_large'
+      }
+      throw fsError
+    }
 
-    const fileStat = await fsStat(destPath)
-    return {
-      path: destPath,
-      name: filename,
-      size: fileStat.size,
-      mimeType: inferMimeType(filename)
+    const operation = await this.sessionCacheOwner!.createOperationFile(
+      context.projectId,
+      context.sessionId,
+      filename
+    )
+    try {
+      await this.transferDownload(connection, remotePath, operation.path, MAX_DOWNLOAD_BYTES)
+      const localSize = await this.verifyStableDownload(
+        host,
+        connection,
+        remotePath,
+        operation.path,
+        remoteSize
+      )
+      const committedPath = await operation.commit()
+      return {
+        path: committedPath,
+        name: filename,
+        size: localSize,
+        mimeType: inferMimeType(filename)
+      }
+    } catch (error) {
+      await this.sessionCacheOwner!.removeOperation(
+        context.projectId,
+        context.sessionId,
+        operation.operationId
+      ).catch(() => undefined)
+      throw error
+    } finally {
+      operation.release()
     }
   }
 
@@ -510,15 +542,23 @@ export class ComputeRemoteOperationOwner {
       `  printf 'f '; stat -c '%s' ${quoted} 2>/dev/null || stat -f '%z' ${quoted}`,
       `elif [ -d ${quoted} ]; then`,
       `  echo 'd 0'`,
+      `elif [ -e ${quoted} ] || [ -L ${quoted} ]; then`,
+      `  echo 'o 0'`,
       `else`,
-      `  echo '? 0'`,
+      `  echo 'm 0'`,
       `fi`
     ].join('\n')
-    const result = await connection.run(command, {
-      timeoutMs: 10_000,
-      loginShell: false,
-      maxOutputBytes: 64
-    })
+    let result
+    try {
+      result = await connection.run(command, {
+        timeoutMs: 10_000,
+        loginShell: false,
+        maxOutputBytes: 64
+      })
+    } catch (error) {
+      if (error instanceof Error && 'remoteFsError' in error) throw error
+      throw remoteConnectionError(error)
+    }
 
     if (result.timedOut || result.exitCode === 255) {
       const fsError = new Error('SSH connection failed during stat') as Error & {
@@ -538,12 +578,56 @@ export class ComputeRemoteOperationOwner {
     return { fileType, size: Number.isFinite(size) ? size : 0 }
   }
 
-  private async statRemoteSize(
+  private async statRemoteFile(
     host: ComputeHost,
     connection: ComputeConnectionLease,
     remotePath: string
   ): Promise<number> {
-    return (await this.statRemote(host, connection, remotePath)).size
+    const { fileType, size } = await this.statRemote(host, connection, remotePath)
+    if (fileType === 'm') {
+      const fsError = new Error(`Remote path not found: ${remotePath}`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsError.remoteFsError = {
+        detail: 'Path not found.',
+        remoteKind: 'not_found'
+      }
+      throw fsError
+    }
+    if (fileType !== 'f') {
+      const fsError = new Error(`Remote path is not a regular file: ${remotePath}`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsError.remoteFsError = {
+        detail: fileType === 'd' ? 'Path is a directory.' : 'Path is not a regular file.',
+        remoteKind: 'not_a_file'
+      }
+      throw fsError
+    }
+    return size
+  }
+
+  private async verifyStableDownload(
+    host: ComputeHost,
+    connection: ComputeConnectionLease,
+    remotePath: string,
+    localPath: string,
+    expectedSize: number
+  ): Promise<number> {
+    const localStat = await fsStat(localPath)
+    const localSize = Number(localStat.size)
+    const postTransferSize = await this.statRemoteFile(host, connection, remotePath)
+    if (localSize !== expectedSize || postTransferSize !== expectedSize) {
+      const fsError = new Error(`File changed during transfer: ${remotePath}`) as Error & {
+        remoteFsError: RemoteFsError
+      }
+      fsError.remoteFsError = {
+        detail: 'File size changed during transfer — download rejected.',
+        remoteKind: 'not_a_file'
+      }
+      throw fsError
+    }
+    return localSize
   }
 
   private async transferDownload(

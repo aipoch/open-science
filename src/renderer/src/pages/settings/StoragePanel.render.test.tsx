@@ -32,9 +32,12 @@ const richInfo: StorageInfo = {
   defaultParent: '/home/u',
   dataRootMissing: false,
   legacyDataMovePrompt: false,
+  cleanupPending: false,
+  canAutoSelectDataDrive: false,
   usage: {
     categories: [
       { key: 'artifacts', bytes: 22_700_000 },
+      { key: 'compute', bytes: 125 },
       {
         key: 'runtime',
         bytes: 3_700_000_000,
@@ -44,9 +47,10 @@ const richInfo: StorageInfo = {
         ]
       },
       { key: 'uploads', bytes: 0 },
-      { key: 'notebooks', bytes: 0 }
+      { key: 'notebooks', bytes: 0 },
+      { key: 'notebook-file-evidence', bytes: 8_300_000 }
     ],
-    totalBytes: 3_722_700_000
+    totalBytes: 3_731_000_125
   },
   availableBytes: 530_600_000_000
 }
@@ -97,7 +101,8 @@ beforeEach(() => {
         defaultDataRoot: '/home/u/.open-science',
         defaultParent: '/home/u',
         dataRootMissing: false,
-        legacyDataMovePrompt: false
+        legacyDataMovePrompt: false,
+        cleanupPending: false
       }),
       getInfo: vi.fn().mockResolvedValue({
         dataRoot: '/home/u/.open-science',
@@ -106,6 +111,8 @@ beforeEach(() => {
         defaultParent: '/home/u',
         dataRootMissing: false,
         legacyDataMovePrompt: false,
+        cleanupPending: false,
+        canAutoSelectDataDrive: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       }),
@@ -152,6 +159,8 @@ describe('StoragePanel', () => {
         defaultParent: '/home/u',
         dataRootMissing: false,
         legacyDataMovePrompt: false,
+        cleanupPending: false,
+        canAutoSelectDataDrive: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       })
@@ -175,6 +184,8 @@ describe('StoragePanel', () => {
         defaultParent: '/home/u',
         dataRootMissing: false,
         legacyDataMovePrompt: false,
+        cleanupPending: false,
+        canAutoSelectDataDrive: false,
         usage: { categories: [], totalBytes: 35_600_000 },
         availableBytes: 500_000_000_000
       })
@@ -207,7 +218,8 @@ describe('StoragePanel', () => {
       defaultDataRoot: '/home/u/.open-science',
       defaultParent: '/home/u',
       dataRootMissing: false,
-      legacyDataMovePrompt: false
+      legacyDataMovePrompt: false,
+      cleanupPending: false
     }
     useStorageInfoStore.setState({
       status: cachedInfo,
@@ -651,13 +663,18 @@ describe('StoragePanel', () => {
 
     expect(container.textContent).toContain('Artifacts')
     expect(container.textContent).toMatch(/22\.7 MB/)
+    expect(container.textContent).toContain('Compute cache')
     expect(container.textContent).toContain('Runtime')
     expect(container.textContent).toMatch(/3\.7 GB/)
+    expect(container.textContent).toContain('Notebook evidence')
+    expect(container.textContent).toMatch(/8\.3 MB/)
     expect(container.textContent).toContain('Total')
     expect(container.textContent).toContain('Available on disk')
     expect(container.textContent).toMatch(/530\.6 GB/)
     expect(container.querySelector('.bg-storage-artifacts')).not.toBeNull()
+    expect(container.querySelector('.bg-storage-compute')).not.toBeNull()
     expect(container.querySelector('.bg-storage-runtime')).not.toBeNull()
+    expect(container.querySelector('.bg-storage-notebook-evidence')).not.toBeNull()
     expect(container.querySelector('.bg-sky-500')).toBeNull()
     expect(container.querySelector('.bg-violet-500')).toBeNull()
 
@@ -732,9 +749,8 @@ describe('StoragePanel', () => {
     // acting, not just the raw parent they picked.
     expect(container.textContent).toContain('Data will be stored in')
     expect(container.textContent).toContain('/mnt/data/OpenScience')
-    // Migration excludes runtime (3.7GB - artifacts 22.7MB), so the moved-size note shows only the
-    // migrated categories' total, not the disk-usage total that includes runtime.
-    expect(container.textContent).toContain('Your existing data (~22.7 MB) will be moved')
+    // Migration excludes runtime but includes the independently stored Notebook evidence.
+    expect(container.textContent).toContain('Your existing data (~31.0 MB) will be moved')
     expect(container.textContent).not.toContain('Your existing data (~3.7 GB)')
     expect(container.textContent).toContain(
       'Python/R environments are rebuilt at the new location on first use (not moved).'

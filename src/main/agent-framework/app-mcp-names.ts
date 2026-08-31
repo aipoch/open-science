@@ -50,6 +50,11 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     tools: ['generate_plan', 'update_step_status']
   },
   {
+    canonicalName: 'open-science-literature',
+    openCodeName: 'open_science_literature',
+    tools: ['read_document']
+  },
+  {
     canonicalName: 'open-science-host-message',
     openCodeName: 'open_science_host_message',
     tools: ['send_message'],

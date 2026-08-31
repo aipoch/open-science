@@ -10,8 +10,10 @@ import type {
 } from '../../shared/notifications'
 import type {
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import {
   agentQuestionDedupeKey,
   type NotificationInboxController
@@ -21,6 +23,8 @@ export type TaskNotification = {
   title: string
   body: string
   attention?: boolean
+  genericBody?: string
+  alwaysGeneric?: boolean
 }
 
 export type TaskNotificationRequest = TaskNotification & {
@@ -31,10 +35,14 @@ export type TaskNotificationRequest = TaskNotification & {
 export type TaskNotificationServiceDeps = {
   // Fresh settings read, so the Settings toggle applies without a restart.
   isEnabled: () => Promise<boolean>
+  // Detailed native copy is a separate privacy opt-in. Absence fails closed to generic copy.
+  showContent?: () => Promise<boolean>
   // Notifications only make sense when the user has switched away; a focused app needs none.
   isAppFocused: () => boolean
   // OS-specific delivery (Electron Notification in production, a spy in tests).
   show: (request: TaskNotificationRequest) => void
+  // Live main-process translator. Tests and non-desktop compositions inject the English translator.
+  translate: NativeTranslator
   // Delivery failures are swallowed (the event stream must never be disturbed) but reported here
   // so they still reach the log file in production.
   onDeliveryError?: (error: unknown) => void
@@ -109,14 +117,23 @@ const quoteSnippet = (snippet: string): string => `"${snippet}"`
 
 // Plain-language phrasing for the stop reasons that mean "ended, but not cleanly": the raw ACP
 // reasons (max_tokens, max_turn_requests, refusal) are developer jargon users shouldn't see.
-const EARLY_STOP_BODY: Record<string, (taskName?: string) => string> = {
-  max_tokens: (taskName) =>
-    `${taskName ?? 'The agent'} stopped early — the answer hit the model's length limit.`,
-  max_turn_requests: (taskName) =>
-    `${taskName ?? 'The agent'} paused — send a message to keep it going.`,
-  refusal: (taskName) =>
-    taskName ? `${taskName} was declined by the agent.` : 'The agent declined the request.'
-}
+const EARLY_STOP_BODY: Record<string, (translate: NativeTranslator, taskName?: string) => string> =
+  {
+    max_tokens: (translate, taskName) =>
+      taskName
+        ? translate(`{{taskName}} stopped early — the answer hit the model's length limit.`, {
+            taskName
+          })
+        : translate(`The agent stopped early — the answer hit the model's length limit.`),
+    max_turn_requests: (translate, taskName) =>
+      taskName
+        ? translate('{{taskName}} paused — send a message to keep it going.', { taskName })
+        : translate('The agent paused — send a message to keep it going.'),
+    refusal: (translate, taskName) =>
+      taskName
+        ? translate('{{taskName}} was declined by the agent.', { taskName })
+        : translate('The agent declined the request.')
+  }
 
 // Inbox rows cross surface and process boundaries and outlive the originating request. Keep their
 // presentation text fixed so prompts, provider errors, connector arguments, and approval payloads
@@ -136,6 +153,17 @@ const AUTHORIZATION_INBOX_SUMMARY = {
 } as const satisfies Record<Exclude<NotificationSource, 'agent-question' | 'agent-runtime'>, string>
 
 const AGENT_QUESTION_INBOX_SUMMARY = 'The agent is waiting for your response.'
+
+const genericNativeNotification = (
+  notification: TaskNotification,
+  translate: NativeTranslator
+): TaskNotification => ({
+  ...notification,
+  body: notification.genericBody ?? translate('Open the app for details.')
+})
+
+const connectorCredentialDedupeKey = (originId: string): string =>
+  `input:connector-credential:${originId}`
 
 const TASK_ATTENTION_REASON_BY_STOP: Readonly<Record<string, NotificationAttentionReason>> = {
   max_tokens: 'task-max-tokens',
@@ -166,7 +194,8 @@ const sanitizeReason = (text: string): string => {
 // ACP_PROMPT_FAILED_EVENT_TITLE marks a genuinely failed task).
 export const describeTaskNotification = (
   event: AcpRuntimeEvent,
-  promptSnippet?: string
+  promptSnippet?: string,
+  translate: NativeTranslator = englishNativeTranslator
 ): TaskNotification | null => {
   const taskName = promptSnippet ? quoteSnippet(promptSnippet) : undefined
 
@@ -177,8 +206,9 @@ export const describeTaskNotification = (
 
     if (reason === 'max_tokens' || reason === 'max_turn_requests' || reason === 'refusal') {
       return {
-        title: 'Task needs attention',
-        body: truncate(EARLY_STOP_BODY[reason](taskName), MAX_BODY_LENGTH)
+        title: translate('Task needs attention'),
+        genericBody: translate('A task needs attention. Open the app for details.'),
+        body: truncate(EARLY_STOP_BODY[reason](translate, taskName), MAX_BODY_LENGTH)
       }
     }
 
@@ -187,23 +217,33 @@ export const describeTaskNotification = (
     // ACP stop reason we don't yet know — is surfaced as needing attention.
     if (reason !== 'end_turn') {
       const cleaned = reason ? sanitizeReason(reason) : ''
-      const suffix = cleaned ? ` (${cleaned})` : ''
       const body = taskName
-        ? `${taskName} finished without a clean completion status${suffix}.`
-        : `The agent finished without a clean completion status${suffix}.`
+        ? cleaned
+          ? translate('{{taskName}} finished without a clean completion status ({{reason}}).', {
+              taskName,
+              reason: cleaned
+            })
+          : translate('{{taskName}} finished without a clean completion status.', { taskName })
+        : cleaned
+          ? translate('The agent finished without a clean completion status ({{reason}}).', {
+              reason: cleaned
+            })
+          : translate('The agent finished without a clean completion status.')
 
       return {
-        title: 'Task needs attention',
+        title: translate('Task needs attention'),
+        genericBody: translate('A task needs attention. Open the app for details.'),
         body: truncate(body, MAX_BODY_LENGTH)
       }
     }
 
     return {
-      title: 'Task completed',
+      title: translate('Task completed'),
+      genericBody: translate('A task completed. Open the app to view it.'),
       body: truncate(
         taskName
-          ? `The agent finished responding to ${taskName}.`
-          : 'The agent finished responding.',
+          ? translate('The agent finished responding to {{taskName}}.', { taskName })
+          : translate('The agent finished responding.'),
         MAX_BODY_LENGTH
       )
     }
@@ -213,11 +253,16 @@ export const describeTaskNotification = (
     if (event.title !== ACP_PROMPT_FAILED_EVENT_TITLE) return null
     if (event.recoverable === 'context-overflow') return null
 
-    const reason = event.text?.trim() || 'Unknown error.'
+    const reason = event.text?.trim() || translate('Unknown error.')
 
     return {
-      title: 'Task failed',
-      body: truncate(taskName ? `${taskName} failed: ${reason}` : reason, MAX_BODY_LENGTH)
+      title: translate('Task failed'),
+      genericBody: translate('A task failed. Open the app for details.'),
+      alwaysGeneric: true,
+      body: truncate(
+        taskName ? translate('{{taskName}} failed: {{reason}}', { taskName, reason }) : reason,
+        MAX_BODY_LENGTH
+      )
     }
   }
 
@@ -225,15 +270,20 @@ export const describeTaskNotification = (
 }
 
 // Formats every blocking approval surface with the same task-aware wording.
-const describeApprovalNotification = (detail: string, promptSnippet?: string): TaskNotification => {
+const describeApprovalNotification = (
+  detail: string,
+  promptSnippet?: string,
+  translate: NativeTranslator = englishNativeTranslator
+): TaskNotification => {
   const taskName = promptSnippet ? quoteSnippet(promptSnippet) : undefined
 
   return {
-    title: 'Approval needed',
+    title: translate('Approval needed'),
+    genericBody: translate('A task needs your approval. Open the app to review it.'),
     body: truncate(
       taskName
-        ? `${taskName} needs your approval: ${detail}`
-        : `The agent needs your approval: ${detail}`,
+        ? translate('{{taskName}} needs your approval: {{detail}}', { taskName, detail })
+        : translate('The agent needs your approval: {{detail}}', { detail }),
       MAX_BODY_LENGTH
     ),
     attention: true
@@ -244,14 +294,19 @@ const describeApprovalNotification = (detail: string, promptSnippet?: string): T
 // answers, so this is the "requires user attention" case from the original feature request.
 export const describePermissionNotification = (
   request: Pick<AcpPermissionRequest, 'title'>,
-  promptSnippet?: string
-): TaskNotification => describeApprovalNotification(request.title, promptSnippet)
+  promptSnippet?: string,
+  translate: NativeTranslator = englishNativeTranslator
+): TaskNotification => describeApprovalNotification(request.title, promptSnippet, translate)
 
-const describeAgentQuestionNotification = (promptSnippet?: string): TaskNotification => ({
-  title: 'Response needed',
+const describeAgentQuestionNotification = (
+  promptSnippet?: string,
+  translate: NativeTranslator = englishNativeTranslator
+): TaskNotification => ({
+  title: translate('Response needed'),
+  genericBody: translate('A task needs your response. Open the app to continue.'),
   body: promptSnippet
-    ? `${quoteSnippet(promptSnippet)} needs your response.`
-    : 'The agent needs your response.',
+    ? translate('{{taskName}} needs your response.', { taskName: quoteSnippet(promptSnippet) })
+    : translate('The agent needs your response.'),
   attention: true
 })
 
@@ -260,11 +315,12 @@ const describeAgentQuestionNotification = (promptSnippet?: string): TaskNotifica
 // attention" case as an ACP permission request, over a separate mechanism.
 export const describeConnectorApprovalNotification = (
   request: Pick<ConnectorApprovalRequest, 'connector' | 'method'>,
-  promptSnippet?: string
+  promptSnippet?: string,
+  translate: NativeTranslator = englishNativeTranslator
 ): TaskNotification => {
   const call = `${request.connector} ${request.method.replaceAll('_', ' ')}`
 
-  return describeApprovalNotification(call, promptSnippet)
+  return describeApprovalNotification(call, promptSnippet, translate)
 }
 
 // A monotonic token lets a rejected send revert exactly its own tracking entry.
@@ -445,15 +501,15 @@ export class TaskNotificationService {
       return
     }
 
-    const notification = describeTaskNotification(event, snippet)
+    const notification = describeTaskNotification(event, snippet, this.deps.translate)
 
     if (!notification) return
 
     const kind =
-      notification.title === 'Task completed'
-        ? 'task.completed'
-        : notification.title === 'Task failed'
-          ? 'task.failed'
+      event.kind === 'error'
+        ? 'task.failed'
+        : event.text === 'end_turn'
+          ? 'task.completed'
           : 'task.needs-attention'
     const inboxUpdate = this.recordInbox({
       dedupeKey: `task:${event.id}`,
@@ -466,7 +522,12 @@ export class TaskNotificationService {
         : {}),
       sessionId,
       originId: event.id,
-      title: notification.title,
+      title:
+        kind === 'task.completed'
+          ? 'Task completed'
+          : kind === 'task.failed'
+            ? 'Task failed'
+            : 'Task needs attention',
       summary: TASK_INBOX_SUMMARY[kind],
       createdAt: event.timestamp
     })
@@ -506,7 +567,7 @@ export class TaskNotificationService {
     pending.add(originId)
     this.pendingAgentQuestions.set(sessionId, pending)
 
-    const notification = describeAgentQuestionNotification(tracked.snippet)
+    const notification = describeAgentQuestionNotification(tracked.snippet, this.deps.translate)
     const inboxUpdate = this.recordInbox({
       dedupeKey,
       kind: 'task.needs-attention',
@@ -514,7 +575,7 @@ export class TaskNotificationService {
       attentionReason: 'waiting-for-user',
       sessionId,
       originId,
-      title: notification.title,
+      title: 'Response needed',
       summary: AGENT_QUESTION_INBOX_SUMMARY,
       actionState: 'pending'
     })
@@ -530,7 +591,11 @@ export class TaskNotificationService {
 
     if (!tracked) return
 
-    const notification = describePermissionNotification(request, tracked.snippet)
+    const notification = describePermissionNotification(
+      request,
+      tracked.snippet,
+      this.deps.translate
+    )
     const inboxUpdate = this.recordInbox({
       dedupeKey: `authorization:agent-tool:${request.requestId}`,
       kind: 'authorization.required',
@@ -538,7 +603,7 @@ export class TaskNotificationService {
       attentionReason: 'waiting-permission',
       sessionId: request.sessionId,
       originId: request.requestId,
-      title: notification.title,
+      title: 'Approval needed',
       summary: AUTHORIZATION_INBOX_SUMMARY['agent-tool'],
       actionState: 'pending'
     })
@@ -561,7 +626,11 @@ export class TaskNotificationService {
     // sessionless connector approvals visible because they can still block an independent tool call.
     if (sessionId && !tracked) return
 
-    const notification = describeConnectorApprovalNotification(request, tracked?.snippet)
+    const notification = describeConnectorApprovalNotification(
+      request,
+      tracked?.snippet,
+      this.deps.translate
+    )
     const inboxUpdate = request.id
       ? this.recordInbox({
           dedupeKey: `authorization:connector:${request.id}`,
@@ -570,12 +639,35 @@ export class TaskNotificationService {
           attentionReason: 'waiting-permission',
           ...(sessionId ? { sessionId } : {}),
           originId: request.id,
-          title: notification.title,
+          title: 'Approval needed',
           summary: AUTHORIZATION_INBOX_SUMMARY.connector,
           actionState: 'pending'
         })
       : Promise.resolve()
     await this.deliver(notification, sessionId)
+    await inboxUpdate
+  }
+
+  // Session-bound credential recovery lives in the owning Composer, so the durable inbox provides
+  // the app-wide path back to it. Sessionless requests keep their existing global dialog instead.
+  handleConnectorCredentialRequest = async (request: ConnectorCredentialRequest): Promise<void> => {
+    if (!request.sessionId) return
+    const tracked = this.trackedFor(request.sessionId)
+    if (!tracked) return
+
+    const notification = describeAgentQuestionNotification(tracked.snippet, this.deps.translate)
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: connectorCredentialDedupeKey(request.id),
+      kind: 'task.needs-attention',
+      source: 'connector',
+      attentionReason: 'waiting-for-user',
+      sessionId: request.sessionId,
+      originId: request.id,
+      title: 'Response needed',
+      summary: AGENT_QUESTION_INBOX_SUMMARY,
+      actionState: 'pending'
+    })
+    await this.deliver(notification, request.sessionId)
     await inboxUpdate
   }
 
@@ -591,7 +683,8 @@ export class TaskNotificationService {
 
     const notification = describeApprovalNotification(
       `${request.provider_name} — ${request.intent}`,
-      tracked?.snippet
+      tracked?.snippet,
+      this.deps.translate
     )
     const inboxUpdate = this.recordInbox({
       dedupeKey: `authorization:compute:${request.id}`,
@@ -600,7 +693,7 @@ export class TaskNotificationService {
       attentionReason: 'waiting-permission',
       ...(sessionId ? { sessionId } : {}),
       originId: request.id,
-      title: notification.title,
+      title: 'Approval needed',
       summary: AUTHORIZATION_INBOX_SUMMARY.compute,
       actionState: 'pending'
     })
@@ -618,8 +711,9 @@ export class TaskNotificationService {
     if (!tracked) return
 
     const notification = describeApprovalNotification(
-      `Import ${request.source.label}`,
-      tracked.snippet
+      this.deps.translate('Import {{source}}', { source: request.source.label }),
+      tracked.snippet,
+      this.deps.translate
     )
     const inboxUpdate = this.recordInbox({
       dedupeKey: `authorization:skill-import:${request.id}`,
@@ -628,7 +722,7 @@ export class TaskNotificationService {
       attentionReason: 'waiting-permission',
       sessionId: request.sessionId,
       originId: request.id,
-      title: notification.title,
+      title: 'Approval needed',
       summary: AUTHORIZATION_INBOX_SUMMARY['skill-import'],
       actionState: 'pending'
     })
@@ -645,11 +739,16 @@ export class TaskNotificationService {
     const tracked = this.trackedFor(request.sessionId)
     if (!tracked) return
     const notification: TaskNotification = {
-      title: 'Plan approval needed',
+      title: this.deps.translate('Plan approval needed'),
+      genericBody: this.deps.translate('A plan is ready for approval. Open the app to review it.'),
       body: truncate(
         tracked.snippet
-          ? `${quoteSnippet(tracked.snippet)} has a plan ready for review.`
-          : `Review the proposed plan: ${request.summary}`,
+          ? this.deps.translate('{{taskName}} has a plan ready for review.', {
+              taskName: quoteSnippet(tracked.snippet)
+            })
+          : this.deps.translate('Review the proposed plan: {{summary}}', {
+              summary: request.summary
+            }),
         MAX_BODY_LENGTH
       ),
       attention: true
@@ -662,7 +761,7 @@ export class TaskNotificationService {
       projectId: request.projectId,
       sessionId: request.sessionId,
       originId: request.artifactVersionId,
-      title: notification.title,
+      title: 'Plan approval needed',
       summary: AUTHORIZATION_INBOX_SUMMARY['session-plan'],
       actionState: 'pending'
     })
@@ -677,6 +776,20 @@ export class TaskNotificationService {
   ): Promise<void> => {
     try {
       await this.deps.inbox?.settleAuthorization(source, originId, state)
+    } catch (error) {
+      reportTaskNotificationError(this.deps.onInboxError, error)
+    }
+  }
+
+  settleConnectorCredentialRequest = async (
+    originId: string,
+    configured: boolean
+  ): Promise<void> => {
+    try {
+      await this.deps.inbox?.settleAction(
+        connectorCredentialDedupeKey(originId),
+        configured ? 'resolved' : 'cancelled'
+      )
     } catch (error) {
       reportTaskNotificationError(this.deps.onInboxError, error)
     }
@@ -701,9 +814,13 @@ export class TaskNotificationService {
     if (this.isAppFocused()) return
 
     let enabled = false
+    let showContent = false
 
     try {
-      enabled = await this.deps.isEnabled()
+      ;[enabled, showContent] = await Promise.all([
+        this.deps.isEnabled(),
+        this.deps.showContent?.().catch(() => false) ?? Promise.resolve(false)
+      ])
     } catch {
       // A settings read failure must not break the event flow; fail closed rather than spam.
       return
@@ -732,7 +849,9 @@ export class TaskNotificationService {
     // unavailable on a platform without preventing the other from reaching the user.
     try {
       this.deps.show({
-        ...notification,
+        ...(showContent && !notification.alwaysGeneric
+          ? notification
+          : genericNativeNotification(notification, this.deps.translate)),
         // Clicks always surface the window; the handler opens the conversation when there is one.
         onClick
       })

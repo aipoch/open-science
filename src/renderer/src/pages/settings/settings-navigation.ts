@@ -1,9 +1,12 @@
 import type { EnvironmentCheckId, EnvironmentCheckItem } from '../../../../shared/settings'
 import type { ArchivedView } from './ArchivedPanel'
 import type { ComputeView } from './ComputePanel'
+import type { CredentialsView } from './CredentialsPanel'
 import type { ConnectorsView } from './ConnectorsPanel'
+import type { MemoryView } from './MemoryPanel'
 import type { SkillsView } from './SkillsPanel'
 import type { SpecialistsView } from './SpecialistsPanel'
+import type { TagsView } from './TagsPanel'
 
 export type SettingsPanelId =
   | 'model'
@@ -11,9 +14,11 @@ export type SettingsPanelId =
   | 'skills'
   | 'connectors'
   | 'specialists'
+  | 'memory'
   | 'tags'
   | 'compute'
   | 'permissions'
+  | 'credentials'
   | 'archived'
   | 'usage'
   | 'general'
@@ -39,13 +44,17 @@ export type SettingsRoute = {
           ? { panel: Panel; view: NetworkView }
           : Panel extends 'compute'
             ? { panel: Panel; view: ComputeView }
-            : Panel extends 'specialists'
-              ? { panel: Panel; view: SpecialistsView }
-              : Panel extends 'archived'
-                ? { panel: Panel; view: ArchivedView }
-                : Panel extends 'tags'
-                  ? { panel: Panel; tagId?: string }
-                  : { panel: Panel }
+            : Panel extends 'credentials'
+              ? { panel: Panel; view: CredentialsView }
+              : Panel extends 'specialists'
+                ? { panel: Panel; view: SpecialistsView }
+                : Panel extends 'archived'
+                  ? { panel: Panel; view: ArchivedView }
+                  : Panel extends 'memory'
+                    ? { panel: Panel; view: MemoryView }
+                    : Panel extends 'tags'
+                      ? { panel: Panel; view: TagsView }
+                      : { panel: Panel }
 }[SettingsPanelId]
 
 export const INITIAL_SETTINGS_ROUTE: SettingsRoute = {
@@ -60,8 +69,11 @@ export const settingsPanelRoute = (panel: SettingsPanelId): SettingsRoute => {
     case 'connectors':
     case 'network':
     case 'compute':
+    case 'credentials':
     case 'specialists':
     case 'archived':
+    case 'memory':
+    case 'tags':
       return { panel, view: { kind: 'list' } }
     default:
       return { panel }

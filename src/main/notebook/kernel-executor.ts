@@ -21,6 +21,10 @@ import {
 import { mapLoopOutputs, type MappedFigure } from './loop-output-mapper'
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import {
+  notebookWorkloadCacheEnv,
+  prepareNotebookWorkloadCache
+} from './notebook-workload-cache-paths'
+import {
   condaActivatedPath,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -58,6 +62,11 @@ import {
   NOTEBOOK_TEXT_LIMIT_BYTES,
   NOTEBOOK_TEXT_LIMIT_ENV
 } from './content-limits'
+import {
+  notebookHelperInitializationCode,
+  type NotebookHelperModuleInjection
+} from './helper-module-host'
+import { notebookInterpreterIdentity } from './session-aggregate'
 
 // Driver-internal process kind. 'python'/'r' are the data kernels selected by the agent-facing
 // NotebookLanguage; 'repl' is the control-plane Node kernel reached only via the control path. The
@@ -222,6 +231,9 @@ type ProcState = {
   // external command+args. ensureProc drops+respawns when the next run's identity differs, so a runtime
   // switch never reuses a kernel bound to the previous interpreter.
   interpreterIdentity: string
+  // Canonical host descriptors already installed into the Python loop's immutable audit hooks.
+  // New roots cross the protocol once; Python never exposes a mutable policy collection or updater.
+  protectedDirs: Set<string>
 }
 
 // Marks timeouts distinctly so persisted run status can reflect timeout instead of failure.
@@ -286,16 +298,12 @@ const resolveProcessKey = (request: NotebookExecutionRequest): ProcessKey => {
 // whose runtime changed (managed <-> external, or a different external interpreter) tears the old kernel
 // down instead of reusing its process + stale in-memory state. Kept OUT of the process key so there is
 // still exactly ONE proc per (kind, env), matching the (kind, env)-keyed status/lock tracking upstream.
-const interpreterIdentity = (request: NotebookExecutionRequest): string => {
-  const ri = request.resolvedInterpreter
-  return ri ? [ri.command, ...(ri.args ?? []), ri.condaPrefix ?? ''].join('\n') : ''
-}
-
 // Converts process, spawn, timeout, and loop errors into normal notebook execution results.
 const errorToExecutionResult = (
   error: unknown,
   request: NotebookExecutionRequest,
-  kernelDispatched = false
+  kernelDispatched = false,
+  helperModulesInitialized: readonly string[] = []
 ): NotebookExecutionResult => {
   if (error instanceof NotebookExecutionCancelledError) {
     return {
@@ -306,7 +314,8 @@ const errorToExecutionResult = (
       traceback: '',
       cwdAfter: request.cwd,
       outputs: [],
-      workingFiles: []
+      workingFiles: [],
+      ...(helperModulesInitialized.length ? { helperModulesInitialized } : {})
     }
   }
 
@@ -320,8 +329,48 @@ const errorToExecutionResult = (
     traceback: message,
     cwdAfter: request.cwd,
     outputs: [{ type: 'error', message, traceback: message }],
-    workingFiles: []
+    workingFiles: [],
+    ...(helperModulesInitialized.length ? { helperModulesInitialized } : {})
   }
+}
+
+const helperInitializationError = (
+  helpers: readonly NotebookHelperModuleInjection[],
+  responseError: string
+): Error => {
+  const stage = responseError.includes('OPEN_SCIENCE_HELPER_MISSING_EXPORT')
+    ? 'HELPER_MISSING_EXPORT'
+    : responseError.includes('OPEN_SCIENCE_HELPER_EXPORT_COLLISION')
+      ? 'HELPER_EXPORT_COLLISION'
+      : responseError.includes('OPEN_SCIENCE_HELPER_DEPENDENCY_EXPORT_MISSING')
+        ? 'HELPER_DEPENDENCY_EXPORT_MISSING'
+        : 'HELPER_INITIALIZATION_FAILED'
+  const helper =
+    helpers.find(({ id }) =>
+      responseError.includes(`${stage.replace(/^HELPER_/, 'OPEN_SCIENCE_HELPER_')}:${id}`)
+    ) ??
+    helpers.find(({ id }) => responseError.includes(`:${id}`)) ??
+    helpers[0]
+  if (!helper) return new Error(`${stage}: helper plan failed before producer dispatch.`)
+  const initializationDiagnostic = responseError.match(
+    new RegExp(
+      `OPEN_SCIENCE_HELPER_INITIALIZATION_FAILED:${helper.id}:` +
+        `([A-Za-z_][A-Za-z0-9_]{0,127})` +
+        `(?::MISSING_MODULE:([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*))?`
+    )
+  )
+  const pythonErrorType = initializationDiagnostic?.[1]
+  const missingModule = initializationDiagnostic?.[2]
+  const actionableDetail = missingModule
+    ? ` Python ${pythonErrorType}: No module named "${missingModule}". ` +
+      'Use inspect_packages to inspect the current environment and manage_packages to install dependencies.'
+    : pythonErrorType
+      ? ` Python ${pythonErrorType}.`
+      : ''
+  return new Error(
+    `${stage}: helper "${helper.id}" failed before producer dispatch ` +
+      `(digest ${helper.digest.slice(0, 12)}, epoch ${helper.epochId}).${actionableDetail}`
+  )
 }
 
 // Drives one persistent exec-loop process per kind for a notebook session, framing requests over
@@ -369,6 +418,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
     let workingFileObservation: WorkingFileObservation | undefined
     let kernelDispatched = false
+    const helperModulesInitialized: string[] = []
     try {
       if (request.signal?.aborted) throw new NotebookExecutionCancelledError()
       const kind = resolveProcessKind(request)
@@ -378,6 +428,45 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       const proc = await this.ensureProc(key, kind, env, request)
       if (proc.pending) throw new Error('Notebook execution is already running.')
+
+      const helperModules = request.helperModules ?? []
+      for (const helper of helperModules) {
+        if (kind !== 'python' || helper.language !== 'python') {
+          throw new Error(
+            `UNSUPPORTED_HELPER_LANGUAGE: helper "${helper.id}" cannot run on this kernel.`
+          )
+        }
+      }
+      if (helperModules.length > 0) {
+        const initialization = await this.sendRequest(
+          proc,
+          randomUUID(),
+          {
+            ...request,
+            code: notebookHelperInitializationCode(helperModules),
+            helperModules: undefined
+          },
+          () => undefined
+        )
+        // A matched success response proves the whole transaction published even when a soft
+        // timeout/cancellation raced with it. Never report or commit a partial helper plan.
+        if (initialization.response.error === null) {
+          helperModulesInitialized.push(...helperModules.map(({ id }) => id))
+        }
+        if (initialization.cancelled) throw new NotebookExecutionCancelledError()
+        if (initialization.timedOut) {
+          const first = helperModules[0]
+          throw new NotebookExecutionTimeoutError(
+            `HELPER_INITIALIZATION_TIMEOUT: helper plan timed out before producer dispatch` +
+              (first
+                ? ` (first helper "${first.id}", digest ${first.digest.slice(0, 12)}, epoch ${first.epochId}).`
+                : '.')
+          )
+        }
+        if (initialization.response.error !== null) {
+          throw helperInitializationError(helperModules, initialization.response.error)
+        }
+      }
       workingFileObservation = await startWorkingFileObservation(request)
       // sendRequest installs proc.pending synchronously. Revalidate immediately before that handoff:
       // an involuntary drop while ensureProc was finishing must settle this execute() locally rather
@@ -390,7 +479,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request, () => {
         kernelDispatched = true
       })
-      const workingFiles = await workingFileObservation.finish()
+      const fileObservation = await workingFileObservation.finish(
+        timedOut || cancelled ? AbortSignal.abort() : request.signal
+      )
       workingFileObservation = undefined
 
       const figureResult = await this.readFigures(response.figures)
@@ -424,12 +515,22 @@ class NotebookKernelExecutor implements NotebookExecutor {
           ? mapped.outputs.filter((output) => output.type !== 'error')
           : mapped.outputs,
         truncated: response.outputTruncated || figureResult.truncated,
-        workingFiles,
+        workingFiles: fileObservation.workingFiles,
+        fileEvidence: fileObservation.fileEvidence,
+        ...(helperModulesInitialized.length ? { helperModulesInitialized } : {}),
         environmentOverlay: response.environmentOverlay
       }
     } catch (error) {
-      await workingFileObservation?.finish()
-      return errorToExecutionResult(error, request, kernelDispatched)
+      const fileObservation = await workingFileObservation?.finish(AbortSignal.abort())
+      return {
+        ...errorToExecutionResult(error, request, kernelDispatched, helperModulesInitialized),
+        ...(fileObservation
+          ? {
+              workingFiles: fileObservation.workingFiles,
+              fileEvidence: fileObservation.fileEvidence
+            }
+          : {})
+      }
     }
   }
 
@@ -554,7 +655,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     env: string,
     request: NotebookExecutionRequest
   ): Promise<ProcState> {
-    const identity = interpreterIdentity(request)
+    const identity = notebookInterpreterIdentity(request.resolvedInterpreter)
     const existing = this.procs.get(key)
     if (existing && existing.alive) {
       if (existing.interpreterIdentity === identity) {
@@ -592,7 +693,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
       child,
       readline,
       alive: true,
-      interpreterIdentity: identity
+      interpreterIdentity: identity,
+      protectedDirs: new Set(request.protectedDirs ?? [])
     }
 
     readline.on('line', (line) => this.handleLine(proc, line))
@@ -644,10 +746,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
     request: NotebookExecutionRequest
   ): Promise<ChildProcessWithoutNullStreams> {
     const figuresDir = this.ensureFiguresDir()
+    const workloadCacheEnv = prepareNotebookWorkloadCache(request.runtimeRoot)
     // A missing session dir would surface as an opaque ENOENT; fall back to the OS default cwd so
     // spawn fails only for a genuinely missing interpreter.
     const spawnCwd = existsSync(request.cwd) ? request.cwd : undefined
-    const spawnEnv = this.buildEnv(kind, request, figuresDir)
+    const spawnEnv = this.buildEnv(kind, request, figuresDir, workloadCacheEnv)
     const prefix = envPrefix(request.runtimeRoot, env)
 
     let command: string
@@ -669,9 +772,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
 
     // The semantic guard rejects known installers before dispatch. This native layer makes the
-    // app-owned runtime read-only to the complete persistent-kernel process tree as well, covering
-    // dynamically constructed R/Python/REPL calls. manage_packages runs in the main process outside
-    // this wrapper and remains the only package writer.
+    // managed runtime state read-only to the complete persistent-kernel process tree as well, covering
+    // dynamically constructed R/Python/REPL calls. Only the disposable workload-cache subtree remains
+    // writable; manage_packages runs in the main process outside this wrapper and remains the only
+    // package writer.
     const invocation = protectManagedRuntimeWrites(
       { executable: command, args },
       request.runtimeRoot,
@@ -691,7 +795,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private buildEnv(
     kind: KernelProcessKind,
     request: NotebookExecutionRequest,
-    figuresDir: string
+    figuresDir: string,
+    workloadCacheEnv: NodeJS.ProcessEnv = notebookWorkloadCacheEnv(request.runtimeRoot)
   ): NodeJS.ProcessEnv {
     // A resolved interpreter is user-owned (BYO/overlay). Never put app-managed conda DLLs ahead of
     // it: on Windows that can load an incompatible BLAS/compiler runtime into the external R process.
@@ -706,6 +811,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           : envPrefix(request.runtimeRoot, resolveRequestEnv(kind, request))
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...workloadCacheEnv,
       // Force a non-interactive matplotlib backend so plt.show() never opens a GUI window in this
       // headless runtime; respect an explicitly configured backend if present.
       MPLBACKEND: process.env.MPLBACKEND || 'Agg',
@@ -854,9 +960,18 @@ class NotebookKernelExecutor implements NotebookExecutor {
           proc.child.stdin.write(frameRRequest(reqId, request.code))
         } else {
           // Python and the repl (JS) loop share the same JSON-lines request framing.
-          proc.child.stdin.write(
-            framePythonRequest(reqId, request.code, request.controlInvocationId)
+          const protectedDirAdditions = (request.protectedDirs ?? []).filter(
+            (directory) => !proc.protectedDirs.has(directory)
           )
+          proc.child.stdin.write(
+            framePythonRequest(
+              reqId,
+              request.code,
+              request.controlInvocationId,
+              protectedDirAdditions
+            )
+          )
+          for (const directory of protectedDirAdditions) proc.protectedDirs.add(directory)
         }
         onDispatch()
       } catch (error) {

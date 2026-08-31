@@ -25,6 +25,7 @@ describe('Settings capabilities', () => {
 
     await Promise.all([
       preferences.setNotificationsEnabled(false),
+      preferences.setShowNotificationContent(true),
       preferences.setClosePreference('minimize'),
       notebook.setRuntimeSelection('python', { source: 'managed' }),
       notebook.setPackageMirror({ pypiIndex: 'https://pypi.example/simple' })
@@ -34,6 +35,7 @@ describe('Settings capabilities', () => {
       version: SETTINGS_FILE_VERSION,
       providers: [],
       notificationsEnabled: false,
+      showNotificationContent: true,
       closePreference: 'minimize',
       notebookRuntimes: { python: { source: 'managed' } },
       packageMirror: { pypiIndex: 'https://pypi.example/simple' },

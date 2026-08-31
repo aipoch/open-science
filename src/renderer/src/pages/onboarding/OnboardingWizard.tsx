@@ -19,14 +19,14 @@ import { NotebookStep } from './NotebookStep'
 import { onboardingErrorMessage } from './onboarding-error'
 import { ProviderStep } from './ProviderStep'
 
-// Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can
-// show only once the provider is already validated.
 type WizardStep = 'environment' | 'agent' | 'provider' | 'notebook' | 'location'
 type OnboardingWizardProps = {
   loadStorageInfo?: () => Promise<StorageInfo>
 }
 
-const STEP_ORDER: WizardStep[] = ['environment', 'agent', 'provider', 'notebook', 'location']
+// Storage is chosen before either runtime step so a recommended Windows data drive is active when
+// the app-managed Notebook environment is installed.
+const STEP_ORDER: WizardStep[] = ['environment', 'location', 'agent', 'provider', 'notebook']
 
 // The step id is a runtime value, so it can't be interpolated into a natural-language key.
 const STEP_LABELS = {
@@ -37,6 +37,64 @@ const STEP_LABELS = {
   location: 'Data location'
 }
 const loadStorageInfoFromBridge = (): Promise<StorageInfo> => window.api.storage.getInfo()
+
+const windowsDriveLetter = (path: string): string | undefined => {
+  const match = /^([a-z]):[\\/]/i.exec(path)
+  return match?.[1].toUpperCase()
+}
+
+// On a fresh Windows setup, prefer the first usable data drive (D:, E:, F:, ...). Existing
+// OpenScience folders are deliberately skipped: adopting historical data remains an explicit user
+// choice through Browse rather than a silent onboarding default.
+const findWindowsStorageDefault = async (
+  storageInfo: StorageInfo
+): Promise<LocationDraft | null> => {
+  if (
+    window.api.platform !== 'win32' ||
+    !storageInfo.isDefault ||
+    !storageInfo.canAutoSelectDataDrive
+  ) {
+    return null
+  }
+
+  const defaultDrive = windowsDriveLetter(storageInfo.defaultDataRoot)
+  if (!defaultDrive) return null
+
+  let drives: Awaited<ReturnType<typeof window.api.localFs.listDrives>>
+  try {
+    drives = await window.api.localFs.listDrives()
+  } catch {
+    return null
+  }
+
+  const candidates = drives
+    .map((drive) => ({ drive, letter: windowsDriveLetter(drive.path) }))
+    .filter(
+      (candidate): candidate is { drive: (typeof drives)[number]; letter: string } =>
+        candidate.letter !== undefined &&
+        candidate.letter >= 'D' &&
+        candidate.letter !== defaultDrive
+    )
+    .sort((left, right) => left.letter.localeCompare(right.letter))
+
+  for (const { drive } of candidates) {
+    try {
+      const inspection = await window.api.storage.inspectDataRoot(drive.path)
+      if (inspection.kind === 'move' && inspection.targetWasAbsent === true) {
+        return {
+          chosenParent: drive.path,
+          chosenDataRoot: inspection.dataRoot,
+          chosenKind: 'move'
+        }
+      }
+    } catch {
+      // This is an opportunistic default. A failed probe must not block onboarding or surface an
+      // error for a location the user never chose.
+    }
+  }
+
+  return null
+}
 
 // Keeps the five-step sequence visible without turning the lightweight setup flow into navigation.
 const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element => {
@@ -78,9 +136,9 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
   )
 }
 
-// First-run gate: inspect the host, install the agent runtime, configure and validate a model
-// provider, optionally set up the notebook runtime, then choose where data lives — one focused
-// step each. Completed users repair later environment regressions from the relevant Settings panel.
+// First-run gate: inspect the host, choose where data lives, install the agent runtime, configure
+// and validate a model provider, then optionally set up the notebook runtime — one focused step
+// each. Completed users repair later environment regressions from the relevant Settings panel.
 const OnboardingWizard = ({
   loadStorageInfo = loadStorageInfoFromBridge
 }: OnboardingWizardProps): React.JSX.Element => {
@@ -100,8 +158,8 @@ const OnboardingWizard = ({
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
-  // Fetched once, up front, so the Location step has the default to show and the provider step can
-  // later tell whether the user's choice actually differs from it.
+  // Fetched once, up front, so Location has the default to show and a post-selection relaunch can
+  // resume after the already-completed storage step.
   const [dataRootInfo, setDataRootInfo] = useState<StorageInfo | null>(null)
   const [dataRootError, setDataRootError] = useState<string | undefined>(undefined)
   // Like the provider draft, the data-location choice belongs to the stable shell so Back/Continue
@@ -111,6 +169,26 @@ const OnboardingWizard = ({
     chosenDataRoot: '',
     chosenKind: null
   })
+  const [didResolveStorageDefault, setDidResolveStorageDefault] = useState(false)
+  const didResolveStorageResume = useRef(false)
+  // A slow automatic drive probe must never overwrite a location the user explicitly browsed to
+  // (or their explicit reset back to the system default).
+  const locationDraftTouched = useRef(false)
+  const handleLocationDraftChange = useCallback((draft: LocationDraft): void => {
+    locationDraftTouched.current = true
+    setDidResolveStorageDefault(true)
+    setLocationDraft(draft)
+  }, [])
+  const suppressStorageResume = useCallback((): void => {
+    didResolveStorageResume.current = true
+  }, [])
+  const leaveLocation = useCallback((nextStep: 'environment' | 'agent'): void => {
+    // Continue is disabled until the automatic probe resolves, so leaving forward freezes the
+    // displayed choice. Back only cancels the in-flight probe; returning to Location retries it.
+    didResolveStorageResume.current = true
+    if (nextStep === 'agent') locationDraftTouched.current = true
+    setStep(nextStep)
+  }, [])
   const [relaunchError, setRelaunchError] = useState<string | undefined>(undefined)
   // Relaunching replaces the whole wizard with a bare screen — owned here because LocationStep
   // unmounts (and the layout disappears) while it is in flight.
@@ -119,11 +197,19 @@ const OnboardingWizard = ({
   const didRequestCheck = useRef(false)
   const didKickEnv = useRef(false)
 
-  // Fetch the default data location once, up front, so the Location step has something to show
-  // and the provider step can later tell whether the user's choice actually differs from it.
+  // Fetch the current data location once, up front, for Location display and relaunch resume.
   const handleDataRootInfoSuccess = useCallback((info: StorageInfo): void => {
     setDataRootInfo(info)
     setDataRootError(undefined)
+    // A non-default root is the durable resume signal after Location persisted the selected drive
+    // and relaunched. No separate onboarding-step field is needed: continue at Agent, after the two
+    // steps the user already completed before the restart.
+    if (!didResolveStorageResume.current) {
+      didResolveStorageResume.current = true
+      if (!info.isDefault && !info.dataRootMissing && !locationDraftTouched.current) {
+        setStep('agent')
+      }
+    }
   }, [])
   const handleDataRootInfoFailure = useCallback((error: unknown): void => {
     setDataRootError(
@@ -131,12 +217,45 @@ const OnboardingWizard = ({
     )
   }, [])
   const retryDataRootInfo = useCallback((): void => {
+    setDataRootError(undefined)
     void loadStorageInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
   }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
 
   useEffect(() => {
     void loadStorageInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
   }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
+
+  useEffect(() => {
+    if (
+      step !== 'location' ||
+      !dataRootInfo ||
+      didResolveStorageDefault ||
+      locationDraftTouched.current
+    ) {
+      return
+    }
+
+    let cancelled = false
+    void findWindowsStorageDefault(dataRootInfo).then((recommendedDraft) => {
+      if (cancelled || locationDraftTouched.current) return
+
+      if (recommendedDraft) {
+        setLocationDraft((current) => (current.chosenParent ? current : recommendedDraft))
+      }
+      setDidResolveStorageDefault(true)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [dataRootInfo, didResolveStorageDefault, step])
+
+  const isResolvingStorageDefault =
+    step === 'location' &&
+    window.api.platform === 'win32' &&
+    dataRootError === undefined &&
+    (dataRootInfo === null ||
+      (dataRootInfo.isDefault && dataRootInfo.canAutoSelectDataDrive && !didResolveStorageDefault))
 
   // App starts this check on every launch. This local fallback also keeps the wizard self-contained in
   // tests or alternate entry surfaces where it may be mounted without App as its parent.
@@ -195,7 +314,7 @@ const OnboardingWizard = ({
             </h1>
             <p className="mt-3 max-w-60 text-sm leading-5 text-muted-foreground">
               {t(
-                'A quick host check confirms this computer is ready, you connect the model you want to use, then you choose where your data lives.'
+                'A quick host check confirms this computer is ready, then you choose where your data lives before connecting the model you want to use.'
               )}
             </p>
             <OnboardingProgress step={step} />
@@ -206,10 +325,25 @@ const OnboardingWizard = ({
             {/* Each step owns its validation gate and advances only through its callback. The shell
                 owns cross-step drafts so Back/Continue never discards provider or location input. */}
             {step === 'environment' ? (
-              <EnvironmentStep onContinue={() => setStep('agent')} />
+              <EnvironmentStep onContinue={() => setStep('location')} />
+            ) : step === 'location' ? (
+              <LocationStep
+                dataRootInfo={dataRootInfo}
+                dataRootError={dataRootError}
+                locationDraft={locationDraft}
+                onLocationDraftChange={handleLocationDraftChange}
+                relaunchError={relaunchError}
+                onRelaunchErrorChange={setRelaunchError}
+                onRetryDataRootInfo={retryDataRootInfo}
+                onInteractionStart={suppressStorageResume}
+                onBack={() => leaveLocation('environment')}
+                onContinue={() => leaveLocation('agent')}
+                isResolvingDefaultLocation={isResolvingStorageDefault}
+                setIsRelaunching={setIsRelaunching}
+              />
             ) : step === 'agent' ? (
               <AgentStep
-                onBack={() => setStep('environment')}
+                onBack={() => setStep('location')}
                 onContinue={() => setStep('provider')}
               />
             ) : step === 'provider' ? (
@@ -220,23 +354,8 @@ const OnboardingWizard = ({
                 onAdvance={() => setStep('notebook')}
               />
             ) : step === 'notebook' ? (
-              <NotebookStep
-                onBack={() => setStep('provider')}
-                onContinue={() => setStep('location')}
-              />
-            ) : (
-              <LocationStep
-                dataRootInfo={dataRootInfo}
-                dataRootError={dataRootError}
-                locationDraft={locationDraft}
-                onLocationDraftChange={setLocationDraft}
-                relaunchError={relaunchError}
-                onRelaunchErrorChange={setRelaunchError}
-                onRetryDataRootInfo={retryDataRootInfo}
-                onBack={() => setStep('notebook')}
-                setIsRelaunching={setIsRelaunching}
-              />
-            )}
+              <NotebookStep onBack={() => setStep('provider')} />
+            ) : null}
           </Card>
         </div>
       </div>

@@ -62,7 +62,7 @@ import { ConversationPermissionGrantStore } from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { AcpPermissionContext } from './permission-context'
 import { AgentMcpHttpHost } from './mcp-http-host'
-import type { SessionCapabilityPolicy } from './session-capability-owner'
+import type { AcpSessionCapabilityOwner, SessionCapabilityPolicy } from './session-capability-owner'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
@@ -75,6 +75,10 @@ import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { UploadRepository } from '../uploads/repository'
+import {
+  LITERATURE_MCP_SERVER_NAME,
+  type LiteratureReadDocumentRequest
+} from '../literature/mcp-server'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type {
@@ -175,6 +179,12 @@ type AcpRuntimeOptions = {
   appVersion: string
   defaultCwd: string
   callbacks?: AcpRuntimeCallbacks
+  auxiliaryUsage?: Readonly<{
+    projectIdForSession: (sessionId: string) => Promise<string | undefined>
+    record: (
+      input: import('../session-persistence/auxiliary-turn-usage').SessionAuxiliaryTurnUsageRecord
+    ) => Promise<unknown>
+  }>
   permissionGrantStore?: ConversationPermissionGrantStore
   permissionGrantRegistry?: PermissionGrantRegistry
   permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
@@ -196,6 +206,13 @@ type AcpRuntimeOptions = {
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
   notebook?: AcpRuntimeNotebookOptions
+  memory?: {
+    isEnabled?(): Promise<boolean>
+    recallForPrompt(
+      requestText: string,
+      context: { projectId: string }
+    ): Promise<string | undefined>
+  }
   skillImport?: AcpRuntimeSkillImportOptions
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
@@ -218,6 +235,15 @@ type AcpRuntimeOptions = {
       routingId: string,
       request: SideChatSendMessageRequest
     ) => Promise<SideChatSendMessageResult>
+  }>
+  literature?: Readonly<{
+    isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
+    readDocument: (request: {
+      projectId: string
+      sessionId: string
+      promptMessageId: string
+      input: LiteratureReadDocumentRequest
+    }) => Promise<unknown>
   }>
   sideChatRelays?: Readonly<{
     claim: (parentSessionId: string) =>
@@ -251,7 +277,7 @@ type AcpRuntimeOptions = {
   // Injectable only for the authenticated OpenCode loopback usage snapshots; production uses fetch.
   opencodeUsageFetch?: typeof fetch
   // Resolves the identity-inject text for a specialist UUID at session-creation time.
-  // The main process reads the latest Profile from ProfileService; the runtime never caches it.
+  // The main process reads the latest Profile from SpecialistService; the runtime never caches it.
   // Returns undefined when the specialist is not found, disabled, or its Profile is corrupt —
   // the caller should have validated before calling createSession.
   resolveSpecialistIdentity?: (
@@ -307,9 +333,12 @@ type AcpRuntimeNotebookOptions = {
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string
+  memoryTools?: boolean
+  isMemoryEnabled?: () => Promise<boolean>
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string
+    memoryTools: boolean
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   releaseSessionCapabilities?: (sessionId: string) => void
@@ -321,10 +350,15 @@ type AcpRuntimeNotebookOptions = {
     method: NotebookExecutionRpcMethod
     rawInput?: unknown
   }) => string | undefined
-  setArtifactProvenanceContext?: (
+  setArtifactTurnBinding?: (
     sessionId: string,
-    context: import('../../shared/notebook').NotebookRunProvenanceContext | undefined
+    binding: {
+      ownerExecutionId: string
+      projectId: string
+      provenanceContext: import('../../shared/notebook').NotebookRunProvenanceContext
+    }
   ) => void
+  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
   registerTurnInputs?: (request: {
     projectId: string
     appSessionId: string
@@ -386,6 +420,7 @@ const errorMessage = (error: unknown): string => {
 }
 
 const log = createLogger('acp')
+const literatureLog = createLogger('literature-reading-context')
 
 const PERMISSION_DENIED_CONTINUATION_TEXT =
   'The user explicitly denied this operation. You do not have authorization to perform it. ' +
@@ -495,6 +530,7 @@ class AcpRuntime {
     Readonly<{
       sessionId: string
       provenanceContext?: NonNullable<AcpPromptRequest['provenanceContext']>
+      memoryEnabled?: boolean
       referencedSessions?: AcpPromptRequest['referencedSessions']
     }>
   >()
@@ -520,6 +556,7 @@ class AcpRuntime {
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
+  private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly sessionUpdateProjector: AcpSessionUpdateProjector
   private readonly providerPromptExecutor: AcpProviderPromptExecutor
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
@@ -561,6 +598,7 @@ class AcpRuntime {
     this.connectionTransitions = base.connectionTransitions
     this.turnSkills = base.turnSkills
     this.sessionConfigurator = base.sessionConfigurator
+    this.sessionCapabilities = base.sessionCapabilities
     this.sessionRegistry = session.sessionRegistry
     this.sessionEnvironment = session.sessionEnvironment
     this.publication = session.publication
@@ -703,6 +741,16 @@ class AcpRuntime {
     return this.backend
   }
 
+  beginProviderTurnObservation(input: {
+    providerSessionId: string
+    cwd: string
+  }): ReturnType<AcpProviderPromptExecutor['beginObservation']> {
+    return this.providerPromptExecutor.beginObservation({
+      ...input,
+      frameworkId: this.framework.id
+    })
+  }
+
   captureSessionModel(
     sessionId: string
   ): Readonly<{ backend: AcpBackendGenerationView; appliedModel?: string }> | undefined {
@@ -760,6 +808,10 @@ class AcpRuntime {
       this.activeSessionFor(sessionId) !== undefined &&
       this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectId === projectId
     )
+  }
+
+  isSessionMemoryEnabled(sessionId: string): boolean {
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().memoryEnabled ?? false
   }
 
   liveSessionProjectId(sessionId: string): string | undefined {
@@ -868,6 +920,90 @@ class AcpRuntime {
       )
       return resumed
     })
+  }
+
+  async enableLiteratureContext(sessionId: string): Promise<void> {
+    if (!this.options.literature) return
+    this.sessionCapabilities.enableLiterature(sessionId)
+    if (
+      this.sessionCapabilities.mcpServerNamesFor(sessionId).includes(LITERATURE_MCP_SERVER_NAME)
+    ) {
+      return
+    }
+    const snapshot = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
+    if (!snapshot || !this.activeSessionFor(sessionId)) {
+      literatureLog.info('Literature MCP mount deferred until provider Session creation', {
+        sessionId
+      })
+      return
+    }
+    if (this.sessionInteractions.current(sessionId)) {
+      throw new Error('Cannot prepare Literature tools while the Agent is running.')
+    }
+    try {
+      await this.withOperationLease(() =>
+        this.providerSessionResumer.reconfigure({
+          sessionId,
+          cwd: snapshot.cwd ?? this.options.defaultCwd,
+          projectId: snapshot.projectId,
+          memoryEnabled: snapshot.memoryEnabled,
+          ...(snapshot.permissionProfile?.selectedProfile
+            ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
+            : {})
+        })
+      )
+      literatureLog.info('Literature MCP mounted with compatible provider resume', {
+        sessionId,
+        framework: this.framework.id,
+        replayedHistory: false
+      })
+    } catch (error) {
+      this.sessionCapabilities.rollbackLiteratureEnable(sessionId)
+      literatureLog.warn('Literature MCP mount failed', {
+        sessionId,
+        ...errorLogFields(error)
+      })
+      throw error
+    }
+  }
+
+  async disableLiteratureContext(sessionId: string): Promise<void> {
+    if (!this.options.literature || !this.sessionCapabilities.disableLiterature(sessionId)) return
+    if (
+      !this.sessionCapabilities.mcpServerNamesFor(sessionId).includes(LITERATURE_MCP_SERVER_NAME)
+    ) {
+      return
+    }
+    const snapshot = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
+    if (!snapshot || !this.activeSessionFor(sessionId)) return
+    if (this.sessionInteractions.current(sessionId)) {
+      literatureLog.info('Literature MCP unmount deferred until the Agent is idle', { sessionId })
+      return
+    }
+    try {
+      await this.withOperationLease(() =>
+        this.providerSessionResumer.reconfigure({
+          sessionId,
+          cwd: snapshot.cwd ?? this.options.defaultCwd,
+          projectId: snapshot.projectId,
+          memoryEnabled: snapshot.memoryEnabled,
+          ...(snapshot.permissionProfile?.selectedProfile
+            ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
+            : {})
+        })
+      )
+      literatureLog.info('Literature MCP disabled with compatible provider resume', {
+        sessionId,
+        framework: this.framework.id,
+        replayedHistory: false
+      })
+    } catch (error) {
+      literatureLog.warn('Literature MCP disable failed; message context remains authoritative', {
+        sessionId,
+        ...errorLogFields(error)
+      })
+      throw error
+    }
   }
 
   // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
@@ -1287,6 +1423,14 @@ class AcpRuntime {
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
+    if (
+      request.referencedArtifacts?.some(
+        (reference) =>
+          'pdfReadingPosition' in reference && reference.pdfReadingPosition !== undefined
+      )
+    ) {
+      await this.enableLiteratureContext(request.sessionId)
+    }
     return this.withOperationLease(() =>
       this.runPromptTurn(request, {
         kind: 'user',
@@ -1481,6 +1625,9 @@ class AcpRuntime {
         request: {
           sessionId: permissionRequest.sessionId,
           text: PERMISSION_DENIED_CONTINUATION_TEXT,
+          ...(promptInteraction.memoryEnabled !== undefined
+            ? { memoryEnabled: promptInteraction.memoryEnabled }
+            : {}),
           suppressUserMessage: true,
           ...(promptInteraction.promptMessageId
             ? { provenanceContext: { promptMessageId: promptInteraction.promptMessageId } }
@@ -1617,6 +1764,7 @@ class AcpRuntime {
       request: {
         sessionId: restored.sessionId,
         text,
+        memoryEnabled: continuation.memoryEnabled,
         suppressUserMessage: true,
         provenanceContext: continuation.provenanceContext,
         ...(continuation.referencedSessions?.length
@@ -1716,6 +1864,7 @@ class AcpRuntime {
         resolution.response,
         restoredContinuation?.historyReplay,
         restoredContinuation?.provenanceContext ?? livePromptContext?.provenanceContext,
+        restoredContinuation?.memoryEnabled ?? livePromptContext?.memoryEnabled,
         restoredContinuation?.referencedSessions ?? livePromptContext?.referencedSessions
       )
       if (continuation) {
@@ -1827,12 +1976,17 @@ class AcpRuntime {
     const referencedSessions = this.handoffContinuity.copyReferencedSessions(request.sessionId)
     if (
       promptInteraction?.kind === 'prompt' &&
-      (promptInteraction.provenanceContext || referencedSessions?.length)
+      (promptInteraction.provenanceContext ||
+        promptInteraction.memoryEnabled !== undefined ||
+        referencedSessions?.length)
     ) {
       this.userChoiceProvenanceContexts.set(requestId, {
         sessionId: request.sessionId,
         ...(promptInteraction.provenanceContext
           ? { provenanceContext: promptInteraction.provenanceContext }
+          : {}),
+        ...(promptInteraction.memoryEnabled !== undefined
+          ? { memoryEnabled: promptInteraction.memoryEnabled }
           : {}),
         ...(referencedSessions?.length ? { referencedSessions } : {})
       })
@@ -1845,6 +1999,7 @@ class AcpRuntime {
     response: CreateElicitationResponse,
     historyReplay?: ElicitationResponse['historyReplay'],
     provenanceContext?: AcpPromptRequest['provenanceContext'],
+    memoryEnabled?: boolean,
     referencedSessions?: AcpPromptRequest['referencedSessions']
   ): AcpPromptRequest | undefined {
     if (response.action === 'cancel') return undefined
@@ -1897,6 +2052,7 @@ class AcpRuntime {
     return {
       sessionId: request.sessionId,
       text,
+      ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
       suppressUserMessage: true,
       ...(continuationProvenance ? { provenanceContext: continuationProvenance } : {}),
       ...(referencedSessions?.length ? { referencedSessions } : {}),
@@ -2066,6 +2222,7 @@ class AcpRuntime {
           : 'The user approved the pending Session Plan. Continue execution of exactly that ' +
             `approved Plan Artifact Version (artifact_version_id=${plan.artifactVersionId}). ` +
             'Do not regenerate, broaden, or reinterpret the approved Plan.',
+      memoryEnabled: continuation.memoryEnabled,
       suppressUserMessage: true,
       provenanceContext: continuation.provenanceContext,
       ...(continuation.referencedSessions?.length

@@ -3,7 +3,6 @@ import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useSettingsStore } from '@/stores/settings-store'
 import { LocationStep } from './LocationStep'
 import {
   clickButton,
@@ -34,13 +33,15 @@ afterEach(() => {
 
 type RenderResult = {
   onBack: ReturnType<typeof vi.fn>
+  onContinue: ReturnType<typeof vi.fn>
   setIsRelaunching: ReturnType<typeof vi.fn>
 }
 
 // The wizard shell fetches the storage info up front and owns the relaunch flag; the step is
 // mounted directly with both as props/spies.
-const renderStep = async (): Promise<RenderResult> => {
+const renderStep = async (isResolvingDefaultLocation = false): Promise<RenderResult> => {
   const onBack = vi.fn()
+  const onContinue = vi.fn()
   const setIsRelaunching = vi.fn()
   const Harness = (): React.JSX.Element => {
     const [locationDraft, setLocationDraft] = useState({
@@ -59,7 +60,10 @@ const renderStep = async (): Promise<RenderResult> => {
         relaunchError={relaunchError}
         onRelaunchErrorChange={setRelaunchError}
         onRetryDataRootInfo={vi.fn()}
+        onInteractionStart={vi.fn()}
         onBack={onBack}
+        onContinue={onContinue}
+        isResolvingDefaultLocation={isResolvingDefaultLocation}
         setIsRelaunching={setIsRelaunching}
       />
     )
@@ -67,7 +71,7 @@ const renderStep = async (): Promise<RenderResult> => {
   await act(async () => {
     root.render(<Harness />)
   })
-  return { onBack, setIsRelaunching }
+  return { onBack, onContinue, setIsRelaunching }
 }
 
 describe('LocationStep', () => {
@@ -79,12 +83,20 @@ describe('LocationStep', () => {
     expect(controls?.className).toContain('sm:flex-row')
   })
 
-  it('returns to the notebook step from the Back button', async () => {
+  it('returns to the environment step from the Back button', async () => {
     const { onBack } = await renderStep()
 
     await clickButton(/back/i)
 
     expect(onBack).toHaveBeenCalledOnce()
+  })
+
+  it('disables Continue, but not Back or Browse, while resolving the Windows default', async () => {
+    await renderStep(true)
+
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+    expect(findButton(/back/i)?.disabled).toBe(false)
+    expect(findButton(/browse/i)?.disabled).toBe(false)
   })
 
   it('shows the default location passed in from the wizard shell', async () => {
@@ -165,7 +177,7 @@ describe('LocationStep', () => {
     expect(window.api.storage.pickDirectory).toHaveBeenCalledTimes(1)
     expect(browseButton?.disabled).toBe(true)
     expect(findButton(/back/i)?.disabled).toBe(true)
-    expect(findButton(/finish/i)?.disabled).toBe(true)
+    expect(findButton(/continue/i)?.disabled).toBe(true)
   })
 
   it('shows an inline error when browsing for a location rejects', async () => {
@@ -218,50 +230,23 @@ describe('LocationStep', () => {
     expect(container.textContent).not.toContain('restart to set this up')
   })
 
-  it('Finish with the default location kept completes onboarding without relaunching', async () => {
-    await renderStep()
-    await clickButton(/finish/i)
+  it('Continue with the default location advances without relaunching', async () => {
+    const { onContinue } = await renderStep()
+    await clickButton(/continue/i)
 
-    expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledTimes(1)
+    expect(onContinue).toHaveBeenCalledOnce()
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
   })
 
-  it('starts only one default completion while the first request is pending', async () => {
-    const completeOnboarding = vi.fn().mockReturnValue(new Promise(() => undefined))
-    useSettingsStore.setState({ completeOnboarding })
-    await renderStep()
-
-    const finishButton = findButton(/finish/i)
-    await act(async () => {
-      finishButton?.click()
-      finishButton?.click()
-      await Promise.resolve()
-    })
-
-    expect(completeOnboarding).toHaveBeenCalledTimes(1)
-    expect(finishButton?.disabled).toBe(true)
-  })
-
-  it('a rejected default completion stays recoverable and shows the failure', async () => {
-    useSettingsStore.setState({
-      completeOnboarding: vi.fn().mockRejectedValue(new Error('Settings write failed.'))
-    })
-    await renderStep()
-
-    await clickButton(/finish/i)
-
-    expect(container.textContent).toContain('Settings write failed.')
-    expect(container.querySelector('section[aria-label="Choose data location"]')).not.toBeNull()
-  })
-  it('Finish with a chosen non-default path shows a restart confirm dialog', async () => {
+  it('Continue with a chosen non-default path shows a restart confirm dialog', async () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
       .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
     await renderStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
 
     const overlay = Array.from(document.body.querySelectorAll<HTMLElement>('div')).find((element) =>
       element.className.includes('bg-black/50')
@@ -302,15 +287,14 @@ describe('LocationStep', () => {
     window.api.storage.setDataRootAndRelaunch = vi.fn().mockResolvedValue({ ok: true })
     const { setIsRelaunching } = await renderStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
     await clickButton(/^restart$/i)
 
-    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/data', true)
+    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/data', false)
     // The shell's full-screen "Setting up" state replaces the wizard while the call is in flight.
     expect(setIsRelaunching).toHaveBeenCalledWith(true)
-    // The renderer-side gate must not flip before the main-process relaunch step: only main marks
-    // onboarding complete now, inside set-data-root-and-relaunch, so this must never be called.
-    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    // Storage is applied before the remaining onboarding steps, so the main-process command must
+    // persist only dataRoot and leave onboarding incomplete across the relaunch.
   })
 
   it('starts only one confirmed relaunch while the first request is pending', async () => {
@@ -323,7 +307,7 @@ describe('LocationStep', () => {
       .mockReturnValue(new Promise(() => undefined))
     await renderStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
 
     const restartButton = findButton(/^restart$/i)
     await act(async () => {
@@ -345,12 +329,10 @@ describe('LocationStep', () => {
       .mockResolvedValue({ ok: false, error: 'Disk is full.' })
     const { setIsRelaunching } = await renderStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
     await clickButton(/^restart$/i)
 
-    // Never marked complete (main only marks it on success), and the gate was never flipped, so
-    // the wizard - not Home - is still what's rendered, with the error visible on Location.
-    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    // The pointer was not committed, so the wizard remains on Location with the error visible.
     expect(container.textContent).toContain('Disk is full.')
     expect(container.querySelector('section[aria-label="Choose data location"]')).not.toBeNull()
     expect(setIsRelaunching).toHaveBeenLastCalledWith(false)
@@ -366,7 +348,7 @@ describe('LocationStep', () => {
       .mockRejectedValue(new Error('Relaunch IPC failed.'))
     const { setIsRelaunching } = await renderStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
     await clickButton(/^restart$/i)
 
     expect(container.textContent).toContain('Relaunch IPC failed.')
@@ -374,28 +356,28 @@ describe('LocationStep', () => {
     expect(setIsRelaunching).toHaveBeenLastCalledWith(false)
   })
 
-  it('Keep default in the confirm dialog completes onboarding without relaunching', async () => {
+  it('Keep default in the confirm dialog advances without relaunching', async () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
       .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
-    await renderStep()
+    const { onContinue } = await renderStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
     await clickButton(/keep default/i)
 
-    expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledTimes(1)
+    expect(onContinue).toHaveBeenCalledOnce()
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
   })
 
-  it('closing the confirm dialog keeps the chosen path without completing onboarding', async () => {
+  it('closing the confirm dialog keeps the chosen path without advancing', async () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
       .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
-    await renderStep()
+    const { onContinue } = await renderStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
 
     const closeButton = document.body.querySelector<HTMLButtonElement>('button[aria-label="Close"]')
     expect(closeButton).not.toBeNull()
@@ -403,26 +385,26 @@ describe('LocationStep', () => {
       closeButton?.click()
     })
 
-    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    expect(onContinue).not.toHaveBeenCalled()
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
     expect(container.textContent).toContain('/mnt/data/OpenScience')
   })
 
-  it('pressing Escape keeps the chosen path without completing onboarding', async () => {
+  it('pressing Escape keeps the chosen path without advancing', async () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
       .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
-    await renderStep()
+    const { onContinue } = await renderStep()
     await clickButton(/browse/i)
-    await clickButton(/finish/i)
+    await clickButton(/continue/i)
 
     expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
 
-    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    expect(onContinue).not.toHaveBeenCalled()
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
     expect(container.textContent).toContain('/mnt/data/OpenScience')
   })

@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const { log } = vi.hoisted(() => ({
+  log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+}))
+
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: () => log
+}))
+
 import type { NotebookLanguage } from '../../shared/notebook'
 import type {
   RuntimeReadiness,
@@ -230,7 +239,7 @@ describe('runtime application commands', () => {
       .fn<() => Promise<string | null>>()
       .mockResolvedValueOnce(null)
       .mockRejectedValueOnce(pickerFailure)
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    log.error.mockClear()
     const { router } = install(createWorkflows(), pickInterpreter)
 
     await expect(
@@ -239,8 +248,9 @@ describe('runtime application commands', () => {
     await expect(
       router.dispatcher.invoke(runtimeApplicationCommands.pickInterpreter, invocation([] as const))
     ).resolves.toBeNull()
-    expect(log).toHaveBeenCalledWith('[runtime-commands] pick-interpreter failed', pickerFailure)
-    log.mockRestore()
+    expect(log.error).toHaveBeenCalledWith('pick interpreter failed', {
+      errorCategory: 'error'
+    })
   })
 
   it('uninstalls only the Runtime command group', async () => {

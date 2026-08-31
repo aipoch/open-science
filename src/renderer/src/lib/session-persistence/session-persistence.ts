@@ -105,6 +105,7 @@ const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
   'permissionProfile',
   'autoReviewEnabled',
+  'memoryEnabled',
   'agentConfiguration',
   'pinned'
 ] as const satisfies readonly SessionConflictRebaseField[]
@@ -465,6 +466,35 @@ const rebaseSessionAfterRevisionConflict = (
         )
         if (!graph) return undefined
         rebased.conversationGraph = graph
+      } else if (key === 'activeRun') {
+        const submittedRun = submittedValue as PersistedChatSession['activeRun']
+        const latestRun = latestValue as PersistedChatSession['activeRun']
+        const baseRun = baseValue as PersistedChatSession['activeRun']
+        if (!submittedRun) {
+          if (!latestRun || latestRun.promptMessageId === baseRun?.promptMessageId) {
+            delete rebased.activeRun
+            continue
+          }
+          return undefined
+        }
+        if (!latestRun) {
+          rebased.activeRun = structuredClone(submittedRun)
+          continue
+        }
+        if (submittedRun.promptMessageId !== latestRun.promptMessageId) return undefined
+        rebased.activeRun = {
+          promptMessageId: submittedRun.promptMessageId,
+          startedAt: Math.min(submittedRun.startedAt, latestRun.startedAt)
+        }
+      } else if (key === 'contextUsage') {
+        // Main does not persist live context-window snapshots. Keep the renderer value, including
+        // an explicit clear, instead of resurrecting a stale durable copy.
+        if (submittedValue === undefined) delete rebased.contextUsage
+        else {
+          rebased.contextUsage = structuredClone(
+            submittedValue as PersistedChatSession['contextUsage']
+          )
+        }
       } else {
         return undefined
       }
@@ -498,10 +528,11 @@ const rebaseSessionAfterRevisionConflict = (
   return rebased
 }
 
-// Session details can legitimately advance through queued, running, and terminal Main-owned
-// revisions while a renderer transcript save is in flight. Rebase each observed authority in
-// sequence, but keep a hard cap so a genuinely active second writer cannot livelock persistence.
-const MAX_SESSION_REVISION_REBASE_ATTEMPTS = 3
+// A first-turn renderer transcript save can overlap several legitimate Main-owned advances:
+// Session details queued/running/terminal, Session status, runtime context, and auxiliary usage.
+// Rebase each newly observed authority in sequence. Keep a hard cap so a genuine second writer
+// cannot livelock persistence.
+const MAX_SESSION_REVISION_REBASE_ATTEMPTS = 8
 
 const saveAfterSessionRevisionConflict = async (
   initialError: unknown,
@@ -862,7 +893,7 @@ type SessionCatalogRecovery =
     }
   | {
       kind: 'damaged-authority'
-      affectedFileCount: number
+      affectedFiles: Array<{ projectId: string; fileName: string }>
     }
   | {
       kind: 'unsupported-version'
@@ -906,7 +937,7 @@ const deriveSessionCatalogRecovery = (
   if (damagedWarnings.length > 0) {
     return {
       kind: 'damaged-authority',
-      affectedFileCount: damagedWarnings.length
+      affectedFiles: damagedWarnings.map(({ projectId, fileName }) => ({ projectId, fileName }))
     }
   }
 
@@ -1711,6 +1742,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
 }
 
 export {
+  MAX_SESSION_REVISION_REBASE_ATTEMPTS,
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,

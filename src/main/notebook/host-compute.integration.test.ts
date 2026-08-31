@@ -1,5 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { NotebookKernelExecutor } from './kernel-executor'
 
 // host.compute lives ONLY in the control-plane repl kernel (a Node process), reached via the same
@@ -14,6 +16,29 @@ const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 
 const makeExecutor = (): NotebookKernelExecutor =>
   new NotebookKernelExecutor({ replLoopPath: REPL_LOOP })
+
+const notebookRoots: string[] = []
+afterEach(() => {
+  for (const root of notebookRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+const makeNotebookRoots = (): {
+  cwd: string
+  notebookSessionRoot: string
+  dataRoot: string
+  runtimeRoot: string
+} => {
+  const root = mkdtempSync(join(tmpdir(), 'os-host-compute-'))
+  notebookRoots.push(root)
+  return {
+    cwd: process.cwd(),
+    notebookSessionRoot: join(root, 'nb'),
+    dataRoot: join(root, 'nb', 'data'),
+    runtimeRoot: join(root, 'runtime')
+  }
+}
 
 // Minimal stub computeCall RPC endpoint that captures params and returns representative unchanged
 // snake_case result projections.
@@ -84,7 +109,8 @@ const startStub = async (
 }
 
 // Base repl-cell request; kind 'repl' routes to the control-plane kernel, the only kind buildEnv
-// forwards the connector RPC endpoint/token AND the session/project identity to.
+// forwards the connector RPC endpoint/token AND the session/project identity to. Spawn still
+// prepares the Notebook workload cache from runtimeRoot, so these cases use a disposable root.
 const baseRequest = (
   overrides: Partial<{
     code: string
@@ -95,11 +121,8 @@ const baseRequest = (
   }>
 ): Parameters<NotebookKernelExecutor['execute']>[0] => ({
   code: '',
-  cwd: process.cwd(),
   kind: 'repl',
-  notebookSessionRoot: '',
-  dataRoot: '',
-  runtimeRoot: '',
+  ...makeNotebookRoots(),
   ...overrides
 })
 

@@ -169,8 +169,8 @@ const loadRemoteAccessSnapshot = async (
     if (!isActive()) return initial
     onInitial(initial)
     if (!initial.canManage) return initial
-    const detected = await window.api.remoteAccess.detect()
-    return cacheRemoteAccessSnapshot(detected, generation)
+    const probed = await window.api.remoteAccess.probe()
+    return cacheRemoteAccessSnapshot(probed, generation)
   })
   const trackedRequest = request.finally(() => {
     if (remoteAccessLoadInFlight === trackedRequest) remoteAccessLoadInFlight = undefined

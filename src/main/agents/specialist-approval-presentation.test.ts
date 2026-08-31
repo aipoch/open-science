@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import { mapDeleteApprovalCard, mapSwitchApprovalCard } from './specialist-approval-presentation'
 import type { SpecialistPermissionCardPayload } from '../../shared/agents-contract'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 
-const baseProfile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+const baseProfile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'sp-1',
   name: 'DATA_ANALYST',
   displayName: 'Data Analyst',

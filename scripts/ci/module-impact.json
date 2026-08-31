@@ -12,14 +12,24 @@
         "src/renderer/src/stores/session-store-run-projection-owner.ts",
         "src/renderer/src/stores/session-store-run-output-helpers.ts",
         "src/renderer/src/stores/session-store-run-activity-helpers.ts",
-        "src/renderer/src/stores/session-store-run-terminal-helpers.ts"
+        "src/renderer/src/stores/session-store-run-terminal-helpers.ts",
+        "src/renderer/src/stores/session-job-store.ts"
       ],
-      "interfacePaths": ["src/renderer/src/stores/session-store.ts"],
-      "consumerModules": ["workspace_runtime", "project_files_view", "workspace_page"],
+      "interfacePaths": [
+        "src/renderer/src/stores/session-store.ts",
+        "src/renderer/src/stores/session-job-store.ts"
+      ],
+      "consumerModules": [
+        "workspace_runtime",
+        "project_files_view",
+        "compute_service",
+        "workspace_page"
+      ],
       "testFiles": {
         "owner": [
           "src/renderer/src/stores/session-store.test.ts",
-          "src/renderer/src/stores/session-store.architecture.test.ts"
+          "src/renderer/src/stores/session-store.architecture.test.ts",
+          "src/renderer/src/stores/session-job-store.test.ts"
         ],
         "contract": ["src/shared/session-persistence.test.ts"],
         "consumer": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"]
@@ -37,6 +47,7 @@
         "src/renderer/src/lib/acp/workspace-runtime-attachment-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-session-memory-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts",
         "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts"
@@ -49,6 +60,7 @@
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx",
           "src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts",
+          "src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts",
           "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
           "src/renderer/src/lib/acp/workspace-events.test.ts"
         ],
@@ -126,7 +138,11 @@
         "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts",
         "src/renderer/src/pages/workspace/composer-attachment-intake.ts",
         "src/renderer/src/pages/workspace/composer-upload-transfer.ts",
-        "src/renderer/src/pages/workspace/composer/composer-history.ts"
+        "src/renderer/src/pages/workspace/composer/composer-history.ts",
+        "src/renderer/src/pages/workspace/WorkspaceActivityGroup.tsx",
+        "src/renderer/src/components/JobDetailModal.tsx",
+        "src/renderer/src/components/JobStatusBadge.tsx",
+        "src/renderer/src/components/RemoteJobRow.tsx"
       ],
       "interfacePaths": ["src/renderer/src/pages/workspace/WorkspacePage.tsx"],
       "consumerModules": [],
@@ -150,7 +166,11 @@
           "src/renderer/src/pages/workspace/composer-attachment-intake.test.ts",
           "src/renderer/src/pages/workspace/composer-upload-transfer.test.ts",
           "src/renderer/src/pages/workspace/composer/composer-history.test.ts",
-          "src/renderer/src/pages/workspace/workspace-components.test.tsx"
+          "src/renderer/src/pages/workspace/workspace-components.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspaceActivityGroup.i18n.render.test.tsx",
+          "src/renderer/src/components/JobDetailModal.render.test.tsx",
+          "src/renderer/src/components/job-observation-ui.test.tsx",
+          "src/renderer/src/components/components-batch-i18n.render.test.tsx"
         ],
         "contract": [
           "src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx",
@@ -222,32 +242,55 @@
       "ownerPaths": [
         "src/main/compute/approval-session-lifecycle.ts",
         "src/main/compute/agent-compute-service.ts",
+        "src/main/compute/bounded-child-termination.ts",
         "src/main/compute/compute-approval-broker.ts",
         "src/main/compute/compute-host-profile-owner.ts",
         "src/main/compute/compute-job-lifecycle.ts",
         "src/main/compute/job-deletion-owner.ts",
         "src/main/compute/compute-job-workflow-owner.ts",
+        "src/main/compute/compute-job-status.ts",
+        "src/main/compute/compute-job-cancellation-owner.ts",
+        "src/main/compute/compute-job-operation-repository.ts",
         "src/main/compute/compute-remote-operation-owner.ts",
         "src/main/compute/concurrency-manager.ts",
         "src/main/compute/job-dispatcher.ts",
         "src/main/compute/job-poller.ts",
         "src/main/compute/job-poll-output.ts",
+        "src/main/compute/job-runtime.ts",
+        "src/main/compute/job-notifier.ts",
+        "src/main/compute/job-harvest-scheduler.ts",
+        "src/main/compute/harvest-engine.ts",
+        "src/main/compute/compute-job-integrity.ts",
         "src/main/compute/job-repository.ts",
+        "src/main/compute/remote-job-process.ts",
+        "src/main/compute/remote-job-handle.ts",
+        "src/main/compute/remote-launch-recovery.ts",
+        "src/main/compute/submitted-job-recovery.ts",
         "src/main/compute/enabled-hosts-registry.ts",
         "src/main/compute/session-enabled-hosts-owner.ts",
         "src/main/compute/permission-grant-adapter.ts",
+        "src/main/compute/repository.ts",
+        "src/main/compute/scp-runner.ts",
+        "src/main/compute/session-cache-owner.ts",
+        "src/main/compute/ssh-runner.ts",
         "src/main/compute/compute-auth-owner.ts",
         "src/main/compute/connection-adapters.ts",
         "src/main/compute/credential-vault.ts",
-        "src/main/compute/compute-service.ts"
+        "src/main/compute/compute-service.ts",
+        "src/renderer/src/lib/compute/job-analysis-trigger.ts",
+        "src/renderer/src/lib/compute/useJobAnalysisEffect.ts",
+        "src/renderer/src/lib/compute/useSessionJobHydration.ts",
+        "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.tsx",
+        "resources/skills/remote-compute-ssh/SKILL.md"
       ],
       "interfacePaths": [
         "src/main/compute/connection-broker.ts",
         "src/main/compute/compute-service.ts",
         "src/main/compute/ipc.ts",
-        "src/main/compute/electron-ipc-adapter.ts"
+        "src/main/compute/electron-ipc-adapter.ts",
+        "src/renderer/src/lib/compute/useJobAnalysisEffect.ts"
       ],
-      "consumerModules": [],
+      "consumerModules": ["workspace_page"],
       "testFiles": {
         "owner": [
           "src/main/compute/approval-session-lifecycle.test.ts",
@@ -259,22 +302,38 @@
           "src/main/compute/compute-service.architecture.test.ts",
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",
+          "src/main/compute/compute-job-cancellation-owner.integration.test.ts",
           "src/main/compute/compute-remote-operation-owner.test.ts",
+          "src/main/compute/session-cache-owner.test.ts",
           "src/main/compute/session-enabled-hosts-owner.test.ts",
           "src/main/compute/permission-grant-adapter.test.ts",
+          "src/main/compute/repository.test.ts",
           "src/main/compute/compute-service.test.ts",
           "src/main/compute/compute-auth-owner.test.ts",
           "src/main/compute/connection-broker.test.ts",
           "src/main/compute/credential-vault.test.ts",
           "src/main/compute/compute-password-auth.architecture.test.ts",
           "src/main/compute/compute-jobs.integration.test.ts",
-          "src/main/compute/concurrency-integration.test.ts"
+          "src/main/compute/concurrency-integration.test.ts",
+          "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
+          "src/main/compute/job-poll-protocol.integration.test.ts",
+          "src/main/compute/job-notifier.integration.test.ts",
+          "src/main/compute/job-deletion-runtime-drain.test.ts",
+          "src/main/compute/job-deletion-runtime-isolation.test.ts",
+          "src/main/compute/harvest-engine.test.ts",
+          "src/main/compute/job-notifier.test.ts",
+          "src/main/compute/remote-compute-skill.test.ts",
+          "src/renderer/src/lib/compute/job-analysis-trigger.test.ts",
+          "src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx",
+          "src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx"
         ],
         "contract": [
           "src/main/application-command-composition.test.ts",
           "src/main/compute/concurrency-manager.test.ts",
           "src/main/compute/job-dispatcher.test.ts",
           "src/main/compute/job-poller.test.ts",
+          "src/main/compute/job-poll-output.test.ts",
+          "src/main/compute/job-repository.test.ts",
           "src/main/compute/scp-runner.test.ts",
           "src/main/compute/ssh-runner.test.ts",
           "src/main/compute/ipc.test.ts",
@@ -663,6 +722,7 @@
         "src/main/artifacts/provenance-storage.ts",
         "src/main/artifacts/provenance-unindexed-recovery.ts",
         "src/main/artifacts/provenance-version-writer.ts",
+        "src/main/artifacts/reviewer-turn-file-evidence-reader.ts",
         "src/main/artifacts/write-budget-owner.ts"
       ],
       "interfacePaths": [

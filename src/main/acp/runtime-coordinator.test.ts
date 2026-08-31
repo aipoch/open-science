@@ -46,6 +46,11 @@ const emptySnapshot = (): AcpStateSnapshot => ({
 const runtimeEventId = (runtimeSequence: number, eventId: string): RegExp =>
   new RegExp(`^runtime-${runtimeSequence}-[0-9a-f-]{36}:${eventId}$`, 'u')
 
+const retainedSessionCancellationKeys = (owner: object): unknown[] =>
+  Object.entries(owner).flatMap(([name, value]) =>
+    name.includes('sessionCancellation') && value instanceof Map ? Array.from(value.keys()) : []
+  )
+
 const createFakeRuntime = (options: {
   frameworkId: AgentFrameworkId
   sessionIds: string[]
@@ -82,10 +87,12 @@ const createFakeRuntime = (options: {
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
   applyModelChange: ReturnType<typeof vi.fn>
   captureBackend: ReturnType<typeof vi.fn>
+  beginProviderTurnObservation: ReturnType<typeof vi.fn>
   captureSessionModel: ReturnType<typeof vi.fn>
   setPermissionProfile: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   requestUserInput: ReturnType<typeof vi.fn>
+  disableLiteratureContext: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
@@ -146,6 +153,10 @@ const createFakeRuntime = (options: {
   const applyReasoningEffortChange = vi.fn(async () => true)
   const applyModelChange = vi.fn(async () => true)
   const captureBackend = vi.fn(() => ({ backendId: `${options.frameworkId}:owned` }) as never)
+  const beginProviderTurnObservation = vi.fn(async () => ({
+    finalize: vi.fn(async () => ({})),
+    cancel: vi.fn()
+  }))
   const captureSessionModel = vi.fn((sessionId: string) => ({
     backend: { backendId: `${options.frameworkId}:owned` },
     appliedModel: `${sessionId}:applied`
@@ -159,6 +170,7 @@ const createFakeRuntime = (options: {
     return snapshot
   })
   const requestUserInput = vi.fn(async () => ({ action: 'answered', answer: 'Minimal' }))
+  const disableLiteratureContext = vi.fn(async () => undefined)
   const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
@@ -280,10 +292,12 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
+    beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
     respondToPermission,
     requestUserInput,
+    disableLiteratureContext,
     shutdown,
     shutdownForQuit,
     shutdownForUpdateGate
@@ -309,10 +323,12 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
+    beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
     respondToPermission,
     requestUserInput,
+    disableLiteratureContext,
     emitEvent: (event) => {
       snapshot = { ...snapshot, events: [...snapshot.events, event] }
       options.callbacks.onEvent?.(event)
@@ -421,6 +437,7 @@ describe('AcpRuntimeCoordinator', () => {
             sessionId: 'detached-session',
             cwd: '/workspace',
             projectId: 'project-1',
+            memoryEnabled: false,
             agentTarget
           }
         },
@@ -441,6 +458,7 @@ describe('AcpRuntimeCoordinator', () => {
         sessionId: 'detached-session',
         cwd: '/workspace',
         projectId: 'project-1',
+        memoryEnabled: false,
         agentTarget
       })
       expect(vi.mocked(created[1].runtime.sendApplicationPrompt)).toHaveBeenCalledOnce()
@@ -1488,7 +1506,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(rootTurnStarted).toHaveBeenCalledTimes(3)
   })
 
-  it.each(['cancel', 'handoff'] as const)(
+  it.each(['cancel', 'handoff', 'delete'] as const)(
     'does not dispatch a root turn superseded by %s while its settlement baseline loads',
     async (supersede) => {
       const settlementStart = createDeferred<string | undefined>()
@@ -1535,8 +1553,10 @@ describe('AcpRuntimeCoordinator', () => {
 
       if (supersede === 'cancel') {
         await coordinator.cancelPrompt({ sessionId: session.sessionId })
-      } else {
+      } else if (supersede === 'handoff') {
         await coordinator.stopPromptForHandoff(session.sessionId)
+      } else {
+        await coordinator.deleteSession({ sessionId: session.sessionId })
       }
       await coordinator.waitForSessionInteractionRelease(session.sessionId)
       settlementStart.resolve('settlement-lease-1')
@@ -1550,6 +1570,9 @@ describe('AcpRuntimeCoordinator', () => {
         clean: false,
         leaseId: 'settlement-lease-1'
       })
+      if (supersede === 'delete') {
+        expect(retainedSessionCancellationKeys(coordinator)).not.toContain(session.sessionId)
+      }
     }
   )
 
@@ -1865,6 +1888,32 @@ describe('AcpRuntimeCoordinator', () => {
     await running
     await release
     expect(released).toBe(true)
+  })
+
+  it('waits for the active turn before disabling Literature context', async () => {
+    const prompt = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => prompt.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession({ projectId: 'project-1' })
+    const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'read' })
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+
+    const disabling = coordinator.disableLiteratureContext(session.sessionId)
+    await Promise.resolve()
+    expect(created.disableLiteratureContext).not.toHaveBeenCalled()
+
+    prompt.resolve({ stopReason: 'end_turn' })
+    await running
+    await disabling
+    expect(created.disableLiteratureContext).toHaveBeenCalledWith(session.sessionId)
   })
 
   it('cancels active prompts and waits for their terminal responses before quit teardown', async () => {
@@ -4173,13 +4222,21 @@ describe('AcpRuntimeCoordinator', () => {
       oldActivityStarted.resolve()
       await releaseOldActivity.promise
       oldBackendId = runtime.captureBackend?.().backendId
+      await runtime.beginProviderTurnObservation?.({
+        providerSessionId: 'reviewer-old',
+        cwd: '/workspace'
+      })
       await runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
     })
     await oldActivityStarted.promise
 
     await coordinator.requestAgentFrameworkSwitch()
-    await coordinator.withActivity({}, (runtime) => {
+    await coordinator.withActivity({}, async (runtime) => {
       newBackendId = runtime.captureBackend?.().backendId
+      await runtime.beginProviderTurnObservation?.({
+        providerSessionId: 'reviewer-new',
+        cwd: '/workspace'
+      })
       return runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
     })
     releaseOldActivity.resolve()
@@ -4187,6 +4244,14 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(vi.mocked(created[0].runtime.buildReviewerSession)).toHaveBeenCalledOnce()
     expect(vi.mocked(created[1].runtime.buildReviewerSession)).toHaveBeenCalledOnce()
+    expect(created[0].beginProviderTurnObservation).toHaveBeenCalledWith({
+      providerSessionId: 'reviewer-old',
+      cwd: '/workspace'
+    })
+    expect(created[1].beginProviderTurnObservation).toHaveBeenCalledWith({
+      providerSessionId: 'reviewer-new',
+      cwd: '/workspace'
+    })
     expect(oldBackendId).toBe('claude-code:owned')
     expect(newBackendId).toBe('codex:owned')
   })
@@ -4215,6 +4280,7 @@ describe('AcpRuntimeCoordinator', () => {
           sessionId: 'old-session',
           cwd: '/workspace',
           projectId: 'project-1',
+          memoryEnabled: false,
           previousFrameworkId: 'claude-code',
           specialistId: 'specialist-new',
           specialistBindingPending: true,
@@ -4240,6 +4306,7 @@ describe('AcpRuntimeCoordinator', () => {
       sessionId: 'old-session',
       cwd: '/workspace',
       projectId: 'project-1',
+      memoryEnabled: false,
       previousFrameworkId: 'claude-code',
       specialistId: 'specialist-new',
       specialistBindingPending: true

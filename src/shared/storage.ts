@@ -1,8 +1,16 @@
-// Renderer-safe copies of storage types whose canonical definitions live in main-only modules
-// (src/main/storage/*), mirroring how ArtifactFile/NotebookRunSummary are shared with preload.
+// Cross-process storage contracts shared by main, preload, and renderer.
 
-export type UsageCategoryKey =
-  'artifacts' | 'delegation' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
+export const STORAGE_USAGE_CATEGORY_KEYS = [
+  'artifacts',
+  'compute',
+  'delegation',
+  'uploads',
+  'runtime',
+  'notebooks',
+  'notebook-file-evidence',
+  'workspaces'
+] as const
+export type UsageCategoryKey = (typeof STORAGE_USAGE_CATEGORY_KEYS)[number]
 export type UsageChild = { name: string; bytes: number }
 export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
 export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
@@ -24,9 +32,16 @@ export type StorageStatus = {
   // the user hasn't yet answered the one-time "move it into the visible OpenScience folder" prompt.
   // Drives the first-run LegacyDataMoveDialog; once answered (moved/relocated/declined) it stays false.
   legacyDataMovePrompt: boolean
+  // True while a committed move still has verified old-root files to remove. Main retries the
+  // durable cleanup intent at startup; renderer uses this only to notify the user.
+  cleanupPending: boolean
 }
 
 export type StorageInfo = StorageStatus & {
+  // Main-owned onboarding eligibility. True only when the default data root is unconfigured and
+  // contains no data or managed runtime, so selecting another drive can use a pointer switch without
+  // hiding an existing install or stranding an environment. Derived on every read; never persisted.
+  canAutoSelectDataDrive: boolean
   usage: StorageUsage
   availableBytes: number
 }
@@ -59,21 +74,21 @@ export type MigrationProgress = {
 }
 export type MigrationResult = { ok: true } | { ok: false; error: string; cancelled?: boolean }
 export type MigrationOutcome =
-  MigrationResult | { ok: false; error: string; switchoverFailed: true }
+  | { ok: true; cleanupWarning?: string }
+  | { ok: false; error: string; cancelled?: boolean }
+  | { ok: false; error: string; switchoverFailed: true }
 
-// Result of validating (or applying) a candidate data root, mirroring main's ValidateResult
 export type DiscardMigratedCopyResult =
   { ok: true; cleanupWarning?: string } | { ok: false; error: string }
 
-// (src/main/storage/migration-service.ts) without importing main-only code into the renderer.
 export type DataRootValidationResult = { ok: true } | { ok: false; error: string }
 
-// Classification of a candidate data root, mirroring main's ClassifyResult
-// (src/main/storage/migration-service.ts). 'move' = empty writable target (copy-in migration).
+// Classification of a candidate data root. 'move' = empty writable target (copy-in migration).
 // 'adopt' = already contains our data (pointer switch only, no move). 'recover' = a durable marker
 // from an interrupted copy that Settings can explicitly finish or discard. 'invalid' carries a reason.
 // `dataRoot` is the derived `<parent>/OpenScience` path, always present so the caller can display
-// the final location regardless of kind.
+// the final location regardless of kind. Main also reports whether a move target was proven absent;
+// callers that require a brand-new target must fail closed unless `targetWasAbsent` is true.
 export type DataRootKind = 'move' | 'adopt' | 'recover' | 'invalid'
 export type DataRootRecoveryStatus = 'copying' | 'verified'
 export type DataRootInspection =
@@ -84,7 +99,14 @@ export type DataRootInspection =
       error?: string
     }
   | {
-      kind: Exclude<DataRootKind, 'recover'>
+      kind: 'move'
+      dataRoot: string
+      targetWasAbsent?: boolean
+      recoveryStatus?: never
+      error?: string
+    }
+  | {
+      kind: Exclude<DataRootKind, 'recover' | 'move'>
       dataRoot: string
       recoveryStatus?: never
       error?: string

@@ -16,6 +16,7 @@ describe('packaging config', () => {
     // them (electron-builder only unpacks matched globs).
     expect(existsSync(join(repoRoot, 'resources/notebook/python_loop.py'))).toBe(true)
     expect(existsSync(join(repoRoot, 'resources/notebook/r_loop.R'))).toBe(true)
+    expect(existsSync(join(repoRoot, 'resources/notebook/file_evidence_worker.js'))).toBe(true)
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
     expect(yml).toMatch(/asarUnpack:\s*\n\s*-\s*resources\/(\*\*|notebook\/\*\*)/)
   })

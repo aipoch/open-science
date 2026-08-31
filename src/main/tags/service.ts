@@ -22,10 +22,6 @@ class TagService {
     private readonly events: Pick<ApplicationEventPublisher, 'publish'>
   ) {}
 
-  private async afterMutations(): Promise<void> {
-    await this.mutationQueue
-  }
-
   private mutate(operation: () => Promise<void>): Promise<TagSnapshot> {
     const result = this.mutationQueue.then(async () => {
       await operation()
@@ -40,25 +36,31 @@ class TagService {
     return result
   }
 
-  async snapshot(): Promise<TagSnapshot> {
-    await this.afterMutations()
-    const pending = [...this.pendingResourceDeletions.values()]
-    if (pending.length > 0) {
-      const removed = await this.repository.removeResourceAssignments(pending)
-      for (const reference of pending)
-        this.pendingResourceDeletions.delete(this.resourceKey(reference))
-      if (removed > 0) {
+  snapshot(): Promise<TagSnapshot> {
+    const result = this.mutationQueue.then(async () => {
+      const pending = [...this.pendingResourceDeletions.values()]
+      if (pending.length > 0) {
+        const removed = await this.repository.removeResourceAssignments(pending)
+        for (const reference of pending)
+          this.pendingResourceDeletions.delete(this.resourceKey(reference))
+        if (removed > 0) {
+          this.revision += 1
+          this.events.publish('tags:changed', { revision: this.revision })
+        }
+      }
+      const resources = await this.resources.snapshot()
+      const pruned = await this.repository.pruneStaleAssignments(resources)
+      if (pruned > 0) {
         this.revision += 1
         this.events.publish('tags:changed', { revision: this.revision })
       }
-    }
-    const resources = await this.resources.snapshot()
-    const pruned = await this.repository.pruneStaleAssignments(resources)
-    if (pruned > 0) {
-      this.revision += 1
-      this.events.publish('tags:changed', { revision: this.revision })
-    }
-    return this.repository.snapshot(this.revision)
+      return this.repository.snapshot(this.revision)
+    })
+    this.mutationQueue = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 
   create(request: CreateTagRequest): Promise<TagSnapshot> {

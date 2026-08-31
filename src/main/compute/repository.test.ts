@@ -26,12 +26,13 @@ const createRow = (overrides: Record<string, unknown> = {}): Record<string, unkn
 
 // Builds a mock computeHost delegate; each method is a spy the tests can assert against.
 const createMockClient = (
-  methods: Partial<Record<'findMany' | 'findUnique' | 'create' | 'delete', unknown>>
+  methods: Partial<Record<'findMany' | 'findUnique' | 'create' | 'update' | 'delete', unknown>>
 ): { client: ComputeHostClient; computeHost: Record<string, ReturnType<typeof vi.fn>> } => {
   const computeHost = {
     findMany: vi.fn(methods.findMany as never),
     findUnique: vi.fn(methods.findUnique as never),
     create: vi.fn(methods.create as never),
+    update: vi.fn(methods.update as never),
     delete: vi.fn(methods.delete as never)
   }
 
@@ -125,39 +126,24 @@ describe('compute host repository', () => {
     })
   })
 
-  it('does not expose unsupported or corrupt Compute JSON payloads', async () => {
+  it.each([
+    [
+      'future-version JSON',
+      { sshOverrides: JSON.stringify({ schemaVersion: 2, user: 'future-user' }) }
+    ],
+    ['corrupt JSON', { sshOverrides: JSON.stringify({ schemaVersion: 1, port: 'not-a-number' }) }],
+    ['an unsupported Host shape', { shape: 'future-cluster-shape' }],
+    ['an unsupported details author', { detailsUpdatedBy: 'future-author' }]
+  ])('fails the Host catalog for %s instead of treating it as missing', async (_label, row) => {
     const { client } = createMockClient({
-      findMany: () =>
-        Promise.resolve([
-          createRow({
-            id: 'future',
-            providerId: 'ssh:future',
-            sshOverrides: JSON.stringify({ schemaVersion: 2, user: 'future-user' }),
-            probeResult: JSON.stringify({ schemaVersion: 2, ok: true })
-          }),
-          createRow({
-            id: 'corrupt',
-            providerId: 'ssh:corrupt',
-            sshOverrides: JSON.stringify({ schemaVersion: 1, port: 'not-a-number' }),
-            probeResult: JSON.stringify({
-              schemaVersion: 1,
-              ok: 'yes',
-              probedAt: '2026-01-01T00:00:00Z',
-              exitCode: 0,
-              errorTail: null
-            })
-          })
-        ])
+      findMany: () => Promise.resolve([createRow(row)])
     })
     const repository = new ComputeHostRepository(() => Promise.resolve(client))
 
-    await expect(repository.list()).resolves.toMatchObject([
-      { providerId: 'ssh:future', sshOverrides: undefined, probeResult: undefined },
-      { providerId: 'ssh:corrupt', sshOverrides: undefined, probeResult: undefined }
-    ])
+    await expect(repository.list()).rejects.toThrow('Compute Host data is corrupt or unsupported')
   })
 
-  it('keeps readable Compute rows available when one row is corrupt', async () => {
+  it('fails the Host catalog when one row uses an unsupported authentication mode', async () => {
     const { client } = createMockClient({
       findMany: () =>
         Promise.resolve([
@@ -167,7 +153,9 @@ describe('compute host repository', () => {
     })
     const repository = new ComputeHostRepository(() => Promise.resolve(client))
 
-    await expect(repository.list()).resolves.toMatchObject([{ providerId: 'ssh:healthy' }])
+    await expect(repository.list()).rejects.toThrow(
+      'This SSH authentication configuration is not supported.'
+    )
   })
 
   it('returns null when a host is not found', async () => {
@@ -178,6 +166,27 @@ describe('compute host repository', () => {
 
     await expect(repository.get('ssh:missing')).resolves.toBeNull()
     expect(computeHost.findUnique).toHaveBeenCalledWith({ where: { providerId: 'ssh:missing' } })
+  })
+
+  it('keeps historical aliases and scratch roots readable without rewriting them', async () => {
+    const { client } = createMockClient({
+      findUnique: () =>
+        Promise.resolve(
+          createRow({
+            providerId: 'ssh:-legacy-option',
+            sshAlias: '-legacy-option',
+            scratchRoot: 'relative/legacy-scratch',
+            scratchPinned: true
+          })
+        )
+    })
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(repository.get('ssh:-legacy-option')).resolves.toMatchObject({
+      sshAlias: '-legacy-option',
+      scratchRoot: 'relative/legacy-scratch',
+      scratchPinned: true
+    })
   })
 
   it('creates a host: derives provider_id, defaults display name to alias, seeds details as user', async () => {
@@ -239,12 +248,75 @@ describe('compute host repository', () => {
     expect(call2.data.sshOverrides).toBeNull()
   })
 
+  it.each([-1, 1.5, 65_536])('rejects invalid SSH port %s before persistence', async (port) => {
+    const { client, computeHost } = createMockClient({
+      findUnique: () => Promise.resolve(null),
+      create: () => Promise.resolve(createRow())
+    })
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(
+      repository.create({ sshAlias: 'cluster', sshOverrides: { port } })
+    ).rejects.toThrow(/port/i)
+    expect(computeHost.create).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['alias', { sshAlias: 'cluster\nother' }],
+    ['display name', { sshAlias: 'cluster', displayName: 'Cluster\0hidden' }],
+    ['user', { sshAlias: 'cluster', sshOverrides: { user: 'researcher\rroot' } }],
+    ['identity file', { sshAlias: 'cluster', sshOverrides: { identityFile: 'x'.repeat(256) } }]
+  ])('rejects an invalid %s before persistence', async (_label, request) => {
+    const { client, computeHost } = createMockClient({
+      findUnique: () => Promise.resolve(null),
+      create: () => Promise.resolve(createRow())
+    })
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(repository.create(request)).rejects.toThrow(/1.+255|control|characters/i)
+    expect(computeHost.create).not.toHaveBeenCalled()
+  })
+
   it('rejects a blank alias without touching the database', async () => {
     const { client, computeHost } = createMockClient({})
     const repository = new ComputeHostRepository(() => Promise.resolve(client))
 
     await expect(repository.create({ sshAlias: '   ' })).rejects.toThrow(/alias/i)
     expect(computeHost.create).not.toHaveBeenCalled()
+  })
+
+  it('rejects an option-like alias without touching the database', async () => {
+    const { client, computeHost } = createMockClient({})
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(
+      repository.create({ sshAlias: '-oProxyCommand=touch /tmp/not-approved' })
+    ).rejects.toThrow(/alias/i)
+    expect(computeHost.findUnique).not.toHaveBeenCalled()
+    expect(computeHost.create).not.toHaveBeenCalled()
+  })
+
+  it.each(['relative/path', '/scratch/../other', '/scratch\nother'])(
+    'rejects an invalid discovered scratch root before writing: %j',
+    async (scratchRoot) => {
+      const { client, computeHost } = createMockClient({})
+      const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+      await expect(repository.updateScratchRoot('ssh:biowulf', scratchRoot)).rejects.toThrow(
+        /scratch root/i
+      )
+      expect(computeHost.update).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects an invalid pinned scratch root before writing', async () => {
+    const { client, computeHost } = createMockClient({})
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await expect(repository.updateScratchPinned('ssh:biowulf', '~/scratch//other')).rejects.toThrow(
+      /scratch root/i
+    )
+    expect(computeHost.update).not.toHaveBeenCalled()
   })
 
   it('rejects a duplicate alias with a readable error before inserting', async () => {
@@ -286,6 +358,19 @@ describe('compute host repository', () => {
       repository.create({ sshAlias: 'big', detailsDoc: 'x'.repeat(32769) })
     ).rejects.toThrow(/32768/)
     expect(computeHost.create).not.toHaveBeenCalled()
+  })
+
+  it('clears the scratch root and unpins it in one persistence update', async () => {
+    const update = vi.fn(async () => createRow({ scratchRoot: null, scratchPinned: false }))
+    const client = { computeHost: { update } } as unknown as ComputeHostClient
+    const repository = new ComputeHostRepository(() => Promise.resolve(client))
+
+    await repository.clearScratchRoot('ssh:biowulf')
+
+    expect(update).toHaveBeenCalledWith({
+      where: { providerId: 'ssh:biowulf' },
+      data: { scratchRoot: null, scratchPinned: false }
+    })
   })
 
   it('deletes a host by provider id', async () => {

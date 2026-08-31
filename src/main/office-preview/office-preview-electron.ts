@@ -1,3 +1,7 @@
+import { createLogger } from '../logger'
+
+const log = createLogger('office-preview')
+
 type OfficePreviewFrame = {
   url: string
   osProcessId: number
@@ -31,7 +35,7 @@ const createOfficePreviewFrameProcessResolver = (contents: OfficePreviewWebConte
     // A frame may disappear before React's close IPC reaches the main process during replacement.
     if (!runtimeFrame) return undefined
     if (runtimeFrame.osProcessId === mainFrame.osProcessId) {
-      console.warn('[office-preview] runtime frame did not receive an isolated process', {
+      log.warn('runtime frame did not receive an isolated process', {
         parentOwnerId,
         osProcessId: runtimeFrame.osProcessId
       })

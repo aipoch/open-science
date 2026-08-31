@@ -197,6 +197,27 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).not.toContain('Restart to update')
   })
 
+  it('shows an installer-open error without replacing the ready retry action', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'ready',
+        current: '0.1.0',
+        latest: '0.2.0',
+        applyKind: 'installer',
+        localPath: '/data/update/Open-Science.dmg',
+        error: 'Could not open the update installer: no associated application'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+
+    expect(document.body.textContent).toContain(
+      'Could not open the update installer: no associated application'
+    )
+    expect(document.body.textContent).toContain('Open installer')
+    expect(document.body.textContent).not.toContain('Download update')
+  })
+
   it('offers a manual download fallback when the update errors', () => {
     useUpdateStore.setState({
       isDialogOpen: true,

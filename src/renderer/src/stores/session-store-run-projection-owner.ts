@@ -23,11 +23,13 @@ import {
 import {
   projectAgentMessageChunks,
   projectMessageArtifacts,
+  projectMessagePdfContext,
   projectMessageUploads,
   projectRunArtifacts,
   type AppendAgentMessageChunkInput,
   type AttachRunArtifactsInput,
   type ReplaceMessageArtifactsInput,
+  type ReplaceMessagePdfContextInput,
   type ReplaceMessageUploadsInput
 } from './session-store-run-output-helpers'
 import {
@@ -65,6 +67,7 @@ export type SessionRunProjectionActions = {
   attachRunArtifacts: (input: AttachRunArtifactsInput) => AppendMessageResult | undefined
   replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
   replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
+  replaceMessagePdfContext: (input: ReplaceMessagePdfContextInput) => void
   recordArtifactError: (sessionId: string, error: string) => void
   clearArtifactError: (sessionId: string) => void
   finishRun: (
@@ -259,6 +262,15 @@ export const createSessionRunProjectionOwner = <
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, input.sessionId, (session) =>
           projectMessageUploads(session, input)
+        )
+      }))
+    },
+
+    replaceMessagePdfContext: (input) => {
+      if (!input.sessionId || !input.messageId) return
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, input.sessionId, (session) =>
+          projectMessagePdfContext(session, input)
         )
       }))
     },

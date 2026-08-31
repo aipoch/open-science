@@ -30,9 +30,14 @@ let cliApi: {
 }
 let settingsApi: {
   setNotificationsEnabled: ReturnType<typeof vi.fn>
+  setShowNotificationContent: ReturnType<typeof vi.fn>
   setClosePreference: ReturnType<typeof vi.fn>
   setAppIconVariant: ReturnType<typeof vi.fn>
   listAppIcons: ReturnType<typeof vi.fn>
+}
+let notificationsApi: {
+  getDesktopAvailability: ReturnType<typeof vi.fn>
+  sendTest: ReturnType<typeof vi.fn>
 }
 
 const findButton = (pattern: RegExp): HTMLButtonElement | undefined =>
@@ -86,6 +91,11 @@ beforeEach(() => {
       .mockImplementation((request: { enabled: boolean }) =>
         Promise.resolve({ notificationsEnabled: request.enabled })
       ),
+    setShowNotificationContent: vi
+      .fn()
+      .mockImplementation((request: { enabled: boolean }) =>
+        Promise.resolve({ showNotificationContent: request.enabled })
+      ),
     setClosePreference: vi
       .fn()
       .mockImplementation((request: { preference?: 'minimize' | 'quit' }) =>
@@ -108,12 +118,23 @@ beforeEach(() => {
   }
   useSettingsStore.setState({
     notificationsEnabled: true,
+    showNotificationContent: false,
     closePreference: undefined,
     appIconVariant: 'light'
   })
+  notificationsApi = {
+    getDesktopAvailability: vi.fn().mockResolvedValue('supported'),
+    sendTest: vi.fn().mockResolvedValue('shown')
+  }
   ;(window as unknown as { api: unknown }).api = {
     logs: {
-      getPath: vi.fn().mockResolvedValue('/logs/main.log'),
+      getStatus: vi.fn().mockResolvedValue({
+        configured: true,
+        path: '/logs/main.log',
+        existing: true,
+        lastWriteSucceeded: true,
+        lastFailureCategory: null
+      }),
       openFile: vi.fn().mockResolvedValue({ opened: true }),
       revealInFolder: vi.fn().mockResolvedValue({ revealed: true })
     },
@@ -121,6 +142,7 @@ beforeEach(() => {
     window: { onCloseConfirmRequest: vi.fn() },
     cli: cliApi,
     github: { getStars: vi.fn().mockResolvedValue(1) },
+    notifications: notificationsApi,
     settings: settingsApi
   }
 })
@@ -133,6 +155,37 @@ afterEach(() => {
 })
 
 describe('GeneralPanel command line tool', () => {
+  it('recovers when the initial command status check fails', async () => {
+    cliApi.getStatus
+      .mockRejectedValueOnce(new Error('command status unavailable'))
+      .mockResolvedValueOnce({
+        installed: false,
+        target: '/home/u/.local/bin/open-science',
+        onPath: true
+      })
+
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not check the command-line tool.'
+    )
+    const retryButton = findButton(/check again/i)
+    expect(retryButton).toBeDefined()
+    expect(findButton(/install command/i)?.disabled).toBe(true)
+
+    await act(async () => {
+      retryButton?.click()
+    })
+    await flush()
+
+    expect(cliApi.getStatus).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(findButton(/install command/i)?.disabled).toBe(false)
+  })
+
   it('installs the command and surfaces the returned path + PATH hint', async () => {
     await act(async () => {
       root.render(<GeneralPanel />)
@@ -233,6 +286,32 @@ describe('GeneralPanel notifications', () => {
     expect(settingsApi.setNotificationsEnabled).toHaveBeenCalledWith({ enabled: false })
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
   })
+
+  it('keeps task content private by default and can verify native delivery', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const contentToggle = container.querySelector(
+      '[aria-label="Toggle task content in system notifications"]'
+    ) as HTMLButtonElement | null
+    expect(contentToggle?.getAttribute('data-state')).toBe('unchecked')
+
+    await act(async () => {
+      contentToggle?.click()
+    })
+    await flush()
+    expect(settingsApi.setShowNotificationContent).toHaveBeenCalledWith({ enabled: true })
+
+    await act(async () => {
+      findButton(/Send test notification/)?.click()
+    })
+    await flush()
+
+    expect(notificationsApi.sendTest).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Test notification shown.')
+  })
 })
 
 describe('GeneralPanel appearance', () => {
@@ -315,6 +394,30 @@ describe('GeneralPanel close behavior', () => {
 
     expect(settingsApi.setClosePreference).toHaveBeenCalledWith({ preference: 'quit' })
     expect(useSettingsStore.getState().closePreference).toBe('quit')
+  })
+})
+
+describe('GeneralPanel diagnostics', () => {
+  it('shows a recent write failure without hiding an existing log file', async () => {
+    const getStatus = (
+      window as unknown as { api: { logs: { getStatus: ReturnType<typeof vi.fn> } } }
+    ).api.logs.getStatus
+    getStatus.mockResolvedValueOnce({
+      configured: true,
+      path: '/logs/main.log',
+      existing: true,
+      lastWriteSucceeded: false,
+      lastFailureCategory: 'append'
+    })
+
+    await act(async () => root.render(<GeneralPanel />))
+    await flush()
+
+    expect(container.textContent).toContain(
+      'The app could not write to the log file during its most recent attempt.'
+    )
+    expect(findButton(/^open$/i)?.disabled).toBe(false)
+    expect(findButton(/^reveal$/i)?.disabled).toBe(false)
   })
 })
 

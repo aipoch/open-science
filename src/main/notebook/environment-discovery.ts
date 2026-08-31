@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { DiscoveredInterpreter, EnvProvenance } from '../../shared/notebook-runtime'
+import { createLogger } from '../logger'
 import { isMacOSDeveloperToolsPythonStub, probeInterpreterVersion } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
 import {
@@ -22,6 +23,7 @@ import {
 export type { DiscoveredInterpreter, EnvProvenance }
 
 const execFileAsync = promisify(execFile)
+const log = createLogger('notebook:environment-discovery')
 
 // Shared options for every discovery subprocess: a hard timeout so a wedged tool (a hung conda, a
 // stuck interpreter, an unresponsive `which`) can NEVER hang environment discovery, and windowsHide so
@@ -275,7 +277,9 @@ export const defaultCandidatePaths =
           // observability but do not reject the entire Promise.all that would block Python discovery too.
           const code = (err as NodeJS.ErrnoException).code
           if (code !== 'ENOENT' && code !== 'EACCES' && code !== 'EPERM') {
-            console.warn('[cran-r] unexpected error scanning', rRoot, code)
+            log.warn('unexpected error scanning standard R installation root', {
+              errorCode: code ?? 'unknown'
+            })
           }
           continue
         }

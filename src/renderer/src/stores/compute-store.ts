@@ -12,6 +12,64 @@ import type {
   ProbeResult
 } from '../../../shared/compute'
 
+type ComputeApprovalBase = {
+  id: string
+  sessionId?: string
+  providerId: string
+  providerName: string
+  shape: string
+  intent: string
+  willPersistUnencrypted: boolean
+}
+
+export type ComputeApproval = ComputeApprovalBase &
+  (
+    | { operation: 'call_command'; commandPreview: string; commandFull: string }
+    | { operation: 'download'; remotePath: string }
+    | {
+        operation: 'submit_job'
+        commandPreview: string
+        commandFull: string
+        inputsSummary?: string
+        resources?: string
+        timeoutSeconds: number
+        remoteWorkdir: string
+      }
+  )
+
+const projectComputeApprovalRequest = (request: ComputeApprovalRequest): ComputeApproval => {
+  const base: ComputeApprovalBase = {
+    id: request.id,
+    ...(request.session_id ? { sessionId: request.session_id } : {}),
+    providerId: request.provider_id,
+    providerName: request.provider_name,
+    shape: request.shape,
+    intent: request.intent,
+    willPersistUnencrypted: request.willPersistUnencrypted === true
+  }
+  if (request.operation === 'download') {
+    return { ...base, operation: request.operation, remotePath: request.remote_path }
+  }
+  if (request.operation === 'call_command') {
+    return {
+      ...base,
+      operation: request.operation,
+      commandPreview: request.command_preview,
+      commandFull: request.command_full
+    }
+  }
+  return {
+    ...base,
+    operation: request.operation,
+    commandPreview: request.command_preview,
+    commandFull: request.command_full,
+    ...(request.inputs_summary ? { inputsSummary: request.inputs_summary } : {}),
+    ...(request.resources ? { resources: request.resources } : {}),
+    timeoutSeconds: request.timeout_seconds,
+    remoteWorkdir: request.remote_workdir
+  }
+}
+
 type ComputeStoreData = {
   hosts: ComputeHost[]
   isLoaded: boolean
@@ -21,7 +79,7 @@ type ComputeStoreData = {
   // Tracks which hosts are currently being probed so the UI can show a Probing... state.
   probingIds: Set<string>
   // Pending compute approval requests, oldest first. Answered one at a time.
-  pendingApprovals: ComputeApprovalRequest[]
+  pendingApprovals: ComputeApproval[]
 }
 
 type ComputeStore = ComputeStoreData & {
@@ -38,6 +96,8 @@ type ComputeStore = ComputeStoreData & {
   saveDetails: (providerId: string, text: string, oldText: string) => Promise<void>
   // Sets the scratch root path and marks the host as pinned.
   setScratch: (providerId: string, path: string) => Promise<void>
+  // Clears the pinned path so a future probe may auto-detect the scratch root.
+  clearScratch: (providerId: string) => Promise<void>
   // Sets the enforced concurrent job limit (1..500).
   setConcurrency: (providerId: string, limit: number) => Promise<void>
   // Queues an incoming approval request (from the main-process compute gate).
@@ -243,6 +303,16 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     }
   },
 
+  clearScratch: async (providerId) => {
+    await window.api.compute.scratchClear(providerId)
+    const updatedHost = await window.api.compute.get(providerId)
+    if (updatedHost) {
+      set((state) => ({
+        hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
+      }))
+    }
+  },
+
   // Updates the concurrent job limit. Merges the updated host into cache.
   setConcurrency: async (providerId, limit) => {
     await window.api.compute.concurrencySet(providerId, limit)
@@ -254,12 +324,12 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     }
   },
 
-  // Queues an incoming compute approval request (pushed from main before each SSH call).
+  // Queues an incoming transport request after projecting it to renderer-native field names.
   enqueueApproval: (request) => {
     set((state) =>
       state.pendingApprovals.some(({ id }) => id === request.id)
         ? state
-        : { pendingApprovals: [...state.pendingApprovals, request] }
+        : { pendingApprovals: [...state.pendingApprovals, projectComputeApprovalRequest(request)] }
     )
   },
 

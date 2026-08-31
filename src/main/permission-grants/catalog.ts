@@ -6,6 +6,7 @@ import type {
   PermissionGrantSnapshot,
   PermissionGrantView
 } from '../../shared/permission-grants'
+import { missingDefaultGlobalPermissionCapabilities } from './defaults'
 
 type PermissionGrantNames = {
   projects?: ReadonlyMap<string, string>
@@ -202,6 +203,7 @@ const projectPermissionGrantSnapshot = (
   )
   return {
     ...metadata,
+    missingDefaultGlobalGrantCount: missingDefaultGlobalPermissionCapabilities(records).length,
     grants,
     counts: {
       all: grants.length,

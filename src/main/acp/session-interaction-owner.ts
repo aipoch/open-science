@@ -27,6 +27,7 @@ export interface AcpPromptSessionInteractionRequest {
   readonly kind: 'prompt'
   readonly promptMessageId?: string
   readonly provenanceContext?: AcpPromptRequest['provenanceContext']
+  readonly memoryEnabled?: boolean
   readonly turnToken?: string
   readonly referencedSessionIds?: readonly string[]
 }
@@ -49,6 +50,7 @@ export interface AcpPromptSessionInteractionScope extends AcpSessionInteractionS
   readonly kind: 'prompt'
   readonly promptMessageId?: string
   readonly provenanceContext?: AcpPromptRequest['provenanceContext']
+  readonly memoryEnabled?: boolean
   readonly turnToken: string
 }
 
@@ -356,6 +358,7 @@ export class AcpSessionInteractionOwner {
       kind: 'prompt',
       promptMessageId: request.promptMessageId,
       provenanceContext: cloneProvenanceContext(request.provenanceContext),
+      ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),
       turnToken: request.turnToken ?? randomUUID(),
       sequence: ++this.sequence,
       signal: abortController.signal

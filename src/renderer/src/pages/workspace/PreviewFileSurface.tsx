@@ -1,19 +1,23 @@
 import {
+  BookOpen,
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
   GitBranch,
+  Link2,
+  Link2Off,
+  Loader2,
   Maximize2,
   MoreHorizontal,
   X
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { usePreviewWorkbenchStore, type PreviewFileItem } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { ArtifactLineageProvenance } from '../../../../shared/artifact-provenance'
@@ -28,15 +32,16 @@ import {
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { LocalFileHeaderActions } from './LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
+import { usePdfContextAction, type PdfContextAction } from './use-pdf-context-action'
 import {
   createPreviewFileItemForArtifactVersion,
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
-import type { PreviewAnnotationPort } from './previews/preview-types'
+import type { PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 
-type PreviewFileSurfaceProps = PreviewAnnotationPort & {
+type PreviewFileSurfaceProps = PreviewInteractionPort & {
   item: PreviewFileItem
   contentKey?: string
   renderContent?: boolean
@@ -48,6 +53,7 @@ type PreviewFileSurfaceProps = PreviewAnnotationPort & {
   // full-screen dialog uses this to exit so the switched conversation is actually visible.
   onViewInContextNavigate?: () => void
   onReload?: () => void
+  onPdfContextError?: (message: string | null) => void
   provenanceEntry?: 'menu' | 'leading' | 'trailing'
 }
 
@@ -138,6 +144,7 @@ const PreviewFileHeader = ({
   onViewInContext,
   viewInContextDisabled,
   onReload,
+  pdfContextAction,
   provenanceEntry = 'menu',
   tooltipClassName
 }: Pick<
@@ -153,6 +160,7 @@ const PreviewFileHeader = ({
   // Undefined hides the entry; disabled keeps it visible with the archived-session hint.
   onViewInContext?: () => void
   viewInContextDisabled?: boolean
+  pdfContextAction?: PdfContextAction
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -194,6 +202,70 @@ const PreviewFileHeader = ({
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
+      {pdfContextAction ? (
+        pdfContextAction.active ? (
+          // The linked state doubles as the status badge: one tinted pill carries both the
+          // "In session context" signal and the Remove command.
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                data-testid="pdf-context-status"
+                className="rounded-full bg-primary/10 px-2 text-[11px] font-medium text-primary hover:bg-primary/15 hover:text-primary"
+                aria-live="polite"
+              >
+                {pdfContextAction.pending ? (
+                  <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Link2 className="size-3" aria-hidden="true" />
+                )}
+                {t('In session context')}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="z-[70] min-w-36">
+              <DropdownMenuItem disabled={pdfContextAction.pending} onSelect={pdfContextAction.run}>
+                <Link2Off className="mr-2 size-4" aria-hidden="true" />
+                {pdfContextAction.label}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          // The primary reading-context entry: a labeled pill next to the download action.
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* A disabled button swallows pointer events, so the trigger spans it to keep the
+                    unavailable hint hoverable. */}
+                <span className="inline-flex">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    data-testid="pdf-context-action"
+                    className="rounded-full px-2 text-[11px] font-medium text-primary hover:bg-surface-control-hover hover:text-primary"
+                    disabled={pdfContextAction.pending || pdfContextAction.disabled}
+                    onClick={pdfContextAction.run}
+                  >
+                    {pdfContextAction.pending ? (
+                      <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <BookOpen className="size-3" aria-hidden="true" />
+                    )}
+                    {pdfContextAction.label}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {pdfContextAction.disabled ? (
+                <TooltipContent className={tooltipClassName}>
+                  {`${pdfContextAction.label} (${t('Unavailable')})`}
+                </TooltipContent>
+              ) : null}
+            </Tooltip>
+          </TooltipProvider>
+        )
+      ) : null}
       {/* A local file has no managed provenance or origin Session, so it takes the reload/copy/open
           actions in place of the whole managed action row. */}
       {item.source === 'local' ? (
@@ -234,6 +306,8 @@ const PreviewFileHeader = ({
               {t('Source session deleted')}
             </span>
           ) : null}
+          {/* The PDF link action lives on the header pill above; this overflow only carries the
+              managed-artifact extras. */}
           {onOpenProvenance && provenanceEntry === 'menu' ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -380,7 +454,12 @@ const PreviewFileSurface = ({
   onAddAnnotation,
   onUpdateAnnotationNote,
   onRemoveAnnotation,
-  onAnnotationError
+  onUndoAnnotation,
+  onRedoAnnotation,
+  onPdfContextError,
+  onAnnotationError,
+  onLinkReadingContext,
+  onUnlinkReadingContext
 }: PreviewFileSurfaceProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [provenanceTarget, setProvenanceTarget] = useState<string>()
@@ -392,6 +471,11 @@ const PreviewFileSurface = ({
   }>()
   const [lineageLoadState, setLineageLoadState] = useState<LineageLoadState>()
   const [lineageRetryToken, setLineageRetryToken] = useState(0)
+  const [pdfContextMenu, setPdfContextMenu] = useState<{
+    itemKey: string
+    x: number
+    y: number
+  }>()
   const projectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
   const storedItem = usePreviewWorkbenchStore((state) =>
     state.items.find((candidate) => candidate.id === item.id)
@@ -445,6 +529,19 @@ const PreviewFileSurface = ({
           projectId
         })
       : previewItem
+  const { action: pdfContextAction, readingContextBindingId } = usePdfContextAction(
+    resolvedPreviewItem,
+    onPdfContextError,
+    { link: onLinkReadingContext, unlink: onUnlinkReadingContext }
+  )
+  const pdfContextMenuItemKey = `${resolvedPreviewItem.id}:${selectedVersionId ?? ''}`
+  const reportPdfReadingPosition = useCallback(
+    (position: { pageNumber: number; pageCount: number }): void => {
+      if (!readingContextBindingId) return
+      usePreviewWorkbenchStore.getState().setPdfReadingPosition(readingContextBindingId, position)
+    },
+    [readingContextBindingId]
+  )
 
   useEffect(() => {
     let active = true
@@ -521,6 +618,18 @@ const PreviewFileSurface = ({
     // navigation that never happened.
     if (opened) onViewInContextNavigate?.()
   }
+  const downloadPreviewFile = (): void => {
+    setPdfContextMenu(undefined)
+    void window.api
+      .saveManagedFile({
+        source: resolvedPreviewItem.source ?? 'artifact',
+        path: resolvedPreviewItem.path,
+        suggestedName: resolvedPreviewItem.name
+      })
+      .catch((error: unknown) => {
+        console.error(`Failed to download ${resolvedPreviewItem.name} from the PDF preview`, error)
+      })
+  }
 
   return (
     <div className="flex size-full min-h-0 flex-col overflow-hidden">
@@ -529,6 +638,7 @@ const PreviewFileSurface = ({
         onClose={onClose}
         onOpenFullScreen={onOpenFullScreen}
         onReload={() => setReloadToken((token) => token + 1)}
+        pdfContextAction={pdfContextAction}
         provenanceEntry={provenanceEntry}
         onOpenProvenance={
           previewItem.source !== 'upload' && previewItem.artifactId && projectId
@@ -565,7 +675,25 @@ const PreviewFileSurface = ({
           onSelect={selectPreviewVersion}
         />
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-bg-000">
+      <div
+        data-testid="preview-file-content-surface"
+        className="min-h-0 flex-1 overflow-y-auto bg-bg-000"
+        onContextMenu={(event) => {
+          if (
+            resolvedPreviewItem.format !== 'pdf' ||
+            !pdfContextAction ||
+            showProvenance ||
+            !renderContent
+          )
+            return
+          event.preventDefault()
+          setPdfContextMenu({
+            itemKey: pdfContextMenuItemKey,
+            x: event.clientX,
+            y: event.clientY
+          })
+        }}
+      >
         {showProvenance && projectId ? (
           <ArtifactProvenancePanel
             item={resolvedPreviewItem}
@@ -581,10 +709,61 @@ const PreviewFileSurface = ({
             onAddAnnotation={onAddAnnotation}
             onUpdateAnnotationNote={onUpdateAnnotationNote}
             onRemoveAnnotation={onRemoveAnnotation}
+            onUndoAnnotation={onUndoAnnotation}
+            onRedoAnnotation={onRedoAnnotation}
             onAnnotationError={onAnnotationError}
+            onPdfReadingPositionChange={
+              readingContextBindingId ? reportPdfReadingPosition : undefined
+            }
           />
         ) : null}
       </div>
+      {pdfContextMenu?.itemKey === pdfContextMenuItemKey && pdfContextAction ? (
+        <DropdownMenu
+          open
+          onOpenChange={(open) => {
+            if (!open) setPdfContextMenu(undefined)
+          }}
+        >
+          <DropdownMenuTrigger asChild>
+            <span
+              aria-hidden="true"
+              className="pointer-events-none fixed size-0"
+              style={{ left: pdfContextMenu.x, top: pdfContextMenu.y }}
+            />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            className="z-[70] min-w-[9.5rem] p-1"
+            data-testid="pdf-preview-context-menu"
+            onCloseAutoFocus={(event) => event.preventDefault()}
+          >
+            <DropdownMenuItem
+              className="min-h-0 h-6 gap-2 rounded-md px-2 py-0 text-[12px]"
+              disabled={pdfContextAction.pending || pdfContextAction.disabled}
+              onSelect={() => {
+                setPdfContextMenu(undefined)
+                pdfContextAction.run()
+              }}
+            >
+              {pdfContextAction.state === 'remove' ? (
+                <Link2Off className="size-3.5 shrink-0" aria-hidden="true" />
+              ) : (
+                <BookOpen className="size-3.5 shrink-0" aria-hidden="true" />
+              )}
+              {pdfContextAction.label}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="min-h-0 h-6 gap-2 rounded-md px-2 py-0 text-[12px]"
+              onSelect={downloadPreviewFile}
+            >
+              <Download className="size-3.5 shrink-0" aria-hidden="true" />
+              {t('Download')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
     </div>
   )
 }

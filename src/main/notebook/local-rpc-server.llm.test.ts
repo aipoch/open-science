@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { HostLlmCallInput, HostLlmResult } from './host-model-service'
+import {
+  HostModelService,
+  type HostLlmBatchItem,
+  type HostLlmCallInput,
+  type HostLlmResult
+} from './host-model-service'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 
 let server: NotebookLocalRpcServer | undefined
@@ -77,6 +82,117 @@ describe('llmCall RPC', () => {
     await expect(unauthorized.json()).resolves.toEqual({
       error: 'A session-bound notebook RPC token is required.'
     })
+  })
+
+  it('keeps active-turn provenance out of single and batch Host LLM inputs', async () => {
+    const hostLlmCall = vi.fn<
+      (
+        input: HostLlmCallInput,
+        signal?: AbortSignal
+      ) => Promise<HostLlmResult | readonly HostLlmBatchItem[]>
+    >(async (input) =>
+      'requests' in input
+        ? input.requests.map((request) => ({
+            text: typeof request === 'string' ? request : request.prompt,
+            model: 'model-a',
+            stopReason: 'end_turn' as const
+          }))
+        : { text: 'PONG', model: 'model-a', stopReason: 'end_turn' }
+    )
+    const hostLlm = {
+      isLlmAvailable: vi.fn(async () => true),
+      isCurrentModelAvailable: vi.fn(async () => true),
+      isListModelsAvailable: vi.fn(async () => true),
+      currentModel: vi.fn(async () => 'model-a'),
+      listModels: vi.fn(async () => ['model-a']),
+      call: hostLlmCall
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostModel: hostLlm,
+      inputRegistry: {
+        registerTurn: vi.fn(async () => undefined),
+        getTurnInputs: vi.fn(() => []),
+        clearSession: vi.fn()
+      }
+    })
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+    server.setArtifactTurnBinding('trusted-session', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'trusted-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-trusted-session',
+        agentFrameId: 'root-frame-trusted-session',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    await server.registerNotebookTurnInputs({
+      projectId: 'trusted-project',
+      appSessionId: 'trusted-session',
+      promptMessageId: 'prompt-1',
+      uploads: [],
+      references: []
+    })
+
+    const single = await call(control.endpoint, control.token, { request: 'PING' })
+    const batch = await call(control.endpoint, control.token, {
+      requests: ['one', { prompt: 'two' }],
+      options: { max_concurrency: 2 }
+    })
+
+    expect(single.status).toBe(200)
+    expect(batch.status).toBe(200)
+    expect(hostLlmCall.mock.calls.map(([input]) => input)).toEqual([
+      { request: 'PING' },
+      {
+        requests: ['one', { prompt: 'two' }],
+        options: { max_concurrency: 2 }
+      }
+    ])
+    expect(hostLlmCall.mock.calls.every(([, signal]) => signal instanceof AbortSignal)).toBe(true)
+  })
+
+  it('preserves unknown user fields for strict Host LLM input validation', async () => {
+    const captureTarget = vi.fn(async () => {
+      throw new Error('inference should not start')
+    })
+    const hostModel = new HostModelService({
+      captureTarget,
+      captureSessionModel: () => undefined,
+      captureModelCatalog: vi.fn(async () => ({ providers: [] })),
+      runner: {
+        run: vi.fn(),
+        shutdown: vi.fn(async () => undefined),
+        supportsTarget: vi.fn(() => true),
+        sweepStaleProfiles: vi.fn(async () => undefined)
+      } as never
+    })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostModel
+    })
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+
+    const response = await call(control.endpoint, control.token, {
+      request: 'PING',
+      model: 'forged-model'
+    })
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({
+      error: 'host.llm single input must contain only request.'
+    })
+    expect(captureTarget).not.toHaveBeenCalled()
   })
 
   it('aborts host inference when the RPC client disconnects', async () => {

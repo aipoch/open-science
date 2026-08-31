@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
 import {
@@ -6,6 +6,7 @@ import {
   loadPersistedSession
 } from '@/lib/session-persistence/session-persistence'
 import { useSessionStore } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
 
 import { NO_VISIBLE_SESSIONS, visibleProjectSessions } from './visible-project-sessions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
@@ -31,6 +32,16 @@ const WorkspaceSidebarContainer = ({
     useShallow((state) =>
       isProjectArchived ? NO_VISIBLE_SESSIONS : visibleProjectSessions(state.sessions, projectId)
     )
+  )
+  const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const credentialPendingSessionIds = useMemo(
+    () =>
+      new Set(
+        pendingCredentialRequests.flatMap((request) =>
+          request.sessionId ? [request.sessionId] : []
+        )
+      ),
+    [pendingCredentialRequests]
   )
   const loadPreviewSession = useCallback(
     (sessionId: string): Promise<void> | void => {
@@ -63,6 +74,7 @@ const WorkspaceSidebarContainer = ({
       {...sidebarProps}
       starNudgeKey={projectId}
       sessions={sessions}
+      credentialPendingSessionIds={credentialPendingSessionIds}
       onPreviewSession={loadPreviewSession}
     />
   )

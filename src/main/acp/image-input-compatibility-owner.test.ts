@@ -45,11 +45,14 @@ describe('ImageInputCompatibilityOwner', () => {
       }),
       frameworkId: 'opencode' as const,
       model: 'vision-model',
-      stopReason: 'end_turn' as const
+      stopReason: 'end_turn' as const,
+      usage: { inputTokens: 8, cacheTokens: 1, outputTokens: 2, turnCount: 1 }
     }))
+    const recordUsage = vi.fn(async () => undefined)
     const owner = new ImageInputCompatibilityOwner({
       captureTarget: vi.fn(async () => target),
-      runner: { run }
+      runner: { run },
+      recordUsage
     })
     const secondImage: ContentBlock = {
       ...image,
@@ -59,7 +62,9 @@ describe('ImageInputCompatibilityOwner', () => {
 
     const prepared = await owner.prepare({
       content: [{ type: 'text', text: 'What changed?' }, image, secondImage],
-      supportsImageInput: false
+      supportsImageInput: false,
+      projectId: 'project-1',
+      sessionId: 'session-1'
     })
 
     expect(prepared).toEqual([
@@ -86,6 +91,42 @@ describe('ImageInputCompatibilityOwner', () => {
         images: [expect.objectContaining({ mimeType: 'image/png', byteLength: 5 })]
       })
     )
+    expect(recordUsage).toHaveBeenCalledTimes(2)
+    expect(recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        source: 'vision',
+        frameworkId: 'opencode',
+        providerId: 'vision-provider',
+        model: 'vision-model',
+        usage: expect.objectContaining({ inputTokens: 8, outputTokens: 2 })
+      })
+    )
+  })
+
+  it('records provider usage attached to an ordinary Vision error', async () => {
+    const usage = { inputTokens: 7, cacheTokens: 1, outputTokens: 2, turnCount: 1 }
+    const recordUsage = vi.fn(async () => undefined)
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: vi.fn(async () => target),
+      runner: {
+        run: vi.fn(async () => {
+          throw Object.assign(new Error('provider failed'), { usage })
+        })
+      },
+      recordUsage
+    })
+
+    await expect(
+      owner.prepare({
+        content: [image],
+        supportsImageInput: false,
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+    ).rejects.toThrow('provider failed')
+    expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({ source: 'vision', usage }))
   })
 
   it('accepts a scalar uncertainty from the Vision model', async () => {

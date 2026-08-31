@@ -121,6 +121,21 @@ const isActivityGroupControlEvent = (event: AcpRuntimeEvent): boolean => {
 const isTerminalToolActivity = (activity: ToolActivity | undefined): boolean =>
   activity?.status === 'completed' || activity?.status === 'failed'
 
+const hasPendingDurableUserChoice = (
+  session: ChatSession | undefined,
+  promptMessageId: string | undefined
+): boolean =>
+  session?.activities?.some((activity) => {
+    const elicitation = activity.elicitation
+    return (
+      elicitation?.state === 'pending' &&
+      elicitation.durable?.kind === 'agent-user-choice' &&
+      (!elicitation.durable.promptMessageId ||
+        !promptMessageId ||
+        elicitation.durable.promptMessageId === promptMessageId)
+    )
+  }) === true
+
 const getCurrentPromptMessageId = (session: ChatSession): string | undefined =>
   session.activeRun?.promptMessageId ??
   session.messages.findLast((message) => message.role === 'user')?.id
@@ -232,11 +247,10 @@ const finalizeRunArtifacts = async (
   throw error
 }
 
-// Artifact finalization validates its renderer-selected Message against the durable Session graph.
-// Persist that graph explicitly instead of relying on the asynchronous store saver to win the IPC race.
-const saveSessionForArtifactFinalization = (
-  session: PersistedChatSession
-): Promise<PersistedChatSession> => saveSessionInOrder(session)
+// Artifact finalization and auto-review both require the latest renderer-selected Message graph to be
+// durable before Main reads it. Persist explicitly instead of racing the asynchronous store saver.
+const saveSessionInRuntimeOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
+  saveSessionInOrder(session)
 
 type FinalizableArtifactEvent = AcpRuntimeEvent & {
   kind: 'artifact'
@@ -288,7 +302,7 @@ const finalizeArtifactEvent = async (
         throw new Error('Artifact finalization Session is no longer available.')
       }
       const submittedSession = toPersistedSession(attachedSession)
-      const durableSession = await (dependencies.saveSession ?? saveSessionForArtifactFinalization)(
+      const durableSession = await (dependencies.saveSession ?? saveSessionInRuntimeOrder)(
         submittedSession
       )
       if (durableSession) {
@@ -445,7 +459,10 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 // the shared assembleReviewRunRequest helper so the auto and manual paths pick the same turn and
 // assemble the same request fields.
 // Fire-and-forget: errors are caught and silently dropped so the main session is never blocked.
-const triggerAutoReview = async (sessionId: string): Promise<void> => {
+const triggerAutoReview = async (
+  sessionId: string,
+  saveSession: NonNullable<WorkspaceRuntimeEventDependencies['saveSession']>
+): Promise<void> => {
   try {
     if (autoReviewsSuppressedForQuit) return
 
@@ -477,6 +494,12 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
     ) {
       return
     }
+
+    // Main resolves Review scope from the durable Session. The renderer's ordinary store saver is
+    // intentionally cadence-limited, so a fixed debounce can still expose the previous message graph.
+    // This runs inside the fire-and-forget auto-review task: the main turn remains settled while only
+    // Reviewer waits for this Session's terminal Message and stop metadata to become readable.
+    await saveSession(toPersistedSession(session))
 
     // Retry a started:false a bounded number of times, but ONLY for reasons a persistence race can
     // produce (the session may not be flushed to disk yet). Every other reason is terminal for the auto
@@ -519,12 +542,17 @@ const resumeAutoReviewsAfterQuitAbort = (): void => {
 // Stop and artifact events normally arrive together, but some providers publish the Artifact just
 // after stop. A short debounced barrier lets that claim finalize before Reviewer freezes its scope.
 // A post-stop Artifact cancels this timer immediately and schedules a fresh review after finalization.
-const scheduleAutoReview = (sessionId: string): void => {
+const scheduleAutoReview = (
+  sessionId: string,
+  saveSession: NonNullable<
+    WorkspaceRuntimeEventDependencies['saveSession']
+  > = saveSessionInRuntimeOrder
+): void => {
   if (autoReviewsSuppressedForQuit) return
   cancelScheduledAutoReview(sessionId)
   const timer = setTimeout(() => {
     scheduledAutoReviewsBySession.delete(sessionId)
-    void triggerAutoReview(sessionId)
+    void triggerAutoReview(sessionId, saveSession)
   }, AUTO_REVIEW_ARTIFACT_SETTLE_DELAY_MS)
   scheduledAutoReviewsBySession.set(sessionId, timer)
 }
@@ -774,10 +802,13 @@ const applyWorkspaceRuntimeEvent = async (
       }
     }
 
-    // Trigger a background review for the just-completed turn.
-    // We read the session state after both finishRun and Artifact finalization so the scope includes
-    // the terminal message and its finalized Artifact Version ids.
-    scheduleAutoReview(event.sessionId)
+    // A durable user choice pauses the same logical turn; reviewing the partial response here would
+    // freeze an incomplete scope before the hidden continuation resumes it.
+    if (!hasPendingDurableUserChoice(terminalSession, terminalPromptMessageId)) {
+      // Trigger a background review for the just-completed turn. Read state after both finishRun and
+      // Artifact finalization so the scope includes the terminal message and finalized versions.
+      scheduleAutoReview(event.sessionId, dependencies.saveSession)
+    }
 
     return true
   }
@@ -860,7 +891,7 @@ const applyWorkspaceRuntimeEvent = async (
       pendingByPrompt?.delete(event.promptMessageId)
       if (pendingByPrompt?.size === 0) pendingArtifactTurnUsageBySession.delete(event.sessionId)
     }
-    if (wasFinalized) scheduleAutoReview(event.sessionId)
+    if (wasFinalized) scheduleAutoReview(event.sessionId, dependencies.saveSession)
     return wasFinalized
   }
 

@@ -1,22 +1,26 @@
-import { createHmac, randomBytes } from 'node:crypto'
-
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
 import {
   classifyCustomMcpFailure,
+  hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
   toCustomMcpConfig,
   type CustomMcpFailureAvailability
 } from './custom-mcp-bootstrap'
 import { McpToolCallError, type CustomMcpServerConfig } from './mcp-client-manager'
-import type { ConnectorCredentials, ToolDescriptor } from './types'
+import type { ConnectorCredentialId, ConnectorCredentials, ToolDescriptor } from './types'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
+import { customServerSecurityFingerprint } from '../settings/custom-server-identity'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { ConnectorPermissionBroker } from '../permission-grants/connector-broker'
 import type { ConnectorPermissionRequest } from '../permission-grants/connector-broker'
 import type { PermissionGrantScope } from '../../shared/permission-grants'
 import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import {
+  CONNECTOR_TOOL_PATTERN_MAX_LENGTH,
+  CONNECTOR_TOOL_RULE_MAX_COUNT,
+  type SpecialistView
+} from '../../shared/specialist'
 
 type McpClientManagerLike = {
   listTools(config: CustomMcpServerConfig, signal?: AbortSignal): Promise<Array<{ name: string }>>
@@ -49,9 +53,19 @@ type ConnectorServiceDeps = {
       // open the right conversation.
       sessionId?: string
       availableScopes: ConnectorApprovalScope[]
+      approvalTarget?: NonNullable<ConnectorPermissionRequest['approvalTarget']>
     },
     signal?: AbortSignal
   ) => Promise<ApprovalDecision>
+  requestCredential?: (
+    info: {
+      credentialId: ConnectorCredentialId
+      connector: string
+      method: string
+      sessionId?: string
+    },
+    signal?: AbortSignal
+  ) => Promise<boolean>
   // Handlers for bundled tools that run privileged local code (e.g. write an artifact, open a preview)
   // instead of the read-only HTTP ParserEngine. Keyed by `${connector}/${method}`; invoked after the
   // same enable/policy/approval gate as any other bundled call. The call context carries the id of the
@@ -68,7 +82,7 @@ type ConnectorServiceDeps = {
   // Resolves the current specialist profile immediately before agent dispatch. This is intentionally
   // a function (rather than a session-start snapshot) so edited/deleted profiles take effect on the
   // next connector call.
-  resolveSpecialistProfile?: (specialistId: string) => Promise<SpecialistProfileView | undefined>
+  resolveSpecialistProfile?: (specialistId: string) => Promise<SpecialistView | undefined>
   onCustomServerAvailabilityChanged?: (
     serverId: string,
     availability: CustomMcpFailureAvailability | undefined
@@ -94,6 +108,11 @@ type ConnectorAccess = {
   specialistScoped: boolean
 }
 
+type BundledAuthorization = {
+  connectors: StoredConnectors | undefined
+  requireApprovalSatisfied: boolean
+}
+
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
   rollback(): void
@@ -106,38 +125,39 @@ const customMcpFailureCategory = (
 const CUSTOM_MCP_RETRY_BASE_MS = 1_000
 const CUSTOM_MCP_RETRY_MAX_MS = 30_000
 
+const matchesToolGlob = (method: string, pattern: string): boolean => {
+  let methodIndex = 0
+  let patternIndex = 0
+  let starIndex = -1
+  let starMethodIndex = 0
+
+  while (methodIndex < method.length) {
+    if (pattern[patternIndex] === '?' || pattern[patternIndex] === method[methodIndex]) {
+      methodIndex += 1
+      patternIndex += 1
+    } else if (pattern[patternIndex] === '*') {
+      starIndex = patternIndex
+      starMethodIndex = methodIndex
+      patternIndex += 1
+    } else if (starIndex >= 0) {
+      patternIndex = starIndex + 1
+      starMethodIndex += 1
+      methodIndex = starMethodIndex
+    } else {
+      return false
+    }
+  }
+
+  while (pattern[patternIndex] === '*') patternIndex += 1
+  return patternIndex === pattern.length
+}
+
 type CustomMcpFailureState = {
   category: 'connector_unavailable' | 'connector_unauthenticated'
   failureCount: number
   retryAt?: number
   probing: boolean
 }
-
-const stableRecordEntries = (record: Record<string, string> | undefined): [string, string][] =>
-  Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))
-
-const customServerSecurityFingerprintKey = randomBytes(32)
-
-// Authenticates fields that can contain credentials. The process-local key lets the barrier compare
-// a configuration generation without retaining another plaintext copy or exposing an enumerable
-// digest. OAuth configuration contains only public metadata, so it remains outside the keyed digest.
-const customServerCredentialFingerprint = (server: StoredCustomMcpServer): string =>
-  createHmac('sha256', customServerSecurityFingerprintKey)
-    .update(
-      JSON.stringify([
-        server.transport,
-        server.command ?? null,
-        server.args ?? [],
-        server.url ?? null,
-        stableRecordEntries(server.envRefs ?? server.env),
-        stableRecordEntries(server.headerRefs ?? server.headers),
-        server.oauthClientSecretRef ?? null
-      ])
-    )
-    .digest('hex')
-
-const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
-  JSON.stringify([server.oauth ?? null, customServerCredentialFingerprint(server)])
 
 const unavailableConnectorMessage = (connector: string): string =>
   `Connector ${JSON.stringify(connector)} is unavailable. ` +
@@ -171,7 +191,11 @@ const connectorGateGuidance: Readonly<Record<string, string>> = {
   connector_runtime_unavailable:
     'The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open Science before retrying.',
   connector_configuration_changed:
-    'The Connector configuration changed before the external tool was called. Retry the exact same call once.'
+    'The Connector configuration changed before the external tool was called. Retry the exact same call once.',
+  credential_unavailable:
+    'One or more encrypted Connector credentials could not be read. Do not retry until the user re-enters them in Settings > Connectors.',
+  credential_required:
+    'A required credential was not configured. Do not retry until the user adds it in Settings > Credentials.'
 }
 
 const connectorGateMessage = (category: string): string => {
@@ -206,7 +230,11 @@ export class ConnectorService {
   private readonly customServerGenerations = new Map<string, number>()
   private readonly customServerBarriers = new Map<
     string,
-    { generation: number; expectedFingerprint?: string }
+    {
+      generation: number
+      expectedFingerprint?: string
+      expectedOAuthClientSecretRef?: string
+    }
   >()
   constructor(private readonly deps: ConnectorServiceDeps) {
     this.engine = deps.engine ?? new ParserEngine()
@@ -238,7 +266,8 @@ export class ConnectorService {
         if (barrier?.generation !== generation) return
         this.customServerBarriers.set(serverId, {
           generation,
-          expectedFingerprint: customServerSecurityFingerprint(server)
+          expectedFingerprint: customServerSecurityFingerprint(server),
+          expectedOAuthClientSecretRef: server.oauthClientSecretRef
         })
       },
       rollback: () => {
@@ -270,7 +299,7 @@ export class ConnectorService {
     const descriptor = getDescriptor(connector, method)
     const isBundled = descriptor !== undefined || ALL_CONNECTOR_IDS.includes(connector)
     if (isBundled) {
-      const access = await this.resolveAccess(connector, context, [connector], signal)
+      const access = await this.resolveAccess(connector, method, context, [connector], signal)
       return this.callBundled(connector, method, args, descriptor, context, access, signal)
     }
 
@@ -279,6 +308,7 @@ export class ConnectorService {
     const custom = customServers.find((server) => server.name === connector)
     const access = await this.resolveAccess(
       connector,
+      method,
       context,
       custom ? [custom.id, custom.name] : [connector],
       signal
@@ -294,6 +324,7 @@ export class ConnectorService {
 
   private async resolveAccess(
     connector: string,
+    method: string,
     context: ConnectorCallContext,
     aliases: readonly string[] = [connector],
     signal?: AbortSignal
@@ -314,11 +345,41 @@ export class ConnectorService {
     signal?.throwIfAborted()
     if (!profile || !profile.enabled) throw new ConnectorGateError('specialist_unavailable')
 
-    const allowed =
+    const capabilities =
+      profile.capabilityMode === 'full' ? profile.fullAccess : profile.selectedCapabilities
+    if (capabilities.connectorTools.length > CONNECTOR_TOOL_RULE_MAX_COUNT) {
+      throw new ConnectorGateError('specialist_capability_denied')
+    }
+    const connectorAllowed =
       profile.capabilityMode === 'full'
         ? !aliases.some((alias) => profile.fullAccess.excludedConnectorIds.includes(alias))
         : aliases.some((alias) => profile.selectedCapabilities.connectorIds.includes(alias))
-    if (!allowed) throw new ConnectorGateError('specialist_capability_denied')
+    const toolRules = capabilities.connectorTools.filter((rule) =>
+      aliases.includes(rule.connectorId)
+    )
+    const includedMethods = toolRules.flatMap((rule) => rule.includedMethods ?? [])
+    const excludedMethods = toolRules.flatMap((rule) => rule.excludedMethods ?? [])
+    const includePatterns = toolRules.flatMap((rule) =>
+      rule.includeToolsPattern === undefined ? [] : [rule.includeToolsPattern]
+    )
+    const excludePatterns = toolRules.flatMap((rule) =>
+      rule.excludeToolsPattern === undefined ? [] : [rule.excludeToolsPattern]
+    )
+    const invalidPattern = [...includePatterns, ...excludePatterns].some(
+      (pattern) => pattern.length === 0 || pattern.length > CONNECTOR_TOOL_PATTERN_MAX_LENGTH
+    )
+    const included =
+      includedMethods.includes(method) ||
+      includePatterns.some((pattern) => matchesToolGlob(method, pattern))
+    if (
+      !connectorAllowed ||
+      invalidPattern ||
+      ((includedMethods.length > 0 || includePatterns.length > 0) && !included) ||
+      excludedMethods.includes(method) ||
+      excludePatterns.some((pattern) => matchesToolGlob(method, pattern))
+    ) {
+      throw new ConnectorGateError('specialist_capability_denied')
+    }
 
     // A Specialist's configuration is independent from Main's enabled and Allow/Ask/Block settings.
     // Physical availability is still checked by the actual bundled/custom dispatch path below.
@@ -342,7 +403,7 @@ export class ConnectorService {
 
     validateToolArguments(descriptor, args)
 
-    const authorizedConnectors = access.bypassMainPolicy
+    let authorization = access.bypassMainPolicy
       ? undefined
       : await this.ensureAuthorized(
           connector,
@@ -362,7 +423,53 @@ export class ConnectorService {
       return signal ? localHandler(args, context, signal) : localHandler(args, context)
     }
 
-    const credentials = this.credentials(authorizedConnectors)
+    const credentialConnectors = authorization
+      ? authorization.connectors
+      : await this.currentConnectors()
+    signal?.throwIfAborted()
+    const credentialResult = await this.credentialsForDescriptor(
+      descriptor,
+      connector,
+      method,
+      context,
+      credentialConnectors,
+      signal
+    )
+    let credentials = credentialResult.credentials
+
+    // Collecting a credential can leave the call parked for minutes. Re-read the Specialist profile,
+    // or Main enablement and policy, so a concurrent access revocation wins while retaining a Once
+    // approval already granted to this exact Main call.
+    if (credentialResult.prompted && access.specialistScoped) {
+      await this.resolveAccess(connector, method, context, [connector], signal)
+      credentials = this.credentials(await this.currentConnectors())
+      signal?.throwIfAborted()
+      if (
+        descriptor.requiredCredential &&
+        !this.hasCredential(credentials, descriptor.requiredCredential)
+      ) {
+        throw new ConnectorGateError('credential_required')
+      }
+    }
+    if (credentialResult.prompted && !access.bypassMainPolicy) {
+      authorization = await this.ensureAuthorized(
+        connector,
+        connector,
+        [connector],
+        method,
+        args,
+        context,
+        signal,
+        authorization
+      )
+      credentials = this.credentials(authorization.connectors)
+      if (
+        descriptor.requiredCredential &&
+        !this.hasCredential(credentials, descriptor.requiredCredential)
+      ) {
+        throw new ConnectorGateError('credential_required')
+      }
+    }
     return signal
       ? this.engine.call(descriptor, args, credentials, signal)
       : this.engine.call(descriptor, args, credentials)
@@ -389,6 +496,9 @@ export class ConnectorService {
         'connector_disabled',
         disabledConnectorMessage(custom.displayName)
       )
+    }
+    if (!hasUsableCustomMcpCredentials(custom)) {
+      throw new ConnectorGateError('credential_unavailable')
     }
     if (!this.isCustomConfigRunnable(custom, customServers)) {
       throw new ConnectorGateError('connector_unavailable')
@@ -557,7 +667,8 @@ export class ConnectorService {
     if (!barrier) return generation
     if (
       barrier.expectedFingerprint === undefined ||
-      barrier.expectedFingerprint !== customServerSecurityFingerprint(custom)
+      barrier.expectedFingerprint !== customServerSecurityFingerprint(custom) ||
+      barrier.expectedOAuthClientSecretRef !== custom.oauthClientSecretRef
     ) {
       throw new ConnectorGateError('connector_configuration_changed')
     }
@@ -584,9 +695,10 @@ export class ConnectorService {
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext,
-    signal?: AbortSignal
-  ): Promise<StoredConnectors | undefined> {
-    let requireApprovalSatisfied = false
+    signal?: AbortSignal,
+    prior?: BundledAuthorization
+  ): Promise<BundledAuthorization> {
+    let requireApprovalSatisfied = prior?.requireApprovalSatisfied ?? false
     for (;;) {
       signal?.throwIfAborted()
       const connectors = await this.currentConnectors()
@@ -604,7 +716,9 @@ export class ConnectorService {
         connectors
       )
       const policyDecision = this.permissionBroker.preflight(request)
-      if (policyDecision === 'allow' || requireApprovalSatisfied) return connectors
+      if (policyDecision === 'allow' || requireApprovalSatisfied) {
+        return { connectors, requireApprovalSatisfied }
+      }
 
       await this.permissionBroker.authorize(request, policyDecision, { signal })
       requireApprovalSatisfied = true
@@ -646,8 +760,14 @@ export class ConnectorService {
           disabledConnectorMessage(current.displayName)
         )
       }
+      if (!hasUsableCustomMcpCredentials(current)) {
+        throw new ConnectorGateError('credential_unavailable')
+      }
       if (!this.isCustomConfigRunnable(current, customServers)) {
         throw new ConnectorGateError('connector_unavailable')
+      }
+      if (access.specialistScoped) {
+        await this.resolveAccess(current.name, method, context, [current.id, current.name], signal)
       }
 
       const request = this.authorizationRequest(
@@ -657,7 +777,17 @@ export class ConnectorService {
         method,
         args,
         context,
-        connectors
+        connectors,
+        {
+          connectorId: current.id,
+          connectorName: current.name,
+          displayName: current.displayName,
+          transport: current.transport,
+          target:
+            current.transport === 'stdio'
+              ? (current.command ?? '')
+              : new URL(current.url ?? '').origin
+        }
       )
       if (access.bypassMainPolicy) {
         return { custom: current, request, requireApprovalSatisfied }
@@ -688,6 +818,44 @@ export class ConnectorService {
     return this.deps.getConnectorsFresh?.() ?? Promise.resolve(this.deps.getConnectors())
   }
 
+  private async credentialsForDescriptor(
+    descriptor: ToolDescriptor,
+    connector: string,
+    method: string,
+    context: ConnectorCallContext,
+    connectors: StoredConnectors | undefined,
+    signal?: AbortSignal
+  ): Promise<{ credentials: ConnectorCredentials; prompted: boolean }> {
+    let credentials = this.credentials(connectors)
+    const credentialId = descriptor.requiredCredential
+    if (!credentialId || this.hasCredential(credentials, credentialId)) {
+      return { credentials, prompted: false }
+    }
+    if (!this.deps.requestCredential) throw new ConnectorGateError('credential_required')
+
+    const configured = await this.deps.requestCredential(
+      {
+        credentialId,
+        connector,
+        method,
+        ...(context.sessionId ? { sessionId: context.sessionId } : {})
+      },
+      signal
+    )
+    signal?.throwIfAborted()
+    if (!configured) throw new ConnectorGateError('credential_required')
+
+    credentials = this.credentials(await this.currentConnectors())
+    if (!this.hasCredential(credentials, credentialId)) {
+      throw new ConnectorGateError('credential_required')
+    }
+    return { credentials, prompted: true }
+  }
+
+  private hasCredential(credentials: ConnectorCredentials, id: ConnectorCredentialId): boolean {
+    return id === 'openalex' && Boolean(credentials.openAlexApiKey)
+  }
+
   private authorizationRequest(
     connectorLabel: string,
     capabilityServerId: string,
@@ -695,7 +863,8 @@ export class ConnectorService {
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext,
-    connectors: StoredConnectors | undefined = this.deps.getConnectors()
+    connectors: StoredConnectors | undefined = this.deps.getConnectors(),
+    approvalTarget?: ConnectorPermissionRequest['approvalTarget']
   ): ConnectorPermissionRequest {
     return {
       capability: { kind: 'mcp_tool', key: `mcp:${capabilityServerId}/${method}` },
@@ -703,6 +872,7 @@ export class ConnectorService {
       connector: connectorLabel,
       method,
       args,
+      ...(approvalTarget ? { approvalTarget } : {}),
       policy: {
         aliases: policyIds,
         autoAllowIds: connectors?.autoAllowIds,
@@ -712,9 +882,11 @@ export class ConnectorService {
     }
   }
 
-  private credentials(
-    c: StoredConnectors | undefined = this.deps.getConnectors()
-  ): ConnectorCredentials {
-    return { ncbiEmail: c?.contactEmail, ncbiApiKey: this.deps.resolveApiKey(c?.ncbiApiKeyRef) }
+  private credentials(c: StoredConnectors | undefined): ConnectorCredentials {
+    return {
+      ncbiEmail: c?.contactEmail,
+      ncbiApiKey: this.deps.resolveApiKey(c?.ncbiApiKeyRef),
+      openAlexApiKey: this.deps.resolveApiKey(c?.openAlexApiKeyRef)
+    }
   }
 }

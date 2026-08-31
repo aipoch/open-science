@@ -19,7 +19,7 @@ describe('compute permission grant adapter', () => {
     const registry = { remember } as unknown as PermissionGrantRegistry
     const adapter = createComputePermissionGrantAdapter(registry)
 
-    await adapter.remember(context, 'conversation')
+    await adapter.remember(context, 'session')
     await adapter.remember(context, 'global')
 
     expect(remember).toHaveBeenNthCalledWith(1, {

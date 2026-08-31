@@ -1,4 +1,8 @@
-import type { ComputeApprovalDecision, DeleteComputeHostRequest } from '../../shared/compute'
+import {
+  normalizeComputeApprovalDecision,
+  type ComputeApprovalDecisionInput,
+  type DeleteComputeHostRequest
+} from '../../shared/compute'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
@@ -31,6 +35,7 @@ type ComputeCommandOwner = Pick<
   | 'detailsGet'
   | 'detailsSave'
   | 'scratchSet'
+  | 'scratchClear'
   | 'concurrencySet'
   | 'listDir'
   | 'download'
@@ -39,8 +44,10 @@ type ComputeCommandOwner = Pick<
   | 'approvalReplay'
   | 'approvalReplayPending'
   | 'jobsList'
+  | 'jobsCancel'
   | 'jobsPendingNotification'
   | 'jobsMarkConsumed'
+  | 'jobsTransitionAnalysis'
 >
 
 type ComputeBookmarksOwner = Readonly<{
@@ -146,6 +153,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'scratchSet'>,
     OwnerResult<ComputeCommandOwner, 'scratchSet'>
   >('compute:scratch:set'),
+  scratchClear: defineApplicationCommand<
+    'compute:scratch:clear',
+    OwnerArgs<ComputeCommandOwner, 'scratchClear'>,
+    OwnerResult<ComputeCommandOwner, 'scratchClear'>
+  >('compute:scratch:clear'),
   concurrencySet: defineApplicationCommand<
     'compute:concurrency:set',
     OwnerArgs<ComputeCommandOwner, 'concurrencySet'>,
@@ -168,7 +180,7 @@ const computeApplicationCommands = Object.freeze({
   >('compute:reveal-in-folder'),
   approvalRespond: defineApplicationCommand<
     'compute:approval-respond',
-    readonly [{ id: string; decision: ComputeApprovalDecision }],
+    readonly [{ id: string; decision: ComputeApprovalDecisionInput }],
     OwnerResult<ComputeCommandOwner, 'approvalRespond'>
   >('compute:approval-respond'),
   approvalReplay: defineApplicationCommand<
@@ -186,6 +198,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'jobsList'>,
     OwnerResult<ComputeCommandOwner, 'jobsList'>
   >('compute:jobs:list'),
+  jobsCancel: defineApplicationCommand<
+    'compute:jobs:cancel',
+    OwnerArgs<ComputeCommandOwner, 'jobsCancel'>,
+    OwnerResult<ComputeCommandOwner, 'jobsCancel'>
+  >('compute:jobs:cancel'),
   jobsPendingNotification: defineApplicationCommand<
     'compute:jobs:pending-notification',
     OwnerArgs<ComputeCommandOwner, 'jobsPendingNotification'>,
@@ -196,6 +213,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'jobsMarkConsumed'>,
     OwnerResult<ComputeCommandOwner, 'jobsMarkConsumed'>
   >('compute:jobs:mark-consumed'),
+  jobsTransitionAnalysis: defineApplicationCommand<
+    'compute:jobs:transition-analysis',
+    OwnerArgs<ComputeCommandOwner, 'jobsTransitionAnalysis'>,
+    OwnerResult<ComputeCommandOwner, 'jobsTransitionAnalysis'>
+  >('compute:jobs:transition-analysis'),
   enabledHostsGet: defineApplicationCommand<
     'compute:enabled-hosts:get',
     OwnerArgs<ComputeEnabledHostsOwner, 'get'>,
@@ -246,8 +268,10 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.hostSelectedSet,
   computeApplicationCommands.get,
   computeApplicationCommands.jobsList,
+  computeApplicationCommands.jobsCancel,
   computeApplicationCommands.jobsMarkConsumed,
   computeApplicationCommands.jobsPendingNotification,
+  computeApplicationCommands.jobsTransitionAnalysis,
   computeApplicationCommands.list,
   computeApplicationCommands.listDir,
   computeApplicationCommands.passwordCapability,
@@ -258,6 +282,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.approvalRespond,
   computeApplicationCommands.revealInFolder,
   computeApplicationCommands.scratchSet,
+  computeApplicationCommands.scratchClear,
   computeApplicationCommands.sshConfigAliases
 ] as const)
 
@@ -340,6 +365,7 @@ const registerComputeApplicationCommands = (
       'compute:details:save': ({ args }) =>
         dependencies.compute.detailsSave(args[0], args[1], args[2], args[3]),
       'compute:scratch:set': ({ args }) => dependencies.compute.scratchSet(args[0], args[1]),
+      'compute:scratch:clear': ({ args }) => dependencies.compute.scratchClear(args[0]),
       'compute:concurrency:set': ({ args }) =>
         dependencies.compute.concurrencySet(args[0], args[1]),
       'compute:list-dir': ({ args }) =>
@@ -358,7 +384,10 @@ const registerComputeApplicationCommands = (
         if (!canSatisfyHumanApproval(callerContext)) {
           throw new Error('Only a current human caller can respond to compute approval requests.')
         }
-        return dependencies.compute.approvalRespond(args[0].id, args[0].decision)
+        return dependencies.compute.approvalRespond(
+          args[0].id,
+          normalizeComputeApprovalDecision(args[0].decision)
+        )
       },
       'compute:approval-replay': ({ args, callerContext }) => {
         if (!canSatisfyHumanApproval(callerContext)) {
@@ -373,10 +402,13 @@ const registerComputeApplicationCommands = (
         return dependencies.compute.approvalReplayPending()
       },
       'compute:jobs:list': ({ args }) => dependencies.compute.jobsList(args[0]),
+      'compute:jobs:cancel': ({ args }) => dependencies.compute.jobsCancel(args[0]),
       'compute:jobs:pending-notification': ({ args }) =>
         dependencies.compute.jobsPendingNotification(args[0]),
       'compute:jobs:mark-consumed': ({ args }) =>
         dependencies.compute.jobsMarkConsumed(args[0], args[1]),
+      'compute:jobs:transition-analysis': ({ args }) =>
+        dependencies.compute.jobsTransitionAnalysis(args[0]),
       'compute:enabled-hosts:get': ({ args }) => dependencies.enabledHosts.get(args[0]),
       'compute:enabled-hosts:set': ({ args }) =>
         commitComputeHostAccess(() => dependencies.enabledHosts.set(args[0], args[1])),

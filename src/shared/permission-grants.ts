@@ -118,6 +118,8 @@ export type PermissionGrantView = {
 export type PermissionGrantSnapshot = {
   version: number
   incompleteStores: Array<'projects' | 'sessions' | 'connector_policy'>
+  // Added as an optional renderer capability so older hosts remain source-compatible.
+  missingDefaultGlobalGrantCount?: number
   grants: PermissionGrantView[]
   counts: {
     all: number
@@ -142,6 +144,10 @@ export type PermissionGrantUndoExtendRequest = {
 export type PermissionGrantMutationView = PermissionGrantSnapshot & {
   receipt?: PermissionGrantUndoReceipt
   conflicts: PermissionGrantMutationConflict[]
+}
+
+export type PermissionGrantDefaultsRestoreView = PermissionGrantSnapshot & {
+  restoredCount: number
 }
 
 export type PermissionGrantsChangedEvent = { revision: number }

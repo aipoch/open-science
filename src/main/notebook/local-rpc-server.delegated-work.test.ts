@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  createArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from '../../shared/artifact-provenance'
+import type { HostArtifactCatalogItem } from '../../shared/project-files'
+import { createUploadVersionReference } from '../../shared/uploads'
 import { createDeterministicDelegateExecution } from '../delegation/deterministic-execution'
 import { createInMemoryDelegatedWorkRecords } from '../delegation/durable-delegated-work'
 import { createTestDurableDelegatedWork as createDurableDelegatedWork } from '../delegation/durable-delegated-work-test-fixture'
@@ -13,6 +19,24 @@ afterEach(async () => {
 })
 
 describe('authenticated delegatedWorkCall route', () => {
+  const catalogItem = (
+    overrides: Partial<HostArtifactCatalogItem> = {}
+  ): HostArtifactCatalogItem => ({
+    source: 'artifact',
+    sourceFileId: 'artifact-1',
+    versionId: 'artifact-version-1',
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    filename: 'result.csv',
+    sizeBytes: 12,
+    sortAtMs: 1,
+    createdAt: '2026-08-28T00:00:00.000Z',
+    sourceFileCreatedAt: '2026-08-28T00:00:00.000Z',
+    rootFrameId: 'root-frame',
+    agentFrameId: 'child-frame',
+    ...overrides
+  })
+
   it('lets only a delegated control-kernel capability submit output for its bound Attempt', async () => {
     const submitOutput = vi.fn(async () => ({ accepted: true as const }))
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
@@ -311,6 +335,312 @@ describe('authenticated delegatedWorkCall route', () => {
     connection.release()
   })
 
+  it('canonicalizes bare same-Session immutable Version ids before delegated admission', async () => {
+    const delegate = vi.fn(async () => ({ kind: 'receipts' as const, children: [] }))
+    const readHostArtifactCatalog = vi.fn(
+      async (request: {
+        projectId: string
+        versionId?: string
+        finalizedArtifactsOnly?: boolean
+      }): Promise<HostArtifactCatalogItem[]> => {
+        expect(request).toMatchObject({
+          projectId: 'project-1',
+          finalizedArtifactsOnly: true
+        })
+        if (request.versionId === 'artifact-version-1') return [catalogItem()]
+        if (request.versionId === 'upload-version-1') {
+          return [
+            catalogItem({
+              source: 'upload',
+              sourceFileId: 'upload-1',
+              versionId: 'upload-version-1',
+              filename: 'input.csv',
+              rootFrameId: null,
+              agentFrameId: null
+            })
+          ]
+        }
+        if (request.versionId === 'child-artifact-version-1') {
+          return [
+            catalogItem({
+              sourceFileId: 'child-artifact-1',
+              versionId: 'child-artifact-version-1',
+              agentFrameId: 'new-child-frame'
+            })
+          ]
+        }
+        return []
+      }
+    )
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: { delegate },
+      delegationInputCatalog: { readHostArtifactCatalog }
+    })
+    const connection = await server.issueControlConnection('session-1', 'project-1', 'root-frame')
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-call-1',
+      originatingUserMessageId: 'origin-message-1'
+    })
+    const legacyArtifact = createArtifactVersionLocator({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'legacy-artifact',
+      versionId: 'legacy-version'
+    })
+    const legacyUpload = createUploadVersionReference('legacy-upload-version', {
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+
+    const response = await fetch(connection.endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        method: 'delegatedWorkCall',
+        params: {
+          request: {
+            task: 'Use exact immutable inputs',
+            name: 'Exact inputs',
+            inputs: [
+              'artifact-version-1',
+              'upload-version-1',
+              'artifact-version-1',
+              'child-artifact-version-1',
+              legacyArtifact,
+              legacyUpload
+            ]
+          },
+          options: { wait: false }
+        }
+      })
+    })
+
+    expect(response.status).toBe(200)
+    expect(delegate).toHaveBeenCalledWith(
+      expect.any(Object),
+      {
+        task: 'Use exact immutable inputs',
+        name: 'Exact inputs',
+        inputs: [
+          createArtifactVersionLocator({
+            projectId: 'project-1',
+            appSessionId: 'session-1',
+            artifactId: 'artifact-1',
+            versionId: 'artifact-version-1'
+          }),
+          createUploadVersionReference('upload-version-1', {
+            projectId: 'project-1',
+            sessionId: 'session-1'
+          }),
+          createArtifactVersionLocator({
+            projectId: 'project-1',
+            appSessionId: 'session-1',
+            artifactId: 'artifact-1',
+            versionId: 'artifact-version-1'
+          }),
+          createArtifactVersionLocator({
+            projectId: 'project-1',
+            appSessionId: 'session-1',
+            artifactId: 'child-artifact-1',
+            versionId: 'child-artifact-version-1'
+          }),
+          legacyArtifact,
+          legacyUpload
+        ]
+      },
+      { wait: false }
+    )
+    expect(readHostArtifactCatalog).toHaveBeenCalledTimes(3)
+    endInvocation()
+    connection.release()
+  })
+
+  it('rejects invalid request semantics before resolving bare Version ids', async () => {
+    const delegate = vi.fn(async () => ({ kind: 'receipts' as const, children: [] }))
+    const readHostArtifactCatalog = vi.fn(async (): Promise<HostArtifactCatalogItem[]> => [])
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: { delegate },
+      delegationInputCatalog: { readHostArtifactCatalog }
+    })
+    const connection = await server.issueControlConnection('session-1', 'project-1', 'root-frame')
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-call-1',
+      originatingUserMessageId: 'origin-message-1'
+    })
+
+    for (const request of [
+      { task: '   ', name: 'Bad task', inputs: ['artifact-version-1'] },
+      { task: 'Missing name', inputs: ['artifact-version-1'] },
+      { task: 'Empty name', name: '   ', inputs: ['artifact-version-1'] },
+      { task: 'Empty input', name: 'Bad input', inputs: [''] },
+      { task: 'Wrong input shape', name: 'Bad input', inputs: 'artifact-version-1' }
+    ]) {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'delegatedWorkCall',
+          params: { request, options: { wait: false } }
+        })
+      })
+
+      expect(response.status).toBe(500)
+    }
+
+    expect(readHostArtifactCatalog).not.toHaveBeenCalled()
+    expect(delegate).not.toHaveBeenCalled()
+    endInvocation()
+    connection.release()
+  })
+
+  it('feeds a canonicalized bare Version id through real durable admission validation', async () => {
+    const session = { projectId: 'project-1', sessionId: 'session-1' }
+    const execution = createDeterministicDelegateExecution()
+    const records = createInMemoryDelegatedWorkRecords({
+      session,
+      rootFrameId: 'root-frame',
+      originMessageId: 'origin-message-1'
+    })
+    const validated: string[] = []
+    const work = createDurableDelegatedWork({
+      execution,
+      records,
+      validateInput: async (identity) => {
+        validated.push(identity)
+        const locator = parseArtifactVersionLocator(identity)
+        return (
+          locator?.projectId === session.projectId &&
+          locator.appSessionId === session.sessionId &&
+          locator.versionId === 'artifact-version-1'
+        )
+      }
+    })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: work,
+      delegationInputCatalog: {
+        readHostArtifactCatalog: async () => [catalogItem()]
+      }
+    })
+    const connection = await server.issueControlConnection(
+      session.sessionId,
+      session.projectId,
+      'root-frame'
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-call-1',
+      originatingUserMessageId: 'origin-message-1'
+    })
+
+    const response = await fetch(connection.endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        method: 'delegatedWorkCall',
+        params: {
+          request: {
+            task: 'Validate canonical input',
+            name: 'Canonical input',
+            inputs: ['artifact-version-1']
+          },
+          options: { wait: false }
+        }
+      })
+    })
+
+    expect(response.status).toBe(200)
+    expect(validated).toEqual([
+      createArtifactVersionLocator({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: 'artifact-1',
+        versionId: 'artifact-version-1'
+      })
+    ])
+    expect((await records.snapshot()).records).toHaveLength(1)
+    await expect.poll(() => execution.controls()).toHaveLength(1)
+    execution.controls()[0].accept()
+    execution.controls()[0].complete('done')
+    endInvocation()
+    connection.release()
+  })
+
+  it('rejects mutable, unavailable, pending, cross-scope, and colliding bare ids before delegation', async () => {
+    const delegate = vi.fn(async () => ({ kind: 'receipts' as const, children: [] }))
+    const readHostArtifactCatalog = vi.fn(
+      async (request: { versionId?: string }): Promise<HostArtifactCatalogItem[]> => {
+        if (request.versionId === 'other-session-version') {
+          return [catalogItem({ versionId: 'other-session-version', sessionId: 'session-2' })]
+        }
+        if (request.versionId === 'collision') {
+          throw new Error(
+            'Artifact Version id is ambiguous across generated Artifacts and Uploads.'
+          )
+        }
+        return []
+      }
+    )
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: { delegate },
+      delegationInputCatalog: { readHostArtifactCatalog }
+    })
+    const connection = await server.issueControlConnection('session-1', 'project-1', 'root-frame')
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-call-1',
+      originatingUserMessageId: 'origin-message-1'
+    })
+
+    for (const identity of [
+      'artifact-1',
+      '/tmp/result.csv',
+      'random-id',
+      'pending-artifact-version',
+      'other-project-version',
+      'other-session-version',
+      'collision'
+    ]) {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'delegatedWorkCall',
+          params: {
+            request: { task: 'Must reject atomically', name: 'Reject input', inputs: [identity] },
+            options: { wait: false }
+          }
+        })
+      })
+      expect(response.status).toBe(500)
+    }
+
+    expect(delegate).not.toHaveBeenCalled()
+    endInvocation()
+    connection.release()
+  })
+
   it('rejects malformed or over-capacity arrays at the authenticated host seam', async () => {
     const delegate = vi.fn(async () => ({ kind: 'receipts' as const, children: [] }))
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
@@ -466,7 +796,7 @@ describe('authenticated delegatedWorkCall route', () => {
 
     expect(response.status).toBe(200)
     expect(delegate).toHaveBeenCalledWith(
-      expect.objectContaining({ parentSpecialistProfileId: 'trusted-specialist' }),
+      expect.objectContaining({ parentSpecialistId: 'trusted-specialist' }),
       { task: 'Inherit trusted identity', name: 'Inherit trusted identity' },
       {}
     )

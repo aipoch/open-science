@@ -495,7 +495,12 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
             ? mergePersistedRuntimeIdentityProjection(existing, session, {
                 // A continuation removes completedAt without changing the Frame's createdAt, so
                 // runtime revision—not Frame timestamps—owns lifecycle.
-                incomingOwnsFrameConflicts: runtimeAdvanced
+                incomingOwnsFrameConflicts: runtimeAdvanced,
+                // A delayed delegated completion can advance its own runtime revision without
+                // owning newer root-session state such as Reading context.
+                incomingOwnsRuntimeContext: !(
+                  existing.updatedAt > session.updatedAt && session.runtimeContext?.delegatedWork
+                )
               })
             : {}),
           ...(filesAdvanced || fileIdentityMerge

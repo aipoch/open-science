@@ -54,6 +54,7 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     detailsGet: vi.fn(async () => ({ doc: '# Cluster', isSkeleton: false })),
     detailsSave: vi.fn(async () => undefined),
     scratchSet: vi.fn(async () => undefined),
+    scratchClear: vi.fn(async () => undefined),
     concurrencySet: vi.fn(async () => undefined),
     listDir: vi.fn(async () => ({ path: '/work', entries: [] })),
     download: vi.fn(async () => ({ path: '/tmp/result.csv', name: 'result.csv', size: 10 })),
@@ -63,7 +64,8 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     approvalReplayPending: vi.fn(() => undefined),
     jobsList: vi.fn(async () => []),
     jobsPendingNotification: vi.fn(async () => []),
-    jobsMarkConsumed: vi.fn(async () => undefined)
+    jobsMarkConsumed: vi.fn(async () => undefined),
+    jobsTransitionAnalysis: vi.fn(async () => [])
   } as unknown as ComputeCommandOwner,
   bookmarks: {
     get: vi.fn(async () => ['/work']),
@@ -92,14 +94,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 28 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 33 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(30)
+    expect(publicComputeChannels).toHaveLength(33)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -178,6 +180,10 @@ describe('Compute application commands', () => {
       invocation(['ssh:cluster', '/scratch'])
     )
     await router.dispatcher.invoke(
+      computeApplicationCommands.scratchClear,
+      invocation(['ssh:cluster'])
+    )
+    await router.dispatcher.invoke(
       computeApplicationCommands.concurrencySet,
       invocation(['ssh:cluster', 8])
     )
@@ -211,6 +217,16 @@ describe('Compute application commands', () => {
     await router.dispatcher.invoke(
       computeApplicationCommands.jobsMarkConsumed,
       invocation(['session-1', ['job-1']])
+    )
+    const analysisTransition = {
+      sessionId: 'session-1',
+      jobIds: ['job-1'],
+      messageId: 'analysis-message-1',
+      state: 'dispatched' as const
+    }
+    await router.dispatcher.invoke(
+      computeApplicationCommands.jobsTransitionAnalysis,
+      invocation([analysisTransition])
     )
     await router.dispatcher.invoke(
       computeApplicationCommands.enabledHostsGet,
@@ -252,6 +268,7 @@ describe('Compute application commands', () => {
       'old',
       'user'
     )
+    expect(dependencies.compute.scratchClear).toHaveBeenCalledWith('ssh:cluster')
     expect(dependencies.compute.download).toHaveBeenCalledWith(
       'ssh:cluster',
       '/work/result.csv',
@@ -262,6 +279,7 @@ describe('Compute application commands', () => {
     expect(dependencies.compute.approvalReplayPending).toHaveBeenCalledOnce()
     expect(dependencies.compute.jobsList).toHaveBeenCalledWith(filter)
     expect(dependencies.compute.jobsMarkConsumed).toHaveBeenCalledWith('session-1', ['job-1'])
+    expect(dependencies.compute.jobsTransitionAnalysis).toHaveBeenCalledWith(analysisTransition)
     expect(dependencies.enabledHosts.set).toHaveBeenCalledWith('session-1', ['ssh:cluster'])
     expect(enabledHostsResult).toEqual(session)
     expect(dependencies.enabledHosts.setHostEnabled).toHaveBeenCalledWith(
@@ -281,6 +299,19 @@ describe('Compute application commands', () => {
       originClientId: 'main:enabled-compute-hosts'
     })
     expect(dependencies.bookmarks.set).toHaveBeenCalledWith('ssh:cluster', ['/work'])
+  })
+
+  it('normalizes the legacy conversation approval scope at the command boundary', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerComputeApplicationCommands(router.registrar, dependencies)
+
+    await router.dispatcher.invoke(
+      computeApplicationCommands.approvalRespond,
+      invocation([{ id: 'approval-1', decision: 'conversation' }])
+    )
+
+    expect(dependencies.compute.approvalRespond).toHaveBeenCalledWith('approval-1', 'session')
   })
 
   it('serializes RemoteFsError details for both remote filesystem commands', async () => {

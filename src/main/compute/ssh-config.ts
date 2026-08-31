@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { assertSafeSshAlias } from './remote-path-security'
+
 // Pure parser: turns the text of a ~/.ssh/config into the list of concrete Host aliases a user can
 // register as a compute provider. It intentionally does NOT resolve HostName/User/etc. — the real
 // connection details are resolved later via `ssh -G <alias>` (see design.md §1). Keeping this a pure
@@ -19,6 +21,15 @@ import { join } from 'node:path'
 // True when a token is an OpenSSH pattern rather than a concrete, connectable alias.
 const isPatternToken = (token: string): boolean =>
   token.includes('*') || token.includes('?') || token.startsWith('!')
+
+const isSafeAlias = (token: string): boolean => {
+  try {
+    assertSafeSshAlias(token)
+    return true
+  } catch {
+    return false
+  }
+}
 
 // Strips a trailing `# ...` comment and surrounding whitespace from a raw config line.
 const stripComment = (line: string): string => {
@@ -47,7 +58,7 @@ export const parseSshConfigHostAliases = (configText: string): string[] => {
     if (keyword !== 'host') continue
 
     for (const token of rest.split(/\s+/)) {
-      if (token === '' || isPatternToken(token)) continue
+      if (token === '' || isPatternToken(token) || !isSafeAlias(token)) continue
       if (seen.has(token)) continue
       seen.add(token)
       aliases.push(token)

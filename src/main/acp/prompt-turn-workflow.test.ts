@@ -687,6 +687,7 @@ describe('AcpPromptTurnWorkflow', () => {
       return { contextReset: true }
     })
     const turn = request()
+    turn.memoryEnabled = false
     turn.resumeFallback = { historyPreamble: 'restored transcript' }
 
     await harness.workflow.run(turn, { kind: 'user' })
@@ -696,7 +697,8 @@ describe('AcpPromptTurnWorkflow', () => {
       sessionId: 's1',
       cwd: '/session',
       projectId: 'project-1',
-      permissionProfile: 'ask'
+      permissionProfile: 'ask',
+      memoryEnabled: false
     })
     expect(turn).toMatchObject({ contextReset: true, historyPreamble: 'restored transcript' })
     expect(harness.executor.mock.calls[0][0].session).toBe(reloaded)

@@ -18,11 +18,16 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
 import { useOpenSideChatParentSessionIds } from './use-side-chat-controller'
-import { enqueueQueuedMessage, queueBlocksImmediateSend } from './workspace-message-queue-admission'
+import {
+  enqueueApplicationMessage,
+  enqueueQueuedMessage,
+  queueBlocksImmediateSend
+} from './workspace-message-queue-admission'
 import { drainQueuedSessions, sendQueuedItemNow } from './workspace-message-queue-drain'
 import {
   WorkspaceMessageQueueOwner,
   type MessageQueueAdmission,
+  type ApplicationMessageQueueAdmission,
   type MessageQueuePhase,
   type WorkspaceMessageQueueControllerOptions
 } from './workspace-message-queue-owner'
@@ -42,6 +47,7 @@ import {
 
 type WorkspaceMessageQueueController = {
   items: MessageQueueItemView[]
+  hasPendingWork: boolean
   announcement: string
   actions: {
     move: (itemId: string, direction: 'up' | 'down') => void
@@ -52,6 +58,9 @@ type WorkspaceMessageQueueController = {
   }
   lifecycle: {
     enqueue: (admission: MessageQueueAdmission) => boolean
+    enqueueApplication: (
+      admission: ApplicationMessageQueueAdmission
+    ) => Promise<{ sessionId: string; messageId: string } | undefined>
     blocksImmediateSend: (sessionId: string) => boolean
   }
 }
@@ -73,6 +82,23 @@ const useProvidedWorkspaceMessageQueueOwner = (): WorkspaceMessageQueueOwner => 
   if (!owner) throw new Error('Workspace message queue provider is missing.')
   return owner
 }
+
+const useWorkspaceApplicationMessageAdmission =
+  (): WorkspaceMessageQueueController['lifecycle']['enqueueApplication'] => {
+    const owner = useProvidedWorkspaceMessageQueueOwner()
+    return useCallback(
+      (admission: ApplicationMessageQueueAdmission) => {
+        const currentSession = useSessionStore
+          .getState()
+          .sessions.find((session) => session.id === admission.session.id)
+        return enqueueApplicationMessage(owner, {
+          ...admission,
+          session: currentSession ?? admission.session
+        })
+      },
+      [owner]
+    )
+  }
 
 const WorkspaceMessageQueueProvider = ({ children }: PropsWithChildren): ReactElement => {
   const [owner] = useState(() => new WorkspaceMessageQueueOwner())
@@ -96,47 +122,54 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
   const loadSpecialists = useSpecialistStore((state) => state.load)
   const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
   const projects = useProjectStore((state) => state.projects)
-  useLayoutEffect(() => {
-    owner.updateRuntime({
-      promptInFlightSessionIds: runtime.promptInFlightSessionIds,
-      sendPreparationInFlightSessionIds: runtime.sendPreparationInFlightSessionIds,
-      saveAsSkillInFlightSessionIds: runtime.saveAsSkillInFlightSessionIds,
-      runtime,
-      isBarrierInFlight: isWorkspaceSpecialistBarrierInFlight,
-      isSpecialistReady: (sessionId) => {
-        const session = useSessionStore
-          .getState()
-          .sessions.find((candidate) => candidate.id === sessionId)
-        if (!session) return false
-        if (session.specialistBindingPending === true) return false
-        if (session.specialistId === undefined) return true
-        if (!specialistCatalogLoaded) {
-          void loadSpecialists()
-          return false
-        }
-        return specialistItems.some(
-          (item) => item.kind === 'custom' && item.enabled && item.id === session.specialistId
-        )
-      },
-      isSideChatOpen: (sessionId) => openSideChatParentSessionIds.has(sessionId),
-      hasPendingPermissionRequest: (sessionId) =>
-        runtime.pendingPermissions.some((request) => request.sessionId === sessionId),
-      isProjectActive: (projectId) =>
-        projects.some((project) => project.id === projectId && project.archivedAt === undefined),
-      abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
-      getSession: (sessionId) =>
-        useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
-      subscribeSessionChanges: useSessionStore.subscribe
-    })
-  }, [
-    loadSpecialists,
-    openSideChatParentSessionIds,
-    owner,
-    projects,
+  const fallbackOptionsRef = useRef<WorkspaceMessageQueueControllerOptions>(undefined as never)
+  const runtimeOptions: WorkspaceMessageQueueControllerOptions = {
+    activeSession: undefined,
+    promptInFlightSessionIds: runtime.promptInFlightSessionIds,
+    sendPreparationInFlightSessionIds: runtime.sendPreparationInFlightSessionIds,
+    saveAsSkillInFlightSessionIds: runtime.saveAsSkillInFlightSessionIds,
     runtime,
-    specialistCatalogLoaded,
-    specialistItems
-  ])
+    composer: {
+      setError: () => undefined,
+      restoreQueuedDraft: () => false,
+      discardSnapshot: () => undefined
+    },
+    isBarrierInFlight: isWorkspaceSpecialistBarrierInFlight,
+    isPresentationRevealing: () => false,
+    isSpecialistReady: (sessionId) => {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session) return false
+      if (session.specialistBindingPending === true) return false
+      if (session.specialistId === undefined) return true
+      if (!specialistCatalogLoaded) {
+        void loadSpecialists()
+        return false
+      }
+      return specialistItems.some(
+        (item) => item.kind === 'custom' && item.enabled && item.id === session.specialistId
+      )
+    },
+    isSideChatOpen: (sessionId) => openSideChatParentSessionIds.has(sessionId),
+    hasPendingPermissionRequest: (sessionId) =>
+      runtime.pendingPermissions.some((request) => request.sessionId === sessionId),
+    isProjectActive: (projectId) =>
+      projects.some((project) => project.id === projectId && project.archivedAt === undefined),
+    abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
+    getSession: (sessionId) =>
+      useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
+    subscribeSessionChanges: useSessionStore.subscribe
+  }
+  useLayoutEffect(() => {
+    fallbackOptionsRef.current = runtimeOptions
+    owner.updateRuntime(runtimeOptions)
+  })
+  useLayoutEffect(() => {
+    const drain = (): void => drainQueuedSessions(owner, fallbackOptionsRef)
+    owner.setFallbackDrain(drain)
+    return () => owner.setFallbackDrain(undefined)
+  }, [owner])
   return null
 }
 
@@ -162,6 +195,14 @@ const useWorkspaceMessageQueueController = (
   )
   const blocksImmediateSend = useCallback(
     (sessionId: string): boolean => queueBlocksImmediateSend(owner, optionsRef.current, sessionId),
+    [owner]
+  )
+  const enqueueApplication = useCallback(
+    (admission: ApplicationMessageQueueAdmission) =>
+      enqueueApplicationMessage(owner, {
+        ...admission,
+        session: optionsRef.current.getSession(admission.session.id) ?? admission.session
+      }),
     [owner]
   )
   const drainQueues = useCallback((): void => {
@@ -203,20 +244,25 @@ const useWorkspaceMessageQueueController = (
   useEffect(() => drainQueues(), [drainQueues, options, queueSnapshot])
 
   return {
-    lifecycle: { enqueue, blocksImmediateSend },
+    lifecycle: { enqueue, enqueueApplication, blocksImmediateSend },
     actions: { move, moveTo, remove, edit, sendNow },
     items: projectActiveQueueItems(queueSnapshot, options.activeSession?.id),
+    hasPendingWork: Boolean(
+      options.activeSession && (queueSnapshot.get(options.activeSession.id)?.length ?? 0) > 0
+    ),
     announcement
   }
 }
 
 export {
   useWorkspaceMessageQueueController,
+  useWorkspaceApplicationMessageAdmission,
   WorkspaceMessageQueueProvider,
   WorkspaceMessageQueueRuntimeBridge
 }
 export type {
   MessageQueueAdmission,
+  ApplicationMessageQueueAdmission,
   MessageQueueItemView,
   MessageQueuePhase,
   WorkspaceMessageQueueController,

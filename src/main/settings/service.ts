@@ -31,6 +31,9 @@ import type {
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetOpenAlexCredentialRequest,
+  ValidateOpenAlexCredentialRequest,
+  OpenAlexCredentialValidation,
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
   SetSkillEnabledRequest,
@@ -145,12 +148,11 @@ export type SettingsServiceOptions = {
   // The framework-neutral Agents config dir. Codex and other compatible agents discover skills
   // under ~/.agents/skills; it is scanned regardless of the active framework.
   userAgentsDir?: string
-  // Bundled-skill source, injectable so tests can point at a seeded temp dir instead of app resources.
   skillRegistry?: SkillRegistry
-  // Writable personal/imported skill store, injectable so tests can use a temp storage root.
   userSkills?: UserSkillRepository
-  // GitHub request implementation, injectable so credential tests never hit the network.
   githubFetch?: FetchLike
+  // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
+  openAlexFetch?: typeof fetch
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
   // One-shot managed Claude installer, injectable so tests avoid real network/fs.
@@ -199,6 +201,7 @@ class SettingsService {
   private readonly log: Logger
   private customServerAuthenticator?: (serverId: string) => Promise<void>
   private customServerAuthenticationCanceller?: (serverId: string) => Promise<void>
+  private customServerDisconnector?: (serverId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -210,7 +213,7 @@ class SettingsService {
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
-    this.connectors = new ConnectorSettingsModule(this.repository)
+    this.connectors = new ConnectorSettingsModule(this.repository, options.openAlexFetch)
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     const userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skills = new SkillCatalogModule({
@@ -220,7 +223,7 @@ class SettingsService {
       userCodexDir,
       userAgentsDir: options.userAgentsDir ?? join(homedir(), '.agents'),
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
-      userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot),
+      userSkills: options.userSkills,
       githubFetch: options.githubFetch
     })
     const allocateSettingsIdSequence = createSettingsIdSequence()
@@ -447,8 +450,17 @@ class SettingsService {
     return (await this.preferences.getSnapshot()).notificationsEnabled
   }
 
+  async getShowNotificationContent(): Promise<boolean> {
+    return (await this.preferences.getSnapshot()).showNotificationContent
+  }
+
   async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
     await this.preferences.setNotificationsEnabled(enabled)
+    return this.getSettingsView()
+  }
+
+  async setShowNotificationContent(enabled: boolean): Promise<SettingsSnapshot> {
+    await this.preferences.setShowNotificationContent(enabled)
     return this.getSettingsView()
   }
 
@@ -513,17 +525,17 @@ class SettingsService {
   async listSkills(): Promise<SkillView[]> {
     return this.skills.listSkills()
   }
-
   // Internal main-process adapter used by host.skills. Unlike listSkills(), this includes bundled
   // internal Skills and returns source directories only to the trusted caller callback.
   async listHostSkills(): Promise<BundledSkill[]> {
     return this.skills.listHostSkills()
   }
-
+  registeredHelperCatalog(): ReturnType<SkillCatalogModule['registeredHelperCatalog']> {
+    return this.skills.registeredHelperCatalog()
+  }
   async listUserSkills(): Promise<BundledSkill[]> {
     return this.skills.listUserSkills()
   }
-
   async withHostSkillRead<T>(
     id: string,
     read: (skill: BundledSkill) => Promise<T>
@@ -694,6 +706,10 @@ class SettingsService {
   // Compatibility facade for installed Skill discovery, preview, and batch import.
   async listAgentHomeSkills(): Promise<AgentHomeSkillView[]> {
     return this.skills.listAgentHomeSkills()
+  }
+
+  async migrateAgentHomeSkillIdentities(): Promise<void> {
+    await this.skills.migrateAgentHomeSkillIdentities()
   }
 
   async previewAgentHomeSkill(
@@ -955,6 +971,16 @@ class SettingsService {
     return this.connectors.setNcbiCredentials(request)
   }
 
+  async setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<ConnectorsSnapshot> {
+    return this.connectors.setOpenAlexCredential(request)
+  }
+
+  async validateOpenAlexCredential(
+    request: ValidateOpenAlexCredentialRequest
+  ): Promise<OpenAlexCredentialValidation> {
+    return this.connectors.validateOpenAlexCredential(request)
+  }
+
   // Adds a user-provided custom MCP server (add-time trust is the caller's responsibility). The
   // config is sanitized to enforce per-transport requirements before it is persisted.
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
@@ -992,17 +1018,26 @@ class SettingsService {
   // intentionally main-process-only; renderer settings never receive the token-bearing state.
   async saveCustomServerOAuthState(
     serverId: string,
-    state: StoredCustomMcpOAuthState | undefined
+    state: StoredCustomMcpOAuthState | undefined,
+    expectedConfigurationFingerprint?: string,
+    expectedOAuthClientSecretRef?: string
   ): Promise<void> {
-    return this.connectors.saveCustomServerOAuthState(serverId, state)
+    return this.connectors.saveCustomServerOAuthState(
+      serverId,
+      state,
+      expectedConfigurationFingerprint,
+      expectedOAuthClientSecretRef
+    )
   }
 
   setCustomServerAuthenticator(
     authenticator: (serverId: string) => Promise<void>,
-    cancel: (serverId: string) => Promise<void>
+    cancel: (serverId: string) => Promise<void>,
+    disconnect?: (serverId: string) => Promise<void>
   ): void {
     this.customServerAuthenticator = authenticator
     this.customServerAuthenticationCanceller = cancel
+    this.customServerDisconnector = disconnect
   }
 
   async authenticateCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
@@ -1015,6 +1050,14 @@ class SettingsService {
 
   async cancelCustomServerAuthentication(serverId: string): Promise<void> {
     await this.customServerAuthenticationCanceller?.(serverId)
+  }
+
+  async disconnectCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
+    if (!this.customServerDisconnector) {
+      throw new Error('Custom MCP OAuth disconnect is not available yet')
+    }
+    await this.customServerDisconnector(serverId)
+    return this.connectors.disconnectCustomServer(serverId)
   }
 
   // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.

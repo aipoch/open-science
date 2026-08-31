@@ -10,6 +10,9 @@ import { createComputeJobRuntime } from './job-runtime'
 describe('createComputeJobRuntime', () => {
   it('routes updates through the service-owned seams and delegates runtime start/stop', async () => {
     const handleJobUpdated = vi.fn()
+    const handleJobCancellationConfirmed = vi.fn(async () => undefined)
+    const startQueueReconciliation = vi.fn()
+    const stopQueueReconciliation = vi.fn(async () => undefined)
     const start = vi.fn()
     const stop = vi.fn(async () => undefined)
     const pause = vi.fn(async () => undefined)
@@ -28,7 +31,12 @@ describe('createComputeJobRuntime', () => {
     })
     const runtime = createComputeJobRuntime(
       {
-        computeService: { handleJobUpdated },
+        computeService: {
+          handleJobUpdated,
+          handleJobCancellationConfirmed,
+          startQueueReconciliation,
+          stopQueueReconciliation
+        },
         jobDeletionOwner,
         hostRepository,
         jobRepository,
@@ -56,11 +64,17 @@ describe('createComputeJobRuntime', () => {
       hostRepository,
       jobRepository,
       storageRoot: '/data',
-      broadcast
+      broadcast,
+      publishJobUpdated: handleJobUpdated
     })
     expect(start).toHaveBeenCalledTimes(1)
+    expect(startQueueReconciliation).toHaveBeenCalledTimes(1)
     expect(stop).toHaveBeenCalledTimes(1)
-    expect(jobDeletionOwner.bindRuntime).toHaveBeenCalledWith({ start, stop, pause, resume })
+    expect(stopQueueReconciliation).toHaveBeenCalledTimes(1)
+    expect(jobDeletionOwner.bindRuntime).toHaveBeenCalledWith({
+      pause: expect.any(Function),
+      resume: expect.any(Function)
+    })
     expect(unbind).toHaveBeenCalledOnce()
   })
 
@@ -78,7 +92,12 @@ describe('createComputeJobRuntime', () => {
       findNonTerminal: vi.fn(async () => [])
     } as unknown as ComputeJobRepository
     const runtime = createComputeJobRuntime({
-      computeService: { handleJobUpdated: vi.fn() },
+      computeService: {
+        handleJobUpdated: vi.fn(),
+        handleJobCancellationConfirmed: vi.fn(async () => undefined),
+        startQueueReconciliation: vi.fn(),
+        stopQueueReconciliation: vi.fn(async () => undefined)
+      },
       hostRepository: {} as ComputeHostRepository,
       jobRepository,
       connectionBroker: {} as ComputeConnectionBroker,
@@ -101,6 +120,54 @@ describe('createComputeJobRuntime', () => {
     expect(stopped).toBe(true)
   })
 
+  it('closes queue reconciliation before aborting and draining lifecycle workers', async () => {
+    const events: string[] = []
+    let releaseReconciliation!: () => void
+    const stopQueueReconciliation = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          events.push('reconciliation-stopping')
+          releaseReconciliation = () => {
+            events.push('reconciliation-stopped')
+            resolve()
+          }
+        })
+    )
+    const stopPoller = vi.fn(async () => {
+      events.push('poller-stopped')
+    })
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: {
+          handleJobUpdated: vi.fn(),
+          handleJobCancellationConfirmed: vi.fn(async () => undefined),
+          startQueueReconciliation: vi.fn(),
+          stopQueueReconciliation
+        },
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository: {} as ComputeJobRepository,
+        connectionBroker: {} as ComputeConnectionBroker,
+        storageRoot: '/data'
+      },
+      {
+        createPoller: () => ({
+          start: vi.fn(),
+          stop: stopPoller,
+          pause: vi.fn(async () => undefined),
+          resume: vi.fn()
+        })
+      }
+    )
+
+    const stopping = runtime.stop()
+    await vi.waitFor(() => expect(stopQueueReconciliation).toHaveBeenCalledOnce())
+    expect(stopPoller).not.toHaveBeenCalled()
+    releaseReconciliation()
+    await stopping
+
+    expect(events).toEqual(['reconciliation-stopping', 'reconciliation-stopped', 'poller-stopped'])
+  })
+
   it('cancels in-flight polling and harvest work when the runtime stops', async () => {
     const runningJob = {
       job_id: 'job-running',
@@ -112,7 +179,8 @@ describe('createComputeJobRuntime', () => {
         stdout_path: '~/.openscience/jobs/job-running/stdout',
         stderr_path: '~/.openscience/jobs/job-running/stderr',
         workdir: '~/.openscience/jobs/job-running'
-      })
+      }),
+      remote_workdir: '~/.openscience/jobs/job-running'
     } as ComputeJob
     const terminalJob = {
       ...runningJob,
@@ -153,12 +221,17 @@ describe('createComputeJobRuntime', () => {
     )
     const jobRepository = {
       findTerminalUnharvested: vi.fn(async () => [terminalJob]),
-      findErrorUnnotified: vi.fn(async () => []),
+      findNotificationReadyUnnotified: vi.fn(async () => []),
       findNonTerminal: vi.fn(async () => [runningJob])
     } as unknown as ComputeJobRepository
     const runtime = createComputeJobRuntime(
       {
-        computeService: { handleJobUpdated: vi.fn() },
+        computeService: {
+          handleJobUpdated: vi.fn(),
+          handleJobCancellationConfirmed: vi.fn(async () => undefined),
+          startQueueReconciliation: vi.fn(),
+          stopQueueReconciliation: vi.fn(async () => undefined)
+        },
         hostRepository: {} as ComputeHostRepository,
         jobRepository,
         connectionBroker,
@@ -175,8 +248,10 @@ describe('createComputeJobRuntime', () => {
 
     const stopping = runtime.stop()
     try {
-      expect(pollSignal?.aborted).toBe(true)
-      expect(harvestSignal?.aborted).toBe(true)
+      await vi.waitFor(() => {
+        expect(pollSignal?.aborted).toBe(true)
+        expect(harvestSignal?.aborted).toBe(true)
+      })
       await stopping
     } finally {
       releasePoll()

@@ -246,6 +246,19 @@ describe('computeDefaultDataRoot', () => {
 
     await rm(configRoot, { recursive: true, force: true })
   })
+
+  it('keeps an explicitly configured default committed while its cleanup marker remains', async () => {
+    const configRoot = resolveConfigRoot()
+    const homeDefault = join(homeDir, 'OpenScience')
+    await mkdir(join(configRoot, 'artifacts'), { recursive: true })
+    await mkdir(join(homeDefault, 'artifacts'), { recursive: true })
+    await writeFile(join(homeDefault, MIGRATION_MARKER_FILENAME), '{}')
+    initDataRoot(homeDefault)
+
+    expect(computeDefaultDataRoot()).toBe(homeDefault)
+
+    await rm(configRoot, { recursive: true, force: true })
+  })
 })
 
 describe('computeDefaultDataRoot (dev mode)', () => {

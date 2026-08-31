@@ -10,6 +10,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import { createNotebookInputPreviewKey } from '../../../../shared/notebook'
 import {
   createInitialSessionState,
   type ChatSession,
@@ -37,7 +38,10 @@ vi.mock('./ManagedFileDownloadButton', () => ({
 }))
 
 vi.mock('./previews/PreviewFileContent', () => ({
-  PreviewFileContent: (props: { item: PreviewFileItem }) => {
+  PreviewFileContent: (props: {
+    item: PreviewFileItem
+    onPdfReadingPositionChange?: (position: { pageNumber: number; pageCount: number }) => void
+  }) => {
     previewContentSpy(props)
     return (
       <div data-testid="preview-content" data-path={props.item.path}>
@@ -48,6 +52,7 @@ vi.mock('./previews/PreviewFileContent', () => ({
 }))
 
 import { PreviewFileSurface } from './PreviewFileSurface'
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -141,6 +146,45 @@ const openMenu = async (trigger: Element | null): Promise<void> => {
 const zIndexFromClassName = (element: Element): number => {
   const match = element.className.match(/(?:^|\s)z-(?:\[(\d+)\]|(\d+))(?:\s|$)/)
   return Number(match?.[1] ?? match?.[2] ?? Number.NaN)
+}
+
+const installPdfContextApi = (): {
+  linkPdfContext: ReturnType<typeof vi.fn>
+  unlinkPdfContext: ReturnType<typeof vi.fn>
+} => {
+  const linkPdfContext = vi.fn().mockResolvedValue({ version: 1, revision: 4 })
+  const unlinkPdfContext = vi.fn().mockResolvedValue({ version: 1, revision: 4 })
+  window.api.sessions = {
+    ...window.api.sessions,
+    linkPdfContext,
+    unlinkPdfContext
+  } as typeof window.api.sessions
+  return { linkPdfContext, unlinkPdfContext }
+}
+
+const selectPdfContextSession = (
+  pdfContext?: NonNullable<NonNullable<ChatSession['runtimeContext']>['pdfContext']>
+): void => {
+  useSessionStore.setState({
+    selectedSessionId: 'active-session',
+    sessions: [
+      {
+        id: 'active-session',
+        projectId: 'project-1',
+        title: 'Active',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        runtimeContext: {
+          version: 1,
+          revision: 3,
+          ...(pdfContext ? { pdfContext } : {})
+        },
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+  })
 }
 
 beforeEach(() => {
@@ -445,6 +489,487 @@ describe('PreviewFileSurface Provenance entry', () => {
   })
 })
 
+describe('PreviewFileSurface PDF context action matrix', () => {
+  const pdfItem: PreviewFileItem = {
+    ...item,
+    title: 'paper.pdf',
+    name: 'paper.pdf',
+    path: 'artifact-version:project-1/session-1/artifact-1/version-1',
+    format: 'pdf'
+  }
+
+  const linkedPdfContext = {
+    version: 1 as const,
+    bindings: [
+      {
+        version: 1 as const,
+        bindingId: 'binding-1',
+        sourceKind: 'artifact-version' as const,
+        sourceFileId: 'artifact-1',
+        sourceVersionId: 'version-1',
+        sourceSessionId: 'session-1',
+        name: 'paper.pdf',
+        mimeType: 'application/pdf' as const,
+        sizeBytes: 12,
+        checksum: 'checksum-1',
+        linkedAt: 1
+      }
+    ]
+  }
+
+  it('adds an Artifact PDF Version to the active Session context from the header action', async () => {
+    selectPdfContextSession()
+    const { linkPdfContext } = installPdfContextApi()
+    const focusListener = vi.fn()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    expect(container.querySelector('[data-testid="pdf-context-status"]')).toBeNull()
+    await clickHeaderAction('Read with agent')
+
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'active-session',
+      expectedRevision: 3,
+      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+    })
+    // Linking is "Read with agent": the composer takes focus so the user can ask immediately.
+    expect(focusListener).toHaveBeenCalled()
+    window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+  })
+
+  it('routes active-Session link and unlink actions through the Composer Reading history port', async () => {
+    selectPdfContextSession()
+    const direct = installPdfContextApi()
+    const onLinkReadingContext = vi.fn().mockResolvedValue(undefined)
+    const onUnlinkReadingContext = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={pdfItem}
+          onClose={vi.fn()}
+          onLinkReadingContext={onLinkReadingContext}
+          onUnlinkReadingContext={onUnlinkReadingContext}
+        />
+      )
+      await Promise.resolve()
+    })
+    await clickHeaderAction('Read with agent')
+
+    expect(onLinkReadingContext).toHaveBeenCalledWith({
+      sourceKind: 'artifact-version',
+      sourceVersionId: 'version-1'
+    })
+    expect(direct.linkPdfContext).not.toHaveBeenCalled()
+
+    selectPdfContextSession(linkedPdfContext)
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={pdfItem}
+          onClose={vi.fn()}
+          onLinkReadingContext={onLinkReadingContext}
+          onUnlinkReadingContext={onUnlinkReadingContext}
+        />
+      )
+      await Promise.resolve()
+    })
+    await openMenu(container.querySelector('[data-testid="pdf-context-status"]'))
+    await clickMenuItem('Remove PDF from context')
+
+    expect(onUnlinkReadingContext).toHaveBeenCalledWith('binding-1')
+    expect(direct.unlinkPdfContext).not.toHaveBeenCalled()
+  })
+
+  it('offers the PDF context action from a right-click inside the preview', async () => {
+    selectPdfContextSession()
+    const { linkPdfContext } = installPdfContextApi()
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    const surface = container.querySelector('[data-testid="preview-file-content-surface"]')
+    act(() => {
+      surface?.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 })
+      )
+    })
+    await act(async () => Promise.resolve())
+
+    const menu = document.body.querySelector('[data-testid="pdf-preview-context-menu"]')
+    expect(menu?.textContent).toContain('Read with agent')
+    expect(menu?.textContent).toContain('Download')
+    expect(menu?.className).toContain('min-w-[9.5rem]')
+    expect(menu?.querySelector('[role="menuitem"]')?.className).toContain('h-6')
+    await clickMenuItem('Read with agent')
+
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'active-session',
+      expectedRevision: 3,
+      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+    })
+  })
+
+  it('downloads the PDF from its preview context menu', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+    window.api.saveManagedFile = vi.fn().mockResolvedValue({ saved: true })
+    window.api.artifacts.getLineage = vi.fn().mockResolvedValue(undefined)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    act(() => {
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 }))
+    })
+    await act(async () => Promise.resolve())
+    await clickMenuItem('Download')
+
+    expect(window.api.saveManagedFile).toHaveBeenCalledWith({
+      source: 'artifact',
+      path: 'artifact-version:project-1/session-1/artifact-1/version-1',
+      suggestedName: 'paper.pdf'
+    })
+  })
+
+  it('keeps the overflow menu for provenance, without the PDF context entry', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await openMenu(container.querySelector('[aria-label^="File actions for"]'))
+
+    const menuText = document.body.querySelector('[role="menu"]')?.textContent
+    expect(menuText).toContain('Provenance')
+    expect(menuText).not.toContain('Read with agent')
+    expect(menuText).not.toContain('PDF')
+  })
+
+  it('keeps the Session context action visible but disabled when an Upload PDF has no immutable Version', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{
+            ...pdfItem,
+            id: 'upload:legacy-upload-1',
+            source: 'upload',
+            path: 'legacy/uploads/paper.pdf',
+            selectedVersionId: undefined
+          }}
+          onClose={vi.fn()}
+        />
+      )
+    })
+
+    const action = container.querySelector<HTMLButtonElement>('[data-testid="pdf-context-action"]')
+    expect(action?.textContent).toContain('Read with agent')
+    expect(action?.disabled).toBe(true)
+  })
+
+  it('offers an immutable PDF Version as context before a new Session is created', async () => {
+    installPdfContextApi()
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+    })
+    await clickHeaderAction('Read with agent')
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual({
+      kind: 'version',
+      sourceKind: 'artifact-version',
+      sourceVersionId: 'version-1',
+      previewItemId: 'artifact-1'
+    })
+  })
+
+  it('links from the modal to the visible project instead of a stale selected Session', async () => {
+    installPdfContextApi()
+    useSessionStore.setState({
+      selectedSessionId: 'stale-session',
+      sessions: [
+        {
+          id: 'stale-session',
+          projectId: 'project-2',
+          title: 'Other project',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          runtimeContext: { version: 1, revision: 3, pdfContext: linkedPdfContext },
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+    })
+
+    expect(container.querySelector('[data-testid="pdf-context-status"]')).toBeNull()
+    await clickHeaderAction('Read with agent')
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual({
+      kind: 'version',
+      sourceKind: 'artifact-version',
+      sourceVersionId: 'version-1',
+      previewItemId: 'artifact-1'
+    })
+  })
+
+  it('adds another uploaded PDF Version to the reading context', async () => {
+    selectPdfContextSession(linkedPdfContext)
+    const { linkPdfContext } = installPdfContextApi()
+    const uploadPdf: PreviewFileItem = {
+      ...pdfItem,
+      id: 'upload-1',
+      artifactId: undefined,
+      selectedVersionId: undefined,
+      source: 'upload',
+      path: 'upload-version:project-1/source-session/upload-version-1'
+    }
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={uploadPdf} onClose={vi.fn()} />)
+    })
+    await clickHeaderAction('Read with agent')
+
+    expect(linkPdfContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [{ sourceKind: 'upload-version', sourceVersionId: 'upload-version-1' }]
+      })
+    )
+  })
+
+  it('offers a PDF context action for a staged upload in a new Session', async () => {
+    installPdfContextApi()
+    // The composer's new-conversation draft currently holds this attachment.
+    usePreviewWorkbenchStore.setState({ draftStagedUploadIds: ['staged-pdf'] })
+    const stagedPdf: PreviewFileItem = {
+      ...pdfItem,
+      id: 'upload:staged-pdf',
+      artifactId: undefined,
+      selectedVersionId: undefined,
+      sessionId: '.pending',
+      source: 'upload',
+      path: '/managed/.pending/staged-pdf/paper.pdf'
+    }
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={stagedPdf} onClose={vi.fn()} />)
+    })
+
+    expect(container.querySelector('[data-testid="pdf-context-action"]')?.textContent).toContain(
+      'Read with agent'
+    )
+    await clickHeaderAction('Read with agent')
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual({
+      kind: 'staged-upload',
+      attachmentId: 'staged-pdf',
+      previewItemId: 'upload:staged-pdf'
+    })
+    expect(container.querySelector('[data-testid="pdf-context-status"]')?.textContent).toContain(
+      'In session context'
+    )
+  })
+
+  it('refuses a staged upload whose attachment is no longer in the draft', async () => {
+    installPdfContextApi()
+    // The preview tab outlived its composer attachment: the draft's staged id list stays empty,
+    // so a pending selection would point at an upload no send could finalize.
+    const stagedPdf: PreviewFileItem = {
+      ...pdfItem,
+      id: 'upload:staged-pdf',
+      artifactId: undefined,
+      selectedVersionId: undefined,
+      sessionId: '.pending',
+      source: 'upload',
+      path: '/managed/.pending/staged-pdf/paper.pdf'
+    }
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={stagedPdf} onClose={vi.fn()} />)
+    })
+
+    const action = container.querySelector<HTMLButtonElement>('[data-testid="pdf-context-action"]')
+    expect(action?.textContent).toContain('Read with agent')
+    expect(action?.disabled).toBe(true)
+    await click(action ?? null)
+    expect(
+      usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']
+    ).toBeUndefined()
+  })
+
+  it('removes the PDF context from the linked status pill menu', async () => {
+    selectPdfContextSession(linkedPdfContext)
+    const { unlinkPdfContext } = installPdfContextApi()
+    const focusListener = vi.fn()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    const statusPill = container.querySelector('[data-testid="pdf-context-status"]')
+    expect(statusPill?.textContent).toContain('In session context')
+    await openMenu(statusPill)
+    await clickMenuItem('Remove PDF from context')
+
+    expect(unlinkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'active-session',
+      expectedRevision: 3,
+      bindingId: 'binding-1'
+    })
+    // Removing the context is not a reading entry point, so the composer is not focused.
+    expect(focusListener).not.toHaveBeenCalled()
+    window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+  })
+
+  it('keeps the linked PDF viewport position in transient renderer state', async () => {
+    selectPdfContextSession(linkedPdfContext)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    const props = previewContentSpy.mock.calls.at(-1)?.[0] as {
+      onPdfReadingPositionChange?: (position: { pageNumber: number; pageCount: number }) => void
+    }
+    act(() => props.onPdfReadingPositionChange?.({ pageNumber: 7, pageCount: 14 }))
+
+    expect(usePreviewWorkbenchStore.getState().pdfReadingPositionByBindingId).toEqual({
+      'binding-1': { pageNumber: 7, pageCount: 14 }
+    })
+  })
+
+  it('disables the PDF context action while its command is pending', async () => {
+    selectPdfContextSession()
+    let resolveLink: ((value: { version: 1; revision: number }) => void) | undefined
+    const { linkPdfContext } = installPdfContextApi()
+    linkPdfContext.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveLink = resolve
+      })
+    )
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await clickHeaderAction('Read with agent')
+
+    const pendingButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="pdf-context-action"]'
+    )
+    expect(pendingButton?.disabled).toBe(true)
+    expect(linkPdfContext).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      resolveLink?.({ version: 1, revision: 4 })
+      await Promise.resolve()
+    })
+  })
+
+  it('uses a Notebook input only when its immutable Version identity parses', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+    const notebookPdf: PreviewFileItem = {
+      ...pdfItem,
+      id: 'notebook-input-1',
+      artifactId: undefined,
+      selectedVersionId: undefined,
+      source: 'notebook-input',
+      path: createNotebookInputPreviewKey({
+        projectId: 'project-1',
+        sourceKind: 'upload-version',
+        inputFileVersionId: 'notebook-upload-version-1'
+      })
+    }
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={notebookPdf} onClose={vi.fn()} />)
+    })
+    await clickHeaderAction('Read with agent')
+    expect(window.api.sessions.linkPdfContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [
+          {
+            sourceKind: 'upload-version',
+            sourceVersionId: 'notebook-upload-version-1'
+          }
+        ]
+      })
+    )
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...notebookPdf, path: 'notebook-input:invalid' }}
+          onClose={vi.fn()}
+        />
+      )
+    })
+    const unavailableAction = container.querySelector<HTMLButtonElement>(
+      '[data-testid="pdf-context-action"]'
+    )
+    expect(unavailableAction?.textContent).toContain('Read with agent')
+    expect(unavailableAction?.disabled).toBe(true)
+  })
+
+  it('does not offer PDF context actions for local files', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+    setupLocalApi()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...pdfItem, id: 'local-pdf', source: 'local', path: '/tmp/paper.pdf' }}
+          onClose={vi.fn()}
+        />
+      )
+    })
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+
+    expect(document.body.querySelector('[role="menu"]')?.textContent).not.toContain('PDF context')
+  })
+
+  it('reports command failures through the workspace error callback', async () => {
+    selectPdfContextSession()
+    const { linkPdfContext } = installPdfContextApi()
+    const onPdfContextError = vi.fn()
+    linkPdfContext.mockRejectedValueOnce(new Error('revision conflict'))
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={pdfItem}
+          onClose={vi.fn()}
+          onPdfContextError={onPdfContextError}
+        />
+      )
+    })
+    await clickHeaderAction('Read with agent')
+
+    expect(onPdfContextError).toHaveBeenNthCalledWith(1, null)
+    expect(onPdfContextError).toHaveBeenLastCalledWith('revision conflict')
+  })
+})
+
 const localItem: PreviewFileItem = {
   id: 'local:/Users/example/logs/proxy.log',
   sessionId: '__local_files__',
@@ -475,6 +1000,14 @@ const clickMenuItem = async (label: string): Promise<void> => {
   )
   if (!menuItem) throw new Error(`menu item not found: ${label}`)
   await click(menuItem)
+}
+
+const clickHeaderAction = async (label: string): Promise<void> => {
+  const button = [...container.querySelectorAll<HTMLButtonElement>('button')].find((element) =>
+    element.textContent?.includes(label)
+  )
+  if (!button) throw new Error(`header action not found: ${label}`)
+  await click(button)
 }
 
 describe('PreviewFileSurface local file header', () => {
@@ -592,6 +1125,100 @@ describe('PreviewFileSurface local file header', () => {
     expect(document.body.querySelector('[role="menu"]')?.textContent).not.toContain(
       'Save as artifact'
     )
+  })
+
+  it('shows a retryable toast when a local file download fails', async () => {
+    const saveManagedFile = vi.mocked(window.api.saveManagedFile)
+    saveManagedFile.mockRejectedValueOnce(new Error('destination denied'))
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+    await clickMenuItem('Download')
+
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+      ).not.toBeNull()
+    })
+    const toast = document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+    expect(toast?.textContent).toContain('Could not download this file.')
+    expect(toast?.textContent).toContain('destination denied')
+
+    await click(
+      [...(toast?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+        (button) => button.textContent === 'Retry'
+      ) ?? null
+    )
+    expect(saveManagedFile).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows a retryable toast when saving a local file as an artifact fails', async () => {
+    const stageLocalPath = vi.mocked(window.api.uploads.stageLocalPath!)
+    stageLocalPath.mockRejectedValueOnce(new Error('source disappeared'))
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+    await clickMenuItem('Save as artifact')
+
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+      ).not.toBeNull()
+    })
+    const toast = document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+    expect(toast?.textContent).toContain('Could not save this file as an artifact.')
+    expect(toast?.textContent).toContain('source disappeared')
+
+    await click(
+      [...(toast?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+        (button) => button.textContent === 'Retry'
+      ) ?? null
+    )
+    expect(stageLocalPath).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows a retryable toast when copying a local file path fails', async () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const writeText = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('clipboard unavailable'))
+      .mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+
+    try {
+      await act(async () => {
+        root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+      })
+      await openMenu(container.querySelector('[aria-label="More actions"]'))
+      await clickMenuItem('Copy path')
+
+      await vi.waitFor(() => {
+        expect(
+          document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+        ).not.toBeNull()
+      })
+      const toast = document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+      expect(toast?.textContent).toContain('Could not copy the file path.')
+      expect(toast?.textContent).toContain('clipboard unavailable')
+
+      await click(
+        [...(toast?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+          (button) => button.textContent === 'Retry'
+        ) ?? null
+      )
+      expect(writeText).toHaveBeenCalledTimes(2)
+    } finally {
+      if (originalClipboard) {
+        Object.defineProperty(navigator, 'clipboard', originalClipboard)
+      } else {
+        Reflect.deleteProperty(navigator, 'clipboard')
+      }
+    }
   })
 })
 

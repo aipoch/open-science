@@ -21,6 +21,40 @@
   text-decoration: underline 0.125rem var(--primary);
 }
 
+/* Sent PDF Evidence gets one quiet, fading overlay after navigation. The persistent Evidence
+   highlight stays underneath, so removing the reveal state cannot cause a visual jump. */
+.pdf-evidence-reveal {
+  isolation: isolate;
+}
+
+.pdf-evidence-reveal::after {
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background-color: color-mix(in oklab, var(--primary) 14%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--primary) 32%, transparent);
+  content: '';
+  pointer-events: none;
+  animation: pdf-evidence-reveal-fade 1600ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@keyframes pdf-evidence-reveal-fade {
+  0%,
+  22% {
+    opacity: 0.8;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-evidence-reveal::after {
+    animation: none;
+    opacity: 0.45;
+  }
+}
+
 /* The annotate trigger hangs below the selection's last line, inside a transcript row whose
    `content-visibility: auto` containment makes it a stacking context. Later sibling rows and
    the composer card would otherwise paint over the trigger whenever it overhangs its row, so
@@ -28,6 +62,89 @@
 [data-slot='message-scroller-item']:has([data-annotation-trigger]) {
   position: relative;
   z-index: 20;
+}
+
+/* PDF.js positions transparent text over each rasterized page. Keeping the layer local avoids
+   importing the full viewer stylesheet while preserving native selection and copy behavior. */
+.pdf-text-layer {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor, 1) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+}
+
+.pdf-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  cursor: text;
+  white-space: pre;
+  transform-origin: 0 0;
+}
+
+/* Hand mode owns the pointer across the raster and PDF.js text layer alike. */
+[data-pdf-cursor-mode='hand'] .pdf-text-layer :is(span, br, .endOfContent) {
+  cursor: inherit;
+}
+
+.pdf-text-layer > :not(.markedContent),
+.pdf-text-layer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --rotate: 0deg;
+  --scale-x: 1;
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-text-layer .markedContent {
+  display: contents;
+}
+
+.pdf-text-layer ::selection {
+  color: transparent;
+  background: color-mix(in oklab, var(--primary) 28%, transparent);
+}
+
+/* PDF.js inserts line-break and end-of-content sentinels to keep native browser selections inside
+   the visual text flow. The break itself must stay transparent or it paints stray vertical bars. */
+.pdf-text-layer br::selection {
+  background: transparent;
+}
+
+/* PDF.js emits standalone whitespace spans to preserve copied text. Keep them selectable so copy
+   semantics stay intact, but do not paint detached highlight blocks between adjacent fragments. */
+.pdf-text-layer .pdf-text-layer-whitespace::selection {
+  background: transparent;
+}
+
+.pdf-text-layer .endOfContent {
+  position: absolute;
+  display: block;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.pdf-text-layer.selecting .endOfContent {
+  top: 0;
+}
+
+/* Full-document find uses the browser Highlight API over PDF.js' text mapping. */
+::highlight(pdf-search-results) {
+  background-color: color-mix(in oklab, var(--primary) 17%, transparent);
+}
+
+::highlight(pdf-search-current) {
+  background-color: color-mix(in oklab, var(--primary) 32%, transparent);
+  text-decoration: underline 0.1rem color-mix(in oklab, var(--primary) 75%, transparent);
 }
 
 @theme inline {
@@ -75,10 +192,12 @@
   /* Settings-only categorical and status roles. These aliases preserve the established palette
      while keeping feature components independent from raw Tailwind color names. */
   --color-storage-artifacts: var(--color-sky-500);
+  --color-storage-compute: var(--color-indigo-500);
   --color-storage-delegation: var(--color-cyan-500);
   --color-storage-runtime: var(--color-violet-500);
   --color-storage-uploads: var(--color-amber-500);
   --color-storage-notebooks: var(--color-emerald-500);
+  --color-storage-notebook-evidence: var(--color-indigo-500);
   --color-storage-workspaces: var(--color-rose-500);
   --color-status-success-surface: var(--color-emerald-100);
   --color-status-success-foreground: var(--color-emerald-700);

@@ -318,56 +318,133 @@ describe('NotebookInputRegistry', () => {
     expect(() => lease.getRunInputFiles()).toThrow(/closed/i)
   })
 
-  it('rechecks Version state and immutable metadata before a run', async () => {
+  it('adds validated workflow Artifact Versions to a run and de-duplicates turn inputs', async () => {
     const registry = await setup()
-    await createUpload({
+    await createArtifact({
       projectId: 'project-1',
       sessionId: 'source-session-1',
-      uploadFileId: 'upload-1',
-      versionId: 'upload-version-1',
-      filename: 'groups.csv',
-      content: 'group\nA\n'
+      artifactId: 'panel-a',
+      versionId: 'panel-a-v1',
+      filename: 'panel_A.png',
+      content: 'panel-a'
     })
-    const attachment = {
-      id: 'upload-1',
-      versionId: 'upload-version-1',
-      versionNumber: 1,
-      sessionId: 'source-session-1',
-      name: 'groups.csv',
-      originalName: 'groups.csv',
-      path: '/ignored',
-      size: 8
-    }
-    await client!.uploadVersion.update({
-      where: { id: 'upload-version-1' },
-      data: { state: 'staging' }
-    })
-    await expect(
-      registry.registerTurn({
-        projectId: 'project-1',
-        appSessionId: 'active-session',
-        promptMessageId: 'prompt-staging',
-        uploads: [attachment],
-        references: []
-      })
-    ).rejects.toThrow(/unavailable in this Project/)
-
-    await client!.uploadVersion.update({
-      where: { id: 'upload-version-1' },
-      data: { state: 'ready' }
+    await createArtifact({
+      projectId: 'project-1',
+      sessionId: 'source-session-2',
+      artifactId: 'panel-b',
+      versionId: 'panel-b-v1',
+      filename: 'panel_B.png',
+      content: 'panel-b'
     })
     const turn = {
       projectId: 'project-1',
       appSessionId: 'active-session',
-      promptMessageId: 'prompt-ready'
+      promptMessageId: 'prompt-1'
     }
-    await registry.registerTurn({ ...turn, uploads: [attachment], references: [] })
-    await client!.uploadVersion.update({
-      where: { id: 'upload-version-1' },
-      data: { versionNumber: 2 }
+    await registry.registerTurn({
+      ...turn,
+      uploads: [],
+      references: [
+        {
+          id: 'panel-a',
+          versionId: 'panel-a-v1',
+          source: 'artifact',
+          name: 'panel_A.png',
+          path: '/ignored'
+        }
+      ]
     })
-    await expect(registry.openRun(turn)).rejects.toThrow(/registration no longer matches/i)
-  }, WINDOWS_SQLITE_TEST_TIMEOUT_MS)
+
+    const lease = await registry.openRun({
+      ...turn,
+      artifactVersionInputs: ['panel-a-v1', 'panel-b-v1', 'panel-b-v1']
+    })
+    expect(
+      lease.getRunInputFiles().map(({ sourceKind, inputFileVersionId, association }) => ({
+        sourceKind,
+        inputFileVersionId,
+        association
+      }))
+    ).toEqual([
+      {
+        sourceKind: 'artifact-version',
+        inputFileVersionId: 'panel-a-v1',
+        association: 'turn-attached'
+      },
+      {
+        sourceKind: 'artifact-version',
+        inputFileVersionId: 'panel-b-v1',
+        association: 'turn-attached'
+      }
+    ])
+  })
+
+  it('fails closed when a workflow Artifact Version is unavailable in the Project', async () => {
+    const registry = await setup()
+    await expect(
+      registry.openRun({
+        projectId: 'project-1',
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-1',
+        artifactVersionInputs: ['missing-panel-version']
+      })
+    ).rejects.toThrow('Artifact Version is unavailable in this Project: missing-panel-version')
+  })
+
+  it(
+    'rechecks Version state and immutable metadata before a run',
+    async () => {
+      const registry = await setup()
+      await createUpload({
+        projectId: 'project-1',
+        sessionId: 'source-session-1',
+        uploadFileId: 'upload-1',
+        versionId: 'upload-version-1',
+        filename: 'groups.csv',
+        content: 'group\nA\n'
+      })
+      const attachment = {
+        id: 'upload-1',
+        versionId: 'upload-version-1',
+        versionNumber: 1,
+        sessionId: 'source-session-1',
+        name: 'groups.csv',
+        originalName: 'groups.csv',
+        path: '/ignored',
+        size: 8
+      }
+      await client!.uploadVersion.update({
+        where: { id: 'upload-version-1' },
+        data: { state: 'staging' }
+      })
+      await expect(
+        registry.registerTurn({
+          projectId: 'project-1',
+          appSessionId: 'active-session',
+          promptMessageId: 'prompt-staging',
+          uploads: [attachment],
+          references: []
+        })
+      ).rejects.toThrow(/unavailable in this Project/)
+
+      await client!.uploadVersion.update({
+        where: { id: 'upload-version-1' },
+        data: { state: 'ready' }
+      })
+      const turn = {
+        projectId: 'project-1',
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-ready'
+      }
+      await registry.registerTurn({ ...turn, uploads: [attachment], references: [] })
+      await client!.uploadVersion.update({
+        where: { id: 'upload-version-1' },
+        data: { versionNumber: 2 }
+      })
+      await expect(registry.openRun(turn)).rejects.toThrow(/registration no longer matches/i)
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('rejects same-size input corruption during turn registration', async () => {
     const registry = await setup()

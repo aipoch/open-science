@@ -1,4 +1,4 @@
-// Main-process-only stored shapes for the specialist profile store (specialists.json).
+// Main-process-only stored shapes for the specialists.json store.
 // No secret fields; systemPrompt is considered non-secret user content.
 
 import type {

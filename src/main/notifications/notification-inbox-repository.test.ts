@@ -65,6 +65,31 @@ describe('NotificationInboxDbRepository', () => {
     )
   })
 
+  it('returns every active pending action in addition to recent history', async () => {
+    const repository = await createRepository()
+    await repository.record({
+      id: 'approval-oldest',
+      dedupeKey: 'authorization:agent-tool:oldest',
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: 'session-oldest',
+      originId: 'oldest',
+      title: 'Approval needed',
+      summary: 'A tool request needs approval.',
+      actionState: 'pending'
+    })
+    for (let index = 0; index < 50; index += 1) {
+      await record(repository, `history-${index}`)
+    }
+
+    const snapshot = await repository.snapshot()
+
+    expect(snapshot.items).toHaveLength(51)
+    expect(snapshot.items.find((item) => item.originId === 'oldest')).toMatchObject({
+      actionState: 'pending'
+    })
+  })
+
   it('marks all only through the caller snapshot boundary', async () => {
     const repository = await createRepository()
     await record(repository, 'before')
@@ -244,6 +269,46 @@ describe('NotificationInboxDbRepository', () => {
     expect(snapshot.items[0]?.originId).toBe(String(MAX_NOTIFICATION_INBOX_ITEMS))
   })
 
+  it('allows active pending actions to exceed the retained history limit', async () => {
+    const repository = await createRepository()
+    await repository.record({
+      id: 'approval-protected',
+      dedupeKey: 'authorization:agent-tool:protected',
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: 'session-protected',
+      originId: 'protected',
+      title: 'Approval needed',
+      summary: 'A tool request needs approval.',
+      actionState: 'pending'
+    })
+    await client!.notificationInboxItem.createMany({
+      data: Array.from({ length: MAX_NOTIFICATION_INBOX_ITEMS - 1 }, (_, index) => ({
+        id: `history-${index}`,
+        dedupeKey: `history:${index}`,
+        kind: 'task.completed',
+        sessionId: `session-history-${index}`,
+        originId: `history-${index}`,
+        title: 'Task completed',
+        summary: 'A task completed.'
+      }))
+    })
+
+    await record(repository, 'new-history')
+
+    expect(
+      (await repository.snapshot()).items.find((item) => item.originId === 'protected')
+    ).toMatchObject({
+      actionState: 'pending'
+    })
+    await expect(client!.notificationInboxItem.count()).resolves.toBe(
+      MAX_NOTIFICATION_INBOX_ITEMS + 1
+    )
+
+    await repository.settle('authorization:agent-tool:protected', 'resolved', 5_000)
+    await expect(client!.notificationInboxItem.count()).resolves.toBe(MAX_NOTIFICATION_INBOX_ITEMS)
+  })
+
   it('acknowledges archive history and retains deleted targets as invalidated', async () => {
     const repository = await createRepository()
     await record(repository, 'archive')
@@ -316,7 +381,9 @@ describe('NotificationInboxDbRepository', () => {
         deleteMany,
         count: vi.fn(async () => 0),
         findFirst: vi.fn(async () => null),
-        findMany: vi.fn(async () => sessionIds.map((sessionId) => ({ sessionId })))
+        findMany: vi.fn(async (args?: { select?: { sequence?: boolean } }) =>
+          args?.select?.sequence ? [] : sessionIds.map((sessionId) => ({ sessionId }))
+        )
       }
     } as unknown as NotificationInboxClient
     const repository = new NotificationInboxDbRepository(() => Promise.resolve(fakeClient))

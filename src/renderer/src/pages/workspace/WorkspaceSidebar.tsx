@@ -46,6 +46,7 @@ type WorkspaceSidebarProps = {
   projectName: string
   starNudgeKey?: string
   sessions: ChatSession[]
+  credentialPendingSessionIds?: ReadonlySet<string>
   activeSessionId: string | undefined
   canCreateConversation: boolean
   canMutateConversations: boolean
@@ -117,14 +118,25 @@ const sessionStatusLabelKeys = {
 } as const satisfies Record<SessionStatus, string>
 
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
+const EMPTY_CREDENTIAL_SESSION_IDS = new Set<string>()
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
-const getPresentedSessionStatus = (session: ChatSession): SessionStatus =>
-  projectPresentedSessionActionability(session).presentedStatus
+const getPresentedSessionStatus = (
+  session: ChatSession,
+  credentialPendingSessionIds: ReadonlySet<string>
+): SessionStatus =>
+  projectPresentedSessionActionability(session, {
+    credentialPending: credentialPendingSessionIds.has(session.id)
+  }).presentedStatus
 
-const isLiveSession = (session: ChatSession): boolean => {
-  const activity = projectPresentedSessionActionability(session).activity
+const isLiveSession = (
+  session: ChatSession,
+  credentialPendingSessionIds: ReadonlySet<string>
+): boolean => {
+  const activity = projectPresentedSessionActionability(session, {
+    credentialPending: credentialPendingSessionIds.has(session.id)
+  }).activity
   return activity === 'running' || activity === 'waiting'
 }
 
@@ -142,7 +154,11 @@ const startOfLocalDay = (timestamp: number): number => {
   return date.getTime()
 }
 
-const getSessionSections = (sessions: ChatSession[], now: number): SidebarSessionSection[] => {
+const getSessionSections = (
+  sessions: ChatSession[],
+  now: number,
+  credentialPendingSessionIds: ReadonlySet<string>
+): SidebarSessionSection[] => {
   const todayStartedAt = startOfLocalDay(now)
   const yesterday = new Date(todayStartedAt)
   yesterday.setDate(yesterday.getDate() - 1)
@@ -162,7 +178,7 @@ const getSessionSections = (sessions: ChatSession[], now: number): SidebarSessio
     if (session.pinned) {
       pinned.push(session)
     } else if (
-      isLiveSession(session) ||
+      isLiveSession(session, credentialPendingSessionIds) ||
       (session.status === 'idle' && now - session.updatedAt < ACTIVE_SESSION_GRACE_MS)
     ) {
       active.push(session)
@@ -217,6 +233,7 @@ const WorkspaceSidebarView = ({
   projectName,
   starNudgeKey,
   sessions,
+  credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
   activeSessionId,
   canCreateConversation,
   canMutateConversations,
@@ -253,7 +270,7 @@ const WorkspaceSidebarView = ({
   onSessionActionsOpenChange
 }: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const sections = getSessionSections(sessions, now)
+  const sections = getSessionSections(sessions, now, credentialPendingSessionIds)
   const shortcutNumberBySessionId = new Map(
     sections
       .flatMap((section) => section.items)
@@ -450,7 +467,10 @@ const WorkspaceSidebarView = ({
                   {section.items.map((session) => {
                     const isActive = session.id === activeSessionId
                     const shortcutNumber = shortcutNumberBySessionId.get(session.id)
-                    const presentedStatus = getPresentedSessionStatus(session)
+                    const presentedStatus = getPresentedSessionStatus(
+                      session,
+                      credentialPendingSessionIds
+                    )
                     const isExportDisabled =
                       (session.activeMessageCount ?? session.messages.length) === 0 ||
                       presentedStatus === 'running' ||
@@ -715,7 +735,11 @@ const WorkspaceSidebarView = ({
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
-  const { onOpenSession, sessions } = props
+  const {
+    credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
+    onOpenSession,
+    sessions
+  } = props
   const [now, setNow] = useState(Date.now)
   const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
@@ -758,7 +782,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       const shortcutNumber = Number(event.key)
       if (!Number.isInteger(shortcutNumber) || shortcutNumber < 1 || shortcutNumber > 9) return
 
-      const session = getSessionSections(sessions, now)
+      const session = getSessionSections(sessions, now, credentialPendingSessionIds)
         .flatMap((section) => section.items)
         .at(shortcutNumber - 1)
       if (!session) return
@@ -781,7 +805,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', hideSessionShortcuts)
     }
-  }, [isMac, now, onOpenSession, sessions])
+  }, [credentialPendingSessionIds, isMac, now, onOpenSession, sessions])
 
   return (
     <WorkspaceSidebarView

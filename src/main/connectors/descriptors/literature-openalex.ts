@@ -1,10 +1,18 @@
 import type { ToolContext, ToolDescriptor } from '../types'
 
-// OpenAlex REST API (all disciplines, ~250M works). Per upstream etiquette this connector sends
-// NO mailto and NO api key on any request; payloads are kept lean via `select=` and multi-page
-// walks use cursor paging with per-page=200 (the API maximum).
+// OpenAlex REST API (all disciplines, ~250M works). Dispatch requires an API key and applies it only
+// to this exact origin. Payloads are kept lean via `select=` and multi-page walks use cursor paging.
 const BASE = 'https://api.openalex.org'
 const PER_PAGE = 200
+
+const fetchOpenAlexJson = (ctx: ToolContext, rawUrl: string): Promise<unknown> => {
+  const url = new URL(rawUrl)
+  if (url.origin !== BASE) throw new Error('OpenAlex credential target must use the OpenAlex API')
+  const apiKey = ctx.credentials.openAlexApiKey
+  if (!apiKey) throw new Error('OpenAlex API key is required')
+  const separator = rawUrl.includes('?') ? '&' : '?'
+  return ctx.fetchJson(`${rawUrl}${separator}api_key=${encodeURIComponent(apiKey)}`)
+}
 
 // Selected fields for the lean work record (see leanWork). include_abstracts adds
 // abstract_inverted_index; get_work additionally requests referenced_works + counts_by_year.
@@ -342,7 +350,7 @@ async function paginate<T>(
   let count = 0
   let first = true
   while (out.length < maxRecords) {
-    const resp = (await ctx.fetchJson(buildUrl(cursor))) as ListResponse<T>
+    const resp = (await fetchOpenAlexJson(ctx, buildUrl(cursor))) as ListResponse<T>
     if (first) {
       count = resp.meta?.count ?? 0
       first = false
@@ -383,7 +391,8 @@ type ResolvedWork = {
 async function resolveWorkIdToWid(ctx: ToolContext, input: string): Promise<ResolvedWork> {
   const ref = normalizeWorkId(input)
   if (ref.kind === 'wid') return { wid: ref.wid }
-  const resp = (await ctx.fetchJson(
+  const resp = (await fetchOpenAlexJson(
+    ctx,
     `${BASE}/works?filter=doi:${encodeURIComponent(ref.doi)}&per-page=50&select=id,cited_by_count,title,display_name`
   )) as ListResponse<OpenAlexWork>
   const results = resp.results ?? []
@@ -410,13 +419,15 @@ async function resolveVenue(ctx: ToolContext, venue: string): Promise<VenueResol
     return { sourceFilterId: shortId(v) ?? v, venueResolved: v }
   }
   if (/^\d{4}-\d{3}[\dX]$/i.test(v)) {
-    const s = (await ctx.fetchJson(
+    const s = (await fetchOpenAlexJson(
+      ctx,
       `${BASE}/sources/issn:${v}?select=id,display_name`
     )) as OpenAlexSource
     const sid = shortId(s.id) ?? ''
     return { sourceFilterId: sid, venueResolved: { source_id: sid, display_name: s.display_name } }
   }
-  const resp = (await ctx.fetchJson(
+  const resp = (await fetchOpenAlexJson(
+    ctx,
     `${BASE}/sources?search=${encodeURIComponent(v)}&per-page=1&select=id,display_name`
   )) as ListResponse<OpenAlexSource>
   const top = resp.results?.[0]
@@ -542,9 +553,13 @@ export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
       let work: OpenAlexWork
       let doiExtra: Record<string, unknown> = {}
       if (ref.kind === 'wid') {
-        work = (await ctx.fetchJson(`${BASE}/works/${ref.wid}?select=${select}`)) as OpenAlexWork
+        work = (await fetchOpenAlexJson(
+          ctx,
+          `${BASE}/works/${ref.wid}?select=${select}`
+        )) as OpenAlexWork
       } else {
-        const resp = (await ctx.fetchJson(
+        const resp = (await fetchOpenAlexJson(
+          ctx,
           `${BASE}/works?filter=doi:${encodeURIComponent(ref.doi)}&per-page=50&select=${select}`
         )) as ListResponse<OpenAlexWork>
         const results = resp.results ?? []
@@ -645,7 +660,8 @@ export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
     run: async (ctx, a) => {
       const maxRecords = clampInt(a.max_records, 100, 1, 500)
       const resolved = await resolveWorkIdToWid(ctx, String(a.work_id))
-      const meta = (await ctx.fetchJson(
+      const meta = (await fetchOpenAlexJson(
+        ctx,
         `${BASE}/works/${resolved.wid}?select=referenced_works`
       )) as OpenAlexWork
       const referenceIds = (meta.referenced_works ?? [])
@@ -658,7 +674,8 @@ export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
       const hydrated = new Map<string, OpenAlexWork>()
       for (let i = 0; i < attemptIds.length; i += 50) {
         const batch = attemptIds.slice(i, i + 50)
-        const resp = (await ctx.fetchJson(
+        const resp = (await fetchOpenAlexJson(
+          ctx,
           `${BASE}/works?filter=openalex_id:${batch.join('|')}&per-page=50&select=${WORK_SELECT}`
         )) as ListResponse<OpenAlexWork>
         for (const w of resp.results ?? []) {
@@ -737,7 +754,8 @@ export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
     run: async (ctx, a) => {
       const worksSample = clampInt(a.works_sample, 10, 0, 200)
       const idToken = normalizeAuthorId(String(a.author_id))
-      const author = (await ctx.fetchJson(
+      const author = (await fetchOpenAlexJson(
+        ctx,
         `${BASE}/authors/${idToken}?select=${AUTHOR_SELECT}`
       )) as OpenAlexAuthor
       const aid = shortId(author.id) ?? ''
@@ -745,7 +763,8 @@ export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
       let topWorks: Record<string, unknown>[] = []
       let topWorksTotal = 0
       if (worksSample > 0) {
-        const resp = (await ctx.fetchJson(
+        const resp = (await fetchOpenAlexJson(
+          ctx,
           `${BASE}/works?filter=author.id:${aid}&sort=cited_by_count:desc&per-page=${worksSample}&select=${WORK_SELECT}`
         )) as ListResponse<OpenAlexWork>
         topWorksTotal = resp.meta?.count ?? 0
@@ -780,7 +799,8 @@ export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
     run: async (ctx, a) => {
       const venue = String(a.venue)
       if (isExactSourceId(venue)) {
-        const source = (await ctx.fetchJson(
+        const source = (await fetchOpenAlexJson(
+          ctx,
           `${BASE}/sources/${normalizeSourceId(venue)}?select=${SOURCE_SELECT}`
         )) as OpenAlexSource
         return { ...leanSource(source), counts_by_year: source.counts_by_year }
@@ -800,4 +820,4 @@ export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
       }
     }
   }
-]
+].map((descriptor) => ({ ...descriptor, requiredCredential: 'openalex' }))

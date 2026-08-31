@@ -15,15 +15,24 @@ import {
 } from './operation-journal'
 import type { NotebookPackageAdmission, NotebookPackageAdmittedTarget } from './package-admission'
 import type { InstallDeps, InstallResult } from './package-manager'
+import type {
+  MicromambaWorkingCacheRetainer,
+  WorkingCacheArchivePublication
+} from './windows-micromamba-working-cache'
+import { prepareNotebookWorkloadCache } from './notebook-workload-cache-paths'
 import { readProcessStartToken } from './operation-recovery'
 import { isChildUnconfirmedError } from './provisioner-runtime'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 
 const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'
+const CACHE_ARCHIVE_EVIDENCE_INCOMPLETE = 'CACHE_ARCHIVE_EVIDENCE_INCOMPLETE'
 
 const isRepairQuarantineError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes(REPAIR_QUARANTINE_FAILED)
+
+const isArchiveEvidenceIncompleteError = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes(CACHE_ARCHIVE_EVIDENCE_INCOMPLETE)
 
 type NotebookPackageMutationInput = Readonly<{
   target: NotebookPackageAdmittedTarget
@@ -54,6 +63,7 @@ type NotebookPackageMutationOwnerOptions = {
     'quarantineProtectedIdentity' | 'completeInterruptedInstall'
   >
   blockUnconfirmedChild: (target: NotebookPackageAdmittedTarget) => void
+  retainWorkingCache?: MicromambaWorkingCacheRetainer
 }
 
 /** Owns the complete crash-recoverable transaction for one admitted package mutation. */
@@ -73,15 +83,29 @@ class NotebookPackageMutationOwner {
     const { runtimeRoot } = this.options
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
     const operationId = randomUUID()
-    let result: InstallResult
+    const archiveCacheTransaction =
+      journalTarget !== undefined &&
+      this.options.retainWorkingCache !== undefined &&
+      request.usePip !== true &&
+      request.installer === undefined
+    const releaseWorkingCache = archiveCacheTransaction
+      ? await this.options.retainWorkingCache?.(runtimeRoot, operationId)
+      : undefined
+    let result: InstallResult | undefined
     let retainForRecovery = false
     let begun = false
+    let publicationIntentPersisted = false
+    let archiveEvidenceIncomplete = false
+    const archivePublications = new Map<string, WorkingCacheArchivePublication>()
     try {
       // The journal begins inside the environment lock so Reset cannot clear this new operation
       // between intent recording and the first installer spawn.
-      result = await this.options.environmentOperations.runMutation(environmentName, async () => {
+      await this.options.environmentOperations.runMutation(environmentName, async () => {
         const repairRefusal = this.options.recheckRepair(target)
-        if (repairRefusal) return repairRefusal.result
+        if (repairRefusal) {
+          result = repairRefusal.result
+          return result
+        }
         await journal.begin({
           operationId,
           kind: 'install',
@@ -89,9 +113,11 @@ class NotebookPackageMutationOwner {
           phase: `install-${request.language}`,
           startedAt: Date.now(),
           targetPath: journalTarget,
-          repairReason: 'interrupted-install'
+          repairReason: 'interrupted-install',
+          archivePublicationPending: archiveCacheTransaction ? true : undefined
         })
         begun = true
+        prepareNotebookWorkloadCache(runtimeRoot)
         const mutation = {
           operationId,
           operation: request.operation ?? ('install' as const),
@@ -143,6 +169,15 @@ class NotebookPackageMutationOwner {
                   childStartToken: undefined
                 })
                 removeOperationChildSync(runtimeRoot, operationId)
+              },
+              onCondaArchiveAuthorizations: (authorizations, workingRoot, evidenceComplete) => {
+                if (evidenceComplete === false) archiveEvidenceIncomplete = true
+                if (authorizations.length === 0) return
+                const previous = archivePublications.get(workingRoot)
+                archivePublications.set(workingRoot, {
+                  workingRoot,
+                  authorizations: [...(previous?.authorizations ?? []), ...authorizations]
+                })
               }
             })
             installerDurationMs = Date.now() - installerStartedAt
@@ -242,6 +277,29 @@ class NotebookPackageMutationOwner {
             durationMs: installerDurationMs
           })
         }
+        const publications = installResult?.ok ? [...archivePublications.values()] : []
+        // Publish from this settled result even if the lock wrapper itself fails while unwinding after
+        // the callback returns. Otherwise the outer assignment never lands and finally could mistake a
+        // committed transaction for an empty publication set.
+        result = installResult
+        if (archiveCacheTransaction && archiveEvidenceIncomplete) {
+          retainForRecovery = true
+          throw new Error(
+            `${CACHE_ARCHIVE_EVIDENCE_INCOMPLETE}: micromamba completed, but its complete archive ` +
+              'authorization set could not be captured; retaining the cache for explicit recovery'
+          )
+        }
+        // Close the pre-mutation crash marker while still holding the environment lock. A successful
+        // transaction records exact immutable authority; every other settled result records that there
+        // is nothing to publish. The cache cannot be released until this atomic transition is durable.
+        await journal.update(operationId, {
+          childPid: undefined,
+          childStartedAt: undefined,
+          childStartToken: undefined,
+          archivePublicationPending: undefined,
+          archivePublications: publications.length > 0 ? publications : undefined
+        })
+        publicationIntentPersisted = true
         return installResult
       })
     } catch (error) {
@@ -255,6 +313,20 @@ class NotebookPackageMutationOwner {
             `not started (installing without a recovery record could strand a worker process). ${
               error instanceof Error ? error.message : String(error)
             }`
+        }
+      }
+      if (
+        !publicationIntentPersisted &&
+        archivePublications.size === 0 &&
+        !isRepairQuarantineError(error) &&
+        !isArchiveEvidenceIncompleteError(error) &&
+        !isChildUnconfirmedError(error)
+      ) {
+        try {
+          await journal.update(operationId, { archivePublicationPending: undefined })
+          publicationIntentPersisted = true
+        } catch {
+          // Keep the durable ambiguity marker, target block, and working cache below.
         }
       }
       if (isRepairQuarantineError(error)) retainForRecovery = true
@@ -273,11 +345,24 @@ class NotebookPackageMutationOwner {
       }
       throw error
     } finally {
+      const publications = result?.ok ? [...archivePublications.values()] : []
+      if (begun && !publicationIntentPersisted) {
+        retainForRecovery = true
+        this.options.blockUnconfirmedChild(target)
+      }
       if (begun && !retainForRecovery) {
         removeOperationChildSync(runtimeRoot, operationId)
+      }
+      const cacheFinalized = await releaseWorkingCache?.({
+        archivePublications: publications,
+        completedOperationId: operationId,
+        retainForRecovery
+      }).catch(() => false)
+      if (begun && !retainForRecovery && (publications.length === 0 || cacheFinalized)) {
         await journal.complete(operationId).catch(() => undefined)
       }
     }
+    if (!result) throw new Error('package mutation completed without an installer result')
     if (result.ok) await this.options.runtimeRepair.completeInterruptedInstall(target)
     return result
   }

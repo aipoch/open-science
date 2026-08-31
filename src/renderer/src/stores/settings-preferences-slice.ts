@@ -32,6 +32,7 @@ type SettingsPreferencesState = {
   visionModel?: VisionModelConfiguration
   visionModelPending?: boolean
   notificationsEnabled: boolean
+  showNotificationContent: boolean
   conversationSkillImportEnabled: boolean
   closePreference: CloseActionPreference | undefined
   appIconVariant: AppIconVariant
@@ -43,6 +44,7 @@ type OptimisticPreferenceField =
   | 'reasoningEffort'
   | 'sessionDetailsModel'
   | 'notificationsEnabled'
+  | 'showNotificationContent'
   | 'conversationSkillImportEnabled'
   | 'closePreference'
   | 'appIconVariant'
@@ -56,6 +58,7 @@ export type SettingsPreferencesActions = {
   setSubagentModel: (configuration: SubagentModelConfiguration) => Promise<void>
   setVisionModel: (configuration: VisionModelConfiguration | undefined) => Promise<void>
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
+  setShowNotificationContent: (enabled: boolean) => Promise<void>
   setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
   setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
   setAppIconVariant: (variant: AppIconVariant) => Promise<void>
@@ -71,6 +74,7 @@ type SettingsPreferencesCommands = Pick<
   Window['api']['settings'],
   | 'setReasoningEffort'
   | 'setNotificationsEnabled'
+  | 'setShowNotificationContent'
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
   | 'setAppIconVariant'
@@ -103,6 +107,7 @@ const OPTIMISTIC_PREFERENCE_WRITES = [
   ['reasoningEffort', 'reasoningEffort'],
   ['sessionDetailsModel', 'sessionDetailsModel'],
   ['notificationsEnabled', 'notifications'],
+  ['showNotificationContent', 'notificationContent'],
   ['conversationSkillImportEnabled', 'conversationSkillImport'],
   ['closePreference', 'closePreference'],
   ['appIconVariant', 'appIcon'],
@@ -126,6 +131,7 @@ const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
   sessionDetailsModel:
     'Could not save Session details model. Refresh the model catalog and try again.',
   notifications: 'Could not save notification preference. Try again.',
+  notificationContent: 'Could not save notification preference. Try again.',
   conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
   closePreference: 'Could not save window close preference. Try again.',
   appIcon: 'Could not save app icon preference. Try again.',
@@ -274,6 +280,15 @@ export const createSettingsPreferencesSlice = ({
         enabled,
         () => getCommands().setNotificationsEnabled({ enabled }),
         'Failed to set notifications enabled'
+      ),
+
+    setShowNotificationContent: (enabled) =>
+      runOptimisticWrite(
+        'showNotificationContent',
+        'notificationContent',
+        enabled,
+        () => getCommands().setShowNotificationContent({ enabled }),
+        'Failed to set notification content visibility'
       ),
 
     setConversationSkillImportEnabled: (enabled) =>

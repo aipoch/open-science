@@ -9,12 +9,15 @@ const fsMocks = vi.hoisted(() => {
     { native }
   )
   return {
+    existsSync: vi.fn(() => false),
     lstatSync: vi.fn(() => {
       throw Object.assign(new Error('missing'), { code: 'ENOENT' })
     }),
     mkdirSync: vi.fn(),
     readFileSync: vi.fn(),
+    readdirSync: vi.fn(() => []),
     realpathSync,
+    rmdirSync: vi.fn(),
     rmSync: vi.fn(),
     writeFileSync: vi.fn()
   }
@@ -50,9 +53,10 @@ describe('Windows micromamba cache preparation', () => {
       deps
     )
 
-    expect(cache.path).toMatch(/^D:\\osp[0-9a-f]{10}$/)
-    expect(hardenOwnership).toHaveBeenCalledOnce()
-    expect(hardenOwnership).toHaveBeenCalledWith(cache.path)
+    expect(cache.path).toMatch(/^D:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(hardenOwnership).toHaveBeenCalledTimes(2)
+    expect(hardenOwnership).toHaveBeenNthCalledWith(1, 'D:\\OpenScienceTmp')
+    expect(hardenOwnership).toHaveBeenNthCalledWith(2, cache.path)
     expect(hardenOwnership.mock.invocationCallOrder[0]).toBeLessThan(
       fsMocks.writeFileSync.mock.invocationCallOrder[0]
     )
@@ -61,9 +65,9 @@ describe('Windows micromamba cache preparation', () => {
     )
   })
 
-  it('does not require a PowerShell ACL read after a new cache was securely hardened', () => {
+  it('verifies the shared parent but skips a second ACL read for a securely hardened cache child', () => {
     const hardenOwnership = vi.fn(() => true)
-    const verifyOwnership = vi.fn(() => false)
+    const verifyOwnership = vi.fn((path: string) => path === 'D:\\OpenScienceTmp')
 
     const cache = selectMicromambaCache(
       'D:\\OpenScience\\runtime',
@@ -77,9 +81,10 @@ describe('Windows micromamba cache preparation', () => {
       }
     )
 
-    expect(cache.path).toMatch(/^D:\\osp[0-9a-f]{10}$/)
-    expect(hardenOwnership).toHaveBeenCalledOnce()
-    expect(verifyOwnership).not.toHaveBeenCalled()
+    expect(cache.path).toMatch(/^D:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(hardenOwnership).toHaveBeenCalledTimes(2)
+    expect(verifyOwnership).toHaveBeenCalledOnce()
+    expect(verifyOwnership).toHaveBeenCalledWith('D:\\OpenScienceTmp', 'alice')
   })
 
   it('removes newly created candidates when ACL hardening fails', () => {
@@ -95,23 +100,71 @@ describe('Windows micromamba cache preparation', () => {
         hardenOwnership,
         verifyOwnership: () => true
       })
-    ).toThrow(/cache ACL could not be hardened \(Set-Acl denied\)/)
+    ).toThrow(/temporary parent ACL could not be hardened \(Set-Acl denied\)/)
 
-    expect(hardenOwnership).toHaveBeenCalledTimes(3)
-    expect(fsMocks.rmSync).toHaveBeenCalledTimes(3)
-    for (const [path, options] of fsMocks.rmSync.mock.calls) {
-      expect(path).toMatch(/^(D:\\|C:\\Users\\alice\\)os/)
-      expect(options).toEqual({ recursive: true, force: true })
-    }
+    expect(hardenOwnership).toHaveBeenCalledTimes(2)
+    expect(fsMocks.rmdirSync).toHaveBeenCalledWith('D:\\OpenScienceTmp')
+    expect(fsMocks.rmdirSync).toHaveBeenCalledWith('C:\\Users\\alice\\os-tmp')
+    expect(fsMocks.rmSync).not.toHaveBeenCalledWith(
+      expect.stringMatching(/(?:OpenScienceTmp|os-tmp)$/),
+      expect.objectContaining({ recursive: true })
+    )
+  })
+
+  it('never recursively removes a newly created shared parent after a sibling appears', () => {
+    const hardenOwnership = vi
+      .fn<() => boolean>()
+      .mockReturnValueOnce(true)
+      .mockImplementationOnce(() => {
+        throw new Error('child ACL denied')
+      })
+      .mockReturnValue(true)
+    fsMocks.readFileSync.mockReturnValue(
+      JSON.stringify({
+        schema: 1,
+        kind: 'micromamba-working-cache-parent',
+        userIdentity: 'alice'
+      })
+    )
+    fsMocks.readdirSync.mockReturnValue([
+      '.open-science-temp.json' as never,
+      'm-concurrent' as never
+    ])
+
+    expect(() =>
+      selectMicromambaCache('D:\\OpenScience\\runtime', DEFAULT_MAX_CACHE_RELATIVE_PATH, {
+        platform: 'win32',
+        env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
+        canonicalize: (path) => win32.normalize(path),
+        hardenOwnership,
+        verifyOwnership: () => true
+      })
+    ).not.toThrow()
+
+    expect(fsMocks.rmSync).toHaveBeenCalledWith(expect.stringMatching(/^D:\\OpenScienceTmp\\m-/), {
+      recursive: true,
+      force: true
+    })
+    expect(fsMocks.rmSync).not.toHaveBeenCalledWith(
+      'D:\\OpenScienceTmp',
+      expect.objectContaining({ recursive: true })
+    )
+    expect(fsMocks.rmdirSync).not.toHaveBeenCalledWith('D:\\OpenScienceTmp')
   })
 
   it('does not harden or take over an existing marked candidate', () => {
-    fsMocks.lstatSync.mockImplementationOnce(
-      () =>
-        ({
-          isDirectory: () => true,
-          isSymbolicLink: () => false
-        }) as never
+    const directory = {
+      isDirectory: () => true,
+      isSymbolicLink: () => false
+    } as never
+    fsMocks.lstatSync.mockImplementationOnce(() => directory)
+    fsMocks.lstatSync.mockImplementationOnce(() => directory)
+    fsMocks.readFileSync.mockImplementationOnce(() =>
+      JSON.stringify({
+        schema: 1,
+        kind: 'micromamba-working-cache-parent',
+        userIdentity: 'alice'
+      })
     )
     fsMocks.readFileSync.mockImplementationOnce(() =>
       JSON.stringify({
@@ -134,11 +187,11 @@ describe('Windows micromamba cache preparation', () => {
       }
     )
 
-    expect(cache.path).toMatch(/^D:\\osp/)
+    expect(cache.path).toMatch(/^D:\\OpenScienceTmp\\m-/)
     expect(hardenOwnership).not.toHaveBeenCalled()
   })
 
-  it('rejects an untrusted existing cache before accepting a newly hardened fallback', () => {
+  it('rejects both an untrusted primary parent and an untrusted per-user fallback', () => {
     fsMocks.lstatSync.mockImplementationOnce(
       () =>
         ({
@@ -149,28 +202,27 @@ describe('Windows micromamba cache preparation', () => {
     fsMocks.readFileSync.mockImplementationOnce(() =>
       JSON.stringify({
         schema: 1,
-        canonicalRoot: 'd:\\openscience\\runtime',
+        kind: 'micromamba-working-cache-parent',
         userIdentity: 'alice'
       })
     )
     const hardenOwnership = vi.fn(() => true)
     const verifyOwnership = vi.fn(() => false)
 
-    const cache = selectMicromambaCache(
-      'D:\\OpenScience\\runtime',
-      DEFAULT_MAX_CACHE_RELATIVE_PATH,
-      {
+    expect(() =>
+      selectMicromambaCache('D:\\OpenScience\\runtime', DEFAULT_MAX_CACHE_RELATIVE_PATH, {
         platform: 'win32',
         env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
         canonicalize: (path) => win32.normalize(path),
         hardenOwnership,
         verifyOwnership
-      }
-    )
+      })
+    ).toThrow(/temporary parent ownership or permissions are not trusted/i)
 
-    expect(cache.path).toMatch(/^C:\\Users\\alice\\osp[0-9a-f]{10}$/)
-    expect(verifyOwnership).toHaveBeenCalledOnce()
+    // The third call is the fail-closed parent cleanup recheck; because it remains untrusted, the
+    // shared parent is preserved instead of being recursively removed.
+    expect(verifyOwnership).toHaveBeenCalledTimes(3)
     expect(hardenOwnership).toHaveBeenCalledOnce()
-    expect(hardenOwnership).toHaveBeenCalledWith(cache.path)
+    expect(hardenOwnership).toHaveBeenCalledWith('C:\\Users\\alice\\os-tmp')
   })
 })

@@ -303,6 +303,30 @@ describe('ComposerAgentControlsMenu', () => {
     expect(container.textContent).not.toContain('Enable Full access?')
   })
 
+  it('toggles Memory for the conversation without closing the menu', () => {
+    const onMemoryChange = vi.fn()
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          memoryEnabled
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onMemoryChange={onMemoryChange}
+        />
+      )
+    })
+
+    act(() =>
+      findButton('MemoryLet the agent recall and save memory in this conversation.').click()
+    )
+
+    expect(onMemoryChange).toHaveBeenCalledWith(false)
+    expect(selectEvents.at(-1)?.prevented).toBe(true)
+  })
+
   it('opens permission choices inside the same menu on mobile and can return', () => {
     mediaState.mobile = true
 
@@ -725,6 +749,48 @@ describe('ComposerAgentControlsMenu', () => {
         .querySelector('[data-testid="specialist-submenu-stub"]')
         ?.getAttribute('data-read-only')
     ).toBe('true')
+  })
+
+  it('keeps replay-independent controls editable while provider controls stay locked', () => {
+    const onAutoReviewChange = vi.fn()
+    const onMemoryChange = vi.fn()
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          memoryEnabled={false}
+          readOnly={true}
+          autoReviewReadOnly={false}
+          memoryReadOnly={false}
+          specialistReadOnly={false}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={onAutoReviewChange}
+          onMemoryChange={onMemoryChange}
+          showSpecialist
+          onSpecialistChange={vi.fn()}
+        />
+      )
+    })
+
+    const autoReviewRow = findButton(
+      'Auto-reviewA reviewer agent checks every change before it lands.'
+    )
+    expect(autoReviewRow.disabled).toBe(false)
+    const memoryRow = findButton('MemoryLet the agent recall and save memory in this conversation.')
+    expect(memoryRow.disabled).toBe(false)
+    expect(
+      container
+        .querySelector('[data-testid="specialist-submenu-stub"]')
+        ?.getAttribute('data-read-only')
+    ).toBe('false')
+
+    act(() => autoReviewRow.click())
+    act(() => memoryRow.click())
+
+    expect(onAutoReviewChange).toHaveBeenCalledWith(true)
+    expect(onMemoryChange).toHaveBeenCalledWith(true)
   })
 
   it('keeps conversation grant actions available while profile controls are read-only', () => {

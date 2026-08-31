@@ -69,6 +69,20 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
   }
 })
 
+const ownerResolvingArchiveAvailability = (
+  projectId: string
+): NonNullable<AcpApplicationCommandDependencies['archiveAvailability']> => ({
+  withSessionAvailable: async <Result>(
+    _projectId: string,
+    _sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> => operation(),
+  withSessionAvailableById: async <Result>(
+    _sessionId: string,
+    operation: (ownerProjectId: string) => Promise<Result>
+  ): Promise<Result> => operation(projectId)
+})
+
 const invocation = <Args extends readonly unknown[]>(
   args: Args,
   callerContext: CallerContext = createElectronCallerContext(7)
@@ -500,6 +514,55 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.compactSession).not.toHaveBeenCalled()
   })
 
+  it('binds Web reset requests to the persisted Project owner', async () => {
+    const persistedProjectId = 'persisted-project'
+    const dependencies: AcpApplicationCommandDependencies = {
+      ...createDependencies(),
+      archiveAvailability: ownerResolvingArchiveAvailability(persistedProjectId)
+    }
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const request = { sessionId: 'session-1', cwd: '/workspace' }
+
+    await router.dispatcher.invoke(
+      acpCommands.resetSessionContext,
+      invocation([request], createWebCallerContext('local-web'))
+    )
+
+    expect(dependencies.runtime.resetSessionContext).toHaveBeenCalledWith({
+      ...request,
+      projectId: persistedProjectId
+    })
+  })
+
+  it('rejects a Web reset request whose projectId disagrees with the persisted owner', async () => {
+    const persistedProjectId = 'persisted-project'
+    const dependencies: AcpApplicationCommandDependencies = {
+      ...createDependencies(),
+      archiveAvailability: ownerResolvingArchiveAvailability(persistedProjectId)
+    }
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.resetSessionContext,
+        invocation(
+          [
+            {
+              sessionId: 'session-1',
+              cwd: '/workspace',
+              projectId: 'forged-project'
+            }
+          ],
+          createWebCallerContext('local-web')
+        )
+      )
+    ).rejects.toThrow('Session does not belong to the requested Project.')
+
+    expect(dependencies.runtime.resetSessionContext).not.toHaveBeenCalled()
+  })
+
   it('does not nest Session admission around the coordinator follow-up guard', async () => {
     let archiveQueue: Promise<void> = Promise.resolve()
     const enqueueArchive = <Result>(operation: () => Promise<Result>): Promise<Result> => {
@@ -513,8 +576,8 @@ describe('ACP application commands', () => {
     const base = createDependencies()
     const withSessionAvailableById = <Result>(
       _sessionId: string,
-      operation: () => Promise<Result>
-    ): Promise<Result> => enqueueArchive(operation)
+      operation: (projectId: string) => Promise<Result>
+    ): Promise<Result> => enqueueArchive(() => operation('project-1'))
     const dependencies: AcpApplicationCommandDependencies = {
       ...base,
       runtime: {
@@ -629,7 +692,8 @@ describe('ACP application commands', () => {
           sessionId: string,
           operation: () => Promise<Result>
         ): Promise<Result> => withinAdmission(sessionId, operation),
-        withSessionAvailableById: withinAdmission
+        withSessionAvailableById: (sessionId, operation) =>
+          withinAdmission(sessionId, () => operation('project-1'))
       },
       respondDelegatedQuestion
     }
@@ -747,10 +811,10 @@ describe('ACP application commands', () => {
     const admitted: string[] = []
     const withSessionAvailableById = <Result>(
       sessionId: string,
-      operation: () => Promise<Result>
+      operation: (projectId: string) => Promise<Result>
     ): Promise<Result> => {
       admitted.push(sessionId)
-      return operation()
+      return operation('project-1')
     }
     const respondDelegatedQuestion = vi.fn(async () => undefined)
     const dependencies: AcpApplicationCommandDependencies = {

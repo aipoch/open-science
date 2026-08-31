@@ -10,6 +10,8 @@ const storageInfo = (totalBytes: number): StorageInfo => ({
   defaultParent: '/',
   dataRootMissing: false,
   legacyDataMovePrompt: false,
+  cleanupPending: false,
+  canAutoSelectDataDrive: false,
   usage: { categories: [], totalBytes },
   availableBytes: 1_000
 })
@@ -20,7 +22,8 @@ const storageStatus = (): StorageStatus => ({
   defaultDataRoot: '/data',
   defaultParent: '/',
   dataRootMissing: false,
-  legacyDataMovePrompt: false
+  legacyDataMovePrompt: false,
+  cleanupPending: false
 })
 
 const setStorageApi = (

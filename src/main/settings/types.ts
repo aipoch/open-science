@@ -147,6 +147,9 @@ export type StoredConnectors = {
   autoAllowIds: string[]
   contactEmail?: string
   ncbiApiKeyRef?: string
+  // OpenAlex is consumed by a subset of the bundled Literature Connector tools. Keep its secret
+  // beside the other Connector-owned credentials so dispatch can resolve it immediately before use.
+  openAlexApiKeyRef?: string
   // Fully-qualified "<connector>/<method>" ids denied by policy; allow by default otherwise.
   blockedToolIds?: string[]
   // Fully-qualified "<connector>/<method>" ids that require per-call approval (opt-in). Tools default
@@ -183,6 +186,8 @@ export type StoredSettings = {
   visionModel?: VisionModelConfiguration
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
+  // Native notification detail is privacy-sensitive. Absent means generic copy only.
+  showNotificationContent?: boolean
   // Conversation-driven Skill package import. Absent means enabled.
   conversationSkillImportEnabled?: boolean
   // Interface language preference shared by desktop renderer and native surfaces. Absent means the

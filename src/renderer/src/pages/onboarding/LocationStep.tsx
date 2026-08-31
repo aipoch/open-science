@@ -23,7 +23,6 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { Separator } from '@/components/ui/separator'
 import type { StorageInfo } from '../../../../shared/storage'
-import { useSettingsStore } from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { onboardingErrorMessage } from './onboarding-error'
 
@@ -36,7 +35,10 @@ type LocationStepProps = {
   relaunchError: string | undefined
   onRelaunchErrorChange: (error: string | undefined) => void
   onRetryDataRootInfo: () => void
+  onInteractionStart: () => void
   onBack: () => void
+  onContinue: () => void
+  isResolvingDefaultLocation: boolean
   // Relaunch replaces the whole wizard with a bare "Setting up…" screen, so the flag lives in the
   // shell and this step only reports it.
   setIsRelaunching: (value: boolean) => void
@@ -47,9 +49,9 @@ type LocationDraft = {
   chosenDataRoot: string
   chosenKind: 'move' | 'adopt' | null
 }
-// Final step (doubles as Finish): pick where large data lives, then either completeOnboarding
-// (default kept) or confirm a restart that applies the new root. Only `dataRoot` is ever touched
-// here — the config root (settings, sessions, db, claude, skills) always stays at its fixed default.
+// Early storage step: pick where large data lives, then either continue with the current default or
+// confirm a restart that activates a custom root before runtime installation. Only `dataRoot` is
+// ever touched here — the config root (settings, sessions, db, claude, skills) stays fixed.
 const LocationStep = ({
   dataRootInfo,
   dataRootError,
@@ -58,11 +60,13 @@ const LocationStep = ({
   relaunchError,
   onRelaunchErrorChange,
   onRetryDataRootInfo,
+  onInteractionStart,
   onBack,
+  onContinue,
+  isResolvingDefaultLocation,
   setIsRelaunching
 }: LocationStepProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
   const { chosenParent, chosenDataRoot, chosenKind } = locationDraft
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
   const [confirmRestart, setConfirmRestart] = useState(false)
@@ -83,6 +87,7 @@ const LocationStep = ({
   }
 
   const handleBrowseLocation = async (): Promise<void> => {
+    onInteractionStart()
     await runExclusive(async () => {
       setLocationError(undefined)
       try {
@@ -117,36 +122,23 @@ const LocationStep = ({
     setLocationError(undefined)
   }
 
-  const completeWithDefaultLocation = async (): Promise<void> => {
-    onRelaunchErrorChange(undefined)
-    try {
-      await completeOnboarding()
-    } catch (error) {
-      onRelaunchErrorChange(
-        onboardingErrorMessage(error, 'Could not finish setup with the default data location.')
-      )
-    }
-  }
-
-  const handleFinishLocation = async (): Promise<void> => {
+  const handleContinueLocation = (): void => {
     if (requestInFlightRef.current) return
 
     if (chosenParent) {
-      // A custom location was chosen: gate completeOnboarding behind the user's confirmation.
-      // Calling completeOnboarding immediately would flip the App-level startup gate to 'app'
-      // and unmount this wizard (and this confirm dialog) before it could ever be shown.
       setConfirmRestart(true)
     } else {
-      // Default kept: nothing more to do, the App gate takes it from here — no relaunch.
-      await runExclusive(completeWithDefaultLocation)
+      onRelaunchErrorChange(undefined)
+      onContinue()
     }
   }
 
-  const handleKeepDefault = async (): Promise<void> => {
-    await runExclusive(async () => {
-      setConfirmRestart(false)
-      await completeWithDefaultLocation()
-    })
+  const handleKeepDefault = (): void => {
+    setConfirmRestart(false)
+    onLocationDraftChange({ chosenParent: '', chosenDataRoot: '', chosenKind: null })
+    onRelaunchErrorChange(undefined)
+    setLocationError(undefined)
+    onContinue()
   }
 
   const handleRestart = async (): Promise<void> => {
@@ -155,14 +147,10 @@ const LocationStep = ({
       onRelaunchErrorChange(undefined)
       setIsRelaunching(true)
 
-      // Deliberately NOT calling the renderer completeOnboarding() here: it flips
-      // onboardingCompletedAt immediately, which would make App.tsx's startup gate swap this
-      // wizard for Home (showing the OLD data root) before setDataRootAndRelaunch even runs, and
-      // would turn the failure branch below into dead code. Instead the main-process handler marks
-      // onboarding complete itself, in the same step as setDataRoot, right before it relaunches -
-      // so the gate only flips once the new location is actually persisted.
+      // Onboarding is intentionally still incomplete. The persisted custom dataRoot is the resume
+      // signal after relaunch, and the wizard continues at Agent before finishing at Notebook.
       try {
-        const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, true)
+        const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, false)
         if (result.ok) return
 
         // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
@@ -195,7 +183,7 @@ const LocationStep = ({
       <CardContent className="flex-1 px-4 py-5 sm:px-6">
         <section
           aria-label={t('Choose data location')}
-          aria-busy={requestInFlight}
+          aria-busy={requestInFlight || isResolvingDefaultLocation}
           className="space-y-5"
         >
           {dataRootError ? (
@@ -294,11 +282,11 @@ const LocationStep = ({
         </Button>
         <Button
           type="button"
-          onClick={() => void handleFinishLocation()}
-          disabled={requestInFlight}
+          onClick={handleContinueLocation}
+          disabled={requestInFlight || isResolvingDefaultLocation}
           className="px-4"
         >
-          {t('Finish')}
+          {t('Continue')}
         </Button>
       </CardFooter>
 
@@ -343,7 +331,7 @@ const LocationStep = ({
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => void handleKeepDefault()}
+                  onClick={handleKeepDefault}
                   disabled={requestInFlight}
                 >
                   {t('Keep default')}

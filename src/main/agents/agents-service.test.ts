@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
-import type { SpecialistProfileView } from '../../shared/specialist'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistView } from '../../shared/specialist'
+import type { SpecialistService } from '../specialist/service'
 import type { StoredConnectors } from '../settings/types'
 
-const profile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+const profile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'sp-1',
   name: 'Bio Expert',
   displayName: 'Bio Expert',
@@ -21,7 +21,7 @@ const profile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProf
   ...overrides
 })
 
-const profileService = (profiles: SpecialistProfileView[]): ProfileService =>
+const specialistService = (profiles: SpecialistView[]): SpecialistService =>
   ({
     list: vi.fn(async () => profiles),
     getByName: vi.fn(async (name: string) => {
@@ -29,7 +29,7 @@ const profileService = (profiles: SpecialistProfileView[]): ProfileService =>
       if (!found) throw new Error(`Specialist "${name}" not found.`)
       return found
     })
-  }) as unknown as ProfileService
+  }) as unknown as SpecialistService
 
 const catalog = (overrides: Partial<AgentsCatalogSource> = {}): AgentsCatalogSource => ({
   listSkillCatalog: vi.fn(async () => [
@@ -57,7 +57,7 @@ const catalog = (overrides: Partial<AgentsCatalogSource> = {}): AgentsCatalogSou
 describe('AgentsService read surface', () => {
   it('list() returns summary records without system prompts or a synthetic Reviewer row', async () => {
     const service = new AgentsService({
-      profileService: profileService([profile()]),
+      specialistService: specialistService([profile()]),
       catalog: catalog()
     })
     const result = (await service.list()) as Awaited<ReturnType<typeof service.list>>
@@ -72,7 +72,7 @@ describe('AgentsService read surface', () => {
 
   it('get(name) returns detail including the system prompt', async () => {
     const service = new AgentsService({
-      profileService: profileService([profile()]),
+      specialistService: specialistService([profile()]),
       catalog: catalog()
     })
     const got = await service.get({ name: 'Bio Expert' })
@@ -99,7 +99,7 @@ describe('AgentsService read surface', () => {
 
   it('get() rejects a missing name with a host.agents.get-prefixed error', async () => {
     const service = new AgentsService({
-      profileService: profileService([]),
+      specialistService: specialistService([]),
       catalog: catalog()
     })
     await expect(service.read({ op: 'get', params: {} })).rejects.toThrow(/host\.agents\.get:/)
@@ -107,7 +107,7 @@ describe('AgentsService read surface', () => {
 
   it('list_skills() returns the full catalog including Main-disabled skills', async () => {
     const service = new AgentsService({
-      profileService: profileService([]),
+      specialistService: specialistService([]),
       catalog: catalog()
     })
     const skills = await service.listSkills({})
@@ -157,7 +157,7 @@ describe('AgentsService read surface', () => {
       ]
     }
     const service = new AgentsService({
-      profileService: profileService([]),
+      specialistService: specialistService([]),
       catalog: catalog({ getConnectors: vi.fn(async () => stored) })
     })
     const connectors = await service.listConnectors({})
@@ -181,7 +181,7 @@ describe('AgentsService read surface', () => {
 
   it('filters by exact stable id first', async () => {
     const service = new AgentsService({
-      profileService: profileService([]),
+      specialistService: specialistService([]),
       catalog: catalog()
     })
     const result = await service.listSkills({ name_or_id: 'personal-foo' })
@@ -191,7 +191,7 @@ describe('AgentsService read surface', () => {
 
   it('rejects an ambiguous public name with a stable-id instruction', async () => {
     const service = new AgentsService({
-      profileService: profileService([]),
+      specialistService: specialistService([]),
       catalog: catalog({
         listSkillCatalog: vi.fn(async () => [
           {
@@ -227,7 +227,7 @@ describe('AgentsService read surface', () => {
       })
     }
     const service = new AgentsService({
-      profileService: failing as unknown as ProfileService,
+      specialistService: failing as unknown as SpecialistService,
       catalog: catalog()
     })
     await expect(service.read({ op: 'list' })).rejects.toThrow(
@@ -236,10 +236,10 @@ describe('AgentsService read surface', () => {
   })
 })
 
-// A ProfileService fake with the mutation surface dispatch needs for privileged ops (update/delete
+// A SpecialistService fake with the mutation surface dispatch needs for privileged ops (update/delete
 // + absence verification), so a delete/name-changing-update can complete end-to-end through
 // dispatch without a real store.
-const mutatingProfileService = (profiles: SpecialistProfileView[]): ProfileService => {
+const mutatingSpecialistService = (profiles: SpecialistView[]): SpecialistService => {
   let store = [...profiles]
   const service = {
     list: vi.fn(async () => [...store]),
@@ -265,7 +265,7 @@ const mutatingProfileService = (profiles: SpecialistProfileView[]): ProfileServi
       if (idx < 0) throw new Error('not found')
       store = store.filter((p) => p.id !== id)
     })
-  } as unknown as ProfileService
+  } as unknown as SpecialistService
   service.resolveCustomMutationByName = vi.fn(async (name: string) => service.getByName(name))
   return service
 }
@@ -286,11 +286,11 @@ describe('AgentsService connector runtime availability', () => {
         }
       ]
     }
-    const profiles = mutatingProfileService([profile()])
+    const profiles = mutatingSpecialistService([profile()])
     const attachConnector = vi.fn(async () => profile())
     profiles.attachConnector = attachConnector
     const service = new AgentsService({
-      profileService: profiles,
+      specialistService: profiles,
       catalog: catalog({ getConnectors: vi.fn(async () => stored) }),
       customServerAvailability: (id) => (id === 'cust-1' ? 'unavailable' : undefined)
     })
@@ -305,13 +305,53 @@ describe('AgentsService connector runtime availability', () => {
     ).rejects.toThrow(/host\.agents\.attach_connector:.*unavailable/)
     expect(attachConnector).not.toHaveBeenCalled()
   })
+
+  it('reports unresolved custom credentials and rejects a new attachment', async () => {
+    const stored: StoredConnectors = {
+      enabledIds: [],
+      autoAllowIds: [],
+      customMcpServers: [
+        {
+          id: 'credential-missing',
+          name: 'credential-missing',
+          displayName: 'Credential Missing',
+          transport: 'stdio',
+          enabled: true,
+          command: 'run',
+          envRefs: { API_TOKEN: 'enc:unavailable' }
+        }
+      ]
+    }
+    const profiles = mutatingSpecialistService([profile()])
+    const attachConnector = vi.fn(async () => profile())
+    profiles.attachConnector = attachConnector
+    const service = new AgentsService({
+      specialistService: profiles,
+      catalog: catalog({ getConnectors: vi.fn(async () => stored) })
+    })
+
+    const connector = (await service.listConnectors({})).find(
+      (item) => item.id === 'credential-missing'
+    )
+    expect(connector).toMatchObject({
+      availability: 'credential_unavailable',
+      mainEnabled: false
+    })
+    await expect(
+      service.dispatch({
+        op: 'attach_connector',
+        params: { name: 'Bio Expert', connector_ref: 'credential-missing', revision: 3 }
+      })
+    ).rejects.toThrow(/host\.agents\.attach_connector:.*credential_unavailable/)
+    expect(attachConnector).not.toHaveBeenCalled()
+  })
 })
 
 describe('AgentsService privileged dispatch — trusted session threading', () => {
   it('threads the trusted calling session into the delete approval request', async () => {
     const seenSessions: unknown[] = []
     const service = new AgentsService({
-      profileService: mutatingProfileService([profile()]),
+      specialistService: mutatingSpecialistService([profile()]),
       catalog: catalog(),
       approvalGateway: {
         decide: async (request) => {
@@ -333,7 +373,7 @@ describe('AgentsService privileged dispatch — trusted session threading', () =
   it('updates displayName without changing immutable name or consulting approval', async () => {
     const decided: unknown[] = []
     const service = new AgentsService({
-      profileService: mutatingProfileService([profile()]),
+      specialistService: mutatingSpecialistService([profile()]),
       catalog: catalog(),
       approvalGateway: {
         decide: async (request) => {
@@ -352,7 +392,7 @@ describe('AgentsService privileged dispatch — trusted session threading', () =
       },
       { sessionId: 'trusted-session-2' }
     )
-    expect(result).toEqual<SpecialistProfileView>(
+    expect(result).toEqual<SpecialistView>(
       expect.objectContaining({ name: 'Bio Expert', displayName: 'Chem Expert' })
     )
     expect(decided).toHaveLength(0)
@@ -361,7 +401,7 @@ describe('AgentsService privileged dispatch — trusted session threading', () =
   it('passes an empty session to the gateway when no trusted context is supplied (test compatibility)', async () => {
     const seenSessions: unknown[] = []
     const service = new AgentsService({
-      profileService: mutatingProfileService([profile()]),
+      specialistService: mutatingSpecialistService([profile()]),
       catalog: catalog(),
       approvalGateway: {
         decide: async (request) => {

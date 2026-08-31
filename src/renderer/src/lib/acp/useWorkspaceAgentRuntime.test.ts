@@ -4,7 +4,10 @@ import type {
   AcpStateSnapshot
 } from '../../../../shared/acp'
 import type { HistoryReplayTarget } from '../../../../shared/history-preamble'
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  SessionPdfContext
+} from '../../../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import {
   MAX_COMPOSER_ATTACHMENTS,
@@ -17,7 +20,8 @@ import {
   createInitialSessionState,
   toPersistedSession,
   useSessionStore,
-  type ChatMessage
+  type ChatMessage,
+  type ChatSession
 } from '../../stores/session-store'
 import {
   createInitialPreviewWorkbenchState,
@@ -25,11 +29,13 @@ import {
 } from '../../stores/preview-workbench-store'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
+  clearLinkedPendingPdfContext,
   createWorkspaceRuntimeEventProcessor,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
   pendingWorkspacePermissions,
   processVisibleWorkspaceRuntimeEvents,
+  revealLinkedPdfContext,
   setWorkspacePermissionProfile,
   syncWorkspaceContextUsage
 } from './useWorkspaceAgentRuntime'
@@ -1343,7 +1349,8 @@ describe('workspace durable elicitation', () => {
           providerId: backendId.slice(backendId.indexOf(':') + 1),
           model: 'session-model',
           reasoningEffort: 'high'
-        }
+        },
+        true
       )
       expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
         respondToElicitation.mock.invocationCallOrder[0]
@@ -1680,7 +1687,8 @@ describe('workspace durable elicitation', () => {
         providerId: 'provider-2',
         model: 'new-model',
         reasoningEffort: 'high'
-      }
+      },
+      true
     )
     expect(onSendPreparationStateChange.mock.calls).toEqual([
       [session.id, true],
@@ -1870,6 +1878,149 @@ describe('workspace durable elicitation', () => {
 })
 
 describe('workspace agent message sending', () => {
+  it('clears only the pending PDF selection proven by the linked context', () => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    const sentSelection = {
+      kind: 'staged-upload' as const,
+      attachmentId: 'upload-1',
+      previewItemId: 'upload:upload-1'
+    }
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', sentSelection)
+    const replacementSelection = {
+      kind: 'version' as const,
+      sourceKind: 'artifact-version' as const,
+      sourceVersionId: 'version-2',
+      previewItemId: 'artifact:version-2'
+    }
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', replacementSelection)
+
+    clearLinkedPendingPdfContext('project-1', sentSelection, {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'upload-version',
+          sourceFileId: 'upload-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    })
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual(
+      replacementSelection
+    )
+  })
+
+  it('clears the exact staged PDF selection after its linked binding is committed', () => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    const selection = {
+      kind: 'staged-upload' as const,
+      attachmentId: 'upload-1',
+      previewItemId: 'upload:upload-1'
+    }
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', selection)
+
+    clearLinkedPendingPdfContext('project-1', selection, {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'upload-version',
+          sourceFileId: 'upload-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    })
+
+    expect(
+      usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']
+    ).toBeUndefined()
+  })
+
+  it('keeps a pending PDF selection when the committed context does not contain it', () => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    const selection = {
+      kind: 'version' as const,
+      sourceKind: 'artifact-version' as const,
+      sourceVersionId: 'version-1',
+      previewItemId: 'artifact:version-1'
+    }
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', selection)
+
+    clearLinkedPendingPdfContext('project-1', selection, {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-2',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'version-2',
+          sourceSessionId: 'session-1',
+          name: 'other-paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'b'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    })
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual(
+      selection
+    )
+  })
+
+  it('reveals a PDF only after its Session context link completes', () => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    const pdfContext: SessionPdfContext = {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'upload-version',
+          sourceFileId: 'upload-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+
+    revealLinkedPdfContext('project-1', pdfContext)
+
+    const preview = usePreviewWorkbenchStore.getState()
+    expect(preview.activeItemId).toBe('upload:upload-1')
+    expect(preview.panelState).toBe('open')
+    expect(preview.items).toEqual([
+      expect.objectContaining({
+        id: 'upload:upload-1',
+        projectId: 'project-1',
+        path: 'upload-version:project-1/session-1/version-1',
+        format: 'pdf'
+      })
+    ])
+  })
+
   beforeEach(() => {
     useSessionStore.setState(createInitialSessionState())
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
@@ -1878,6 +2029,241 @@ describe('workspace agent message sending', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it.each<AgentFrameworkId>(['claude-code', 'opencode', 'codex', 'codebuddy'])(
+    'persists a stable application-owned Message before dispatching through %s',
+    async (agentFrameworkId) => {
+      useSessionStore.setState({
+        ...createInitialSessionState(),
+        selectedSessionId: 'transport-session-1',
+        sessions: [
+          {
+            id: 'transport-session-1',
+            projectId: 'project-1',
+            cwd: '/workspace/project',
+            title: 'Compute analysis',
+            status: 'idle',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1
+          } as ChatSession
+        ]
+      })
+      const persisted = createDeferred<PersistedChatSession>()
+      const saveSession = vi.fn((session: PersistedChatSession) => {
+        void session
+        return persisted.promise
+      })
+      vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+      const runtime = {
+        state: createSnapshot(['transport-session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      }
+      const input = {
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1',
+        text: 'Analyze the completed compute job',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId
+      }
+
+      const sending = sendWorkspaceMessage(runtime, input)
+
+      await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+      expect(saveSession.mock.calls[0]?.[0].messages).toEqual([
+        expect.objectContaining({
+          id: 'automatic-analysis-message-1',
+          role: 'user',
+          content: 'Analyze the completed compute job'
+        })
+      ])
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+      persisted.resolve(saveSession.mock.calls[0]![0])
+      await expect(sending).resolves.toEqual({
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1'
+      })
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+
+      await expect(sendWorkspaceMessage(runtime, input)).resolves.toEqual({
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1'
+      })
+      expect(saveSession).toHaveBeenCalledOnce()
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('redispatches a persisted stable Message when no response or active run exists', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      content: 'Analyze the completed compute job',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'transport-session-1'
+          ? { ...session, status: 'idle', activeRun: undefined }
+          : session
+      )
+    }))
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await expect(
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1',
+        text: 'Analyze the completed compute job',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId: 'claude-code'
+      })
+    ).resolves.toEqual({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1'
+    })
+
+    expect(saveSession).toHaveBeenCalledOnce()
+    expect(saveSession.mock.calls[0]?.[0]).toMatchObject({
+      status: 'running',
+      activeRun: { promptMessageId: 'automatic-analysis-message-1' },
+      messages: [
+        {
+          id: 'automatic-analysis-message-1',
+          role: 'user',
+          content: 'Analyze the completed compute job'
+        }
+      ]
+    })
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('redispatches a stable Message preserved on an inactive conversation Branch', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      content: 'Analyze the completed compute job',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore
+      .getState()
+      .truncateSessionFromMessage('transport-session-1', 'automatic-analysis-message-1')
+
+    const truncated = useSessionStore.getState().sessions[0]
+    expect(truncated.messages).toEqual([])
+    expect(
+      truncated.conversationGraph?.messages.filter(
+        (message) => message.id === 'automatic-analysis-message-1'
+      )
+    ).toHaveLength(1)
+
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await expect(
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'transport-session-1',
+        messageId: 'automatic-analysis-message-1',
+        text: 'Analyze the completed compute job',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId: 'claude-code'
+      })
+    ).resolves.toEqual({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1'
+    })
+
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([
+      expect.objectContaining({ id: 'automatic-analysis-message-1' })
+    ])
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].conversationGraph?.messages.filter(
+          (message) => message.id === 'automatic-analysis-message-1'
+        )
+    ).toHaveLength(1)
+  })
+
+  it('reports a stable application-owned Message as unsent when prompt ownership is lost', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      selectedSessionId: 'transport-session-1',
+      sessions: [
+        {
+          id: 'transport-session-1',
+          projectId: 'project-1',
+          cwd: '/workspace/project',
+          title: 'Compute analysis',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ]
+    })
+    const persisted = createDeferred<PersistedChatSession>()
+    const saveSession = vi.fn((session: PersistedChatSession) => {
+      void session
+      return persisted.promise
+    })
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    const sending = sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      text: 'Analyze the completed compute job',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'transport-session-1'
+          ? { ...session, status: 'idle', activeRun: undefined }
+          : session
+      )
+    }))
+    persisted.resolve(saveSession.mock.calls[0]![0])
+
+    await expect(sending).resolves.toBeUndefined()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('does not pin a catalog fallback model onto an unpinned send target', async () => {
@@ -2011,6 +2397,104 @@ describe('workspace agent message sending', () => {
       content: '',
       annotations: [annotation]
     })
+  })
+
+  it('dispatches a PDF region Evidence screenshot as current visual context', async () => {
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt
+    }
+    const annotation = {
+      id: 'pdf-region-1',
+      kind: 'pdf' as const,
+      target: 'agent' as const,
+      source: {
+        kind: 'upload-version' as const,
+        projectId: 'project-1',
+        sessionId: 'transport-session-1',
+        versionId: 'version-1',
+        name: 'paper.pdf',
+        path: 'upload-version:project-1/transport-session-1/version-1',
+        checksum: 'a'.repeat(64)
+      },
+      selector: {
+        kind: 'region' as const,
+        pageNumber: 2,
+        rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
+        pageRotation: 0,
+        image: { mimeType: 'image/png' as const, data: 'AQID', byteLength: 3 }
+      }
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Explain this figure.',
+      annotations: [annotation],
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      supportsImageInput: true
+    })
+
+    await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
+    expect(sendPrompt.mock.calls[0]?.[1]).toContain('"type":"pdf-region"')
+    expect(sendPrompt.mock.calls[0]?.[1]).not.toContain('AQID')
+    expect(sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+    expect(sendPrompt.mock.calls[0]?.[15]).toEqual([
+      { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+    ])
+    expect(useSessionStore.getState().sessions[0].messages[0]?.annotations).toEqual([annotation])
+  })
+
+  it('rejects PDF region Evidence before mutation when no visual model is available', async () => {
+    const sendPrompt = vi.fn()
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt
+    }
+    const sessionsBefore = useSessionStore.getState().sessions
+
+    await expect(
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'transport-session-1',
+        text: 'Explain this figure.',
+        annotations: [
+          {
+            id: 'pdf-region-1',
+            kind: 'pdf',
+            target: 'agent',
+            source: {
+              kind: 'upload-version',
+              projectId: 'project-1',
+              sessionId: 'transport-session-1',
+              versionId: 'version-1',
+              name: 'paper.pdf',
+              path: 'upload-version:project-1/transport-session-1/version-1',
+              checksum: 'a'.repeat(64)
+            },
+            selector: {
+              kind: 'region',
+              pageNumber: 2,
+              rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
+              pageRotation: 0,
+              image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+            }
+          }
+        ],
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        supportsImageInput: false
+      })
+    ).rejects.toThrow("The selected model doesn't support images")
+
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions).toBe(sessionsBefore)
   })
 
   it('dispatches mixed image annotations with fixed references, stable numbers, and natural pixels', async () => {
@@ -2188,6 +2672,269 @@ describe('workspace agent message sending', () => {
     expect(sent).toBeUndefined()
     expect(sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('snapshots one linked PDF into the durable user turn and shared file-reference budget', async () => {
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+    const pdfContext = {
+      version: 1 as const,
+      bindings: [
+        {
+          version: 1 as const,
+          bindingId: 'binding-1',
+          sourceKind: 'artifact-version' as const,
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'source-session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf' as const,
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+
+    const readingPosition = { pageNumber: 7, pageCount: 14 }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Summarize the linked paper',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      pdfContext,
+      pdfReadingPosition: readingPosition,
+      referencedArtifacts: [
+        {
+          id: 'artifact-1',
+          name: 'paper.pdf',
+          source: 'artifact',
+          path: 'artifact-version:project-1/source-session-1/artifact-1/version-1',
+          versionId: 'version-1',
+          mimeType: 'application/pdf'
+        }
+      ]
+    })
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[4]).toEqual([
+      expect.objectContaining({
+        id: 'artifact-1',
+        source: 'artifact',
+        versionId: 'version-1',
+        mimeType: 'application/pdf',
+        pdfReadingPosition: readingPosition
+      })
+    ])
+    expect(useSessionStore.getState().sessions[0].messages[0].pdfContext).toEqual({
+      ...pdfContext,
+      activeBindingId: 'binding-1',
+      readingPosition
+    })
+  })
+
+  it('does not assign the current PDF page to a newly linked document', async () => {
+    const firstBinding: SessionPdfContext['bindings'][number] = {
+      version: 1,
+      bindingId: 'binding-1',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
+      sourceVersionId: 'version-1',
+      sourceSessionId: 'source-session-1',
+      name: 'first.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      linkedAt: 1
+    }
+    const secondBinding: SessionPdfContext['bindings'][number] = {
+      ...firstBinding,
+      bindingId: 'binding-2',
+      sourceFileId: 'artifact-2',
+      sourceVersionId: 'version-2',
+      name: 'second.pdf',
+      checksum: 'b'.repeat(64),
+      linkedAt: 2
+    }
+    const firstContext: SessionPdfContext = { version: 1, bindings: [firstBinding] }
+    const linkedContext: SessionPdfContext = {
+      version: 1,
+      bindings: [firstBinding, secondBinding]
+    }
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Read the first paper',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        runtimeContext: { version: 1, revision: 1, pdfContext: firstContext }
+      }))
+    }))
+    const linkPdfContext = vi.fn().mockResolvedValue({
+      version: 1,
+      revision: 2,
+      pdfContext: linkedContext
+    })
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          linkPdfContext,
+          saveSession: vi.fn(async (session: PersistedChatSession) => session),
+          filterPdfContextCandidates: vi.fn().mockResolvedValue({
+            sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-2' }],
+            pendingAttachmentIds: []
+          })
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Now inspect the second paper',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      pdfContext: {
+        ...firstContext,
+        activeBindingId: firstBinding.bindingId,
+        readingPosition: { pageNumber: 7, pageCount: 14 }
+      },
+      pdfReadingPosition: { pageNumber: 7, pageCount: 14 },
+      pendingPdfContextVersions: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-2' }]
+    })
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+    const message = useSessionStore.getState().sessions[0].messages.at(-1)
+    expect(message?.pdfContext).toEqual({
+      ...linkedContext,
+      activeBindingId: secondBinding.bindingId
+    })
+    expect(message?.pdfContext).not.toHaveProperty('readingPosition')
+  })
+
+  it('links staged and immutable PDFs atomically without losing the current page', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Existing prompt',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    const stagedPdf = createAttachment({
+      id: 'pdf-upload-1',
+      name: 'staged-paper.pdf',
+      originalName: 'staged-paper.pdf',
+      path: '/uploads/.pending/staged-paper.pdf',
+      mimeType: 'application/pdf'
+    })
+    const finalizedPdf = createAttachment({
+      ...stagedPdf,
+      sessionId: 'transport-session-1',
+      path: 'upload-version:project-1/transport-session-1/pdf-version-1',
+      versionId: 'pdf-version-1',
+      versionNumber: 1,
+      checksum: 'a'.repeat(64)
+    })
+    const stagedBinding: SessionPdfContext['bindings'][number] = {
+      version: 1,
+      bindingId: 'binding-upload',
+      sourceKind: 'upload-version',
+      sourceFileId: stagedPdf.id,
+      sourceVersionId: finalizedPdf.versionId!,
+      sourceSessionId: 'transport-session-1',
+      name: stagedPdf.name,
+      mimeType: 'application/pdf',
+      sizeBytes: stagedPdf.size,
+      checksum: 'a'.repeat(64),
+      linkedAt: 1
+    }
+    const immutableBinding: SessionPdfContext['bindings'][number] = {
+      ...stagedBinding,
+      bindingId: 'binding-artifact',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-2',
+      sourceVersionId: 'artifact-version-2',
+      sourceSessionId: 'source-session-2',
+      name: 'library-paper.pdf',
+      checksum: 'b'.repeat(64),
+      linkedAt: 2
+    }
+    const linkedContext: SessionPdfContext = {
+      version: 1,
+      bindings: [stagedBinding, immutableBinding]
+    }
+    const linkPdfContext = vi.fn().mockImplementation(async ({ sources }) => ({
+      version: 1,
+      revision: sources.length,
+      pdfContext: sources.length === 1 ? { version: 1, bindings: [stagedBinding] } : linkedContext
+    }))
+    vi.stubGlobal('window', {
+      api: {
+        uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
+        sessions: {
+          linkPdfContext,
+          saveSession: vi.fn(async (session: PersistedChatSession) => session),
+          filterPdfContextCandidates: vi.fn().mockResolvedValue({
+            sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }],
+            pendingAttachmentIds: [stagedPdf.id]
+          })
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+    const readingPosition = { pageNumber: 5, pageCount: 14 }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Compare these papers',
+      attachments: [stagedPdf],
+      pendingPdfContextAttachmentIds: [stagedPdf.id],
+      pendingPdfContextVersions: [
+        { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+      ],
+      pdfReadingPosition: readingPosition,
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+    expect(linkPdfContext).toHaveBeenCalledOnce()
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'transport-session-1',
+      expectedRevision: 0,
+      sources: [
+        { sourceKind: 'upload-version', sourceVersionId: 'pdf-version-1' },
+        { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+      ],
+      excludeSinglePage: true
+    })
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.pdfContext).toEqual({
+      ...linkedContext,
+      activeBindingId: stagedBinding.bindingId,
+      readingPosition
+    })
   })
 
   it('does not append a prompt when attachment finalization fails', async () => {
@@ -2463,6 +3210,9 @@ describe('workspace agent message sending', () => {
       [],
       undefined,
       expect.objectContaining({ promptMessageId: expect.any(String) }),
+      true,
+      undefined,
+      undefined,
       true
     )
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
@@ -2525,7 +3275,8 @@ describe('workspace agent message sending', () => {
       'transport-session-1',
       '/workspace/project',
       'project-1',
-      'ask'
+      'ask',
+      true
     )
     expect(resumeSession).toHaveBeenCalledWith(
       'transport-session-1',
@@ -2537,7 +3288,9 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      undefined,
+      true
     )
     expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
       resumeSession.mock.invocationCallOrder[0]
@@ -2628,7 +3381,8 @@ describe('workspace agent message sending', () => {
       'transport-session-1',
       '/workspace/project',
       'project-1',
-      'ask'
+      'ask',
+      true
     )
     expect(resumeSession).toHaveBeenCalledWith(
       'transport-session-1',
@@ -2640,7 +3394,9 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      undefined,
+      true
     )
     expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
       resumeSession.mock.invocationCallOrder[0]
@@ -2886,7 +3642,8 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       undefined,
-      { frameworkId: 'codex', ...agentConfiguration }
+      { frameworkId: 'codex', ...agentConfiguration },
+      true
     )
     expect(runtime.resetSessionContext).not.toHaveBeenCalled()
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
@@ -2968,7 +3725,9 @@ describe('workspace agent message sending', () => {
       '/workspace/project',
       undefined,
       'ask',
-      undefined
+      undefined,
+      undefined,
+      true
     )
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
@@ -3015,8 +3774,225 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       expect.objectContaining({ promptMessageId: expect.any(String) }),
-      false
+      false,
+      undefined,
+      undefined,
+      true
     )
+  })
+
+  it('links staged and immutable PDFs atomically before the first Session prompt', async () => {
+    const stagedPdf = createAttachment({
+      id: 'pdf-upload-1',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: '/uploads/.pending/paper.pdf',
+      mimeType: 'application/pdf'
+    })
+    const finalizedPdf = createAttachment({
+      ...stagedPdf,
+      sessionId: 'transport-session-1',
+      path: 'upload-version:project-1/transport-session-1/pdf-version-1',
+      versionId: 'pdf-version-1',
+      versionNumber: 1,
+      checksum: 'a'.repeat(64)
+    })
+    const pdfContext: SessionPdfContext = {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'upload-version',
+          sourceFileId: stagedPdf.id,
+          sourceVersionId: finalizedPdf.versionId!,
+          sourceSessionId: 'transport-session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: stagedPdf.size,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        },
+        {
+          version: 1,
+          bindingId: 'binding-2',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'artifact-version-2',
+          sourceSessionId: 'source-session-2',
+          name: 'library-paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 84,
+          checksum: 'b'.repeat(64),
+          linkedAt: 2
+        }
+      ]
+    }
+    const readingPosition = { pageNumber: 3, pageCount: 14 }
+    const saveSession = vi.fn(async (session: PersistedChatSession) =>
+      saveSession.mock.calls.length === 1
+        ? { ...session, runtimeContext: { version: 1 as const, revision: 3 } }
+        : session
+    )
+    const linkPdfContext = vi.fn().mockResolvedValue({
+      version: 1,
+      revision: 1,
+      pdfContext
+    })
+    vi.stubGlobal('window', {
+      api: {
+        uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
+        sessions: {
+          saveSession,
+          linkPdfContext,
+          filterPdfContextCandidates: vi.fn().mockResolvedValue({
+            sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }],
+            pendingAttachmentIds: [stagedPdf.id]
+          })
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-1',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+    const onPdfContextLinked = vi.fn()
+
+    const sent = await sendWorkspaceMessage(
+      runtime,
+      {
+        text: 'Read this paper',
+        attachments: [stagedPdf],
+        pendingPdfContextAttachmentIds: [stagedPdf.id],
+        pendingPdfContextVersions: [
+          { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+        ],
+        pdfReadingPosition: readingPosition,
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      },
+      { onPdfContextLinked }
+    )
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+
+    expect(runtime.createSession).toHaveBeenCalledWith(
+      '/workspace/project',
+      'project-1',
+      'ask',
+      undefined,
+      undefined,
+      true,
+      true
+    )
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'transport-session-1',
+      expectedRevision: 3,
+      sources: [
+        { sourceKind: 'upload-version', sourceVersionId: 'pdf-version-1' },
+        { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+      ],
+      excludeSinglePage: true
+    })
+    expect(runtime.sendPrompt.mock.calls[0]?.[4]).toEqual([
+      expect.objectContaining({
+        id: stagedPdf.id,
+        source: 'upload',
+        versionId: 'pdf-version-1'
+      }),
+      expect.objectContaining({
+        id: 'artifact-2',
+        source: 'artifact',
+        versionId: 'artifact-version-2'
+      })
+    ])
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.runtimeContext?.pdfContext).toEqual(pdfContext)
+    expect(session.messages.find((message) => message.id === sent?.messageId)?.pdfContext).toEqual({
+      ...pdfContext,
+      activeBindingId: 'binding-1',
+      readingPosition
+    })
+    expect(onPdfContextLinked).toHaveBeenCalledWith('transport-session-1', {
+      ...pdfContext,
+      activeBindingId: 'binding-1',
+      readingPosition
+    })
+    expect(saveSession).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not provision Literature when every staged PDF candidate is single-page', async () => {
+    const stagedPdf = createAttachment({
+      id: 'single-page-pdf',
+      name: 'one-page.pdf',
+      originalName: 'one-page.pdf',
+      path: '/uploads/.pending/one-page.pdf',
+      mimeType: 'application/pdf'
+    })
+    const finalizedPdf = createAttachment({
+      ...stagedPdf,
+      sessionId: 'transport-session-1',
+      path: 'upload-version:project-1/transport-session-1/single-page-version',
+      versionId: 'single-page-version'
+    })
+    const linkPdfContext = vi.fn()
+    const filterPdfContextCandidates = vi.fn().mockResolvedValue({
+      sources: [],
+      pendingAttachmentIds: []
+    })
+    vi.stubGlobal('window', {
+      api: {
+        uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
+        sessions: { filterPdfContextCandidates, linkPdfContext }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-1',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Describe this file',
+      attachments: [stagedPdf],
+      pendingPdfContextAttachmentIds: [stagedPdf.id],
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+
+    expect(filterPdfContextCandidates).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sources: [],
+      pendingAttachments: [
+        {
+          attachmentId: stagedPdf.id,
+          path: stagedPdf.path,
+          name: stagedPdf.name,
+          mimeType: stagedPdf.mimeType
+        }
+      ]
+    })
+    expect(runtime.createSession).toHaveBeenCalledWith(
+      '/workspace/project',
+      'project-1',
+      'ask',
+      undefined,
+      undefined,
+      true
+    )
+    expect(linkPdfContext).not.toHaveBeenCalled()
   })
 
   it('notifies Session bind so first-turn overflow can keep the admitted target', async () => {
@@ -3177,7 +4153,9 @@ describe('workspace agent message sending', () => {
       '/workspace/project',
       'project-1',
       'ask',
-      undefined
+      undefined,
+      undefined,
+      true
     )
     expect(useSessionStore.getState().selectedSessionId).toBe(branched?.sessionId)
     expect(useSessionStore.getState().sessions).toHaveLength(2)
@@ -3215,8 +4193,95 @@ describe('workspace agent message sending', () => {
       expect.objectContaining({ promptMessageId: branched?.messageId }),
       true,
       undefined,
-      'plan-first'
+      'plan-first',
+      true
     )
+  })
+
+  it('relinks the captured PDF context before dispatching a branched Session', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the paper',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const pdfContext: SessionPdfContext = {
+      version: 1,
+      bindings: [
+        {
+          version: 1,
+          bindingId: 'source-binding',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'source-session',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+    const branchedPdfContext: SessionPdfContext = {
+      ...pdfContext,
+      bindings: [{ ...pdfContext.bindings[0], bindingId: 'branched-binding' }]
+    }
+    const saveSession = vi.fn(async (session: PersistedChatSession) => ({
+      ...session,
+      runtimeContext: { version: 1 as const, revision: 3 }
+    }))
+    const linkPdfContext = vi.fn().mockResolvedValue({
+      version: 1,
+      revision: 4,
+      pdfContext: branchedPdfContext
+    })
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          saveSession,
+          linkPdfContext,
+          filterPdfContextCandidates: vi.fn().mockResolvedValue({
+            sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }],
+            pendingAttachmentIds: []
+          })
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-runtime-session',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      text: 'Try a different interpretation',
+      pdfContext
+    })
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'branched-runtime-session',
+      expectedRevision: 3,
+      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }],
+      excludeSinglePage: true
+    })
+    expect(runtime.sendPrompt.mock.calls[0]?.[4]).toEqual([
+      expect.objectContaining({
+        id: 'artifact-1',
+        source: 'artifact',
+        versionId: 'version-1',
+        mimeType: 'application/pdf'
+      })
+    ])
   })
 
   it('creates and persists an idle branched Session without sending a prompt', async () => {
@@ -3276,7 +4341,9 @@ describe('workspace agent message sending', () => {
       '/workspace/project',
       'project-1',
       'ask',
-      'specialist-b'
+      'specialist-b',
+      undefined,
+      true
     )
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(saveSession).toHaveBeenCalledWith(
@@ -3501,6 +4568,9 @@ describe('workspace agent message sending', () => {
       [],
       undefined,
       expect.objectContaining({ promptMessageId: branched?.messageId }),
+      true,
+      undefined,
+      undefined,
       true
     )
   })
@@ -3630,6 +4700,9 @@ describe('workspace agent message sending', () => {
       [],
       undefined,
       expect.objectContaining({ promptMessageId: branched?.messageId }),
+      true,
+      undefined,
+      undefined,
       true
     )
   })
@@ -3832,7 +4905,14 @@ describe('workspace agent message sending', () => {
       projectId: 'project-1'
     })
 
-    expect(runtime.createSession).toHaveBeenCalledWith(undefined, 'project-1', 'ask', undefined)
+    expect(runtime.createSession).toHaveBeenCalledWith(
+      undefined,
+      'project-1',
+      'ask',
+      undefined,
+      undefined,
+      true
+    )
   })
 
   it('does not persist the runtime home when managed session creation omits cwd', async () => {
@@ -4013,7 +5093,10 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       expect.objectContaining({ promptMessageId: expect.any(String) }),
-      false
+      false,
+      undefined,
+      undefined,
+      true
     )
     expect(useSessionStore.getState().sessions[0].messages[0].uploads?.[0]).not.toHaveProperty(
       'path'
@@ -4120,7 +5203,10 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       expect.objectContaining({ promptMessageId: expect.any(String) }),
-      false
+      false,
+      undefined,
+      undefined,
+      true
     )
     expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
@@ -4227,14 +5313,18 @@ describe('workspace agent message sending', () => {
       undefined,
       'project-1',
       'ask',
-      undefined
+      undefined,
+      undefined,
+      true
     )
     expect(runtime.createSession).toHaveBeenNthCalledWith(
       2,
       undefined,
       'project-1',
       'ask',
-      undefined
+      undefined,
+      undefined,
+      true
     )
   })
 
@@ -4715,6 +5805,7 @@ describe('workspace agent message sending', () => {
       text: 'Continue restored conversation',
       cwd: '/workspace/project'
     })
+    await flushRuntimeTasks()
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
@@ -4782,6 +5873,7 @@ describe('workspace agent message sending', () => {
       text: 'Continue restored conversation',
       cwd: '/workspace/project'
     })
+    await flushRuntimeTasks()
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
@@ -4918,7 +6010,8 @@ describe('resuming an interrupted session on demand', () => {
       undefined,
       undefined,
       undefined,
-      agentTarget
+      agentTarget,
+      true
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
@@ -5844,7 +6937,9 @@ describe('resuming an interrupted session on demand', () => {
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      undefined,
+      true
     )
     const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
     expect(preamble).toContain('Analyze the data with Claude')
@@ -6289,7 +7384,8 @@ describe('resuming an interrupted session on demand', () => {
       undefined,
       undefined,
       undefined,
-      { frameworkId: 'codex', ...snapshot }
+      { frameworkId: 'codex', ...snapshot },
+      true
     )
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
     expect(useSessionStore.getState().sessions[0].agentConfiguration).toEqual(preferred)
@@ -6402,7 +7498,11 @@ describe('recovering from a request-size overflow', () => {
     vi.unstubAllGlobals()
   })
 
-  const seedOverflowedConversation = (includeHistoryImage = false): void => {
+  const seedOverflowedConversation = (
+    includeHistoryImage = false,
+    pdfContext?: SessionPdfContext,
+    annotations?: ChatMessage['annotations']
+  ): void => {
     // A completed prior turn (replayed as text) followed by the unanswered turn that overflowed.
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -6431,7 +7531,9 @@ describe('recovering from a request-size overflow', () => {
       content: 'now compare with this new screenshot',
       cwd: '/workspace/project',
       projectId: 'default-project',
-      permissionProfile: 'ask'
+      permissionProfile: 'ask',
+      pdfContext,
+      annotations
     })
     useSessionStore.getState().failRun('session-1', 'Request too large (max 32MB)')
   }
@@ -6477,6 +7579,7 @@ describe('recovering from a request-size overflow', () => {
       'processRuntimeEvents',
       'compact',
       'ensureReady',
+      'reconfigureMemory',
       'resume',
       'cancel'
     ])
@@ -6571,7 +7674,8 @@ describe('recovering from a request-size overflow', () => {
       undefined,
       undefined,
       undefined,
-      admittedTarget
+      admittedTarget,
+      true
     )
   })
 
@@ -6658,7 +7762,8 @@ describe('recovering from a request-size overflow', () => {
       undefined,
       undefined,
       undefined,
-      admittedTarget
+      admittedTarget,
+      true
     )
   })
 
@@ -6725,7 +7830,8 @@ describe('recovering from a request-size overflow', () => {
     )
 
     await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledTimes(1))
-    expect(runtime.resumeSession.mock.calls.at(-1)?.at(-1)).toEqual(laterTarget)
+    expect(runtime.resumeSession.mock.calls.at(-1)?.at(-2)).toEqual(laterTarget)
+    expect(runtime.resumeSession.mock.calls.at(-1)?.at(-1)).toBe(true)
   })
 
   it('persists the reset provider identity and re-sends the failed turn with a text preamble', async () => {
@@ -6785,7 +7891,8 @@ describe('recovering from a request-size overflow', () => {
       'session-1',
       '/workspace/project',
       'default-project',
-      'ask'
+      'ask',
+      true
     )
     // The unanswered turn is re-sent (not duplicated) with the prior turn replayed as a text preamble.
     expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('now compare with this new screenshot')
@@ -6806,7 +7913,8 @@ describe('recovering from a request-size overflow', () => {
       'provider-session-new',
       'continuity-new',
       undefined,
-      agentTarget
+      agentTarget,
+      true
     )
     expect(toPersistedSession(useSessionStore.getState().sessions[0])).toMatchObject({
       agentFrameworkId: 'codex',
@@ -6884,6 +7992,115 @@ describe('recovering from a request-size overflow', () => {
     expect(runtime.resetSessionContext).not.toHaveBeenCalled()
     expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('now compare with this new screenshot')
     expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
+  })
+
+  it('preserves linked PDF context when retrying after compaction', async () => {
+    const pdfContext = {
+      version: 1 as const,
+      bindings: [
+        {
+          version: 1 as const,
+          bindingId: 'binding-1',
+          sourceKind: 'artifact-version' as const,
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'source-session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf' as const,
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+    seedOverflowedConversation(false, pdfContext)
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+
+    expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[4]).toEqual([
+      expect.objectContaining({
+        id: 'artifact-1',
+        source: 'artifact',
+        versionId: 'version-1',
+        mimeType: 'application/pdf'
+      })
+    ])
+    expect(useSessionStore.getState().sessions[0]?.messages.at(-1)?.pdfContext).toEqual(pdfContext)
+  })
+
+  it('preserves PDF region Evidence when retrying after compaction', async () => {
+    const annotation = {
+      id: 'pdf-region-1',
+      kind: 'pdf' as const,
+      target: 'agent' as const,
+      source: {
+        kind: 'upload-version' as const,
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        versionId: 'version-1',
+        name: 'paper.pdf',
+        path: 'upload-version:default-project/session-1/version-1',
+        checksum: 'a'.repeat(64)
+      },
+      selector: {
+        kind: 'region' as const,
+        pageNumber: 2,
+        rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
+        pageRotation: 0,
+        image: { mimeType: 'image/png' as const, data: 'AQID', byteLength: 3 }
+      }
+    }
+    seedOverflowedConversation(false, undefined, [annotation])
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+
+    expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1', true)).toBe(true)
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toContain('"type":"pdf-region"')
+    expect(runtime.sendPrompt.mock.calls[0]?.[15]).toEqual([
+      { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+    ])
+    expect(useSessionStore.getState().sessions[0]?.messages.at(-1)?.annotations).toEqual([
+      annotation
+    ])
   })
 
   it('does not synthesize Plan authority when an unrelated message overflows', async () => {
@@ -7618,13 +8835,16 @@ describe('resendEditedWorkspaceMessage', () => {
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      undefined,
+      true
     )
     expect(runtime.resetSessionContext).toHaveBeenCalledWith(
       'session-1',
       '/workspace/project',
       'default-project',
-      'ask'
+      'ask',
+      true
     )
     expect(drainRuntimeEvents).toHaveBeenCalledOnce()
     expect(preparationChanged).toHaveBeenLastCalledWith('session-1', false)
@@ -7737,7 +8957,8 @@ describe('resendEditedWorkspaceMessage', () => {
       'session-1',
       '/workspace/project',
       'default-project',
-      'ask'
+      'ask',
+      true
     )
 
     // The kept turns replay as a text preamble (the edited turn is not duplicated into it), and the

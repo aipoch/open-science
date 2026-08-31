@@ -1,4 +1,10 @@
-export type ConnectorCredentials = { ncbiEmail?: string; ncbiApiKey?: string }
+export type ConnectorCredentialId = 'openalex'
+
+export type ConnectorCredentials = {
+  ncbiEmail?: string
+  ncbiApiKey?: string
+  openAlexApiKey?: string
+}
 
 export type ToolContext = {
   signal?: AbortSignal
@@ -27,6 +33,8 @@ export type ToolDescriptor = {
   // shared conventions template, not repeated here. When omitted, the doc renders a bare call built from `input`.
   example?: string
   required?: string[]
+  // Code-only dispatch metadata. It is not part of the generated tool schema or persisted state.
+  requiredCredential?: ConnectorCredentialId
   format?: 'json' | 'text'
   // Per-attempt wall-clock deadline, including response-body streaming. Overrides the engine default.
   totalTimeoutMs?: number

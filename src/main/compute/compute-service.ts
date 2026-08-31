@@ -22,9 +22,12 @@ import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import type { ComputeConnectionBroker } from './connection-broker'
 import type { CredentialVault } from './credential-vault'
 import type { ComputeJobRepository } from './job-repository'
+import { ComputeJobCancellationOwner } from './compute-job-cancellation-owner'
+import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ScpRunner } from './scp-runner'
 import type { SshRunner } from './ssh-runner'
+import { SessionCacheOwner } from './session-cache-owner'
 import {
   createSshConfigCompatibilityBroker,
   projectComputeCredentialStatus
@@ -46,9 +49,11 @@ export type ComputeServiceDependencies = Readonly<{
   scpRunner?: ScpRunner
   overrideDownloadsDir?: string
   jobRepository?: ComputeJobRepository
+  operationRepository?: ComputeJobOperationRepository
   onJobUpdated?: (job: ComputeJob) => void
   artifactResolver?: ArtifactResolver
   storageRoot?: string
+  sessionCacheOwner?: SessionCacheOwner
   concurrencyManager?: ConcurrencyManager
   connectionBroker?: ComputeConnectionBroker
   credentialVault?: Pick<CredentialVault, 'credentialStatus'>
@@ -59,6 +64,7 @@ export class ComputeService {
   private readonly hostProfiles: ComputeHostProfileOwner
   private readonly remoteOperations: ComputeRemoteOperationOwner
   private readonly jobWorkflow: ComputeJobWorkflowOwner
+  private readonly jobCancellation?: ComputeJobCancellationOwner
   private readonly repository: ComputeHostRepository
   private readonly concurrencyManager?: ConcurrencyManager
   private readonly credentialVault?: Pick<CredentialVault, 'credentialStatus'>
@@ -71,9 +77,11 @@ export class ComputeService {
       scpRunner,
       overrideDownloadsDir,
       jobRepository,
+      operationRepository,
       onJobUpdated,
       artifactResolver,
       storageRoot,
+      sessionCacheOwner,
       concurrencyManager,
       connectionBroker,
       credentialVault
@@ -88,7 +96,8 @@ export class ComputeService {
       effectiveConnectionBroker,
       repository,
       approvalBroker,
-      overrideDownloadsDir
+      overrideDownloadsDir,
+      sessionCacheOwner ?? (storageRoot ? new SessionCacheOwner(storageRoot) : undefined)
     )
     this.jobWorkflow = new ComputeJobWorkflowOwner(
       effectiveConnectionBroker,
@@ -100,6 +109,10 @@ export class ComputeService {
       storageRoot,
       concurrencyManager
     )
+    this.jobCancellation =
+      operationRepository && jobRepository
+        ? new ComputeJobCancellationOwner(operationRepository, jobRepository)
+        : undefined
   }
 
   async probe(providerId: string, signal?: AbortSignal): Promise<ProbeResult> {
@@ -133,6 +146,10 @@ export class ComputeService {
 
   async setScratchRoot(providerId: string, path: string): Promise<void> {
     return this.hostProfiles.setScratchRoot(providerId, path)
+  }
+
+  async clearScratchRoot(providerId: string): Promise<void> {
+    return this.hostProfiles.clearScratchRoot(providerId)
   }
 
   async setConcurrencyLimit(providerId: string, limit: number): Promise<void> {
@@ -206,6 +223,27 @@ export class ComputeService {
     return this.jobWorkflow.getJobResult(jobId, scope)
   }
 
+  async cancelJob(
+    jobId: string,
+    scope: ComputeJobReadScope
+  ): Promise<import('../../shared/compute').JobStatusResult> {
+    if (!this.jobCancellation) {
+      throw new Error('ComputeJobOperationRepository is required to call cancelJob.')
+    }
+    const result = await this.jobCancellation.request(jobId, scope)
+    const job = await this.jobWorkflow.getJob(jobId, scope)
+    this.handleJobUpdated(job)
+    if (result.cancellation_status === 'cancelled') {
+      await this.concurrencyManager?.onJobCompleted()
+    }
+    return result
+  }
+
+  handleJobCancellationConfirmed = async (job: ComputeJob): Promise<void> => {
+    this.handleJobUpdated(job)
+    await this.concurrencyManager?.onJobCompleted()
+  }
+
   async setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {
     return this.jobWorkflow.setSessionConcurrencyLimit(sessionId, limit)
   }
@@ -216,5 +254,13 @@ export class ComputeService {
 
   handleJobUpdated = (job: ComputeJob): void => {
     this.jobWorkflow.handleJobUpdated(job)
+  }
+
+  startQueueReconciliation = (): void => {
+    this.concurrencyManager?.startQueueReconciliation()
+  }
+
+  stopQueueReconciliation = async (): Promise<void> => {
+    await this.concurrencyManager?.stopQueueReconciliation()
   }
 }

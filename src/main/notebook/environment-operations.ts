@@ -4,6 +4,7 @@ import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import type { NotebookLaneIdentity } from './lane-identity'
 import { EnvironmentLeaseManager, type EnvironmentLeaseMode } from './environment-lease-manager'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { errorLogFields } from '../logger'
 import {
   boundedRuntimeDiagnostic,
   redactRuntimeDiagnosticValue,
@@ -278,7 +279,10 @@ export class NotebookEnvironmentOperations {
               session.clearProcessState(revokedProcessKey)
               this.options.notifyChanged(session)
             } catch (error) {
-              console.error('[notebook] Failed to drain/close a revoked runtime', error)
+              this.options.logger?.error('failed to drain or close a revoked runtime', {
+                ...errorLogFields(error),
+                environment
+              })
             }
           })
           this.revocationDrains.add(drain)
