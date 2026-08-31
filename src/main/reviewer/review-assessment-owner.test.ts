@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
 
 import type { AcpRuntime } from '../acp/runtime'
+import type { AcpBackendGenerationView } from '../acp/backend-generation-owner'
 import { getAgentFramework } from '../agent-framework'
 import type {
   NewCheck,
@@ -233,13 +234,18 @@ const makeRepository = (): ReviewRepository =>
     })
   }) as unknown as ReviewRepository
 
-const runtime = (contextModel?: string, sessionModel?: string): AcpRuntime =>
+const runtime = (
+  contextModel?: string,
+  sessionModel?: string,
+  modelRoute?: AcpBackendGenerationView['modelRoute']
+): AcpRuntime =>
   ({
-    ...(contextModel || sessionModel
+    ...(contextModel || sessionModel || modelRoute
       ? {
           captureBackend: () => ({
             framework: getAgentFramework('codex'),
             providerId: 'reviewer-provider',
+            ...(modelRoute ? { modelRoute } : {}),
             context: {
               ...(contextModel ? { model: contextModel } : {}),
               supportsImageInput: false
@@ -529,6 +535,20 @@ describe('review assessment owner', () => {
 
     expect(reviewRepository.updateReview).toHaveBeenCalledWith('assessment-review', {
       model: 'selected-runtime-model'
+    })
+  })
+
+  it('records the upstream model instead of the Codex bridge catalog alias', async () => {
+    const reviewRepository = makeRepository()
+
+    await runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      acpRuntime: runtime('glm-5.3', 'gpt-5.4', 'codex-bridge'),
+      mode: 'initial'
+    })
+
+    expect(reviewRepository.updateReview).toHaveBeenCalledWith('assessment-review', {
+      model: 'glm-5.3'
     })
   })
 

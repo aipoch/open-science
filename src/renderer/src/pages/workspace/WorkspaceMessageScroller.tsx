@@ -784,14 +784,14 @@ const WorkspaceMessageScrollerImpl = ({
       ),
     [conversationItems]
   )
-  const respondedPromptMessageIds = useMemo(
+  const responseByPromptMessageId = useMemo(
     () =>
-      new Set(
+      new Map(
         conversationItems.flatMap((item) =>
           item.type === 'message' &&
           item.message.role === 'agent' &&
           item.message.responseToMessageId
-            ? [item.message.responseToMessageId]
+            ? [[item.message.responseToMessageId, item.message] as const]
             : []
         )
       ),
@@ -1421,11 +1421,18 @@ const WorkspaceMessageScrollerImpl = ({
                           }
                         : undefined,
                     artifacts,
-                    reviewerCorrectionActive:
-                      activeSession?.activeRun?.promptMessageId === item.message.id &&
-                      activeSession.status !== 'idle' &&
-                      activeSession.status !== 'error' &&
-                      !respondedPromptMessageIds.has(item.message.id)
+                    reviewerCorrectionState: (() => {
+                      const response = responseByPromptMessageId.get(item.message.id)
+                      if (response?.status === 'complete') return 'completed'
+                      if (response?.status === 'error') return 'failed'
+
+                      const runIsActive =
+                        activeSession?.activeRun?.promptMessageId === item.message.id &&
+                        activeSession.status !== 'idle' &&
+                        activeSession.status !== 'error'
+                      if (runIsActive) return response ? 'responding' : 'waiting'
+                      return 'failed'
+                    })()
                   }
                   if (item.message.role === 'agent') {
                     const nextConversationItem = conversationItems[itemIndex + 1]

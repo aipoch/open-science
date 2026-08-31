@@ -79,7 +79,7 @@ const renderItem = async (
       onPrevious?: () => void
       onNext?: () => void
     }
-    reviewerCorrectionActive?: boolean
+    reviewerCorrectionState?: 'waiting' | 'responding' | 'completed' | 'failed'
     activeTextAnnotations?: TextAnnotation[]
     onAddTextAnnotation?: (annotation: TextAnnotation) => undefined
   } = {}
@@ -101,7 +101,7 @@ const renderItem = async (
         onBranchInNewSession={options.onBranchInNewSession}
         subsequentTurns={options.subsequentTurns ?? 0}
         revisionNavigation={options.revisionNavigation}
-        reviewerCorrectionActive={options.reviewerCorrectionActive}
+        reviewerCorrectionState={options.reviewerCorrectionState}
         annotationPort={
           options.onAddTextAnnotation
             ? {
@@ -563,13 +563,14 @@ describe('WorkspaceMessageItem user message actions', () => {
       }),
       {
         canEditMessage: true,
-        revisionNavigation: { index: 0, total: 2, onNext: noop }
+        revisionNavigation: { index: 0, total: 2, onNext: noop },
+        reviewerCorrectionState: 'completed'
       }
     )
 
     expect(container.querySelector('[data-testid="reviewer-correction-message"]')).not.toBeNull()
     expect(container.textContent).toContain('Corrections requested')
-    expect(container.textContent).toContain('Handed off to the Agent · response started')
+    expect(container.textContent).toContain('Response completed.')
     expect(container.textContent).not.toContain('[Auditor] Correct the unsupported claim.')
     expect(container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
     expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
@@ -592,7 +593,7 @@ describe('WorkspaceMessageItem user message actions', () => {
           causeReviewId: 'review-1'
         }
       }),
-      { reviewerCorrectionActive: true }
+      { reviewerCorrectionState: 'waiting' }
     )
 
     expect(container.textContent).toContain('Reviewer requested corrections')
