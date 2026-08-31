@@ -20,6 +20,8 @@ import type {
   NotebookSandboxedSpawn,
   NotebookSandboxInvocation
 } from './process-sandbox'
+import { startDiagnosticOperation } from '../diagnostics/operation'
+import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { environmentPathRoots, notebookTrustBundleEnvironment } from './process-environment'
 import {
   notebookTrustBundleStatus,
@@ -66,6 +68,7 @@ type NotebookNetworkSandboxOwnerOptions = Readonly<{
   getCaBundlePath?: () => Promise<string | undefined>
   getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
   platform?: NodeJS.Platform
+  logger?: Logger
 }>
 
 const quotePosix = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`
@@ -136,22 +139,31 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     Map<NotebookCommandRuntime, Set<string>>
   >()
   private readonly platform: NodeJS.Platform
+  private readonly log: Logger
+  private lastStatusSignature: string | undefined
 
   constructor(private readonly options: NotebookNetworkSandboxOwnerOptions) {
     this.platform = options.platform ?? process.platform
+    this.log = options.logger ?? createLogger('notebook:network-sandbox')
   }
 
   async status(): Promise<NotebookNetworkStatus> {
-    if (this.initializePromise) return { kind: 'checking' }
+    if (this.initializePromise) return this.recordStatus({ kind: 'checking' })
     try {
       await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
-    } catch {
-      return { kind: 'error', reason: 'trustBundleInvalid' }
+    } catch (error) {
+      return this.recordStatus(
+        { kind: 'error', reason: 'trustBundleInvalid' },
+        diagnosticErrorFields(error)
+      )
     }
     try {
-      return presentStatus(await this.getOrCreateSandbox().status(this.platform))
-    } catch {
-      return { kind: 'error', reason: 'runtimeFailure' }
+      return this.recordStatus(presentStatus(await this.getOrCreateSandbox().status(this.platform)))
+    } catch (error) {
+      return this.recordStatus(
+        { kind: 'error', reason: 'runtimeFailure' },
+        diagnosticErrorFields(error)
+      )
     }
   }
 
@@ -228,6 +240,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       })
     } catch (error) {
       await rm(commandTempRoot, { recursive: true, force: true }).catch(() => undefined)
+      this.log.error('sandbox process preparation failed', {
+        platform: this.platform,
+        runtime: invocation.runtime,
+        ...diagnosticErrorFields(error)
+      })
       throw error
     }
     let cleaned = false
@@ -282,14 +299,16 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   ): Promise<NotebookNetworkAccessDecisionResult> {
     const normalized = validateCustomAllowedDomain(request.hostname)
     if (!normalized.ok) {
-      return { hostname: request.hostname, status: 'blocked' }
+      return this.networkAccessResult(request.hostname, 'blocked', request.runtime, {
+        validationReason: normalized.reason
+      })
     }
     const settings = normalizeNotebookNetworkSettings(
       this.settings ?? (await this.options.getSettings())
     )
     this.settings = settings
     if (notebookNetworkSettingsAllowDomain(settings, normalized.hostname)) {
-      return { hostname: normalized.hostname, status: 'alreadyAllowed' }
+      return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime)
     }
 
     const destinationKey = blockedDestinationKey(request.sessionId, normalized.hostname)
@@ -303,7 +322,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ? [...blockedRuntimes][0]
         : undefined
     if (!blockedRuntimes || !runtime) {
-      return { hostname: normalized.hostname, status: 'denied' }
+      return this.networkAccessResult(normalized.hostname, 'denied', request.runtime, {
+        decisionSource: 'no-matching-block'
+      })
     }
     const commands = blockedCommands!.get(runtime)
     const commandText =
@@ -313,7 +334,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? [...commands][0]
           : undefined
     if (!commands || !commandText) {
-      return { hostname: normalized.hostname, status: 'denied' }
+      return this.networkAccessResult(normalized.hostname, 'denied', runtime, {
+        decisionSource: 'no-matching-command'
+      })
     }
     commands.delete(commandText)
     if (commands.size === 0) blockedCommands!.delete(runtime)
@@ -321,7 +344,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
     const controller = request.signal ? undefined : new AbortController()
     const signal = request.signal ?? controller!.signal
-    if (signal.aborted) return { hostname: normalized.hostname, status: 'denied' }
+    if (signal.aborted) {
+      return this.networkAccessResult(normalized.hostname, 'denied', runtime, {
+        decisionSource: 'aborted'
+      })
+    }
     const decision = await this.options.requestDecision({
       sessionId: request.sessionId,
       projectId: request.projectId,
@@ -331,37 +358,67 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       signal
     })
     if (decision === 'unavailable') {
-      return { hostname: normalized.hostname, status: 'unavailable' }
+      return this.networkAccessResult(normalized.hostname, 'unavailable', runtime, {
+        decisionSource: 'approval-surface-unavailable'
+      })
     }
     if (decision === 'deny' || signal.aborted) {
-      return { hostname: normalized.hostname, status: 'denied' }
+      return this.networkAccessResult(normalized.hostname, 'denied', runtime, {
+        decisionSource: signal.aborted ? 'aborted' : 'user-decision'
+      })
     }
     if (decision === 'allowOnce') {
       const grantKey = commandGrantKey(request.sessionId, runtime, commandText)
       const grants = this.nextExecutionGrants.get(grantKey) ?? new Set<string>()
       grants.add(normalized.hostname)
       this.nextExecutionGrants.set(grantKey, grants)
-      return { hostname: normalized.hostname, status: 'allowedOnce' }
+      return this.networkAccessResult(normalized.hostname, 'allowedOnce', runtime)
     }
 
     const next = await this.options.persistAlwaysAllow(normalized.hostname)
     this.applySettings(next)
-    return { hostname: normalized.hostname, status: 'alwaysAllowed' }
+    return this.networkAccessResult(normalized.hostname, 'alwaysAllowed', runtime)
   }
 
   applySettings(settings: NotebookNetworkSettings): void {
     this.settings = normalizeNotebookNetworkSettings(settings)
-    if (this.initialized) this.sandbox!.updatePolicy(buildNotebookNetworkPolicy(this.settings))
+    try {
+      if (this.initialized) this.sandbox!.updatePolicy(buildNotebookNetworkPolicy(this.settings))
+      this.log.info('network policy applied', {
+        active: this.initialized,
+        customDomainCount: this.settings.allowedDomains.length,
+        disabledGroupCount: this.settings.disabledOpenScienceDomainGroups.length,
+        disabledDomainCount: this.settings.disabledOpenScienceDomains.length
+      })
+    } catch (error) {
+      this.log.error('network policy application failed', {
+        active: this.initialized,
+        ...diagnosticErrorFields(error)
+      })
+      throw error
+    }
   }
 
   async updateParentProxy(): Promise<void> {
     if (!this.initialized || !this.options.getParentProxy) return
-    const parentProxy = await this.options.getParentProxy()
-    this.sandbox!.updateConfiguration({ parentProxy: parentProxy ?? null })
+    try {
+      const parentProxy = await this.options.getParentProxy()
+      this.sandbox!.updateConfiguration({ parentProxy: parentProxy ?? null })
+      this.log.info('parent proxy configuration applied', { configured: Boolean(parentProxy) })
+    } catch (error) {
+      this.log.error('parent proxy configuration failed', diagnosticErrorFields(error))
+      throw error
+    }
   }
 
   async updateTrustBundle(): Promise<NotebookTrustBundleStatus> {
-    const next = await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
+    let next: NotebookTrustBundle | undefined
+    try {
+      next = await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
+    } catch (error) {
+      this.log.error('trust bundle configuration failed', diagnosticErrorFields(error))
+      throw error
+    }
     const changed =
       next?.path !== this.trustBundle?.path ||
       next?.certificates.join('\n') !== this.trustBundle?.certificates.join('\n')
@@ -371,20 +428,57 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         trustBundle: next ? { path: next.path, certificates: next.certificates } : null
       })
     }
+    if (changed) {
+      this.log.info('trust bundle configuration applied', {
+        active: this.initialized,
+        configured: Boolean(next),
+        certificateCount: next?.certificates.length ?? 0
+      })
+    }
     return notebookTrustBundleStatus(next)
   }
 
-  installWindows(): Promise<{ cancelled: boolean }> {
-    return this.getOrCreateSandbox().installWindows()
+  async installWindows(): Promise<{ cancelled: boolean }> {
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'notebook-network-windows-setup',
+      fields: { platform: this.platform }
+    })
+    try {
+      const result = await this.getOrCreateSandbox().installWindows()
+      if (result.cancelled) operation.cancel()
+      else operation.complete()
+      return result
+    } catch (error) {
+      operation.fail(error)
+      throw error
+    }
   }
 
-  removeWindows(): Promise<{ cancelled: boolean }> {
-    return this.getOrCreateSandbox().removeWindows()
+  async removeWindows(): Promise<{ cancelled: boolean }> {
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'notebook-network-windows-remove',
+      fields: { platform: this.platform }
+    })
+    try {
+      const result = await this.getOrCreateSandbox().removeWindows()
+      if (result.cancelled) operation.cancel()
+      else operation.complete()
+      return result
+    } catch (error) {
+      operation.fail(error)
+      throw error
+    }
   }
 
   async dispose(): Promise<void> {
     await this.initializePromise?.catch(() => undefined)
-    await this.sandbox?.dispose()
+    try {
+      await this.sandbox?.dispose()
+    } catch (error) {
+      this.log.error('sandbox disposal failed', diagnosticErrorFields(error))
+      throw error
+    }
+    this.log.info('sandbox disposed')
     this.initialized = false
     this.sandbox = undefined
     this.nextExecutionGrants.clear()
@@ -392,14 +486,70 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   private async initializeInternal(): Promise<void> {
-    this.settings = normalizeNotebookNetworkSettings(
-      this.settings ?? (await this.options.getSettings())
-    )
-    const parentProxy = await this.options.getParentProxy?.()
-    this.trustBundle = await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
-    this.sandbox = this.createSandbox(this.settings, parentProxy)
-    await this.sandbox.initialize()
-    this.initialized = true
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'notebook-network-sandbox-initialize',
+      fields: { platform: this.platform }
+    })
+    try {
+      this.settings = normalizeNotebookNetworkSettings(
+        this.settings ?? (await this.options.getSettings())
+      )
+      const parentProxy = await this.options.getParentProxy?.()
+      this.trustBundle = await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
+      this.sandbox = this.createSandbox(this.settings, parentProxy)
+      await this.sandbox.initialize()
+      this.initialized = true
+      operation.complete({
+        customDomainCount: this.settings.allowedDomains.length,
+        parentProxyConfigured: Boolean(parentProxy),
+        trustBundleConfigured: Boolean(this.trustBundle)
+      })
+    } catch (error) {
+      operation.fail(error)
+      throw error
+    }
+  }
+
+  private recordStatus(
+    status: NotebookNetworkStatus,
+    extraFields: Record<string, unknown> = {}
+  ): NotebookNetworkStatus {
+    const signature = JSON.stringify(status)
+    if (signature === this.lastStatusSignature) return status
+    this.lastStatusSignature = signature
+    const fields =
+      status.kind === 'ready'
+        ? { kind: status.kind, warningCount: status.warnings.length, warnings: status.warnings }
+        : status.kind === 'setupRequired'
+          ? {
+              kind: status.kind,
+              platform: status.platform,
+              reasonCount: status.reasons.length,
+              reasons: status.reasons
+            }
+          : status.kind === 'unsupported'
+            ? { kind: status.kind, platform: status.platform }
+            : status.kind === 'error'
+              ? { kind: status.kind, reason: status.reason }
+              : { kind: status.kind }
+    const level = status.kind === 'error' ? 'error' : status.kind === 'ready' ? 'info' : 'warn'
+    this.log[level]('sandbox status changed', { ...fields, ...extraFields })
+    return status
+  }
+
+  private networkAccessResult(
+    hostname: string,
+    status: NotebookNetworkAccessDecisionResult['status'],
+    runtime: NotebookCommandRuntime | undefined,
+    fields: Record<string, unknown> = {}
+  ): NotebookNetworkAccessDecisionResult {
+    const level = status === 'allowedOnce' || status === 'alwaysAllowed' ? 'info' : 'warn'
+    this.log[level]('network access request resolved', {
+      status,
+      runtime: runtime ?? 'unknown',
+      ...fields
+    })
+    return { hostname, status }
   }
 
   private getOrCreateSandbox(): NotebookNetworkSandbox {

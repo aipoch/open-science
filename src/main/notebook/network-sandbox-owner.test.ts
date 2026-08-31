@@ -6,6 +6,7 @@ import { rootCertificates } from 'node:tls'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import type { Logger } from '../logger'
 
 const backend = vi.hoisted(() => ({
   request: undefined as
@@ -16,17 +17,21 @@ const backend = vi.hoisted(() => ({
   wrap: vi.fn(),
   updatePolicy: vi.fn(),
   updateConfiguration: vi.fn(),
+  status: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] }),
+  installWindows: vi.fn().mockResolvedValue({ cancelled: false }),
+  removeWindows: vi.fn().mockResolvedValue({ cancelled: false }),
   dispose: vi.fn().mockResolvedValue(undefined)
 }))
 
 vi.mock('@aipoch/notebook-network-sandbox', () => ({
   NotebookNetworkSandbox: class {
-    status = vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] })
+    status = backend.status
     initialize = backend.initialize
     wrap = backend.wrap
     updatePolicy = backend.updatePolicy
     updateConfiguration = backend.updateConfiguration
-    installWindows = vi.fn().mockResolvedValue({ cancelled: false })
+    installWindows = backend.installWindows
+    removeWindows = backend.removeWindows
     dispose = backend.dispose
   }
 }))
@@ -35,9 +40,23 @@ import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owne
 
 const fixtureDirectories: string[] = []
 
+const createCapturingLogger = (): { logger: Logger; records: unknown[] } => {
+  const records: unknown[] = []
+  const capture = (message: string, data?: unknown): void => {
+    records.push({ message, data })
+  }
+  return {
+    logger: { debug: capture, info: capture, warn: capture, error: capture },
+    records
+  }
+}
+
 beforeEach(() => {
   backend.request = undefined
   vi.clearAllMocks()
+  backend.status.mockResolvedValue({ kind: 'ready', warnings: [] })
+  backend.installWindows.mockResolvedValue({ cancelled: false })
+  backend.removeWindows.mockResolvedValue({ cancelled: false })
   backend.wrap.mockImplementation(
     async (command: {
       onNetworkAccessRequest: (request: {
@@ -224,25 +243,27 @@ describe('NotebookNetworkSandboxOwner', () => {
 
   it('returns unavailable without creating a grant when no approval client is connected', async () => {
     const requestDecision = vi.fn().mockResolvedValue('unavailable')
+    const { logger, records } = createCapturingLogger()
     const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
+      resourceRoot: '/private/resources/notebook-sandbox',
       getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
       persistAlwaysAllow: vi.fn(),
       requestDecision,
-      platform: 'linux'
+      platform: 'linux',
+      logger
     })
     const wrapped = await owner.wrap({
       executable: '/usr/bin/python',
       args: ['loop.py'],
       env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'python loop.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
+      cwd: '/Users/example/private-study',
+      commandText: 'python private-patient-analysis.py --token secret-value',
+      sessionId: 'private-session-id',
+      projectId: 'private-project-id',
       runtime: 'python',
       filesystem: {
         readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
+        readWriteRoots: ['/Users/example/private-study'],
         deniedReadRoots: [],
         deniedWriteRoots: []
       }
@@ -253,14 +274,86 @@ describe('NotebookNetworkSandboxOwner', () => {
 
     await expect(
       owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
+        sessionId: 'private-session-id',
+        projectId: 'private-project-id',
         hostname: 'data.example.org',
-        reason: 'Download the requested dataset.'
+        reason: 'Download private patient data.'
       })
     ).resolves.toEqual({ hostname: 'data.example.org', status: 'unavailable' })
     expect(requestDecision).toHaveBeenCalledOnce()
     wrapped.cleanup()
+    await owner.dispose()
+
+    const serialized = JSON.stringify(records)
+    expect(serialized).toContain('approval-surface-unavailable')
+    expect(serialized).toContain('"runtime":"python"')
+    for (const privateValue of [
+      'data.example.org',
+      'private-patient-analysis.py',
+      'secret-value',
+      'private patient data',
+      'private-session-id',
+      'private-project-id',
+      '/Users/example/private-study',
+      '/private/resources/notebook-sandbox'
+    ]) {
+      expect(serialized).not.toContain(privateValue)
+    }
+  })
+
+  it('records only a fixed error category when sandbox initialization fails', async () => {
+    const { logger, records } = createCapturingLogger()
+    backend.initialize.mockRejectedValueOnce(
+      new Error(
+        'Could not run curl https://private.example.org from /Users/example/private-study/data.csv'
+      )
+    )
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/private/resources/notebook-sandbox',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('deny'),
+      platform: 'linux',
+      logger
+    })
+
+    await expect(owner.initialize()).rejects.toThrow('Could not run curl')
+
+    const serialized = JSON.stringify(records)
+    expect(serialized).toContain('"errorCategory":"error"')
+    for (const privateValue of [
+      'private.example.org',
+      'curl',
+      '/Users/example/private-study/data.csv',
+      '/private/resources/notebook-sandbox'
+    ]) {
+      expect(serialized).not.toContain(privateValue)
+    }
+    await owner.dispose()
+  })
+
+  it('records Windows setup and removal outcomes without native details', async () => {
+    const { logger, records } = createCapturingLogger()
+    backend.removeWindows.mockResolvedValueOnce({ cancelled: true })
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: 'C:\\private\\notebook-sandbox',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('deny'),
+      platform: 'win32',
+      logger
+    })
+
+    await expect(owner.installWindows()).resolves.toEqual({ cancelled: false })
+    await expect(owner.removeWindows()).resolves.toEqual({ cancelled: true })
+
+    const serialized = JSON.stringify(records)
+    expect(serialized).toContain('notebook-network-windows-setup')
+    expect(serialized).toContain('notebook-network-windows-remove')
+    expect(serialized).toContain('"outcome":"completed"')
+    expect(serialized).toContain('"outcome":"cancelled"')
+    expect(serialized).not.toContain('C:\\\\private\\\\notebook-sandbox')
+    await owner.dispose()
   })
 
   it('fails closed instead of giving an ambiguous approval to the wrong runtime', async () => {
@@ -449,12 +542,14 @@ describe('NotebookNetworkSandboxOwner', () => {
   })
 
   it('returns stable status reasons instead of backend prose', async () => {
+    const { logger, records } = createCapturingLogger()
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/resources',
       getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
       persistAlwaysAllow: vi.fn(),
       requestDecision: vi.fn().mockResolvedValue('deny'),
-      platform: 'linux'
+      platform: 'linux',
+      logger
     })
     const sandbox = (
       owner as unknown as { getOrCreateSandbox: () => { status: ReturnType<typeof vi.fn> } }
@@ -470,6 +565,13 @@ describe('NotebookNetworkSandboxOwner', () => {
       platform: 'linux',
       reasons: ['linuxBubblewrapMissing']
     })
+    await owner.status()
+    expect(
+      records.filter(
+        (record) => (record as { message?: string }).message === 'sandbox status changed'
+      )
+    ).toHaveLength(1)
+    expect(JSON.stringify(records)).not.toContain('Notebook isolation requires bubblewrap')
     await owner.dispose()
   })
 

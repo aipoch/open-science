@@ -494,11 +494,26 @@ const createApplicationModules = async (
   const notebookPolicyLifecycle: {
     current?: Pick<NotebookRuntimeService, 'shutdownAll'>
   } = {}
-  const shutdownNotebooksBeforePolicyChange = async (): Promise<void> => {
+  const notebookPolicyLog = createLogger('notebook:policy')
+  const shutdownNotebooksBeforePolicyChange = async (
+    trigger: 'ca-bundle' | 'granted-roots'
+  ): Promise<void> => {
+    const operation = startDiagnosticOperation(notebookPolicyLog, {
+      operation: 'notebook-policy-shutdown',
+      fields: { trigger }
+    })
     if (!notebookPolicyLifecycle.current) {
-      throw new Error('Notebook policy lifecycle is not ready.')
+      const error = new Error('Notebook policy lifecycle is not ready.')
+      operation.fail(error)
+      throw error
     }
-    await notebookPolicyLifecycle.current.shutdownAll()
+    try {
+      const result = await notebookPolicyLifecycle.current.shutdownAll()
+      operation.complete({ reaped: result.reaped })
+    } catch (error) {
+      operation.fail(error)
+      throw error
+    }
   }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
@@ -589,7 +604,7 @@ const createApplicationModules = async (
       applyPackageMirror: async () => {
         await notebookNetworkSandbox.updateTrustBundle()
       },
-      beforePackageMirrorCaBundleChange: shutdownNotebooksBeforePolicyChange,
+      beforePackageMirrorCaBundleChange: () => shutdownNotebooksBeforePolicyChange('ca-bundle'),
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
@@ -781,9 +796,8 @@ const createApplicationModules = async (
     settingsService
   )
   grantedRootsRepositoryRef.current = grantedRootsRepository
-  const localFsService = new LocalFsService(
-    grantedRootsRepository,
-    shutdownNotebooksBeforePolicyChange
+  const localFsService = new LocalFsService(grantedRootsRepository, () =>
+    shutdownNotebooksBeforePolicyChange('granted-roots')
   )
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
