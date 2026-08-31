@@ -347,18 +347,26 @@ const normalizeWorkingFiles = (
 
 // Fills optional run fields so old or partial records always have the current shape. Legacy
 // records predate kernelKind and were always python/r, so default (never overwrite) to 'python'.
-const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunRecord => ({
-  ...run,
-  kernelKind: run.kernelKind ?? 'python',
-  text: run.text ?? emptyText(),
-  outputs: run.outputs ?? [],
-  artifacts: run.artifacts ?? [],
-  workingFiles: normalizeWorkingFiles(sessionRoot, run.runId, run.workingFiles),
-  ...(run.fileEvidence
-    ? { fileEvidence: { ...run.fileEvidence, reasonCodes: [...run.fileEvidence.reasonCodes] } }
-    : {}),
-  inputFiles: (run.inputFiles ?? []).map((input) => ({ ...input }))
-})
+const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunRecord => {
+  const fileEvidence = run.fileEvidence
+    ? parseOwnedExecutionFileEvidenceSummary(run.fileEvidence, {
+        activityId: run.runId,
+        activityKind: 'notebook-run'
+      })
+    : undefined
+  return {
+    ...run,
+    kernelKind: run.kernelKind ?? 'python',
+    text: run.text ?? emptyText(),
+    outputs: run.outputs ?? [],
+    artifacts: run.artifacts ?? [],
+    workingFiles: normalizeWorkingFiles(sessionRoot, run.runId, run.workingFiles),
+    ...(fileEvidence
+      ? { fileEvidence: { ...fileEvidence, reasonCodes: [...fileEvidence.reasonCodes] } }
+      : {}),
+    inputFiles: (run.inputFiles ?? []).map((input) => ({ ...input }))
+  }
+}
 
 const kernelInstanceIdentityKey = (instance: NotebookKernelInstanceIdentity): string =>
   instance.kind === 'repl' ? 'repl' : `${instance.kind}:${instance.environment}`

@@ -575,7 +575,7 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'execution-file-evidence',
     medium: 'filesystem',
-    resources: ['execution-file-evidence/<projectId>/'],
+    resources: ['execution-file-evidence/<projectId>/', 'notebook-file-evidence/<projectId>/'],
     policy: {
       kind: 'coordinator-cleanup',
       effect: 'hard-delete',

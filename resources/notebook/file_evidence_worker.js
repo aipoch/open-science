@@ -34,8 +34,8 @@ const ownershipFile = (token) => `.ownership-${assertSafeName(token)}`
 const projectOwnershipReceipt = (projectName) =>
   `.project-ownership-${assertSafeName(projectName)}.json`
 const projectDeletionTombstone = (ownershipToken) => `deleting-${assertSafeName(ownershipToken)}`
-const runDeletionTombstonePrefix = (ownershipToken, kind) =>
-  `deleting-activity-${assertSafeName(ownershipToken)}-${kind}`
+const runDeletionTombstonePrefix = (ownershipToken, kind, legacyNotebook = false) =>
+  `${legacyNotebook ? 'deleting-run' : 'deleting-activity'}-${assertSafeName(ownershipToken)}-${kind}`
 const UUID_NAME = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u
 const BLOB_NAME = /^sha256-[a-f0-9]{64}$/u
 const BLOB_DELETION_TOMBSTONE_NAME =
@@ -197,10 +197,84 @@ const receiptShape = (value) => {
   if (value.phase === 'published' && !validIdentity(value.finalIdentity)) return false
   return true
 }
+const LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS = [
+  'schemaVersion',
+  'phase',
+  'receiptName',
+  'stagingName',
+  'finalName',
+  'runId',
+  'evidenceId',
+  'storageKeyPrefix',
+  'ownershipToken'
+]
+const LEGACY_NOTEBOOK_RECEIPT_FIELDS_BY_PHASE = new Map([
+  ['prepared', new Set(LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS)],
+  ['allocated', new Set([...LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS, 'stagingIdentity'])],
+  [
+    'capturing',
+    new Set([...LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS, 'stagingIdentity', 'captureChecksum'])
+  ],
+  [
+    'published',
+    new Set([
+      ...LEGACY_NOTEBOOK_RECEIPT_BASE_FIELDS,
+      'stagingIdentity',
+      'captureChecksum',
+      'finalIdentity'
+    ])
+  ]
+])
+const legacyNotebookReceiptShape = (value) => {
+  const expectedFields =
+    value && typeof value === 'object'
+      ? LEGACY_NOTEBOOK_RECEIPT_FIELDS_BY_PHASE.get(value.phase)
+      : undefined
+  if (
+    !expectedFields ||
+    Object.keys(value).length !== expectedFields.size ||
+    Object.keys(value).some((field) => !expectedFields.has(field)) ||
+    value.schemaVersion !== 1
+  ) {
+    return false
+  }
+  if (
+    typeof value.runId !== 'string' ||
+    typeof value.evidenceId !== 'string' ||
+    typeof value.storageKeyPrefix !== 'string' ||
+    typeof value.ownershipToken !== 'string'
+  ) {
+    return false
+  }
+  try {
+    assertReceiptName(value.receiptName)
+    assertSafeName(value.stagingName)
+    assertSafeName(value.finalName)
+    assertSafeName(value.ownershipToken)
+    assertStorageKeyPrefix(value.storageKeyPrefix)
+  } catch {
+    return false
+  }
+  if (value.phase !== 'prepared' && !validIdentity(value.stagingIdentity)) return false
+  if (
+    (value.phase === 'capturing' || value.phase === 'published') &&
+    (typeof value.captureChecksum !== 'string' || !/^[a-f0-9]{64}$/u.test(value.captureChecksum))
+  ) {
+    return false
+  }
+  return value.phase !== 'published' || validIdentity(value.finalIdentity)
+}
 const readReceipt = (name) => {
   const value = readJson(assertReceiptName(name), MAX_REQUEST_BYTES)
   if (!receiptShape(value) || value.receiptName !== name) {
     throw new Error(`Invalid file-evidence recovery receipt: ${name}`)
+  }
+  return value
+}
+const readLegacyNotebookReceipt = (name) => {
+  const value = readJson(assertReceiptName(name), MAX_REQUEST_BYTES)
+  if (!legacyNotebookReceiptShape(value) || value.receiptName !== name) {
+    throw new Error(`Invalid legacy Notebook file-evidence recovery receipt: ${name}`)
   }
   return value
 }
@@ -279,8 +353,8 @@ const removeRunTombstone = (name, expectedIdentity, ownershipToken) => {
   syncDirectory()
   return true
 }
-const findRunDeletionTombstone = (ownershipToken, kind) => {
-  const prefix = runDeletionTombstonePrefix(ownershipToken, kind)
+const findRunDeletionTombstone = (ownershipToken, kind, legacyNotebook = false) => {
+  const prefix = runDeletionTombstonePrefix(ownershipToken, kind, legacyNotebook)
   const matches = []
   for (const entry of readdirSync('.')) {
     if (entry !== prefix && !entry.startsWith(`${prefix}-`)) continue
@@ -295,11 +369,17 @@ const findRunDeletionTombstone = (ownershipToken, kind) => {
   }
   return matches[0]
 }
-const removeReceiptOwnedDirectory = (name, expectedIdentity, ownershipToken, kind) => {
+const removeReceiptOwnedDirectory = (
+  name,
+  expectedIdentity,
+  ownershipToken,
+  kind,
+  legacyNotebook = false
+) => {
   if (!validIdentity(expectedIdentity)) {
     throw new Error(`File-evidence owned directory identity is missing: ${name}`)
   }
-  const existingQuarantineName = findRunDeletionTombstone(ownershipToken, kind)
+  const existingQuarantineName = findRunDeletionTombstone(ownershipToken, kind, legacyNotebook)
   const actual = entryIdentity(name)
   const quarantineIdentity = existingQuarantineName
     ? entryIdentity(existingQuarantineName)
@@ -321,7 +401,7 @@ const removeReceiptOwnedDirectory = (name, expectedIdentity, ownershipToken, kin
     throw new Error(`File-evidence owned directory identity changed: ${name}`)
   }
   verifyOwnershipMarker(name, ownershipToken, 'File-evidence Activity')
-  const quarantineName = `${runDeletionTombstonePrefix(ownershipToken, kind)}-${randomUUID()}`
+  const quarantineName = `${runDeletionTombstonePrefix(ownershipToken, kind, legacyNotebook)}-${randomUUID()}`
   renameSync(name, quarantineName)
   syncDirectory()
   return removeRunTombstone(quarantineName, expectedIdentity, ownershipToken)
@@ -499,7 +579,7 @@ const preparedStagingIdentity = (receipt) => {
   }
   return actual
 }
-const cleanupReceiptTargets = (receipt) => {
+const cleanupReceiptTargets = (receipt, legacyNotebook = false) => {
   let removedStagingEntries = 0
   let removedActivityEntries = 0
   const stagingExpected =
@@ -511,7 +591,8 @@ const cleanupReceiptTargets = (receipt) => {
       receipt.stagingName,
       stagingExpected,
       receipt.ownershipToken,
-      'staging'
+      'staging',
+      legacyNotebook
     )
   if (stagingRemoved) {
     removedStagingEntries += 1
@@ -520,7 +601,13 @@ const cleanupReceiptTargets = (receipt) => {
     receipt.finalIdentity ?? (!stagingWasPresent ? receipt.stagingIdentity : undefined)
   if (
     finalExpected &&
-    removeReceiptOwnedDirectory(receipt.finalName, finalExpected, receipt.ownershipToken, 'final')
+    removeReceiptOwnedDirectory(
+      receipt.finalName,
+      finalExpected,
+      receipt.ownershipToken,
+      'final',
+      legacyNotebook
+    )
   ) {
     removedActivityEntries += 1
   }
@@ -1396,6 +1483,77 @@ const reconcile = (request) => {
   }
 }
 
+const verifyLegacyNotebookPublishedEvidence = (receipt, expected) => {
+  const expectedIdentity = receipt.finalIdentity ?? receipt.stagingIdentity
+  const actualIdentity = entryIdentity(receipt.finalName)
+  if (!actualIdentity || !expectedIdentity || !sameIdentity(actualIdentity, expectedIdentity)) {
+    throw new Error('Published legacy Notebook file-evidence directory identity mismatch.')
+  }
+  verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'Notebook file-evidence Run')
+  process.chdir(receipt.finalName)
+  try {
+    const bytes = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
+    if (createHash('sha256').update(bytes).digest('hex') !== expected.checksum) {
+      throw new Error('Published legacy Notebook file-evidence checksum mismatch.')
+    }
+    const sidecar = JSON.parse(bytes.toString('utf8'))
+    if (
+      sidecar.schemaVersion !== 1 ||
+      sidecar.runId !== expected.runId ||
+      sidecar.evidenceId !== expected.evidenceId
+    ) {
+      throw new Error('Published legacy Notebook file-evidence identity mismatch.')
+    }
+  } finally {
+    process.chdir('..')
+  }
+  assertBoundRoot(expected.expectedRootIdentity)
+  const storageKey = `${receipt.storageKeyPrefix}/${receipt.finalName}/evidence.json`
+  if (storageKey !== expected.storageKey) {
+    throw new Error('Published legacy Notebook file-evidence storage key mismatch.')
+  }
+}
+
+const reconcileLegacyNotebook = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const blobPool = bindBlobPool(request)
+  const retained = new Map(request.retained.map((item) => [item.runId, item]))
+  let removedStagingEntries = 0
+  let removedActivityEntries = 0
+  for (const entry of readdirSync('.', { withFileTypes: true })) {
+    if (!RECEIPT_NAME.test(entry.name)) continue
+    if (!entry.isFile()) {
+      throw new Error(`Unsafe legacy Notebook file-evidence recovery receipt: ${entry.name}`)
+    }
+    const receipt = readLegacyNotebookReceipt(entry.name)
+    const expected = retained.get(receipt.runId)
+    if (expected) {
+      if (
+        expected.receiptName !== receipt.receiptName ||
+        expected.finalName !== receipt.finalName ||
+        expected.evidenceId !== receipt.evidenceId
+      ) {
+        throw new Error('Retained legacy Notebook evidence does not match its recovery receipt.')
+      }
+      verifyLegacyNotebookPublishedEvidence(receipt, {
+        ...expected,
+        expectedRootIdentity: request.expectedRootIdentity
+      })
+      removeReceipt(receipt.receiptName)
+      continue
+    }
+    const removed = cleanupReceiptTargets(receipt, true)
+    removedStagingEntries += removed.removedStagingEntries
+    removedActivityEntries += removed.removedActivityEntries
+  }
+  return {
+    ok: true,
+    removedStagingEntries,
+    removedActivityEntries,
+    removedBlobEntries: sweepBlobPool(blobPool)
+  }
+}
+
 const cleanup = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
@@ -1517,13 +1675,13 @@ process.stdin.on('end', () => {
                     ? cleanup(request)
                     : request.operation === 'delete-project'
                       ? deleteProject(request)
-                    : request.operation === 'reconcile'
-                      ? reconcile(request)
-                      : request.operation === 'reconcile-legacy-notebook'
-                        ? reconcileLegacyNotebook(request)
-                        : (() => {
-                            throw new Error('Unsupported file-evidence worker operation.')
-                          })()
+                      : request.operation === 'reconcile'
+                        ? reconcile(request)
+                        : request.operation === 'reconcile-legacy-notebook'
+                          ? reconcileLegacyNotebook(request)
+                          : (() => {
+                              throw new Error('Unsupported file-evidence worker operation.')
+                            })()
     process.stdout.write(`${JSON.stringify(result)}\n`)
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error))

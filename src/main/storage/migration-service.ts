@@ -36,7 +36,7 @@ import {
 import { waitForDataRootWriters } from './migration-state'
 import { DEFAULT_MAX_ENV_RELATIVE_PATH, PACK_PATH_BUDGET_FILE } from '../notebook/bundle-manifest'
 import { windowsDefaultEnvPrefixReserve } from '../notebook/runtime-paths'
-import { RELOCATABLE_DATA_DIRS } from './data-directories'
+import { MIGRATABLE_DATA_DIRS } from './data-directories'
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
 import { disconnectProjectDbClient } from '../projects/prisma-client'
 import { createLogger, type Logger } from '../logger'
@@ -50,7 +50,7 @@ export { DATA_ROOT_DIRS } from './data-directories'
 // Session workspaces and caches move with the other relocatable data. runtime/ is intentionally
 // excluded because its environments can contain hardcoded absolute paths, so it is rebuilt on
 // demand at the new root. See design §17.
-export const MIGRATED_DIRS = RELOCATABLE_DATA_DIRS
+export const MIGRATED_DIRS = MIGRATABLE_DATA_DIRS
 
 // Classification of a candidate data root relative to the current one. 'move' = empty and
 // writable, safe for the copy-in migration engine. 'adopt' = already holds our data (a prior

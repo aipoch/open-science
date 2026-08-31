@@ -1,7 +1,7 @@
 import { lstat, realpath, rm } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
-import { RELOCATABLE_DATA_DIRS } from './data-directories'
+import { MIGRATABLE_DATA_DIRS } from './data-directories'
 import { capturePortableMetadata, restorePortableMetadata } from './data-migration'
 import {
   DurableJsonRecoveryBarrierError,
@@ -12,15 +12,14 @@ import {
   MIGRATION_MARKER_FILENAME,
   readMigrationMarker,
   removeMigrationMarker,
-  scanInventory,
-  type MigrationMarker
+  scanInventory
 } from './migration-marker'
 import { defaultFileDurability } from './file-durability'
 
 const DATA_ROOT_CLEANUP_FILENAME = 'data-root-cleanup.json'
 const CLEANUP_JOURNAL_VERSION = 1 as const
 const ALLOWED_CLEANUP_DIRS = new Set([
-  ...RELOCATABLE_DATA_DIRS,
+  ...MIGRATABLE_DATA_DIRS,
   'runtime',
   join('runtime', 'pkgs'),
   join('runtime', 'provenance', 'environment-manifests')
@@ -228,14 +227,19 @@ const refreshEntryIdentity = async (
   return { ...entry, dev, ino, birthtimeNs: stats.birthtimeNs.toString() }
 }
 
-const markerAllowsCleanup = (marker: MigrationMarker, intent: DataRootCleanupIntent): boolean => {
-  const markerDirs = new Set(marker.migratedDirs ?? RELOCATABLE_DATA_DIRS)
+const markerAllowsCleanup = (
+  verifiedDirs: readonly string[],
+  intent: DataRootCleanupIntent
+): boolean => {
+  const markerDirs = new Set(verifiedDirs)
   const runtimeCleanupAllowed =
     markerDirs.has(join('runtime', 'pkgs')) &&
     markerDirs.has(join('runtime', 'provenance', 'environment-manifests'))
   return intent.entries.every(
-    ({ dir }) =>
-      (dir !== 'runtime' && markerDirs.has(dir)) || (dir === 'runtime' && runtimeCleanupAllowed)
+    ({ dir, present }) =>
+      !present ||
+      (dir !== 'runtime' && markerDirs.has(dir)) ||
+      (dir === 'runtime' && runtimeCleanupAllowed)
   )
 }
 
@@ -434,14 +438,10 @@ class DataRootCleanupJournal {
       }
       return undefined
     }
-    if (
-      marker.status !== 'verified' ||
-      marker.token !== intent.token ||
-      !marker.inventory ||
-      !markerAllowsCleanup(marker, intent)
-    ) {
+    if (marker.status !== 'verified' || marker.token !== intent.token || !marker.inventory) {
       return undefined
     }
+    if (!markerAllowsCleanup(marker.migratedDirs ?? marker.inventory.dirs, intent)) return undefined
     let markerSource: string
     let markerTarget: string
     try {

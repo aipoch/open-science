@@ -58,6 +58,21 @@ describe('computeStorageUsage', () => {
     expect(usage.totalBytes).toBe(125)
   })
 
+  it('includes legacy Notebook evidence in the Execution evidence category', async () => {
+    await writeSized(join(dataRoot, 'execution-file-evidence', 'project-1', 'current.bin'), 125)
+    await writeSized(join(dataRoot, 'notebook-file-evidence', 'project-1', 'legacy.bin'), 75)
+
+    const usage = await computeStorageUsage(dataRoot)
+
+    expect(usage.categories.find((category) => category.key === 'execution-file-evidence')).toEqual(
+      {
+        key: 'execution-file-evidence',
+        bytes: 200
+      }
+    )
+    expect(usage.totalBytes).toBe(200)
+  })
+
   it('sums per-category bytes and gives runtime a sorted children breakdown', async () => {
     await writeSized(join(dataRoot, 'artifacts', 'a.bin'), 100)
     await writeSized(join(dataRoot, 'delegation', 'project-1', 'frame.bin'), 75)

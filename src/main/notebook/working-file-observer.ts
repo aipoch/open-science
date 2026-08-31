@@ -182,6 +182,18 @@ type EvidenceWorkerReconcileRequest = EvidenceWorkerBlobPoolBinding & {
     storageKey: string
   }>
 }
+type EvidenceWorkerLegacyNotebookReconcileRequest = EvidenceWorkerBlobPoolBinding & {
+  operation: 'reconcile-legacy-notebook'
+  expectedRootIdentity: FileIdentity
+  retained: Array<{
+    receiptName: string
+    finalName: string
+    runId: string
+    evidenceId: string
+    checksum: string
+    storageKey: string
+  }>
+}
 type EvidenceWorkerCleanupRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'cleanup'
   expectedRootIdentity: FileIdentity
@@ -205,6 +217,7 @@ type EvidenceWorkerRequest =
   | EvidenceWorkerRecoverPublishedRequest
   | EvidenceWorkerCompleteRequest
   | EvidenceWorkerReconcileRequest
+  | EvidenceWorkerLegacyNotebookReconcileRequest
   | EvidenceWorkerCleanupRequest
   | EvidenceWorkerDeleteProjectRequest
   | EvidenceWorkerEnsureProjectRequest
@@ -264,6 +277,7 @@ const EVIDENCE_WORKER_TIMEOUT_MS = 10 * 60 * 1000
 const EVIDENCE_QUEUE_TIMEOUT_MS = 5_000
 const SAFE_ACTIVITY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const EXECUTION_FILE_EVIDENCE_DIR = 'execution-file-evidence'
+const LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR = 'notebook-file-evidence'
 const BASELINE_REASON_CODES: ExecutionFileEvidenceReason[] = [
   'file-reads-not-observed',
   'external-paths-not-observed',
@@ -613,13 +627,12 @@ const projectEvidenceScope = (
   }
 }
 
-const deleteWorkingFileEvidenceProject = async (
+const deleteFileEvidenceProjectAtRoot = async (
   storageRoot: string,
+  evidenceDirectory: string,
   projectId: string
 ): Promise<void> => {
-  if (!SAFE_ACTIVITY_ID.test(projectId))
-    throw new Error('Unsafe Execution file-evidence Project ID.')
-  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, EXECUTION_FILE_EVIDENCE_DIR))
+  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, evidenceDirectory))
   const result = await runSerializedEvidenceWorker(
     runEvidenceWorker,
     root.path,
@@ -633,6 +646,18 @@ const deleteWorkingFileEvidenceProject = async (
   )
   if (!('removedProjectEntries' in result)) {
     throw new Error('File-evidence Project deletion returned an invalid result.')
+  }
+}
+
+const deleteWorkingFileEvidenceProject = async (
+  storageRoot: string,
+  projectId: string
+): Promise<void> => {
+  if (!SAFE_ACTIVITY_ID.test(projectId))
+    throw new Error('Unsafe Execution file-evidence Project ID.')
+  await deleteFileEvidenceProjectAtRoot(storageRoot, EXECUTION_FILE_EVIDENCE_DIR, projectId)
+  if (existsSync(join(storageRoot, LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR))) {
+    await deleteFileEvidenceProjectAtRoot(storageRoot, LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR, projectId)
   }
 }
 
@@ -710,6 +735,89 @@ const reconcileEvidenceReceipts = async (
   }
 }
 
+const legacyNotebookEvidenceLocation = (
+  location: WorkingFileEvidenceLocation
+):
+  | (WorkingFileEvidenceLocation & {
+      blobRoot: string
+      blobStorageKeyPrefix: string
+    })
+  | undefined => {
+  const segments = location.storageKeyPrefix.split('/')
+  if (segments[0] !== EXECUTION_FILE_EVIDENCE_DIR || segments.length < 3) return undefined
+  if (segments.some((segment) => !SAFE_ACTIVITY_ID.test(segment))) {
+    throw new Error('Unsafe legacy Notebook file-evidence storage prefix.')
+  }
+  if (resolve(location.root) !== resolve(location.storageRoot, ...segments)) {
+    throw new Error('Execution file-evidence root does not match its storage prefix.')
+  }
+  const legacySegments = [LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR, ...segments.slice(1)]
+  const root = join(location.storageRoot, ...legacySegments)
+  if (!existsSync(root)) return undefined
+  return {
+    storageRoot: location.storageRoot,
+    root,
+    storageKeyPrefix: legacySegments.join('/'),
+    blobRoot: join(location.storageRoot, LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR, segments[1], 'blobs'),
+    blobStorageKeyPrefix: `${LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR}/${segments[1]}/blobs`
+  }
+}
+
+const reconcileLegacyNotebookEvidence = async (
+  location: WorkingFileEvidenceLocation,
+  runs: readonly Pick<NotebookRunRecord, 'runId' | 'fileEvidence'>[]
+): Promise<{ removedStagingEntries: number; removedActivityEntries: number }> => {
+  const legacyLocation = legacyNotebookEvidenceLocation(location)
+  if (!legacyLocation) return { removedStagingEntries: 0, removedActivityEntries: 0 }
+  if (!existsSync(legacyLocation.blobRoot)) {
+    throw new Error('Legacy Notebook file-evidence blob pool is missing.')
+  }
+  const retained: EvidenceWorkerLegacyNotebookReconcileRequest['retained'] = runs.flatMap((run) => {
+    const evidence = run.fileEvidence
+    if (
+      !SAFE_ACTIVITY_ID.test(run.runId) ||
+      evidence?.activityId !== run.runId ||
+      evidence.activityKind !== 'notebook-run' ||
+      !evidence.evidenceId ||
+      !evidence.checksum ||
+      !evidence.storageKey
+    ) {
+      return []
+    }
+    const finalName = `run-${run.runId}`
+    if (evidence.storageKey !== `${legacyLocation.storageKeyPrefix}/${finalName}/evidence.json`) {
+      return []
+    }
+    return [
+      {
+        receiptName: receiptNameForActivity(run.runId),
+        finalName,
+        runId: run.runId,
+        evidenceId: evidence.evidenceId,
+        checksum: evidence.checksum,
+        storageKey: evidence.storageKey
+      }
+    ]
+  })
+  const evidenceRoot = await secureEvidenceRoot(location.storageRoot, legacyLocation.root)
+  const blobRoot = await secureEvidenceRoot(location.storageRoot, legacyLocation.blobRoot)
+  const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
+    operation: 'reconcile-legacy-notebook',
+    expectedRootIdentity: evidenceRoot.identity,
+    blobRoot: blobRoot.path,
+    expectedBlobRootIdentity: blobRoot.identity,
+    blobStorageKeyPrefix: legacyLocation.blobStorageKeyPrefix,
+    retained
+  })
+  if (!('removedStagingEntries' in result)) {
+    throw new Error('Legacy Notebook file-evidence reconciliation returned an invalid result.')
+  }
+  return {
+    removedStagingEntries: result.removedStagingEntries,
+    removedActivityEntries: result.removedActivityEntries
+  }
+}
+
 const reconcileWorkingFileEvidence = async (
   location: WorkingFileEvidenceLocation,
   runs: readonly Pick<NotebookRunRecord, 'runId' | 'fileEvidence'>[]
@@ -740,7 +848,7 @@ const reconcileWorkingFileEvidence = async (
       }
     ]
   })
-  return reconcileEvidenceReceipts(
+  const current = await reconcileEvidenceReceipts(
     location,
     retainedNotebookRuns,
     // Notebook recovery cannot prove whether an unreferenced asynchronous Compute Job is still
@@ -748,6 +856,11 @@ const reconcileWorkingFileEvidence = async (
     ['compute-job'],
     []
   )
+  const legacy = await reconcileLegacyNotebookEvidence(location, runs)
+  return {
+    removedStagingEntries: current.removedStagingEntries + legacy.removedStagingEntries,
+    removedActivityEntries: current.removedActivityEntries + legacy.removedActivityEntries
+  }
 }
 
 type ComputeJobFileEvidenceRecord = Pick<

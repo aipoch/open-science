@@ -260,6 +260,12 @@ describe('Project-owned data catalog architecture', () => {
     ])
   })
 
+  it('catalogs current and legacy execution evidence roots as Project-owned data', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'execution-file-evidence')?.resources
+    ).toEqual(['execution-file-evidence/<projectId>/', 'notebook-file-evidence/<projectId>/'])
+  })
+
   it('checks declared Prisma cascades and Restrict boundaries through generated DMMF', () => {
     for (const entry of PROJECT_OWNED_DATA_CATALOG) {
       for (const modelContract of entry.prismaModels ?? []) {

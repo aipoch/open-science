@@ -77,6 +77,7 @@ export const hasImmutableExecutionFileEvidenceReference = (
 
 const ACTIVITY_KINDS = new Set<ExecutionActivityKind>(['notebook-run', 'compute-job'])
 const EVIDENCE_STATES = new Set(['available', 'partial', 'unavailable'])
+const LEGACY_NOTEBOOK_EVIDENCE_STATES = new Set(['complete', 'partial', 'unavailable'])
 const COVERAGE_STATES = new Set<ExecutionFileEvidenceCoverage>([
   'complete',
   'partial',
@@ -107,6 +108,41 @@ const REASON_CODES = new Set<ExecutionFileEvidenceReason>([
   'absolute-path-not-frozen',
   'source-analysis-unsupported-call'
 ])
+const LEGACY_NOTEBOOK_REASON_CODES = new Set([
+  'file-reads-not-observed',
+  'initial-file-generations-not-captured',
+  'external-paths-not-observed',
+  'remote-outputs-not-observed',
+  'transient-files-not-captured',
+  'delayed-writes-not-observed',
+  'writer-not-isolated',
+  'watcher-unavailable',
+  'observation-not-started',
+  'observer-conflict',
+  'observer-limit-exceeded',
+  'observer-failed',
+  'generation-budget-exceeded',
+  'generation-freeze-failed',
+  'evidence-persistence-failed',
+  'run-identity-missing'
+])
+const LEGACY_NOTEBOOK_EVIDENCE_FIELDS = new Set([
+  'schemaVersion',
+  'state',
+  'evidenceId',
+  'checksum',
+  'storageKey',
+  'relationCount',
+  'generationCount',
+  'scientificOutputCount',
+  'initialViewState',
+  'managedRootsFinalState',
+  'scientificOutputAnalysis',
+  'fileReads',
+  'externalPaths',
+  'writerAttribution',
+  'reasonCodes'
+])
 const SAFE_ACTIVITY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const SHA256 = /^[a-f0-9]{64}$/u
 
@@ -122,6 +158,11 @@ const isPortableStorageKey = (value: string): boolean =>
   !/^[A-Za-z]:[\\/]/u.test(value) &&
   !value.includes('\\') &&
   value.split('/').every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+
+const isOwnedLegacyNotebookStorageKey = (value: string, activityId: string): boolean =>
+  isPortableStorageKey(value) &&
+  (value.startsWith('notebook-file-evidence/') || value.startsWith('file-evidence/')) &&
+  value.endsWith(`/run-${activityId}/evidence.json`)
 
 export const parseExecutionFileEvidenceSummary = (
   value: unknown
@@ -166,6 +207,39 @@ export const parseExecutionFileEvidenceSummary = (
   return value as ExecutionFileEvidenceSummary
 }
 
+const normalizeLegacyNotebookFileEvidenceSummary = (
+  value: unknown,
+  activityId: string
+): ExecutionFileEvidenceSummary | undefined => {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((field) => !LEGACY_NOTEBOOK_EVIDENCE_FIELDS.has(field)) ||
+    (value.evidenceId !== undefined &&
+      value.evidenceId !== `notebook-file-evidence-${activityId}`) ||
+    (value.storageKey !== undefined &&
+      (typeof value.storageKey !== 'string' ||
+        !isOwnedLegacyNotebookStorageKey(value.storageKey, activityId))) ||
+    typeof value.state !== 'string' ||
+    !LEGACY_NOTEBOOK_EVIDENCE_STATES.has(value.state) ||
+    !Array.isArray(value.reasonCodes) ||
+    value.reasonCodes.length > LEGACY_NOTEBOOK_REASON_CODES.size ||
+    value.reasonCodes.some(
+      (reason) => typeof reason !== 'string' || !LEGACY_NOTEBOOK_REASON_CODES.has(reason)
+    )
+  ) {
+    return undefined
+  }
+  return parseExecutionFileEvidenceSummary({
+    ...value,
+    activityId,
+    activityKind: 'notebook-run',
+    state: value.state === 'complete' ? 'available' : value.state,
+    reasonCodes: value.reasonCodes.map((reason) =>
+      reason === 'run-identity-missing' ? 'activity-identity-missing' : reason
+    )
+  })
+}
+
 export const parseOwnedExecutionFileEvidenceSummary = (
   value: unknown,
   owner: {
@@ -175,7 +249,11 @@ export const parseOwnedExecutionFileEvidenceSummary = (
     storageKey?: string
   }
 ): ExecutionFileEvidenceSummary | undefined => {
-  const summary = parseExecutionFileEvidenceSummary(value)
+  const summary =
+    parseExecutionFileEvidenceSummary(value) ??
+    (owner.activityKind === 'notebook-run'
+      ? normalizeLegacyNotebookFileEvidenceSummary(value, owner.activityId)
+      : undefined)
   if (
     !summary ||
     summary.activityId !== owner.activityId ||

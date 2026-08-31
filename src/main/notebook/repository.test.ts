@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookRunRepository, getNotebookSessionRoot } from './repository'
 import { createFrameNotebookLane, createRootNotebookLane } from './lane-identity'
@@ -229,6 +230,149 @@ describe('notebook run repository', () => {
     await expect(
       new NotebookRunRepository(root).findExisting('default-project', 'session-1')
     ).rejects.toThrow('Notebook document is corrupt.')
+  })
+
+  it('normalizes legacy Notebook file evidence without changing its immutable reference', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    const document = await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+    const runJsonPath = join(document.notebookSessionRoot, 'run.json')
+    const persisted = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    const legacyEvidence = {
+      schemaVersion: 1,
+      state: 'complete',
+      evidenceId: 'notebook-file-evidence-legacy-run',
+      checksum: 'a'.repeat(64),
+      storageKey: 'notebook-file-evidence/default-project/session-1/run-legacy-run/evidence.json',
+      relationCount: 1,
+      generationCount: 1,
+      scientificOutputCount: 1,
+      initialViewState: 'complete',
+      managedRootsFinalState: 'complete',
+      scientificOutputAnalysis: 'complete',
+      fileReads: 'unavailable',
+      externalPaths: 'unavailable',
+      writerAttribution: 'unavailable',
+      reasonCodes: ['file-reads-not-observed']
+    }
+    const legacyOwner = {
+      activityId: 'legacy-run',
+      activityKind: 'notebook-run' as const
+    }
+    expect(
+      parseOwnedExecutionFileEvidenceSummary(
+        {
+          ...legacyEvidence,
+          evidenceId: 'notebook-file-evidence-another-run'
+        },
+        legacyOwner
+      )
+    ).toBeUndefined()
+    expect(
+      parseOwnedExecutionFileEvidenceSummary(
+        {
+          ...legacyEvidence,
+          storageKey:
+            'notebook-file-evidence/default-project/session-1/run-another-run/evidence.json'
+        },
+        legacyOwner
+      )
+    ).toBeUndefined()
+    expect(
+      parseOwnedExecutionFileEvidenceSummary(
+        {
+          ...legacyEvidence,
+          runId: 'legacy-run'
+        },
+        legacyOwner
+      )
+    ).toBeUndefined()
+    expect(
+      parseOwnedExecutionFileEvidenceSummary(
+        {
+          ...legacyEvidence,
+          unexpectedField: true
+        },
+        legacyOwner
+      )
+    ).toBeUndefined()
+    persisted.runs = [
+      {
+        runId: 'legacy-run',
+        cellId: 'cell-legacy-run',
+        source: 'agent',
+        script: '1',
+        status: 'completed',
+        startedAt: 1,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: [],
+        fileEvidence: legacyEvidence
+      },
+      {
+        runId: 'legacy-unavailable-run',
+        cellId: 'cell-legacy-unavailable-run',
+        source: 'agent',
+        script: '2',
+        status: 'failed',
+        startedAt: 2,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: [],
+        fileEvidence: {
+          ...legacyEvidence,
+          state: 'unavailable',
+          evidenceId: undefined,
+          checksum: undefined,
+          storageKey: undefined,
+          relationCount: undefined,
+          generationCount: undefined,
+          scientificOutputCount: 0,
+          reasonCodes: ['run-identity-missing']
+        }
+      }
+    ]
+    await writeFile(runJsonPath, JSON.stringify(persisted, null, 2), 'utf8')
+
+    const reloaded = await new NotebookRunRepository(root).findExisting(
+      'default-project',
+      'session-1'
+    )
+
+    expect(reloaded?.runs[0]?.fileEvidence).toEqual({
+      ...legacyEvidence,
+      activityId: 'legacy-run',
+      activityKind: 'notebook-run',
+      state: 'available'
+    })
+    expect(reloaded?.runs[1]?.fileEvidence).toMatchObject({
+      activityId: 'legacy-unavailable-run',
+      activityKind: 'notebook-run',
+      state: 'unavailable',
+      reasonCodes: ['activity-identity-missing']
+    })
+
+    await new NotebookRunRepository(root).updateKernelStatus({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      status: 'idle'
+    })
+    const normalizedOnDisk = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    expect(normalizedOnDisk.runs[0].fileEvidence).toMatchObject({
+      activityId: 'legacy-run',
+      activityKind: 'notebook-run',
+      state: 'available',
+      storageKey: 'notebook-file-evidence/default-project/session-1/run-legacy-run/evidence.json'
+    })
   })
 
   it('isolates Frame workspaces while root keeps the legacy Session work surface', async () => {

@@ -2187,6 +2187,190 @@ describe('working-file evidence', () => {
     expect(await readdir(evidenceRoot)).toContain('.project-ownership-project-2.json')
   })
 
+  it('also deletes an owned Project from the legacy Notebook evidence root', async () => {
+    await createRoots()
+    const legacyRoot = join(storageRoot as string, 'notebook-file-evidence')
+    await mkdir(legacyRoot)
+    const root = await stat(legacyRoot)
+    await runEvidenceWorker(legacyRoot, {
+      operation: 'ensure-project',
+      expectedRootIdentity: { dev: root.dev, ino: root.ino },
+      projectName: 'project-legacy'
+    })
+    await mkdir(join(legacyRoot, 'project-legacy', 'session-1'))
+    await writeFile(join(legacyRoot, 'project-legacy', 'session-1', 'evidence.json'), 'legacy')
+
+    await deleteWorkingFileEvidenceProject(storageRoot as string, 'project-legacy')
+
+    await expect(readdir(join(legacyRoot, 'project-legacy'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(readdir(legacyRoot)).resolves.toEqual([])
+  })
+
+  it('reclaims a legacy Notebook cleanup tombstone and its orphaned CAS blob', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'os-legacy-notebook-evidence-recovery-'))
+    const projectId = 'project-legacy'
+    const sessionId = 'session-legacy'
+    const runId = 'legacy-orphan'
+    const legacyRoot = join(storageRoot, 'notebook-file-evidence', projectId, sessionId)
+    const blobRoot = join(storageRoot, 'notebook-file-evidence', projectId, 'blobs')
+    const stagingName = `staging-${runId}`
+    const ownershipToken = '00000000-0000-4000-8000-000000000010'
+    const tombstoneName =
+      `deleting-run-${ownershipToken}-staging-` + '00000000-0000-4000-8000-000000000011'
+    const content = 'legacy orphan bytes'
+    const blobName = `sha256-${createHash('sha256').update(content).digest('hex')}`
+    await mkdir(join(legacyRoot, stagingName, 'blobs'), { recursive: true })
+    await mkdir(blobRoot, { recursive: true })
+    await writeFile(join(legacyRoot, stagingName, `.ownership-${ownershipToken}`), '')
+    await writeFile(join(blobRoot, blobName), content)
+    await link(join(blobRoot, blobName), join(legacyRoot, stagingName, 'blobs', blobName))
+    const staging = await stat(join(legacyRoot, stagingName))
+    await rename(join(legacyRoot, stagingName), join(legacyRoot, tombstoneName))
+    await writeFile(
+      join(legacyRoot, `receipt-${runId}.json`),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        phase: 'allocated',
+        receiptName: `receipt-${runId}.json`,
+        stagingName,
+        finalName: `run-${runId}`,
+        runId,
+        evidenceId: `notebook-file-evidence-${runId}`,
+        storageKeyPrefix: `notebook-file-evidence/${projectId}/${sessionId}`,
+        ownershipToken,
+        stagingIdentity: { dev: staging.dev, ino: staging.ino }
+      })}\n`
+    )
+
+    await expect(
+      reconcileWorkingFileEvidence(
+        {
+          storageRoot,
+          root: join(storageRoot, 'execution-file-evidence', projectId, sessionId),
+          storageKeyPrefix: `execution-file-evidence/${projectId}/${sessionId}`
+        },
+        []
+      )
+    ).resolves.toEqual({ removedStagingEntries: 1, removedActivityEntries: 0 })
+
+    await expect(readdir(legacyRoot)).resolves.toEqual([])
+    await expect(readdir(blobRoot)).resolves.toEqual([])
+  })
+
+  it('settles a retained legacy Notebook receipt without rewriting its published evidence', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'os-legacy-notebook-evidence-retained-'))
+    const projectId = 'project-legacy'
+    const sessionId = 'session-legacy'
+    const runId = 'legacy-retained'
+    const evidenceId = `notebook-file-evidence-${runId}`
+    const storageKeyPrefix = `notebook-file-evidence/${projectId}/${sessionId}`
+    const legacyRoot = join(storageRoot, ...storageKeyPrefix.split('/'))
+    const blobRoot = join(storageRoot, 'notebook-file-evidence', projectId, 'blobs')
+    const finalName = `run-${runId}`
+    const ownershipToken = '00000000-0000-4000-8000-000000000020'
+    const sidecar = `${JSON.stringify({ schemaVersion: 1, evidenceId, runId })}\n`
+    const checksum = createHash('sha256').update(sidecar).digest('hex')
+    await mkdir(join(legacyRoot, finalName), { recursive: true })
+    await mkdir(blobRoot, { recursive: true })
+    await writeFile(join(legacyRoot, finalName, `.ownership-${ownershipToken}`), '')
+    await writeFile(join(legacyRoot, finalName, 'evidence.json'), sidecar)
+    const final = await stat(join(legacyRoot, finalName))
+    await writeFile(
+      join(legacyRoot, `receipt-${runId}.json`),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        phase: 'published',
+        receiptName: `receipt-${runId}.json`,
+        stagingName: `staging-${runId}`,
+        finalName,
+        runId,
+        evidenceId,
+        storageKeyPrefix,
+        ownershipToken,
+        stagingIdentity: { dev: final.dev, ino: final.ino },
+        captureChecksum: 'a'.repeat(64),
+        finalIdentity: { dev: final.dev, ino: final.ino }
+      })}\n`
+    )
+
+    await reconcileWorkingFileEvidence(
+      {
+        storageRoot,
+        root: join(storageRoot, 'execution-file-evidence', projectId, sessionId),
+        storageKeyPrefix: `execution-file-evidence/${projectId}/${sessionId}`
+      },
+      [
+        {
+          runId,
+          fileEvidence: {
+            schemaVersion: 1,
+            activityId: runId,
+            activityKind: 'notebook-run',
+            evidenceId,
+            state: 'available',
+            checksum,
+            storageKey: `${storageKeyPrefix}/${finalName}/evidence.json`,
+            relationCount: 0,
+            generationCount: 0,
+            scientificOutputCount: 0,
+            initialViewState: 'complete',
+            managedRootsFinalState: 'complete',
+            scientificOutputAnalysis: 'complete',
+            fileReads: 'unavailable',
+            externalPaths: 'unavailable',
+            writerAttribution: 'complete',
+            reasonCodes: []
+          }
+        }
+      ]
+    )
+
+    await expect(readdir(legacyRoot)).resolves.toEqual([finalName])
+    await expect(readFile(join(legacyRoot, finalName, 'evidence.json'), 'utf8')).resolves.toBe(
+      sidecar
+    )
+  })
+
+  it('fails closed on unknown fields in a legacy Notebook recovery receipt', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'os-legacy-notebook-evidence-invalid-'))
+    const projectId = 'project-legacy'
+    const sessionId = 'session-legacy'
+    const legacyRoot = join(storageRoot, 'notebook-file-evidence', projectId, sessionId)
+    await mkdir(legacyRoot, { recursive: true })
+    await mkdir(join(storageRoot, 'notebook-file-evidence', projectId, 'blobs'))
+    const receiptPath = join(legacyRoot, 'receipt-legacy-invalid.json')
+    await writeFile(
+      receiptPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        phase: 'prepared',
+        receiptName: 'receipt-legacy-invalid.json',
+        stagingName: 'staging-legacy-invalid',
+        finalName: 'run-legacy-invalid',
+        runId: 'legacy-invalid',
+        evidenceId: 'notebook-file-evidence-legacy-invalid',
+        storageKeyPrefix: `notebook-file-evidence/${projectId}/${sessionId}`,
+        ownershipToken: '00000000-0000-4000-8000-000000000030',
+        unexpectedField: true
+      })}\n`
+    )
+
+    await expect(
+      reconcileWorkingFileEvidence(
+        {
+          storageRoot,
+          root: join(storageRoot, 'execution-file-evidence', projectId, sessionId),
+          storageKeyPrefix: `execution-file-evidence/${projectId}/${sessionId}`
+        },
+        []
+      )
+    ).rejects.toThrow(/Invalid legacy Notebook file-evidence recovery receipt/)
+
+    await expect(readFile(receiptPath, 'utf8')).resolves.toContain('unexpectedField')
+  })
+
   it('recovers deletion after the owned Project was renamed to its tombstone', async () => {
     await createRoots()
     const evidenceRoot = join(storageRoot as string, 'execution-file-evidence')

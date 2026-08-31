@@ -38,6 +38,147 @@ afterEach(async () => {
 })
 
 describe('DataRootCleanupJournal', () => {
+  it('removes copied legacy Notebook evidence through the durable cleanup journal', async () => {
+    const legacyDirectory = 'notebook-file-evidence'
+    await mkdir(join(source, legacyDirectory, 'project-1'), { recursive: true })
+    await mkdir(join(target, legacyDirectory, 'project-1'), { recursive: true })
+    await writeFile(join(source, legacyDirectory, 'project-1', 'evidence.json'), 'legacy')
+    await writeFile(join(target, legacyDirectory, 'project-1', 'evidence.json'), 'legacy')
+    await writeMigrationMarker(target, {
+      version: 1,
+      token: 'cleanup-token',
+      source,
+      target,
+      createdAt: 1,
+      status: 'verified',
+      migratedDirs: [legacyDirectory],
+      inventory: await scanInventory(target, [legacyDirectory])
+    })
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: [legacyDirectory],
+      createdAt: 1
+    })
+    await journal.markCommitted('cleanup-token')
+
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: false,
+      failureCount: 0
+    })
+    await expect(
+      readFile(join(source, legacyDirectory, 'project-1', 'evidence.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readFile(join(target, legacyDirectory, 'project-1', 'evidence.json'), 'utf8')
+    ).resolves.toBe('legacy')
+  })
+
+  it('uses a legacy migration marker inventory as its cleanup authority', async () => {
+    const legacyDirectory = 'notebook-file-evidence'
+    await mkdir(join(source, legacyDirectory, 'project-1'), { recursive: true })
+    await mkdir(join(target, legacyDirectory, 'project-1'), { recursive: true })
+    await writeFile(join(source, legacyDirectory, 'project-1', 'evidence.json'), 'legacy')
+    await writeFile(join(target, legacyDirectory, 'project-1', 'evidence.json'), 'legacy')
+    await writeMigrationMarker(target, {
+      version: 1,
+      token: 'cleanup-token',
+      source,
+      target,
+      createdAt: 1,
+      status: 'verified',
+      inventory: await scanInventory(target, [legacyDirectory])
+    })
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: [legacyDirectory],
+      createdAt: 1
+    })
+    await journal.markCommitted('cleanup-token')
+
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: false,
+      failureCount: 0
+    })
+    await expect(
+      readFile(join(source, legacyDirectory, 'project-1', 'evidence.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readFile(join(target, legacyDirectory, 'project-1', 'evidence.json'), 'utf8')
+    ).resolves.toBe('legacy')
+  })
+
+  it('does not let absent new directories block cleanup from a legacy marker', async () => {
+    await writeMigrationMarker(target, {
+      version: 1,
+      token: 'cleanup-token',
+      source,
+      target,
+      createdAt: 1,
+      status: 'verified',
+      inventory: await scanInventory(target, ['artifacts'])
+    })
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts', 'notebook-file-evidence'],
+      createdAt: 1
+    })
+    await journal.markCommitted('cleanup-token')
+
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: false,
+      failureCount: 0
+    })
+    await expect(readFile(join(source, 'artifacts', 'result.txt'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
+  it('does not extend a legacy marker beyond its verified inventory', async () => {
+    const legacyDirectory = 'notebook-file-evidence'
+    await mkdir(join(source, legacyDirectory, 'project-1'), { recursive: true })
+    await mkdir(join(target, legacyDirectory, 'project-1'), { recursive: true })
+    await writeFile(join(source, legacyDirectory, 'project-1', 'evidence.json'), 'source legacy')
+    await writeFile(join(target, legacyDirectory, 'project-1', 'evidence.json'), 'target legacy')
+    await writeMigrationMarker(target, {
+      version: 1,
+      token: 'cleanup-token',
+      source,
+      target,
+      createdAt: 1,
+      status: 'verified',
+      inventory: await scanInventory(target, ['artifacts'])
+    })
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({
+      token: 'cleanup-token',
+      source,
+      target,
+      dirs: ['artifacts', legacyDirectory],
+      createdAt: 1
+    })
+    await journal.markCommitted('cleanup-token')
+
+    await expect(journal.recover(target, deleteSources)).resolves.toEqual({
+      pending: true,
+      failureCount: 0
+    })
+    await expect(readFile(join(source, 'artifacts', 'result.txt'), 'utf8')).resolves.toBe(
+      'preserved'
+    )
+    await expect(
+      readFile(join(source, legacyDirectory, 'project-1', 'evidence.json'), 'utf8')
+    ).resolves.toBe('source legacy')
+  })
+
   it('does not recover a committed intent outside the live cleanup chain', async () => {
     const journal = new DataRootCleanupJournal(configRoot)
     await journal.stage({
