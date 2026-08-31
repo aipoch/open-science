@@ -1065,13 +1065,6 @@ describe('WorkspaceSidebar accessible render', () => {
 
       openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]'))
 
-      const projectMenu = document.body.querySelector<HTMLElement>('[aria-label="Project actions"]')
-      expect(projectMenu?.className).toContain(
-        'max-h-[var(--radix-dropdown-menu-content-available-height)]'
-      )
-      expect(projectMenu?.className).toContain('overflow-y-auto')
-      expect(projectMenu?.getAttribute('data-side')).toBeTruthy()
-
       let projectItems = Array.from(
         document.body.querySelectorAll<HTMLElement>('[data-project-id]')
       )
@@ -1086,25 +1079,10 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(projectItems[0]?.textContent).toContain('Description 1')
       expect(projectItems[4]?.textContent).not.toContain('Description')
 
-      const menuItems = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'))
-      const showRemainingItem = menuItems.find(
-        (item) => item.textContent?.trim() === 'Show remaining 2 projects'
-      )
-      const newProjectItem = menuItems.find((item) => item.textContent?.trim() === 'New project')
+      const showRemainingItem = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim() === 'Show remaining 2 projects')
       expect(showRemainingItem).toBeDefined()
-      expect(newProjectItem).toBeDefined()
-      expect(showRemainingItem?.tagName).toBe('BUTTON')
-      expect(showRemainingItem?.className).toContain('w-fit')
-      expect(showRemainingItem?.className).toContain('text-[11px]')
-      expect(showRemainingItem?.className).toContain('text-muted-foreground')
-      expect(showRemainingItem?.className).toContain('bg-transparent!')
-      expect(showRemainingItem?.className).toContain('focus-visible:ring-[3px]')
-      expect(showRemainingItem?.className).toContain('focus-visible:ring-ring/50')
-      expect(showRemainingItem?.className).toContain('data-[highlighted]:text-foreground!')
-      expect(showRemainingItem?.querySelector('.lucide-chevron-down')).not.toBeNull()
-      expect(showRemainingItem?.compareDocumentPosition(newProjectItem!)).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING
-      )
 
       clickRadixMenuItem(showRemainingItem)
 

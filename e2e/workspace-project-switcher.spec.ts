@@ -35,7 +35,7 @@ const createProject = async (
 
 test('switches projects from the Workspace project menu and expands remaining projects locally', async ({
   app
-}, testInfo) => {
+}) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
@@ -100,13 +100,6 @@ test('switches projects from the Workspace project menu and expands remaining pr
   expect(showRemainingPresentation.height).toBeLessThan(showRemainingPresentation.newProjectHeight)
   expect(showRemainingPresentation.width).toBeLessThan(showRemainingPresentation.menuWidth)
 
-  const collapsedScreenshotPath = testInfo.outputPath('workspace-project-switcher-collapsed.png')
-  await page.screenshot({ path: collapsedScreenshotPath })
-  await testInfo.attach('Workspace project switcher collapsed', {
-    path: collapsedScreenshotPath,
-    contentType: 'image/png'
-  })
-
   await page.keyboard.press('End')
   await page.keyboard.press('ArrowUp')
   await expect(showRemaining).toBeFocused()
@@ -151,13 +144,6 @@ test('switches projects from the Workspace project menu and expands remaining pr
 
   await newProject.scrollIntoViewIfNeeded()
   await expect(newProject).toBeVisible()
-
-  const screenshotPath = testInfo.outputPath('workspace-project-switcher-expanded.png')
-  await page.screenshot({ path: screenshotPath })
-  await testInfo.attach('Workspace project switcher expanded', {
-    path: screenshotPath,
-    contentType: 'image/png'
-  })
 
   await projectItems.filter({ hasText: /^Project 1Description 1$/ }).click()
   await expect(page.locator('button[title="Project 1"]')).toBeVisible()
