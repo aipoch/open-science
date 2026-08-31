@@ -109,6 +109,22 @@ describe('settings document store', () => {
     await expect(readdir(storageRoot)).resolves.toEqual([temporaryName])
   })
 
+  it('does not delete a future Settings temp when an older primary exists', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-temp-'))
+    const settingsPath = join(storageRoot, 'settings.json')
+    const temporaryName = 'settings.json.1700000000000-1.tmp'
+    const primaryContents = '{"version":2,"providers":[]}\n'
+    const futureContents = '{"version":3,"futurePreference":"must-survive"}\n'
+    await writeFile(settingsPath, primaryContents, 'utf8')
+    await writeFile(join(storageRoot, temporaryName), futureContents, 'utf8')
+
+    await expect(new SettingsDocumentStore(storageRoot).read()).rejects.toThrow(
+      'Settings document version 3 is newer than supported version 2.'
+    )
+    await expect(readFile(settingsPath, 'utf8')).resolves.toBe(primaryContents)
+    await expect(readFile(join(storageRoot, temporaryName), 'utf8')).resolves.toBe(futureContents)
+  })
+
   it('rejects corrupt JSON and prevents a mutation from publishing over it', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-'))
     const settingsPath = join(storageRoot, 'settings.json')

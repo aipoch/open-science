@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
   writeDurableJsonFile,
   type DurableJsonFileDependencies
@@ -167,6 +168,27 @@ describe('durable JSON file recovery', () => {
       value: { source: 'primary' }
     })
     await expect(readdir(root)).resolves.toEqual(['settings.json'])
+  })
+
+  it('preserves a recovery-barrier temp when a valid primary exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'durable-json-primary-barrier-'))
+    roots.push(root)
+    const filePath = join(root, 'settings.json')
+    const temporaryPath = `${filePath}.1700000000000-1.tmp`
+    const primaryContents = '{"version":2}\n'
+    const futureContents = '{"version":3}\n'
+    await writeFile(filePath, primaryContents, 'utf8')
+    await writeFile(temporaryPath, futureContents, 'utf8')
+
+    const decode = (contents: string): { version: number } => {
+      const value = JSON.parse(contents) as { version: number }
+      if (value.version > 2) throw new DurableJsonRecoveryBarrierError('future version')
+      return value
+    }
+
+    await expect(readDurableJsonFile(filePath, decode)).rejects.toThrow('future version')
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(primaryContents)
+    await expect(readFile(temporaryPath, 'utf8')).resolves.toBe(futureContents)
   })
 
   it('does not treat an unrelated tmp file as publication residue', async () => {

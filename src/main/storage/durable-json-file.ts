@@ -228,6 +228,20 @@ const cleanupTemporaryCandidates = async (
   )
 }
 
+const assertNoRecoveryBarrier = async <Value>(
+  candidates: readonly TemporaryCandidate[],
+  decode: (contents: string) => Value,
+  dependencies: DurableJsonFileDependencies
+): Promise<void> => {
+  for (const candidate of candidates) {
+    try {
+      decode(await dependencies.readFile(candidate.path))
+    } catch (error) {
+      if (error instanceof DurableJsonRecoveryBarrierError) throw error
+    }
+  }
+}
+
 export const readDurableJsonFile = async <Value>(
   filePath: string,
   decode: (contents: string) => Value,
@@ -268,10 +282,9 @@ export const readDurableJsonFile = async <Value>(
     }
 
     const value = decode(primaryContents)
-    await cleanupTemporaryCandidates(
-      await listTemporaryCandidates(filePath, dependencies),
-      dependencies
-    )
+    const candidates = await listTemporaryCandidates(filePath, dependencies)
+    await assertNoRecoveryBarrier(candidates, decode, dependencies)
+    await cleanupTemporaryCandidates(candidates, dependencies)
     return { status: 'found', value }
   })
 }
