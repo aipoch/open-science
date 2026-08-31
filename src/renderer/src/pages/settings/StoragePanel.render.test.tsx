@@ -85,6 +85,7 @@ const openEditor = async (): Promise<void> => {
 }
 
 beforeEach(() => {
+  vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Open Science Electron')
   useSettingsStore.setState(createInitialSettingsState())
   useStorageInfoStore.setState({
     status: null,
@@ -146,6 +147,7 @@ afterEach(() => {
   container.remove()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
+  vi.restoreAllMocks()
 })
 
 describe('StoragePanel', () => {
@@ -175,6 +177,24 @@ describe('StoragePanel', () => {
     expect(window.api.localFs.openPath).toHaveBeenCalledWith(
       '/home/u/.open-science/workspaces/workspace-id'
     )
+  })
+
+  it('does not offer the host folder action from a Web client', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0')
+    useStorageInfoStore.setState({
+      status: richInfo,
+      info: richInfo,
+      scannedAt: Date.now(),
+      isLoading: false,
+      isRefreshing: false,
+      loadError: undefined
+    })
+
+    await act(async () => root.render(<StoragePanel />))
+    clickButton((button) => button.textContent?.includes('Session workspaces') ?? false)
+
+    expect(container.querySelector('button[aria-label="Open folder"]')).toBeNull()
+    expect(window.api.localFs.openPath).not.toHaveBeenCalled()
   })
 
   it('shows the data location while the usage scan is still running', async () => {

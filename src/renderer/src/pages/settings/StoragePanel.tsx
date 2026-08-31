@@ -116,6 +116,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const retryStorageInfo = (): void => {
     void refreshStorageInfo().catch(() => undefined)
   }
+  const canOpenWorkspaceFolders = navigator.userAgent.includes('Electron')
   const initialStorageFailure = environmentCheck?.checks.some(
     (check) => check.id === 'storage' && check.status === 'failed'
   )
@@ -697,7 +698,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                                 <span className="tabular-nums text-muted-foreground">
                                   {formatBytes(child.bytes)}
                                 </span>
-                                {category.key === 'workspaces' ? (
+                                {category.key === 'workspaces' && canOpenWorkspaceFolders ? (
                                   <Button
                                     type="button"
                                     variant="ghost"

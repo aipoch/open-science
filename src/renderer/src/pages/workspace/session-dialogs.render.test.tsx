@@ -207,9 +207,7 @@ describe('workspace session dialogs behavior wiring', () => {
     )
 
     expect(getTextContent(tree)).toContain('Dataset cleanup')
-    expect(getTextContent(tree)).toContain(
-      'Files in its Session workspace are not deleted and remain available in Settings → Storage.'
-    )
+    expect(getTextContent(tree)).toContain('Files in its working folder are not deleted.')
     expect(root.props.onOpenChange).toBeTypeOf('function')
     ;(root.props.onOpenChange as (open: boolean) => void)(false)
     expect(onCancel).toHaveBeenCalledOnce()
