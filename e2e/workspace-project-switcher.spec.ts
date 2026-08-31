@@ -75,7 +75,10 @@ test('switches projects from the Workspace project menu and expands remaining pr
   await page.setViewportSize({ width: 1280, height: 600 })
   await page.locator('button[title="Project 16"]').click()
   const menu = page.locator('[aria-label="Project actions"]')
+  const search = menu.getByRole('searchbox', { name: 'Search projects' })
   const projectItems = menu.locator('[data-project-id]')
+  await expect(search).toBeVisible()
+  await expect(search).toBeFocused()
   await expect(projectItems).toHaveCount(5)
   await expect(projectItems).toHaveText([
     'Project 15Description 15',
@@ -129,7 +132,10 @@ test('switches projects from the Workspace project menu and expands remaining pr
   expect(showRemainingPresentation.height).toBeLessThan(showRemainingPresentation.newProjectHeight)
   expect(showRemainingPresentation.width).toBeLessThan(showRemainingPresentation.menuWidth)
 
+  await search.press('ArrowDown')
+  await expect(projectItems.first()).toBeFocused()
   await page.keyboard.press('End')
+  await expect(newProject).toBeFocused()
   await page.keyboard.press('ArrowUp')
   await expect(showRemaining).toBeFocused()
   const focusedPresentation = await showRemaining.evaluate((element) => {
@@ -177,10 +183,50 @@ test('switches projects from the Workspace project menu and expands remaining pr
   await newProject.scrollIntoViewIfNeeded()
   await expect(newProject).toBeVisible()
 
-  await projectItems.filter({ hasText: /^Project 1Description 1$/ }).click()
-  await expect(page.locator('button[title="Project 1"]')).toBeVisible()
+  await search.fill('  PROJECT 1  ')
+  await expect(projectItems).toHaveCount(5)
+  await expect(projectItems).toHaveText([
+    'Project 15Description 15',
+    'Project 14Description 14',
+    'Project 13Description 13',
+    'Project 12Description 12',
+    'Project 11Description 11'
+  ])
+  const filteredShowRemaining = menu.getByRole('menuitem', {
+    name: 'Show remaining 2 projects',
+    exact: true
+  })
+  await expect(filteredShowRemaining).toBeVisible()
 
-  await page.locator('button[title="Project 1"]').click()
+  const titlePresentation = await projectItems.first().evaluate((item) => {
+    const title = item.querySelector<HTMLElement>('[data-project-title]')
+    const highlight = title?.querySelector<HTMLElement>('.text-primary')
+    if (!title || !highlight) return null
+    const titleStyle = getComputedStyle(title)
+    const highlightStyle = getComputedStyle(highlight)
+    return {
+      highlightColor: highlightStyle.color,
+      highlightFontSize: highlightStyle.fontSize,
+      highlightFontWeight: highlightStyle.fontWeight,
+      highlightText: highlight.textContent,
+      titleColor: titleStyle.color,
+      titleFontSize: titleStyle.fontSize,
+      titleFontWeight: titleStyle.fontWeight
+    }
+  })
+  expect(titlePresentation).not.toBeNull()
+  expect(titlePresentation?.highlightText).toBe('Project 1')
+  expect(titlePresentation?.highlightColor).not.toBe(titlePresentation?.titleColor)
+  expect(titlePresentation?.highlightFontSize).toBe(titlePresentation?.titleFontSize)
+  expect(titlePresentation?.highlightFontWeight).toBe(titlePresentation?.titleFontWeight)
+
+  await search.press('ArrowDown')
+  await expect(projectItems.first()).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('button[title="Project 15"]')).toBeVisible()
+
+  await page.locator('button[title="Project 15"]').click()
+  await expect(search).toHaveValue('')
   await expect(menu.locator('[data-project-id]')).toHaveCount(5)
 })
 

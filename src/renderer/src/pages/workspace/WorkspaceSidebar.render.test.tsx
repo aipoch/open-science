@@ -172,6 +172,56 @@ const renderSidebar = async (
   )
 }
 
+type SidebarProject = { id: string; name: string; description: string }
+
+const mountProjectSidebar = async (
+  otherProjects: readonly SidebarProject[],
+  onOpenProject: (projectId: string) => void = vi.fn()
+): Promise<{ cleanup: () => void; openMenu: () => void }> => {
+  const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+
+  await act(async () => {
+    root.render(
+      <WorkspaceSidebar
+        projectName="Example project"
+        otherProjects={otherProjects}
+        sessions={[createSession({ id: 'session-a' })]}
+        activeSessionId="session-a"
+        canCreateConversation
+        canMutateConversations
+        canDeleteConversations
+        onGoHome={vi.fn()}
+        onNewConversation={vi.fn()}
+        isFilesOpen={false}
+        onOpenFiles={vi.fn()}
+        onOpenSession={vi.fn()}
+        onOpenProject={onOpenProject}
+        onRenameSession={vi.fn()}
+        canDownloadArtifacts
+        onDownloadArtifacts={vi.fn()}
+        onViewNotebook={vi.fn()}
+        onTogglePin={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenProjectSettings={vi.fn()}
+        onNewProject={vi.fn()}
+      />
+    )
+  })
+
+  return {
+    cleanup: () => {
+      act(() => root.unmount())
+      container.remove()
+    },
+    openMenu: () =>
+      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]'))
+  }
+}
+
 type ElementWithProps = ReactElement<Record<string, unknown>>
 
 const collectElements = (node: ReactNode): ElementWithProps[] => {
@@ -1021,49 +1071,152 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onNewProject).toHaveBeenCalledTimes(1)
   })
 
-  it('shows five other projects, expands in place, switches projects, and resets after close', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+  it('shows project search only when more than five other projects are available', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const fiveProjects = await mountProjectSidebar(projects.slice(0, 5))
+    try {
+      fiveProjects.openMenu()
+      expect(document.body.querySelector('[aria-label="Search projects"]')).toBeNull()
+    } finally {
+      fiveProjects.cleanup()
+    }
+
+    const sixProjects = await mountProjectSidebar(projects)
+    try {
+      sixProjects.openMenu()
+      expect(document.body.querySelector('[aria-label="Search projects"]')).not.toBeNull()
+    } finally {
+      sixProjects.cleanup()
+    }
+  })
+
+  it('fuzzy matches project titles before descriptions without reordering either group', async () => {
+    const otherProjects = [
+      { id: 'title-first', name: 'Alpha Lab', description: 'Alpha outcomes' },
+      { id: 'description-first', name: 'Genome Atlas', description: 'Alpha description' },
+      { id: 'title-second', name: 'Alpine Study', description: 'Clinical cohort' },
+      { id: 'description-second', name: 'Signal Cohort', description: 'Alpine follow-up' },
+      { id: 'unmatched-1', name: 'Control Study', description: 'Baseline cohort' },
+      { id: 'unmatched-2', name: 'Reference Set', description: 'Control samples' }
+    ]
+    const mounted = await mountProjectSidebar(otherProjects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, ' aLp ')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const projectItems = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[data-project-id]')
+      )
+      expect(projectItems.map((item) => item.dataset.projectId)).toEqual([
+        'title-first',
+        'title-second',
+        'description-first',
+        'description-second'
+      ])
+
+      const titleFirst = projectItems[0]
+      const descriptionFirst = projectItems[2]
+      expect(titleFirst?.querySelector('[data-project-title] .text-primary')?.textContent).toBe(
+        'Alp'
+      )
+      expect(
+        titleFirst?.querySelector('[data-project-description] .text-primary')?.textContent
+      ).toBe('Alp')
+      expect(descriptionFirst?.querySelector('[data-project-title] .text-primary')).toBeNull()
+      expect(
+        descriptionFirst?.querySelector('[data-project-description] .text-primary')?.textContent
+      ).toBe('Alp')
+      expect(document.body.textContent).not.toContain('Show remaining')
+
+      await act(async () => {
+        valueSetter?.call(search, 'zzzz')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(0)
+      expect(document.body.textContent).toContain('No matching projects')
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('moves from project search into the first result and opens it with the keyboard', async () => {
     const onOpenProject = vi.fn()
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    const root = createRoot(container)
+    const otherProjects = [
+      { id: 'project-1', name: 'Alpha', description: 'First cohort' },
+      { id: 'project-2', name: 'Beta', description: 'Second cohort' },
+      { id: 'project-3', name: 'Gamma', description: 'Third cohort' },
+      { id: 'project-4', name: 'Delta', description: 'Fourth cohort' },
+      { id: 'project-5', name: 'Epsilon', description: 'Fifth cohort' },
+      { id: 'project-6', name: 'Target Project', description: 'Selected cohort' }
+    ]
+    const mounted = await mountProjectSidebar(otherProjects, onOpenProject)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      expect(document.activeElement).toBe(search)
+      await act(async () => {
+        search?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, isComposing: true })
+        )
+      })
+      expect(document.activeElement).toBe(search)
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'TARGET')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => {
+        search?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      })
+
+      const firstResult = document.body.querySelector<HTMLElement>('[data-project-id]')
+      expect(firstResult?.dataset.projectId).toBe('project-6')
+      expect(document.activeElement).toBe(firstResult)
+
+      await act(async () => {
+        firstResult?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      })
+      expect(onOpenProject).toHaveBeenCalledWith('project-6')
+
+      mounted.openMenu()
+      const reopenedSearch = document.body.querySelector<HTMLInputElement>(
+        '[aria-label="Search projects"]'
+      )
+      expect(reopenedSearch?.value).toBe('')
+      expect(document.activeElement).toBe(reopenedSearch)
+      await act(async () => {
+        reopenedSearch?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+        )
+      })
+      expect(document.body.querySelector('[aria-label="Project actions"]')).toBeNull()
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('shows five other projects, expands in place, switches projects, and resets after close', async () => {
+    const onOpenProject = vi.fn()
     const otherProjects = Array.from({ length: 7 }, (_, index) => ({
       id: `project-${index + 1}`,
       name: `Project ${index + 1}`,
       description: index === 4 ? '' : `Description ${index + 1}`
     }))
+    const mounted = await mountProjectSidebar(otherProjects, onOpenProject)
 
     try {
-      await act(async () => {
-        root.render(
-          <WorkspaceSidebar
-            projectName="Example project"
-            otherProjects={otherProjects}
-            sessions={[createSession({ id: 'session-a' })]}
-            activeSessionId="session-a"
-            canCreateConversation
-            canMutateConversations
-            canDeleteConversations
-            onGoHome={vi.fn()}
-            onNewConversation={vi.fn()}
-            isFilesOpen={false}
-            onOpenFiles={vi.fn()}
-            onOpenSession={vi.fn()}
-            onOpenProject={onOpenProject}
-            onRenameSession={vi.fn()}
-            canDownloadArtifacts
-            onDownloadArtifacts={vi.fn()}
-            onViewNotebook={vi.fn()}
-            onTogglePin={vi.fn()}
-            onDeleteSession={vi.fn()}
-            onOpenSettings={vi.fn()}
-            onOpenProjectSettings={vi.fn()}
-            onNewProject={vi.fn()}
-          />
-        )
-      })
-
-      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]'))
+      mounted.openMenu()
 
       let projectItems = Array.from(
         document.body.querySelectorAll<HTMLElement>('[data-project-id]')
@@ -1090,14 +1243,35 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(projectItems).toHaveLength(7)
       expect(document.body.querySelector('[aria-label="Project actions"]')).not.toBeNull()
 
-      clickRadixMenuItem(projectItems[6])
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'Description')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      projectItems = Array.from(document.body.querySelectorAll<HTMLElement>('[data-project-id]'))
+      expect(projectItems).toHaveLength(5)
+      const filteredShowRemaining = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim() === 'Show remaining 1 project')
+      expect(filteredShowRemaining).toBeDefined()
+
+      clickRadixMenuItem(filteredShowRemaining)
+      projectItems = Array.from(document.body.querySelectorAll<HTMLElement>('[data-project-id]'))
+      expect(projectItems).toHaveLength(6)
+      expect(document.body.querySelector('[aria-label="Search projects"]')).not.toBeNull()
+
+      clickRadixMenuItem(projectItems[5])
       expect(onOpenProject).toHaveBeenCalledWith('project-7')
 
-      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]'))
+      mounted.openMenu()
       expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(5)
+      expect(
+        document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')?.value
+      ).toBe('')
+      expect(document.body.textContent).toContain('Show remaining 2 projects')
     } finally {
-      act(() => root.unmount())
-      container.remove()
+      mounted.cleanup()
     }
   })
 

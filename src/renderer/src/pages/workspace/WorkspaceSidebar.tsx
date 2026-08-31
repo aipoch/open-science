@@ -11,12 +11,13 @@ import {
   Pin,
   PinOff,
   Plus,
+  Search,
   Settings,
   Toolbox,
   Trash2,
   X
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
@@ -25,6 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 
 import { cn } from '@/lib/utils'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
@@ -35,6 +37,7 @@ import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import { NotificationBell } from '@/components/NotificationBell'
 
 import { projectPresentedSessionActionability } from './session-wait-reason'
+import { fuzzyScore } from './composer/fuzzy-match'
 import {
   SessionHoverPreview,
   SessionHoverPreviewProvider,
@@ -104,6 +107,8 @@ type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
   onSessionActionsOpenChange?: (sessionId: string, open: boolean) => void
   showAllProjects?: boolean
   onShowAllProjectsChange?: (showAllProjects: boolean) => void
+  projectQuery?: string
+  onProjectQueryChange?: (query: string) => void
   onProjectMenuOpenChange?: (open: boolean) => void
 }
 
@@ -238,6 +243,88 @@ const sessionRowActionClassName =
 // Shared icon wrapper inside each menu item row.
 const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-center'
 
+type ProjectMenuMatch = {
+  project: NonNullable<WorkspaceSidebarProps['otherProjects']>[number]
+  description: string
+  titlePositions: number[]
+  descriptionPositions: number[]
+}
+
+const matchProjects = (
+  projects: NonNullable<WorkspaceSidebarProps['otherProjects']>,
+  query: string
+): ProjectMenuMatch[] => {
+  const needle = query.trim()
+  if (!needle) {
+    return projects.map((project) => ({
+      project,
+      description: project.description.trim(),
+      titlePositions: [],
+      descriptionPositions: []
+    }))
+  }
+
+  const titleMatches: ProjectMenuMatch[] = []
+  const descriptionMatches: ProjectMenuMatch[] = []
+  projects.forEach((project) => {
+    const description = project.description.trim()
+    const titleMatch = fuzzyScore(needle, project.name)
+    const descriptionMatch = description ? fuzzyScore(needle, description) : null
+    if (!titleMatch && !descriptionMatch) return
+
+    const match = {
+      project,
+      description,
+      titlePositions: titleMatch?.positions ?? [],
+      descriptionPositions: descriptionMatch?.positions ?? []
+    }
+    // Separate arrays make title priority absolute while preserving the store order within each tier.
+    if (titleMatch) titleMatches.push(match)
+    else descriptionMatches.push(match)
+  })
+  return [...titleMatches, ...descriptionMatches]
+}
+
+const ProjectMatchText = ({
+  text,
+  positions
+}: {
+  text: string
+  positions: number[]
+}): React.JSX.Element => {
+  if (positions.length === 0) return <>{text}</>
+
+  const highlighted = new Set(positions)
+  const segments: React.JSX.Element[] = []
+  let run = ''
+  let runIsHighlighted = highlighted.has(0)
+
+  const flush = (endExclusive: number): void => {
+    if (!run) return
+    segments.push(
+      runIsHighlighted ? (
+        <span key={endExclusive} className="text-primary">
+          {run}
+        </span>
+      ) : (
+        <Fragment key={endExclusive}>{run}</Fragment>
+      )
+    )
+    run = ''
+  }
+
+  for (let index = 0; index < text.length; index += 1) {
+    const isHighlighted = highlighted.has(index)
+    if (isHighlighted !== runIsHighlighted) {
+      flush(index)
+      runIsHighlighted = isHighlighted
+    }
+    run += text[index]
+  }
+  flush(text.length)
+  return <>{segments}</>
+}
+
 // Left navigation owns session selection, creation entry, and workspace settings.
 const WorkspaceSidebarView = ({
   projectName,
@@ -282,6 +369,8 @@ const WorkspaceSidebarView = ({
   onSessionActionsOpenChange,
   showAllProjects = false,
   onShowAllProjectsChange,
+  projectQuery = '',
+  onProjectQueryChange,
   onProjectMenuOpenChange
 }: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -296,10 +385,11 @@ const WorkspaceSidebarView = ({
   const activeStarNudgeKey = (mobileMode ? isMobileOpen : sidebarToggle?.state !== 'collapsed')
     ? starNudgeKey
     : undefined
-  const visibleOtherProjects = showAllProjects
-    ? otherProjects
-    : otherProjects.slice(0, INITIAL_PROJECT_MENU_LIMIT)
-  const remainingProjectCount = Math.max(0, otherProjects.length - INITIAL_PROJECT_MENU_LIMIT)
+  const projectMatches = matchProjects(otherProjects, projectQuery)
+  const visibleProjectMatches = showAllProjects
+    ? projectMatches
+    : projectMatches.slice(0, INITIAL_PROJECT_MENU_LIMIT)
+  const remainingProjectCount = Math.max(0, projectMatches.length - INITIAL_PROJECT_MENU_LIMIT)
 
   return (
     <aside
@@ -358,6 +448,13 @@ const WorkspaceSidebarView = ({
                 align="start"
                 sideOffset={6}
                 collisionPadding={8}
+                onFocus={(event) => {
+                  if (event.target !== event.currentTarget) return
+                  const search =
+                    event.currentTarget.querySelector<HTMLInputElement>('[data-project-search]')
+                  if (!search) return
+                  search.focus()
+                }}
               >
                 <DropdownMenuItem className="gap-2" onSelect={() => onOpenProjectSettings()}>
                   <span className={sessionMenuIconClassName}>
@@ -376,10 +473,48 @@ const WorkspaceSidebarView = ({
                   {t('Download artifacts…')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                {visibleOtherProjects.map((project) => {
-                  const description = project.description.trim()
-
-                  return (
+                {otherProjects.length > INITIAL_PROJECT_MENU_LIMIT ? (
+                  // Keep the input outside the Radix item collection so typing never selects a row.
+                  <div className="relative px-1 pb-1">
+                    <Search
+                      className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      data-project-search
+                      type="search"
+                      aria-label={t('Search projects')}
+                      placeholder={t('Search projects…')}
+                      value={projectQuery}
+                      autoComplete="off"
+                      className="h-8 pl-7"
+                      onChange={(event) => onProjectQueryChange?.(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.nativeEvent.isComposing) {
+                          event.stopPropagation()
+                          return
+                        }
+                        if (event.key === 'ArrowDown') {
+                          event.preventDefault()
+                          event.currentTarget
+                            .closest<HTMLElement>('[role="menu"]')
+                            ?.querySelector<HTMLElement>('[data-project-id]')
+                            ?.focus()
+                          event.stopPropagation()
+                          return
+                        }
+                        if (event.key !== 'Escape' && event.key !== 'Tab') event.stopPropagation()
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {projectQuery.trim() && projectMatches.length === 0 ? (
+                  <p role="status" className="px-2 py-3 text-center text-sm text-muted-foreground">
+                    {t('No matching projects')}
+                  </p>
+                ) : null}
+                {visibleProjectMatches.map(
+                  ({ project, description, titlePositions, descriptionPositions }) => (
                     <DropdownMenuItem
                       key={project.id}
                       data-project-id={project.id}
@@ -388,18 +523,25 @@ const WorkspaceSidebarView = ({
                       onSelect={() => onOpenProject?.(project.id)}
                     >
                       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className="truncate font-medium" title={project.name}>
-                          {project.name}
+                        <span
+                          data-project-title
+                          className="truncate font-medium"
+                          title={project.name}
+                        >
+                          <ProjectMatchText text={project.name} positions={titlePositions} />
                         </span>
                         {description ? (
-                          <span className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground">
-                            {description}
+                          <span
+                            data-project-description
+                            className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground"
+                          >
+                            <ProjectMatchText text={description} positions={descriptionPositions} />
                           </span>
                         ) : null}
                       </span>
                     </DropdownMenuItem>
                   )
-                })}
+                )}
                 {!showAllProjects && remainingProjectCount > 0 ? (
                   <DropdownMenuItem
                     asChild
@@ -818,6 +960,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
   const [showAllProjects, setShowAllProjects] = useState(false)
+  const [projectQuery, setProjectQuery] = useState('')
   const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
   const isMac = window.api?.platform === 'darwin'
 
@@ -895,8 +1038,16 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       }}
       showAllProjects={showAllProjects}
       onShowAllProjectsChange={setShowAllProjects}
+      projectQuery={projectQuery}
+      onProjectQueryChange={(query) => {
+        setProjectQuery(query)
+        setShowAllProjects(false)
+      }}
       onProjectMenuOpenChange={(open) => {
-        if (!open) setShowAllProjects(false)
+        if (!open) {
+          setProjectQuery('')
+          setShowAllProjects(false)
+        }
       }}
     />
   )
