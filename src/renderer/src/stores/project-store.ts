@@ -107,6 +107,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   createProject: async (request) => {
     const project = await window.api.projects.create(request)
 
+    // The IPC layer can resolve without a row; hand it back untouched so callers surface the
+    // failure instead of this store reading fields off undefined.
+    if (!project) return project
+
     projectMutationSequence += 1
     if (get().projects.some((current) => current.id === project.id)) {
       set({ loadError: undefined })
@@ -125,6 +129,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   updateProject: async (request) => {
     const generation = beginProjectProjection()
     const project = await window.api.projects.update(request)
+
+    // Same empty-row contract as create: nothing to merge, so leave the cache untouched.
+    if (!project) return project
 
     projectMutationSequence += 1
     if (commitProjectProjection(project.id, generation)) {
