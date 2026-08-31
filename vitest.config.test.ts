@@ -117,7 +117,7 @@ it('runs whole-tree architecture scans in one reused worker after the parallel u
   )
 })
 
-it('serializes real kernels, TCP servers, and integration files so they cannot starve the unit pool', () => {
+it('serializes real kernels, TCP servers, database smoke tests, and integration files', () => {
   expect(VITEST_PROCESS_TEST_GLOBS).toEqual(
     expect.arrayContaining([
       '**/*.integration.test.ts',
@@ -125,7 +125,8 @@ it('serializes real kernels, TCP servers, and integration files so they cannot s
       'src/main/notebook/kernel-executor.test.ts',
       'src/main/local-rpc-transport.test.ts',
       'src/main/session-plan/plan-mcp-server.test.ts',
-      'src/main/acp/mcp-http-host.test.ts'
+      'src/main/acp/mcp-http-host.test.ts',
+      'scripts/database-migration-ledger-smoke.test.ts'
     ])
   )
   const processProject = projectByName('process')

@@ -1175,6 +1175,57 @@ describe('production delegated-work composition', () => {
     }
   })
 
+  it('waits for pending workspace preparation before stopAll resolves', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-pending-preparation-'))
+    const inputPath = join(root, 'input.txt')
+    await writeFile(inputPath, 'immutable input\n', 'utf8')
+    const inputResolutionStarted = Promise.withResolvers<void>()
+    const releaseInputResolution = Promise.withResolvers<void>()
+    let inputResolutionCount = 0
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      undefined,
+      undefined,
+      {},
+      [],
+      undefined,
+      undefined,
+      async (identity) => {
+        if (identity !== 'upload-version:stopping-input') throw new Error('unknown input')
+        inputResolutionCount += 1
+        if (inputResolutionCount === 1) return { path: inputPath, filename: 'input.txt' }
+        inputResolutionStarted.resolve()
+        await releaseInputResolution.promise
+        return { path: inputPath, filename: 'input.txt' }
+      }
+    )
+    const delegated = harness.composition.host.delegate(
+      harness.caller,
+      {
+        task: 'pending workspace preparation',
+        name: 'pending workspace preparation',
+        inputs: ['upload-version:stopping-input']
+      },
+      { wait: true }
+    )
+    await inputResolutionStarted.promise
+
+    let stopped = false
+    const stopping = harness.composition.root.stopAll().then(() => {
+      stopped = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(stopped).toBe(false)
+    } finally {
+      releaseInputResolution.resolve()
+      await stopping
+      await delegated.catch(() => undefined)
+      await harness.composition.root.deleteSession(harness.session.id)
+    }
+  })
+
   it('rechecks authoritative delegation policy inside durable child admission', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-policy-race-'))
     const harness = await createCompositionHarness(root, 'codex')

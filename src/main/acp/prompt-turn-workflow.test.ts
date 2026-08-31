@@ -676,7 +676,7 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.onProviderPromptAccepted).toHaveBeenCalledWith('s1', 'attempt-2')
   })
 
-  it('publishes an attributed application turn without claiming side chat or routing user notifications', async () => {
+  it('publishes an attributed application turn and routes its provider response', async () => {
     const claim = vi.fn(() => ({
       historyPreamble: 'Queued human side chat.',
       commit: vi.fn(),
@@ -715,7 +715,15 @@ describe('AcpPromptTurnWorkflow', () => {
       attribution
     })
     expect(claim).not.toHaveBeenCalled()
-    expect(harness.routeNotification).not.toHaveBeenCalled()
+    expect(harness.routeNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Internal reviewer turn' }
+        })
+      }),
+      's1'
+    )
   })
 
   it('cannot let delayed admission clear a newer active interaction', async () => {

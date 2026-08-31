@@ -2078,6 +2078,7 @@
     "Show more": "더 보기",
     "Show output": "출력 표시",
     "Show relevant {{count}} packages_other": "관련 패키지 {{count}}개 표시",
+    "Show remaining {{count}} projects_other": "나머지 프로젝트 {{count}}개 표시",
     "Show rendered HTML": "렌더링된 HTML 표시",
     "Show repositories": "저장소 표시",
     "Showing data from {{time}}": "{{time}} 데이터를 표시하는 중",

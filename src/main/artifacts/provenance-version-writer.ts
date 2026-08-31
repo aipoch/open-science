@@ -114,6 +114,12 @@ type PublishCompatibilityRouting = (
   version: PersistedVersionFileRecord,
   options?: CompatibilityRoutingPublicationOptions
 ) => Promise<void>
+type WriteVersionWithinSession = (
+  request: CreateArtifactVersionRequest,
+  publishCompatibilityRouting: PublishCompatibilityRouting,
+  signal?: AbortSignal,
+  appGeneratedProducer?: AppGeneratedArtifactProducer
+) => Promise<ArtifactVersionFile>
 
 type ArtifactProvenanceVersionWriterOptions = {
   storageRoot: string
@@ -167,6 +173,42 @@ class ArtifactProvenanceVersionWriter {
     signal?: AbortSignal,
     appGeneratedProducer?: AppGeneratedArtifactProducer
   ): Promise<ArtifactVersionFile> {
+    return this.withSessionWrite(request, (writeVersion) =>
+      writeVersion(request, publishCompatibilityRouting, signal, appGeneratedProducer)
+    )
+  }
+
+  async withSessionWrite<Result>(
+    request: Pick<CreateArtifactVersionRequest, 'projectId' | 'appSessionId'>,
+    operation: (writeVersion: WriteVersionWithinSession) => Promise<Result>
+  ): Promise<Result> {
+    const sessionKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}`
+    const previous =
+      ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) ?? Promise.resolve()
+    let release = (): void => undefined
+    const current = new Promise<void>((resolveCurrent) => {
+      release = resolveCurrent
+    })
+    const tail = previous.then(() => current)
+    ArtifactProvenanceVersionWriter.sessionWrites.set(sessionKey, tail)
+    await previous
+
+    try {
+      return await operation((...args) => this.writeVersionWithinSession(...args))
+    } finally {
+      release()
+      if (ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) === tail) {
+        ArtifactProvenanceVersionWriter.sessionWrites.delete(sessionKey)
+      }
+    }
+  }
+
+  private async writeVersionWithinSession(
+    request: CreateArtifactVersionRequest,
+    publishCompatibilityRouting: PublishCompatibilityRouting,
+    signal?: AbortSignal,
+    appGeneratedProducer?: AppGeneratedArtifactProducer
+  ): Promise<ArtifactVersionFile> {
     if (request.resourceReservationId) {
       if (
         request.resourceSizeBytes === undefined ||
@@ -192,7 +234,7 @@ class ArtifactProvenanceVersionWriter {
 
     let version: ArtifactVersionFile
     try {
-      version = await this.writeVersionWithinSession(
+      version = await this.writeVersionSerialized(
         request,
         publishCompatibilityRouting,
         signal,
@@ -225,38 +267,6 @@ class ArtifactProvenanceVersionWriter {
       })
     }
     return version
-  }
-
-  private async writeVersionWithinSession(
-    request: CreateArtifactVersionRequest,
-    publishCompatibilityRouting: PublishCompatibilityRouting,
-    signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactProducer
-  ): Promise<ArtifactVersionFile> {
-    const sessionKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}`
-    const previous =
-      ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) ?? Promise.resolve()
-    let release = (): void => undefined
-    const current = new Promise<void>((resolveCurrent) => {
-      release = resolveCurrent
-    })
-    const tail = previous.then(() => current)
-    ArtifactProvenanceVersionWriter.sessionWrites.set(sessionKey, tail)
-    await previous
-
-    try {
-      return await this.writeVersionSerialized(
-        request,
-        publishCompatibilityRouting,
-        signal,
-        appGeneratedProducer
-      )
-    } finally {
-      release()
-      if (ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) === tail) {
-        ArtifactProvenanceVersionWriter.sessionWrites.delete(sessionKey)
-      }
-    }
   }
 
   private async writeVersionSerialized(

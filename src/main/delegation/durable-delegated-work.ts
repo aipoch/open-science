@@ -515,6 +515,8 @@ const createDurableDelegatedWork = (
       if (executionStarted) await active?.completion
       const latest = await snapshotChild(child.frameId)
       if (latest && currentAttempt(latest).status !== 'running') {
+        // Pre-execution completion still owns workspace preparation and reservation cleanup.
+        if (!executionStarted) await active?.completion
         return currentAttempt(latest).status === 'cancelled'
           ? { frameId: child.frameId, status: 'cancelled' }
           : { frameId: child.frameId, status: 'already_terminal' }
@@ -526,6 +528,7 @@ const createDurableDelegatedWork = (
         endedAt: now(),
         cancellationReason: reason
       })
+      if (!executionStarted) await active?.completion
       return { frameId: child.frameId, status: 'cancelled' }
     } catch (error) {
       const latest = await snapshotChild(child.frameId)

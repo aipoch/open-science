@@ -22,7 +22,7 @@
     "build:e2e": "node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build",
     "test:e2e": "playwright test",
     "test:e2e:journey": "playwright test e2e/electron-foundation.spec.ts e2e/settings-persistence.spec.ts e2e/windows-window-system.spec.ts",
-    "test:e2e:workspace": "playwright test e2e/launch-environment.spec.ts e2e/message-tool-layout-stability.spec.ts e2e/workspace-conversation.spec.ts e2e/workspace-files.spec.ts",
+    "test:e2e:workspace": "playwright test e2e/launch-environment.spec.ts e2e/message-tool-layout-stability.spec.ts e2e/workspace-project-switcher.spec.ts e2e/workspace-conversation.spec.ts e2e/workspace-files.spec.ts",
     "test:e2e:accessibility": "playwright test e2e/accessibility.spec.ts",
     "test:e2e:accessibility:signal": "node scripts/ci/run-accessibility-e2e.mjs",
     "test:e2e:visual": "playwright test e2e/visual-regression.spec.ts",

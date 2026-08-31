@@ -2070,6 +2070,7 @@
     "Show more": "もっと見る",
     "Show output": "出力を表示",
     "Show relevant {{count}} packages_other": "関連する {{count}} パッケージを表示",
+    "Show remaining {{count}} projects_other": "残りの {{count}} 件のプロジェクトを表示",
     "Show rendered HTML": "レンダリングされた HTML を表示する",
     "Show repositories": "リポジトリを表示する",
     "Showing data from {{time}}": "{{time}} のデータを表示しています",

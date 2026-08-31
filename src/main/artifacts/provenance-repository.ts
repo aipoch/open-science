@@ -369,67 +369,75 @@ class ArtifactProvenanceRepository {
       artifactRunId: request.artifactRunId
     }
 
-    return this.compatibilityRepository.withPendingFileTransaction(
-      {
-        projectId: request.projectId,
-        sessionId: request.artifactStorageSessionId,
-        runId: request.artifactRunId,
-        filename: request.filename,
-        mimeType: request.contentType,
-        kind,
-        source: { kind: 'inline', content, encoding: 'utf8' }
-      },
-      {
-        reserveFile: (fileBytes) =>
-          this.writeBudgetOwner.reserve({
-            ...reservationScope,
-            writeOperationId,
-            filename: request.filename,
-            fileBytes
-          }),
-        releaseFileReservation: (reservationId) =>
-          this.writeBudgetOwner.release({ ...reservationScope, reservationId })
-      },
-      async (_pendingFile, _sourceFileObservation, bindVersionRouting, fileDigest, reservation) => {
-        if (!reservation) throw new Error('App-owned Artifact write reservation was not created.')
-        const contentChecksum = fileDigest.checksum
-        const writeRequestChecksum = sha256(
-          canonicalJson({
-            contentChecksum,
-            contentType: request.contentType ?? null,
-            filename: request.filename,
-            producerRunId: null,
-            sourceKind: 'inline',
-            sourceFileObservation: null
-          })
-        )
+    return this.versionWriter.withSessionWrite(versionRequest, (writeVersion) =>
+      this.compatibilityRepository.withPendingFileTransaction(
+        {
+          projectId: request.projectId,
+          sessionId: request.artifactStorageSessionId,
+          runId: request.artifactRunId,
+          filename: request.filename,
+          mimeType: request.contentType,
+          kind,
+          source: { kind: 'inline', content, encoding: 'utf8' }
+        },
+        {
+          reserveFile: (fileBytes) =>
+            this.writeBudgetOwner.reserve({
+              ...reservationScope,
+              writeOperationId,
+              filename: request.filename,
+              fileBytes
+            }),
+          releaseFileReservation: (reservationId) =>
+            this.writeBudgetOwner.release({ ...reservationScope, reservationId })
+        },
+        async (
+          _pendingFile,
+          _sourceFileObservation,
+          bindVersionRouting,
+          fileDigest,
+          reservation
+        ) => {
+          if (!reservation) throw new Error('App-owned Artifact write reservation was not created.')
+          const contentChecksum = fileDigest.checksum
+          const writeRequestChecksum = sha256(
+            canonicalJson({
+              contentChecksum,
+              contentType: request.contentType ?? null,
+              filename: request.filename,
+              producerRunId: null,
+              sourceKind: 'inline',
+              sourceFileObservation: null
+            })
+          )
 
-        return this.versionWriter.writeVersion(
-          {
-            ...versionRequest,
-            writeOperationId,
-            writeRequestChecksum,
-            sourceKind: 'inline',
-            resourceReservationId: reservation.id,
-            resourceSizeBytes: fileDigest.sizeBytes,
-            resourceChecksum: fileDigest.checksum
-          },
-          async (version) =>
-            bindVersionRouting(
-              {
-                artifactId: version.artifactId,
-                versionId: version.id,
-                versionNumber: version.versionNumber,
-                artifactRunId: version.artifactRunId,
-                checksum: version.checksum,
-                mimeType: version.contentType ?? undefined
-              },
-              resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-            ),
-          undefined,
-          producer
-        )
-      }
+          return writeVersion(
+            {
+              ...versionRequest,
+              writeOperationId,
+              writeRequestChecksum,
+              sourceKind: 'inline',
+              resourceReservationId: reservation.id,
+              resourceSizeBytes: fileDigest.sizeBytes,
+              resourceChecksum: fileDigest.checksum
+            },
+            async (version) =>
+              bindVersionRouting(
+                {
+                  artifactId: version.artifactId,
+                  versionId: version.id,
+                  versionNumber: version.versionNumber,
+                  artifactRunId: version.artifactRunId,
+                  checksum: version.checksum,
+                  mimeType: version.contentType ?? undefined
+                },
+                resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
+              ),
+            undefined,
+            producer
+          )
+        }
+      )
     )
   }
 

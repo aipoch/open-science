@@ -2143,6 +2143,7 @@
     "Show more": "展開",
     "Show output": "顯示輸出",
     "Show relevant {{count}} packages_other": "顯示相關的 {{count}} 個套件",
+    "Show remaining {{count}} projects_other": "顯示其餘 {{count}} 個專案",
     "Show rendered HTML": "顯示算繪後的 HTML",
     "Show repositories": "顯示儲存庫",
     "Showing data from {{time}}": "顯示的是 {{time}} 的資料",
