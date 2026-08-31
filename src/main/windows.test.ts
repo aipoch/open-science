@@ -1407,6 +1407,43 @@ describe('close chord interception', () => {
     expect(window.destroyMock).not.toHaveBeenCalled()
   })
 
+  it('recovers a newer navigation failure while a stale explicit load is pending', () => {
+    let loadAttempt = 0
+    loadRendererDocument = () => {
+      loadAttempt += 1
+      return loadAttempt === 1 ? new Promise<void>(() => undefined) : Promise.resolve()
+    }
+
+    createMainWindow()
+    const window = currentWindow!
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/index.html',
+      frame: window.mainFrame
+    })
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/reloaded.html',
+      frame: window.mainFrame
+    })
+
+    fireWebContentsEvent(
+      window,
+      'did-fail-load',
+      {},
+      -105,
+      'NAME_NOT_RESOLVED',
+      'file:///app/reloaded.html',
+      true
+    )
+
+    expect(window.loadFileMock).toHaveBeenCalledTimes(2)
+    expect(windowLogSpies.warn).toHaveBeenCalledWith(
+      'reloading renderer after document load failure',
+      { automaticRecoveryAttempt: 1 }
+    )
+  })
+
   it('recovers a main-frame document load failure within the renderer retry budget', async () => {
     showMessageBoxMock.mockReturnValueOnce(new Promise(() => undefined))
     createMainWindow()

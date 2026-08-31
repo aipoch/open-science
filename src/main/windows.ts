@@ -281,7 +281,7 @@ const createMainWindow = (
   let rendererUnresponsiveAt: number | undefined
   let rendererRecoveryTimes: number[] = []
   let rendererRecoveryDialogOpen = false
-  let rendererLoadsInFlight = 0
+  const pendingRendererLoadsByNavigationGeneration = new Map<number, number>()
   let mainFrameNavigationGeneration = 0
   const clearRendererHangState = (): void => {
     rendererResponsive = true
@@ -293,13 +293,21 @@ const createMainWindow = (
     // The explicit load is expected to start one top-level navigation. Any later generation means a
     // reload or replacement navigation superseded this Promise before it settled.
     const ownedNavigationGeneration = mainFrameNavigationGeneration + 1
-    rendererLoadsInFlight += 1
+    pendingRendererLoadsByNavigationGeneration.set(
+      ownedNavigationGeneration,
+      (pendingRendererLoadsByNavigationGeneration.get(ownedNavigationGeneration) ?? 0) + 1
+    )
+    const releasePendingLoad = (): void => {
+      const pending = pendingRendererLoadsByNavigationGeneration.get(ownedNavigationGeneration) ?? 0
+      if (pending <= 1) pendingRendererLoadsByNavigationGeneration.delete(ownedNavigationGeneration)
+      else pendingRendererLoadsByNavigationGeneration.set(ownedNavigationGeneration, pending - 1)
+    }
     void loadRenderer(window).then(
       () => {
-        rendererLoadsInFlight -= 1
+        releasePendingLoad()
       },
       (error) => {
-        rendererLoadsInFlight -= 1
+        releasePendingLoad()
         log.error('renderer document load rejected', { errorName: rendererLoadErrorName(error) })
         if (window.isDestroyed()) return
         if (mainFrameNavigationGeneration > ownedNavigationGeneration) return
@@ -478,7 +486,9 @@ const createMainWindow = (
       // Explicit loadRenderer attempts are observed through their Promise so one Chromium failure only
       // consumes one recovery slot. A later top-level navigation has no pending Promise owner, so route
       // its failure through the same bounded recovery used for renderer process exits.
-      if (rendererLoadsInFlight === 0) recoverRenderer('load-failed', true)
+      if (!pendingRendererLoadsByNavigationGeneration.has(mainFrameNavigationGeneration)) {
+        recoverRenderer('load-failed', true)
+      }
     }
   )
   window.webContents.on('preload-error', (_event, _preloadPath, error) => {

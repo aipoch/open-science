@@ -125,6 +125,10 @@ export const installAppLifecycle = (
   // Set once the user has confirmed a quit (via the dialog or a prior 'confirm' close), so a re-issued
   // before-quit skips straight to teardown instead of asking again.
   let quitConfirmed = false
+  // A delegated confirmation authorizes only the Sessions visible in that dialog. The final
+  // before-quit boundary rechecks this snapshot so work admitted between confirmation and the
+  // re-issued quit cannot inherit an unrelated confirmation.
+  let confirmedDelegatedSessionKeys = new Set<string>()
   // Shared across both confirm-dispatching paths (titlebar X and tray/Ctrl+Q quit) so only one
   // confirmation modal is ever open at a time. The renderer holds a single request slot; a second
   // dispatch would silently overwrite the first and strand its promise forever (see app-lifecycle.test.ts).
@@ -163,8 +167,11 @@ export const installAppLifecycle = (
       : confirmClose(variant, sessions)
   const detectDelegatedWork = (): ActiveSessionInfo[] =>
     deps.detectActiveSessions().filter((session) => session.kind === 'delegated')
-  const requestConfirmedQuit = (): void => {
+  const delegatedSessionKey = (session: ActiveSessionInfo): string =>
+    JSON.stringify([session.projectId, session.sessionId])
+  const requestConfirmedQuit = (delegated: readonly ActiveSessionInfo[] = []): void => {
     quitConfirmed = true
+    confirmedDelegatedSessionKeys = new Set(delegated.map(delegatedSessionKey))
     deps.quit()
   }
 
@@ -203,6 +210,7 @@ export const installAppLifecycle = (
       // A caller's earlier confirmation cannot authorize delegated work that is already live at the
       // final boundary. Leave that case unconfirmed so before-quit performs the delegated-work recheck.
       quitConfirmed = confirmed && detectDelegatedWork().length === 0
+      confirmedDelegatedSessionKeys = new Set()
       deps.quit()
     },
     ...(deps.onAppearanceChanged ? { onAppearanceChanged: deps.onAppearanceChanged } : {})
@@ -269,6 +277,7 @@ export const installAppLifecycle = (
       // ordinary quit could bypass its active-session confirmation.
       clearApplicationShutdownTrigger()
       quitConfirmed = false
+      confirmedDelegatedSessionKeys = new Set()
       return
     }
     const trigger = shutdownTrigger()
@@ -284,15 +293,19 @@ export const installAppLifecycle = (
     // quitAndInstall. Once either committed handoff invokes app.quit(), it must continue; cancelling
     // there would strand the already-started installer or a process cached on the old data root.
     const delegatedAtShutdownBoundary = detectDelegatedWork()
-    if (!quitConfirmed && delegatedWorkBlocksShutdown && delegatedAtShutdownBoundary.length > 0) {
+    const hasUnconfirmedDelegatedWork = delegatedAtShutdownBoundary.some(
+      (session) => !confirmedDelegatedSessionKeys.has(delegatedSessionKey(session))
+    )
+    if (delegatedWorkBlocksShutdown && hasUnconfirmedDelegatedWork) {
       event.preventDefault()
       quitConfirmed = false
+      confirmedDelegatedSessionKeys = new Set()
       clearApplicationShutdownTrigger()
       if (confirmInFlight) return
       confirmInFlight = true
       void confirmResearchClose('quit', delegatedAtShutdownBoundary)
         .then((choice) => {
-          if (choice === 'quit') requestConfirmedQuit()
+          if (choice === 'quit') requestConfirmedQuit(delegatedAtShutdownBoundary)
         })
         .finally(() => {
           confirmInFlight = false
@@ -313,7 +326,7 @@ export const installAppLifecycle = (
             if (delegated.length > 0) {
               quitConfirmed = false
               const delegatedChoice = await confirmResearchClose('quit', delegated)
-              if (delegatedChoice === 'quit') requestConfirmedQuit()
+              if (delegatedChoice === 'quit') requestConfirmedQuit(delegated)
               return
             }
             requestConfirmedQuit()

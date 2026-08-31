@@ -1161,6 +1161,44 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
+  it('rechecks delegated work added after the delegated confirmation', async () => {
+    let active: ActiveSessionInfo[] = []
+    let resolveFirst: ((choice: CloseConfirmChoice) => void) | undefined
+    const confirmClose = vi.fn(() => {
+      if (confirmClose.mock.calls.length === 1) {
+        return new Promise<CloseConfirmChoice>((resolve) => {
+          resolveFirst = resolve
+        })
+      }
+      return Promise.resolve<CloseConfirmChoice>(
+        confirmClose.mock.calls.length === 2 ? 'quit' : 'cancel'
+      )
+    })
+    const { app, quit, prepareForQuit, flushSessionPersistence, shutdownBackends } = setup({
+      detectActiveSessions: () => active,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    active = [{ projectId: 'demo', sessionId: 'child-1', kind: 'delegated' }]
+    resolveFirst?.('quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(quit).toHaveBeenCalledTimes(1)
+
+    active = [...active, { projectId: 'demo', sessionId: 'child-2', kind: 'delegated' }]
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledTimes(3)
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', active)
+    expect(prepareForQuit).not.toHaveBeenCalled()
+    expect(flushSessionPersistence).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
   it('rechecks after a saved close preference resolves and safely minimizes for new delegated work', async () => {
     let active: ActiveSessionInfo[] = []
     let resolveSavedPreference: ((choice: CloseConfirmChoice) => void) | undefined
