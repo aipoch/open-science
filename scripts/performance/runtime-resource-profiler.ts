@@ -846,7 +846,12 @@ class RuntimeResourceProfiler {
         )
         .then(
           (metrics) => ({ complete: true, metrics }),
-          () => ({ complete: false, metrics: [] as ElectronProcessMetric[] })
+          (error) => {
+            process.stderr.write(
+              `Runtime resource profiler could not capture Electron metrics: ${error instanceof Error ? error.message : String(error)}\n`
+            )
+            return { complete: false, metrics: [] as ElectronProcessMetric[] }
+          }
         ),
       includeStorage && this.storageRoot
         ? readRuntimeStorageSnapshot(this.storageRoot, this.dataRoot)
