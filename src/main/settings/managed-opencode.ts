@@ -1,6 +1,7 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { chmod, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { readFileSync, type Dirent } from 'node:fs'
+import { chmod, mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
@@ -167,11 +168,23 @@ export const managedOpencodeDir = (dataRoot: string): string =>
 export const isManagedOpencodePath = (resolvedPath: string, dataRoot: string): boolean =>
   resolve(dirname(resolvedPath)) === resolve(managedOpencodeDir(dataRoot))
 
-// Removes the app-managed OpenCode install tree (the `opencode-managed` dir holding `bin/<binName>`).
+const ORPHANED_OPENCODE_RUNTIME_PATTERN =
+  /^opencode-managed\.(?:staging|backup)-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+
+// Removes the app-managed OpenCode install tree and exact installer-owned staging/backup siblings.
 // Resolves (never rejects); a missing dir is a no-op so callers can uninstall idempotently.
 export const uninstallManagedOpencode = async (dataRoot: string): Promise<void> => {
-  await rm(dirname(managedOpencodeDir(dataRoot)), { recursive: true, force: true }).catch(
-    () => undefined
+  const root = dirname(managedOpencodeDir(dataRoot))
+  const siblings = await readdir(dirname(root), { withFileTypes: true }).catch(() => [] as Dirent[])
+  await Promise.all(
+    [
+      root,
+      ...siblings
+        .filter(
+          (entry) => entry.isDirectory() && ORPHANED_OPENCODE_RUNTIME_PATTERN.test(entry.name)
+        )
+        .map((entry) => join(dirname(root), entry.name))
+    ].map((path) => rm(path, { recursive: true, force: true }).catch(() => undefined))
   )
 }
 
@@ -284,6 +297,7 @@ export type InstallManagedOpencodeOptions = {
   fetchTarball?: FetchTarball
   verifyBinary?: VerifyBinary
   detectAvx2?: () => boolean
+  renamePath?: typeof rename
   tmpDir?: string
 }
 
@@ -293,6 +307,42 @@ export type InstallManagedOpencodeOptions = {
 type PackageAttempt =
   | { ok: true; version: string }
   | { ok: false; error: string; illegalInstruction: boolean; resolvedVersion: string }
+
+const replaceManagedOpencodeRoot = async (
+  stagedRoot: string,
+  root: string,
+  renamePath: typeof rename
+): Promise<void> => {
+  const backup = `${root}.backup-${randomUUID()}`
+  let backedUp = false
+
+  try {
+    await renamePath(root, backup)
+    backedUp = true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  try {
+    await renamePath(stagedRoot, root)
+  } catch (swapError) {
+    if (backedUp) {
+      try {
+        await renamePath(backup, root)
+      } catch (restoreError) {
+        const swapMessage = swapError instanceof Error ? swapError.message : String(swapError)
+        const restoreMessage =
+          restoreError instanceof Error ? restoreError.message : String(restoreError)
+        throw new Error(
+          `OpenCode runtime swap failed: ${swapMessage}. The previous runtime remains at ${backup} because restore failed: ${restoreMessage}.`
+        )
+      }
+    }
+    throw swapError
+  }
+
+  if (backedUp) await rm(backup, { recursive: true, force: true }).catch(() => undefined)
+}
 
 // Downloads + installs the managed opencode binary, trying each registry in order. Resolves (never
 // rejects) with a structured outcome the service can persist.
@@ -307,10 +357,15 @@ export const installManagedOpencode = async ({
   fetchTarball = defaultFetchTarball,
   verifyBinary = defaultVerifyBinary,
   detectAvx2: detectAvx2Dep = detectAvx2,
+  renamePath = rename,
   tmpDir
 }: InstallManagedOpencodeOptions): Promise<ManagedInstallOutcome> => {
-  const destPath = join(managedOpencodeDir(dataRoot), platform.binName)
-  const scratch = tmpDir ?? managedOpencodeDir(dataRoot)
+  const root = dirname(managedOpencodeDir(dataRoot))
+  const destPath = join(root, 'bin', platform.binName)
+  const scratch = `${root}.staging-${randomUUID()}`
+  const stagedRoot = join(scratch, 'runtime')
+  const stagedPath = join(stagedRoot, 'bin', platform.binName)
+  const downloadDir = tmpDir ?? scratch
   let lastError = 'no registries configured'
 
   // Downloads, extracts, and smoke-checks one package key. Throws on registry-level errors (so the
@@ -321,9 +376,10 @@ export const installManagedOpencode = async ({
     packageKey: string,
     pinnedVersion: string | undefined
   ): Promise<PackageAttempt> => {
-    const tgzPath = join(scratch, `opencode-download-${Date.now()}.tgz`)
+    const tgzPath = join(downloadDir, `opencode-download-${randomUUID()}.tgz`)
 
     try {
+      await rm(stagedRoot, { recursive: true, force: true })
       onEvent({ kind: 'progress', installId, phase: 'resolving' })
       onEvent({
         kind: 'log',
@@ -346,17 +402,16 @@ export const installManagedOpencode = async ({
       const found = await extractFileFromTgz({
         tgzPath,
         entryName: `package/bin/${platform.binName}`,
-        destPath
+        destPath: stagedPath
       })
 
       if (!found) throw new Error(`Native package did not contain bin/${platform.binName}`)
-      if (process.platform !== 'win32') await chmod(destPath, 0o755)
+      if (process.platform !== 'win32') await chmod(stagedPath, 0o755)
 
-      // Smoke-check the binary before reporting success — a clean download does not guarantee it runs
-      // on this CPU. Remove the unusable binary and report a soft failure so no broken path is persisted.
-      const verification = verifyBinary(destPath)
+      // Smoke-check the staged binary before reporting success — a clean download does not guarantee
+      // it runs on this CPU. Report a soft failure so no broken candidate is published.
+      const verification = verifyBinary(stagedPath)
       if (!verification.ok) {
-        await rm(destPath, { force: true }).catch(() => undefined)
         const illegalInstruction = verification.illegalInstruction
         const hint = illegalInstruction
           ? ' Your CPU may not support the required instruction set (AVX2).'
@@ -384,43 +439,54 @@ export const installManagedOpencode = async ({
   const preferBaseline = isX64 && !detectAvx2Dep()
   const firstKey = preferBaseline ? baselinePackageKey(platform.key) : platform.key
 
-  for (const registry of registries) {
-    try {
-      const first = await installFromPackage(registry, firstKey, version)
-      if (first.ok) {
-        onEvent({
-          kind: 'log',
-          installId,
-          stream: 'system',
-          chunk: `Installed OpenCode ${first.version}${preferBaseline ? ' (baseline)' : ''}.\n`
-        })
-        return {
-          result: { installId, ok: true },
-          resolvedPath: destPath,
-          version: first.version
+  await mkdir(scratch, { recursive: true })
+  try {
+    for (const registry of registries) {
+      let reachedPublication = false
+      try {
+        const first = await installFromPackage(registry, firstKey, version)
+        if (first.ok) {
+          reachedPublication = true
+          await replaceManagedOpencodeRoot(stagedRoot, root, renamePath)
+          onEvent({
+            kind: 'log',
+            installId,
+            stream: 'system',
+            chunk: `Installed OpenCode ${first.version}${preferBaseline ? ' (baseline)' : ''}.\n`
+          })
+          return {
+            result: { installId, ok: true },
+            resolvedPath: destPath,
+            version: first.version
+          }
         }
-      }
 
-      // The first build extracted but died on this CPU. If we did NOT already prefer baseline and this is
-      // an x64 host reporting an illegal instruction (SIGILL on POSIX, the NTSTATUS status on Windows),
-      // retry once with the `-baseline` variant so the onboarding "auto-installable" claim holds. Gating
-      // on `!preferBaseline` avoids building a double-`baseline` key when the first attempt already was
-      // baseline. If the baseline package is missing (404 at resolve) or also fails to run, surface the
-      // illegal-instruction/AVX2 diagnosis rather than crashing on an unverifiable package name.
-      if (!preferBaseline && first.illegalInstruction && isX64) {
-        onEvent({
-          kind: 'log',
-          installId,
-          stream: 'system',
-          chunk: 'Standard build is not runnable on this CPU; retrying the -baseline variant …\n'
-        })
-        try {
-          const baseline = await installFromPackage(
-            registry,
-            baselinePackageKey(platform.key),
-            first.resolvedVersion
-          )
-          if (baseline.ok) {
+        // The first build extracted but died on this CPU. If we did NOT already prefer baseline and this is
+        // an x64 host reporting an illegal instruction (SIGILL on POSIX, the NTSTATUS status on Windows),
+        // retry once with the `-baseline` variant so the onboarding "auto-installable" claim holds. Gating
+        // on `!preferBaseline` avoids building a double-`baseline` key when the first attempt already was
+        // baseline. If the baseline package is missing (404 at resolve) or also fails to run, surface the
+        // illegal-instruction/AVX2 diagnosis rather than crashing on an unverifiable package name.
+        if (!preferBaseline && first.illegalInstruction && isX64) {
+          onEvent({
+            kind: 'log',
+            installId,
+            stream: 'system',
+            chunk: 'Standard build is not runnable on this CPU; retrying the -baseline variant …\n'
+          })
+          let baseline: PackageAttempt | undefined
+          try {
+            baseline = await installFromPackage(
+              registry,
+              baselinePackageKey(platform.key),
+              first.resolvedVersion
+            )
+          } catch {
+            // Baseline unavailable (e.g. 404): fall through to the illegal-instruction/AVX2 error below.
+          }
+          if (baseline?.ok) {
+            reachedPublication = true
+            await replaceManagedOpencodeRoot(stagedRoot, root, renamePath)
             onEvent({
               kind: 'log',
               installId,
@@ -433,22 +499,23 @@ export const installManagedOpencode = async ({
               version: baseline.version
             }
           }
-        } catch {
-          // Baseline unavailable (e.g. 404): fall through to the illegal-instruction/AVX2 error below.
         }
+
+        throw new Error(first.error)
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error)
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `${registry} failed: ${lastError}\n`
+        })
+        if (reachedPublication) return { result: { installId, ok: false, error: lastError } }
       }
-
-      throw new Error(first.error)
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error)
-      onEvent({
-        kind: 'log',
-        installId,
-        stream: 'system',
-        chunk: `${registry} failed: ${lastError}\n`
-      })
     }
-  }
 
-  return { result: { installId, ok: false, error: lastError } }
+    return { result: { installId, ok: false, error: lastError } }
+  } finally {
+    await rm(scratch, { recursive: true, force: true }).catch(() => undefined)
+  }
 }

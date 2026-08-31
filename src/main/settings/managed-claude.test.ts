@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
@@ -447,7 +447,8 @@ describe('managed-claude: install orchestration', () => {
         url.endsWith('claude-code-linux-x64/2.1.209')
           ? { dist: { tarball: 'https://reg/x.tgz', integrity: sha512(tgz) } }
           : { 'dist-tags': { latest: '2.1.209' } },
-      fetchTarball: async () => ({ stream: Readable.from([tgz]), totalBytes: tgz.length })
+      fetchTarball: async () => ({ stream: Readable.from([tgz]), totalBytes: tgz.length }),
+      verifyBinary: async () => '2.1.209'
     })
 
     expect(outcome.result.ok).toBe(true)
@@ -465,6 +466,64 @@ describe('managed-claude: install orchestration', () => {
     ).toBe(true)
   })
 
+  it('preserves the existing runtime when the replacement archive is incomplete', async () => {
+    const existingPath = join(managedClaudeDir(root), 'claude')
+    await mkdir(managedClaudeDir(root), { recursive: true })
+    await writeFile(existingPath, 'WORKING-CLAUDE')
+    const tgz = buildTgz([{ name: 'package/not-claude', content: Buffer.from('replacement') }])
+
+    const outcome = await installManagedClaude({
+      installId: 'preserve-existing',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform,
+      fetchJson: async (url) =>
+        url.endsWith('claude-code-linux-x64/2.1.209')
+          ? { dist: { tarball: 'https://reg/x.tgz', integrity: sha512(tgz) } }
+          : { 'dist-tags': { latest: '2.1.209' } },
+      fetchTarball: async () => ({ stream: Readable.from([tgz]), totalBytes: tgz.length }),
+      verifyBinary: async () => '2.1.209'
+    })
+
+    expect(outcome.result.ok).toBe(false)
+    expect(await readFile(existingPath, 'utf8')).toBe('WORKING-CLAUDE')
+  })
+
+  it('restores the existing runtime when publication fails', async () => {
+    const existingPath = join(managedClaudeDir(root), 'claude')
+    const managedRoot = dirname(managedClaudeDir(root))
+    await mkdir(managedClaudeDir(root), { recursive: true })
+    await writeFile(existingPath, 'WORKING-CLAUDE')
+    const { tgz } = fixture()
+    const renamePath = vi.fn(async (...args: Parameters<typeof rename>) => {
+      const [source, destination] = args
+      if (String(source).includes('.staging-') && String(destination) === managedRoot) {
+        throw new Error('swap failed')
+      }
+      await rename(source, destination)
+    })
+
+    const outcome = await installManagedClaude({
+      installId: 'restore-existing',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform,
+      fetchJson: async (url) =>
+        url.endsWith('claude-code-linux-x64/2.1.209')
+          ? { dist: { tarball: 'https://reg/x.tgz', integrity: sha512(tgz) } }
+          : { 'dist-tags': { latest: '2.1.209' } },
+      fetchTarball: async () => ({ stream: Readable.from([tgz]), totalBytes: tgz.length }),
+      verifyBinary: async () => '2.1.209',
+      renamePath
+    })
+
+    expect(outcome.result).toMatchObject({ ok: false, error: 'swap failed' })
+    expect(await readFile(existingPath, 'utf8')).toBe('WORKING-CLAUDE')
+    expect((await readdir(root)).filter((name) => name.includes('.backup-'))).toEqual([])
+  })
+
   it('falls back to the next registry when the first fails', async () => {
     const { tgz } = fixture()
     const events: ClaudeInstallEvent[] = []
@@ -480,7 +539,8 @@ describe('managed-claude: install orchestration', () => {
           ? { dist: { tarball: 'https://good/x.tgz', integrity: sha512(tgz) } }
           : { 'dist-tags': { latest: '2.1.209' } }
       },
-      fetchTarball: async () => ({ stream: Readable.from([tgz]) })
+      fetchTarball: async () => ({ stream: Readable.from([tgz]) }),
+      verifyBinary: async () => '2.1.209'
     })
 
     expect(outcome.result.ok).toBe(true)
@@ -501,14 +561,16 @@ describe('managed-claude: install orchestration', () => {
       fetchJson: async () => {
         throw new Error('boom')
       },
-      fetchTarball: async () => ({ stream: Readable.from([Buffer.from('x')]) })
+      fetchTarball: async () => ({ stream: Readable.from([Buffer.from('x')]) }),
+      verifyBinary: async () => '2.1.209'
     })
 
     expect(outcome.result.ok).toBe(false)
     expect(outcome.result.error).toContain('boom')
     expect(
       events.some(
-        (event) => event.kind === 'log' && event.chunk.includes('remove the incomplete runtime')
+        (event) =>
+          event.kind === 'log' && event.chunk.includes('No candidate runtime was published')
       )
     ).toBe(true)
   })
@@ -524,7 +586,8 @@ describe('managed-claude: install orchestration', () => {
       fetchJson: async () => {
         throw Object.assign(new Error('no space left on device, write'), { code: 'ENOSPC' })
       },
-      fetchTarball: async () => ({ stream: Readable.from([]) })
+      fetchTarball: async () => ({ stream: Readable.from([]) }),
+      verifyBinary: async () => '2.1.209'
     })
 
     expect(outcome.result.ok).toBe(false)
@@ -563,6 +626,23 @@ describe('isManagedClaudePath / uninstallManagedClaude', () => {
     await expect(readFile(bin)).rejects.toThrow()
     // The `claude-code` parent (one level above bin) is gone, not just the file.
     await expect(readFile(join(root, 'claude-code', 'bin', 'claude'))).rejects.toThrow()
+  })
+
+  it('removes only owned staging and backup siblings', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const stagingMarker = join(root, `claude-code.staging-${uuid}`, 'marker')
+    const backupMarker = join(root, `claude-code.backup-${uuid}`, 'marker')
+    const lookalikeMarker = join(root, 'claude-code.backup-manual', 'marker')
+    for (const marker of [stagingMarker, backupMarker, lookalikeMarker]) {
+      await mkdir(dirname(marker), { recursive: true })
+      await writeFile(marker, 'present')
+    }
+
+    await uninstallManagedClaude(root)
+
+    await expect(readFile(stagingMarker)).rejects.toThrow()
+    await expect(readFile(backupMarker)).rejects.toThrow()
+    await expect(readFile(lookalikeMarker, 'utf8')).resolves.toBe('present')
   })
 
   it('is a no-op (never rejects) when nothing is installed', async () => {

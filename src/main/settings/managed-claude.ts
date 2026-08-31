@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream } from 'node:fs'
-import { chmod, mkdir, rm } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream, createWriteStream, type Dirent } from 'node:fs'
+import { chmod, mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -112,11 +112,21 @@ const managedClaudeDir = (dataRoot: string): string => join(dataRoot, 'claude-co
 const isManagedClaudePath = (resolvedPath: string, dataRoot: string): boolean =>
   resolve(dirname(resolvedPath)) === resolve(managedClaudeDir(dataRoot))
 
-// Removes the app-managed Claude install tree (the `claude-code` dir holding `bin/<binName>`).
+const ORPHANED_CLAUDE_RUNTIME_PATTERN =
+  /^claude-code\.(?:staging|backup)-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+
+// Removes the app-managed Claude install tree and exact installer-owned staging/backup siblings.
 // Resolves (never rejects); a missing dir is a no-op so callers can uninstall idempotently.
 const uninstallManagedClaude = async (dataRoot: string): Promise<void> => {
-  await rm(dirname(managedClaudeDir(dataRoot)), { recursive: true, force: true }).catch(
-    () => undefined
+  const root = dirname(managedClaudeDir(dataRoot))
+  const siblings = await readdir(dirname(root), { withFileTypes: true }).catch(() => [] as Dirent[])
+  await Promise.all(
+    [
+      root,
+      ...siblings
+        .filter((entry) => entry.isDirectory() && ORPHANED_CLAUDE_RUNTIME_PATTERN.test(entry.name))
+        .map((entry) => join(dirname(root), entry.name))
+    ].map((path) => rm(path, { recursive: true, force: true }).catch(() => undefined))
   )
 }
 
@@ -407,6 +417,8 @@ export type InstallManagedClaudeOptions = {
   platform?: ManagedPlatform
   fetchJson?: FetchJson
   fetchTarball?: FetchTarball
+  verifyBinary: (binPath: string) => Promise<string | undefined>
+  renamePath?: typeof rename
   tmpDir?: string
 }
 
@@ -430,6 +442,42 @@ const describeManagedInstallError = (error: unknown): string => {
   return message
 }
 
+const replaceManagedClaudeRoot = async (
+  stagedRoot: string,
+  root: string,
+  renamePath: typeof rename
+): Promise<void> => {
+  const backup = `${root}.backup-${randomUUID()}`
+  let backedUp = false
+
+  try {
+    await renamePath(root, backup)
+    backedUp = true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  try {
+    await renamePath(stagedRoot, root)
+  } catch (swapError) {
+    if (backedUp) {
+      try {
+        await renamePath(backup, root)
+      } catch (restoreError) {
+        const swapMessage = swapError instanceof Error ? swapError.message : String(swapError)
+        const restoreMessage =
+          restoreError instanceof Error ? restoreError.message : String(restoreError)
+        throw new Error(
+          `Claude runtime swap failed: ${swapMessage}. The previous runtime remains at ${backup} because restore failed: ${restoreMessage}.`
+        )
+      }
+    }
+    throw swapError
+  }
+
+  if (backedUp) await rm(backup, { recursive: true, force: true }).catch(() => undefined)
+}
+
 // Downloads + installs the managed Claude binary, trying each registry in order. Streams progress via
 // `onEvent` and resolves (never rejects) with a structured outcome the service can persist.
 const installManagedClaude = async ({
@@ -441,77 +489,101 @@ const installManagedClaude = async ({
   platform = getManagedPlatform(),
   fetchJson = defaultFetchJson,
   fetchTarball = defaultFetchTarball,
+  verifyBinary,
+  renamePath = rename,
   tmpDir
 }: InstallManagedClaudeOptions): Promise<ManagedInstallOutcome> => {
-  const destPath = join(managedClaudeDir(dataRoot), platform.binName)
-  const scratch = tmpDir ?? managedClaudeDir(dataRoot)
+  const root = dirname(managedClaudeDir(dataRoot))
+  const destPath = join(root, 'bin', platform.binName)
+  const scratch = `${root}.staging-${randomUUID()}`
+  const stagedRoot = join(scratch, 'runtime')
+  const stagedPath = join(stagedRoot, 'bin', platform.binName)
+  const downloadDir = tmpDir ?? scratch
   let lastError = 'no registries configured'
 
-  for (const registry of registries) {
-    const tgzPath = join(scratch, `claude-download-${Date.now()}.tgz`)
+  await mkdir(scratch, { recursive: true })
+  try {
+    for (const registry of registries) {
+      const tgzPath = join(downloadDir, `claude-download-${randomUUID()}.tgz`)
+      let reachedPublication = false
 
-    try {
-      onEvent({ kind: 'progress', installId, phase: 'resolving' })
-      onEvent({
-        kind: 'log',
-        installId,
-        stream: 'system',
-        chunk: `Resolving Claude from ${registry} …\n`
-      })
-      const resolution = await resolveNativePackage({ registry, platform, version, fetchJson })
+      try {
+        await rm(stagedRoot, { recursive: true, force: true })
+        onEvent({ kind: 'progress', installId, phase: 'resolving' })
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `Resolving Claude from ${registry} …\n`
+        })
+        const resolution = await resolveNativePackage({ registry, platform, version, fetchJson })
 
-      await downloadAndVerify({
-        url: resolution.tarball,
-        integrity: resolution.integrity,
-        destPath: tgzPath,
-        installId,
-        onEvent,
-        fetchTarball
-      })
+        await downloadAndVerify({
+          url: resolution.tarball,
+          integrity: resolution.integrity,
+          destPath: tgzPath,
+          installId,
+          onEvent,
+          fetchTarball
+        })
 
-      onEvent({ kind: 'progress', installId, phase: 'extracting' })
-      const found = await extractFileFromTgz({
-        tgzPath,
-        entryName: `package/${platform.binName}`,
-        destPath
-      })
+        onEvent({ kind: 'progress', installId, phase: 'extracting' })
+        const found = await extractFileFromTgz({
+          tgzPath,
+          entryName: `package/${platform.binName}`,
+          destPath: stagedPath
+        })
 
-      if (!found) throw new Error(`Native package did not contain ${platform.binName}`)
-      if (process.platform !== 'win32') await chmod(destPath, 0o755)
+        if (!found) throw new Error(`Native package did not contain ${platform.binName}`)
+        if (process.platform !== 'win32') await chmod(stagedPath, 0o755)
+        const installedVersion = await verifyBinary(stagedPath)
+        if (!installedVersion) {
+          throw new Error(
+            'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
+          )
+        }
 
-      onEvent({
-        kind: 'log',
-        installId,
-        stream: 'system',
-        chunk: `Installed Claude ${resolution.version}.\n`
-      })
+        reachedPublication = true
+        await replaceManagedClaudeRoot(stagedRoot, root, renamePath)
 
-      return {
-        result: { installId, ok: true },
-        resolvedPath: destPath,
-        version: resolution.version
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `Installed Claude ${resolution.version}.\n`
+        })
+
+        return {
+          result: { installId, ok: true },
+          resolvedPath: destPath,
+          version: resolution.version
+        }
+      } catch (error) {
+        lastError = describeManagedInstallError(error)
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `${registry} failed: ${lastError}\n`
+        })
+        if (reachedPublication) return { result: { installId, ok: false, error: lastError } }
+      } finally {
+        await rm(tgzPath, { force: true }).catch(() => undefined)
       }
-    } catch (error) {
-      lastError = describeManagedInstallError(error)
-      onEvent({
-        kind: 'log',
-        installId,
-        stream: 'system',
-        chunk: `${registry} failed: ${lastError}\n`
-      })
-    } finally {
-      await rm(tgzPath, { force: true }).catch(() => undefined)
     }
+
+    onEvent({
+      kind: 'log',
+      installId,
+      stream: 'system',
+      chunk:
+        'Automatic setup stopped. Correct the error above and install again. No candidate runtime was published.\n'
+    })
+
+    return { result: { installId, ok: false, error: lastError } }
+  } finally {
+    await rm(scratch, { recursive: true, force: true }).catch(() => undefined)
   }
-
-  onEvent({
-    kind: 'log',
-    installId,
-    stream: 'system',
-    chunk: `Automatic setup stopped. Correct the error above and install again. If an installation was interrupted, remove the incomplete runtime at ${destPath} before retrying.\n`
-  })
-
-  return { result: { installId, ok: false, error: lastError } }
 }
 
 // ---- Default Electron transport (Session-proxy-aware) ---------------------------------------------

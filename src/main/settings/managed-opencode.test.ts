@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 
@@ -131,8 +132,11 @@ describe('installManagedOpencode', () => {
 
   // A downloaded package that extracts cleanly but cannot run on this CPU (e.g. SIGILL on a non-AVX2
   // x64 host) must fail the install, not persist a broken path.
-  it('fails cleanly and removes the binary when the smoke check reports it cannot run', async () => {
+  it('preserves the existing runtime when the replacement fails its smoke check', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const existingPath = join(managedOpencodeDir(root), 'opencode')
+    await mkdir(managedOpencodeDir(root), { recursive: true })
+    await writeFile(existingPath, 'WORKING-OPENCODE')
     const tgz = buildTgz([
       { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho opencode\n') }
     ])
@@ -165,12 +169,52 @@ describe('installManagedOpencode', () => {
     // Actionable error mentioning the failed probe and the likely AVX2 cause.
     expect(outcome.result.error).toMatch(/failed to run/)
     expect(outcome.result.error).toMatch(/AVX2/)
-    // The unusable binary is not left on disk.
-    await expect(readFile(join(managedOpencodeDir(root), 'opencode'))).rejects.toThrow()
+    expect(await readFile(existingPath, 'utf8')).toBe('WORKING-OPENCODE')
+  })
+
+  it('restores the existing runtime when publication fails', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const existingPath = join(managedOpencodeDir(root), 'opencode')
+    const managedRoot = dirname(managedOpencodeDir(root))
+    await mkdir(managedOpencodeDir(root), { recursive: true })
+    await writeFile(existingPath, 'WORKING-OPENCODE')
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho replacement\n') }
+    ])
+    const renamePath = vi.fn(async (...args: Parameters<typeof rename>) => {
+      const [source, destination] = args
+      if (String(source).includes('.staging-') && String(destination) === managedRoot) {
+        throw new Error('swap failed')
+      }
+      await rename(source, destination)
+    })
+
+    const outcome = await installManagedOpencode({
+      installId: 'restore-existing',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson: async (url) =>
+        url.endsWith('/opencode-ai')
+          ? { 'dist-tags': { latest: '1.18.3' } }
+          : { dist: { tarball: 'https://reg/opencode.tgz', integrity: sha512(tgz) } },
+      fetchTarball: async () => ({ stream: Readable.from(tgz), totalBytes: tgz.length }),
+      verifyBinary: () => ({ ok: true }),
+      tmpDir: root,
+      renamePath
+    })
+
+    expect(outcome.result).toMatchObject({ ok: false, error: 'swap failed' })
+    expect(await readFile(existingPath, 'utf8')).toBe('WORKING-OPENCODE')
+    expect((await readdir(root)).filter((name) => name.includes('.backup-'))).toEqual([])
   })
 
   it('succeeds when the smoke check confirms the binary runs', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const finalPath = join(managedOpencodeDir(root), 'opencode')
+    await mkdir(managedOpencodeDir(root), { recursive: true })
+    await writeFile(finalPath, 'WORKING-OPENCODE')
     const tgz = buildTgz([
       { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho opencode\n') }
     ])
@@ -185,7 +229,8 @@ describe('installManagedOpencode', () => {
       totalBytes?: number
     }> => ({ stream: Readable.from(tgz), totalBytes: tgz.length })
 
-    let verifiedPath: string | undefined
+    let verifiedContent: string | undefined
+    let finalContentDuringVerification: string | undefined
     const outcome = await installManagedOpencode({
       installId: 'i4',
       onEvent: () => undefined,
@@ -195,16 +240,17 @@ describe('installManagedOpencode', () => {
       fetchJson,
       fetchTarball,
       verifyBinary: (binPath) => {
-        verifiedPath = binPath
+        verifiedContent = readFileSync(binPath, 'utf8')
+        finalContentDuringVerification = readFileSync(finalPath, 'utf8')
         return { ok: true }
       },
       tmpDir: root
     })
 
     expect(outcome.result.ok).toBe(true)
-    expect(outcome.resolvedPath).toBe(join(managedOpencodeDir(root), 'opencode'))
-    // The verifier is handed the installed binary path.
-    expect(verifiedPath).toBe(join(managedOpencodeDir(root), 'opencode'))
+    expect(outcome.resolvedPath).toBe(finalPath)
+    expect(verifiedContent).toContain('echo opencode')
+    expect(finalContentDuringVerification).toBe('WORKING-OPENCODE')
   })
 
   // A non-AVX2 x64 host: the standard build dies with SIGILL, so the installer retries the -baseline
@@ -694,6 +740,23 @@ describe('isManagedOpencodePath / uninstallManagedOpencode', () => {
 
     await expect(readFile(bin)).rejects.toThrow()
     await expect(readFile(join(root, 'opencode-managed', 'bin', 'opencode'))).rejects.toThrow()
+  })
+
+  it('removes only owned staging and backup siblings', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const stagingMarker = join(root, `opencode-managed.staging-${uuid}`, 'marker')
+    const backupMarker = join(root, `opencode-managed.backup-${uuid}`, 'marker')
+    const lookalikeMarker = join(root, 'opencode-managed.backup-manual', 'marker')
+    for (const marker of [stagingMarker, backupMarker, lookalikeMarker]) {
+      await mkdir(dirname(marker), { recursive: true })
+      await writeFile(marker, 'present')
+    }
+
+    await uninstallManagedOpencode(root)
+
+    await expect(readFile(stagingMarker)).rejects.toThrow()
+    await expect(readFile(backupMarker)).rejects.toThrow()
+    await expect(readFile(lookalikeMarker, 'utf8')).resolves.toBe('present')
   })
 
   it('is a no-op (never rejects) when nothing is installed', async () => {
