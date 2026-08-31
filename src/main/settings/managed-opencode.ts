@@ -170,6 +170,8 @@ export const isManagedOpencodePath = (resolvedPath: string, dataRoot: string): b
 
 const ORPHANED_OPENCODE_RUNTIME_PATTERN =
   /^opencode-managed\.(?:staging|backup)-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+const STAGED_OPENCODE_RUNTIME_PATTERN =
+  /^opencode-managed\.staging-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
 const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
 const OPENCODE_RUNTIME_OWNER = 'open-science:opencode:v1\n'
 
@@ -177,26 +179,38 @@ const isOwnedOpencodeRuntime = async (root: string): Promise<boolean> =>
   (await readFile(join(root, RUNTIME_OWNER_MARKER), 'utf8').catch(() => undefined)) ===
   OPENCODE_RUNTIME_OWNER
 
+const findOwnedOpencodeRuntimeSiblings = async (
+  dataRoot: string,
+  pattern: RegExp
+): Promise<string[]> => {
+  const root = dirname(managedOpencodeDir(dataRoot))
+  const siblings = await readdir(dirname(root), { withFileTypes: true }).catch(() => [] as Dirent[])
+  const candidates = siblings
+    .filter((entry) => entry.isDirectory() && pattern.test(entry.name))
+    .map((entry) => join(dirname(root), entry.name))
+  return (
+    await Promise.all(
+      candidates.map(async (path) => ((await isOwnedOpencodeRuntime(path)) ? path : undefined))
+    )
+  ).filter((path): path is string => path !== undefined)
+}
+
+const removeOwnedOpencodeRuntimeSiblings = async (
+  dataRoot: string,
+  pattern: RegExp
+): Promise<void> => {
+  const owned = await findOwnedOpencodeRuntimeSiblings(dataRoot, pattern)
+  await Promise.all(
+    owned.map((path) => rm(path, { recursive: true, force: true }).catch(() => undefined))
+  )
+}
+
 // Removes the app-managed OpenCode install tree and exact installer-owned staging/backup siblings.
 // Resolves (never rejects); a missing dir is a no-op so callers can uninstall idempotently.
 export const uninstallManagedOpencode = async (dataRoot: string): Promise<void> => {
   const root = dirname(managedOpencodeDir(dataRoot))
-  const siblings = await readdir(dirname(root), { withFileTypes: true }).catch(() => [] as Dirent[])
-  const orphanCandidates = siblings
-    .filter((entry) => entry.isDirectory() && ORPHANED_OPENCODE_RUNTIME_PATTERN.test(entry.name))
-    .map((entry) => join(dirname(root), entry.name))
-  const ownedOrphans = (
-    await Promise.all(
-      orphanCandidates.map(async (path) =>
-        (await isOwnedOpencodeRuntime(path)) ? path : undefined
-      )
-    )
-  ).filter((path): path is string => path !== undefined)
-  await Promise.all(
-    [root, ...ownedOrphans].map((path) =>
-      rm(path, { recursive: true, force: true }).catch(() => undefined)
-    )
-  )
+  await removeOwnedOpencodeRuntimeSiblings(dataRoot, ORPHANED_OPENCODE_RUNTIME_PATTERN)
+  await rm(root, { recursive: true, force: true }).catch(() => undefined)
 }
 
 // Resolves the native package tarball URL + sha512 for one registry: `opencode-ai` latest (unless a
@@ -457,6 +471,7 @@ export const installManagedOpencode = async ({
   const preferBaseline = isX64 && !detectAvx2Dep()
   const firstKey = preferBaseline ? baselinePackageKey(platform.key) : platform.key
 
+  await removeOwnedOpencodeRuntimeSiblings(dataRoot, STAGED_OPENCODE_RUNTIME_PATTERN)
   try {
     await mkdir(scratch, { recursive: true })
     await writeFile(join(scratch, RUNTIME_OWNER_MARKER), OPENCODE_RUNTIME_OWNER)

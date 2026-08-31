@@ -213,8 +213,19 @@ describe('installManagedOpencode', () => {
   it('succeeds when the smoke check confirms the binary runs', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
     const finalPath = join(managedOpencodeDir(root), 'opencode')
+    const interruptedStaging = join(
+      root,
+      'opencode-managed.staging-12345678-1234-1234-1234-123456789abc'
+    )
+    const interruptedPayload = join(interruptedStaging, 'partial-download')
     await mkdir(managedOpencodeDir(root), { recursive: true })
     await writeFile(finalPath, 'WORKING-OPENCODE')
+    await mkdir(interruptedStaging, { recursive: true })
+    await writeFile(
+      join(interruptedStaging, '.open-science-managed-runtime'),
+      'open-science:opencode:v1\n'
+    )
+    await writeFile(interruptedPayload, 'partial')
     const tgz = buildTgz([
       { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho opencode\n') }
     ])
@@ -261,6 +272,7 @@ describe('installManagedOpencode', () => {
 
     expect(outcome.result.ok).toBe(true)
     expect(stagingOwner).toBe('open-science:opencode:v1\n')
+    await expect(readFile(interruptedPayload)).rejects.toThrow()
     expect(outcome.resolvedPath).toBe(finalPath)
     expect(verifiedContent).toContain('echo opencode')
     expect(finalContentDuringVerification).toBe('WORKING-OPENCODE')

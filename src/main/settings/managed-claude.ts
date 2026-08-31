@@ -114,6 +114,8 @@ const isManagedClaudePath = (resolvedPath: string, dataRoot: string): boolean =>
 
 const ORPHANED_CLAUDE_RUNTIME_PATTERN =
   /^claude-code\.(?:staging|backup)-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+const STAGED_CLAUDE_RUNTIME_PATTERN =
+  /^claude-code\.staging-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
 const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
 const CLAUDE_RUNTIME_OWNER = 'open-science:claude-code:v1\n'
 
@@ -121,24 +123,38 @@ const isOwnedClaudeRuntime = async (root: string): Promise<boolean> =>
   (await readFile(join(root, RUNTIME_OWNER_MARKER), 'utf8').catch(() => undefined)) ===
   CLAUDE_RUNTIME_OWNER
 
+const findOwnedClaudeRuntimeSiblings = async (
+  dataRoot: string,
+  pattern: RegExp
+): Promise<string[]> => {
+  const root = dirname(managedClaudeDir(dataRoot))
+  const siblings = await readdir(dirname(root), { withFileTypes: true }).catch(() => [] as Dirent[])
+  const candidates = siblings
+    .filter((entry) => entry.isDirectory() && pattern.test(entry.name))
+    .map((entry) => join(dirname(root), entry.name))
+  return (
+    await Promise.all(
+      candidates.map(async (path) => ((await isOwnedClaudeRuntime(path)) ? path : undefined))
+    )
+  ).filter((path): path is string => path !== undefined)
+}
+
+const removeOwnedClaudeRuntimeSiblings = async (
+  dataRoot: string,
+  pattern: RegExp
+): Promise<void> => {
+  const owned = await findOwnedClaudeRuntimeSiblings(dataRoot, pattern)
+  await Promise.all(
+    owned.map((path) => rm(path, { recursive: true, force: true }).catch(() => undefined))
+  )
+}
+
 // Removes the app-managed Claude install tree and exact installer-owned staging/backup siblings.
 // Resolves (never rejects); a missing dir is a no-op so callers can uninstall idempotently.
 const uninstallManagedClaude = async (dataRoot: string): Promise<void> => {
   const root = dirname(managedClaudeDir(dataRoot))
-  const siblings = await readdir(dirname(root), { withFileTypes: true }).catch(() => [] as Dirent[])
-  const orphanCandidates = siblings
-    .filter((entry) => entry.isDirectory() && ORPHANED_CLAUDE_RUNTIME_PATTERN.test(entry.name))
-    .map((entry) => join(dirname(root), entry.name))
-  const ownedOrphans = (
-    await Promise.all(
-      orphanCandidates.map(async (path) => ((await isOwnedClaudeRuntime(path)) ? path : undefined))
-    )
-  ).filter((path): path is string => path !== undefined)
-  await Promise.all(
-    [root, ...ownedOrphans].map((path) =>
-      rm(path, { recursive: true, force: true }).catch(() => undefined)
-    )
-  )
+  await removeOwnedClaudeRuntimeSiblings(dataRoot, ORPHANED_CLAUDE_RUNTIME_PATTERN)
+  await rm(root, { recursive: true, force: true }).catch(() => undefined)
 }
 
 // ---- Registry metadata -----------------------------------------------------------------------------
@@ -518,6 +534,7 @@ const installManagedClaude = async ({
   const downloadDir = tmpDir ?? scratch
   let lastError = 'no registries configured'
 
+  await removeOwnedClaudeRuntimeSiblings(dataRoot, STAGED_CLAUDE_RUNTIME_PATTERN)
   try {
     await mkdir(scratch, { recursive: true })
     await writeFile(join(scratch, RUNTIME_OWNER_MARKER), CLAUDE_RUNTIME_OWNER)

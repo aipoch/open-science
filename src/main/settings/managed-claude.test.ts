@@ -436,6 +436,17 @@ describe('managed-claude: install orchestration', () => {
   it('installs the binary and reports the resolved path + version', async () => {
     const { tgz, binary } = fixture()
     const events: ClaudeInstallEvent[] = []
+    const interruptedStaging = join(
+      root,
+      'claude-code.staging-12345678-1234-1234-1234-123456789abc'
+    )
+    const interruptedPayload = join(interruptedStaging, 'partial-download')
+    await mkdir(interruptedStaging, { recursive: true })
+    await writeFile(
+      join(interruptedStaging, '.open-science-managed-runtime'),
+      'open-science:claude-code:v1\n'
+    )
+    await writeFile(interruptedPayload, 'partial')
     let stagingOwner: string | undefined
     const renamePath = async (...args: Parameters<typeof rename>): Promise<void> => {
       const [source] = args
@@ -465,6 +476,7 @@ describe('managed-claude: install orchestration', () => {
 
     expect(outcome.result.ok).toBe(true)
     expect(stagingOwner).toBe('open-science:claude-code:v1\n')
+    await expect(readFile(interruptedPayload)).rejects.toThrow()
     expect(outcome.version).toBe('2.1.209')
     expect(outcome.resolvedPath).toBe(join(root, 'claude-code', 'bin', 'claude'))
     expect((await readFile(outcome.resolvedPath as string)).equals(binary)).toBe(true)
