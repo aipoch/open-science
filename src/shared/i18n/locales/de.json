@@ -3946,6 +3946,24 @@
     "Sign in again": "Erneut anmelden",
     "One variable name per line as KEY=.": "Pro Zeile ein Variablenname im Format KEY=.",
     "Line {{line}}: use KEY=.": "Zeile {{line}}: Verwenden Sie KEY=.",
-    "One header name per line as Name:.": "Pro Zeile ein Headername im Format Name:."
+    "One header name per line as Name:.": "Pro Zeile ein Headername im Format Name:.",
+    "{{platform}} {{architecture}} is supported.": "{{platform}} {{architecture}} wird unterstützt.",
+    "Automatic setup uses an app-managed runtime and does not require administrator access.": "Bei der automatischen Einrichtung wird eine von der App verwaltete Laufzeit verwendet; Administratorrechte sind nicht erforderlich.",
+    "Open Science can write to its private data folder.": "Open Science kann in seinen privaten Datenordner schreiben.",
+    "The operating-system credential vault is available.": "Der Anmeldeinformationsspeicher des Betriebssystems ist verfügbar.",
+    "No download is needed because {{runtime}} is already installed.": "{{runtime}} ist bereits installiert; ein Download ist nicht erforderlich.",
+    "{{platform}} {{architecture}} is supported — the baseline build will be installed.": "{{platform}} {{architecture}} wird unterstützt; die Baseline-Version wird installiert.",
+    "This CPU lacks AVX2, so automatic setup installs the app-managed baseline runtime. No administrator access is required.": "Diese CPU unterstützt AVX2 nicht. Daher installiert die automatische Einrichtung die von der App verwaltete Baseline-Laufzeit. Administratorrechte sind nicht erforderlich.",
+    "{{platform}} {{architecture}} can use the detected {{runtime}} runtime.": "{{platform}} {{architecture}} kann die erkannte Laufzeit {{runtime}} verwenden.",
+    "{{platform}} {{architecture}} has no automatic installer package.": "Für {{platform}} {{architecture}} ist kein Paket für die automatische Installation verfügbar.",
+    "Open Science cannot write to its private data folder.": "Open Science kann nicht in seinen privaten Datenordner schreiben.",
+    "The operating-system credential vault is unavailable.": "Der Anmeldeinformationsspeicher des Betriebssystems ist nicht verfügbar.",
+    "Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.": "Entsperren Sie den Systemschlüsselbund oder autorisieren Sie den Zugriff darauf, bevor Sie API-Schlüssel speichern. Laufzeiten, die keine Schlüssel benötigen, können mit der Einrichtung fortfahren.",
+    "{{registry}} is the fastest reachable source.": "{{registry}} ist die am schnellsten erreichbare Bezugsquelle.",
+    "Measured {{latencyMs}} ms. The other trusted source remains available as an automatic fallback.": "Gemessen: {{latencyMs}} ms. Die andere vertrauenswürdige Quelle bleibt als automatischer Fallback verfügbar.",
+    "Neither the official registry nor the China-friendly mirror is reachable.": "Weder die offizielle Registry noch der für China optimierte Mirror ist erreichbar.",
+    "Check the network, proxy, VPN, or firewall, then run the check again.": "Überprüfen Sie Netzwerk, Proxy, VPN oder Firewall und führen Sie die Prüfung erneut aus.",
+    "official npm registry": "Die offizielle npm-Registry",
+    "China-friendly npmmirror": "Das für China optimierte npmmirror"
   }
 }

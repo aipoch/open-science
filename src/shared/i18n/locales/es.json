@@ -4168,6 +4168,24 @@
     "Remote job recovery needs attention": "La recuperación de trabajos remotos requiere atención",
     "Open Science could not check saved remote jobs. Retry to restore pending result analysis.": "Open Science no pudo comprobar los trabajos remotos guardados. Vuelva a intentarlo para restaurar el análisis de resultados pendiente.",
     "Remote job completed": "Trabajo remoto completado",
-    "Analysis started automatically": "El análisis se inició automáticamente"
+    "Analysis started automatically": "El análisis se inició automáticamente",
+    "{{platform}} {{architecture}} is supported.": "Se admite {{platform}} {{architecture}}.",
+    "Automatic setup uses an app-managed runtime and does not require administrator access.": "La configuración automática usa un entorno de ejecución gestionado por la aplicación y no requiere permisos de administrador.",
+    "Open Science can write to its private data folder.": "Open Science puede escribir en su carpeta privada de datos.",
+    "The operating-system credential vault is available.": "El almacén de credenciales del sistema operativo está disponible.",
+    "No download is needed because {{runtime}} is already installed.": "No es necesario descargar nada porque {{runtime}} ya está instalado.",
+    "{{platform}} {{architecture}} is supported — the baseline build will be installed.": "Se admite {{platform}} {{architecture}}; se instalará la versión de base.",
+    "This CPU lacks AVX2, so automatic setup installs the app-managed baseline runtime. No administrator access is required.": "Esta CPU no admite AVX2, por lo que la configuración automática instala el entorno de ejecución de base gestionado por la aplicación. No se requieren permisos de administrador.",
+    "{{platform}} {{architecture}} can use the detected {{runtime}} runtime.": "{{platform}} {{architecture}} puede usar el entorno de ejecución {{runtime}} detectado.",
+    "{{platform}} {{architecture}} has no automatic installer package.": "No hay ningún paquete de instalación automática para {{platform}} {{architecture}}.",
+    "Open Science cannot write to its private data folder.": "Open Science no puede escribir en su carpeta privada de datos.",
+    "The operating-system credential vault is unavailable.": "El almacén de credenciales del sistema operativo no está disponible.",
+    "Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.": "Desbloquee o autorice el llavero del sistema antes de guardar claves API. Los entornos de ejecución que no requieren claves pueden continuar con la configuración.",
+    "{{registry}} is the fastest reachable source.": "{{registry}} es la fuente accesible más rápida.",
+    "Measured {{latencyMs}} ms. The other trusted source remains available as an automatic fallback.": "Latencia medida: {{latencyMs}} ms. La otra fuente de confianza sigue disponible como alternativa automática.",
+    "Neither the official registry nor the China-friendly mirror is reachable.": "No se puede acceder ni al registro oficial ni al mirror optimizado para China.",
+    "Check the network, proxy, VPN, or firewall, then run the check again.": "Compruebe la red, el proxy, la VPN o el firewall y vuelva a ejecutar la comprobación.",
+    "official npm registry": "El registro oficial de npm",
+    "China-friendly npmmirror": "El mirror de npmmirror optimizado para China"
   }
 }

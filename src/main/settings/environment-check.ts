@@ -165,7 +165,12 @@ const runEnvironmentCheck = async ({
             : `${platformLabel(platform)} ${architecture} is supported.`,
           detail: opencodeBaselineNote
             ? 'This CPU lacks AVX2, so automatic setup installs the app-managed baseline runtime. No administrator access is required.'
-            : 'Automatic setup uses an app-managed runtime and does not require administrator access.'
+            : 'Automatic setup uses an app-managed runtime and does not require administrator access.',
+          presentation: {
+            kind: opencodeBaselineNote ? 'system-baseline-supported' : 'system-supported',
+            platform: platformLabel(platform),
+            architecture
+          }
         }
       } catch (error) {
         // An already-runnable runtime can still be used even if this architecture has no managed
@@ -180,7 +185,19 @@ const runEnvironmentCheck = async ({
           detail:
             error instanceof Error
               ? error.message
-              : 'Install a compatible agent runtime, then choose Check again.'
+              : 'Install a compatible agent runtime, then choose Check again.',
+          presentation: selectedRuntime.found
+            ? {
+                kind: 'system-detected-runtime',
+                platform: platformLabel(platform),
+                architecture,
+                runtime: selectedLabel
+              }
+            : {
+                kind: 'system-no-installer',
+                platform: platformLabel(platform),
+                architecture
+              }
         }
       }
     }),
@@ -190,7 +207,8 @@ const runEnvironmentCheck = async ({
         label: 'App storage permission',
         status: 'passed',
         summary: 'Open Science can write to its private data folder.',
-        detail: storageRoot
+        detail: storageRoot,
+        presentation: { kind: 'storage-writable' }
       }))
       .catch<EnvironmentCheckItem>((error) => ({
         id: 'storage',
@@ -200,7 +218,8 @@ const runEnvironmentCheck = async ({
         detail:
           error instanceof Error
             ? `${storageRoot} — ${error.message}`
-            : `${storageRoot} — grant write access, then check again.`
+            : `${storageRoot} — grant write access, then check again.`,
+        presentation: { kind: 'storage-unwritable' }
       })),
     findPython().catch(() => undefined)
   ])
@@ -213,7 +232,8 @@ const runEnvironmentCheck = async ({
       id: 'install-network',
       label: 'Installation network',
       status: 'passed',
-      summary: `No download is needed because ${selectedLabel} is already installed.`
+      summary: `No download is needed because ${selectedLabel} is already installed.`,
+      presentation: { kind: 'install-network-runtime-present', runtime: selectedLabel }
     }
   } else {
     const registryResults = await Promise.all([
@@ -234,14 +254,20 @@ const runEnvironmentCheck = async ({
           label: 'Installation network',
           status: 'passed',
           summary: `${REGISTRY_LABELS[recommendedRegistry]} is the fastest reachable source.`,
-          detail: `Measured ${reachable[0].latencyMs} ms. The other trusted source remains available as an automatic fallback.`
+          detail: `Measured ${reachable[0].latencyMs} ms. The other trusted source remains available as an automatic fallback.`,
+          presentation: {
+            kind: 'install-network-registry-available',
+            registry: recommendedRegistry,
+            latencyMs: reachable[0].latencyMs
+          }
         }
       : {
           id: 'install-network',
           label: 'Installation network',
           status: 'failed',
           summary: 'Neither the official registry nor the China-friendly mirror is reachable.',
-          detail: 'Check the network, proxy, VPN, or firewall, then run the check again.'
+          detail: 'Check the network, proxy, VPN, or firewall, then run the check again.',
+          presentation: { kind: 'install-network-unreachable' }
         }
   }
 
@@ -250,7 +276,8 @@ const runEnvironmentCheck = async ({
         id: 'secure-storage',
         label: 'Secure credential storage',
         status: 'passed',
-        summary: 'The operating-system credential vault is available.'
+        summary: 'The operating-system credential vault is available.',
+        presentation: { kind: 'secure-storage-available' }
       }
     : {
         id: 'secure-storage',
@@ -258,7 +285,8 @@ const runEnvironmentCheck = async ({
         status: 'warning',
         summary: 'The operating-system credential vault is unavailable.',
         detail:
-          'Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.'
+          'Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.',
+        presentation: { kind: 'secure-storage-unavailable' }
       }
 
   // Notebooks run in an app-managed Python environment (provisioned on demand), so a system Python 3

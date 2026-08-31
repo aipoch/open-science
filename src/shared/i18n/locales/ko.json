@@ -3856,6 +3856,24 @@
     "Remote job recovery needs attention": "원격 작업 복구를 확인해야 합니다",
     "Open Science could not check saved remote jobs. Retry to restore pending result analysis.": "Open Science가 저장된 원격 작업을 확인하지 못했습니다. 다시 시도하여 대기 중인 결과 분석을 복구하세요.",
     "Remote job completed": "원격 작업 완료",
-    "Analysis started automatically": "분석이 자동으로 시작되었습니다"
+    "Analysis started automatically": "분석이 자동으로 시작되었습니다",
+    "{{platform}} {{architecture}} is supported.": "{{platform}} {{architecture}} 환경이 지원됩니다.",
+    "Automatic setup uses an app-managed runtime and does not require administrator access.": "자동 설정은 앱에서 관리하는 런타임을 사용하므로 관리자 권한이 필요하지 않습니다.",
+    "Open Science can write to its private data folder.": "Open Science에서 전용 데이터 폴더에 쓸 수 있습니다.",
+    "The operating-system credential vault is available.": "운영 체제 자격 증명 보관소를 사용할 수 있습니다.",
+    "No download is needed because {{runtime}} is already installed.": "{{runtime}} 설치가 확인되어 다운로드가 필요하지 않습니다.",
+    "{{platform}} {{architecture}} is supported — the baseline build will be installed.": "{{platform}} {{architecture}} 환경을 지원하며 베이스라인 빌드가 설치됩니다.",
+    "This CPU lacks AVX2, so automatic setup installs the app-managed baseline runtime. No administrator access is required.": "이 CPU는 AVX2를 지원하지 않으므로 자동 설정에서 앱이 관리하는 베이스라인 런타임을 설치합니다. 관리자 권한은 필요하지 않습니다.",
+    "{{platform}} {{architecture}} can use the detected {{runtime}} runtime.": "{{platform}} {{architecture}} 환경에서는 감지된 {{runtime}} 런타임을 사용할 수 있습니다.",
+    "{{platform}} {{architecture}} has no automatic installer package.": "{{platform}} {{architecture}}용 자동 설치 패키지가 없습니다.",
+    "Open Science cannot write to its private data folder.": "Open Science에서 전용 데이터 폴더에 쓸 수 없습니다.",
+    "The operating-system credential vault is unavailable.": "운영 체제 자격 증명 보관소를 사용할 수 없습니다.",
+    "Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.": "API 키를 저장하기 전에 시스템 키체인의 잠금을 해제하거나 접근을 승인하세요. 키가 필요 없는 런타임은 설정을 계속할 수 있습니다.",
+    "{{registry}} is the fastest reachable source.": "{{registry}} 소스의 연결 속도가 가장 빠릅니다.",
+    "Measured {{latencyMs}} ms. The other trusted source remains available as an automatic fallback.": "측정값은 {{latencyMs}}ms입니다. 신뢰할 수 있는 다른 소스도 자동 대체 소스로 계속 사용할 수 있습니다.",
+    "Neither the official registry nor the China-friendly mirror is reachable.": "공식 레지스트리와 중국 환경용 미러에 모두 연결할 수 없습니다.",
+    "Check the network, proxy, VPN, or firewall, then run the check again.": "네트워크, 프록시, VPN 또는 방화벽을 확인한 후 다시 검사하세요.",
+    "official npm registry": "공식 npm 레지스트리",
+    "China-friendly npmmirror": "중국 환경용 npmmirror"
   }
 }

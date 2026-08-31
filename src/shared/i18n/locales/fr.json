@@ -4168,6 +4168,24 @@
     "Remote job recovery needs attention": "La récupération des tâches distantes nécessite votre attention",
     "Open Science could not check saved remote jobs. Retry to restore pending result analysis.": "Open Science n’a pas pu vérifier les tâches distantes enregistrées. Réessayez pour restaurer l’analyse des résultats en attente.",
     "Remote job completed": "Tâche distante terminée",
-    "Analysis started automatically": "L’analyse a démarré automatiquement"
+    "Analysis started automatically": "L’analyse a démarré automatiquement",
+    "{{platform}} {{architecture}} is supported.": "{{platform}} {{architecture}} est pris en charge.",
+    "Automatic setup uses an app-managed runtime and does not require administrator access.": "La configuration automatique utilise un environnement d’exécution géré par l’application et ne nécessite aucun droit d’administrateur.",
+    "Open Science can write to its private data folder.": "Open Science peut écrire dans son dossier de données privé.",
+    "The operating-system credential vault is available.": "Le coffre d’identifiants du système d’exploitation est disponible.",
+    "No download is needed because {{runtime}} is already installed.": "Aucun téléchargement n’est nécessaire, car {{runtime}} est déjà installé.",
+    "{{platform}} {{architecture}} is supported — the baseline build will be installed.": "{{platform}} {{architecture}} est pris en charge\u00a0; la version de base sera installée.",
+    "This CPU lacks AVX2, so automatic setup installs the app-managed baseline runtime. No administrator access is required.": "Ce processeur ne prend pas en charge AVX2. La configuration automatique installe donc l’environnement d’exécution de base géré par l’application, sans nécessiter de droits d’administrateur.",
+    "{{platform}} {{architecture}} can use the detected {{runtime}} runtime.": "{{platform}} {{architecture}} peut utiliser l’environnement d’exécution {{runtime}} détecté.",
+    "{{platform}} {{architecture}} has no automatic installer package.": "Aucun paquet d’installation automatique n’est disponible pour {{platform}} {{architecture}}.",
+    "Open Science cannot write to its private data folder.": "Open Science ne peut pas écrire dans son dossier de données privé.",
+    "The operating-system credential vault is unavailable.": "Le coffre d’identifiants du système d’exploitation n’est pas disponible.",
+    "Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.": "Déverrouillez ou autorisez le trousseau système avant d’enregistrer des clés API. Les environnements d’exécution ne nécessitant pas de clé peuvent poursuivre la configuration.",
+    "{{registry}} is the fastest reachable source.": "{{registry}} est la source accessible la plus rapide.",
+    "Measured {{latencyMs}} ms. The other trusted source remains available as an automatic fallback.": "Temps mesuré\u00a0: {{latencyMs}} ms. L’autre source de confiance reste disponible comme solution de secours automatique.",
+    "Neither the official registry nor the China-friendly mirror is reachable.": "Ni le registre officiel ni le miroir adapté à la Chine ne sont accessibles.",
+    "Check the network, proxy, VPN, or firewall, then run the check again.": "Vérifiez le réseau, le proxy, le VPN ou le pare-feu, puis relancez la vérification.",
+    "official npm registry": "Le registre npm officiel",
+    "China-friendly npmmirror": "Le miroir npmmirror adapté à la Chine"
   }
 }

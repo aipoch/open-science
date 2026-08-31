@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
+import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { EnvironmentStep } from './EnvironmentStep'
 import {
@@ -24,11 +25,12 @@ beforeEach(() => {
   root = createRoot(container)
 })
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
+  await i18next.changeLanguage('en')
 })
 
 const renderStep = async (onContinue: () => void = vi.fn()): Promise<void> => {
@@ -43,6 +45,172 @@ const continueButton = (): HTMLButtonElement | undefined =>
   ) as HTMLButtonElement | undefined
 
 describe('EnvironmentStep', () => {
+  it('localizes completed host checks instead of rendering IPC English', async () => {
+    const completedEnvironment = {
+      ...environment(true),
+      platform: 'darwin',
+      architecture: 'arm64',
+      checks: [
+        {
+          id: 'system',
+          label: 'System compatibility',
+          status: 'passed',
+          summary: 'macOS arm64 is supported.',
+          detail:
+            'Automatic setup uses an app-managed runtime and does not require administrator access.',
+          presentation: {
+            kind: 'system-supported',
+            platform: 'macOS',
+            architecture: 'arm64'
+          }
+        },
+        {
+          id: 'storage',
+          label: 'App storage permission',
+          status: 'passed',
+          summary: 'Open Science can write to its private data folder.',
+          detail: '/tmp/de',
+          presentation: { kind: 'storage-writable' }
+        },
+        {
+          id: 'secure-storage',
+          label: 'Secure credential storage',
+          status: 'passed',
+          summary: 'The operating-system credential vault is available.',
+          presentation: { kind: 'secure-storage-available' }
+        },
+        {
+          id: 'install-network',
+          label: 'Installation network',
+          status: 'passed',
+          summary: 'No download is needed because Claude Code is already installed.',
+          presentation: {
+            kind: 'install-network-runtime-present',
+            runtime: 'Claude Code'
+          }
+        }
+      ]
+    } as EnvironmentCheckResult
+    useSettingsStore.setState({ environmentCheck: completedEnvironment })
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+
+    await renderStep()
+
+    expect(container.textContent).toContain('系统兼容性')
+    expect(container.textContent).toContain('支持 macOS arm64。')
+    expect(container.textContent).toContain('自动设置使用由应用管理的运行时，无需管理员权限。')
+    expect(container.textContent).toContain('应用存储权限')
+    expect(container.textContent).toContain('Open Science 可以写入其专用数据文件夹。')
+    expect(container.textContent).toContain('凭据安全存储')
+    expect(container.textContent).toContain('操作系统凭据库可用。')
+    expect(container.textContent).toContain('安装所需网络')
+    expect(container.textContent).toContain('Claude Code 已安装，无需下载。')
+    expect(container.textContent).not.toContain('System compatibility')
+    expect(container.textContent).not.toContain('Automatic setup uses an app-managed runtime')
+  })
+
+  it('localizes German host warnings and failures while preserving diagnostics', async () => {
+    const completedEnvironment = {
+      ...environment(false),
+      platform: 'linux',
+      architecture: 'x64',
+      checks: [
+        {
+          id: 'system',
+          label: 'System compatibility',
+          status: 'warning',
+          summary: 'Linux x64 can use the detected Claude Code runtime.',
+          detail: 'Unsupported platform for managed install',
+          presentation: {
+            kind: 'system-detected-runtime',
+            platform: 'Linux',
+            architecture: 'x64',
+            runtime: 'Claude Code'
+          }
+        },
+        {
+          id: 'storage',
+          label: 'App storage permission',
+          status: 'failed',
+          summary: 'Open Science cannot write to its private data folder.',
+          detail: '/locked — EACCES',
+          presentation: { kind: 'storage-unwritable' }
+        },
+        {
+          id: 'secure-storage',
+          label: 'Secure credential storage',
+          status: 'warning',
+          summary: 'The operating-system credential vault is unavailable.',
+          detail:
+            'Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.',
+          presentation: { kind: 'secure-storage-unavailable' }
+        },
+        {
+          id: 'install-network',
+          label: 'Installation network',
+          status: 'failed',
+          summary: 'Neither the official registry nor the China-friendly mirror is reachable.',
+          detail: 'Check the network, proxy, VPN, or firewall, then run the check again.',
+          presentation: { kind: 'install-network-unreachable' }
+        }
+      ]
+    } as EnvironmentCheckResult
+    useSettingsStore.setState({ environmentCheck: completedEnvironment })
+    await act(async () => i18next.changeLanguage('de'))
+
+    await renderStep()
+
+    expect(container.textContent).toContain(
+      'Linux x64 kann die erkannte Laufzeit Claude Code verwenden.'
+    )
+    expect(container.textContent).toContain('Unsupported platform for managed install')
+    expect(container.textContent).toContain(
+      'Open Science kann nicht in seinen privaten Datenordner schreiben.'
+    )
+    expect(container.textContent).toContain('/locked — EACCES')
+    expect(container.textContent).toContain(
+      'Der Anmeldeinformationsspeicher des Betriebssystems ist nicht verfügbar.'
+    )
+    expect(container.textContent).toContain(
+      'Weder die offizielle Registry noch der für China optimierte Mirror ist erreichbar.'
+    )
+    expect(container.textContent).not.toContain('Open Science cannot write')
+    expect(container.textContent).not.toContain('Neither the official registry')
+  })
+
+  it('localizes registry display names returned by the host check', async () => {
+    const completedEnvironment = {
+      ...environment(false),
+      checks: [
+        {
+          id: 'install-network',
+          label: 'Installation network',
+          status: 'passed',
+          summary: 'China-friendly npmmirror is the fastest reachable source.',
+          detail:
+            'Measured 42 ms. The other trusted source remains available as an automatic fallback.',
+          presentation: {
+            kind: 'install-network-registry-available',
+            registry: 'npmmirror',
+            latencyMs: 42
+          }
+        }
+      ]
+    } as EnvironmentCheckResult
+    useSettingsStore.setState({ environmentCheck: completedEnvironment })
+    await act(async () => i18next.changeLanguage('de'))
+
+    await renderStep()
+
+    expect(container.textContent).toContain(
+      'Das für China optimierte npmmirror ist die am schnellsten erreichbare Bezugsquelle.'
+    )
+    expect(container.textContent).toContain(
+      'Gemessen: 42 ms. Die andere vertrauenswürdige Quelle bleibt als automatischer Fallback verfügbar.'
+    )
+    expect(container.textContent).not.toContain('China-friendly')
+  })
+
   it('shows only the host check rows, not the agent or notebook rows', async () => {
     useSettingsStore.setState({
       environmentCheck: {
