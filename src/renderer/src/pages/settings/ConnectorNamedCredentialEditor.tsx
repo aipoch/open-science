@@ -56,7 +56,7 @@ const nameFromLine = (line: string, kind: NamedCredentialKind): string => {
 }
 
 const normalizeNameInput = (value: string, kind: NamedCredentialKind): string =>
-  value.replace(kind === 'environment' ? /[=\r\n]/gu : /[:\r\n]/gu, '')
+  value.replace(kind === 'environment' ? /[=\r\n]/gu : /[:\r\n]/gu, '').trim()
 
 const lineForName = (name: string, kind: NamedCredentialKind): string =>
   kind === 'environment' ? `${name}=` : `${name}: `
@@ -100,11 +100,11 @@ function ConnectorNamedCredentialEditor({
     sourceLines.length > 0
       ? sourceLines
       : [{ index: 0, line: '', name: '', virtual: true as const }]
+  const separator = kind === 'environment' ? '=' : ':'
   const displayedInvalidLines =
     mode === 'fields'
-      ? parsed.invalidLines.filter((line) => nameFromLine(text.split('\n')[line - 1] ?? '', kind))
+      ? parsed.invalidLines.filter((line) => text.split('\n')[line - 1]?.trim() !== separator)
       : parsed.invalidLines
-  const separator = kind === 'environment' ? '=' : ':'
   const editorLabel =
     kind === 'environment' ? t('Environment variable editor mode') : t('Header editor mode')
   const nameLabel = kind === 'environment' ? t('Variable name') : t('Header name')
@@ -213,7 +213,7 @@ function ConnectorNamedCredentialEditor({
                   {separator}
                 </span>
                 <Select
-                  value={credentialId}
+                  value={credentialId ?? ''}
                   disabled={disabled || !row.name}
                   onValueChange={(credentialIdValue) => {
                     if (credentialIdValue === NEW_CREDENTIAL_VALUE) {

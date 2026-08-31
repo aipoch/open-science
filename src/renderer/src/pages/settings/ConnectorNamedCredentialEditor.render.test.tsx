@@ -153,6 +153,89 @@ describe('ConnectorNamedCredentialEditor', () => {
     expect(onCreateCredential).toHaveBeenCalledWith('Authorization')
   })
 
+  it('canonicalizes field names before moving credential bindings', () => {
+    const onTextChange = vi.fn()
+    const onNameChange = vi.fn()
+    act(() => {
+      root.render(
+        <ConnectorNamedCredentialEditor
+          kind="environment"
+          text="OLD_TOKEN="
+          onTextChange={onTextChange}
+          credentials={[credential]}
+          credentialIdForName={() => credential.id}
+          onCredentialChange={() => undefined}
+          onNameChange={onNameChange}
+          onRemoveName={() => undefined}
+          onCreateCredential={() => undefined}
+        />
+      )
+    })
+
+    setInputValue(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Variable name"]')!,
+      ' API_TOKEN '
+    )
+
+    expect(onTextChange).toHaveBeenCalledWith('API_TOKEN=')
+    expect(onNameChange).toHaveBeenCalledWith('OLD_TOKEN', 'API_TOKEN')
+  })
+
+  it('clears a reused selector when the remaining row is unbound', () => {
+    const Harness = (): React.JSX.Element => {
+      const [text, setText] = useState('FIRST=\nSECOND=')
+      return (
+        <ConnectorNamedCredentialEditor
+          kind="environment"
+          text={text}
+          onTextChange={setText}
+          credentials={[credential]}
+          credentialIdForName={(name) => (name === 'FIRST' ? credential.id : undefined)}
+          onCredentialChange={() => undefined}
+          onNameChange={() => undefined}
+          onRemoveName={() => undefined}
+          onCreateCredential={() => undefined}
+        />
+      )
+    }
+    act(() => root.render(<Harness />))
+
+    const removeFirst = document.body.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Remove variable"]'
+    )[0]
+    act(() => removeFirst?.click())
+
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Credential for SECOND"]')
+        ?.textContent
+    ).toContain('Select credential')
+  })
+
+  it('explains malformed empty-name lines in fields mode', () => {
+    act(() => {
+      root.render(
+        <ConnectorNamedCredentialEditor
+          kind="environment"
+          text="=secret"
+          onTextChange={() => undefined}
+          credentials={[credential]}
+          credentialIdForName={() => undefined}
+          onCredentialChange={() => undefined}
+          onNameChange={() => undefined}
+          onRemoveName={() => undefined}
+          onCreateCredential={() => undefined}
+        />
+      )
+    })
+
+    expect(document.body.textContent).toContain('Line 1: use KEY=.')
+    expect(
+      document.body
+        .querySelector<HTMLInputElement>('[aria-label="Variable name"]')
+        ?.getAttribute('aria-invalid')
+    ).toBe('true')
+  })
+
   it('keeps a newly added blank field neutral while it is being named', () => {
     const Harness = (): React.JSX.Element => {
       const [text, setText] = useState('API_TOKEN=')
