@@ -27,6 +27,7 @@ type WorkspaceSidebarContainerProps = Omit<
 const WorkspaceSidebarContainer = ({
   projectId,
   isProjectArchived,
+  onMobileClose,
   ...sidebarProps
 }: WorkspaceSidebarContainerProps): React.JSX.Element => {
   const previewLoadsRef = useRef(new Map<string, Promise<void>>())
@@ -54,8 +55,11 @@ const WorkspaceSidebarContainer = ({
   )
   const openProject = useNavigationStore((state) => state.openProject)
   const handleOpenProject = useCallback(
-    (targetProjectId: string): void => openProject(targetProjectId, 'user'),
-    [openProject]
+    (targetProjectId: string): void => {
+      onMobileClose?.()
+      openProject(targetProjectId, 'user')
+    },
+    [onMobileClose, openProject]
   )
   const loadPreviewSession = useCallback(
     (sessionId: string): Promise<void> | void => {
@@ -86,6 +90,7 @@ const WorkspaceSidebarContainer = ({
   return (
     <WorkspaceSidebar
       {...sidebarProps}
+      onMobileClose={onMobileClose}
       starNudgeKey={projectId}
       sessions={sessions}
       credentialPendingSessionIds={credentialPendingSessionIds}

@@ -115,9 +115,12 @@ test('switches projects from the Workspace project menu and expands remaining pr
   expect(focusedPresentation.boxShadow).not.toBe('none')
   expect(focusedPresentation.color).toBe(showRemainingPresentation.newProjectColor)
 
-  await showRemaining.click()
+  await page.keyboard.press('Enter')
   await expect(menu).toBeVisible()
   await expect(projectItems).toHaveCount(15)
+  await expect(menu.locator(':focus')).toHaveCount(1)
+  await page.keyboard.press('ArrowDown')
+  await expect(menu.locator('[data-project-id]:focus')).toHaveCount(1)
 
   const layout = await menu.evaluate((element) => {
     const menuRect = element.getBoundingClientRect()
@@ -150,4 +153,30 @@ test('switches projects from the Workspace project menu and expands remaining pr
 
   await page.locator('button[title="Project 1"]').click()
   await expect(menu.locator('[data-project-id]')).toHaveCount(5)
+})
+
+test('closes mobile navigation when switching projects', async ({ app }) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+
+  await createProject(page, 'Project 1', 'Description 1', false)
+  await createProject(page, 'Project 2', 'Description 2', true)
+
+  await page.setViewportSize({ width: 700, height: 700 })
+  await page.getByRole('button', { name: 'Open navigation' }).click()
+
+  const navigation = page.locator('aside[aria-label="Workspace navigation"]')
+  await expect(navigation).toHaveAttribute('data-mobile-open', 'true')
+  await navigation.locator('button[title="Project 2"]').click()
+  await page
+    .locator('[aria-label="Project actions"]')
+    .locator('[data-project-id]')
+    .filter({ hasText: /^Project 1Description 1$/ })
+    .click()
+
+  await expect(navigation).toHaveAttribute('data-mobile-open', 'false')
+  await expect(page.getByRole('button', { name: 'Open navigation' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Open navigation' }).click()
+  await expect(navigation.locator('button[title="Project 1"]')).toBeVisible()
 })

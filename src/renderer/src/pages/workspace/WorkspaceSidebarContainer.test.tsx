@@ -160,7 +160,7 @@ describe('WorkspaceSidebarContainer Session previews', () => {
 })
 
 describe('WorkspaceSidebarContainer Project switching', () => {
-  it('passes only other active projects in store order and opens the selected project', async () => {
+  it('passes only other active projects in store order and opens one without a mobile close callback', async () => {
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [
@@ -198,6 +198,46 @@ describe('WorkspaceSidebarContainer Project switching', () => {
       await act(async () => projectButtons[0]?.click())
 
       expect(useNavigationStore.getState().activeProjectId).toBe('project-new')
+      expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
+  it('closes mobile navigation before opening the selected project', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [
+        createProject({ id: 'project-1', name: 'Current' }),
+        createProject({ id: 'project-2', name: 'Target' })
+      ],
+      isLoaded: true
+    })
+    const onMobileClose = vi.fn(() => {
+      expect(useNavigationStore.getState().activeProjectId).toBe('project-1')
+    })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <WorkspaceSidebarContainer
+            {...({
+              projectId: 'project-1',
+              isProjectArchived: false
+            } as ComponentProps<typeof WorkspaceSidebarContainer>)}
+            onMobileClose={onMobileClose}
+          />
+        )
+      })
+
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-project-id="project-2"]')?.click()
+      )
+
+      expect(onMobileClose).toHaveBeenCalledOnce()
+      expect(useNavigationStore.getState().activeProjectId).toBe('project-2')
       expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
     } finally {
       act(() => root.unmount())
