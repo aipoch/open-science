@@ -6,11 +6,14 @@ import {
 } from './identity-catalog'
 
 describe('permission identity catalog', () => {
-  it('contains the closed 36-identity v1 bootstrap inventory', () => {
-    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(36)
+  it('contains the closed 37-identity v1 bootstrap inventory', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(37)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual([])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.customize_mutation).toHaveLength(8)
-    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(19)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(20)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
+      'mcp:open-science-notebook/request_network_access'
+    )
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.execution).toHaveLength(2)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.file_operation).toHaveLength(6)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.skill_operation).toHaveLength(1)

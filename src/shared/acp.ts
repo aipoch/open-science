@@ -645,6 +645,9 @@ export type AcpPermissionRequest = {
   sessionId: string
   toolCallId: string
   title: string
+  // Main-process provenance for application-owned approvals. Provider payloads are rebuilt by the
+  // permission broker and cannot set this projection. It is transient and never persisted.
+  appOwned?: true
   // Renderer lifecycle hint only. Main sets this after the request authority reaches Session
   // storage; restored authority is still reloaded and validated independently before use.
   durable?: true

@@ -17,6 +17,7 @@ import {
   resolveLoopScriptPaths
 } from './runtime-service'
 import { effectiveMirrorAsync, resetAutoMirrorCache } from './mirror-probe'
+import { getNotebookInputRoot } from './input-staging'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import { createRootNotebookLane } from './lane-identity'
 import {
@@ -2965,7 +2966,12 @@ describe('notebook runtime service', () => {
         command: 'opaque command',
         cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
         handoffDir: join(root, 'notebooks', 'default-project', 'session-1', 'handoff'),
+        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+        inputRoot: getNotebookInputRoot(root, 'default-project', 'session-1'),
+        projectId: 'default-project',
+        protectedDirs: [join(root, 'claude')],
         runtimeRoot: getRuntimeRoot(root),
+        sessionId: 'session-1',
         timeoutMs: 321,
         signal: expect.any(AbortSignal)
       })
@@ -6393,6 +6399,7 @@ describe('notebook runtime service', () => {
     it('resolves the effective mirror from the injected getPackageMirror + locale and forwards it as installPackages deps', async () => {
       const root = await createStorageRoot()
       const calls: Array<[InstallRequestForTest, Partial<InstallDepsForTest> | undefined]> = []
+      const processSandbox = { wrap: vi.fn() }
       const scriptedResult: InstallResultForTest = { ok: true, needsRestart: false, log: 'done' }
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -6414,6 +6421,7 @@ describe('notebook runtime service', () => {
         }),
         getPackageMirror: () => ({ pypiIndex: 'https://corp.example/simple' }),
         locale: 'zh-CN',
+        processSandbox,
         installPackagesImpl: async (request, deps) => {
           calls.push([request, deps])
           return scriptedResult
@@ -6448,6 +6456,7 @@ describe('notebook runtime service', () => {
       })
       expect(calls[0][1]?.condaChannel).toBeUndefined()
       expect(calls[0][1]?.cranMirror).toBeUndefined()
+      expect(calls[0][1]?.spawn).toBeTypeOf('function')
     })
 
     it('resolves the mirror before returning a package admission refusal', async () => {

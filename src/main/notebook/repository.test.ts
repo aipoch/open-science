@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookRunRepository, getNotebookSessionRoot } from './repository'
 import { createFrameNotebookLane, createRootNotebookLane } from './lane-identity'
+import { getNotebookInputRoot } from './input-staging'
 
 let storageRoot: string | undefined
 
@@ -663,7 +664,7 @@ describe('notebook run repository', () => {
     })
   })
 
-  it('creates the handoff and outputs cross-kernel workspace dirs alongside the other session dirs', async () => {
+  it('creates writable workspace dirs and the separate immutable-input sandbox root', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
     const sessionRoot = join(root, 'notebooks', 'default-project', 'session-1')
@@ -677,6 +678,23 @@ describe('notebook run repository', () => {
 
     expect((await stat(join(sessionRoot, 'handoff'))).isDirectory()).toBe(true)
     expect((await stat(join(sessionRoot, 'outputs'))).isDirectory()).toBe(true)
+    expect(
+      (await stat(getNotebookInputRoot(root, 'default-project', 'session-1'))).isDirectory()
+    ).toBe(true)
+
+    await rm(getNotebookInputRoot(root, 'default-project', 'session-1'), {
+      recursive: true,
+      force: true
+    })
+    await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      workspaceCwd: '/workspace'
+    })
+    expect(
+      (await stat(getNotebookInputRoot(root, 'default-project', 'session-1'))).isDirectory()
+    ).toBe(true)
   })
 
   it('persists an updated kernel lifecycle status without touching run history', async () => {

@@ -35,7 +35,7 @@ import {
 
 export { parseProbeOutput } from './compute-host-profile-owner'
 export type { ProbeScriptOutput } from './compute-host-profile-owner'
-export { resolveInputs } from './compute-job-workflow-owner'
+export { createComputeArtifactResolver, resolveInputs } from './compute-job-workflow-owner'
 export type {
   ArtifactResolver,
   ComputeJobReadScope,

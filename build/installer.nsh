@@ -1,4 +1,21 @@
+!macro customInstallMode
+  # Notebook AppContainer profiles are per-user durable resources. A machine-wide installation
+  # cannot safely create, identify, and remove one profile for every Windows account, so keep the
+  # assisted installer and uninstaller bound to the current user.
+  StrCpy $isForceCurrentInstall "1"
+!macroend
+
 !macro customUnInstall
+  # Updates run the old uninstaller with isUpdated set and must retain the durable profile. Only a
+  # real product uninstall removes the AppContainer resources.
+  ${ifNot} ${isUpdated}
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
+    Pop $0
+    StrCmp $0 "0" notebookSandboxCleanupComplete
+    MessageBox MB_OK|MB_ICONSTOP "Open Science could not safely remove its owned Notebook isolation resources. The uninstall was stopped so the cleanup can be retried."
+    Abort
+    notebookSandboxCleanupComplete:
+  ${endif}
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-runtime-cache-uninstall.ps1"'
 !macroend
 
@@ -281,6 +298,8 @@ FunctionEnd
       nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
       Pop $R1
       nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM micromamba.exe`
+      Pop $R1
+      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "notebook-appcontainer-host.exe"`
       Pop $R1
     ${endif}
     ClearErrors

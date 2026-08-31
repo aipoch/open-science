@@ -283,6 +283,7 @@ import type {
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
+  SetNotebookNetworkRequest,
   SetAgentFrameworkRequest,
   SetConversationSkillImportEnabledRequest,
   SetNotificationsEnabledRequest,
@@ -362,6 +363,7 @@ import type {
 } from './settings'
 import type { PackageMirror } from './mirror'
 import type { NetworkProxySettings } from './network-proxy'
+import type { NotebookNetworkSettings, NotebookNetworkStatus } from './notebook-network'
 import type { NetworkInfo } from './network'
 import type {
   ActiveSessionInfo,
@@ -1851,6 +1853,21 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.setNetworkProxy': callable<
     (request: SetNetworkProxyRequest) => Promise<NetworkProxySettings>
   >()('settings', ['settings:set-network-proxy', LOCAL]),
+  'settings.setNotebookNetwork': callable<
+    (request: SetNotebookNetworkRequest) => Promise<NotebookNetworkSettings>
+  >()('settings', ['settings:set-notebook-network', LOCAL]),
+  'settings.getNotebookNetworkStatus': callable<() => Promise<NotebookNetworkStatus>>()(
+    'settings',
+    ['settings:get-notebook-network-status', LOCAL]
+  ),
+  'settings.installNotebookNetwork': callable<() => Promise<NotebookNetworkStatus>>()('settings', [
+    'settings:install-notebook-network',
+    LOCAL
+  ]),
+  'settings.removeNotebookNetwork': callable<() => Promise<NotebookNetworkStatus>>()('settings', [
+    'settings:remove-notebook-network',
+    LOCAL
+  ]),
   'settings.setNotificationsEnabled': callable<
     (request: SetNotificationsEnabledRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:set-notifications-enabled', LOCAL]),

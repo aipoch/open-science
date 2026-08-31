@@ -180,6 +180,7 @@ jobs:
             'cli_sdk',
             'i18n',
             'unit_macos',
+            'linux_runtime',
             'windows_runtime',
             'windows_path',
             'build',
@@ -194,6 +195,7 @@ jobs:
             'policy',
             'static',
             'unit',
+            'linux_runtime',
             'windows_core',
             'macos_e2e',
             'windows_e2e'
@@ -517,6 +519,50 @@ jobs:
           fi
           exit "$failed"
 
+  linux_runtime:
+    name: Linux Notebook isolation
+    needs: preflight
+    # The full-plan fallback covers the introducing PR, whose trusted base classifier does not yet
+    # know this bundle. Once the classifier is on main, only the dedicated bundle selects this job.
+    if: ${{ needs.preflight.result == 'success' && (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') || (fromJSON(needs.preflight.outputs.plan).mode == 'full' && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'linux_runtime'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install application dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Install Linux sandbox dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes apparmor-profiles apparmor-utils bubblewrap
+
+          apparmor_userns_restriction="$(
+            sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
+          )"
+          if [[ "$apparmor_userns_restriction" == "1" ]]; then
+            profile_source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+            test -r "$profile_source"
+            sudo install -m 0644 "$profile_source" /etc/apparmor.d/bwrap-userns-restrict
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          fi
+
+          bwrap --unshare-all --ro-bind / / -- /bin/true
+      - name: Test real Linux filesystem and network isolation
+        run: >-
+          npx vitest run --project process
+          packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
+          packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
+
   # The trusted base classifier for the introducing PR still selects this legacy bundle.
   # It performs no tests and can be deleted after this workflow lands on main.
   coverage_macos:
@@ -560,7 +606,7 @@ jobs:
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_core') }}
     runs-on: windows-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -573,6 +619,25 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Test Windows sandbox native source
+        id: windows_sandbox_source
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        continue-on-error: true
+        run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
+      - name: Build Windows sandbox native host
+        id: windows_sandbox_build
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        continue-on-error: true
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+      - name: Upload rebuilt Windows sandbox native host
+        if: ${{ steps.windows_sandbox_build.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-sandbox-host-x64
+          path: packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
+          retention-days: 5
+          if-no-files-found: error
       - name: Test Windows-specific behavior
         id: windows_runtime
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
@@ -600,6 +665,14 @@ jobs:
           src/main/notebook/runtime-service.test.ts
           --testNamePattern
           "kills a command that outlasts the timeout and returns a non-normal result"
+      - name: Test Windows AppContainer ownership and removal lifecycle
+        id: windows_sandbox
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && steps.windows_sandbox_source.outcome == 'success' && steps.windows_sandbox_build.outcome == 'success' }}
+        continue-on-error: true
+        shell: powershell
+        run: >-
+          packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1
+          -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
       - name: Test Windows path portability
         id: windows_path
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_path') }}
@@ -628,6 +701,9 @@ jobs:
         env:
           WINDOWS_PATH_OUTCOME: ${{ steps.windows_path.outcome }}
           WINDOWS_RUNTIME_OUTCOME: ${{ steps.windows_runtime.outcome }}
+          WINDOWS_SANDBOX_BUILD_OUTCOME: ${{ steps.windows_sandbox_build.outcome }}
+          WINDOWS_SANDBOX_OUTCOME: ${{ steps.windows_sandbox.outcome }}
+          WINDOWS_SANDBOX_SOURCE_OUTCOME: ${{ steps.windows_sandbox_source.outcome }}
           WINDOWS_SERVICE_TIMEOUT_OUTCOME: ${{ steps.windows_service_timeout.outcome }}
           WINDOWS_SHELL_OUTCOME: ${{ steps.windows_shell.outcome }}
         run: |
@@ -640,6 +716,9 @@ jobs:
             fi
           }
           check windows_runtime "$WINDOWS_RUNTIME_OUTCOME"
+          check windows_sandbox_source "$WINDOWS_SANDBOX_SOURCE_OUTCOME"
+          check windows_sandbox_build "$WINDOWS_SANDBOX_BUILD_OUTCOME"
+          check windows_sandbox "$WINDOWS_SANDBOX_OUTCOME"
           check windows_shell "$WINDOWS_SHELL_OUTCOME"
           check windows_service_timeout "$WINDOWS_SERVICE_TIMEOUT_OUTCOME"
           check windows_path "$WINDOWS_PATH_OUTCOME"
@@ -866,6 +945,7 @@ jobs:
       - policy
       - static
       - unit
+      - linux_runtime
       - coverage_macos
       - windows_core
       - macos_e2e
@@ -874,7 +954,8 @@ jobs:
     timeout-minutes: 3
     env:
       PR_GATE_EXECUTION_MODE: bundles
-      PR_GATE_NEEDS: ${{ toJSON(needs) }}
+      PR_GATE_NEEDS: >-
+        {"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"coverage_macos":{"result":"${{ needs.coverage_macos.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}
       PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
       PREFLIGHT_RESULT: ${{ needs.preflight.result }}
     steps:

@@ -4260,6 +4260,7 @@ describe('ProjectFilesView — granted local folders', () => {
     grantRoot = vi.fn().mockResolvedValue([grantedRoot])
     setGrantedRootAccess = vi.fn().mockResolvedValue([{ ...grantedRoot, access: 'rw' }])
     removeGrantedRoot = vi.fn().mockResolvedValue([])
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       previewResources: {
@@ -4426,6 +4427,25 @@ describe('ProjectFilesView — granted local folders', () => {
     await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
     expect(useGrantedFoldersStore.getState().roots).toEqual([])
+  })
+
+  it('keeps granted-root access unchanged when the kernel-stop confirmation is cancelled', async () => {
+    vi.mocked(window.confirm).mockReturnValue(false)
+    await renderFilesView()
+    await openFilterMenu()
+    await hoverElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
+
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
+      ).not.toBeNull()
+    })
+    await clickElement(
+      document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
+    )
+
+    expect(setGrantedRootAccess).not.toHaveBeenCalled()
+    expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('ro')
   })
 
   it('shows the failed access change and retries it from the toast', async () => {

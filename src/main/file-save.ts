@@ -25,7 +25,7 @@ import { toErrorMessage } from './error-message'
 
 type RegisterFileSaveHandlersOptions = {
   resolveManagedFilePath?: (
-    source: Extract<SaveManagedFileRequest, { path: string }>['source'],
+    source: 'local',
     request: {
       path: string
       projectId?: string
@@ -35,6 +35,7 @@ type RegisterFileSaveHandlersOptions = {
     }
   ) => Promise<ManagedFilePathResolution>
   openManagedFile?: (sourcePath: string) => Promise<ManagedFileHandle>
+  openNotebookInput?: (request: { path: string }) => Promise<ManagedFileHandle>
   openLatestManagedFile?: (
     source: 'artifact' | 'upload',
     request: { projectId: string; fileId: string }
@@ -508,8 +509,8 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       assertSaveManagedFileRequest(request)
       const versionedRequest =
         request.source === 'artifact' || request.source === 'upload' ? request : undefined
-      const pathRequest =
-        request.source === 'notebook-input' || request.source === 'local' ? request : undefined
+      const notebookInputRequest = request.source === 'notebook-input' ? request : undefined
+      const localRequest = request.source === 'local' ? request : undefined
       if (versionedRequest) {
         if (
           versionedRequest.versionId
@@ -518,24 +519,28 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         ) {
           throw new Error('Managed file Version lease is not configured.')
         }
-      } else if (!options.resolveManagedFilePath) {
+      } else if (
+        notebookInputRequest ? !options.openNotebookInput : !options.resolveManagedFilePath
+      ) {
         throw new Error('Managed file resolver is not configured.')
       }
 
-      const pathManagedFile = pathRequest
-        ? await (options.openManagedFile ?? openManagedFile)(
-            getManagedFilePath(
-              await options.resolveManagedFilePath!(pathRequest.source, { path: pathRequest.path })
+      const pathManagedFile = notebookInputRequest
+        ? await options.openNotebookInput!({ path: notebookInputRequest.path })
+        : localRequest
+          ? await (options.openManagedFile ?? openManagedFile)(
+              getManagedFilePath(
+                await options.resolveManagedFilePath!('local', { path: localRequest.path })
+              )
             )
-          )
-        : undefined
+          : undefined
       const requestedBaseName = basename(request.suggestedName.trim())
       const safeName =
         requestedBaseName && requestedBaseName !== '.' && requestedBaseName !== '..'
           ? requestedBaseName
           : versionedRequest
             ? versionedRequest.fileId
-            : basename(pathRequest!.path)
+            : basename((notebookInputRequest ?? localRequest)!.path)
       const dialogOptions = {
         defaultPath: join(app.getPath('downloads'), safeName),
         title: (options.translate ?? englishNativeTranslator)('Save file')

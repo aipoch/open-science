@@ -240,6 +240,7 @@ class ArtifactProvenanceRepository {
     const inputAuthority =
       options.inputAuthority ??
       new ImmutableInputAuthority({
+        storageRoot: options.storageRoot,
         managedFileVersions:
           options.managedFileVersions ??
           new ManagedFileVersionService({

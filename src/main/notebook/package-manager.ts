@@ -145,7 +145,11 @@ export type InstallSpawn = (
   // Invoked synchronously right before EACH spawn so the caller can (re)record the per-spawn intent. An
   // R install spawns twice (conda then CRAN on fallback), so each must re-arm rather than trust the
   // first spawn's PID. Throwing fails closed (nothing is spawned).
-  onBeforeSpawn?: () => void
+  onBeforeSpawn?: () => void,
+  // A sandbox wrapper replaces the original argv with its launcher argv. Preserve whether the
+  // underlying installer requested structured conda JSON so recovery evidence remains complete.
+  captureCondaJson?: boolean,
+  cwd?: string
 ) => Promise<SpawnResult>
 
 // condaChannel/pypiIndex/cranMirror are resolved PackageMirror values (see shared/mirror.ts);
@@ -958,10 +962,18 @@ const discardCondaJsonCapture = async (capture: CondaJsonCapture | undefined): P
 
 // Real spawn wrapper collecting stdout/stderr and the exit code; replaced by an injected spawn in tests.
 // Exported so its fail-closed spawn-intent / kill-on-record-failure branches are directly testable.
-export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBeforeSpawn) => {
+export const defaultSpawn: InstallSpawn = (
+  command,
+  args,
+  env,
+  onChild,
+  onBeforeSpawn,
+  captureCondaJson,
+  cwd
+) => {
   let condaJsonCapture: CondaJsonCapture | undefined
   try {
-    if (args.includes('--json')) condaJsonCapture = createCondaJsonCapture()
+    if (captureCondaJson ?? args.includes('--json')) condaJsonCapture = createCondaJsonCapture()
   } catch (error) {
     return Promise.resolve({
       code: 1,
@@ -985,7 +997,7 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
     }
     let child: ReturnType<typeof nodeSpawn>
     try {
-      child = nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env })
+      child = nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env, cwd })
     } catch (error) {
       void discardCondaJsonCapture(condaJsonCapture)
       resolve({
@@ -1146,8 +1158,9 @@ const resolveInstallMicromamba = (
   return deps.micromambaRunner ? deps.micromambaRunner.resolve() : resolveMicromamba()
 }
 
-// Installs packages into the global default environments from the trusted main process (spec §3.1/§8).
-// The kernel never installs; this is the only install entry point. Python picks up a newly-installed
+// Installs packages into the global default environments through the trusted manage_packages path
+// (spec §3.1/§8). Production injects the Notebook process boundary as `deps.spawn`; the kernel never
+// installs. Python picks up a newly-installed
 // package on its next import (sys.path rescan), so needsRestart stays false there. R is different: a
 // live R session that already attached a package or a dependency won't see the new install, and
 // compiled packages hold DLL/.so handles — so an R install/uninstall returns needsRestart:true and the

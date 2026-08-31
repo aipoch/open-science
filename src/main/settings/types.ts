@@ -17,6 +17,7 @@ import type {
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
+import type { NotebookNetworkSettings } from '../../shared/notebook-network'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
@@ -263,6 +264,8 @@ export type StoredSettings = {
   packageMirror?: PackageMirror
   // Application-wide proxy preference. Absent in historical documents means follow the system.
   networkProxy?: NetworkProxySettings
+  // Application-wide egress policy for Notebook REPL and Notebook Bash processes.
+  notebookNetwork?: NotebookNetworkSettings
   // Absolute path of the relocatable data root (artifacts/notebooks/runtime/uploads). Absent means
   // "use the config root" (default). Only written after a successful migration; a change needs a restart.
   dataRoot?: string

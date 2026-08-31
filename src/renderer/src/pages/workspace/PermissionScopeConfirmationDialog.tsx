@@ -22,6 +22,7 @@ type PermissionScopeConfirmation = {
   scope: BroadPermissionScope
   subject: string
   codeExecution: boolean
+  settingsTarget?: 'network'
 }
 
 type PermissionScopeConfirmationDialogProps = {
@@ -49,6 +50,9 @@ const PermissionScopeConfirmationDialog = ({
     : isProject
       ? t('Matching actions can run without another approval for every session in this project.')
       : t('Matching actions can run without another approval for every session in every project.')
+  const settingsTarget = retainedConfirmation?.settingsTarget
+    ? `${t('Settings')} → ${t('Network')} → ${t('Allowed domains')}`
+    : t('Settings → Permissions')
 
   return (
     <AlertDialog.Root
@@ -87,9 +91,7 @@ const PermissionScopeConfirmationDialog = ({
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
               {effect} {t('You can revoke it in')}{' '}
-              <strong className="font-semibold text-foreground">
-                {t('Settings → Permissions')}
-              </strong>
+              <strong className="font-semibold text-foreground">{settingsTarget}</strong>
             </AlertDialog.Description>
           </div>
           <div className={dialogFooterClassName}>

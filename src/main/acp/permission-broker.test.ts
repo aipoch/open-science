@@ -421,6 +421,50 @@ describe('ACP permission broker', () => {
     await expect(declined).resolves.toBe(false)
   })
 
+  it('returns custom app-owned decisions and cancels them with their command lifecycle', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const controller = new AbortController()
+
+    const selected = broker.requestAppPermission({
+      sessionId: 'session-network',
+      title: 'Connect to data.example.org?',
+      rawInput: {
+        notebookNetworkApproval: { hostname: 'data.example.org', port: 443, runtime: 'python' }
+      },
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+        {
+          optionId: 'always-allow',
+          name: 'Global',
+          kind: 'allow_always',
+          scope: 'global'
+        },
+        { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+      ],
+      signal: controller.signal
+    })
+    expect(emitted[0]).toMatchObject({
+      sessionId: 'session-network',
+      appOwned: true,
+      title: 'Connect to data.example.org?',
+      options: [{ optionId: 'allow-once' }, { optionId: 'always-allow' }, { optionId: 'deny' }]
+    })
+    await broker.respond({ requestId: emitted[0].requestId, optionId: 'always-allow' })
+    await expect(selected).resolves.toBe('always-allow')
+
+    const cancelled = broker.requestAppPermission({
+      sessionId: 'session-network',
+      title: 'Connect to other.example.org?',
+      rawInput: { notebookNetworkApproval: { hostname: 'other.example.org', runtime: 'bash' } },
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' }],
+      signal: controller.signal
+    })
+    controller.abort()
+    await expect(cancelled).resolves.toBeUndefined()
+    expect(broker.getPendingRequests()).toEqual([])
+  })
+
   it('re-evaluates pending tool requests after a live profile change without approving app actions', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))

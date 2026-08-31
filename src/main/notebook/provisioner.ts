@@ -64,6 +64,9 @@ import {
   type MicromambaRunnerDeps
 } from './windows-micromamba-runner'
 import { defaultOperationChildLiveness, readProcessStartToken } from './operation-recovery'
+import { sandboxedPackageSpawn } from './package-process-sandbox'
+import type { InstallRequest } from './package-manager'
+import type { NotebookProcessSandbox } from './process-sandbox'
 import {
   isChildUnconfirmedError,
   captureMicromamba,
@@ -181,7 +184,8 @@ export type ProvisionerDeps = {
     // Called synchronously right before each spawn so the caller can (re)record the per-spawn intent.
     onBeforeSpawn?: () => void,
     cache?: MicromambaCache,
-    maxCacheRelativePath?: number
+    maxCacheRelativePath?: number,
+    sandboxRequest?: InstallRequest
   ) => Promise<void>
   // Runs micromamba's supported unused-package cleanup with MAMBA_ROOT_PREFIX bound to this provisioner's
   // root. Tarballs remain available for offline data-root relocation. The existing prefix-operation
@@ -1227,7 +1231,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   async createNamedEnvironment(
     name: string,
     language: NotebookLanguage,
-    packages: string[] = []
+    packages: string[] = [],
+    request?: Pick<InstallRequest, 'projectId' | 'sessionId' | 'workspaceCwd'>
   ): Promise<EnvironmentInfo> {
     const flagLike = packages.find((pkg) => pkg.trim().startsWith('-'))
     if (flagLike) {
@@ -1288,7 +1293,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
               onChild,
               onBeforeSpawn,
               this.cache,
-              DEFAULT_MAX_CACHE_RELATIVE_PATH
+              DEFAULT_MAX_CACHE_RELATIVE_PATH,
+              {
+                language,
+                packages,
+                ...request
+              }
             )
           })
         )
@@ -1763,6 +1773,7 @@ export const planStartupAction = (root: string, expectedVersion: number): Startu
 export type ProductionProvisionerOptions = {
   root: string
   channel: string | (() => Promise<string>)
+  processSandbox?: NotebookProcessSandbox
   micromamba?: MicromambaRunnerDeps
   // PEM CA bundle path (enterprise TLS proxy) exported into micromamba's env so an ONLINE provision /
   // named-env create verifies HTTPS against it. Offline bundle creates need no network, so this only
@@ -1854,7 +1865,15 @@ export const createProductionProvisioner = (
       await runner.resolve()
       return fetchBundle(...args)
     },
-    runArgv: async (argv, signal, onChild, onBeforeSpawn, runCache, maxCacheRelativePath) => {
+    runArgv: async (
+      argv,
+      signal,
+      onChild,
+      onBeforeSpawn,
+      runCache,
+      maxCacheRelativePath,
+      sandboxRequest
+    ) => {
       const selected = await runner.resolve()
       const selectedArgv = [selected, ...argv.slice(1)]
       if (deps.runArgv) {
@@ -1868,24 +1887,35 @@ export const createProductionProvisioner = (
         )
       }
       const workloadCacheEnv = prepareNotebookWorkloadCache(opts.root)
+      const env = {
+        ...micromambaSpawnEnv(
+          opts.root,
+          opts.caBundle,
+          {
+            selectCache: () =>
+              runCache ??
+              selectMicromambaCache(
+                opts.root,
+                maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
+              )
+          },
+          maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
+        ),
+        ...workloadCacheEnv
+      }
+      if (opts.processSandbox && sandboxRequest) {
+        const result = await sandboxedPackageSpawn({
+          processSandbox: opts.processSandbox,
+          request: sandboxRequest,
+          runtimeRoot: opts.root,
+          storageRoot: dirname(opts.root)
+        })(selectedArgv[0]!, selectedArgv.slice(1), env, onChild, onBeforeSpawn)
+        if (result.code !== 0) throw new Error(result.stderr || 'micromamba exited unsuccessfully')
+        return
+      }
       return (deps.runMicromamba ?? runMicromamba)(
         selectedArgv,
-        {
-          ...micromambaSpawnEnv(
-            opts.root,
-            opts.caBundle,
-            {
-              selectCache: () =>
-                runCache ??
-                selectMicromambaCache(
-                  opts.root,
-                  maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
-                )
-            },
-            maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
-          ),
-          ...workloadCacheEnv
-        },
+        env,
         signal,
         onChild,
         onBeforeSpawn

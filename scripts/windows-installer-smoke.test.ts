@@ -28,6 +28,7 @@ import {
   releasedMigrationCountForPhase,
   requestPackagedAppShutdown,
   runProcess,
+  terminateDirectoryProcesses,
   terminateProcessTree,
   waitForShutdownExit,
   windowsProfileEnvironment,
@@ -47,6 +48,24 @@ describe('Windows installer smoke plan', () => {
     await mkdir(join(root, 'nested'))
     await writeFile(join(root, 'aipoch-open-science-0.9.0-win-x64-setup.exe'), '')
     await expect(findSetupInstaller(root)).rejects.toThrow(/exactly one Windows setup executable/)
+  })
+
+  it('force-kills leftover processes whose executable still lives under the install directory', async () => {
+    const run = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' })
+
+    await terminateDirectoryProcesses('D:\\installed app 程序\\', run)
+
+    expect(run).toHaveBeenCalledWith(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "$root = $args[0]; Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'CurrentCultureIgnoreCase') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+        'D:\\installed app 程序\\'
+      ],
+      { allowNonZero: true }
+    )
   })
 
   it('derives the packaged version from stable and nightly installer names', () => {

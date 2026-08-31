@@ -479,6 +479,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             const {
               applicationCommands,
               applicationEvents,
+              permissionApprovalPresence,
               bindRemoteAccess,
               taskNotifications,
               notificationInbox,
@@ -575,6 +576,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               requestQuit: () => app.quit(),
               externalAccess: remoteAccess.webAccess,
               applicationEvents,
+              permissionApprovalPresence,
               taskAgent,
               taskControls,
               computePreferences

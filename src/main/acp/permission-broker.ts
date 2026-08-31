@@ -38,6 +38,7 @@ import type { PermissionGrantRegistry } from '../permission-grants/registry'
 
 type PendingPermission = {
   request: AcpPermissionRequest
+  appOwned?: true
   automaticRequest?: RequestPermissionRequest
   policyContext?: PermissionPolicyContext
   categoryKey?: string
@@ -55,6 +56,14 @@ type PendingPermission = {
 }
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
+
+type AppPermissionRequest = Readonly<{
+  sessionId: string
+  title: string
+  rawInput: unknown
+  options: ReadonlyArray<AcpPermissionRequest['options'][number]>
+  signal?: AbortSignal
+}>
 
 type DurablePermissionWaitCandidate = Readonly<{
   request: AcpPermissionRequest
@@ -879,30 +888,44 @@ class AcpPermissionBroker {
     sessionId: string
     title: string
     rawInput: unknown
+    signal?: AbortSignal
   }): Promise<boolean> {
     const requestId = randomUUID()
     const approveOptionId = `${requestId}:approve`
+    return this.requestAppPermission({
+      ...input,
+      options: [
+        { optionId: approveOptionId, name: 'Approve', kind: 'allow_once', scope: 'once' },
+        { optionId: `${requestId}:decline`, name: 'Decline', kind: 'reject_once' }
+      ]
+    }).then((optionId) => optionId === approveOptionId)
+  }
+
+  // General app-owned requests keep their decision semantics in the calling module while sharing
+  // the broker's renderer projection, response validation, and Session cancellation lifecycle.
+  requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
+    if (input.signal?.aborted) return Promise.resolve(undefined)
+    const requestId = randomUUID()
     const request: AcpPermissionRequest = {
       requestId,
       sessionId: input.sessionId,
       toolCallId: `app-approval:${requestId}`,
       title: input.title,
+      appOwned: true,
       providerToolName: 'Open Science',
       rawInput: input.rawInput,
-      options: [
-        { optionId: approveOptionId, name: 'Approve', kind: 'allow_once', scope: 'once' },
-        { optionId: `${requestId}:decline`, name: 'Decline', kind: 'reject_once' }
-      ]
+      options: input.options.map((option) => ({ ...option }))
     }
 
-    return this.enqueuePermissionRequest({
-      requestId,
-      request,
-      providerAllowOnceOptionId: approveOptionId
-    }).then(
-      (response) =>
-        response.outcome.outcome === 'selected' && response.outcome.optionId === approveOptionId
+    const response = this.enqueuePermissionRequest({ requestId, request, appOwned: true }).then(
+      (result) => (result.outcome.outcome === 'selected' ? result.outcome.optionId : undefined)
     )
+    const abort = (): void => {
+      void this.respond({ requestId, cancelled: true }).catch(() => undefined)
+    }
+    input.signal?.addEventListener('abort', abort, { once: true })
+    if (input.signal?.aborted) abort()
+    return response.finally(() => input.signal?.removeEventListener('abort', abort))
   }
 
   // Stores a permission request and resolves it later from a renderer response.
@@ -1262,7 +1285,10 @@ class AcpPermissionBroker {
       : 'resolved'
     const rememberedScope =
       selected?.scope === 'session' || selected?.scope === 'project' || selected?.scope === 'global'
-    const providerOptionId = rememberedScope ? pending.providerAllowOnceOptionId : response.optionId
+    // App-owned requests use the shared scope UI but keep their decision semantics in the caller;
+    // only provider requests translate remembered scopes back to a provider-native one-shot option.
+    const providerOptionId =
+      rememberedScope && !pending.appOwned ? pending.providerAllowOnceOptionId : response.optionId
 
     if (!providerOptionId) {
       const persistence = this.persistLiveSettlement(pending)
@@ -1273,6 +1299,7 @@ class AcpPermissionBroker {
 
     if (
       rememberedScope &&
+      !pending.appOwned &&
       selected?.scope &&
       pending.capability &&
       pending.projectId &&
@@ -1529,6 +1556,7 @@ class AcpPermissionBroker {
 }
 
 export {
+  type AppPermissionRequest,
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
   projectRegistrySessionGrants,

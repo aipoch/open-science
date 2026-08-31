@@ -137,6 +137,47 @@ describe('ManagedPreviewResources', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it('keeps a Notebook input Version lease open for capability reads instead of resolving a path', async () => {
+    const trustedBytes = Buffer.from('staged through a live lease')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openNotebookInput = vi.fn().mockResolvedValue({
+      path: '/managed/source-must-not-escape.txt',
+      size: trustedBytes.byteLength,
+      versionToken: 84,
+      snapshot: { dev: 4n, ino: 5n, size: BigInt(trustedBytes.byteLength), mtimeNs: 6n },
+      read: vi.fn(),
+      readRange: vi.fn(async (begin: number, end: number) => trustedBytes.subarray(begin, end)),
+      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+      close
+    })
+    const resolvePath = vi.fn().mockRejectedValue(new Error('path resolver must not run'))
+    const resources = new ManagedPreviewResources({
+      resolvePath,
+      openNotebookInput,
+      createId: () => 'notebook-resource'
+    } as never)
+
+    const resource = await resources.acquire(17, {
+      source: 'notebook-input',
+      path: 'notebook-input-preview:%5B%22project-1%22%5D'
+    })
+    await expect(
+      resources.readRange(17, { resourceId: resource.id, begin: 0, end: trustedBytes.byteLength })
+    ).resolves.toEqual({
+      begin: 0,
+      end: trustedBytes.byteLength,
+      total: trustedBytes.byteLength,
+      data: new Uint8Array(trustedBytes)
+    })
+    expect(openNotebookInput).toHaveBeenCalledWith({
+      source: 'notebook-input',
+      path: 'notebook-input-preview:%5B%22project-1%22%5D'
+    })
+    expect(resolvePath).not.toHaveBeenCalled()
+    await resources.release(17, { resourceId: resource.id })
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it.each(['artifact', 'upload'] as const)(
     'rejects a path-only %s preview instead of resolving its original path',
     async (source) => {

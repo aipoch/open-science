@@ -1,0 +1,54 @@
+diff --git a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh b/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
+--- a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
++++ b/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
+@@ -209,34 +209,20 @@ Function uninstallOldVersion
+   StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\old-uninstaller.exe"
+   !insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"
+-
++
+-  # Retry counter
+-  StrCpy $R5 0
+-
+-  UninstallLoop:
+-    IntOp $R5 $R5 + 1
+-
+-    ${if} $R5 > 5
+-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY OneMoreAttempt
+-      Return
+-    ${endIf}
+-
+-  OneMoreAttempt:
+-    ExecWait '"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir' $R0
+-    ifErrors TryInPlace CheckResult
++  ExecWait '"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir' $R0
++  ifErrors TryInPlace CheckResult
+-
++
+-    TryInPlace:
+-      # the execution failed - might have been caused by some group policy restrictions
+-      # we try to execute the uninstaller in place
+-      ExecWait '"$uninstallerFileName" /S /KEEP_APP_DATA $0 _?=$installationDir' $R0
+-      ifErrors DoesNotExist
++  TryInPlace:
++    # the execution failed - might have been caused by some group policy restrictions
++    # we try to execute the uninstaller in place
++    ExecWait '"$uninstallerFileName" /S /KEEP_APP_DATA $0 _?=$installationDir' $R0
++    ifErrors DoesNotExist
+-
++
+-    CheckResult:
+-      ${if} $R0 == 0
+-        Return
+-      ${endIf}
+-
+-    Sleep 1000
+-    Goto UninstallLoop
++  CheckResult:
++    # Open Science handles a non-zero result in customUnInstallCheck with path-scoped process
++    # cleanup and one controlled retry. Return immediately so the upstream retry loop cannot
++    # misreport every old-uninstaller failure as an application that could not be closed.
++    Return
+-
++
+   DoesNotExist:
+     SetErrors

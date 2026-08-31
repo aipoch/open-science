@@ -12,6 +12,8 @@ import {
   terminateShellOnTimeout
 } from './shell-process'
 import { NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
+import type { NotebookProcessSandbox } from './process-sandbox'
+import { normalizeFilesystemLayout } from '../../../packages/notebook-network-sandbox/runtime/src/platform/filesystem-layout.js'
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -19,7 +21,7 @@ describe('notebook shell process behavior', () => {
   describe('invocation', () => {
     it('uses a POSIX sh command on Unix platforms', () => {
       expect(resolveShellInvocation('echo hi', 'linux')).toEqual({
-        executable: 'sh',
+        executable: '/bin/sh',
         args: ['-c', 'echo hi']
       })
     })
@@ -143,7 +145,6 @@ describe('notebook shell process behavior', () => {
         WINDIR: 'C:\\Windows',
         ComSpec: 'C:\\Windows\\System32\\cmd.exe',
         PATHEXT: '.COM;.EXE;.BAT;.CMD',
-        USERPROFILE: 'C:\\Users\\Ada',
         PSModulePath:
           'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
         OPEN_SCIENCE_PSMODULEPATH:
@@ -155,6 +156,7 @@ describe('notebook shell process behavior', () => {
         TORCH_HOME: join(cacheRoot, 'torch')
       })
       expect(env.ProgramFiles).toBeUndefined()
+      expect(env.USERPROFILE).toBeUndefined()
       expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
     })
 
@@ -228,6 +230,8 @@ describe('notebook shell process behavior', () => {
         cwd: process.cwd(),
         handoffDir: process.cwd(),
         runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
+        sessionId: 'session-1',
+        projectId: 'project-1',
         platform: 'linux',
         timeoutMs,
         signal
@@ -239,6 +243,54 @@ describe('notebook shell process behavior', () => {
         stderr: 'warning',
         exitCode: 7
       })
+    })
+
+    it('wraps Notebook Bash with the shared process sandbox', async () => {
+      const runtimeRoot = join(process.cwd(), '.open-science-test-runtime')
+      const inputRoot = join(process.cwd(), '.open-science-test-inputs')
+      const cleanup = vi.fn()
+      const endExecution = vi.fn()
+      const beginExecution = vi.fn(() => endExecution)
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => {
+          normalizeFilesystemLayout(invocation.filesystem)
+          return {
+            executable: invocation.executable,
+            args: invocation.args,
+            env: { OPEN_SCIENCE_SANDBOX_TEST: 'wrapped' },
+            beginExecution,
+            annotateStderr: (stderr) => stderr,
+            cleanup
+          }
+        })
+      }
+
+      const result = await runShellCommand({
+        command: 'printf "$OPEN_SCIENCE_SANDBOX_TEST"',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot,
+        inputRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'linux',
+        processSandbox
+      })
+
+      expect(result.stderr).not.toContain('Sandbox filesystem path must be absolute')
+      expect(result).toMatchObject({ stdout: 'wrapped', exitCode: 0 })
+
+      expect(processSandbox.wrap).toHaveBeenCalledOnce()
+      const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
+      expect(sandboxInvocation.filesystem.readOnlyRoots).toContain(runtimeRoot)
+      expect(sandboxInvocation.filesystem.readOnlyRoots).toContain(inputRoot)
+      expect(sandboxInvocation.filesystem.readWriteRoots).toContain(
+        join(runtimeRoot, 'cache', 'notebook')
+      )
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).not.toContain(runtimeRoot)
+      expect(beginExecution).toHaveBeenCalledOnce()
+      expect(endExecution).toHaveBeenCalledOnce()
+      expect(cleanup).toHaveBeenCalledOnce()
     })
 
     it('reserves stderr capacity after stdout reaches its capture limit', async () => {

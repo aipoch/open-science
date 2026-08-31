@@ -25,6 +25,7 @@ import {
 import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { ApplicationEventSource } from '../application-events'
+import type { PermissionApprovalPresence } from '../permission-approval-presence'
 import { createLogger, diagnosticErrorFields, runWithDiagnosticCorrelation } from '../logger'
 import {
   WEB_RPC_CAPABILITIES,
@@ -114,6 +115,7 @@ type WebServerOptions = {
   staticRoot: string
   applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb'>
   applicationEvents: ApplicationEventSource
+  permissionApprovalPresence?: PermissionApprovalPresence
   eventHeartbeatIntervalMs?: number
   requestBodyBudgets?: RequestBodyBudgets
   webClientRetention?: Readonly<{
@@ -1471,12 +1473,14 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
       throw error
     }
+    let releaseApprovalPresence: (() => void) | undefined
     socket.on('close', () => {
       sockets.delete(socket)
       externalSockets.delete(socket)
       publicEventSockets.delete(socket)
       internalEventSockets.delete(socket)
       livenessSockets.delete(socket)
+      releaseApprovalPresence?.()
       lease.release()
     })
     socket.on('pong', () => awaitingPong.delete(socket))
@@ -1520,6 +1524,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         for (const message of internalEventStream.resume({ streamId, after })) {
           if (!sendCurrentWebSocketMessage(socket, message)) break
         }
+      }
+      if (url.searchParams.get('liveness') !== '1') {
+        releaseApprovalPresence = options.permissionApprovalPresence?.acquire()
       }
     }
     if (socket.readyState === WebSocket.OPEN) sockets.add(socket)

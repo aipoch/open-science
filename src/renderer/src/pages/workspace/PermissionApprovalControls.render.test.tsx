@@ -143,6 +143,32 @@ const literaturePermissionRequest: AcpPermissionRequest = {
   ]
 }
 
+const networkApprovalRequest: AcpPermissionRequest = {
+  requestId: 'network-1',
+  sessionId: 'session-1',
+  toolCallId: 'app-approval:network-1',
+  title: 'Connect to data.example.org?',
+  appOwned: true,
+  providerToolName: 'Open Science',
+  rawInput: {
+    notebookNetworkApproval: {
+      hostname: 'data.example.org',
+      port: 443,
+      reason: 'Download the dataset requested in this conversation.'
+    }
+  },
+  options: [
+    { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+    {
+      optionId: 'always-allow',
+      name: 'Global',
+      kind: 'allow_always',
+      scope: 'global'
+    },
+    { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+  ]
+}
+
 const renderControls = (): string =>
   renderToStaticMarkup(
     <PermissionApprovalControls requests={[permissionRequest]} onRespond={() => undefined} />
@@ -162,6 +188,23 @@ const secondPermissionRequest: AcpPermissionRequest = {
 }
 
 describe('PermissionApprovalControls', () => {
+  it('renders Notebook domain requests as a conversation approval without exposing raw payload JSON', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls requests={[networkApprovalRequest]} onRespond={() => undefined} />
+    )
+
+    expect(html).toContain('Connect to data.example.org?')
+    expect(html).toContain('Network access')
+    expect(html).toContain('Notebook code requested access to data.example.org:443.')
+    expect(html).toContain('Reason: Download the dataset requested in this conversation.')
+    expect(html).toContain('Details')
+    expect(html).toContain('Allow once')
+    expect(html).toContain('Deny')
+    expect(html).toContain('data-testid="scope-chevron"')
+    expect(html).not.toContain('data-testid="extra-option"')
+    expect(html).not.toContain('notebookNetworkApproval')
+  })
+
   it('renders the Allow button with the conversation copy for the session scope by default', () => {
     const html = renderControls()
     expect(html).toContain('for this conversation')

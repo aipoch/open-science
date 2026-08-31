@@ -58,7 +58,7 @@ import {
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
-import { ConversationPermissionGrantStore } from './permission-broker'
+import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { AcpPermissionContext } from './permission-context'
 import { AgentMcpHttpHost } from './mcp-http-host'
@@ -2484,8 +2484,13 @@ class AcpRuntime {
     sessionId: string
     title: string
     rawInput: unknown
+    signal?: AbortSignal
   }): Promise<boolean> {
     return this.permissionContext.requestAppApproval(input)
+  }
+
+  async requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
+    return this.permissionContext.requestAppPermission(input)
   }
 
   // Lazily initializes the process connection before session creation.

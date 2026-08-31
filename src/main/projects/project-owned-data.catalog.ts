@@ -25,6 +25,7 @@ type ProjectDeletionPath =
   | 'compute-job-project-delete'
   | 'delegated-runtime-quiescence'
   | 'notification-session-invalidation'
+  | 'notebook-input-cache-tail'
   | 'notebook-file-evidence-tail'
   | 'project-deletion-intent-protocol'
   | 'project-file-projection-delete'
@@ -562,6 +563,18 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
         'Retained until the user removes the Project working folder outside Project deletion.',
       reason:
         'The delete confirmation promises that files in the Project working folder are not deleted.'
+    }
+  },
+  {
+    id: 'notebook-input-cache',
+    medium: 'filesystem',
+    resources: ['notebook-inputs/<projectId>/'],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'notebook-input-cache-tail',
+      operation: 'NotebookRuntimeService.deleteProjectInputs',
+      note: 'The durable Project deletion intent removes derived, read-only Notebook input copies after runtime quiescence.'
     }
   },
   {

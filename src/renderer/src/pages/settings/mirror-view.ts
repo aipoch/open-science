@@ -4,7 +4,7 @@ import type { PackageMirror } from '../../../../shared/mirror'
 
 export { MIRROR_HELP_URL } from '../../../../shared/mirror'
 
-// True when any mirror field is set (conda channel or PyPI index). cranMirror is
+// True when any field exposed by this panel is set. cranMirror is
 // intentionally excluded from the UI-facing check: this panel only exposes conda/pip; R's CRAN
 // mirror is configured elsewhere (Plan C).
 export const isMirrorConfigured = (mirror: PackageMirror | undefined): boolean =>
@@ -18,5 +18,6 @@ export const mirrorStatusText = (mirror: PackageMirror | undefined, t: TFunction
     return t('Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)')
   }
   const parts = [mirror!.condaChannel, mirror!.pypiIndex].filter(Boolean)
+  if (parts.length === 0) return t('Custom CA bundle configured')
   return t('Fetching packages from {{hosts}}', { hosts: parts.join(' , ') })
 }

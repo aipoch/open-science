@@ -33,15 +33,49 @@ const createProject = async (
   }
 }
 
+const seedProjects = async (page: Page, count: number): Promise<void> => {
+  await page.evaluate(async (projectCount) => {
+    const bridge = globalThis as unknown as {
+      api: {
+        projects: {
+          create: (request: { name: string; description: string }) => Promise<{ updatedAt: number }>
+        }
+      }
+    }
+
+    for (let index = 1; index <= projectCount; index += 1) {
+      const project = await bridge.api.projects.create({
+        name: `Project ${index}`,
+        description: `Description ${index}`
+      })
+      // The menu sorts by updatedAt. Wait for the wall clock to advance so every seeded row has a
+      // deterministic order even on Windows clocks with a coarse timer resolution.
+      while (Date.now() <= project.updatedAt) {
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+    }
+  }, count)
+}
+
+const reloadAndOpenProject = async (page: Page, name: string): Promise<void> => {
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  const projectButton = page.getByRole('button', { name, exact: true })
+  await expect(projectButton).toBeVisible()
+  await projectButton.click()
+  await expect(page.locator(`button[title="${name}"]`)).toBeVisible()
+}
+
 test('switches projects from the Workspace project menu and expands remaining projects locally', async ({
   app
 }) => {
   await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+  let page = await app.configureFakeAgent()
 
-  for (let index = 1; index <= 16; index += 1) {
-    await createProject(page, `Project ${index}`, `Description ${index}`, index > 1)
-  }
+  await seedProjects(page, 15)
+  page = await app.restart()
+  await expect(page.getByText('Project 15', { exact: true })).toBeVisible()
+  await createProject(page, 'Project 16', 'Description 16', false)
+  await reloadAndOpenProject(page, 'Project 16')
 
   await page.setViewportSize({ width: 1280, height: 600 })
   await page.locator('button[title="Project 16"]').click()
@@ -157,10 +191,13 @@ test('switches projects from the Workspace project menu and expands remaining pr
 
 test('closes mobile navigation when switching projects', async ({ app }) => {
   await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+  let page = await app.configureFakeAgent()
 
-  await createProject(page, 'Project 1', 'Description 1', false)
-  await createProject(page, 'Project 2', 'Description 2', true)
+  await seedProjects(page, 1)
+  page = await app.restart()
+  await expect(page.getByText('Project 1', { exact: true })).toBeVisible()
+  await createProject(page, 'Project 2', 'Description 2', false)
+  await reloadAndOpenProject(page, 'Project 2')
 
   await page.setViewportSize({ width: 700, height: 700 })
   await page.getByRole('button', { name: 'Open navigation' }).click()

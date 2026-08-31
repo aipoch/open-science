@@ -976,6 +976,7 @@ describe('artifact provenance input authority', () => {
     const value = await fixture()
     const { input, inputPath } = await createReadyUploadInput(value)
     const inputAuthority = new ImmutableInputAuthority({
+      storageRoot: value.storageRoot,
       managedFileVersions: new ManagedFileVersionService({
         storageRoot: value.storageRoot,
         getClient: () => Promise.resolve(value.client)

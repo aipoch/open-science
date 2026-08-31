@@ -1048,13 +1048,30 @@ const findUninstaller = async (installDirectory) => {
   return join(installDirectory, uninstallers[0])
 }
 
+const terminateDirectoryProcesses = async (directory, run = runProcess) => {
+  const root = `${directory.replace(/[\\/]+$/u, '')}\\`
+  await run(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "$root = $args[0]; Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'CurrentCultureIgnoreCase') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+      root
+    ],
+    { allowNonZero: true }
+  )
+}
+
 const uninstallAndVerify = async (installDirectory, env) => {
   const uninstaller = await findUninstaller(installDirectory)
   const installedPaths = [...packagedResourcePaths(installDirectory), uninstaller]
+  await terminateDirectoryProcesses(installDirectory)
   const result = await runProcess(uninstaller, ['/S', '/KEEP_APP_DATA'], {
     allowNonZero: true,
     env
   })
+  await terminateDirectoryProcesses(installDirectory)
   await waitFor('the installed application files to be removed', async () => {
     const pathsRemain = (await Promise.all(installedPaths.map(pathExists))).some(Boolean)
     if (pathsRemain) return undefined
@@ -1266,6 +1283,7 @@ export {
   requestPackagedAppShutdown,
   releasedMigrationCountForPhase,
   runProcess,
+  terminateDirectoryProcesses,
   terminateProcessTree,
   uninstallAndVerify,
   waitFor,

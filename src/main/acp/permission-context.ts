@@ -26,6 +26,7 @@ import {
   ConversationPermissionGrantStore,
   permissionRequestFingerprint,
   resolveNotebookPermissionContext,
+  type AppPermissionRequest,
   type PermissionWaitHooks
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
@@ -714,8 +715,13 @@ class AcpPermissionContext {
     sessionId: string
     title: string
     rawInput: unknown
+    signal?: AbortSignal
   }): Promise<boolean> {
     return this.broker.requestAppApproval(input)
+  }
+
+  requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
+    return this.broker.requestAppPermission(input)
   }
 
   respondToPermission(

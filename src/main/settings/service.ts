@@ -42,6 +42,7 @@ import type {
   OpenAlexCredentialValidation,
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
+  SetNotebookNetworkRequest,
   SetSkillEnabledRequest,
   SetSkillsEnabledRequest,
   SetToolPermissionRequest,
@@ -77,6 +78,7 @@ import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
+import type { NotebookNetworkSettings, NotebookNetworkStatus } from '../../shared/notebook-network'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -128,6 +130,8 @@ import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import { NetworkProxySettingsOwner } from './network-proxy-settings-owner'
+import { NotebookNetworkSettingsOwner } from './notebook-network-settings-owner'
+import { PackageMirrorSettingsOwner } from './package-mirror-settings-owner'
 
 // Outcome of uninstalling a managed runtime. `activeBackendAffected` is true only when the removed
 // runtime backed the active framework, so the IPC layer reconnects the agent for that case alone —
@@ -183,6 +187,14 @@ export type SettingsServiceOptions = {
   // Projects a persisted proxy preference into the live Electron Session and future child process
   // environment. Tests omit it to keep SettingsService free of host-global side effects.
   applyNetworkProxy?: (settings: NetworkProxySettings) => Promise<void>
+  // Applies a committed Notebook egress policy to live kernels without requiring a restart.
+  applyNotebookNetwork?: (settings: NotebookNetworkSettings) => Promise<void>
+  validatePackageMirror?: (settings: SetPackageMirrorRequest) => Promise<void>
+  applyPackageMirror?: (settings: PackageMirror) => Promise<void>
+  beforePackageMirrorCaBundleChange?: () => Promise<void>
+  getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
+  installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
+  removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   // Encrypted-token controller for claude-isolated; default-constructed against this.storageRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
@@ -207,6 +219,11 @@ class SettingsService {
   private readonly scenarioModels: ScenarioModelOwner
   private readonly storageRoot: string
   private readonly networkProxy: NetworkProxySettingsOwner
+  private readonly notebookNetwork: NotebookNetworkSettingsOwner
+  private readonly packageMirror: PackageMirrorSettingsOwner
+  private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
+  private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
+  private readonly removeNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
   private readonly userClaudeDir: string
   private readonly log: Logger
   private customServerAuthenticator?: (serverId: string) => Promise<void>
@@ -223,6 +240,29 @@ class SettingsService {
       repository: this.repository,
       apply: options.applyNetworkProxy ?? (async () => undefined)
     })
+    this.notebookNetwork = new NotebookNetworkSettingsOwner({
+      repository: this.repository,
+      apply: options.applyNotebookNetwork ?? (async () => undefined)
+    })
+    this.packageMirror = new PackageMirrorSettingsOwner({
+      repository: this.repository,
+      validate: options.validatePackageMirror ?? (async () => undefined),
+      apply: options.applyPackageMirror ?? (async () => undefined),
+      beforeCaBundleChange: options.beforePackageMirrorCaBundleChange
+    })
+    this.getNotebookNetworkStatusImpl =
+      options.getNotebookNetworkStatus ??
+      (async () => ({ kind: 'error', reason: 'runtimeFailure' }))
+    this.installNotebookNetworkImpl =
+      options.installNotebookNetwork ??
+      (async () => {
+        throw new Error('Notebook network sandbox installation is unavailable.')
+      })
+    this.removeNotebookNetworkImpl =
+      options.removeNotebookNetwork ??
+      (async () => {
+        throw new Error('Notebook network sandbox removal is unavailable.')
+      })
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
@@ -380,11 +420,37 @@ class SettingsService {
   }
 
   async setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror> {
-    return this.notebookRuntimeSettings.setPackageMirror(request)
+    return this.packageMirror.set(request)
   }
 
   setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings> {
     return this.networkProxy.set(request)
+  }
+
+  async setNotebookNetwork(request: SetNotebookNetworkRequest): Promise<NotebookNetworkSettings> {
+    return this.notebookNetwork.set(request)
+  }
+
+  getNotebookNetwork(): Promise<NotebookNetworkSettings> {
+    return this.notebookNetwork.get()
+  }
+
+  allowNotebookNetworkDomain(hostname: string): Promise<NotebookNetworkSettings> {
+    return this.notebookNetwork.allowDomain(hostname)
+  }
+
+  getNotebookNetworkStatus(): Promise<NotebookNetworkStatus> {
+    return this.getNotebookNetworkStatusImpl()
+  }
+
+  async installNotebookNetwork(): Promise<NotebookNetworkStatus> {
+    await this.installNotebookNetworkImpl()
+    return this.getNotebookNetworkStatusImpl()
+  }
+
+  async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {
+    await this.removeNotebookNetworkImpl()
+    return this.getNotebookNetworkStatusImpl()
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {

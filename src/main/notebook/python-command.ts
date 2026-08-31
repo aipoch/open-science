@@ -146,7 +146,7 @@ export const resolvePythonCommand = async (
 }
 
 const CALLABLE_HELPER_VALIDATOR = String.raw`
-import builtins, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics, sys
+import base64, builtins, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics, sys
 
 allowed_modules = {
     module.__name__: module
@@ -165,7 +165,7 @@ def deny(event, args):
         raise PermissionError("host access is unavailable during helper validation")
 
 sys.addaudithook(deny)
-request = json.loads(sys.stdin.read())
+request = json.loads(base64.b64decode(sys.stdin.read()).decode("utf-8"))
 safe_names = (
     "__build_class__", "abs", "all", "any", "bool", "bytes", "callable", "dict", "enumerate",
     "Exception", "float", "int", "isinstance", "len", "list", "map", "max", "min", "object",
@@ -183,18 +183,20 @@ if missing:
 export const validateNotebookHelperExports = async (
   helperId: string,
   source: string,
-  exports: readonly string[]
+  exports: readonly string[],
+  deps: { python?: PythonCommand; env?: NodeJS.ProcessEnv } = {}
 ): Promise<void> => {
-  const python = await resolvePythonCommand()
+  const python = deps.python ?? (await resolvePythonCommand())
   await new Promise<void>((resolveValidation, rejectValidation) => {
     const child = spawn(
       python.command,
       [...python.baseArgs, '-I', '-S', '-c', CALLABLE_HELPER_VALIDATOR],
       {
         env:
-          process.platform === 'win32'
+          deps.env ??
+          (process.platform === 'win32'
             ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR }
-            : {},
+            : {}),
         stdio: ['pipe', 'ignore', 'pipe'],
         windowsHide: true
       }
@@ -224,6 +226,6 @@ export const validateNotebookHelperExports = async (
         )
       )
     })
-    child.stdin.end(JSON.stringify({ source, exports }))
+    child.stdin.end(Buffer.from(JSON.stringify({ source, exports }), 'utf8').toString('base64'))
   })
 }

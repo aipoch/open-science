@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { PackageMirror } from '../../../shared/mirror'
 import type { NetworkProxySettings } from '../../../shared/network-proxy'
+import {
+  DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+  type NotebookNetworkSettings
+} from '../../../shared/notebook-network'
 import type {
   AppIconVariant,
   ProjectFilesFilterPreference,
@@ -39,6 +43,7 @@ type PreferencesCommands = Pick<
   | 'markOnboardingComplete'
   | 'setPackageMirror'
   | 'setNetworkProxy'
+  | 'setNotebookNetwork'
 >
 
 type CommandMocks = Required<{ [Command in keyof PreferencesCommands]: Mock }>
@@ -47,6 +52,7 @@ type TestStore = SettingsPreferencesActions & {
   onboardingCompletedAt?: number
   networkProxy?: NetworkProxySettings
   packageMirror?: PackageMirror
+  notebookNetwork: NotebookNetworkSettings
   reasoningEffort: ReasoningEffort
   reviewerModel?: ReviewerModelConfiguration
   reviewerModelPending?: boolean
@@ -131,7 +137,14 @@ const createCommands = (persisted: Partial<SettingsSnapshot>): CommandMocks => {
     setDefaultPermissionProfile: vi.fn(({ profile }) => save('defaultPermissionProfile', profile)),
     markOnboardingComplete: vi.fn().mockResolvedValue(snapshot({ onboardingCompletedAt: 42 })),
     setPackageMirror: vi.fn((mirror) => Promise.resolve(mirror)),
-    setNetworkProxy: vi.fn((settings) => Promise.resolve(settings))
+    setNetworkProxy: vi.fn((settings) => Promise.resolve(settings)),
+    setNotebookNetwork: vi.fn((settings) =>
+      Promise.resolve({
+        allowedDomains: settings.allowedDomains,
+        disabledOpenScienceDomainGroups: settings.disabledOpenScienceDomainGroups,
+        disabledOpenScienceDomains: settings.disabledOpenScienceDomains
+      })
+    )
   }
 }
 
@@ -147,6 +160,7 @@ const createHarness = (): {
       onboardingCompletedAt: next.onboardingCompletedAt,
       networkProxy: next.networkProxy,
       packageMirror: next.packageMirror,
+      notebookNetwork: next.notebookNetwork ?? DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
       reasoningEffort: next.reasoningEffort,
       reviewerModel: next.reviewerModel,
       sessionDetailsModel: next.sessionDetailsModel,
@@ -174,6 +188,7 @@ const createHarness = (): {
     appIconVariant: 'light',
     projectFilesFilter: undefined,
     defaultPermissionProfile: 'ask',
+    notebookNetwork: DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
 
     settingsWriteError: undefined,
     ...createSettingsPreferencesSlice({
@@ -395,6 +410,29 @@ describe('settings preferences slice', () => {
     commands.setNetworkProxy = undefined as unknown as Mock
     await expect(store.getState().setNetworkProxy({ mode: 'direct' })).rejects.toThrow(
       'Network proxy settings are unavailable.'
+    )
+  })
+
+  it('persists Notebook network settings as one global policy', async () => {
+    const notebookNetwork = {
+      allowedDomains: ['data.example.org'],
+      disabledOpenScienceDomainGroups: ['literature'],
+      disabledOpenScienceDomains: ['rest.uniprot.org']
+    } as const satisfies NotebookNetworkSettings
+
+    await expect(
+      store.getState().setNotebookNetwork(notebookNetwork, ['baseline.example.org'])
+    ).resolves.toEqual(notebookNetwork)
+
+    expect(commands.setNotebookNetwork).toHaveBeenCalledWith({
+      ...notebookNetwork,
+      baseAllowedDomains: ['baseline.example.org']
+    })
+    expect(store.getState().notebookNetwork).toEqual(notebookNetwork)
+
+    commands.setNotebookNetwork = undefined as unknown as Mock
+    await expect(store.getState().setNotebookNetwork(notebookNetwork)).rejects.toThrow(
+      'Notebook network settings are unavailable.'
     )
   })
 })

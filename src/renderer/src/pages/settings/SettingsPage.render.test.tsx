@@ -3039,10 +3039,10 @@ describe('SettingsPage layout', () => {
         .querySelector<HTMLButtonElement>('[aria-controls="connector-advanced-settings"]')
         ?.click()
     )
-    const newCredential = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('button')
-    ).find((button) => button.textContent?.trim() === 'New credential')
-    await act(async () => newCredential?.click())
+    fireEvent.change(document.body.querySelector('[aria-label="Variable name"]')!, {
+      target: { value: 'API_TOKEN' }
+    })
+    selectSettingsOption('Credential for API_TOKEN', 'New credential')
 
     expect(document.body.textContent).toContain('Stored on this device')
     expect(document.body.textContent).toContain('Add connector')
@@ -3083,13 +3083,14 @@ describe('SettingsPage layout', () => {
         ?.click()
     )
     selectSettingsOption('Environment variable action', 'Replace saved variables')
-    fireEvent.change(document.body.querySelector('[aria-label="Environment variables"]')!, {
-      target: { value: 'API_TOKEN=' }
+    await act(async () => {
+      await Promise.resolve()
     })
-    const newCredential = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('button')
-    ).find((button) => button.textContent?.trim() === 'New credential')
-    await act(async () => newCredential?.click())
+    fireEvent.change(document.body.querySelector('[aria-label="Variable name"]')!, {
+      target: { value: 'API_TOKEN' }
+    })
+    expect(document.body.querySelector('[aria-label="Credential for API_TOKEN"]')).not.toBeNull()
+    selectSettingsOption('Credential for API_TOKEN', 'New credential')
 
     expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
     expect(document.body.querySelector('[aria-label="Manage Tags"]')).toBeNull()
@@ -3105,9 +3106,8 @@ describe('SettingsPage layout', () => {
     )
     expect(document.body.querySelector('[aria-label="Manage Tags"]')).not.toBeNull()
     expect(
-      document.body.querySelector<HTMLTextAreaElement>('[aria-label="Environment variables"]')
-        ?.value
-    ).toBe('API_TOKEN=')
+      document.body.querySelector<HTMLInputElement>('[aria-label="Variable name"]')?.value
+    ).toBe('API_TOKEN')
   })
 
   it('blocks Connector save and preserves the draft when a live refresh removes the target', async () => {

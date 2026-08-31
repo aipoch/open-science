@@ -29,6 +29,7 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-notebook/inspect_packages',
     'mcp:open-science-notebook/manage_packages',
     'mcp:open-science-notebook/manage_environments',
+    'mcp:open-science-notebook/request_network_access',
     'mcp:open-science-artifacts/write_artifact_file',
     'mcp:open-science-activity/begin_activity_group',
     'mcp:open-science-skills/request_skill_import',

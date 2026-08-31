@@ -390,11 +390,18 @@ const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
 
 const createProvenanceArtifact = async (sessionId) => {
   const producerRunId = await withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    const before = toolResult(
+      'notebook_state',
+      await client.callTool({ name: 'notebook_state', arguments: {} })
+    )
+    const existingRunIds = new Set(
+      before.recentRuns?.map((candidate) => candidate.runId).filter(Boolean) ?? []
+    )
     const execution = toolResult(
       'bash_execute',
       await client.callTool({
         name: 'bash_execute',
-        arguments: { command: 'node -e "console.log(\'artifact-provenance-e2e\')"' }
+        arguments: { command: "printf 'artifact-provenance-e2e\\n'" }
       })
     )
     const state = toolResult(
@@ -407,10 +414,12 @@ const createProvenanceArtifact = async (sessionId) => {
         (candidate) =>
           candidate.kernelKind === 'bash' &&
           candidate.status === 'completed' &&
-          candidate.outputPreview?.includes('artifact-provenance-e2e')
+          !existingRunIds.has(candidate.runId)
       )
     if (!execution.stdout?.includes('artifact-provenance-e2e') || !run?.runId) {
-      throw new Error('The Notebook did not persist the Bash producer run.')
+      throw new Error(
+        `The Notebook did not persist the Bash producer run: ${JSON.stringify({ execution, recentRuns: state.recentRuns })}`
+      )
     }
     return run.runId
   })

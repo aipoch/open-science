@@ -1,12 +1,14 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { win32 } from 'node:path'
+import { dirname } from 'node:path'
 
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
+import type { NotebookProcessSandbox } from './process-sandbox'
 import { terminateProcessTree } from '../process-tree'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import {
   notebookWorkloadCacheEnv,
+  notebookWorkloadCacheRoot,
   prepareNotebookWorkloadCache
 } from './notebook-workload-cache-paths'
 import {
@@ -14,6 +16,7 @@ import {
   NOTEBOOK_TEXT_LIMIT_BYTES,
   limitUtf8
 } from './content-limits'
+import { buildNotebookShellEnvironment, environmentPathRoots } from './process-environment'
 
 // Grace between the POSIX process group's polite termination and an uncatchable group kill.
 const SHELL_KILL_GRACE_MS = 2_000
@@ -35,6 +38,11 @@ type NotebookShellProcessRequest = {
   cwd: string
   handoffDir: string
   runtimeRoot: string
+  notebookSessionRoot?: string
+  inputRoot?: string
+  protectedDirs?: readonly string[]
+  sessionId: string
+  projectId: string
   timeoutMs?: number
   signal?: AbortSignal
 }
@@ -44,29 +52,6 @@ type NotebookShellProcess = {
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult>
 }
 
-// Benign variables the shell may inherit; all other host variables are denied by default.
-const SHELL_ENV_ALLOWLIST = [
-  'PATH',
-  'HOME',
-  'USER',
-  'LOGNAME',
-  'SHELL',
-  'LANG',
-  'LC_ALL',
-  'LC_CTYPE',
-  'TERM',
-  'TZ',
-  'TMPDIR',
-  'TEMP',
-  'TMP'
-]
-
-// Safe OS paths PowerShell and Windows child processes need to locate built-in tools.
-const WINDOWS_SHELL_ENV_ALLOWLIST = ['ComSpec', 'PATHEXT', 'SystemRoot', 'WINDIR', 'USERPROFILE']
-
-// Builds a minimal, secret-free environment because the stateless shell cannot enforce the Python
-// kernel's protected-dir audit. Only safe host variables and the shared handoff channel are projected;
-// filesystem/network egress isolation remains a separate follow-up.
 const buildShellEnv = (
   handoffDir: string,
   platform: NodeJS.Platform = process.platform,
@@ -74,38 +59,7 @@ const buildShellEnv = (
   runtimeRoot?: string,
   workloadCacheEnv?: NodeJS.ProcessEnv
 ): NodeJS.ProcessEnv => {
-  const env: NodeJS.ProcessEnv = {}
-  const keys =
-    platform === 'win32'
-      ? [...SHELL_ENV_ALLOWLIST, ...WINDOWS_SHELL_ENV_ALLOWLIST]
-      : SHELL_ENV_ALLOWLIST
-  for (const key of keys) {
-    const value = sourceEnv[key]
-    if (value !== undefined) env[key] = value
-  }
-  if (platform === 'win32') {
-    const modulePaths: string[] = []
-    const programFiles = sourceEnv.ProgramFiles
-    if (programFiles) {
-      modulePaths.push(win32.join(programFiles, 'WindowsPowerShell', 'Modules'))
-    }
-    const windowsRoot = sourceEnv.SystemRoot ?? sourceEnv.WINDIR
-    if (windowsRoot) {
-      // PowerShell's built-in cmdlets are module-backed. Supplying no PSModulePath makes Windows
-      // PowerShell perform extremely slow first-use discovery on hosted machines, while inheriting
-      // the host value would expose arbitrary user/third-party modules. Preserve only the standard
-      // AllUsers and in-box module locations, excluding CurrentUser and host-specific additions.
-      modulePaths.push(win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'))
-    }
-    if (modulePaths.length > 0) {
-      const controlledModulePath = modulePaths.join(win32.delimiter)
-      env.PSModulePath = controlledModulePath
-      // Windows PowerShell reconstructs PSModulePath at startup and can reinsert CurrentUser paths.
-      // Carry the controlled value through startup so the wrapper can restore it before user code.
-      env.OPEN_SCIENCE_PSMODULEPATH = controlledModulePath
-    }
-  }
-  env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
+  const env = buildNotebookShellEnvironment(handoffDir, platform, sourceEnv)
   if (runtimeRoot) {
     Object.assign(env, workloadCacheEnv ?? notebookWorkloadCacheEnv(runtimeRoot))
   }
@@ -220,7 +174,7 @@ const resolveShellInvocation = (
           encodePowerShellCommand(command)
         ]
       }
-    : { executable: 'sh', args: ['-c', command] }
+    : { executable: '/bin/sh', args: ['-c', command] }
 
 // Signals only the independently spawned POSIX shell group. A validated positive child pid is also its
 // process-group id because POSIX spawn uses detached:true below. If group signaling is unavailable, fall
@@ -269,17 +223,17 @@ const terminateShellOnTimeout = async (
 const runShellCommand = (
   options: NotebookShellProcessRequest & {
     platform?: NodeJS.Platform
+    processSandbox?: NotebookProcessSandbox
   }
-): Promise<NotebookShellResult> =>
-  new Promise((resolve) => {
+): Promise<NotebookShellResult> => {
+  const run = async (): Promise<NotebookShellResult> => {
     if (options.signal?.aborted) {
-      resolve({
+      return {
         stdout: '',
         stderr: 'Shell command was cancelled.',
         exitCode: null,
         cancelled: true
-      })
-      return
+      }
     }
 
     let shellEnv: NodeJS.ProcessEnv
@@ -293,146 +247,200 @@ const runShellCommand = (
         workloadCacheEnv
       )
     } catch (error) {
-      resolve({
+      return {
         stdout: '',
         stderr: error instanceof Error ? error.message : String(error),
         exitCode: null
-      })
-      return
+      }
     }
 
     const timeoutMs = options.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
     const platform = options.platform ?? process.platform
-    const invocation = protectManagedRuntimeWrites(
-      resolveShellInvocation(options.command, platform),
-      options.runtimeRoot,
-      platform
-    )
-    const child = spawn(invocation.executable, invocation.args, {
-      cwd: options.cwd,
-      env: shellEnv,
-      // On POSIX this makes the shell the leader of a private process group/session. Keep its handle
-      // and stdio referenced (no unref), preserving normal completion while enabling safe -PGID kills.
-      detached: platform !== 'win32'
-    })
+    const nativeInvocation = resolveShellInvocation(options.command, platform)
+    const invocation = options.processSandbox
+      ? nativeInvocation
+      : protectManagedRuntimeWrites(nativeInvocation, options.runtimeRoot, platform)
+    const baseEnv = shellEnv
+    const sandboxed = options.processSandbox
+      ? await options.processSandbox.wrap({
+          executable: invocation.executable,
+          args: invocation.args,
+          env: baseEnv,
+          cwd: options.cwd,
+          commandText: options.command,
+          sessionId: options.sessionId,
+          projectId: options.projectId,
+          runtime: 'bash',
+          filesystem: {
+            readOnlyRoots: [
+              options.runtimeRoot,
+              ...(options.inputRoot ? [options.inputRoot] : []),
+              dirname(invocation.executable),
+              ...environmentPathRoots(baseEnv, platform)
+            ],
+            readWriteRoots: [
+              options.notebookSessionRoot ?? options.cwd,
+              options.cwd,
+              options.handoffDir,
+              notebookWorkloadCacheRoot(options.runtimeRoot)
+            ],
+            deniedReadRoots: options.protectedDirs ?? [],
+            deniedWriteRoots: options.protectedDirs ?? []
+          },
+          ...(options.signal ? { signal: options.signal } : {})
+        })
+      : undefined
+    const endSandboxExecution = sandboxed?.beginExecution?.()
 
-    let stdout = ''
-    let stderr = ''
-    let stdoutBytes = 0
-    let stderrBytes = 0
-    let truncated = false
-    let settled = false
-    // Timeout owns settlement even if Windows taskkill emits exit before its promise resolves.
-    let timedOut = false
-    let cancelled = false
-
-    const finish = (result: NotebookShellResult): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeoutTimer)
-      options.signal?.removeEventListener('abort', abort)
-      resolve({ ...result, stderr: normalizePowerShellStderr(result.stderr) })
-    }
-
-    const terminateAndFinish = (result: NotebookShellResult): void => {
-      void terminateShellOnTimeout(child, platform).then((usedWindowsTerminator) => {
-        if (usedWindowsTerminator) {
-          // child.kill() only reaches the PowerShell parent on Windows; taskkill /T /F reaps the
-          // full tree. Settle only after it completes so callers can safely inspect or remove cwd.
-          finish(result)
-          return
+    return new Promise((resolve) => {
+      const child = spawn(
+        sandboxed?.executable ?? invocation.executable,
+        sandboxed?.args ?? invocation.args,
+        {
+          cwd: options.cwd,
+          env: sandboxed?.env ?? baseEnv,
+          // On POSIX this makes the shell the leader of a private process group/session. Keep its handle
+          // and stdio referenced (no unref), preserving normal completion while enabling safe -PGID kills.
+          detached: platform !== 'win32'
         }
+      )
 
-        // POSIX group teardown continues in the background so a wedged command tree cannot delay the
-        // result. Its SIGKILL timer intentionally survives the shell leader's exit.
-        finish(result)
-      })
-    }
+      let stdout = ''
+      let stderr = ''
+      let stdoutBytes = 0
+      let stderrBytes = 0
+      let truncated = false
+      let settled = false
+      // Timeout owns settlement even if Windows taskkill emits exit before its promise resolves.
+      let timedOut = false
+      let cancelled = false
 
-    const abort = (): void => {
-      if (settled || timedOut || cancelled) return
-      cancelled = true
-      clearTimeout(timeoutTimer)
-      terminateAndFinish({
-        stdout,
-        stderr:
-          stderr + `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command was cancelled.`,
-        exitCode: null,
-        cancelled: true
-      })
-    }
-
-    const timeoutTimer = setTimeout(() => {
-      if (settled || cancelled) return
-      timedOut = true
-      const timeoutResult: NotebookShellResult = {
-        stdout,
-        stderr:
-          stderr +
-          `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
-        exitCode: null,
-        ...(truncated ? { truncated: true } : {})
+      const finish = (result: NotebookShellResult): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeoutTimer)
+        options.signal?.removeEventListener('abort', abort)
+        endSandboxExecution?.()
+        const normalized = normalizePowerShellStderr(result.stderr)
+        const stderr = sandboxed ? sandboxed.annotateStderr(normalized) : normalized
+        sandboxed?.cleanup()
+        resolve({ ...result, stderr })
       }
-      terminateAndFinish(timeoutResult)
-    }, timeoutMs)
 
-    options.signal?.addEventListener('abort', abort, { once: true })
-    if (options.signal?.aborted) abort()
+      const terminateAndFinish = (result: NotebookShellResult): void => {
+        void terminateShellOnTimeout(child, platform).then((usedWindowsTerminator) => {
+          if (usedWindowsTerminator) {
+            // child.kill() only reaches the PowerShell parent on Windows; taskkill /T /F reaps the
+            // full tree. Settle only after it completes so callers can safely inspect or remove cwd.
+            finish(result)
+            return
+          }
 
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    const appendOutput = (
-      current: string,
-      chunk: string,
-      remainingBytes: number,
-      updateBytes: (captured: number) => void
-    ): string => {
-      const limited = limitUtf8(chunk, remainingBytes)
-      updateBytes(Buffer.byteLength(limited.text, 'utf8'))
-      truncated ||= limited.truncated
-      return current + limited.text
-    }
-    child.stdout.on('data', (chunk: string) => {
-      stdout = appendOutput(
-        stdout,
-        chunk,
-        NOTEBOOK_TEXT_LIMIT_BYTES - NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES - stdoutBytes,
-        (captured) => {
-          stdoutBytes += captured
-        }
-      )
-    })
-    child.stderr.on('data', (chunk: string) => {
-      stderr = appendOutput(
-        stderr,
-        chunk,
-        NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES - SHELL_TIMEOUT_MESSAGE_RESERVE_BYTES - stderrBytes,
-        (captured) => {
-          stderrBytes += captured
-        }
-      )
-    })
-    child.once('error', (error) => {
-      if (!timedOut && !cancelled)
-        finish({
+          // POSIX group teardown continues in the background so a wedged command tree cannot delay the
+          // result. Its SIGKILL timer intentionally survives the shell leader's exit.
+          finish(result)
+        })
+      }
+
+      const abort = (): void => {
+        if (settled || timedOut || cancelled) return
+        cancelled = true
+        clearTimeout(timeoutTimer)
+        terminateAndFinish({
           stdout,
-          stderr: stderr || error.message,
+          stderr:
+            stderr + `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command was cancelled.`,
+          exitCode: null,
+          cancelled: true
+        })
+      }
+
+      const timeoutTimer = setTimeout(() => {
+        if (settled || cancelled) return
+        timedOut = true
+        const timeoutResult: NotebookShellResult = {
+          stdout,
+          stderr:
+            stderr +
+            `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
           exitCode: null,
           ...(truncated ? { truncated: true } : {})
-        })
+        }
+        terminateAndFinish(timeoutResult)
+      }, timeoutMs)
+
+      options.signal?.addEventListener('abort', abort, { once: true })
+      if (options.signal?.aborted) abort()
+
+      child.stdout.setEncoding('utf8')
+      child.stderr.setEncoding('utf8')
+      const appendOutput = (
+        current: string,
+        chunk: string,
+        remainingBytes: number,
+        updateBytes: (captured: number) => void
+      ): string => {
+        const limited = limitUtf8(chunk, remainingBytes)
+        updateBytes(Buffer.byteLength(limited.text, 'utf8'))
+        truncated ||= limited.truncated
+        return current + limited.text
+      }
+      child.stdout.on('data', (chunk: string) => {
+        stdout = appendOutput(
+          stdout,
+          chunk,
+          NOTEBOOK_TEXT_LIMIT_BYTES - NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES - stdoutBytes,
+          (captured) => {
+            stdoutBytes += captured
+          }
+        )
+      })
+      child.stderr.on('data', (chunk: string) => {
+        stderr = appendOutput(
+          stderr,
+          chunk,
+          NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES - SHELL_TIMEOUT_MESSAGE_RESERVE_BYTES - stderrBytes,
+          (captured) => {
+            stderrBytes += captured
+          }
+        )
+      })
+      child.once('error', (error) => {
+        if (!timedOut && !cancelled)
+          finish({
+            stdout,
+            stderr: stderr || error.message,
+            exitCode: null,
+            ...(truncated ? { truncated: true } : {})
+          })
+      })
+      child.once('exit', (code) => {
+        if (!timedOut && !cancelled)
+          finish({ stdout, stderr, exitCode: code, ...(truncated ? { truncated: true } : {}) })
+      })
     })
-    child.once('exit', (code) => {
-      if (!timedOut && !cancelled)
-        finish({ stdout, stderr, exitCode: code, ...(truncated ? { truncated: true } : {}) })
-    })
-  })
+  }
+
+  return run().catch((error: unknown) => ({
+    stdout: '',
+    stderr: error instanceof Error ? error.message : String(error),
+    exitCode: null
+  }))
+}
 
 // Stateless production adapter: a shared instance adds no queue or process registry.
 class NotebookShellProcessAdapter implements NotebookShellProcess {
-  constructor(private readonly platform: NodeJS.Platform = process.platform) {}
+  constructor(
+    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly processSandbox?: NotebookProcessSandbox
+  ) {}
 
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult> {
-    return runShellCommand({ ...request, platform: this.platform })
+    return runShellCommand({
+      ...request,
+      platform: this.platform,
+      ...(this.processSandbox ? { processSandbox: this.processSandbox } : {})
+    })
   }
 }
 

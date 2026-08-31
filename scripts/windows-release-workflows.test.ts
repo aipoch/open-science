@@ -68,21 +68,47 @@ describe('post-merge Windows validation', () => {
     expect(stage.run).toContain('"$compatibility_path" --version')
   })
 
+  it('rebuilds the Windows sandbox host before packaging', () => {
+    const job = readWorkflow('build.yml').jobs.build
+    const steps = job.steps ?? []
+    const rustTest = findStep(job, 'Test Windows sandbox native source')
+    const buildHost = findStep(job, 'Build Windows sandbox native host')
+    const packageStep = findStep(job, 'Build & package')
+
+    expect(rustTest.if).toBe("${{ matrix.platform == 'win' }}")
+    expect(rustTest.run).toBe(
+      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml'
+    )
+    expect(buildHost.if).toBe("${{ matrix.platform == 'win' }}")
+    expect(buildHost.run).toBe(
+      'node packages/notebook-network-sandbox/vendor/windows/build.mjs x64'
+    )
+    expect(steps.indexOf(rustTest)).toBeLessThan(steps.indexOf(buildHost))
+    expect(steps.indexOf(buildHost)).toBeLessThan(steps.indexOf(packageStep))
+  })
+
   it('batches complete Windows coverage independently against the latest main head', () => {
     const build = readWorkflow('build.yml')
     const workflow = readWorkflow('windows-full-test.yml')
     const plan = workflow.jobs.plan
     const job = workflow.jobs.windows_full_test
+    const sandbox = workflow.jobs.notebook_sandbox
+    const dispatch = workflow.on?.workflow_dispatch
 
     expect(build.jobs.windows_full_test).toBeUndefined()
     expect(workflow.on?.push).toBeUndefined()
     expect(workflow.on?.schedule).toEqual([{ cron: '47 * * * *' }])
-    expect(workflow.on).toHaveProperty('workflow_dispatch')
+    expect(dispatch?.inputs?.mode).toMatchObject({
+      default: 'full',
+      options: ['full', 'notebook-sandbox']
+    })
     expect(workflow.on).not.toHaveProperty('workflow_call')
-    expect(findStep(plan, 'Check for untested main changes').run).toContain('status=success')
+    expect(findStep(plan, 'Check for untested main changes').run).toContain(
+      'event=schedule&status=success'
+    )
     expect(job).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_test == 'true'",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}",
       'runs-on': 'windows-latest'
     })
     expect(job['continue-on-error']).toBeUndefined()
@@ -90,6 +116,26 @@ describe('post-merge Windows validation', () => {
     expect(findStep(job, 'Test complete suite shard').run).toBe(
       'npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
     )
+    expect(sandbox).toMatchObject({
+      needs: 'plan',
+      if: "needs.plan.outputs.should_test == 'true'",
+      'runs-on': 'windows-latest',
+      'timeout-minutes': 20
+    })
+    const sandboxSteps = sandbox.steps ?? []
+    const rustTest = findStep(sandbox, 'Test Windows sandbox native source')
+    const buildHost = findStep(sandbox, 'Build Windows sandbox native host')
+    const smoke = findStep(sandbox, 'Test AppContainer ownership and removal lifecycle')
+    expect(findStep(sandbox, 'Setup Node').with).toMatchObject({ 'node-version': 22 })
+    expect(rustTest.run).toBe(
+      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml'
+    )
+    expect(buildHost.run).toBe(
+      'node packages/notebook-network-sandbox/vendor/windows/build.mjs x64'
+    )
+    expect(sandboxSteps.indexOf(rustTest)).toBeLessThan(sandboxSteps.indexOf(buildHost))
+    expect(sandboxSteps.indexOf(buildHost)).toBeLessThan(sandboxSteps.indexOf(smoke))
+    expect(smoke.run).toContain('vendor/windows-src/ci/smoke.ps1')
   })
 
   it('hard-gates every packaged Windows build on a fresh install/start/uninstall smoke', () => {

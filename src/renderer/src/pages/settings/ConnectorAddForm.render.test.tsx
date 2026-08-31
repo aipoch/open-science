@@ -35,11 +35,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-// Sets a controlled input/textarea value the way React expects (native setter + input event).
-const setValue = (label: string, value: string): void => {
-  const field = document.body.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-    `[aria-label="${label}"]`
-  )
+const setValueForInput = (field: HTMLInputElement | HTMLTextAreaElement, value: string): void => {
   const proto =
     field instanceof HTMLTextAreaElement
       ? window.HTMLTextAreaElement.prototype
@@ -47,8 +43,35 @@ const setValue = (label: string, value: string): void => {
   const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
   act(() => {
     setter?.call(field, value)
-    field?.dispatchEvent(new Event('input', { bubbles: true }))
+    field.dispatchEvent(new Event('input', { bubbles: true }))
   })
+}
+
+// Sets a controlled input/textarea value the way React expects (native setter + input event).
+const setValue = (label: string, value: string): void => {
+  let editorModeLabel: string | undefined
+  if (label === 'Environment variables' || label === 'Headers') {
+    editorModeLabel =
+      label === 'Environment variables' ? 'Environment variable editor mode' : 'Header editor mode'
+    const textMode = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(
+        `[role="radiogroup"][aria-label="${editorModeLabel}"] [role="radio"]`
+      )
+    ).find((radio) => radio.textContent?.trim() === 'Text')
+    if (textMode?.getAttribute('data-state') !== 'checked') act(() => textMode?.click())
+  }
+  const field = document.body.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    `[aria-label="${label}"]`
+  )
+  if (field) setValueForInput(field, value)
+  if (editorModeLabel) {
+    const fieldsMode = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(
+        `[role="radiogroup"][aria-label="${editorModeLabel}"] [role="radio"]`
+      )
+    ).find((radio) => radio.textContent?.trim() === 'Fields')
+    act(() => fieldsMode?.click())
+  }
 }
 
 const checkTrust = (): void => {
@@ -392,19 +415,18 @@ describe('ConnectorAddForm (local command)', () => {
     openAdvancedSettings()
 
     expect(advancedButton()?.getAttribute('aria-expanded')).toBe('true')
-    for (const label of [
-      'Connector name',
-      'Connector ID',
-      'Description',
-      'Arguments',
-      'Environment variables'
-    ]) {
+    for (const label of ['Connector name', 'Connector ID', 'Description', 'Arguments']) {
       expect(
         document.body
           .querySelector(`[aria-label="${label}"]`)
           ?.closest('[data-slot="settings-editor-field"]')
       ).not.toBeNull()
     }
+    expect(
+      document.body
+        .querySelector('[data-slot="environment-credential-editor"]')
+        ?.closest('[data-slot="settings-editor-field"]')
+    ).not.toBeNull()
   })
 
   it('reveals a generated Connector name error instead of hiding it in Advanced settings', () => {
@@ -458,13 +480,10 @@ describe('ConnectorAddForm (local command)', () => {
     expect(
       document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
     ).toBe('Example Research')
-    expect(
-      document.body.querySelector<HTMLTextAreaElement>('[aria-label="Environment variables"]')
-        ?.value
-    ).toBe('API_TOKEN=')
-    const environment = document.body.querySelector<HTMLTextAreaElement>(
-      '[aria-label="Environment variables"]'
+    const environment = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Variable name"]'
     )
+    expect(environment?.value).toBe('API_TOKEN')
     expect(environment?.getAttribute('aria-required')).toBe('true')
     expect(environment?.getAttribute('aria-describedby')).toBe('connector-env-help')
     expect(document.body.querySelector('#connector-env-help')?.textContent).toContain(
@@ -487,6 +506,47 @@ describe('ConnectorAddForm (local command)', () => {
         envCredentialIds: { API_TOKEN: 'credential-static' }
       })
     )
+  })
+
+  it('binds a newly created static Credential to the active environment row', async () => {
+    const createdCredential = {
+      ...staticCredential,
+      id: 'credential-created',
+      displayName: 'Created API key',
+      kind: 'api_key' as const
+    }
+    useSettingsStore.setState({
+      createDeviceCredential: vi.fn().mockImplementation(async () => {
+        useSettingsStore.setState({ deviceCredentials: [createdCredential] })
+        return createdCredential
+      })
+    })
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    openAdvancedSettings()
+    setValue('Variable name', 'API_TOKEN')
+    selectOption('Credential for API_TOKEN', 'New credential')
+
+    const [credentialName, secret] = Array.from(
+      document.body.querySelectorAll<HTMLInputElement>('input')
+    )
+    setValueForInput(credentialName!, 'Created API key')
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: { getData: vi.fn(() => 'raw-secret'), setData: vi.fn() }
+    })
+    act(() => secret!.dispatchEvent(paste))
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Save'
+    )
+    await act(async () => save?.click())
+
+    expect(
+      document.body.querySelector('[aria-label="Credential for API_TOKEN"]')?.textContent
+    ).toContain('Created API key')
   })
 })
 
@@ -522,7 +582,7 @@ describe('ConnectorAddForm (remote server)', () => {
       )
     })
 
-    const headers = document.body.querySelector('[aria-label="Headers"]')
+    const headers = document.body.querySelector('[aria-label="Header name"]')
     expect(headers?.getAttribute('aria-required')).toBe('true')
     expect(headers?.getAttribute('aria-describedby')).toBe('connector-headers-help')
     expect(document.body.querySelector('#connector-headers-help')?.textContent).toContain(

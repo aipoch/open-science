@@ -4,3 +4,7 @@ pnpm-lock.yaml
 LICENSE.md
 tsconfig.json
 tsconfig.*.json
+# Auditable upstream snapshot and native sources retain their original formatting.
+packages/notebook-network-sandbox/upstream
+packages/notebook-network-sandbox/vendor
+packages/notebook-network-sandbox/LICENSE.upstream

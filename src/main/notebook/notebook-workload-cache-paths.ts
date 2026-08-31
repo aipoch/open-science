@@ -1,5 +1,5 @@
 import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 const MARKER_FILE = '.open-science-notebook-cache.json'
 const MARKER_KIND = 'notebook-workload-cache'
@@ -58,8 +58,8 @@ export const notebookWorkloadCacheEnv = (runtimeRoot: string): NodeJS.ProcessEnv
 }
 
 export const prepareNotebookWorkloadCache = (runtimeRoot: string): NodeJS.ProcessEnv => {
-  if (runtimeRoot.trim() === '') {
-    throw new Error('Notebook workload cache requires a runtime root.')
+  if (!runtimeRoot || !isAbsolute(runtimeRoot)) {
+    throw new Error('Notebook workload cache requires an absolute runtime root.')
   }
   const cacheRoot = notebookWorkloadCacheRoot(runtimeRoot)
   const cacheParent = dirname(cacheRoot)

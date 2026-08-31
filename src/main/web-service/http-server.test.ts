@@ -24,6 +24,7 @@ import {
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
 import { createLogger, flushLogs, initLogger } from '../logger'
+import { PermissionApprovalPresence } from '../permission-approval-presence'
 import {
   REMOTE_LOCAL_ONLY_RPC_CHANNELS,
   startWebHttpServer,
@@ -150,6 +151,41 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('tracks only interactive internal Web event clients as approval-capable', async () => {
+    const permissionApprovalPresence = new PermissionApprovalPresence()
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      permissionApprovalPresence,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const interactive = new WebSocket(
+      `ws://127.0.0.1:${server.port}/events?token=test-token&client=web-ui`
+    )
+    await new Promise<void>((resolve) => interactive.once('open', resolve))
+    expect(permissionApprovalPresence.isAvailable()).toBe(true)
+
+    const liveness = new WebSocket(
+      `ws://127.0.0.1:${server.port}/events?token=test-token&client=probe&liveness=1`
+    )
+    await new Promise<void>((resolve) => liveness.once('open', resolve))
+    interactive.close()
+    await new Promise<void>((resolve) => interactive.once('close', () => resolve()))
+    await vi.waitFor(() => expect(permissionApprovalPresence.isAvailable()).toBe(false))
+
+    liveness.close()
+  })
+
   it('closes stale external event sockets before an application event can leak', async () => {
     let authorizationCurrent = true
     const server = await startTestWebHttpServer({

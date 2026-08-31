@@ -59,8 +59,8 @@ const inferMimeType = (filePath: string, fallback?: string): string =>
 
 type ManagedPreviewResourcesOptions = {
   resolvePath: (
-    source: 'notebook-input' | 'local',
-    request: Extract<AcquireManagedPreviewRequest, { source: 'notebook-input' | 'local' }>
+    source: 'local',
+    request: Extract<AcquireManagedPreviewRequest, { source: 'local' }>
   ) => Promise<string>
   openLatestManagedFile?: (
     source: 'artifact' | 'upload',
@@ -70,8 +70,16 @@ type ManagedPreviewResourcesOptions = {
     source: 'artifact' | 'upload',
     request: { projectId: string; fileId: string; versionId: string }
   ) => Promise<ManagedFileReadLease>
+  openNotebookInput?: (
+    request: Extract<AcquireManagedPreviewRequest, { source: 'notebook-input' }>
+  ) => Promise<ManagedPreviewTrustedLease>
   createId?: () => string
 }
+
+type ManagedPreviewTrustedLease = Pick<
+  ManagedFileReadLease,
+  'path' | 'size' | 'versionToken' | 'snapshot' | 'read' | 'readRange' | 'verifyUnchanged' | 'close'
+>
 
 type ManagedPreviewResourceSnapshot = {
   size: number
@@ -89,7 +97,7 @@ type AcquireManagedPreviewOptions = {
 type ResourceEntry = ManagedPreviewResource & {
   ownerId: number
   filePath: string
-  trustedLease?: ManagedFileReadLease
+  trustedLease?: ManagedPreviewTrustedLease
   strictSnapshot?: {
     dev: bigint
     ino: bigint
@@ -181,8 +189,9 @@ class ManagedPreviewResources {
     if (request.source === 'artifact' || request.source === 'upload') {
       throw new Error('Managed preview Version lease is unavailable.')
     }
+    if (request.source !== 'local') throw new Error('Managed preview lease is unavailable.')
     // Path-backed sources still resolve through their source-specific trust boundary.
-    const filePath = await this.options.resolvePath(request.source, request)
+    const filePath = await this.options.resolvePath('local', request)
     const fileStat = await stat(filePath, { bigint: true })
     if (!fileStat.isFile()) throw new Error('Managed preview path is not a file.')
 
@@ -204,7 +213,11 @@ class ManagedPreviewResources {
           ? (() => {
               throw new Error('Managed preview Version lease is unavailable.')
             })()
-          : await this.options.resolvePath(request.source, request)
+          : request.source === 'local'
+            ? await this.options.resolvePath('local', request)
+            : (() => {
+                throw new Error('Managed preview lease is unavailable.')
+              })()
       const fileSnapshot = trustedLease
         ? {
             size: trustedLease.size,
@@ -521,7 +534,13 @@ class ManagedPreviewResources {
 
   private openTrustedLease(
     request: AcquireManagedPreviewRequest
-  ): Promise<ManagedFileReadLease | undefined> {
+  ): Promise<ManagedPreviewTrustedLease | undefined> {
+    if (request.source === 'notebook-input') {
+      if (!this.options.openNotebookInput) {
+        return Promise.reject(new Error('Notebook input preview lease is not configured.'))
+      }
+      return this.options.openNotebookInput(request)
+    }
     if (request.source !== 'artifact' && request.source !== 'upload') {
       return Promise.resolve(undefined)
     }

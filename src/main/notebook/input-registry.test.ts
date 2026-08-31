@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -11,6 +11,7 @@ import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from './input-registry'
 import { createNotebookInputPreviewKey } from '../../shared/notebook'
+import { getNotebookInputRoot } from './input-staging'
 
 // Hosted Windows runners migrate a fresh database for each case under disk
 // contention. The Windows full-test workflow default is 60s; the heavier
@@ -153,6 +154,7 @@ const setup = async (): Promise<NotebookInputRegistry> => {
   })
   return new NotebookInputRegistry({
     inputAuthority: new ImmutableInputAuthority({
+      storageRoot,
       managedFileVersions: new ManagedFileVersionService({
         storageRoot,
         getClient: () => Promise.resolve(client!)
@@ -341,12 +343,29 @@ describe('NotebookInputRegistry', () => {
         inputFileVersionId: 'upload-version-1'
       })
     ).rejects.toThrow(/not registered/i)
-    await expect(
+    const stagedPath = await lease.resolve({
+      sourceKind: 'upload-version',
+      inputFileVersionId: 'upload-version-1'
+    })
+    expect(stagedPath).not.toBe(await realpath(join(storageRoot!, ...storageKey.split('/'))))
+    expect(stagedPath).toContain(getNotebookInputRoot(storageRoot!, 'project-1', 'active-session'))
+    await expect(readFile(stagedPath, 'utf8')).resolves.toBe('group\nA\n')
+    if (process.platform !== 'win32') expect((await stat(stagedPath)).mode & 0o222).toBe(0)
+    await chmod(stagedPath, 0o644)
+    await writeFile(stagedPath, 'group\nB\n')
+    const [repairedPath, concurrentPath] = await Promise.all([
+      lease.resolve({
+        sourceKind: 'upload-version',
+        inputFileVersionId: 'upload-version-1'
+      }),
       lease.resolve({
         sourceKind: 'upload-version',
         inputFileVersionId: 'upload-version-1'
       })
-    ).resolves.toBe(join(storageRoot!, ...storageKey.split('/')))
+    ])
+    expect(repairedPath).toBe(stagedPath)
+    expect(concurrentPath).toBe(stagedPath)
+    await expect(readFile(stagedPath, 'utf8')).resolves.toBe('group\nA\n')
     await expect(lease.close()).resolves.toEqual([
       expect.objectContaining({ association: 'resolver-accessed' })
     ])

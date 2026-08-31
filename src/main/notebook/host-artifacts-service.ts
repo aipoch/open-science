@@ -8,20 +8,13 @@ import type {
   HostArtifactsResult
 } from '../../shared/project-files'
 import { isRecord } from './value-guards'
+import type { ImmutableInputAuthority } from '../immutable-input-authority'
 
 type HostArtifactCatalog = {
   readHostArtifactCatalog(request: {
     projectId: string
     versionId?: string
   }): Promise<HostArtifactCatalogItem[]>
-}
-
-type HostManagedFileReader = {
-  openLatest(request: {
-    source: 'artifact' | 'upload'
-    projectId: string
-    fileId: string
-  }): Promise<{ path: string; close(): Promise<void> }>
 }
 
 type HostArtifactReadContext = { projectId: string; sessionId: string }
@@ -263,7 +256,7 @@ const matchesContentType = (actual: string | undefined, requested: string): bool
 class HostArtifactsService {
   constructor(
     private readonly catalog: HostArtifactCatalog,
-    private readonly managedFileVersions: HostManagedFileReader
+    private readonly inputAuthority: Pick<ImmutableInputAuthority, 'stageLatest'>
   ) {}
 
   async list(options: unknown, context: HostArtifactReadContext): Promise<HostArtifactsResult> {
@@ -355,21 +348,16 @@ class HostArtifactsService {
     if (!item)
       throw new Error(`Artifact Version not found in the current Project: ${versionIdValue}`)
 
-    const lease = await this.managedFileVersions.openLatest({
-      source: item.source,
+    const path = await this.inputAuthority.stageLatest({
       projectId: context.projectId,
-      fileId: item.sourceFileId
+      targetSessionId: context.sessionId,
+      sourceKind: item.source === 'artifact' ? 'artifact-version' : 'upload-version',
+      expectedSourceFileId: item.sourceFileId
     })
-    try {
-      if (!isAbsolute(lease.path)) {
-        throw new Error('Managed Artifact reader returned a relative path.')
-      }
-      return lease.path
-    } finally {
-      await lease.close()
-    }
+    if (!isAbsolute(path)) throw new Error('Notebook input stager returned a relative path.')
+    return path
   }
 }
 
 export { HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED, HostArtifactsService }
-export type { HostArtifactCatalog, HostArtifactReadContext, HostManagedFileReader }
+export type { HostArtifactCatalog, HostArtifactReadContext }

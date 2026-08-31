@@ -72,10 +72,27 @@ const takeOutputTail = (budget, value) => {
 // the captured values instead. (Broader filesystem/network egress isolation is a tracked follow-up.)
 const RPC_ENDPOINT = process.env.OPEN_SCIENCE_MCP_RPC_ENDPOINT
 const RPC_SOCKET_PATH = process.env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH
-const RPC_TOKEN = process.env.OPEN_SCIENCE_MCP_RPC_TOKEN
+const RPC_TOKEN_FD = Number(process.env.OPEN_SCIENCE_MCP_RPC_TOKEN_FD)
+const RPC_TOKEN =
+  Number.isInteger(RPC_TOKEN_FD) && RPC_TOKEN_FD >= 3
+    ? (() => {
+        try {
+          return fs.readFileSync(RPC_TOKEN_FD, 'utf8')
+        } finally {
+          fs.closeSync(RPC_TOKEN_FD)
+        }
+      })()
+    : process.env.OPEN_SCIENCE_MCP_RPC_TOKEN
+const RPC_PROXY_URL =
+  !RPC_SOCKET_PATH &&
+  RPC_ENDPOINT &&
+  new URL(RPC_ENDPOINT).hostname === 'open-science-notebook-rpc.invalid'
+    ? process.env.HTTP_PROXY
+    : undefined
 delete process.env.OPEN_SCIENCE_MCP_RPC_ENDPOINT
 delete process.env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH
 delete process.env.OPEN_SCIENCE_MCP_RPC_TOKEN
+delete process.env.OPEN_SCIENCE_MCP_RPC_TOKEN_FD
 
 // Notebook session/project identity for host.compute grant-scope approval memory (This conversation /
 // This project). Not secret, but captured and removed alongside the RPC creds so sandbox user code that
@@ -103,16 +120,24 @@ let DELEGATE_CALL_SEQUENCE = 0
 const capturedFetch = fetch
 const capturedHttpRequest = require('node:http').request
 const capturedRpcFetch = (input, init = {}) => {
-  if (!RPC_SOCKET_PATH) return capturedFetch(input, init)
+  if (!RPC_SOCKET_PATH && !RPC_PROXY_URL) return capturedFetch(input, init)
 
   const url = new URL(input)
+  const proxy = RPC_PROXY_URL && new URL(RPC_PROXY_URL)
+  const headers = Object.fromEntries(new Headers(init.headers).entries())
+  if (proxy) {
+    const supplied = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`
+    headers['proxy-authorization'] = `Basic ${Buffer.from(supplied).toString('base64')}`
+  }
   return new Promise((resolve, reject) => {
     const request = capturedHttpRequest(
       {
-        socketPath: RPC_SOCKET_PATH,
-        path: url.pathname + url.search,
+        ...(RPC_SOCKET_PATH
+          ? { socketPath: RPC_SOCKET_PATH }
+          : { hostname: proxy.hostname, port: proxy.port || 80 }),
+        path: proxy ? url.href : url.pathname + url.search,
         method: init.method || 'GET',
-        headers: init.headers
+        headers
       },
       (response) => {
         let body = ''

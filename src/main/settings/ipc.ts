@@ -47,6 +47,7 @@ import {
   type ValidateOpenAlexCredentialRequest,
   type SetPackageMirrorRequest,
   type SetNetworkProxyRequest,
+  type SetNotebookNetworkRequest,
   type SetClosePreferenceRequest,
   type SetDefaultPermissionProfileRequest,
   type SetConversationSkillImportEnabledRequest,
@@ -302,12 +303,18 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:mark-onboarding-complete', () => service.markOnboardingComplete())
 
   ipcMainHandle('settings:get-package-mirror', () => service.getPackageMirror())
+  ipcMainHandle('settings:get-notebook-network-status', () => service.getNotebookNetworkStatus())
   ipcMainHandle('settings:set-package-mirror', (_event, request: SetPackageMirrorRequest) =>
     service.setPackageMirror(request)
   )
   ipcMainHandle('settings:set-network-proxy', (_event, request: SetNetworkProxyRequest) =>
     service.setNetworkProxy(request)
   )
+  ipcMainHandle('settings:set-notebook-network', (_event, request: SetNotebookNetworkRequest) =>
+    service.setNotebookNetwork(request)
+  )
+  ipcMainHandle('settings:install-notebook-network', () => service.installNotebookNetwork())
+  ipcMainHandle('settings:remove-notebook-network', () => service.removeNotebookNetwork())
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())
   ipcMainHandle('settings:get-github-token-status', () => service.getGitHubTokenStatus())

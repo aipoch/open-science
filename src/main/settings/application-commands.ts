@@ -18,6 +18,7 @@ import type {
   SetShowNotificationContentRequest,
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
+  SetNotebookNetworkRequest,
   SetProjectFilesFilterRequest,
   SetReviewerModelRequest,
   SetSessionDetailsModelRequest,
@@ -60,6 +61,7 @@ type CoreSettingsCommandStore = Pick<
   | 'detectOpencode'
   | 'getConnectorDetail'
   | 'getPackageMirror'
+  | 'getNotebookNetworkStatus'
   | 'getGitHubTokenStatus'
   | 'getPreflight'
   | 'getSettingsView'
@@ -68,6 +70,8 @@ type CoreSettingsCommandStore = Pick<
   | 'installCodeBuddy'
   | 'installCodex'
   | 'installOpencode'
+  | 'installNotebookNetwork'
+  | 'removeNotebookNetwork'
   | 'isEncryptionAvailable'
   | 'isNpmAvailable'
   | 'listConnectors'
@@ -86,6 +90,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setShowNotificationContent'
   | 'setPackageMirror'
   | 'setNetworkProxy'
+  | 'setNotebookNetwork'
   | 'setProjectFilesFilter'
   | 'setReviewerModel'
   | 'setSessionDetailsModel'
@@ -156,6 +161,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'getPackageMirror'>
   >('settings:get-package-mirror'),
+  getNotebookNetworkStatus: defineApplicationCommand<
+    'settings:get-notebook-network-status',
+    readonly [],
+    StoreResult<'getNotebookNetworkStatus'>
+  >('settings:get-notebook-network-status'),
   getPreflight: defineApplicationCommand<
     'settings:get-preflight',
     readonly [],
@@ -191,6 +201,16 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: InstallOpencodeRequest],
     StoreResult<'installOpencode'>
   >('settings:install-opencode'),
+  installNotebookNetwork: defineApplicationCommand<
+    'settings:install-notebook-network',
+    readonly [],
+    StoreResult<'installNotebookNetwork'>
+  >('settings:install-notebook-network'),
+  removeNotebookNetwork: defineApplicationCommand<
+    'settings:remove-notebook-network',
+    readonly [],
+    StoreResult<'removeNotebookNetwork'>
+  >('settings:remove-notebook-network'),
   isEncryptionAvailable: defineApplicationCommand<
     'settings:encryption-available',
     readonly [],
@@ -289,6 +309,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetNetworkProxyRequest],
     StoreResult<'setNetworkProxy'>
   >('settings:set-network-proxy'),
+  setNotebookNetwork: defineApplicationCommand<
+    'settings:set-notebook-network',
+    readonly [request: SetNotebookNetworkRequest],
+    StoreResult<'setNotebookNetwork'>
+  >('settings:set-notebook-network'),
   setProjectFilesFilter: defineApplicationCommand<
     'settings:set-project-files-filter',
     readonly [request: SetProjectFilesFilterRequest],
@@ -333,6 +358,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getConnectorDetail,
   settingsCoreApplicationCommands.getGitHubTokenStatus,
   settingsCoreApplicationCommands.getPackageMirror,
+  settingsCoreApplicationCommands.getNotebookNetworkStatus,
   settingsCoreApplicationCommands.getPreflight,
   settingsCoreApplicationCommands.getSettings,
   settingsCoreApplicationCommands.getSkillDetail,
@@ -340,6 +366,8 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.installCodeBuddy,
   settingsCoreApplicationCommands.installCodex,
   settingsCoreApplicationCommands.installOpencode,
+  settingsCoreApplicationCommands.installNotebookNetwork,
+  settingsCoreApplicationCommands.removeNotebookNetwork,
   settingsCoreApplicationCommands.isEncryptionAvailable,
   settingsCoreApplicationCommands.isNpmAvailable,
   settingsCoreApplicationCommands.listAppIcons,
@@ -360,6 +388,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setShowNotificationContent,
   settingsCoreApplicationCommands.setPackageMirror,
   settingsCoreApplicationCommands.setNetworkProxy,
+  settingsCoreApplicationCommands.setNotebookNetwork,
   settingsCoreApplicationCommands.setProjectFilesFilter,
   settingsCoreApplicationCommands.setReviewerModel,
   settingsCoreApplicationCommands.setSessionDetailsModel,
@@ -413,6 +442,7 @@ const registerCoreSettingsApplicationCommands = (
         return dependencies.service.getGitHubTokenStatus()
       },
       'settings:get-package-mirror': () => dependencies.service.getPackageMirror(),
+      'settings:get-notebook-network-status': () => dependencies.service.getNotebookNetworkStatus(),
       'settings:get-preflight': () => dependencies.service.getPreflight(),
       'settings:get-settings': () => dependencies.service.getSettingsView(),
       'settings:get-skill-detail': ({ args }) => dependencies.service.getSkillDetail(args[0]),
@@ -431,6 +461,14 @@ const registerCoreSettingsApplicationCommands = (
       'settings:install-opencode': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-opencode')
         return dependencies.service.installOpencode(args[0], dependencies.emitInstallEvent)
+      },
+      'settings:install-notebook-network': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:install-notebook-network')
+        return dependencies.service.installNotebookNetwork()
+      },
+      'settings:remove-notebook-network': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:remove-notebook-network')
+        return dependencies.service.removeNotebookNetwork()
       },
       'settings:encryption-available': () => dependencies.service.isEncryptionAvailable(),
       'settings:npm-available': () => dependencies.service.isNpmAvailable(),
@@ -483,6 +521,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:set-network-proxy': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-network-proxy')
         return dependencies.service.setNetworkProxy(args[0])
+      },
+      'settings:set-notebook-network': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-notebook-network')
+        return dependencies.service.setNotebookNetwork(args[0])
       },
       'settings:set-project-files-filter': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-project-files-filter')

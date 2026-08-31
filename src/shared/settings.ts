@@ -12,6 +12,7 @@ import type {
 } from './reasoning-effort'
 import type { PackageMirror } from './mirror'
 import type { NetworkProxySettings } from './network-proxy'
+import type { NotebookNetworkSettings } from './notebook-network'
 import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
@@ -509,6 +510,8 @@ export type SettingsSnapshot = {
   packageMirror?: PackageMirror
   // Application-wide proxy preference. Older documents without this field resolve to System.
   networkProxy?: NetworkProxySettings
+  // Global Notebook REPL/Bash egress policy. Historical settings resolve to the safe defaults.
+  notebookNetwork?: NotebookNetworkSettings
   // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
   // default untouched; concrete levels apply to subsequent requests when the agent supports them.
   reasoningEffort: ReasoningEffort
@@ -545,6 +548,12 @@ export type ProjectFilesFilterPreference = {
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
 export type SetNetworkProxyRequest = NetworkProxySettings
+
+export type SetNotebookNetworkRequest = NotebookNetworkSettings & {
+  // The renderer's allowed-domain baseline. The owner applies the draft's add/remove delta to the
+  // latest stored policy so a concurrent conversation approval cannot be overwritten by a stale form.
+  baseAllowedDomains?: readonly string[]
+}
 
 export type SetPackageMirrorRequest = PackageMirror
 

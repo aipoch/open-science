@@ -18,9 +18,11 @@ import { cn } from '@/lib/utils'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import {
   describePermissionRequest,
+  getNotebookNetworkApproval,
   isArtifactWriteRequest,
   isLiteratureReadRequest,
   isMcpPermissionRequest,
+  isNotebookNetworkApprovalRequest,
   isSpecialistDeleteRequest,
   isSpecialistSwitchRequest,
   type PermissionPresentation,
@@ -163,7 +165,15 @@ const getExtraOptionLabel = (option: PermissionOption, t: TFunction): string => 
 const getScopeConfirmationSubject = (
   presentation: PermissionPresentation,
   request: AcpPermissionRequest
-): { subject: string; codeExecution: boolean } => {
+): Omit<PermissionScopeConfirmation, 'scope'> => {
+  const networkApproval = getNotebookNetworkApproval(request)
+  if (networkApproval) {
+    return {
+      subject: networkApproval.hostname,
+      codeExecution: false,
+      settingsTarget: 'network'
+    }
+  }
   if (presentation.notebookRuntime) {
     return { subject: presentation.notebookRuntime, codeExecution: true }
   }
@@ -211,6 +221,7 @@ const resolveNotebookToolName = (request: AcpPermissionRequest): string | undefi
 
 // Derives displayable code and language from the tool's raw input.
 const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | undefined => {
+  if (isNotebookNetworkApprovalRequest(request)) return undefined
   const raw = request.rawInput
   const rawInput =
     raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
@@ -311,6 +322,45 @@ const PermissionCodeSection = ({
           <WorkspaceToolCodeBlock code={code} language={language} copyable />
         </div>
       )}
+    </div>
+  )
+}
+
+const NotebookNetworkApprovalDetail = ({
+  request
+}: {
+  request: AcpPermissionRequest
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const approval = getNotebookNetworkApproval(request)
+  if (!approval) return null
+  const destination = approval.port ? `${approval.hostname}:${approval.port}` : approval.hostname
+
+  return (
+    <div className="space-y-2 text-xs leading-5 text-muted-foreground">
+      <p>{t('Notebook code requested access to {{destination}}.', { destination })}</p>
+      {approval.reason ? <p>{t('Reason: {{reason}}', { reason: approval.reason })}</p> : null}
+      <button
+        type="button"
+        aria-expanded={expanded}
+        className="inline-flex items-center gap-1 font-medium text-foreground hover:text-primary"
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <ChevronRight
+          className={cn('size-3.5 transition-transform', expanded && 'rotate-90')}
+          aria-hidden="true"
+        />
+        {t('Details')}
+      </button>
+      {expanded ? (
+        <p>
+          {t(
+            'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Allowed domains.',
+            { domain: approval.hostname }
+          )}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -844,6 +894,8 @@ const PermissionApprovalCard = ({
           redacted payload; all other requests keep the activity-style code preview. */}
       {literatureSummary ? (
         <WorkspaceLiteratureToolCard summary={literatureSummary} />
+      ) : isNotebookNetworkApprovalRequest(request) ? (
+        <NotebookNetworkApprovalDetail request={request} />
       ) : isSpecialistSwitchRequest(request) ? (
         <SpecialistSwitchDetail request={request} />
       ) : isSpecialistDeleteRequest(request) ? (

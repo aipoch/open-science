@@ -22,6 +22,18 @@ export type NotebookRunSource = 'agent' | 'user'
 // Exact app-local dispatch methods corresponding to the three approval-gated Notebook MCP tools.
 export type NotebookExecutionRpcMethod = 'execute' | 'executeControl' | 'executeShell'
 
+export type RequestNotebookNetworkAccessRequest = NotebookSessionRequest & {
+  hostname: string
+  reason: string
+  runtime?: 'python' | 'r' | 'repl' | 'bash'
+  command?: string
+}
+
+export type RequestNotebookNetworkAccessResult = Readonly<{
+  hostname: string
+  status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked' | 'unavailable'
+}>
+
 // Distinguishes regular notebook cells from terminal submissions in the same history.
 export type NotebookRunInputKind = 'cell' | 'terminal'
 

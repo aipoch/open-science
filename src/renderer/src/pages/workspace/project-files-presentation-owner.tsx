@@ -449,8 +449,7 @@ const FilterMenuItem = ({
   </DropdownMenuItem>
 )
 
-// Keeps all/uploads filters fixed while session choices expand through their own group-header cursor,
-// preventing menu exploration from advancing any file collection shown in the content area.
+// Session choices paginate independently so menu exploration never advances the visible files.
 const ProjectFilesFilterMenu = ({
   label,
   options,

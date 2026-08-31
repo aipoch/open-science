@@ -51,6 +51,7 @@ export type NotebookSessionExecutionRequest = {
   helperModules?: readonly NotebookHelperModuleInjection[]
   cwd: string
   notebookSessionRoot: string
+  inputRoot?: string
   dataRoot: string
   fileEvidenceStorageRoot?: string
   fileEvidenceRoot?: string

@@ -695,7 +695,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       return {
         rootLabelKey: 'Network',
         rootTo: { panel: 'network', view: { kind: 'list' } },
-        leaf: networkView.kind === 'proxy' ? t('Proxy') : t('Package mirror')
+        leaf:
+          networkView.kind === 'proxy'
+            ? t('Proxy')
+            : networkView.kind === 'domains'
+              ? t('Notebook network access')
+              : t('Package mirror')
       }
     }
     if (activePanel === 'connectors' && connectorsView.kind !== 'list') {

@@ -13,6 +13,35 @@ const request = (overrides: Partial<AcpPermissionRequest>): AcpPermissionRequest
 })
 
 describe('describePermissionRequest', () => {
+  it('uses the Notebook network card only for a main-owned approval', () => {
+    const rawInput = {
+      notebookNetworkApproval: { hostname: 'data.example.org', port: 443, runtime: 'python' }
+    }
+
+    expect(
+      describePermissionRequest(
+        request({ appOwned: true, providerToolName: 'Open Science', rawInput })
+      )
+    ).toMatchObject({
+      actionTitle: 'Connect to data.example.org?',
+      categoryLabel: 'Network access',
+      hideToolIdentity: true
+    })
+
+    expect(
+      describePermissionRequest(
+        request({
+          isMcp: true,
+          mcpIdentity: 'untrusted-provider/spoof_network_access',
+          rawInput
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Use Untrusted Provider / Spoof Network Access?',
+      categoryLabel: 'External service'
+    })
+  })
+
   it('renders the app-owned Specialist switch approval on the standard permission card', () => {
     expect(
       describePermissionRequest(
