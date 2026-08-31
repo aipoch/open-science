@@ -46,6 +46,7 @@ type NotebookDataExecutionAdmissionOwnerOptions = {
   ensureRecovered: () => Promise<void>
   resolveRuntimeEnablement: (language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>
   repairPolicy: Pick<NotebookRuntimeRepairPolicy, 'blockKey' | 'requirement'>
+  platform?: NodeJS.Platform
 }
 
 const defaultEnvironment = (language: NotebookLanguage): string =>
@@ -132,7 +133,9 @@ class NotebookDataExecutionAdmissionOwner {
     const recoveryBlocked =
       (binding?.runtimeId && this.options.recovery.isRuntimeIdBlocked(binding.runtimeId)) ||
       (!isExternal &&
-        this.options.recovery.isPrefixBlocked(envPrefix(runtimeRoot, route.environment))) ||
+        this.options.recovery.isPrefixBlocked(
+          envPrefix(runtimeRoot, route.environment, this.options.platform)
+        )) ||
       (isExternal && this.options.recovery.isGloballyBlocked())
     const repairRequired =
       this.options.environmentOperations.isRepairBlocked(
@@ -173,7 +176,8 @@ class NotebookDataExecutionAdmissionOwner {
       source: cell.code,
       surface: cell.language,
       runtimeRoot: session.runtimeRoot,
-      cwd: session.cwd
+      cwd: session.cwd,
+      platform: this.options.platform
     })
     if (blockedMutation && rejection === undefined) {
       rejection = new Error(`MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`)
@@ -231,8 +235,11 @@ class NotebookDataExecutionAdmissionOwner {
   ): Promise<boolean> {
     const enablement = await this.options.resolveRuntimeEnablement(language)
     if (!enablement) return false
-    const prefix = envPrefix(runtimeRoot, defaultEnvironment(language))
-    const interpreter = language === 'r' ? rBin(prefix) : pythonBin(prefix)
+    const prefix = envPrefix(runtimeRoot, defaultEnvironment(language), this.options.platform)
+    const interpreter =
+      language === 'r'
+        ? rBin(prefix, this.options.platform)
+        : pythonBin(prefix, this.options.platform)
     let environmentId = interpreter
     try {
       environmentId = realpathSync(interpreter)
@@ -254,7 +261,7 @@ class NotebookDataExecutionAdmissionOwner {
       sessionId: session.sessionId,
       ensureRecovered: this.options.ensureRecovered,
       assertRecoverable: () => {
-        const prefix = envPrefix(session.runtimeRoot, environment)
+        const prefix = envPrefix(session.runtimeRoot, environment, this.options.platform)
         if (this.options.recovery.isPrefixBlocked(prefix)) {
           throw new Error(
             `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +

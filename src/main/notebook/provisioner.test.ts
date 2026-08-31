@@ -83,9 +83,9 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
       // argv[3] is --prefix / -p value depending on form; find the prefix and drop a bin file.
       const pIdx = argv.findIndex((a) => a === '--prefix' || a === '-p')
       const prefix = argv[pIdx + 1]
-      const isPython =
-        prefix === envPrefix(root, DEFAULT_PY_ENV, overrides.platform ?? process.platform)
-      const bin = isPython ? pythonBin(prefix) : rBin(prefix)
+      const platform = overrides.platform ?? process.platform
+      const isPython = prefix === envPrefix(root, DEFAULT_PY_ENV, platform)
+      const bin = isPython ? pythonBin(prefix, platform) : rBin(prefix, platform)
       mkdirSync(join(bin, '..'), { recursive: true })
       writeFileSync(bin, 'x')
       created.push(argv[1])
@@ -573,8 +573,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
   it('repairs and retries after a Windows native access violation leaves an incomplete cache', async () => {
     const root = makeRoot()
     const cache = pkgsCache(root)
-    const prefix = envPrefix(root, DEFAULT_PY_ENV)
-    const bin = pythonBin(prefix)
+    const prefix = envPrefix(root, DEFAULT_PY_ENV, 'win32')
+    const bin = pythonBin(prefix, 'win32')
     mkdirSync(join(cache, 'interrupted-pkg'), { recursive: true })
     writeFileSync(join(cache, 'interrupted-pkg', 'partial'), 'x')
 
@@ -621,8 +621,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
   it('repairs an access violation from the short-cache MAX_PATH retry', async () => {
     const root = makeRoot()
     const cache = pkgsCache(root)
-    const prefix = envPrefix(root, DEFAULT_PY_ENV)
-    const bin = pythonBin(prefix)
+    const prefix = envPrefix(root, DEFAULT_PY_ENV, 'win32')
+    const bin = pythonBin(prefix, 'win32')
     const leaf = 'broken-package-1.0-0'
     const packageDir = join(cache, 'https', 'host', 'channel', 'noarch', leaf)
     const missing = join(packageDir, 'Library', 'x'.repeat(280))
@@ -1344,7 +1344,8 @@ const makeNamedEnvDeps = (
       const prefix = argv[idx + 1]
       // Named envs are always Python in these tests unless the packages carry r-base.
       const isR = argv.includes('r-base')
-      const bin = isR ? rBin(prefix) : pythonBin(prefix)
+      const platform = overrides.platform ?? process.platform
+      const bin = isR ? rBin(prefix, platform) : pythonBin(prefix, platform)
       mkdirSync(join(bin, '..'), { recursive: true })
       writeFileSync(bin, 'x')
     },
@@ -1360,6 +1361,21 @@ const makeNamedEnvDeps = (
 }
 
 describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
+  it('uses the injected platform for the interpreter it verifies', async () => {
+    const root = makeRoot()
+    const platform: NodeJS.Platform = process.platform === 'win32' ? 'linux' : 'win32'
+    const verify = vi.fn(async () => undefined)
+    const { deps } = makeNamedEnvDeps(root, { platform, verify })
+
+    await new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+
+    const prefix = envPrefix(root, 'analysis', platform)
+    expect(verify).toHaveBeenLastCalledWith(
+      platform === 'win32' ? join(prefix, 'python.exe') : join(prefix, 'bin', 'python'),
+      prefix
+    )
+  })
+
   it('publishes and releases the Windows working cache after a successful create', async () => {
     const root = makeRoot()
     const release = vi.fn().mockResolvedValue(true)
@@ -1830,11 +1846,11 @@ describe('DefaultRuntimeProvisioner.listEnvironments', () => {
   it('maps short Windows default directories to logical names and ignores legacy duplicates', () => {
     const root = makeRoot()
     const shortPrefix = join(root, 'envs', '.p')
-    mkdirSync(join(pythonBin(shortPrefix), '..'), { recursive: true })
-    writeFileSync(pythonBin(shortPrefix), 'short')
+    mkdirSync(join(pythonBin(shortPrefix, 'win32'), '..'), { recursive: true })
+    writeFileSync(pythonBin(shortPrefix, 'win32'), 'short')
     const legacyPrefix = join(root, 'envs', DEFAULT_PY_ENV)
-    mkdirSync(join(pythonBin(legacyPrefix), '..'), { recursive: true })
-    writeFileSync(pythonBin(legacyPrefix), 'legacy')
+    mkdirSync(join(pythonBin(legacyPrefix, 'win32'), '..'), { recursive: true })
+    writeFileSync(pythonBin(legacyPrefix, 'win32'), 'legacy')
 
     const infos = new DefaultRuntimeProvisioner(
       makeDeps(root, { platform: 'win32' })
@@ -2691,21 +2707,22 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     writeSpawnIntent(root, 'orphan', BOOT_A) // no-PID orphan with a Linux boot token
     const runArgv = vi.fn(async () => undefined)
 
-    // Simulate a boot token available (Linux-like) but SAME boot (no reboot proof). The actual platform
-    // detection is process.platform, so we can't mock it in the test, but we can verify the error message
-    // contains appropriate guidance: on the real test platform (likely darwin/win32), it should mention
-    // manual cleanup; on Linux CI, it should mention reboot.
+    // Simulate a boot token available (Linux-like) but SAME boot (no reboot proof). Inject the opposite
+    // platform policy from the real host so this exercises the provisioner's dependency seam instead of
+    // accidentally agreeing with process.platform.
+    const platform: NodeJS.Platform = process.platform === 'linux' ? 'darwin' : 'linux'
     const deps = makeDeps(root, {
       runArgv,
       isPrefixBlocked: () => true,
-      readBootToken: () => BOOT_A
+      readBootToken: () => BOOT_A,
+      platform
     })
     const error = await new DefaultRuntimeProvisioner(deps)
       .repair('python', () => {}, { force: true })
       .catch((e) => e)
     expect(error.message).toMatch(/RUNTIME_RECOVERY_BLOCKED/)
-    // The guidance varies by platform: Linux → reboot, others → manual cleanup.
-    if (process.platform === 'linux') {
+    // The guidance varies by the injected platform: Linux → reboot, others → manual cleanup.
+    if (platform === 'linux') {
       expect(error.message).toMatch(/Restart your computer.*reboot proves/)
     } else {
       expect(error.message).toMatch(/manually delete the recovery metadata files/)

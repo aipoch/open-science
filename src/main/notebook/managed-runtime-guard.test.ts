@@ -9,6 +9,20 @@ import { describe, expect, it } from 'vitest'
 import { detectManagedRuntimeMutation, protectManagedRuntimeWrites } from './managed-runtime-guard'
 
 describe('detectManagedRuntimeMutation', () => {
+  it('uses the injected platform for managed-runtime path comparisons', () => {
+    const platform: NodeJS.Platform = process.platform === 'win32' ? 'linux' : 'win32'
+    const runtimeRoot = join(tmpdir(), 'OpenScience', 'runtime')
+    const target = join(tmpdir(), 'openscience', 'runtime', 'pwn.txt')
+    const mutation = detectManagedRuntimeMutation({
+      source: `touch "${target}"`,
+      surface: 'bash',
+      runtimeRoot,
+      platform
+    })
+
+    expect(mutation !== undefined).toBe(platform === 'win32')
+  })
+
   const runtimeRoot = '/tmp/open-science/runtime'
 
   it.each([

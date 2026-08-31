@@ -534,7 +534,8 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       ensureRecovered: () => this.ensureRecovered(),
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
-      repairPolicy: this.repairPolicy
+      repairPolicy: this.repairPolicy,
+      platform: options.platform
     })
     this.runTerminalization = new NotebookRunTerminalizationOwner({
       repository: this.repository,
@@ -632,8 +633,15 @@ class NotebookRuntimeService {
   ): Promise<boolean> {
     const enablement = await this.resolveRuntimeEnablement(language)
     if (!enablement) return false
-    const prefix = envPrefix(runtimeRootDir, language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV)
-    const interp = language === 'r' ? rBin(prefix) : pythonBin(prefix)
+    const prefix = envPrefix(
+      runtimeRootDir,
+      language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV,
+      this.options.platform
+    )
+    const interp =
+      language === 'r'
+        ? rBin(prefix, this.options.platform)
+        : pythonBin(prefix, this.options.platform)
     // Match by real path if the interpreter is on disk (how the Settings card keys it); else the path
     // as-is (an unprovisioned default can't have been toggled, so this only matters once it exists).
     let envId = interp
@@ -664,13 +672,16 @@ class NotebookRuntimeService {
     resolvedInterpreter: ResolvedInterpreter | undefined,
     runtimeRootDir: string
   ): EnvironmentCaptureTarget {
-    const prefix = envPrefix(runtimeRootDir, environmentName)
+    const prefix = envPrefix(runtimeRootDir, environmentName, this.options.platform)
     return {
       language,
       environmentName,
       runtimeSource: binding?.source === 'external' ? 'external' : 'managed',
       command:
-        resolvedInterpreter?.command ?? (language === 'r' ? rScriptBin(prefix) : pythonBin(prefix)),
+        resolvedInterpreter?.command ??
+        (language === 'r'
+          ? rScriptBin(prefix, this.options.platform)
+          : pythonBin(prefix, this.options.platform)),
       args: resolvedInterpreter?.args,
       ...(language === 'r' && (resolvedInterpreter?.condaPrefix || binding?.source !== 'external')
         ? { condaPrefix: resolvedInterpreter?.condaPrefix ?? prefix }
@@ -1206,7 +1217,8 @@ class NotebookRuntimeService {
   isDefaultEnvRecoveryBlocked(language: NotebookLanguage): boolean {
     const prefix = envPrefix(
       getRuntimeRoot(this.options.dataRoot),
-      language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+      language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV,
+      this.options.platform
     )
     return this.isPrefixRecoveryBlocked(prefix)
   }

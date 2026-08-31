@@ -11,7 +11,7 @@ import {
   discoverInterpreters,
   type DiscoveryDeps
 } from './environment-discovery'
-import { DEFAULT_R_ENV, envPrefix, rBin, rScriptBin } from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, rBin, rScriptBin } from './runtime-paths'
 
 describe('defaultDiscoveryDeps Windows conda R probes', () => {
   it('activates the interpreter own conda prefix for version and jsonlite probes', async () => {
@@ -135,6 +135,28 @@ describe('discoverInterpreters', () => {
     const notPy3 = await discoverInterpreters('python', makeDeps(['/x/python2'], {}))
     expect(notPy3[0].runnable).toBe(false)
     expect(notPy3[0].detail).toMatch(/Python 3/)
+  })
+
+  it('uses the injected platform when classifying interpreter provenance', async () => {
+    const platform: NodeJS.Platform = process.platform === 'win32' ? 'linux' : 'win32'
+    const runtimeRoot = join(tmpdir(), 'OpenScience', 'runtime')
+    const interpreterPath = join(
+      tmpdir(),
+      'openscience',
+      'runtime',
+      'envs',
+      'analysis',
+      platform === 'win32' ? 'python.exe' : join('bin', 'python')
+    )
+    const deps: DiscoveryDeps = {
+      ...makeDeps([interpreterPath], { versions: { [interpreterPath]: '3.12.4' } }),
+      runtimeRoot,
+      platform
+    }
+
+    const [found] = await discoverInterpreters('python', deps)
+
+    expect(found.provenance).toBe(platform === 'win32' ? 'agent-created' : 'user-own')
   })
 
   it('keeps the logical default name when discovery sees a short physical directory', async () => {
@@ -294,6 +316,25 @@ describe('collapseRscript', () => {
 })
 
 describe('defaultCandidatePaths (targeted enumeration)', () => {
+  it('uses the injected platform for app-managed interpreter paths', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-disc-platform-'))
+    const platform: NodeJS.Platform = process.platform === 'win32' ? 'linux' : 'win32'
+    const prefix = envPrefix(root, DEFAULT_PY_ENV, platform)
+    const interpreter =
+      platform === 'win32' ? join(prefix, 'python.exe') : join(prefix, 'bin', 'python')
+    mkdirSync(join(interpreter, '..'), { recursive: true })
+    writeFileSync(interpreter, 'x')
+
+    try {
+      const paths = await defaultDiscoveryDeps(root, undefined, { platform }).candidatePaths(
+        'python'
+      )
+      expect(paths).toContain(interpreter)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('includes manually-added interpreters and the app-managed default, and collapses R/Rscript', async () => {
     const root = mkdtempSync(join(tmpdir(), 'os-disc-'))
     // App-managed default-r on disk under runtime/envs.
@@ -325,18 +366,15 @@ describe('defaultCandidatePaths Windows CRAN R detection', () => {
     writeFileSync(join(r443Dir, 'R.exe'), 'x')
     writeFileSync(join(r443Dir, 'Rscript.exe'), 'x')
 
-    // Override env to point to our fake Program Files and mock Windows platform
-    const originalEnv = process.env.ProgramFiles
-    const originalPlatform = process.platform
-    process.env.ProgramFiles = join(root, 'Program Files')
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     try {
-      const paths = await defaultCandidatePaths(root)('r')
+      const paths = await defaultCandidatePaths(root, undefined, {
+        platform: 'win32',
+        env: { ProgramFiles: join(root, 'Program Files') },
+        home: root
+      })('r')
       expect(paths).toContain(join(r443Dir, 'R.exe'))
       expect(paths).not.toContain(join(r443Dir, 'Rscript.exe'))
     } finally {
-      process.env.ProgramFiles = originalEnv
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
       rmSync(root, { recursive: true, force: true })
     }
   })
