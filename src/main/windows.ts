@@ -281,7 +281,8 @@ const createMainWindow = (
   let rendererUnresponsiveAt: number | undefined
   let rendererRecoveryTimes: number[] = []
   let rendererRecoveryDialogOpen = false
-  const pendingRendererLoadsByNavigationGeneration = new Map<number, number>()
+  type PendingRendererLoad = { failureHandledByProcessExit: boolean }
+  const pendingRendererLoadsByNavigationGeneration = new Map<number, Set<PendingRendererLoad>>()
   let mainFrameNavigationGeneration = 0
   const clearRendererHangState = (): void => {
     rendererResponsive = true
@@ -293,14 +294,17 @@ const createMainWindow = (
     // The explicit load is expected to start one top-level navigation. Any later generation means a
     // reload or replacement navigation superseded this Promise before it settled.
     const ownedNavigationGeneration = mainFrameNavigationGeneration + 1
-    pendingRendererLoadsByNavigationGeneration.set(
-      ownedNavigationGeneration,
-      (pendingRendererLoadsByNavigationGeneration.get(ownedNavigationGeneration) ?? 0) + 1
-    )
+    const pendingLoad: PendingRendererLoad = { failureHandledByProcessExit: false }
+    const loadsForGeneration =
+      pendingRendererLoadsByNavigationGeneration.get(ownedNavigationGeneration) ??
+      new Set<PendingRendererLoad>()
+    loadsForGeneration.add(pendingLoad)
+    pendingRendererLoadsByNavigationGeneration.set(ownedNavigationGeneration, loadsForGeneration)
     const releasePendingLoad = (): void => {
-      const pending = pendingRendererLoadsByNavigationGeneration.get(ownedNavigationGeneration) ?? 0
-      if (pending <= 1) pendingRendererLoadsByNavigationGeneration.delete(ownedNavigationGeneration)
-      else pendingRendererLoadsByNavigationGeneration.set(ownedNavigationGeneration, pending - 1)
+      loadsForGeneration.delete(pendingLoad)
+      if (loadsForGeneration.size === 0) {
+        pendingRendererLoadsByNavigationGeneration.delete(ownedNavigationGeneration)
+      }
     }
     void loadRenderer(window).then(
       () => {
@@ -310,6 +314,7 @@ const createMainWindow = (
         releasePendingLoad()
         log.error('renderer document load rejected', { errorName: rendererLoadErrorName(error) })
         if (window.isDestroyed()) return
+        if (pendingLoad.failureHandledByProcessExit) return
         if (mainFrameNavigationGeneration > ownedNavigationGeneration) return
         if (initial) {
           // The startup shell waits for the resulting closed event and then lets the lifecycle create a
@@ -515,6 +520,14 @@ const createMainWindow = (
 
     if (!RECOVERABLE_RENDERER_EXIT_REASONS.has(details.reason) || window.isDestroyed()) return
 
+    // The load can own the current generation (navigation already started) or the next generation
+    // (the process exited before did-start-navigation). In both cases this process-exit path owns the
+    // recovery decision, so a later rejection from that same load must not consume another slot.
+    for (const generation of [mainFrameNavigationGeneration, mainFrameNavigationGeneration + 1]) {
+      for (const pendingLoad of pendingRendererLoadsByNavigationGeneration.get(generation) ?? []) {
+        pendingLoad.failureHandledByProcessExit = true
+      }
+    }
     recoverRenderer(details.reason)
   })
   window.webContents.on('unresponsive', () => {
