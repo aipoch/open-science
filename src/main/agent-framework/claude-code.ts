@@ -31,8 +31,8 @@ import {
 const CLAUDE_CODE_BUILTIN_TOOLS = { type: 'preset', preset: 'claude_code' } as const
 
 // Claude's Agent tool (formerly Task), Workflows, and team messaging can create or control work
-// outside the app-owned Frame/Attempt graph. Keep the complete ordinary Claude Code preset,
-// including TaskOutput/TaskStop for background shell jobs, but remove native delegation entry points.
+// outside the app-owned Frame/Attempt graph. Keep the complete ordinary Claude Code preset, but
+// remove native delegation entry points. Native execution is filtered separately below.
 const CLAUDE_CODE_NATIVE_DELEGATION_TOOLS = Object.freeze([
   'Agent',
   'Task',
@@ -41,6 +41,10 @@ const CLAUDE_CODE_NATIVE_DELEGATION_TOOLS = Object.freeze([
   'TeamCreate',
   'TeamDelete'
 ] as const)
+
+// Shell execution is app-owned so every framework follows the Notebook runtime's managed working
+// directory, environment-mutation guard, permission identity, and durable Run recording contract.
+const CLAUDE_CODE_NATIVE_EXECUTION_TOOLS = Object.freeze(['Bash'] as const)
 
 const recordValue = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -141,7 +145,8 @@ export const claudeCodeFramework: AgentFramework = {
     const disallowedTools = Object.freeze([
       ...new Set([
         ...stringArrayValue(sessionOptions.disallowedTools),
-        ...CLAUDE_CODE_NATIVE_DELEGATION_TOOLS
+        ...CLAUDE_CODE_NATIVE_DELEGATION_TOOLS,
+        ...CLAUDE_CODE_NATIVE_EXECUTION_TOOLS
       ])
     ])
     const managedSettings = Object.freeze({

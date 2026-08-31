@@ -149,9 +149,10 @@ describe('opencodeFramework.prepareModelConfig', () => {
     for (const tool of ['read', 'glob', 'grep', 'list', 'lsp', 'skill']) {
       expect(rules[tool]).toBe('allow')
     }
-    for (const tool of ['edit', 'bash', 'webfetch', 'websearch', 'external_directory']) {
+    for (const tool of ['edit', 'webfetch', 'websearch', 'external_directory']) {
       expect(rules[tool]).toBe('ask')
     }
+    expect(rules.bash).toBe('deny')
     expect(rules.task).toBe('deny')
     expect(JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}').agent).toEqual({
       general: { disable: true },
@@ -663,7 +664,7 @@ describe('buildOpencodeConfig', () => {
     expect(config.provider.anthropic.options.apiKey).toBeUndefined()
   })
 
-  it('pins sensitive built-in tools to ask and disables native task delegation', () => {
+  it('pins sensitive built-ins to ask and disables native Bash and task delegation', () => {
     const config = JSON.parse(
       buildOpencodeConfig(
         { type: 'custom', baseUrl: 'https://gw/v1', model: 'm' },
@@ -672,9 +673,10 @@ describe('buildOpencodeConfig', () => {
     )
 
     // Our rules override the base for every side-effecting built-in.
-    for (const tool of ['edit', 'bash', 'webfetch', 'websearch', 'external_directory']) {
+    for (const tool of ['edit', 'webfetch', 'websearch', 'external_directory']) {
       expect(config.permission[tool]).toBe('ask')
     }
+    expect(config.permission.bash).toBe('deny')
     expect(config.permission.task).toBe('deny')
     expect(config.agent).toEqual({
       general: { disable: true },
@@ -696,9 +698,10 @@ describe('buildOpencodeConfig', () => {
     for (const tool of ['read', 'glob', 'grep', 'list', 'lsp', 'skill']) {
       expect(config.permission[tool]).toBe('allow')
     }
-    // Mutating/external tools are pinned to ask (and unlisted MCP tools fall through to "*" → ask).
+    // Mutating/external tools are pinned to ask (and unlisted MCP tools fall through to "*" → ask),
+    // while native Bash is removed independently of the Notebook bash_execute MCP tool.
     expect(config.permission.edit).toBe('ask')
-    expect(config.permission.bash).toBe('ask')
+    expect(config.permission.bash).toBe('deny')
     expect(config.permission.task).toBe('deny')
   })
 
