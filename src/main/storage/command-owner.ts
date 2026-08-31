@@ -1,4 +1,5 @@
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readdir } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
@@ -58,6 +59,7 @@ import { toErrorMessage } from '../error-message'
 import type { RendererSessionPersistenceTarget } from '../session-persistence/renderer-flush'
 import type { SessionPersistenceFlushResponse } from '../../shared/session-persistence-flush'
 import { DataRootCleanupJournal } from './data-root-cleanup'
+import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 
 type LegacySessionSource = { projectId: string; sessionId: string }
 type NotebookSessionSource = { projectId: string; sessionId: string }
@@ -120,6 +122,49 @@ type StorageCommandOwnerDeps = {
 
 type StorageParentRequest = Readonly<{ parent: string }>
 type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
+
+const NON_UPLOAD_DATA_ROOT_DIRS = DATA_ROOT_DIRS.filter((dir) => dir !== 'uploads')
+
+const readDirectoryIfPresent = async (path: string): Promise<Dirent[] | undefined> => {
+  try {
+    return await readdir(path, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+// Uploads initializes this empty directory chain before onboarding asks for storage information.
+// It is infrastructure, not user data, so it must not pin a fresh install to the system drive. Any
+// additional entry (including an in-flight staged file or a symlink) still fails closed as data.
+const hasUploadDataBeyondStartupScaffold = async (dataRoot: string): Promise<boolean> => {
+  const uploads = await readDirectoryIfPresent(join(dataRoot, 'uploads'))
+  if (!uploads || uploads.length === 0) return false
+  if (
+    uploads.length !== 1 ||
+    uploads[0].name !== DEFAULT_UPLOAD_PROJECT_ID ||
+    !uploads[0].isDirectory()
+  ) {
+    return true
+  }
+
+  const defaultProject = await readDirectoryIfPresent(
+    join(dataRoot, 'uploads', DEFAULT_UPLOAD_PROJECT_ID)
+  )
+  if (!defaultProject || defaultProject.length === 0) return false
+  if (
+    defaultProject.length !== 1 ||
+    defaultProject[0].name !== '.staging' ||
+    !defaultProject[0].isDirectory()
+  ) {
+    return true
+  }
+
+  const staging = await readDirectoryIfPresent(
+    join(dataRoot, 'uploads', DEFAULT_UPLOAD_PROJECT_ID, '.staging')
+  )
+  return Boolean(staging?.length)
+}
 
 // Pushes migration progress to every live window, mirroring the acp/update broadcast pattern.
 const defaultBroadcast = (progress: MigrationProgress): void => {
@@ -222,9 +267,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         legacyInPlace && hasUserData && storedSettings.legacyDataMovePromptDismissedAt === undefined
       // Include runtime/: unlike legacy detection, onboarding must not pointer-switch away from a
       // managed environment that was prepared before an interrupted setup resumed.
-      const currentRootHasData = await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
-        DATA_ROOT_DIRS.map((dir) => join(dataRoot, dir))
-      )
+      const currentRootHasData =
+        (await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
+          NON_UPLOAD_DATA_ROOT_DIRS.map((dir) => join(dataRoot, dir))
+        )) || (await hasUploadDataBeyondStartupScaffold(dataRoot))
       canAutoSelectDataDrive = !storedSettings.dataRoot && !currentRootHasData && !dataRootMissing
     } catch (err) {
       logger.warn('data root status detection failed', diagnosticErrorFields(err))
