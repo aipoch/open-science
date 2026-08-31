@@ -1948,6 +1948,89 @@ describe('compactNotebookExecutionResult', () => {
     expect(compact.traceback).toBe(traceback)
   })
 
+  it('corrects imports of injected figure Skill helpers without suggesting package installation', () => {
+    const kernelSkillIds = ['figure-style', 'figure-composer', 'paper-narrative']
+
+    for (const [skillId, moduleName] of [
+      ['figure-style', 'figure_style'],
+      ['figure-composer', 'figure_composer'],
+      ['paper-narrative', 'paper_narrative']
+    ] as const) {
+      const traceback = [
+        'Traceback (most recent call last):',
+        '  File "<cell>", line 3, in <module>',
+        `ModuleNotFoundError: No module named '${moduleName}'`
+      ].join('\n')
+
+      const compact = compactNotebookExecutionResult(
+        {
+          ...runSummary({ traceback }),
+          kernelKind: 'python',
+          status: 'failed'
+        },
+        { kernelSkillIds }
+      ) as { hint?: string; traceback: string }
+
+      expect(compact.traceback).toBe(traceback)
+      expect(compact.hint).toContain(`Kernel Skill "${skillId}"`)
+      expect(compact.hint).toContain('not a Python package')
+      expect(compact.hint).toContain(
+        'kernelSkillIds: ["figure-style","figure-composer","paper-narrative"]'
+      )
+      expect(compact.hint).toContain('call its exported functions directly')
+      expect(compact.hint).toContain(`Do not install ${moduleName}`)
+    }
+
+    const ordinaryMissingPackage = compactNotebookExecutionResult(
+      {
+        ...runSummary({
+          traceback: [
+            'Traceback (most recent call last):',
+            '  File "<cell>", line 1, in <module>',
+            "ModuleNotFoundError: No module named 'pandas'"
+          ].join('\n')
+        }),
+        kernelKind: 'python',
+        status: 'failed'
+      },
+      { kernelSkillIds }
+    ) as { hint?: string }
+    expect(ordinaryMissingPackage.hint).toBeUndefined()
+
+    const helperInternalFailure = compactNotebookExecutionResult(
+      {
+        ...runSummary({
+          traceback: [
+            'Traceback (most recent call last):',
+            '  File "<cell>", line 1, in <module>',
+            '  File "<open-science-helper:figure-style>", line 2, in apply_figure_style',
+            "ModuleNotFoundError: No module named 'figure_style'"
+          ].join('\n')
+        }),
+        kernelKind: 'python',
+        status: 'failed'
+      },
+      { kernelSkillIds }
+    ) as { hint?: string }
+    expect(helperInternalFailure.hint).toBeUndefined()
+
+    const unverifiedCustomHelper = compactNotebookExecutionResult(
+      {
+        ...runSummary({
+          traceback: [
+            'Traceback (most recent call last):',
+            '  File "<cell>", line 1, in <module>',
+            "ModuleNotFoundError: No module named 'foo_bar'"
+          ].join('\n')
+        }),
+        kernelKind: 'python',
+        status: 'failed'
+      },
+      { kernelSkillIds: ['foo-bar'] }
+    ) as { hint?: string }
+    expect(unverifiedCustomHelper.hint).toBeUndefined()
+  })
+
   it('preserves producer truncation when no additional MCP clipping is needed', () => {
     const compact = compactNotebookExecutionResult({
       ...runSummary({ stdout: 'retained prefix' }),

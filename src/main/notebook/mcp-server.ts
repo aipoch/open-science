@@ -613,11 +613,18 @@ const compactExecutionOutputs = (
   return { outputs, truncated, omitted }
 }
 
+const BUNDLED_KERNEL_SKILL_PSEUDO_MODULES = new Map([
+  ['figure_style', 'figure-style'],
+  ['figure_composer', 'figure-composer'],
+  ['paper_narrative', 'paper-narrative']
+])
+
 // Projects one immediate execution result for the next model step. Code, roots, provenance, and
 // duplicated stream outputs remain durable but are not echoed into every later inference.
-const compactNotebookExecutionResult = (raw: unknown): unknown => {
+const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unknown => {
   const record = asRecord(raw)
   if (!record) return raw
+  const request = asRecord(input)
   const text = asRecord(record.text)
   const stream = (field: 'stdout' | 'stderr' | 'traceback'): string => {
     const value = record[field] ?? text?.[field]
@@ -642,6 +649,25 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
     staleness.truncated
   const captureTruncated = record.truncated === true
   const truncated = captureTruncated || resultCompacted
+  const rawTraceback = stream('traceback')
+  const pythonFrames = [...rawTraceback.matchAll(/^\s*File "([^"]+)", line \d+/gmu)]
+  const missingModule =
+    record.status === 'failed' && pythonFrames.at(-1)?.[1] === '<cell>'
+      ? rawTraceback.match(
+          /ModuleNotFoundError:\s+No module named ['"]([A-Za-z_][A-Za-z0-9_]*)['"]/u
+        )?.[1]
+      : undefined
+  const requestedKernelSkillIds = Array.isArray(request?.kernelSkillIds)
+    ? request.kernelSkillIds.filter((id): id is string => typeof id === 'string')
+    : []
+  const importedKernelSkillId =
+    missingModule && requestedKernelSkillIds.length
+      ? BUNDLED_KERNEL_SKILL_PSEUDO_MODULES.get(missingModule)
+      : undefined
+  const hint =
+    importedKernelSkillId && requestedKernelSkillIds.includes(importedKernelSkillId)
+      ? `Kernel Skill "${importedKernelSkillId}" is injected by kernelSkillIds and is not a Python package. Remove the "${missingModule}" import, keep kernelSkillIds: ${JSON.stringify(requestedKernelSkillIds)}, call its exported functions directly, and retry. Do not install ${missingModule}.`
+      : undefined
   const invalidatedRuns = Array.isArray(record.invalidatedRuns)
     ? record.invalidatedRuns.slice(0, 50).flatMap((value) => {
         const invalidated = asRecord(value)
@@ -675,6 +701,7 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
     ...(stdout.text ? { stdout: stdout.text } : {}),
     ...(stderr.text ? { stderr: stderr.text } : {}),
     ...(traceback.text ? { traceback: traceback.text } : {}),
+    ...(hint ? { hint } : {}),
     ...(compactOutputs.outputs.length ? { outputs: compactOutputs.outputs } : {}),
     ...(compactOutputs.omitted > 0 ? { omittedOutputCount: compactOutputs.omitted } : {}),
     ...(workingFiles.length ? { workingFiles } : {}),
