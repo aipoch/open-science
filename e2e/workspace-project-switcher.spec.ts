@@ -71,6 +71,42 @@ test('switches projects from the Workspace project menu and expands remaining pr
   expect(newProjectBounds).not.toBeNull()
   expect(showRemainingBounds?.y).toBeLessThan(newProjectBounds?.y ?? 0)
 
+  const showRemainingPresentation = await showRemaining.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const menuElement = element.closest<HTMLElement>('[aria-label="Project actions"]')
+    const newProjectElement = Array.from(
+      menuElement?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []
+    ).find((item) => item.textContent?.trim() === 'New project')
+    return {
+      backgroundColor: style.backgroundColor,
+      color: style.color,
+      fontSize: style.fontSize,
+      hasChevronIcon: element.querySelector('.lucide-chevron-down') !== null,
+      height: element.getBoundingClientRect().height,
+      menuWidth: menuElement?.getBoundingClientRect().width ?? 0,
+      newProjectColor: newProjectElement ? getComputedStyle(newProjectElement).color : '',
+      newProjectHeight: newProjectElement?.getBoundingClientRect().height ?? 0,
+      tagName: element.tagName,
+      width: element.getBoundingClientRect().width
+    }
+  })
+  expect(showRemainingPresentation).toMatchObject({
+    backgroundColor: 'rgba(0, 0, 0, 0)',
+    fontSize: '11px',
+    hasChevronIcon: true,
+    tagName: 'BUTTON'
+  })
+  expect(showRemainingPresentation.color).not.toBe(showRemainingPresentation.newProjectColor)
+  expect(showRemainingPresentation.height).toBeLessThan(showRemainingPresentation.newProjectHeight)
+  expect(showRemainingPresentation.width).toBeLessThan(showRemainingPresentation.menuWidth)
+
+  const collapsedScreenshotPath = testInfo.outputPath('workspace-project-switcher-collapsed.png')
+  await page.screenshot({ path: collapsedScreenshotPath })
+  await testInfo.attach('Workspace project switcher collapsed', {
+    path: collapsedScreenshotPath,
+    contentType: 'image/png'
+  })
+
   await showRemaining.click()
   await expect(menu).toBeVisible()
   await expect(projectItems).toHaveCount(15)

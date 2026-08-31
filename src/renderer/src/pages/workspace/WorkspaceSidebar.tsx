@@ -402,15 +402,28 @@ const WorkspaceSidebarView = ({
                 })}
                 {!showAllProjects && remainingProjectCount > 0 ? (
                   <DropdownMenuItem
+                    asChild
                     onSelect={(event) => {
                       event.preventDefault()
                       onShowAllProjectsChange?.(true)
                     }}
                   >
-                    {t('Show remaining {{count}} projects', {
-                      count: remainingProjectCount,
-                      defaultValue_one: 'Show remaining {{count}} project'
-                    })}
+                    <button
+                      type="button"
+                      className="min-h-0! w-fit! gap-1 rounded-none! bg-transparent! px-2 py-1 text-[11px]! text-muted-foreground! hover:bg-transparent! hover:text-muted-foreground! focus:bg-transparent! data-[highlighted]:bg-transparent! data-[highlighted]:text-muted-foreground!"
+                    >
+                      <ChevronDown
+                        className="size-3.5 shrink-0"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {t('Show remaining {{count}} projects', {
+                          count: remainingProjectCount,
+                          defaultValue_one: 'Show remaining {{count}} project'
+                        })}
+                      </span>
+                    </button>
                   </DropdownMenuItem>
                 ) : null}
                 {otherProjects.length > 0 ? <DropdownMenuSeparator /> : null}

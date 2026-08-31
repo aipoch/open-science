@@ -1093,6 +1093,12 @@ describe('WorkspaceSidebar accessible render', () => {
       const newProjectItem = menuItems.find((item) => item.textContent?.trim() === 'New project')
       expect(showRemainingItem).toBeDefined()
       expect(newProjectItem).toBeDefined()
+      expect(showRemainingItem?.tagName).toBe('BUTTON')
+      expect(showRemainingItem?.className).toContain('w-fit')
+      expect(showRemainingItem?.className).toContain('text-[11px]')
+      expect(showRemainingItem?.className).toContain('text-muted-foreground')
+      expect(showRemainingItem?.className).toContain('bg-transparent!')
+      expect(showRemainingItem?.querySelector('.lucide-chevron-down')).not.toBeNull()
       expect(showRemainingItem?.compareDocumentPosition(newProjectItem!)).toBe(
         Node.DOCUMENT_POSITION_FOLLOWING
       )
