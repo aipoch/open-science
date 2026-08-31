@@ -3,15 +3,13 @@ import type { Page } from 'playwright'
 
 import { test } from './fixtures/electron-app'
 
-const dismissStarDialog = async (page: Page): Promise<void> => {
-  const starDialog = page.getByRole('dialog', { name: 'Star on GitHub' })
-  try {
-    await expect(starDialog).toBeVisible({ timeout: 2_000 })
-    await starDialog.getByRole('button', { name: 'Close' }).click()
-    await expect(starDialog).toHaveCount(0)
-  } catch {
-    // The GitHub star nudge is optional and may not appear in this journey.
-  }
+// Keep in sync with GitHubStarBadge. Workspace variant waits 5s, then opens above menus.
+const STAR_NUDGE_LAST_SHOWN_STORAGE_KEY = 'open-science:github-star-nudge-last-shown-at'
+
+const suppressStarNudge = async (page: Page): Promise<void> => {
+  await page.evaluate((storageKey) => {
+    window.localStorage.setItem(storageKey, String(Date.now()))
+  }, STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
 }
 
 const createProject = async (
@@ -38,7 +36,6 @@ const createProject = async (
   await dialog.getByLabel('Description').fill(description)
   await dialog.getByRole('button', { name: 'Create project' }).click()
   await expect(page.locator(`button[title="${name}"]`)).toBeVisible()
-  await dismissStarDialog(page)
 }
 
 const seedWorkspaceProjects = async (page: Page, count: number): Promise<void> => {
@@ -65,6 +62,7 @@ test('switches projects from the Workspace project menu and expands remaining pr
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
+  await suppressStarNudge(page)
 
   await seedWorkspaceProjects(page, 16)
   const homeProjects = page.getByRole('region', { name: 'Projects' })
@@ -73,7 +71,6 @@ test('switches projects from the Workspace project menu and expands remaining pr
   })
   await homeProjects.getByRole('button', { name: 'Project 16', exact: true }).click()
   await expect(page.locator('button[title="Project 16"]')).toBeVisible()
-  await dismissStarDialog(page)
 
   await page.setViewportSize({ width: 1280, height: 600 })
   await page.locator('button[title="Project 16"]').click()
@@ -190,6 +187,7 @@ test('switches projects from the Workspace project menu and expands remaining pr
 test('closes mobile navigation when switching projects', async ({ app }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
+  await suppressStarNudge(page)
 
   await createProject(page, 'Project 1', 'Description 1', false)
   await createProject(page, 'Project 2', 'Description 2', true)
