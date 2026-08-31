@@ -125,6 +125,11 @@ describe('NotebookWorkloadCache', () => {
     expect(removeNotebookWorkloadCache(physicalRuntimeRoot)).toBe(true)
   })
 
+  it('refuses a blank runtime root instead of creating the current working directory', () => {
+    expect(() => prepareNotebookWorkloadCache('')).toThrow(/runtime root/i)
+    expect(() => prepareNotebookWorkloadCache('   ')).toThrow(/runtime root/i)
+  })
+
   it('refuses a pre-existing unmarked or mismatched directory', () => {
     const runtimeRoot = makeRuntime()
     const cacheRoot = notebookWorkloadCacheRoot(runtimeRoot)

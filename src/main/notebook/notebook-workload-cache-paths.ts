@@ -58,6 +58,9 @@ export const notebookWorkloadCacheEnv = (runtimeRoot: string): NodeJS.ProcessEnv
 }
 
 export const prepareNotebookWorkloadCache = (runtimeRoot: string): NodeJS.ProcessEnv => {
+  if (runtimeRoot.trim() === '') {
+    throw new Error('Notebook workload cache requires a runtime root.')
+  }
   const cacheRoot = notebookWorkloadCacheRoot(runtimeRoot)
   const cacheParent = dirname(cacheRoot)
   let created = false
