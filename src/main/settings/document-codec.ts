@@ -37,7 +37,7 @@ import {
   sanitizePackageMirror,
   sanitizeProvider
 } from './record-codec'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 // Checks for plain JSON objects so untrusted settings payloads can be sanitized safely.
 const asString = (value: unknown): string | undefined =>

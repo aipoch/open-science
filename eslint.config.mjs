@@ -5,6 +5,10 @@ import eslintPluginReact from 'eslint-plugin-react'
 import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
+const typescriptRulesOff = Object.fromEntries(
+  Object.keys(tseslint.plugin.rules).map((rule) => [`@typescript-eslint/${rule}`, 'off'])
+)
+
 export default defineConfig(
   {
     ignores: [
@@ -16,10 +20,6 @@ export default defineConfig(
       '**/tmp/**',
       // Packaged e2e build output (electron-builder --dir into dist-e2e-*); bundled JS, not source.
       '**/dist-e2e-*',
-      // Runtime kernel loop scripts shipped as raw resources (CommonJS, not part of the TS source tree).
-      'resources/notebook/*.js',
-      // Whole-window find overlay: an ES-module page shipped as a raw resource (not part of the TS source tree).
-      'resources/find-overlay/*.js',
       // Git worktrees hold full source copies; don't lint duplicate source from either supported root.
       '**/.claude/**',
       '**/.worktree/**',
@@ -61,6 +61,10 @@ export default defineConfig(
     rules: {
       'no-control-regex': 'off'
     }
+  },
+  {
+    files: ['resources/notebook/*.js', 'resources/find-overlay/*.js'],
+    rules: typescriptRulesOff
   },
   eslintConfigPrettier
 )

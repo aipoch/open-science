@@ -23,7 +23,7 @@ import type {
   StoredCustomMcpServer,
   StoredProvider
 } from './types'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 const log = createLogger('settings.repository')
 

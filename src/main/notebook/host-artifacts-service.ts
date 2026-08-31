@@ -6,7 +6,7 @@ import type {
   HostArtifactCatalogItem,
   HostArtifactsResult
 } from '../../shared/project-files'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
 
 type HostArtifactCatalog = {

@@ -8,7 +8,7 @@ import {
 } from '../storage/durable-json-file'
 import { sanitizeSettings } from './document-codec'
 import { createEmptySettings, type StoredSettings } from './types'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 const SETTINGS_FILE = 'settings.json'
 
