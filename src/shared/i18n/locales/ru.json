@@ -520,6 +520,8 @@
     "Change data location?": "Изменить расположение данных?",
     "Change location": "Изменить расположение",
     "Changing access mode…": "Изменение режима доступа…",
+    "Changing Notebook file access will stop active Notebook kernels. Continue?": "Изменение доступа Notebook к файлам остановит активные ядра Notebook. Продолжить?",
+    "Changing the CA bundle will stop active Notebook kernels. Continue?": "Изменение пакета сертификатов CA остановит активные ядра Notebook. Продолжить?",
     "Channel": "Канал",
     "Chat with agent": "Обсудить с агентом",
     "Check Codex login": "Проверить вход в Codex",

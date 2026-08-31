@@ -14,7 +14,8 @@ type NotebookEnvironmentManager = {
   createNamedEnvironment: (
     name: string,
     language: NotebookLanguage,
-    packages?: string[]
+    packages?: string[],
+    request?: Extract<ManageEnvironmentsRequest, { action: 'create' }>
   ) => Promise<EnvironmentInfo>
   listEnvironments: () => EnvironmentInfo[]
   removeEnvironment: (name: string) => void
@@ -72,7 +73,8 @@ class NotebookEnvironmentManagementOwner {
           const created = await manager.createNamedEnvironment(
             name,
             request.language,
-            request.packages
+            request.packages,
+            request
           )
           const { runtimeId } = managedRuntimeIdentity(
             this.options.runtimeRoot,

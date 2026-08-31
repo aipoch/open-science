@@ -455,6 +455,10 @@ const GrantedRootMenuRow = ({
   const { t } = useTranslation()
   const setAccess = useGrantedFoldersStore((state) => state.setAccess)
   const remove = useGrantedFoldersStore((state) => state.remove)
+  const confirmPolicyChange = (): boolean =>
+    window.confirm(
+      t('Changing Notebook file access will stop active Notebook kernels. Continue?')
+    ) !== false
 
   // Hover opens the submenu; click selects the folder and closes the parent menu explicitly.
   return (
@@ -508,7 +512,9 @@ const GrantedRootMenuRow = ({
           <DropdownMenuItem
             className="gap-2"
             data-testid={`granted-root-allow-writes-${root.id}`}
-            onSelect={() => onMutation('change', () => setAccess(root.id, 'rw'))}
+            onSelect={() => {
+              if (confirmPolicyChange()) onMutation('change', () => setAccess(root.id, 'rw'))
+            }}
           >
             <LockOpen
               className="size-4 shrink-0 text-text-300"
@@ -521,7 +527,9 @@ const GrantedRootMenuRow = ({
           <DropdownMenuItem
             className="gap-2"
             data-testid={`granted-root-make-read-only-${root.id}`}
-            onSelect={() => onMutation('change', () => setAccess(root.id, 'ro'))}
+            onSelect={() => {
+              if (confirmPolicyChange()) onMutation('change', () => setAccess(root.id, 'ro'))
+            }}
           >
             <Lock className="size-4 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
             <span>{t('Make read-only')}</span>
@@ -530,7 +538,9 @@ const GrantedRootMenuRow = ({
         <DropdownMenuItem
           className="gap-2 text-danger-000 data-[highlighted]:text-danger-000"
           data-testid={`granted-root-remove-${root.id}`}
-          onSelect={() => onMutation('remove', () => remove(root.id))}
+          onSelect={() => {
+            if (confirmPolicyChange()) onMutation('remove', () => remove(root.id))
+          }}
         >
           <Trash2 className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
           <span>{t('Remove access')}</span>

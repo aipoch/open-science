@@ -65,6 +65,7 @@ export const createComputeArtifactResolver = (
         path
       )
       if (staged) return staged
+      throw new Error('Compute input is not staged for the submitting Project and Session.')
     }
     return resolveManagedArtifactPath(path)
   }

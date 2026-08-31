@@ -51,7 +51,15 @@ export type EnvironmentInfo = {
 
 // manage_environments tool request — discriminated on action (design D2).
 export type ManageEnvironmentsRequest =
-  | { action: 'create'; language: NotebookLanguage; name: string; packages?: string[] }
+  | {
+      action: 'create'
+      language: NotebookLanguage
+      name: string
+      packages?: string[]
+      projectId?: string
+      sessionId?: string
+      workspaceCwd?: string
+    }
   | { action: 'list' }
   | { action: 'remove'; name: string }
 

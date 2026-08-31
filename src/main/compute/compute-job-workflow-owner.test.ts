@@ -822,9 +822,13 @@ describe('resolveInputs — artifact source', () => {
           ...scope,
           sessionId: 'session-2'
         })
-      ).rejects.toThrow('outside the artifact store')
+      ).rejects.toThrow('not staged for the submitting Project and Session')
       await expect(
         resolveInputs([{ src: legacyPath, dst_filename: 'legacy.csv' }], undefined, resolver, scope)
+      ).rejects.toThrow('not staged for the submitting Project and Session')
+      expect(managedResolver).not.toHaveBeenCalled()
+      await expect(
+        resolveInputs([{ src: legacyPath, dst_filename: 'legacy.csv' }], undefined, resolver)
       ).resolves.toMatchObject({
         entries: [{ kind: 'upload', localPath: legacyPath, dstFilename: 'legacy.csv' }]
       })

@@ -191,6 +191,7 @@ export type SettingsServiceOptions = {
   applyNotebookNetwork?: (settings: NotebookNetworkSettings) => Promise<void>
   validatePackageMirror?: (settings: SetPackageMirrorRequest) => Promise<void>
   applyPackageMirror?: (settings: PackageMirror) => Promise<void>
+  beforePackageMirrorCaBundleChange?: () => Promise<void>
   getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
   installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
@@ -246,7 +247,8 @@ class SettingsService {
     this.packageMirror = new PackageMirrorSettingsOwner({
       repository: this.repository,
       validate: options.validatePackageMirror ?? (async () => undefined),
-      apply: options.applyPackageMirror ?? (async () => undefined)
+      apply: options.applyPackageMirror ?? (async () => undefined),
+      beforeCaBundleChange: options.beforePackageMirrorCaBundleChange
     })
     this.getNotebookNetworkStatusImpl =
       options.getNotebookNetworkStatus ??

@@ -20,6 +20,7 @@ import {
 } from './provisioner'
 import { selectMicromambaCache } from './micromamba-cache'
 import { notebookWorkloadCacheRoot } from './notebook-workload-cache-paths'
+import type { NotebookProcessSandbox } from './process-sandbox'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-start-'))
 const touchBin = (path: string): void => {
@@ -265,6 +266,52 @@ describe('createProductionProvisioner', () => {
 
     expect(resolveChannel).toHaveBeenCalledOnce()
     expect(runArgv.mock.calls[0]?.[0]).toContain('https://fast-mirror.invalid/conda-forge')
+  })
+
+  it('routes a contextual named environment create through the Notebook process sandbox', async () => {
+    const root = makeRoot()
+    const mmPath = join(root, 'bin', micromambaBinName)
+    touchBin(mmPath)
+    const cleanup = vi.fn()
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async () => ({
+        executable: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        env: { PATH: process.env.PATH },
+        annotateStderr: (stderr) => stderr,
+        cleanup
+      }))
+    }
+    const provisioner = createProductionProvisioner(
+      {
+        root,
+        channel: 'conda-forge',
+        processSandbox,
+        micromamba: { env: { OPEN_SCIENCE_MICROMAMBA_BIN: mmPath } }
+      },
+      {
+        runner: { initialPath: mmPath, resolve: async () => mmPath },
+        maintainCache: async () => undefined,
+        verify: async () => undefined,
+        captureExplicitLock: async () => '@EXPLICIT\n'
+      }
+    )
+
+    await provisioner.createNamedEnvironment('analysis', 'python', ['numpy'], {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+
+    expect(processSandbox.wrap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        runtime: 'python',
+        cwd: root
+      })
+    )
+    expect(cleanup).toHaveBeenCalledOnce()
   })
 
   it('binds the default cache-maintenance adapter to the selected app cache', async () => {

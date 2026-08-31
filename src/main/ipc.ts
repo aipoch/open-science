@@ -128,6 +128,8 @@ import {
   createNotebookLocalRpcModule,
   installNotebookEnvironmentSurface
 } from './notebook/application'
+import type { NotebookRuntimeService } from './notebook/runtime-service'
+import { PermissionApprovalPresence } from './permission-approval-presence'
 import { serializeProvisioner } from './notebook/environment-operation-foundation'
 import { createNotebookEnvironmentLifecycle } from './notebook/environment-lifecycle-workflows'
 import { NotebookNetworkSandboxOwner } from './notebook/network-sandbox-owner'
@@ -406,6 +408,7 @@ type IpcRegistrationOptions = {
 export type ApplicationRuntimeInterfaces = {
   applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
   applicationEvents: ApplicationEventSource
+  permissionApprovalPresence: PermissionApprovalPresence
   bindRemoteAccess: ApplicationCommandComposition['bindRemoteAccess']
   taskNotifications: Pick<
     TaskNotificationService,
@@ -475,6 +478,7 @@ const createApplicationModules = async (
     installRendererBroadcastEventHub,
     createApplicationEventModule
   )
+  const permissionApprovalPresence = new PermissionApprovalPresence()
   const webSessionPersistenceFlush = createWebSessionPersistenceFlush(applicationEvents)
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
@@ -487,6 +491,15 @@ const createApplicationModules = async (
   })
   const settingsServiceRef: { current?: SettingsService } = {}
   const grantedRootsRepositoryRef: { current?: GrantedLocalRootsRepository } = {}
+  const notebookPolicyLifecycle: {
+    current?: Pick<NotebookRuntimeService, 'shutdownAll'>
+  } = {}
+  const shutdownNotebooksBeforePolicyChange = async (): Promise<void> => {
+    if (!notebookPolicyLifecycle.current) {
+      throw new Error('Notebook policy lifecycle is not ready.')
+    }
+    await notebookPolicyLifecycle.current.shutdownAll()
+  }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
       resourceRoot: app.isPackaged
@@ -509,6 +522,7 @@ const createApplicationModules = async (
         return service.allowNotebookNetworkDomain(hostname)
       },
       requestDecision: async ({ sessionId, hostname, port, runtime, reason, signal }) => {
+        if (headless && !permissionApprovalPresence.isAvailable()) return 'unavailable'
         const coordinator = runtimeRef.current
         if (!coordinator || signal.aborted) return 'deny'
         const selected = await coordinator
@@ -575,6 +589,7 @@ const createApplicationModules = async (
       applyPackageMirror: async () => {
         await notebookNetworkSandbox.updateTrustBundle()
       },
+      beforePackageMirrorCaBundleChange: shutdownNotebooksBeforePolicyChange,
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
@@ -766,7 +781,10 @@ const createApplicationModules = async (
     settingsService
   )
   grantedRootsRepositoryRef.current = grantedRootsRepository
-  const localFsService = new LocalFsService(grantedRootsRepository)
+  const localFsService = new LocalFsService(
+    grantedRootsRepository,
+    shutdownNotebooksBeforePolicyChange
+  )
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
     source: ManagedPreviewSource,
@@ -1313,6 +1331,7 @@ const createApplicationModules = async (
     commands: notebookCommands,
     localRpc: notebookLocalRpc
   } = notebookApplication
+  notebookPolicyLifecycle.current = notebookService
   notebookActivityRef.current = notebookService
   composition.phase('notebook-runtime')
 
@@ -3307,6 +3326,7 @@ const createApplicationModules = async (
     provisioner = createProductionProvisioner(
       {
         root: provisioningRoot,
+        processSandbox: notebookNetworkSandbox,
         channel: async () =>
           (await effectiveMirror()).condaChannel ??
           process.env.OPEN_SCIENCE_CONDA_CHANNEL ??
@@ -3868,6 +3888,7 @@ const createApplicationModules = async (
       task: applicationCommandComposition.task
     },
     applicationEvents,
+    permissionApprovalPresence,
     bindRemoteAccess: applicationCommandComposition.bindRemoteAccess,
     taskNotifications,
     notificationInbox,

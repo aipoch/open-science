@@ -595,6 +595,8 @@
     "Change data location?": "變更資料位置？",
     "Change location": "變更位置",
     "Changing access mode…": "正在變更存取模式…",
+    "Changing Notebook file access will stop active Notebook kernels. Continue?": "變更 Notebook 檔案存取權限將停止正在執行的 Notebook 核心。是否繼續？",
+    "Changing the CA bundle will stop active Notebook kernels. Continue?": "變更 CA 憑證套件將停止正在執行的 Notebook 核心。是否繼續？",
     "Channel": "頻道",
     "Chat with agent": "與智能體對話",
     "Check Codex login": "檢查 Codex 登入",

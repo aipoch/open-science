@@ -495,6 +495,8 @@
     "Change data location?": "데이터 위치를 변경하시겠습니까?",
     "Change location": "위치 변경",
     "Changing access mode…": "액세스 모드 변경 중…",
+    "Changing Notebook file access will stop active Notebook kernels. Continue?": "Notebook 파일 액세스를 변경하면 실행 중인 Notebook 커널이 중지됩니다. 계속하시겠습니까?",
+    "Changing the CA bundle will stop active Notebook kernels. Continue?": "CA 번들을 변경하면 실행 중인 Notebook 커널이 중지됩니다. 계속하시겠습니까?",
     "Channel": "채널",
     "Chat with agent": "에이전트와 채팅하세요",
     "Check Codex login": "Codex 로그인 확인",

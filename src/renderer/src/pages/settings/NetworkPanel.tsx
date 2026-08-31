@@ -128,6 +128,12 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   }
 
   const handleSave = async (): Promise<void> => {
+    if (
+      packageMirror?.caBundle !== draft.caBundle &&
+      window.confirm(t('Changing the CA bundle will stop active Notebook kernels. Continue?')) ===
+        false
+    )
+      return
     setIsSaving(true)
     setMessage(undefined)
 

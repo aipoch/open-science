@@ -300,6 +300,12 @@ const GrantFolderAccessDialogContent = ({
 
   const handleGrant = async (): Promise<void> => {
     if (grantingRef.current) return
+    if (
+      window.confirm(
+        t('Changing Notebook file access will stop active Notebook kernels. Continue?')
+      ) === false
+    )
+      return
     grantingRef.current = true
     const attempt = ++grantAttemptRef.current
     setIsGranting(true)

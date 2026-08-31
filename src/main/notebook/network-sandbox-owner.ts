@@ -29,7 +29,7 @@ import {
 } from './trust-bundle'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
-export type NotebookNetworkDecision = 'deny' | 'allowOnce' | 'alwaysAllow'
+export type NotebookNetworkDecision = 'deny' | 'allowOnce' | 'alwaysAllow' | 'unavailable'
 
 type NotebookNetworkDecisionRequest = Readonly<{
   sessionId: string
@@ -330,6 +330,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       reason: request.reason,
       signal
     })
+    if (decision === 'unavailable') {
+      return { hostname: normalized.hostname, status: 'unavailable' }
+    }
     if (decision === 'deny' || signal.aborted) {
       return { hostname: normalized.hostname, status: 'denied' }
     }

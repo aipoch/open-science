@@ -5,6 +5,7 @@ import { app } from 'electron'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import { createLogger } from '../logger'
 import type { ApplicationEventSource } from '../application-events'
+import type { PermissionApprovalPresence } from '../permission-approval-presence'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import type { TaskAgentPort, TaskComputePreferencePort } from '../tasks/task-runner'
 import { resolveConfigRoot } from '../storage-root'
@@ -71,6 +72,7 @@ const createWebServiceController = (
     requestQuit,
     externalAccess,
     applicationEvents,
+    permissionApprovalPresence,
     taskAgent,
     taskControls,
     computePreferences
@@ -79,6 +81,7 @@ const createWebServiceController = (
     requestQuit: () => void
     externalAccess?: ExternalWebAccess
     applicationEvents: ApplicationEventSource
+    permissionApprovalPresence?: PermissionApprovalPresence
     taskAgent: TaskAgentPort
     taskControls?: TaskControlPorts
     computePreferences: TaskComputePreferencePort
@@ -183,6 +186,7 @@ const createWebServiceController = (
         remoteWeb: applicationCommands.remoteWeb
       },
       applicationEvents,
+      permissionApprovalPresence,
       externalAccess,
       tasks,
       // Attached: a graceful shutdown request stops only the web service (the app keeps running). A

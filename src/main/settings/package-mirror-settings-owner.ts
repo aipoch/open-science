@@ -10,6 +10,7 @@ type PackageMirrorSettingsOwnerOptions = Readonly<{
   repository: PackageMirrorStore
   validate: (settings: SetPackageMirrorRequest) => Promise<void>
   apply: (settings: PackageMirror) => Promise<void>
+  beforeCaBundleChange?: () => Promise<void>
 }>
 
 const cloneMirror = (mirror: PackageMirror | undefined): PackageMirror => ({ ...mirror })
@@ -31,6 +32,7 @@ class PackageMirrorSettingsOwner {
   private async commit(request: SetPackageMirrorRequest): Promise<PackageMirror> {
     await this.options.validate(request)
     const previous = cloneMirror((await this.options.repository.getSettings()).packageMirror)
+    if (previous.caBundle !== request.caBundle) await this.options.beforeCaBundleChange?.()
     const stored = await this.options.repository.setPackageMirror(request)
     const packageMirror = cloneMirror(stored.packageMirror)
     try {

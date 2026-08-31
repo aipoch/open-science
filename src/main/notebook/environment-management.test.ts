@@ -135,7 +135,10 @@ describe('NotebookEnvironmentManagementOwner', () => {
         action: 'create',
         name: 'analysis',
         language: 'python',
-        packages: ['numpy']
+        packages: ['numpy'],
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
       })
     ).resolves.toEqual({
       created: {
@@ -153,6 +156,16 @@ describe('NotebookEnvironmentManagementOwner', () => {
       'create:analysis:python:numpy'
     ])
     expect(configured.listEnvironments).not.toHaveBeenCalled()
+    expect(configured.createNamedEnvironment).toHaveBeenCalledWith(
+      'analysis',
+      'python',
+      ['numpy'],
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      })
+    )
     expect(options.assertPrefixRecoverable).toHaveBeenCalledWith(envPrefix('/runtime', 'analysis'))
   })
 

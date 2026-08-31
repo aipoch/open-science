@@ -513,6 +513,8 @@
     "Change data location?": "Changer l'emplacement des données ?",
     "Change location": "Changer d'emplacement",
     "Changing access mode…": "Changer le mode d'accès…",
+    "Changing Notebook file access will stop active Notebook kernels. Continue?": "La modification de l'accès de Notebook aux fichiers arrêtera les kernels Notebook actifs. Continuer?",
+    "Changing the CA bundle will stop active Notebook kernels. Continue?": "La modification du bundle d'autorités de certification arrêtera les kernels Notebook actifs. Continuer?",
     "Channel": "Chaîne",
     "Chat with agent": "Discutez avec l'agent",
     "Check Codex login": "Vérifiez la connexion Codex",

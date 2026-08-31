@@ -222,6 +222,47 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it('returns unavailable without creating a grant when no approval client is connected', async () => {
+    const requestDecision = vi.fn().mockResolvedValue('unavailable')
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision,
+      platform: 'linux'
+    })
+    const wrapped = await owner.wrap({
+      executable: '/usr/bin/python',
+      args: ['loop.py'],
+      env: { PATH: '/usr/bin' },
+      cwd: '/workspace',
+      commandText: 'python loop.py',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'python',
+      filesystem: {
+        readOnlyRoots: ['/usr/bin'],
+        readWriteRoots: ['/workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    })
+    const endExecution = wrapped.beginExecution?.()
+    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
+    endExecution?.()
+
+    await expect(
+      owner.requestNetworkAccess({
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        hostname: 'data.example.org',
+        reason: 'Download the requested dataset.'
+      })
+    ).resolves.toEqual({ hostname: 'data.example.org', status: 'unavailable' })
+    expect(requestDecision).toHaveBeenCalledOnce()
+    wrapped.cleanup()
+  })
+
   it('fails closed instead of giving an ambiguous approval to the wrong runtime', async () => {
     const requestDecision = vi.fn().mockResolvedValue('allowOnce')
     const owner = new NotebookNetworkSandboxOwner({

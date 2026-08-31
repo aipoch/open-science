@@ -11,6 +11,7 @@ type PackageMirrorHarness = Readonly<{
   }
   validate: Mock<() => Promise<void>>
   apply: Mock<(settings: PackageMirror) => Promise<void>>
+  beforeCaBundleChange: Mock<() => Promise<void>>
   current: () => PackageMirror
 }>
 
@@ -25,24 +26,49 @@ const setup = (initial: PackageMirror = {}): PackageMirrorHarness => {
   }
   const validate = vi.fn(async (): Promise<void> => undefined)
   const apply = vi.fn(async (): Promise<void> => undefined)
+  const beforeCaBundleChange = vi.fn(async (): Promise<void> => undefined)
   return {
-    owner: new PackageMirrorSettingsOwner({ repository, validate, apply }),
+    owner: new PackageMirrorSettingsOwner({
+      repository,
+      validate,
+      apply,
+      beforeCaBundleChange
+    }),
     repository,
     validate,
     apply,
+    beforeCaBundleChange,
     current: () => current
   }
 }
 
 describe('PackageMirrorSettingsOwner', () => {
   it('validates before persisting and applies the committed value', async () => {
-    const { owner, repository, validate, apply } = setup()
+    const { owner, repository, validate, apply, beforeCaBundleChange } = setup()
 
     await expect(owner.set({ caBundle: '/certs/complete.pem' })).resolves.toEqual({
       caBundle: '/certs/complete.pem'
     })
     expect(validate).toHaveBeenCalledBefore(repository.setPackageMirror)
+    expect(beforeCaBundleChange).toHaveBeenCalledBefore(repository.setPackageMirror)
     expect(apply).toHaveBeenCalledWith({ caBundle: '/certs/complete.pem' })
+  })
+
+  it('does not restart kernels when only a mirror URL changes', async () => {
+    const { owner, beforeCaBundleChange } = setup({ caBundle: '/certs/current.pem' })
+
+    await owner.set({ caBundle: '/certs/current.pem', pypiIndex: 'https://pypi.example/simple' })
+
+    expect(beforeCaBundleChange).not.toHaveBeenCalled()
+  })
+
+  it('does not persist when stopping kernels for a CA change fails', async () => {
+    const { owner, repository, beforeCaBundleChange } = setup()
+    beforeCaBundleChange.mockRejectedValueOnce(new Error('shutdown failed'))
+
+    await expect(owner.set({ caBundle: '/certs/new.pem' })).rejects.toThrow('shutdown failed')
+
+    expect(repository.setPackageMirror).not.toHaveBeenCalled()
   })
 
   it('restores storage and the live runtime when apply fails', async () => {

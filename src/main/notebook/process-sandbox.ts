@@ -39,7 +39,7 @@ export type NotebookNetworkAccessDecisionRequest = Readonly<{
 
 export type NotebookNetworkAccessDecisionResult = Readonly<{
   hostname: string
-  status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked'
+  status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked' | 'unavailable'
 }>
 
 export interface NotebookProcessSandbox {
