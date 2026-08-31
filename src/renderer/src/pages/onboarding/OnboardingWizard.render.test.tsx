@@ -388,6 +388,43 @@ describe('OnboardingWizard flow', () => {
     expect(currentSection('Set up the agent runtime')).not.toBeNull()
   })
 
+  it('stops a pending Windows recommendation when the user leaves Location', async () => {
+    let resolveDrives: ((drives: Array<{ path: string; label: string }>) => void) | undefined
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDrives = resolve
+        })
+    )
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+    expect(window.api.localFs.listDrives).toHaveBeenCalledOnce()
+
+    await clickButton(/back/i)
+    await act(async () => {
+      resolveDrives?.([
+        { path: 'C:\\', label: 'C:' },
+        { path: 'D:\\', label: 'D:' }
+      ])
+    })
+    expect(window.api.storage.inspectDataRoot).not.toHaveBeenCalled()
+
+    await goToLocationStep()
+    expect(window.api.localFs.listDrives).toHaveBeenCalledOnce()
+    expect(currentSection('Choose data location')?.getAttribute('aria-busy')).toBe('false')
+  })
+
   it('ends a pending Windows recommendation and keeps the default after its deadline', async () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
@@ -478,6 +515,19 @@ describe('OnboardingWizard flow', () => {
       resolveStorageInfo?.(storageInfo({ canAutoSelectDataDrive: false }))
     })
     expect(findButton(/^continue$/i)?.disabled).toBe(false)
+  })
+
+  it('allows non-Windows onboarding to continue while storage info is pending', async () => {
+    window.api.platform = 'darwin'
+    window.api.storage.getInfo = vi.fn().mockReturnValue(new Promise(() => undefined))
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
+    await clickButton(/^continue$/i)
+    expect(currentSection('Set up the agent runtime')).not.toBeNull()
   })
 
   it('does not let a late storage resume override a Browse interaction in flight', async () => {

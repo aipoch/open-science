@@ -105,21 +105,23 @@ const findWindowsStorageDefault = async (
 // mapped drive may never settle. Recommendation is opportunistic, so bound the whole attempt and
 // keep the already-loaded default instead of leaving the setup UI busy indefinitely.
 const resolveWindowsStorageDefault = async (
-  storageInfo: StorageInfo
+  storageInfo: StorageInfo,
+  signal: AbortSignal
 ): Promise<LocationDraft | null> => {
   const controller = new AbortController()
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  const deadline = new Promise<null>((resolve) => {
-    timeout = setTimeout(() => {
-      controller.abort()
-      resolve(null)
-    }, WINDOWS_STORAGE_RECOMMENDATION_TIMEOUT_MS)
+  const stopped = new Promise<null>((resolve) => {
+    controller.signal.addEventListener('abort', () => resolve(null), { once: true })
   })
+  const stop = (): void => controller.abort()
+  if (signal.aborted) stop()
+  else signal.addEventListener('abort', stop, { once: true })
+  const timeout = setTimeout(stop, WINDOWS_STORAGE_RECOMMENDATION_TIMEOUT_MS)
 
   try {
-    return await Promise.race([findWindowsStorageDefault(storageInfo, controller.signal), deadline])
+    return await Promise.race([findWindowsStorageDefault(storageInfo, controller.signal), stopped])
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout)
+    clearTimeout(timeout)
+    signal.removeEventListener('abort', stop)
   }
 }
 
@@ -210,10 +212,11 @@ const OnboardingWizard = ({
     didResolveStorageResume.current = true
   }, [])
   const leaveLocation = useCallback((nextStep: 'environment' | 'agent'): void => {
-    // Continue is disabled until the automatic probe resolves, so leaving forward freezes the
-    // displayed choice. Back only cancels the in-flight probe; returning to Location retries it.
+    // Leaving freezes the displayed choice. The effect cleanup stops the renderer-side probe, and
+    // marking it resolved prevents Back/return loops from accumulating uncancellable IPC requests.
     didResolveStorageResume.current = true
     if (nextStep === 'agent') locationDraftTouched.current = true
+    setDidResolveStorageDefault(true)
     setStep(nextStep)
   }, [])
   const [relaunchError, setRelaunchError] = useState<string | undefined>(undefined)
@@ -263,7 +266,8 @@ const OnboardingWizard = ({
     }
 
     let cancelled = false
-    void resolveWindowsStorageDefault(dataRootInfo).then((recommendedDraft) => {
+    const controller = new AbortController()
+    void resolveWindowsStorageDefault(dataRootInfo, controller.signal).then((recommendedDraft) => {
       if (cancelled || locationDraftTouched.current) return
 
       if (recommendedDraft) {
@@ -274,6 +278,7 @@ const OnboardingWizard = ({
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [dataRootInfo, didResolveStorageDefault, step])
 
