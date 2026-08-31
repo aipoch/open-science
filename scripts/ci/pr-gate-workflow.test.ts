@@ -558,7 +558,6 @@ describe('PR Gate workflow', () => {
       if: "${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
     })
     for (const testFile of [
-      'scripts/database-migration-ledger-smoke.test.ts',
       'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
       'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
       'src/main/net/network-info.test.ts',

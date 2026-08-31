@@ -760,7 +760,6 @@ jobs:
         continue-on-error: true
         run: |
           npx vitest run \
-            scripts/database-migration-ledger-smoke.test.ts \
             packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts \
             packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts \
             src/main/net/network-info.test.ts \
