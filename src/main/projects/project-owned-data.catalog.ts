@@ -34,6 +34,7 @@ type ProjectDeletionPath =
   | 'project-session-json-delete'
   | 'provenance-tail'
   | 'review-tail'
+  | 'side-chat-profile-tail'
 
 type ForeignKeyCascadePolicy = Readonly<{
   kind: 'foreign-key-cascade'
@@ -485,6 +486,18 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       path: 'delegated-runtime-quiescence',
       operation: 'ProductionFrameWorkspace.deleteProject',
       note: 'The delegated owner removes both live work and dormant Project workspace directories.'
+    }
+  },
+  {
+    id: 'side-chat-runtime-profiles',
+    medium: 'filesystem',
+    resources: ['runtime-support/side-chat/<sideChatId>/'],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'side-chat-profile-tail',
+      operation: 'SideChatRuntimeOwner.completeProjectDeletion',
+      note: 'The durable Project deletion tail removes restricted backend profiles for hydrated Side Chats before releasing its deletion intent.'
     }
   },
   {

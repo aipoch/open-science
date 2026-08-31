@@ -227,6 +227,7 @@ describe('Project-owned data catalog architecture', () => {
       'artifact-bytes',
       'upload-bytes',
       'delegated-frame-workspaces',
+      'side-chat-runtime-profiles',
       'acp-runtime-state',
       'reviewer-runtime-state',
       'side-chat-runtime-state',
@@ -256,7 +257,8 @@ describe('Project-owned data catalog architecture', () => {
       'project-runtime-quiescence',
       'project-session-json-delete',
       'provenance-tail',
-      'review-tail'
+      'review-tail',
+      'side-chat-profile-tail'
     ])
   })
 
@@ -636,6 +638,40 @@ describe('Project-owned data catalog architecture', () => {
     )
     const workspaceDelete = nestedMethod(workspace, 'deleteProject')
     expectCallsInOrder(workspaceDelete, ['makeTreeRemovable', 'rm'])
+  })
+
+  it('catalogs persistent Side Chat profiles and wires their Project deletion tail', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'side-chat-runtime-profiles')
+    ).toMatchObject({
+      medium: 'filesystem',
+      resources: ['runtime-support/side-chat/<sideChatId>/'],
+      policy: {
+        kind: 'coordinator-cleanup',
+        effect: 'hard-delete',
+        path: 'side-chat-profile-tail',
+        operation: 'SideChatRuntimeOwner.completeProjectDeletion'
+      }
+    })
+
+    const constructor = newExpression('src/main/ipc.ts', 'ProjectDeletionCoordinator')
+    if (!isNewExpression(constructor.node)) throw new Error('Expected constructor expression.')
+    const lifecycle = constructor.node.arguments?.[5]
+    if (!lifecycle || !isObjectLiteralExpression(lifecycle)) {
+      throw new Error('Project deletion lifecycle wiring is not an object literal.')
+    }
+    expectCall(
+      objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
+      'owner.completeProjectDeletion'
+    )
+    expectCall(
+      classMethod(
+        'src/main/side-chat/runtime-owner.ts',
+        'SideChatRuntimeOwner',
+        'completeProjectDeletion'
+      ),
+      'rm'
+    )
   })
 
   it('proves provenance cleanup owns Restrict-ordered rows and managed bytes', () => {
