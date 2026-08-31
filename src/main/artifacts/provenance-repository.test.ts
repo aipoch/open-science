@@ -26,11 +26,20 @@ import {
   ArtifactOwnershipPersistenceRaceError,
   ArtifactProvenanceRepository
 } from './provenance-repository'
+import { ArtifactProvenanceVersionWriter } from './provenance-version-writer'
 import { ArtifactRepository } from './repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
+
+const createDeferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
 
 afterEach(async () => {
   await disconnect?.()
@@ -853,6 +862,90 @@ describe('artifact provenance repository', () => {
       producer: { state: 'unavailable', reason: 'producer-not-supplied' },
       execution_status: { state: 'unavailable', reason: 'producer-not-supplied' }
     })
+  })
+
+  it('does not deadlock app-generated and RPC Version writes for the same pending file', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-lock-order-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository
+    })
+    const content = 'same pending file'
+    const common = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      agentName: 'Codex',
+      filename: 'shared.txt',
+      contentType: 'text/plain'
+    } as const
+    await compatibilityRepository.writePendingFile({
+      projectId: common.projectId,
+      sessionId: common.artifactStorageSessionId,
+      runId: common.artifactRunId,
+      filename: common.filename,
+      mimeType: common.contentType,
+      source: { kind: 'inline', content, encoding: 'utf8' }
+    })
+
+    const rpcRoutingStarted = createDeferred()
+    const releaseRpcRouting = createDeferred()
+    const sessionWrites = vi.spyOn(ArtifactProvenanceVersionWriter.prototype, 'withSessionWrite')
+    const originalEnsureRouting =
+      compatibilityRepository.ensurePendingVersionRouting.bind(compatibilityRepository)
+    vi.spyOn(compatibilityRepository, 'ensurePendingVersionRouting').mockImplementation(
+      async (request) => {
+        rpcRoutingStarted.resolve()
+        await releaseRpcRouting.promise
+        return originalEnsureRouting(request)
+      }
+    )
+
+    const appPendingTransactionStarted = createDeferred()
+    let appPendingTransactionDidStart = false
+    const originalPendingTransaction =
+      compatibilityRepository.withPendingFileTransaction.bind(compatibilityRepository)
+    vi.spyOn(compatibilityRepository, 'withPendingFileTransaction').mockImplementation(
+      (request, options, operation) =>
+        originalPendingTransaction(request, options, async (...args) => {
+          appPendingTransactionDidStart = true
+          appPendingTransactionStarted.resolve()
+          return operation(...args)
+        })
+    )
+
+    const rpcWrite = repository.createVersion({
+      ...common,
+      writeOperationId: 'rpc-write',
+      writeRequestChecksum: 'a'.repeat(64)
+    })
+    await rpcRoutingStarted.promise
+
+    const appWrite = repository.writeAppGeneratedVersion({
+      ...common,
+      content
+    })
+    await vi.waitFor(() => expect(sessionWrites).toHaveBeenCalledTimes(2))
+    expect(appPendingTransactionDidStart).toBe(false)
+    releaseRpcRouting.resolve()
+    await appPendingTransactionStarted.promise
+
+    const result = await Promise.race([
+      Promise.allSettled([rpcWrite, appWrite]).then(() => 'settled' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 1_000))
+    ])
+    expect(result).toBe('settled')
   })
 
   it('persists a trusted app-owned Connector execution receipt with its generated Version', async () => {

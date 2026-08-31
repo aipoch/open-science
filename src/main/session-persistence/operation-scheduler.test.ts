@@ -209,6 +209,19 @@ describe('SessionPersistenceOperationScheduler', () => {
     ])
   })
 
+  it('does not wait on a Session identity already held by the current operation', async () => {
+    const scheduler = new SessionPersistenceOperationScheduler()
+
+    const result = await Promise.race([
+      scheduler.runSession('project-1', 'session-1', (scope) =>
+        scope.runSessionIdentities(['session-1', 'session-1'], async () => 'completed')
+      ),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+
+    expect(result).toBe('completed')
+  })
+
   it('makes global operations exclusive with earlier and later scoped work', async () => {
     const scheduler = new SessionPersistenceOperationScheduler()
     const projectGate = createDeferred()
