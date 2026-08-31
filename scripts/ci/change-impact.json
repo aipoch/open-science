@@ -190,6 +190,7 @@
         "src/main/settings/skill-catalog.ts",
         "src/main/storage-root.ts",
         "src/main/storage/**",
+        "src/main/system-lifecycle-adapters.ts",
         "src/main/tray.ts",
         "src/main/update/create-strategy.ts",
         "src/main/update/electron-updater-strategy.ts",
