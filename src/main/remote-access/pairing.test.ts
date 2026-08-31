@@ -99,6 +99,8 @@ describe('RemoteSessionPairingManager', () => {
     expect(firstResponse.body()).toContain('Approve this browser')
     expect(firstResponse.body()).toContain('Open Science → Settings → Remote')
     expect(firstResponse.body()).toContain('Choose “Allow for up to 12 hours”')
+    expect(firstResponse.body()).toContain('“Trust this browser for 180 days”')
+    expect(firstResponse.body()).not.toContain('Always trust this browser')
     expect(firstResponse.body()).not.toContain('Choose “Allow once”')
     expect(firstResponse.body()).not.toContain('Settings → Remote control')
     const pendingCookie = cookiePair(firstResponse.headers.get('set-cookie') as string)
