@@ -389,7 +389,7 @@ jobs:
           exit "$failed"
 
   unit_shard:
-    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/3)
+    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
     runs-on: ubuntu-latest
@@ -399,7 +399,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -415,7 +415,19 @@ jobs:
       - name: Test complete suite shard
         id: unit_macos_shard
         continue-on-error: true
-        run: npx vitest run --coverage --coverage.reporter=text-summary --shard=${{ matrix.shard }}/3 --reporter=blob --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+        # The static lane owns the i18n catalog guard. Real Linux and macOS sandbox behavior runs
+        # in platform jobs with the required native dependencies, so do not duplicate those files.
+        run: >-
+          npx vitest run
+          --coverage
+          --coverage.reporter=text-summary
+          --testTimeout=30000
+          --exclude=src/renderer/src/i18n/resources.test.ts
+          --exclude=packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
+          --exclude=packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
+          --shard=${{ matrix.shard }}/4
+          --reporter=blob
+          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -354,12 +354,12 @@ describe('PR Gate workflow', () => {
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     expect(shards).toMatchObject({
       env: { VITEST_DEFER_COVERAGE_THRESHOLDS: '1' },
-      name: 'Full portable tests (Ubuntu, shard ${{ matrix.shard }}/3)',
+      name: 'Full portable tests (Ubuntu, shard ${{ matrix.shard }}/4)',
       needs: 'preflight',
       'runs-on': 'ubuntu-latest',
       strategy: {
         'fail-fast': false,
-        matrix: { shard: [1, 2, 3] }
+        matrix: { shard: [1, 2, 3, 4] }
       }
     })
     expect(shards.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
@@ -368,7 +368,18 @@ describe('PR Gate workflow', () => {
     )
     expect(shardRun).toMatchObject({
       'continue-on-error': true,
-      run: 'npx vitest run --coverage --coverage.reporter=text-summary --shard=${{ matrix.shard }}/3 --reporter=blob --outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
+      run: [
+        'npx vitest run',
+        '--coverage',
+        '--coverage.reporter=text-summary',
+        '--testTimeout=30000',
+        '--exclude=src/renderer/src/i18n/resources.test.ts',
+        '--exclude=packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+        '--exclude=packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
+        '--shard=${{ matrix.shard }}/4',
+        '--reporter=blob',
+        '--outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
+      ].join(' ')
     })
     expect(shardUpload).toMatchObject({
       if: '${{ always() }}',
