@@ -389,7 +389,7 @@ jobs:
           exit "$failed"
 
   unit_shard:
-    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
+    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/3)
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
     runs-on: ubuntu-latest
@@ -400,7 +400,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -423,7 +423,7 @@ jobs:
           --coverage
           --coverage.reporter=text-summary
           --testTimeout=30000
-          --shard=${{ matrix.shard }}/4
+          --shard=${{ matrix.shard }}/3
           --reporter=blob
           --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
