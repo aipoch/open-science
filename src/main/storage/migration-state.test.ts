@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  clearApplicationShutdownTrigger,
+  markApplicationShutdownTrigger
+} from '../application-shutdown-trigger'
+
 vi.mock('electron', () => ({ dialog: { showMessageBoxSync: vi.fn() } }))
 
 const {
@@ -35,6 +40,7 @@ const makeApp = (): GuardApp & { fireBeforeQuit: () => { prevented: boolean } } 
 
 afterEach(() => {
   endMigration()
+  clearApplicationShutdownTrigger()
   vi.clearAllMocks()
 })
 
@@ -172,6 +178,25 @@ describe('migration-state', () => {
     expect(confirmQuit).toHaveBeenCalledTimes(1)
     expect(app.quit).not.toHaveBeenCalled()
     expect(isMigrationInProgress()).toBe(true)
+  })
+
+  it('cancels a migration without prompting when system shutdown owns the quit', async () => {
+    const app = makeApp()
+    const confirmQuit = vi.fn().mockReturnValue(false)
+    installMigrationQuitGuard(app, confirmQuit)
+    beginMigration()
+    markApplicationShutdownTrigger('system')
+
+    const { prevented } = app.fireBeforeQuit()
+
+    expect(prevented).toBe(true)
+    expect(confirmQuit).not.toHaveBeenCalled()
+    expect(app.quit).not.toHaveBeenCalled()
+
+    await Promise.resolve()
+
+    expect(isMigrationInProgress()).toBe(false)
+    await vi.waitFor(() => expect(app.quit).toHaveBeenCalledTimes(1))
   })
 
   it('quit guard clears the flag before asynchronously re-issuing a confirmed quit', async () => {
