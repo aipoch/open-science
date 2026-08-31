@@ -40,6 +40,13 @@ const expectedSkillChannels = [
 ] as const
 
 const expectedConnectorChannels = [
+  'settings:list-device-credentials',
+  'settings:create-device-credential',
+  'settings:update-device-credential',
+  'settings:remove-device-credential',
+  'settings:authenticate-device-credential',
+  'settings:cancel-device-credential-authentication',
+  'settings:disconnect-device-credential',
   'settings:set-connector-enabled',
   'settings:set-connector-auto-allow',
   'settings:set-tool-permission',
@@ -136,7 +143,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 28-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 35-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -170,7 +177,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(28)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(35)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -179,7 +186,7 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(28)
+    expect(integrationContracts).toHaveLength(35)
     expect(
       integrationContracts
         ?.filter(
@@ -188,6 +195,13 @@ describe('Settings integration application commands', () => {
             contract.channel !== 'settings:cancel-custom-server-authentication' &&
             contract.channel !== 'settings:disconnect-custom-server' &&
             contract.channel !== 'settings:retry-custom-server' &&
+            contract.channel !== 'settings:list-device-credentials' &&
+            contract.channel !== 'settings:create-device-credential' &&
+            contract.channel !== 'settings:update-device-credential' &&
+            contract.channel !== 'settings:remove-device-credential' &&
+            contract.channel !== 'settings:authenticate-device-credential' &&
+            contract.channel !== 'settings:cancel-device-credential-authentication' &&
+            contract.channel !== 'settings:disconnect-device-credential' &&
             contract.channel !== 'settings:set-openalex-credential' &&
             contract.channel !== 'settings:validate-openalex-credential' &&
             contract.channel !== 'settings:add-custom-server' &&
@@ -210,6 +224,13 @@ describe('Settings integration application commands', () => {
             contract.channel === 'settings:cancel-custom-server-authentication' ||
             contract.channel === 'settings:disconnect-custom-server' ||
             contract.channel === 'settings:retry-custom-server' ||
+            contract.channel === 'settings:list-device-credentials' ||
+            contract.channel === 'settings:create-device-credential' ||
+            contract.channel === 'settings:update-device-credential' ||
+            contract.channel === 'settings:remove-device-credential' ||
+            contract.channel === 'settings:authenticate-device-credential' ||
+            contract.channel === 'settings:cancel-device-credential-authentication' ||
+            contract.channel === 'settings:disconnect-device-credential' ||
             contract.channel === 'settings:set-openalex-credential' ||
             contract.channel === 'settings:validate-openalex-credential' ||
             contract.channel === 'settings:add-custom-server' ||

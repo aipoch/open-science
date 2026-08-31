@@ -211,13 +211,27 @@ describe('artifact IPC handlers', () => {
       checksum: 'a'.repeat(64),
       createdAt: '2026-08-30T00:00:00.000Z'
     } satisfies ArtifactVersionFile
+    const callOrder: string[] = []
     const repository = {
-      finalizeRunArtifacts: vi.fn().mockResolvedValue([compatibilityArtifact]),
+      finalizeRunArtifacts: vi.fn(async () => {
+        callOrder.push('compatibility')
+        return [compatibilityArtifact]
+      }),
       listMessageFiles: vi.fn().mockResolvedValue([compatibilityArtifact])
     } as unknown as ArtifactRepository
     const provenance = {
-      finalizeRun: vi.fn().mockResolvedValue([provenanceArtifact]),
-      listRunVersions: vi.fn().mockResolvedValue([provenanceArtifact])
+      finalizeRun: vi.fn(async () => {
+        callOrder.push('finalize')
+        return [provenanceArtifact]
+      }),
+      activateFinalizedRun: vi.fn(async () => {
+        callOrder.push('activate')
+        return [provenanceArtifact]
+      }),
+      listRunVersions: vi.fn(async () => {
+        callOrder.push('list')
+        return [provenanceArtifact]
+      })
     }
     const runRegistry = new ArtifactRunRegistry()
     const claimId = runRegistry.register({
@@ -243,6 +257,7 @@ describe('artifact IPC handlers', () => {
       artifacts.map(({ id, versionId }) => ({ id, versionId }))
     expect(identityOf(firstResult)).toEqual([{ id: 'version-1', versionId: 'version-1' }])
     expect(identityOf(retryResult)).toEqual(identityOf(firstResult))
+    expect(callOrder).toEqual(['finalize', 'compatibility', 'activate', 'list'])
   })
 
   it('finalizes compatibility files and provenance inside the shared Session mutation', async () => {

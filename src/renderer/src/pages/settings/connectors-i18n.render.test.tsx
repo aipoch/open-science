@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 // Covers what a plain string swap gets wrong in this form: the command dropdown labels are catalog
-// keys resolved at render (a stale `.label` would silently ship English), the headers hint runs
-// through <Trans> with a `code` placeholder that must render a real element rather than literal
-// markup, the credential hints are composed from independently-translated sentences whose order the
-// catalog must not assume, and Cancel comes from the shared `common` namespace.
+// keys resolved at render (a stale `.label` would silently ship English), the credential actions and
+// hints are composed from independently-translated strings whose order the catalog must not assume,
+// and Cancel comes from the shared `common` namespace.
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -70,8 +69,8 @@ const remoteEditServer: CustomServerView = {
   url: 'https://example.com/mcp'
 }
 
-// hasHeaders is what puts the form into the Static-headers auth mode, which is the only state that
-// renders the headers field the <Trans> hint below belongs to.
+// hasHeaders puts the form into the Static-headers auth mode and defaults editing to preserving the
+// existing bindings.
 const headersEditServer: CustomServerView = {
   ...remoteEditServer,
   id: 'srv-3',
@@ -152,12 +151,12 @@ describe('ConnectorAddForm copy', () => {
     expect(container.textContent).toContain('儲存變更')
   })
 
-  // Add mode accepts values immediately. Edit mode defaults to the explicit keep action and exposes
-  // saved names without rendering their values, so translations must cover both public states.
+  // Add mode binds names to device credentials. Edit mode defaults to the explicit keep action and
+  // exposes saved names without rendering their values, so translations must cover both states.
   it('translates the environment add hint and explicit edit action', () => {
     render()
     openAdvancedSettings()
-    expect(container.textContent).toContain('One KEY=VALUE per line.')
+    expect(container.textContent).toContain('One variable name per line as KEY=.')
     expect(container.textContent).not.toContain('Keep saved variables')
 
     render({ editServer: envEditServer })
@@ -165,31 +164,22 @@ describe('ConnectorAddForm copy', () => {
     expect(container.textContent).toContain('Saved names: API_TOKEN.')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('每行一条 KEY=VALUE。')
+    expect(container.textContent).toContain('每行一个变量名，格式为 KEY=。')
     expect(container.textContent).toContain('保留已保存的变量')
     expect(container.textContent).toContain('已保存的名称：API_TOKEN。')
 
     switchTo('zh-Hant')
-    expect(container.textContent).toContain('每行一條 KEY=VALUE。')
+    expect(container.textContent).toContain('每行一個變數名稱，格式為 KEY=。')
     expect(container.textContent).toContain('保留已儲存的變數')
     expect(container.textContent).toContain('已儲存的名稱：API_TOKEN。')
   })
 
-  // The field is behind the Static-headers auth mode, which initializes from hasHeaders — hence the
-  // edit fixture rather than initialTransport alone.
-  it('renders the headers hint <code> placeholder as an element, not literal markup', () => {
+  it('translates the explicit header credential action', () => {
     render({ editServer: headersEditServer })
-    const hint = container.querySelector('#connector-headers')?.parentElement as HTMLElement
-    const code = hint.querySelector('span.font-mono') as HTMLElement
-    expect(code.textContent).toBe('Name: Value')
-    expect(hint.textContent).toContain('One Name: Value per line (not JSON).')
-    expect(hint.textContent).not.toContain('<code>')
+    expect(container.textContent).toContain('Keep saved headers')
 
     switchTo('zh-Hant')
-    const zhHint = container.querySelector('#connector-headers')?.parentElement as HTMLElement
-    expect((zhHint.querySelector('span.font-mono') as HTMLElement).textContent).toBe('Name: Value')
-    expect(zhHint.textContent).toContain('每行一條 Name: Value（不是 JSON）。')
-    expect(zhHint.textContent).not.toContain('<code>')
+    expect(container.textContent).toContain('保留已儲存的標頭')
   })
 
   // The invocation name is immutable after creation, so editing disables the field. The hint explaining

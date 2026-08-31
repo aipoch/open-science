@@ -107,6 +107,33 @@ export type StoredCustomMcpOAuthState = {
   discoveryState?: OAuthDiscoveryState
 }
 
+export type StoredDeviceCredential =
+  | {
+      id: string
+      displayName: string
+      kind: 'api_key' | 'token'
+      secretRef: string
+      createdAt: number
+      updatedAt: number
+    }
+  | {
+      id: string
+      displayName: string
+      kind: 'oauth'
+      resourceUri: string
+      transport: 'streamable_http' | 'sse'
+      oauth: StoredCustomMcpOAuthConfig
+      clientSecretRef?: string
+      stateRef?: string
+      createdAt: number
+      updatedAt: number
+    }
+
+export type StoredDeviceCredentialsDocument = {
+  version: 1
+  credentials: StoredDeviceCredential[]
+}
+
 // A user-added custom MCP server. Secret values are stored as safeStorage refs and decrypted only in
 // the main process when constructing the MCP transport.
 export type StoredCustomMcpServer = {
@@ -129,11 +156,14 @@ export type StoredCustomMcpServer = {
   oauth?: StoredCustomMcpOAuthConfig
   // The pre-registered client secret follows the same safeStorage-ref convention as env/headers.
   oauthClientSecretRef?: string
+  // New Connectors may point at a device-global OAuth credential. Legacy records keep encrypted
+  // OAuth state in this field; the `credential:` prefix distinguishes the new reference shape.
   oauthRef?: string
-  // Main-process-only projections populated by ConnectorSettingsModule. Neither field is persisted
-  // to settings.json or sent to the renderer.
+  // Main-process-only projections populated by ConnectorSettingsModule. These fields are not
+  // persisted to settings.json or sent to the renderer.
   oauthClientSecret?: string
   oauthState?: StoredCustomMcpOAuthState
+  oauthCredentialUnavailable?: true
   enabled: boolean
   // Timestamp of the user's explicit add-time trust confirmation (see plan §3.5).
   trustedAt?: number

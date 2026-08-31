@@ -1,5 +1,6 @@
 import type {
   AddCustomServerRequest,
+  CreateDeviceCredentialRequest,
   ApprovalDecision,
   AuthenticateCustomServerRequest,
   ConnectorApprovalRequest,
@@ -7,7 +8,10 @@ import type {
   ConnectorDetailView,
   ConnectorView,
   CustomServerView,
+  DeviceCredentialView,
+  DeviceCredentialAuthenticationRequest,
   DisconnectCustomServerRequest,
+  RemoveDeviceCredentialRequest,
   NcbiCredentialsView,
   OpenAlexCredentialView,
   OpenAlexCredentialValidation,
@@ -15,6 +19,7 @@ import type {
   SetOpenAlexCredentialRequest,
   ToolPermission,
   UpdateCustomServerRequest,
+  UpdateDeviceCredentialRequest,
   ValidateOpenAlexCredentialRequest
 } from '../../../shared/settings'
 
@@ -42,10 +47,21 @@ export type SettingsConnectorsState = NormalizedSettingsConnectorsProjection & {
   pendingApprovals: ConnectorApprovalRequest[]
   pendingCredentialRequests: ConnectorCredentialRequest[]
   connectorAuthNotice?: ConnectorAuthNotice
+  deviceCredentials: DeviceCredentialView[]
+  deviceCredentialsLoaded: boolean
 }
 
 export type SettingsConnectorsActions = {
   loadConnectors: () => Promise<void>
+  loadDeviceCredentials: () => Promise<void>
+  createDeviceCredential: (request: CreateDeviceCredentialRequest) => Promise<DeviceCredentialView>
+  updateDeviceCredential: (request: UpdateDeviceCredentialRequest) => Promise<void>
+  removeDeviceCredential: (request: RemoveDeviceCredentialRequest) => Promise<void>
+  authenticateDeviceCredential: (request: DeviceCredentialAuthenticationRequest) => Promise<void>
+  cancelDeviceCredentialAuthentication: (
+    request: DeviceCredentialAuthenticationRequest
+  ) => Promise<void>
+  disconnectDeviceCredential: (request: DeviceCredentialAuthenticationRequest) => Promise<void>
   setConnectorEnabled: (id: string, enabled: boolean) => Promise<void>
   setConnectorAutoAllow: (id: string, autoAllow: boolean) => Promise<void>
   setToolPermission: (toolId: string, permission: ToolPermission) => Promise<ConnectorDetailView>
@@ -74,6 +90,13 @@ export type SettingsConnectorsActions = {
 type SettingsConnectorsCommands = Pick<
   Window['api']['settings'],
   | 'listConnectors'
+  | 'listDeviceCredentials'
+  | 'createDeviceCredential'
+  | 'updateDeviceCredential'
+  | 'removeDeviceCredential'
+  | 'authenticateDeviceCredential'
+  | 'cancelDeviceCredentialAuthentication'
+  | 'disconnectDeviceCredential'
   | 'setConnectorEnabled'
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
@@ -111,6 +134,8 @@ export const createInitialSettingsConnectorsState = (): SettingsConnectorsState 
   pendingApprovals: [],
   pendingCredentialRequests: [],
   connectorAuthNotice: undefined,
+  deviceCredentials: [],
+  deviceCredentialsLoaded: false,
   ncbi: { hasApiKey: false },
   openAlex: { hasApiKey: false }
 })
@@ -221,6 +246,15 @@ export const createSettingsConnectorsSlice = ({
   ): Promise<void> => {
     await runMutation(() => reconcile(command))
   }
+  const refreshDeviceCredentialsIfLoaded = async (): Promise<void> => {
+    if (!getState().deviceCredentialsLoaded) return
+    try {
+      const snapshot = await getCommands().listDeviceCredentials()
+      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+    } catch {
+      setState({ deviceCredentialsLoaded: false })
+    }
+  }
   let removeRuntimeChangedListener: (() => void) | undefined
   let catalogLoadRequest: Promise<void> | undefined
   const subscribeToRuntimeChanges = (): void => {
@@ -230,6 +264,34 @@ export const createSettingsConnectorsSlice = ({
   }
 
   return {
+    loadDeviceCredentials: async () => {
+      if (getState().deviceCredentialsLoaded) return
+      const snapshot = await getCommands().listDeviceCredentials()
+      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+    },
+    createDeviceCredential: async (request) => {
+      const result = await getCommands().createDeviceCredential(request)
+      setState({ deviceCredentials: result.credentials, deviceCredentialsLoaded: true })
+      return result.createdCredential
+    },
+    updateDeviceCredential: async (request) => {
+      const snapshot = await getCommands().updateDeviceCredential(request)
+      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+    },
+    removeDeviceCredential: async (request) => {
+      const snapshot = await getCommands().removeDeviceCredential(request)
+      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+    },
+    authenticateDeviceCredential: async (request) => {
+      const snapshot = await getCommands().authenticateDeviceCredential(request)
+      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+    },
+    cancelDeviceCredentialAuthentication: (request) =>
+      getCommands().cancelDeviceCredentialAuthentication(request),
+    disconnectDeviceCredential: async (request) => {
+      const snapshot = await getCommands().disconnectDeviceCredential(request)
+      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+    },
     loadConnectors: async () => {
       // Keep subscription and command lookup inside this async action so a missing Settings
       // surface rejects the returned promise instead of throwing synchronously into callers.
@@ -333,12 +395,15 @@ export const createSettingsConnectorsSlice = ({
       const projection = await runMutation(() =>
         reconcile(() => getCommands().addCustomServer(request))
       )
+      await refreshDeviceCredentialsIfLoaded()
       const created = projection.customServers.find((server) => server.name === request.name.trim())
       if (!created) throw new Error('Added Connector was missing from the saved settings.')
       return created
     },
-    updateCustomServer: (request) =>
-      reconcileMutation(() => getCommands().updateCustomServer(request)),
+    updateCustomServer: async (request) => {
+      await reconcileMutation(() => getCommands().updateCustomServer(request))
+      await refreshDeviceCredentialsIfLoaded()
+    },
     authenticateCustomServer: (request) =>
       runMutation(async () => {
         try {
@@ -348,12 +413,20 @@ export const createSettingsConnectorsSlice = ({
           // connector does not remain visibly "Connected" after main has cleared its credentials.
           await reconcile(() => getCommands().listConnectors()).catch(() => undefined)
           throw error
+        } finally {
+          await refreshDeviceCredentialsIfLoaded()
         }
       }),
     cancelCustomServerAuthentication: (request) =>
       getCommands().cancelCustomServerAuthentication(request),
     disconnectCustomServer: (request) =>
-      reconcileMutation(() => getCommands().disconnectCustomServer(request)),
+      runMutation(async () => {
+        try {
+          await reconcile(() => getCommands().disconnectCustomServer(request))
+        } finally {
+          await refreshDeviceCredentialsIfLoaded()
+        }
+      }),
     retryCustomServer: (id) => reconcileMutation(() => getCommands().retryCustomServer({ id })),
     setCustomServerEnabled: async (id, enabled) => {
       const key = customServerEnabledKey(id)
@@ -393,7 +466,10 @@ export const createSettingsConnectorsSlice = ({
         throw error
       }
     },
-    removeCustomServer: (id) => reconcileMutation(() => getCommands().removeCustomServer({ id })),
+    removeCustomServer: async (id) => {
+      await reconcileMutation(() => getCommands().removeCustomServer({ id }))
+      await refreshDeviceCredentialsIfLoaded()
+    },
     dismissConnectorAuthNotice: () => setState({ connectorAuthNotice: undefined }),
     enqueueApproval: (request) => {
       setState((state) =>

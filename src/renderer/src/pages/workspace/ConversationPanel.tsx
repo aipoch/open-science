@@ -332,6 +332,7 @@ type ConversationPanelAgentControls = {
   changeModelConfiguration?: (configuration: SessionAgentConfiguration) => void
   autoReviewEnabled: boolean
   memoryEnabled?: boolean
+  memoryDisabledReason?: string
   enabledComputeHosts: string[]
   selectedComputeHosts?: string[]
   toggleAutoReview: (enabled: boolean) => void
@@ -537,6 +538,7 @@ const ConversationPanel = ({
     changeModelConfiguration = () => undefined,
     autoReviewEnabled,
     memoryEnabled = true,
+    memoryDisabledReason,
     enabledComputeHosts,
     selectedComputeHosts = [],
     toggleAutoReview: onAutoReviewToggle,
@@ -1382,6 +1384,7 @@ const ConversationPanel = ({
                               grants={permissionGrants}
                               autoReviewEnabled={autoReviewEnabled}
                               memoryEnabled={memoryEnabled}
+                              memoryDisabledReason={memoryDisabledReason}
                               readOnly
                               permissionProfileReadOnly
                               grantActionsReadOnly
@@ -2111,6 +2114,7 @@ const ConversationPanel = ({
                           grants={permissionGrants}
                           autoReviewEnabled={autoReviewEnabled}
                           memoryEnabled={memoryEnabled}
+                          memoryDisabledReason={memoryDisabledReason}
                           readOnly={!canChangeAgentControls}
                           autoReviewReadOnly={!canChangeAutoReview}
                           memoryReadOnly={!canChangeMemory}

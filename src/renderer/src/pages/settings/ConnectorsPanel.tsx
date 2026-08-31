@@ -55,6 +55,7 @@ import { specialistsUsingConnector, type SpecialistUsage } from './specialist-re
 import { ResourceTagBadges, ResourceTagMenu, TagFilter } from './ResourceTagControls'
 import { SkillUsageAgents } from './SkillUsageAgents'
 import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
+import { localizeCredentialError } from './credential-error-message'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
@@ -65,8 +66,9 @@ export type ConnectorsView =
       kind: 'add'
       transport: 'local' | 'remote'
       template?: ConnectorTemplateDefinition
+      credentialView?: 'create'
     }
-  | { kind: 'edit'; id: string }
+  | { kind: 'edit'; id: string; credentialView?: 'create' }
   | { kind: 'import' }
   | { kind: 'export'; id: string }
 
@@ -196,9 +198,7 @@ export function ConnectorsPanel({
         })
       }
     } catch (error) {
-      setOAuthConnectionError(
-        error instanceof Error ? error.message : t('Failed to disconnect Connector.')
-      )
+      setOAuthConnectionError(localizeCredentialError(error, t, 'Failed to disconnect Connector.'))
     } finally {
       setOAuthConnectionBusy(false)
     }
@@ -1001,9 +1001,13 @@ export function ConnectorsPanel({
             </div>
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                {t(
-                  'Disconnect removes OAuth tokens from this app and disables the Connector. It does not revoke access on the service.'
-                )}
+                {oauthConnectionServer?.oauth?.sharedCredential
+                  ? t(
+                      'Disconnect removes the shared OAuth tokens from this app and disables every Connector using this credential. It does not revoke access on the service.'
+                    )
+                  : t(
+                      'Disconnect removes OAuth tokens from this app and disables the Connector. It does not revoke access on the service.'
+                    )}
               </AlertDialog.Description>
               {oauthConnectionError ? (
                 <p className="mt-3 text-sm text-status-failure">{oauthConnectionError}</p>

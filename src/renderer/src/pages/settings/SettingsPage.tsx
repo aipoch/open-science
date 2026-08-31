@@ -392,6 +392,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
+  const deviceCredentials = useSettingsStore((state) => state.deviceCredentials)
   const computeHosts = useComputeStore((state) => state.hosts)
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadTags = useTagStore((state) => state.load)
@@ -649,7 +650,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const breadcrumb = ((): {
     rootLabelKey: DrillablePanelName
     rootTo: SettingsRoute
-    parents?: ReadonlyArray<{ label: string; to: SettingsRoute; ariaLabel: string }>
+    parents?: ReadonlyArray<{
+      label: string
+      to: SettingsRoute
+      ariaLabel: string
+      onClick?: () => void
+    }>
     leaf: string
   } | null => {
     if (activePanel === 'skills' && skillsView.kind !== 'list') {
@@ -693,6 +699,47 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       }
     }
     if (activePanel === 'connectors' && connectorsView.kind !== 'list') {
+      if (connectorsView.kind === 'add' && connectorsView.credentialView === 'create') {
+        const addConnectorRoute: SettingsRoute = {
+          panel: 'connectors',
+          view: {
+            kind: 'add',
+            transport: connectorsView.transport,
+            ...(connectorsView.template ? { template: connectorsView.template } : {})
+          }
+        }
+        return {
+          rootLabelKey: 'Connectors',
+          rootTo: { panel: 'connectors', view: { kind: 'list' } },
+          parents: [
+            {
+              label: t('Add connector'),
+              to: addConnectorRoute,
+              ariaLabel: t('Back to {{panel}}', { panel: t('Add connector') }),
+              onClick: () => setHistoryIndex((index) => Math.max(0, index - 1))
+            }
+          ],
+          leaf: t('New credential')
+        }
+      }
+      if (connectorsView.kind === 'edit' && connectorsView.credentialView === 'create') {
+        const connectorName =
+          customServers.find((server) => server.id === connectorsView.id)?.name ?? t('connector')
+        const editConnectorLabel = t('Edit {{name}}', { name: connectorName }).trim()
+        return {
+          rootLabelKey: 'Connectors',
+          rootTo: { panel: 'connectors', view: { kind: 'list' } },
+          parents: [
+            {
+              label: editConnectorLabel,
+              to: { panel: 'connectors', view: { kind: 'edit', id: connectorsView.id } },
+              ariaLabel: t('Back to {{panel}}', { panel: editConnectorLabel }),
+              onClick: () => setHistoryIndex((index) => Math.max(0, index - 1))
+            }
+          ],
+          leaf: t('New credential')
+        }
+      }
       const leaf =
         connectorsView.kind === 'add'
           ? t('Add connector')
@@ -791,13 +838,18 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         leaf: tagsView.kind === 'create' ? t('New Tag') : t('Edit Tag')
       }
     }
-    if (activePanel === 'credentials' && credentialsView.kind === 'service') {
+    if (activePanel === 'credentials' && credentialsView.kind !== 'list') {
       const leaf =
-        credentialsView.serviceId === 'github'
-          ? t('GitHub')
-          : credentialsView.serviceId === 'openalex'
-            ? t('OpenAlex')
-            : t('Literature access')
+        credentialsView.kind === 'create'
+          ? t('New credential')
+          : credentialsView.kind === 'credential'
+            ? (deviceCredentials.find(({ id }) => id === credentialsView.id)?.displayName ??
+              t('Credential'))
+            : credentialsView.serviceId === 'github'
+              ? t('GitHub')
+              : credentialsView.serviceId === 'openalex'
+                ? t('OpenAlex')
+                : t('Literature access')
       return {
         rootLabelKey: 'Credentials',
         rootTo: { panel: 'credentials', view: { kind: 'list' } },
@@ -1223,7 +1275,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           </span>
                           <button
                             type="button"
-                            onClick={() => navigate(parent.to)}
+                            onClick={parent.onClick ?? (() => navigate(parent.to))}
                             aria-label={parent.ariaLabel}
                             className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
                           >
@@ -1324,7 +1376,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 )}
               >
                 <SettingsPanelLoadingBoundary
-                  panelKey={`${activePanel}:${historyIndex}`}
+                  panelKey={
+                    activePanel === 'connectors' &&
+                    (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
+                    connectorsView.credentialView === 'create'
+                      ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
+                      : `${activePanel}:${historyIndex}`
+                  }
                   onClose={onClose}
                 >
                   {activePanel === 'skills' ? (
@@ -1439,6 +1497,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       <ConnectorAddForm
                         initialTransport={connectorsView.transport}
                         initialTemplate={connectorsView.template}
+                        credentialViewOpen={connectorsView.credentialView === 'create'}
+                        onCredentialViewChange={(open) => {
+                          if (open) {
+                            navigateConnectors({ ...connectorsView, credentialView: 'create' })
+                          } else {
+                            goBack()
+                          }
+                        }}
                         onDone={() => navigateConnectors({ kind: 'list' })}
                         onCancel={() => navigateConnectors({ kind: 'list' })}
                       />
@@ -1461,17 +1527,27 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       />
                     ) : connectorsView.kind === 'edit' ? (
                       <div>
-                        <ResourceTagSummary
-                          reference={{
-                            resourceType: 'catalog.connector',
-                            resourceId: connectorsView.id
-                          }}
-                          className="px-5 pt-5"
-                          onOpenTag={navigateTag}
-                        />
+                        {connectorsView.credentialView !== 'create' ? (
+                          <ResourceTagSummary
+                            reference={{
+                              resourceType: 'catalog.connector',
+                              resourceId: connectorsView.id
+                            }}
+                            className="px-5 pt-5"
+                            onOpenTag={navigateTag}
+                          />
+                        ) : null}
                         <ConnectorAddForm
                           editServer={customServers.find((s) => s.id === connectorsView.id)}
                           editServerId={connectorsView.id}
+                          credentialViewOpen={connectorsView.credentialView === 'create'}
+                          onCredentialViewChange={(open) => {
+                            if (open) {
+                              navigateConnectors({ ...connectorsView, credentialView: 'create' })
+                            } else {
+                              goBack()
+                            }
+                          }}
                           onDone={() => navigateConnectors({ kind: 'list' })}
                           onCancel={() => navigateConnectors({ kind: 'list' })}
                         />

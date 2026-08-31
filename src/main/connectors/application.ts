@@ -116,6 +116,36 @@ const createConnectorApplication = (
     (serverId) => mcpClientManager.cancelAuthentication(serverId),
     (serverId) => mcpClientManager.close(serverId)
   )
+  deps.settings.setDeviceCredentialAuthenticator(
+    async (credentialId) => {
+      const credential = await deps.settings.resolveDeviceOAuthCredential(credentialId)
+      if (!credential) throw new Error(`Unknown OAuth credential: ${credentialId}`)
+      if (credential.hasClientSecret && credential.clientSecret === undefined) {
+        throw new Error('credential_unavailable')
+      }
+      const syntheticServerId = `credential:${credentialId}`
+      try {
+        await mcpClientManager.authenticate({
+          id: syntheticServerId,
+          name: credential.id,
+          transport: credential.transport,
+          url: credential.resourceUri,
+          oauth: {
+            ...credential.oauth,
+            credentialId,
+            ...(credential.clientSecret ? { clientSecret: credential.clientSecret } : {}),
+            ...(credential.state ? { state: credential.state } : {})
+          }
+        })
+      } finally {
+        // This identity only drives the Credentials-panel OAuth flow; tool calls use real Connector
+        // ids, so keeping its authenticated MCP transport cached would leak an idle session.
+        await mcpClientManager.close(syntheticServerId)
+      }
+    },
+    (credentialId) => mcpClientManager.cancelAuthentication(`credential:${credentialId}`),
+    (credentialId) => mcpClientManager.close(`credential:${credentialId}`)
+  )
 
   const connectorApprovals =
     deps.connectorApprovals ??

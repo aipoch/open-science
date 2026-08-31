@@ -673,6 +673,15 @@ class SettingsRepository {
     })
   }
 
+  async setCustomServersEnabled(ids: readonly string[], enabled: boolean): Promise<StoredSettings> {
+    const selected = new Set(ids)
+    return this.mutateConnectors((connectors) => {
+      connectors.customMcpServers = (connectors.customMcpServers ?? []).map((server) =>
+        selected.has(server.id) ? { ...server, enabled } : server
+      )
+    })
+  }
+
   // Replaces one custom MCP server record; background migrations may ignore a concurrently deleted id.
   async updateCustomServer(id: string, server: StoredCustomMcpServer, allowMissing = false): Write {
     return this.mutateConnectors((connectors) => {

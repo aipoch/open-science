@@ -367,6 +367,7 @@ describe('Settings backend ownership architecture', () => {
       'setConnectorDisabled',
       'setConversationSkillImportEnabled',
       'setCustomServerEnabled',
+      'setCustomServersEnabled',
       'setDataRoot',
       'setDefaultPermissionProfile',
       'setGitHubToken',
@@ -469,30 +470,30 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel authenticateCustomServer buildCustomServerTemplateExport
-        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
-        codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
-        detectOpencode disconnectCustomServer dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
+        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel authenticateCustomServer authenticateDeviceCredential buildCustomServerTemplateExport
+        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
+        codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
+        detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotificationsEnabled getPackageMirror
         getPreflight getRuntimeEnablement getRuntimeSelection getSettingsView getShowNotificationContent getSkillDetail
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         importSkillZipBatch installClaude installCodeBuddy installCodex installOpencode isEncryptionAvailable
-        isNpmAvailable listAgentHomeSkills listConnectors listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
+        isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
         loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized migrateAgentHomeSkillIdentities previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
-        provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog removeCustomServer removeGitHubToken
+        provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog removeCustomServer removeDeviceCredential removeGitHubToken
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
-        resolveAdmittedSubagentBackend resolveAgentBackend resolveExplicitAgentBackend resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
+        resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
         scanRepoSkills setActiveProvider setAgentFramework setAppIconVariant setClosePreference
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
-        setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
+        setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
         setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodeBuddy uninstallCodex
-        uninstallOpencode updateCustomServer updateSkill upsertProvider validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
+        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
         .split(/\s+/)

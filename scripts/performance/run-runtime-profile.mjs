@@ -75,14 +75,21 @@ for (const argument of process.argv.slice(2)) {
   }
 }
 
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const npmCliPath = process.env.npm_execpath?.trim()
+if (!npmCliPath) {
+  throw new Error('npm_execpath is required. Run this profile through npm run perf:runtime.')
+}
 const run = (args, environment = process.env) =>
   new Promise((resolveRun, rejectRun) => {
-    const child = spawn(npmCommand, args, { env: environment, stdio: 'inherit', windowsHide: true })
+    const child = spawn(process.execPath, [npmCliPath, ...args], {
+      env: environment,
+      stdio: 'inherit',
+      windowsHide: true
+    })
     child.once('error', rejectRun)
     child.once('exit', (code, signal) => {
       if (code === 0) resolveRun()
-      else rejectRun(new Error(`${npmCommand} ${args.join(' ')} exited with ${code ?? signal}.`))
+      else rejectRun(new Error(`npm ${args.join(' ')} exited with ${code ?? signal}.`))
     })
   })
 

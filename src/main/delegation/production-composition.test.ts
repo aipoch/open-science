@@ -1140,35 +1140,39 @@ describe('production delegated-work composition', () => {
   it('blocks only new child admission when the Session delegation policy is deny', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-policy-'))
     const harness = await createCompositionHarness(root, 'codex')
-    harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
+    try {
+      harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
 
-    await expect(
-      harness.composition.host.delegate(
+      await expect(
+        harness.composition.host.delegate(
+          harness.caller,
+          { task: 'blocked child', name: 'blocked child' },
+          { wait: false }
+        )
+      ).rejects.toMatchObject({
+        code: 'admission_rejection',
+        message: expect.stringMatching(/delegation is disabled/i)
+      })
+      expect(harness.execution.reservationCounts()).toEqual([])
+
+      harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'allow' })
+      const admitted = await harness.composition.host.delegate(
         harness.caller,
-        { task: 'blocked child', name: 'blocked child' },
+        { task: 'existing child', name: 'existing child' },
         { wait: false }
       )
-    ).rejects.toMatchObject({
-      code: 'admission_rejection',
-      message: expect.stringMatching(/delegation is disabled/i)
-    })
-    expect(harness.execution.reservationCounts()).toEqual([])
+      expect(admitted).toMatchObject({
+        kind: 'receipts',
+        children: [{ name: 'existing child' }]
+      })
 
-    harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'allow' })
-    const admitted = await harness.composition.host.delegate(
-      harness.caller,
-      { task: 'existing child', name: 'existing child' },
-      { wait: false }
-    )
-    expect(admitted).toMatchObject({
-      kind: 'receipts',
-      children: [{ name: 'existing child' }]
-    })
-
-    harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
-    await expect(harness.composition.host.children(harness.caller)).resolves.toEqual([
-      expect.objectContaining({ name: 'existing child' })
-    ])
+      harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
+      await expect(harness.composition.host.children(harness.caller)).resolves.toEqual([
+        expect.objectContaining({ name: 'existing child' })
+      ])
+    } finally {
+      await harness.composition.root.stopAll()
+    }
   })
 
   it('rechecks authoritative delegation policy inside durable child admission', async () => {

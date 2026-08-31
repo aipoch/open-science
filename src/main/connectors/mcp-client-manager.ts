@@ -47,6 +47,8 @@ export type CustomMcpServerConfig = {
     clientSecret?: string
     redirectUri?: string
     state?: StoredCustomMcpOAuthState
+    // Device-global OAuth credential identity. It is never sent to the remote server.
+    credentialId?: string
   }
 }
 
@@ -424,6 +426,9 @@ export class McpClientManager {
   private readonly connecting = new Map<string, ConnectionAttempt>()
   private readonly authenticationCancels = new Map<string, () => Promise<void>>()
   private readonly generations = new Map<string, number>()
+  private readonly oauthCredentialIds = new Map<string, string>()
+  private readonly oauthStateWrites = new Map<string, Promise<void>>()
+  private readonly oauthCredentialStateWrites = new Map<string, Promise<void>>()
   private readonly callbackServer = new OAuthCallbackServer()
   private readonly openExternal: (url: string) => Promise<void> | void
   private readonly saveOAuthState?: (
@@ -486,15 +491,24 @@ export class McpClientManager {
 
   async close(id: string): Promise<void> {
     this.generations.set(id, this.generation(id) + 1)
+    await this.closeClientResources(id, true)
+  }
+
+  private async closeClientResources(id: string, waitForOAuthStateWrite: boolean): Promise<void> {
+    const oauthStateWrite = this.oauthStateWrites.get(id)
     const attempt = this.connecting.get(id)
     this.connecting.delete(id)
     attempt?.controller.abort()
     const cancelAuthentication = this.authenticationCancels.get(id)
     this.authenticationCancels.delete(id)
+    this.oauthCredentialIds.delete(id)
     await cancelAuthentication?.()
     const client = this.clients.get(id)
     this.clients.delete(id)
     if (client) await client.close()
+    // Disconnect/reconfiguration persists after close returns. Wait for an already-started write so
+    // stale OAuth state cannot land after the newer settings mutation.
+    if (waitForOAuthStateWrite) await oauthStateWrite?.catch(() => undefined)
   }
 
   async closeAll(): Promise<void> {
@@ -503,7 +517,8 @@ export class McpClientManager {
         ...new Set([
           ...this.clients.keys(),
           ...this.connecting.keys(),
-          ...this.authenticationCancels.keys()
+          ...this.authenticationCancels.keys(),
+          ...this.oauthStateWrites.keys()
         ])
       ].map((id) => this.close(id))
     )
@@ -529,6 +544,9 @@ export class McpClientManager {
     }
     const closing = this.close(config.id)
     const generation = this.generation(config.id)
+    if (config.oauth.credentialId) {
+      this.oauthCredentialIds.set(config.id, config.oauth.credentialId)
+    }
     // Register before the first await so closeAll() can supersede startup during application exit.
     this.authenticationCancels.set(config.id, cancelAuthentication)
     try {
@@ -586,6 +604,13 @@ export class McpClientManager {
       if (this.authenticationCancels.get(config.id) === cancelAuthentication) {
         this.authenticationCancels.delete(config.id)
       }
+      if (
+        generation === this.generation(config.id) &&
+        !this.clients.has(config.id) &&
+        this.oauthCredentialIds.get(config.id) === config.oauth.credentialId
+      ) {
+        this.oauthCredentialIds.delete(config.id)
+      }
     }
   }
 
@@ -601,6 +626,8 @@ export class McpClientManager {
     if (!attempt) {
       const generation = this.generation(config.id)
       const controller = new AbortController()
+      const credentialId = config.oauth?.credentialId
+      if (credentialId) this.oauthCredentialIds.set(config.id, credentialId)
       const promise = this.createClientWithOAuth(config, generation, controller.signal)
         .then(async (client) => {
           if (generation !== this.generation(config.id)) {
@@ -619,6 +646,12 @@ export class McpClientManager {
           if (current?.promise === promise) {
             current.settled = true
             this.connecting.delete(config.id)
+            if (
+              !this.clients.has(config.id) &&
+              this.oauthCredentialIds.get(config.id) === credentialId
+            ) {
+              this.oauthCredentialIds.delete(config.id)
+            }
           }
         })
       const entry: ConnectionAttempt = { controller, promise, waiters: 0, settled: false }
@@ -658,6 +691,8 @@ export class McpClientManager {
     generation: number,
     interactive = false
   ): PersistentOAuthClientProvider {
+    const credentialId = config.oauth?.credentialId
+    if (credentialId) this.oauthCredentialIds.set(config.id, credentialId)
     return new PersistentOAuthClientProvider({
       serverId: config.id,
       redirectUrl,
@@ -666,19 +701,79 @@ export class McpClientManager {
       state: config.oauth?.state,
       ...(interactive ? { openExternal: this.openExternal } : {}),
       saveState: this.saveOAuthState
-        ? (state) =>
-            generation === this.generation(config.id)
-              ? config.configurationFingerprint
-                ? this.saveOAuthState!(
-                    config.id,
-                    state,
-                    config.configurationFingerprint,
-                    config.oauthClientSecretRef
-                  )
-                : this.saveOAuthState!(config.id, state)
-              : Promise.resolve()
+        ? async (state) => {
+            if (generation !== this.generation(config.id)) return
+            await this.persistOAuthState(
+              config.id,
+              generation,
+              credentialId,
+              state,
+              config.configurationFingerprint,
+              config.oauthClientSecretRef
+            )
+          }
         : undefined
     })
+  }
+
+  private async persistOAuthState(
+    serverId: string,
+    generation: number,
+    credentialId: string | undefined,
+    state: StoredCustomMcpOAuthState,
+    configurationFingerprint: string | undefined,
+    oauthClientSecretRef: string | undefined
+  ): Promise<void> {
+    // Shared credentials are one persistence stream even when several connector clients emit
+    // state. Keep that stream ordered here so sibling invalidation happens before a queued writer
+    // reaches the settings store.
+    const previous = credentialId
+      ? this.oauthCredentialStateWrites.get(credentialId)
+      : this.oauthStateWrites.get(serverId)
+    let invalidatedSiblings: string[] = []
+    const write = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(
+      async () => {
+        if (generation !== this.generation(serverId)) return
+        if (configurationFingerprint) {
+          await this.saveOAuthState!(
+            serverId,
+            state,
+            configurationFingerprint,
+            oauthClientSecretRef
+          )
+        } else {
+          await this.saveOAuthState!(serverId, state)
+        }
+        if (generation !== this.generation(serverId)) return
+        if (credentialId) {
+          invalidatedSiblings = this.invalidateOAuthSiblingGenerations(credentialId, serverId)
+        }
+      }
+    )
+    this.oauthStateWrites.set(serverId, write)
+    if (credentialId) this.oauthCredentialStateWrites.set(credentialId, write)
+    try {
+      await write
+    } finally {
+      if (this.oauthStateWrites.get(serverId) === write) this.oauthStateWrites.delete(serverId)
+      if (credentialId && this.oauthCredentialStateWrites.get(credentialId) === write) {
+        this.oauthCredentialStateWrites.delete(credentialId)
+      }
+    }
+    // Their queued writes are serialized behind this write and will fail the generation guard.
+    // Do not wait for those writes while cleaning up their clients: that would make cleanup depend
+    // on the successor of the write which initiated it.
+    await Promise.all(invalidatedSiblings.map((id) => this.closeClientResources(id, false)))
+  }
+
+  private invalidateOAuthSiblingGenerations(credentialId: string, ownerId: string): string[] {
+    const siblings = [...this.oauthCredentialIds.entries()]
+      .filter(([serverId, sharedId]) => serverId !== ownerId && sharedId === credentialId)
+      .map(([serverId]) => serverId)
+    for (const serverId of siblings) {
+      this.generations.set(serverId, this.generation(serverId) + 1)
+    }
+    return siblings
   }
 
   private generation(id: string): number {

@@ -2839,10 +2839,6 @@ describe('Korean binding terminology', () => {
     ['Move to OpenScience', 'OpenScience로 이동'],
     ['Official install.ps1', '공식 install.ps1'],
     [
-      'One <code>Name: Value</code> per line (not JSON).',
-      '줄마다 <code>Name: Value</code> 하나씩 입력하세요(JSON 형식 아님).'
-    ],
-    [
       'Used by host.mcp("{{name}}", …), Specialists, and the generated MCP skill.',
       'host.mcp("{{name}}", …), 스페셜리스트 및 생성된 MCP 스킬에서 사용됩니다.'
     ],
