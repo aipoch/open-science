@@ -1139,7 +1139,6 @@ describe('mandatory product glossary', () => {
 
   it('uses reviewed German wording for Notebook variables and source previews', () => {
     expect({
-      backToNotebook: de.renderer['Back to Notebook'],
       inspectVariables: de.renderer['Inspect variables'],
       liveNamespace: de.renderer['No live namespace'],
       sizeAndShape: de.renderer['Size / Shape'],
@@ -1151,7 +1150,6 @@ describe('mandatory product glossary', () => {
       sourcePreview: de.renderer['Source preview: {{title}}'],
       httpsOnly: de.renderer['Only HTTPS sources can be previewed']
     }).toEqual({
-      backToNotebook: 'Zurück zum Notebook',
       inspectVariables: 'Variablen untersuchen',
       liveNamespace: 'Kein aktiver Namespace',
       sizeAndShape: 'Größe / Dimensionen',
@@ -1589,9 +1587,12 @@ describe('mandatory product glossary', () => {
     expect(readme).toContain('Sitzungsnummern in der globalen Suche')
     expect(readme).toContain('Tastaturkürzel für eine neue Konversation')
     expect(readme).toContain('Schlüssel- oder Passwortauthentifizierung')
-    expect(readme).toContain('Open Science v0.21.0 veröffentlicht')
+    expect(readme).toContain('Open Science v0.23.0 veröffentlicht')
     expect(readme).toContain('CodeBuddy')
-    expect(readme).toContain('Text- und Bildanmerkungen')
+    expect(readme).toContain('Text-, Bild- und PDF-Anmerkungen')
+    expect(readme).toContain('persistente Agentenerinnerungen')
+    expect(readme).toContain('Vorschlägen für Variablennamen des laufenden Kernels')
+    expect(readme).toContain('provenienzbewusste Workflows für Abbildungen')
     expect(readme).toContain('abgeschirmte Quellenvorschauen')
     expect(readme).toContain('Live-Variablenansicht')
     expect(readme).toContain('Schließen anderer Tabs')
