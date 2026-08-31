@@ -436,6 +436,17 @@ describe('managed-claude: install orchestration', () => {
   it('installs the binary and reports the resolved path + version', async () => {
     const { tgz, binary } = fixture()
     const events: ClaudeInstallEvent[] = []
+    let stagingOwner: string | undefined
+    const renamePath = async (...args: Parameters<typeof rename>): Promise<void> => {
+      const [source] = args
+      if (String(source).includes('.staging-')) {
+        stagingOwner = await readFile(
+          join(dirname(String(source)), '.open-science-managed-runtime'),
+          'utf8'
+        )
+      }
+      await rename(...args)
+    }
 
     const outcome = await installManagedClaude({
       installId: 'i1',
@@ -448,10 +459,12 @@ describe('managed-claude: install orchestration', () => {
           ? { dist: { tarball: 'https://reg/x.tgz', integrity: sha512(tgz) } }
           : { 'dist-tags': { latest: '2.1.209' } },
       fetchTarball: async () => ({ stream: Readable.from([tgz]), totalBytes: tgz.length }),
-      verifyBinary: async () => '2.1.209'
+      verifyBinary: async () => '2.1.209',
+      renamePath
     })
 
     expect(outcome.result.ok).toBe(true)
+    expect(stagingOwner).toBe('open-science:claude-code:v1\n')
     expect(outcome.version).toBe('2.1.209')
     expect(outcome.resolvedPath).toBe(join(root, 'claude-code', 'bin', 'claude'))
     expect((await readFile(outcome.resolvedPath as string)).equals(binary)).toBe(true)

@@ -459,6 +459,7 @@ export const installManagedOpencode = async ({
 
   try {
     await mkdir(scratch, { recursive: true })
+    await writeFile(join(scratch, RUNTIME_OWNER_MARKER), OPENCODE_RUNTIME_OWNER)
   } catch (error) {
     lastError = error instanceof Error ? error.message : String(error)
     onEvent({

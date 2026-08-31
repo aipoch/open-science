@@ -520,6 +520,7 @@ const installManagedClaude = async ({
 
   try {
     await mkdir(scratch, { recursive: true })
+    await writeFile(join(scratch, RUNTIME_OWNER_MARKER), CLAUDE_RUNTIME_OWNER)
   } catch (error) {
     lastError = describeManagedInstallError(error)
     onEvent({

@@ -231,6 +231,17 @@ describe('installManagedOpencode', () => {
 
     let verifiedContent: string | undefined
     let finalContentDuringVerification: string | undefined
+    let stagingOwner: string | undefined
+    const renamePath = async (...args: Parameters<typeof rename>): Promise<void> => {
+      const [source] = args
+      if (String(source).includes('.staging-')) {
+        stagingOwner = await readFile(
+          join(dirname(String(source)), '.open-science-managed-runtime'),
+          'utf8'
+        )
+      }
+      await rename(...args)
+    }
     const outcome = await installManagedOpencode({
       installId: 'i4',
       onEvent: () => undefined,
@@ -244,10 +255,12 @@ describe('installManagedOpencode', () => {
         finalContentDuringVerification = readFileSync(finalPath, 'utf8')
         return { ok: true }
       },
-      tmpDir: root
+      tmpDir: root,
+      renamePath
     })
 
     expect(outcome.result.ok).toBe(true)
+    expect(stagingOwner).toBe('open-science:opencode:v1\n')
     expect(outcome.resolvedPath).toBe(finalPath)
     expect(verifiedContent).toContain('echo opencode')
     expect(finalContentDuringVerification).toBe('WORKING-OPENCODE')
