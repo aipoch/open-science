@@ -1207,6 +1207,74 @@ describe('mandatory product glossary', () => {
     })
   })
 
+  it('uses native German wording for device-wide Connector credentials', () => {
+    expect({
+      credentialFor: de.renderer['Credential for {{name}}'],
+      connectorCredentials: de.renderer['Connector credentials'],
+      deviceWide:
+        de.renderer[
+          'Device-wide credentials that can be shared by the Custom Connectors you choose.'
+        ],
+      accessToken: de.renderer['Access token'],
+      resourceUrl: de.renderer['Resource URL'],
+      scopes: de.renderer.Scopes,
+      noOAuthMatch:
+        de.renderer[
+          "No OAuth credential matches this Connector's resource URL, transport, and registration."
+        ],
+      sharedOAuth:
+        de.renderer['OAuth credentials can be shared by Connectors with the same resource URL.'],
+      storedOnly:
+        de.renderer['Stored on this device and shared only with the Connectors you select.'],
+      bearer:
+        de.renderer['Access tokens use Bearer authentication only for an Authorization header.'],
+      removeFirst: de.renderer['Remove this credential from its Connectors first.'],
+      saved: de.renderer['Credential saved.'],
+      connected: de.renderer['Credential connected.'],
+      disconnected: de.renderer['Credential disconnected.'],
+      saveAndSignIn: de.renderer['Save and sign in'],
+      headerAction: de.renderer['Header credential action'],
+      keepHeaders: de.renderer['Keep saved headers']
+    }).toEqual({
+      credentialFor: 'Anmeldeinformation für {{name}}',
+      connectorCredentials: 'Konnektor-Anmeldeinformationen',
+      deviceWide:
+        'Geräteweit verfügbare Anmeldeinformationen, die Sie für ausgewählte benutzerdefinierte Konnektoren freigeben können.',
+      accessToken: 'Zugriffstoken',
+      resourceUrl: 'Ressourcen-URL',
+      scopes: 'Scopes',
+      noOAuthMatch:
+        'Keine OAuth-Anmeldeinformation stimmt mit Ressourcen-URL, Transportprotokoll und Registrierung dieses Konnektors überein.',
+      sharedOAuth:
+        'OAuth-Anmeldeinformationen können von Konnektoren mit derselben Ressourcen-URL gemeinsam genutzt werden.',
+      storedOnly:
+        'Wird auf diesem Gerät gespeichert und nur für die von Ihnen ausgewählten Konnektoren freigegeben.',
+      bearer:
+        'Zugriffstoken werden ausschließlich per Bearer-Authentifizierung im Authorization-Header übermittelt.',
+      removeFirst: 'Entfernen Sie diese Anmeldeinformation zuerst aus den zugehörigen Konnektoren.',
+      saved: 'Anmeldeinformation gespeichert.',
+      connected: 'Anmeldeinformation verbunden.',
+      disconnected: 'Verbindung zur Anmeldeinformation getrennt.',
+      saveAndSignIn: 'Speichern und anmelden',
+      headerAction: 'Aktion für Header-Anmeldeinformationen',
+      keepHeaders: 'Gespeicherte Header beibehalten'
+    })
+  })
+
+  it('uses natural German project-overflow and disabled-Memory copy', () => {
+    expect({
+      projectOne: de.renderer['Show remaining {{count}} projects_one'],
+      projectOther: de.renderer['Show remaining {{count}} projects_other'],
+      memoryOff:
+        de.renderer['Memory is off in Settings. Turn it on to use Memory in this conversation.']
+    }).toEqual({
+      projectOne: '{{count}} weiteres Projekt anzeigen',
+      projectOther: '{{count}} weitere Projekte anzeigen',
+      memoryOff:
+        'Erinnerungen sind in den Einstellungen deaktiviert. Aktivieren Sie sie, um Erinnerungen in dieser Konversation zu verwenden.'
+    })
+  })
+
   it('does not ship known literal German mistranslations', () => {
     const literalMistranslations =
       /Schecks|Stellvertreter|Kratz(?:en|wurzel)|Bioleiter|Hauptgericht|Fernbedienung|Sparen|Versöhnt|Knoten v|GitHub-(?:Problem|Ausgabe)|Problemvorausfüllung|Rezension|Rezensent/iu
@@ -1256,7 +1324,7 @@ describe('mandatory product glossary', () => {
       .filter(
         ([key, value]) =>
           /\bturns?\b/iu.test(key) &&
-          !/turn off/iu.test(key) &&
+          !/turn(?: it)? (?:off|on)/iu.test(key) &&
           key !== 'T{{turn}}' &&
           (!/Interaktion(?:en)?/u.test(value) ||
             /\b(?:Durchgang|Durchgänge|Runde|Zug|Wende)|dreh/iu.test(value))
