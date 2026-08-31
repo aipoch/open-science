@@ -291,6 +291,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       })
       startupDiagnostics?.phase('crash-reporting', { enabled: crashReporting.enabled })
 
+      startupDiagnostics?.phase('electron-ready')
+      await app.whenReady()
+      installPowerMonitorListeners()
+
       startupDiagnostics?.phase('load-startup-shell-modules')
       const [
         { createManagedPreviewProtocolBridge },
@@ -324,9 +328,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./settings/repository')
       ])
 
-      startupDiagnostics?.phase('electron-ready')
-      await app.whenReady()
-      installPowerMonitorListeners()
       startupDiagnostics?.phase('prepare-shell')
       // The bridge is lightweight, but its protocol handler must exist before the first BrowserWindow
       // creates the default session. macOS otherwise treats later managed-preview requests as an
