@@ -9,6 +9,22 @@ afterEach(() => {
 })
 
 describe('notification inbox store', () => {
+  it('marks normalized session ids unread and refreshes the snapshot', async () => {
+    const markSessionUnread = vi.fn(async () => undefined)
+    const getSnapshot = vi.fn(async () => ({
+      revision: 2,
+      unreadCount: 1,
+      latestSequence: 4,
+      items: []
+    }))
+    vi.stubGlobal('window', { api: { notifications: { getSnapshot, markSessionUnread } } })
+
+    await useNotificationInboxStore.getState().markSessionUnread([' session-1 ', 'session-1', ''])
+
+    expect(markSessionUnread).toHaveBeenCalledWith({ sessionIds: ['session-1'] })
+    expect(getSnapshot).toHaveBeenCalledOnce()
+  })
+
   it('marks all completions for normalized session ids and refreshes the snapshot', async () => {
     const markSessionCompletionsRead = vi.fn(async () => undefined)
     const getSnapshot = vi.fn(async () => ({

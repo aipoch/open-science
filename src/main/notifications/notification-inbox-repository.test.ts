@@ -225,6 +225,42 @@ describe('NotificationInboxDbRepository', () => {
     expect(snapshot.items.find((item) => item.kind === 'task.failed')?.readAt).toBeUndefined()
   })
 
+  it('marks only the latest notification for each session unread and promotes it into snapshots', async () => {
+    const repository = await createRepository()
+    for (const originId of ['older', 'latest']) {
+      await repository.record({
+        id: `item-${originId}`,
+        dedupeKey: `task:${originId}`,
+        kind: 'task.completed',
+        sessionId: 'session-shared',
+        originId,
+        title: 'Task completed',
+        summary: `Task ${originId} finished.`
+      })
+    }
+    await repository.markSessionsRead(['session-shared'], 2800)
+    for (let index = 0; index < 50; index += 1) await record(repository, `newer-${index}`)
+
+    expect((await repository.snapshot()).items.some((item) => item.id === 'item-latest')).toBe(
+      false
+    )
+
+    await repository.markSessionUnread(['session-shared'])
+
+    const snapshot = await repository.snapshot()
+    expect(snapshot.unreadCount).toBe(51)
+    expect(snapshot.items[0]).toMatchObject({
+      id: 'item-latest',
+      sessionId: 'session-shared'
+    })
+    expect(snapshot.items[0]).not.toHaveProperty('readAt')
+    expect(
+      await client!.notificationInboxItem.findUnique({ where: { id: 'item-older' } })
+    ).toMatchObject({
+      readAt: new Date(2800)
+    })
+  })
+
   it('migrates legacy unread sessions exactly once and clears the old projection', async () => {
     const repository = await createRepository()
     await client!.unreadTaskSession.create({ data: { sessionId: 'legacy-session' } })

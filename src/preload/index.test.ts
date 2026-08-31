@@ -394,6 +394,7 @@ describe('preload bridge — public surface inventory', () => {
       'notifications.markAllRead',
       'notifications.markRead',
       'notifications.markSessionCompletionsRead',
+      'notifications.markSessionUnread',
       'notifications.onChanged',
       'notifications.onOpenSession',
       'notifications.onViewProbe',

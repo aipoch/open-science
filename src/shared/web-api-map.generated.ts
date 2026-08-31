@@ -113,6 +113,7 @@ export const WEB_INVOKE_CHANNELS = {
   'notifications.markAllRead': 'notifications:mark-all-read',
   'notifications.markRead': 'notifications:mark-read',
   'notifications.markSessionCompletionsRead': 'notifications:mark-session-completions-read',
+  'notifications.markSessionUnread': 'notifications:mark-session-unread',
   'notifications.peekPendingOpenSession': 'notifications:peek-pending-open-session',
   'notifications.takePendingOpenSession': 'notifications:take-pending-open-session',
   'permissions.extendUndo': 'permissions:extend-undo',

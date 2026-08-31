@@ -1,7 +1,8 @@
 import type {
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
-  NotificationMarkSessionCompletionsReadRequest
+  NotificationMarkSessionCompletionsReadRequest,
+  NotificationMarkSessionUnreadRequest
 } from '../../shared/notifications'
 
 const requireNotificationMarkReadRequest = (value: unknown): NotificationMarkReadRequest => {
@@ -46,8 +47,25 @@ const requireNotificationMarkSessionCompletionsReadRequest = (
   return value as NotificationMarkSessionCompletionsReadRequest
 }
 
+const requireNotificationMarkSessionUnreadRequest = (
+  value: unknown
+): NotificationMarkSessionUnreadRequest => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !Array.isArray((value as { sessionIds?: unknown }).sessionIds) ||
+    !(value as { sessionIds: unknown[] }).sessionIds.every(
+      (sessionId) => typeof sessionId === 'string'
+    )
+  ) {
+    throw new Error('Invalid notifications:mark-session-unread request.')
+  }
+  return value as NotificationMarkSessionUnreadRequest
+}
+
 export {
   requireNotificationMarkAllReadRequest,
   requireNotificationMarkReadRequest,
-  requireNotificationMarkSessionCompletionsReadRequest
+  requireNotificationMarkSessionCompletionsReadRequest,
+  requireNotificationMarkSessionUnreadRequest
 }

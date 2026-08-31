@@ -81,3 +81,7 @@ export type NotificationMarkAllReadRequest = Readonly<{ throughSequence: number 
 export type NotificationMarkSessionCompletionsReadRequest = Readonly<{
   sessionIds: readonly string[]
 }>
+
+export type NotificationMarkSessionUnreadRequest = Readonly<{
+  sessionIds: readonly string[]
+}>

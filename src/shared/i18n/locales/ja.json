@@ -1278,6 +1278,7 @@
     "Managed runtime is not set up yet": "マネージドランタイムがまだセットアップされていません",
     "Manual": "手動",
     "Mark all read": "すべて既読としてマークする",
+    "Mark as unread": "未読としてマークする",
     "Mark completed session {{title}} as read": "完了したセッション {{title}} を既読としてマークする",
     "Markdown couldn't be read for preview": "マークダウンをプレビュー用に読み取ることができませんでした",
     "Markdown shown to the agent when the skill is invoked.": "スキルが呼び出されたときにエージェントに表示されるマークダウン。",

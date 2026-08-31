@@ -46,6 +46,7 @@ type NotificationInboxController = Readonly<{
   markAllRead(throughSequence: number): Promise<void>
   markSessionsRead(sessionIds: readonly string[]): Promise<void>
   markSessionCompletionsRead(sessionIds: readonly string[]): Promise<void>
+  markSessionUnread(sessionIds: readonly string[]): Promise<void>
   invalidateSessions(sessionIds: readonly string[]): Promise<void>
   reconcileSessionCatalog(existingSessionIds: readonly string[]): Promise<void>
   syncViewState(state: UnreadTaskViewState): Promise<void>
@@ -228,6 +229,9 @@ export const createNotificationInboxController = (
   const markSessionCompletionsRead = (sessionIds: readonly string[]): Promise<void> =>
     mutate(() => dependencies.repository.markSessionCompletionsRead(sessionIds, now()))
 
+  const markSessionUnread = (sessionIds: readonly string[]): Promise<void> =>
+    mutate(() => dependencies.repository.markSessionUnread(sessionIds))
+
   const invalidateSessions = async (sessionIds: readonly string[]): Promise<void> => {
     for (const sessionId of sessionIds) {
       const normalized = sessionId.trim()
@@ -267,6 +271,7 @@ export const createNotificationInboxController = (
     markAllRead,
     markSessionsRead,
     markSessionCompletionsRead,
+    markSessionUnread,
     invalidateSessions,
     reconcileSessionCatalog,
     syncViewState,

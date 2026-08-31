@@ -174,10 +174,12 @@ describe('production application command wiring', () => {
     expect(notificationIpcSource).toContain(
       "ipcMainHandle('notifications:mark-session-completions-read'"
     )
+    expect(notificationIpcSource).toContain("ipcMainHandle('notifications:mark-session-unread'")
     expect(notificationIpcSource).toContain('owner.getSnapshot()')
     expect(notificationIpcSource).toContain('owner.markRead(')
     expect(notificationIpcSource).toContain('owner.markAllRead(')
     expect(notificationIpcSource).toContain('owner.markSessionCompletionsRead(')
+    expect(notificationIpcSource).toContain('owner.markSessionUnread(')
   })
 
   it('adds transport adapters after composition and disposes the router before its owners', () => {

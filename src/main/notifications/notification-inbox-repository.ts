@@ -291,6 +291,39 @@ export class NotificationInboxDbRepository {
     })
   }
 
+  markSessionUnread(sessionIds: readonly string[]): Promise<NotificationRepositoryState> {
+    const normalized = normalizeIds(sessionIds)
+    if (normalized.length === 0) return this.currentState()
+    return this.enqueue(async () => {
+      const client = await this.getClient()
+      return client.$transaction(async (transaction) => {
+        const rows = await transaction.notificationInboxItem.findMany({
+          where: {
+            sessionId: { in: normalized },
+            targetInvalidatedAt: null
+          },
+          orderBy: { sequence: 'desc' }
+        })
+        const seenSessionIds = new Set<string>()
+        const latestReadRows = rows.flatMap((row) => {
+          if (!row.sessionId || seenSessionIds.has(row.sessionId)) return []
+          seenSessionIds.add(row.sessionId)
+          return row.readAt ? [row] : []
+        })
+        if (latestReadRows.length === 0) return stateFor(transaction, false)
+        // Reinsert the stable notification identity so its new sequence crosses the bounded
+        // snapshot window. Updating readAt alone could leave an older session outside Messages.
+        await transaction.notificationInboxItem.deleteMany({
+          where: { id: { in: latestReadRows.map((row) => row.id) } }
+        })
+        await transaction.notificationInboxItem.createMany({
+          data: latestReadRows.map((row) => ({ ...row, sequence: undefined, readAt: null }))
+        })
+        return stateFor(transaction, true)
+      })
+    })
+  }
+
   invalidateSessions(
     sessionIds: readonly string[],
     invalidatedAt: number

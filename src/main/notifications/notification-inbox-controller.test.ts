@@ -33,6 +33,11 @@ const repository = (
       unreadCount: 0,
       latestSequence: 1
     })),
+    markSessionUnread: vi.fn(async () => ({
+      changed: true,
+      unreadCount: 1,
+      latestSequence: 2
+    })),
     invalidateSessions: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 0 })),
     reconcileSessionCatalog: vi.fn(async () => ({
       changed: false,
@@ -190,6 +195,19 @@ describe('createNotificationInboxController', () => {
     await inbox.markSessionCompletionsRead(['session-1'])
 
     expect(db.markSessionCompletionsRead).toHaveBeenCalledWith(['session-1'], 3500)
+  })
+
+  it('marks a session unread without applying an acknowledgement timestamp', async () => {
+    const db = repository()
+    const inbox = createNotificationInboxController({
+      headless: false,
+      repository: db,
+      onChanged: vi.fn()
+    })
+
+    await inbox.markSessionUnread(['session-1'])
+
+    expect(db.markSessionUnread).toHaveBeenCalledWith(['session-1'])
   })
 
   it('waits for an in-flight authorization record before settling it', async () => {

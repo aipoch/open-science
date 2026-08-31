@@ -1453,6 +1453,7 @@ describe('WorkspaceSidebar accessible render', () => {
     const onDeleteSession = vi.fn()
     const onExportSession = vi.fn()
     const onArchiveSession = vi.fn()
+    const onMarkSessionUnread = vi.fn()
     const tree = WorkspaceSidebarView({
       now: Date.now(),
       projectName: 'Example project',
@@ -1472,6 +1473,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onViewNotebook: vi.fn(),
       onExportSession,
       onTogglePin: vi.fn(),
+      onMarkSessionUnread,
       canArchiveSession: () => true,
       onArchiveSession,
       onDeleteSession,
@@ -1494,6 +1496,9 @@ describe('WorkspaceSidebar accessible render', () => {
     )
     const deleteItems = elements.filter((element) => getTextContent(element).trim() === 'Delete')
     const archiveItems = elements.filter((element) => getTextContent(element).trim() === 'Archive')
+    const unreadItems = elements.filter(
+      (element) => getTextContent(element).trim() === 'Mark as unread'
+    )
     const exportItems = elements.filter(
       (element) => getTextContent(element).trim() === 'Export conversation…'
     )
@@ -1521,6 +1526,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(archiveItems[1]?.props.onSelect).toBeTypeOf('function')
     ;(archiveItems[1]?.props.onSelect as () => void)()
     expect(onArchiveSession).toHaveBeenCalledWith(sessions[1])
+
+    expect(unreadItems[1]?.props.onSelect).toBeTypeOf('function')
+    ;(unreadItems[1]?.props.onSelect as () => void)()
+    expect(onMarkSessionUnread).toHaveBeenCalledWith(sessions[1])
 
     expect(deleteItems[0]?.props.onSelect).toBeTypeOf('function')
     ;(deleteItems[0]?.props.onSelect as () => void)()

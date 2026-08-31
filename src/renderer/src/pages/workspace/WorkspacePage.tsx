@@ -12,6 +12,7 @@ import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persist
 import { deleteSession } from '@/lib/session-persistence/session-persistence'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
@@ -1004,6 +1005,13 @@ const WorkspacePage = ({
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
   }
 
+  const markSessionUnread = (session: ChatSession): void => {
+    void useNotificationInboxStore
+      .getState()
+      .markSessionUnread([session.id])
+      .catch(() => undefined)
+  }
+
   return (
     <main className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]">
       <WorkspacePanelLayout
@@ -1052,6 +1060,7 @@ const WorkspacePage = ({
             onTogglePin={(session) => {
               sessionController.actions.togglePin(session)
             }}
+            onMarkSessionUnread={markSessionUnread}
             canArchiveSession={canArchiveSession}
             onArchiveSession={sessionController.actions.archive}
             onDeleteSession={sessionController.actions.openDelete}
@@ -1120,6 +1129,10 @@ const WorkspacePage = ({
             onTogglePin={(session) => {
               close()
               sessionController.actions.togglePin(session)
+            }}
+            onMarkSessionUnread={(session) => {
+              close()
+              markSessionUnread(session)
             }}
             canArchiveSession={canArchiveSession}
             onArchiveSession={(session) => {

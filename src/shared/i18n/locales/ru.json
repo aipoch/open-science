@@ -1335,6 +1335,7 @@
     "Managed runtime is not set up yet": "Управляемая среда выполнения ещё не настроена",
     "Manual": "Ручной",
     "Mark all read": "Отметить все как прочитанные",
+    "Mark as unread": "Отметить как непрочитанное",
     "Mark completed session {{title}} as read": "Отметить сессию {{title}} как прочитанную",
     "Markdown couldn't be read for preview": "Невозможно прочитать Markdown для предпросмотра",
     "Markdown shown to the agent when the skill is invoked.": "Содержимое Markdown отображается агенту при вызове навыка.",

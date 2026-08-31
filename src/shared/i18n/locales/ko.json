@@ -1293,6 +1293,7 @@
     "Managed runtime is not set up yet": "관리형 런타임이 아직 설정되지 않았습니다.",
     "Manual": "수동",
     "Mark all read": "모두 읽은 것으로 표시",
+    "Mark as unread": "읽지 않은 것으로 표시",
     "Mark completed session {{title}} as read": "완료된 세션을 읽음으로 표시: {{title}}",
     "Markdown couldn't be read for preview": "Markdown을 읽지 못해 미리보기를 생성할 수 없습니다.",
     "Markdown shown to the agent when the skill is invoked.": "스킬을 호출하면 에이전트에게 표시되는 Markdown입니다.",

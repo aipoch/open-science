@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Download,
+  Eye,
   Files,
   MoreVertical,
   PanelLeft,
@@ -72,6 +73,7 @@ type WorkspaceSidebarProps = {
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession) => void
   onTogglePin: (session: ChatSession) => void
+  onMarkSessionUnread?: (session: ChatSession) => void
   canArchiveSession?: (session: ChatSession) => boolean
   onArchiveSession?: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
@@ -263,6 +265,7 @@ const WorkspaceSidebarView = ({
   onViewNotebook,
   onExportSession,
   onTogglePin,
+  onMarkSessionUnread,
   canArchiveSession,
   onArchiveSession,
   onDeleteSession,
@@ -675,6 +678,16 @@ const WorkspaceSidebarView = ({
                                   <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
                                 </span>
                                 {t('Edit…')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="gap-2"
+                                disabled={!onMarkSessionUnread}
+                                onSelect={() => onMarkSessionUnread?.(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <Eye className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                {t('Mark as unread')}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               {canDownloadArtifacts ? (
