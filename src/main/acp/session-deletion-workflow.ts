@@ -1,7 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 
-import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import type { AcpRuntimeEventInput, AcpStateSnapshot } from '../../shared/acp'
 import type { AcpAppContinuationOwner } from './app-continuation-owner'
 import type { ContextUsageTracker } from './context-usage-tracker'
 import type { AcpElicitationOwner } from './elicitation-owner'
@@ -13,7 +13,7 @@ import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { AcpSessionRegistry, AcpSessionRegistryEntry } from './session-registry'
 import type { AcpSessionUpdateProjector } from './session-update-projector'
 
-type SessionDeletedEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'>
+type SessionDeletedEvent = AcpRuntimeEventInput
 type OperationLease = <Result>(work: () => Promise<Result>) => Promise<Result>
 
 type AcpSessionDeletionWorkflowDependencies = Readonly<{

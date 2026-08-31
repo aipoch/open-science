@@ -137,16 +137,26 @@ class CodeBuddyOutputAdapter {
     if (!split.changed) return Object.freeze([visibleEvent])
 
     return Object.freeze(
-      split.segments.map((segment, index) => ({
-        ...visibleEvent,
-        id: `${event.id}:${index + 1}`,
-        kind: segment.kind,
-        text: segment.text,
-        raw: undefined,
-        ...(segment.kind === 'thought'
-          ? { messageId: `${event.messageId ?? event.id}:thought` }
-          : {})
-      }))
+      split.segments.map((segment, index): AcpRuntimeEvent => {
+        const id = `${event.id}:${index + 1}`
+        if (segment.kind === 'message') {
+          return { ...visibleEvent, id, text: segment.text, raw: undefined }
+        }
+
+        return {
+          id,
+          timestamp: event.timestamp,
+          kind: 'thought',
+          level: event.level,
+          sessionId: event.sessionId,
+          runId: event.runId,
+          promptMessageId: event.promptMessageId,
+          role: 'assistant',
+          messageId: `${event.messageId ?? event.id}:thought`,
+          text: segment.text,
+          raw: undefined
+        }
+      })
     )
   }
 }

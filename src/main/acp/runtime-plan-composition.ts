@@ -1,4 +1,4 @@
-import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpPromptRequest, AcpRuntimeEventInput } from '../../shared/acp'
 import type {
   ActivePlanProjection,
   GeneratePlanContent,
@@ -87,9 +87,7 @@ const composeAcpRuntimePlanWorkflow = (
   const sessionInteractions = base.sessionInteractions
   const planSessions = options.plan?.sessions
   const continuationOwner = hooks.continuations
-  const pushEvent = (
-    event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
-  ): void => session.publication.pushEvent(event)
+  const pushEvent = (event: AcpRuntimeEventInput): void => session.publication.pushEvent(event)
   const publishProjection = (sessionId: string, projection: ActivePlanProjection): void => {
     try {
       pushEvent({

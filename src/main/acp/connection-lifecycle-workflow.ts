@@ -2,7 +2,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { ClientConnection, SetProviderRequest } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 
-import type { AcpConnectRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import type { AcpConnectRequest, AcpRuntimeEventInput, AcpStateSnapshot } from '../../shared/acp'
 import type { AgentFramework, AgentProviderConfiguration } from '../agent-framework'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { AcpAgentConnectionCandidate } from './agent-connection-adapter'
@@ -13,7 +13,7 @@ import type {
 } from './connection-resource-owner'
 import { retainInitializeCapabilities } from './native-follow-up'
 
-type LifecycleEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
+type LifecycleEvent = AcpRuntimeEventInput
 type TransferredConnection = ReturnType<AcpAgentConnectionCandidate['transferTo']>
 
 const resolveFallbackProviderConfiguration = async (

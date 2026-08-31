@@ -330,6 +330,7 @@ describe('workspace Agent first-output runtime sync', () => {
             level: 'info',
             sessionId: 'session-1',
             role: 'assistant',
+            text: '',
             messageId: 'assistant-image-1',
             image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
           }

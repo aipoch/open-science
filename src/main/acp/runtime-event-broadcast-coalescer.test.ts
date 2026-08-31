@@ -169,6 +169,7 @@ describe('AcpRuntimeEventBroadcastCoalescer', () => {
       kind: 'permission',
       level: 'warning',
       sessionId: 'session-1',
+      permissionRequestId: 'permission-1',
       title: 'Permission requested'
     }
     const tool = inProgressTool('tool-1', 'call-1')

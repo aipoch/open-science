@@ -20,6 +20,7 @@ import {
   type AcpCreateSessionRequest,
   type AcpCreateSessionResponse,
   type AcpRuntimeEvent,
+  type AcpRuntimeEventInput,
   type AcpDeleteSessionRequest,
   type AcpPermissionRequest,
   type AcpPermissionResponse,
@@ -1541,7 +1542,7 @@ class AcpRuntime {
         }
       } catch (error) {
         this.pushEvent({
-          kind: 'permission',
+          kind: 'system',
           level: 'error',
           sessionId: request.sessionId,
           title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
@@ -1657,6 +1658,7 @@ class AcpRuntime {
       this.pushEvent({
         kind: 'permission',
         level: handled ? 'info' : 'warning',
+        permissionRequestId: response.requestId,
         title: handled ? 'Permission response sent' : 'Permission request not found',
         text: response.cancelled ? 'cancelled' : response.optionId
       })
@@ -1667,6 +1669,7 @@ class AcpRuntime {
       this.pushEvent({
         kind: 'permission',
         level: 'error',
+        permissionRequestId: response.requestId,
         title: 'Permission approval could not be saved',
         text: error instanceof Error ? error.message : 'The tool call was cancelled.'
       })
@@ -1816,6 +1819,7 @@ class AcpRuntime {
       kind: 'permission',
       level: 'info',
       sessionId: restored.sessionId,
+      permissionRequestId: response.requestId,
       promptMessageId: decision.permission.originatingPromptMessageId,
       title: 'Restored permission response accepted',
       text: response.cancelled ? 'cancelled' : response.optionId
@@ -2876,10 +2880,7 @@ class AcpRuntime {
   }
 
   // Adds a bounded event entry and notifies all renderer listeners.
-  private pushEvent(
-    event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>,
-    onAppended?: () => void
-  ): void {
+  private pushEvent(event: AcpRuntimeEventInput, onAppended?: () => void): void {
     this.publication.pushEvent(event, onAppended)
   }
 

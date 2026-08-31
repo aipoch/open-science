@@ -156,6 +156,7 @@ class AcpRuntimePublicationOwner {
       kind: 'permission',
       level: 'warning',
       sessionId: request.sessionId,
+      permissionRequestId: request.requestId,
       toolCallId: request.toolCallId,
       title: 'Permission requested',
       text: request.title,

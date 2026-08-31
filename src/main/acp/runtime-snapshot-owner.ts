@@ -1,4 +1,4 @@
-import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import type { AcpRuntimeEvent, AcpRuntimeEventInput, AcpStateSnapshot } from '../../shared/acp'
 import {
   getAcpRuntimeEventImage,
   MAX_ACP_RUNTIME_EVENTS,
@@ -14,7 +14,7 @@ const EVENT_TRIM_THRESHOLD = ACP_RUNTIME_EVENT_RETENTION_LIMIT * 2
 
 type RuntimeSnapshotFields = Pick<AcpStateSnapshot, 'status' | 'cwd' | 'error' | 'events'>
 type RuntimeSnapshotProjection = Omit<AcpStateSnapshot, keyof RuntimeSnapshotFields>
-type RuntimeEventInput = Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
+type RuntimeEventInput = AcpRuntimeEventInput
 
 const cloneEvent = (event: AcpRuntimeEvent): AcpRuntimeEvent => structuredClone(event)
 
@@ -86,7 +86,7 @@ class AcpRuntimeSnapshotOwner {
     // Preserve the normalized event shape as it evolves. Explicitly override the owned identity,
     // timestamp, defaults, and bounded image/raw fields so future presentation metadata cannot be
     // silently dropped by a second hand-maintained projection list.
-    const runtimeEvent: AcpRuntimeEvent = {
+    const runtimeEvent = {
       ...event,
       id: event.id ?? this.nextEventId(),
       timestamp: event.timestamp ?? Date.now(),
@@ -97,7 +97,7 @@ class AcpRuntimeSnapshotOwner {
       terminalOutput,
       promptMessageId: event.promptMessageId,
       raw
-    }
+    } as AcpRuntimeEvent
 
     // Deeply frozen inputs (the session-update projector deep-freezes every event it emits) are
     // immutable, so ownership transfers and the retained history can share them; anything else
