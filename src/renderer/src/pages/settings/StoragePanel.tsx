@@ -60,10 +60,12 @@ const formatBytes = (bytes: number): string => {
 // t() can still key-check them against the catalog.
 const CATEGORY_LABEL_KEYS = {
   artifacts: 'Artifacts',
+  compute: 'Compute cache',
   delegation: 'Subagent workspaces',
   uploads: 'Uploads',
   runtime: 'Runtime',
   notebooks: 'Notebooks',
+  'notebook-file-evidence': 'Notebook evidence',
   workspaces: 'Session workspaces'
 } as const satisfies Record<UsageCategoryKey, string>
 
@@ -71,10 +73,12 @@ const CATEGORY_LABEL_KEYS = {
 // even though the bar only renders non-zero segments while the legend lists every category.
 const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
   artifacts: 'bg-storage-artifacts',
+  compute: 'bg-storage-compute',
   delegation: 'bg-storage-delegation',
   runtime: 'bg-storage-runtime',
   uploads: 'bg-storage-uploads',
   notebooks: 'bg-storage-notebooks',
+  'notebook-file-evidence': 'bg-storage-notebook-evidence',
   workspaces: 'bg-storage-workspaces'
 }
 

@@ -30,10 +30,12 @@ const click = async (label: string): Promise<void> => {
 
 const enterToken = (value: string): void => {
   const field = document.body.querySelector<HTMLInputElement>('#github-token')
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+  const paste = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(paste, 'clipboardData', {
+    value: { getData: vi.fn(() => value), setData: vi.fn() }
+  })
   act(() => {
-    setter?.call(field, value)
-    field?.dispatchEvent(new Event('input', { bubbles: true }))
+    field?.dispatchEvent(paste)
   })
 }
 
@@ -72,7 +74,6 @@ describe('GitHubTokenControl', () => {
     await act(async () => root.render(<GitHubTokenControl />))
     await flush()
 
-    await click('GitHub token')
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.includes('Verify and save')
     )
@@ -87,12 +88,23 @@ describe('GitHubTokenControl', () => {
 
     enterToken('github_pat_verified')
     expect(save?.disabled).toBe(false)
-    await click('Verify and save')
+    await act(async () => {
+      document.body
+        .querySelector<HTMLInputElement>('#github-token')
+        ?.dispatchEvent(
+          new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' })
+        )
+    })
     await flush()
 
     expect(settingsApi.saveGitHubToken).toHaveBeenCalledWith({ token: 'github_pat_verified' })
     expect(document.body.textContent).toContain('Token verified and saved.')
-    expect(document.body.textContent).toContain('GitHub token · gith…fied')
+    expect(document.body.textContent).toContain('Saved token: gith…fied')
+    expect(document.body.querySelectorAll('#github-token-status')).toHaveLength(1)
+    expect(document.body.querySelectorAll('#github-token-feedback')).toHaveLength(1)
+    expect(document.body.querySelector('#github-token')?.getAttribute('aria-describedby')).toBe(
+      'github-token-status github-token-feedback'
+    )
     expect(document.body.querySelector<HTMLInputElement>('#github-token')?.value).toBe('')
 
     await act(async () => i18next.changeLanguage('zh-Hans'))
@@ -107,7 +119,6 @@ describe('GitHubTokenControl', () => {
     await act(async () => root.render(<GitHubTokenControl />))
     await flush()
 
-    await click('GitHub token')
     enterToken('bad-token')
     await click('Verify and save')
     await flush()
@@ -116,7 +127,7 @@ describe('GitHubTokenControl', () => {
       document.body.querySelector('[aria-label="GitHub token settings"]')?.getAttribute('aria-busy')
     ).toBe('false')
     expect(document.body.textContent).toContain('GitHub rejected this token.')
-    expect(document.body.textContent).toContain('GitHub token · old…oken')
+    expect(document.body.textContent).toContain('Saved token: old…oken')
     expect(document.body.querySelector('[role="alert"]')).not.toBeNull()
   })
 
@@ -128,7 +139,6 @@ describe('GitHubTokenControl', () => {
     await act(async () => root.render(<GitHubTokenControl />))
     await flush()
 
-    await click('GitHub token')
     enterToken('bad-token')
     await click('Verify and save')
     await flush()
@@ -150,7 +160,6 @@ describe('GitHubTokenControl', () => {
     await act(async () => root.render(<GitHubTokenControl />))
     await flush()
 
-    await click('GitHub token')
     await click('Remove token')
     await flush()
 

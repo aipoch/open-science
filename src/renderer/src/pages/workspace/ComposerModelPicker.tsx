@@ -14,6 +14,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { providerKindKey } from '../settings/provider-form-value'
@@ -29,7 +30,7 @@ import {
   resolveProviderReasoningEffortProfile
 } from '../../../../shared/provider-reasoning-effort'
 import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
-import { incompatibilityReason } from './composer-model-picker-utils'
+import { incompatibilityReason, modelUnavailableReason } from './composer-model-picker-utils'
 
 const triggerClassName =
   'flex h-8 min-w-0 max-w-[220px] shrink items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
@@ -387,23 +388,38 @@ const ComposerModelPicker = ({
                       const optionCompatible = option.selectable
 
                       if (!optionCompatible) {
-                        // Endpoint is fine but this model is statically marked unsupported over the Codex
-                        // bridge. Grey it with a warning icon; the full reason is on hover (title) and read
-                        // by assistive tech (aria-label), so it isn't a long inline string.
-                        const optionReason = `${optionLabel(option)} is not supported over the Codex Chat Completions bridge.`
+                        const optionReason = modelUnavailableReason(
+                          option,
+                          group.provider,
+                          frameworkName,
+                          frameworkEndpoints,
+                          tCommon
+                        )
                         return (
-                          <DropdownMenuItem
+                          <TooltipProvider
                             key={`${option.providerId}:${option.model}`}
-                            aria-disabled
-                            aria-label={optionReason}
-                            title={optionReason}
-                            onSelect={(event) => event.preventDefault()}
-                            className="gap-2 text-text-300"
+                            delayDuration={200}
                           >
-                            <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
-                            <span className="min-w-0 flex-1 truncate">{optionLabel(option)}</span>
-                            <span className="text-xs">unsupported</span>
-                          </DropdownMenuItem>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <DropdownMenuItem
+                                  aria-disabled
+                                  aria-label={optionReason}
+                                  onSelect={(event) => event.preventDefault()}
+                                  className="gap-2 text-text-300"
+                                >
+                                  <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+                                  <span className="min-w-0 flex-1 truncate">
+                                    {optionLabel(option)}
+                                  </span>
+                                  <span className="text-xs">unsupported</span>
+                                </DropdownMenuItem>
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="max-w-72 leading-5">
+                                {optionReason}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         )
                       }
 

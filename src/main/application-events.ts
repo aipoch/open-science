@@ -26,6 +26,7 @@ import type {
 import type {
   ClaudeInstallEvent,
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest,
   SettingsSnapshot
 } from '../shared/settings'
@@ -35,6 +36,11 @@ import type { SideChatRelayDeliveredEvent, SideChatRuntimeEvent } from '../share
 import type { UpdateStatus } from '../shared/update'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { TagsChangedEvent } from '../shared/tags'
+import type { MemoryChangedEvent } from '../shared/memory'
+import type {
+  SessionPersistenceFlushAbortedEvent,
+  SessionPersistenceFlushRequest
+} from '../shared/session-persistence-flush'
 import { createLogger, errorLogFields } from './logger'
 
 const log = createLogger('application-events')
@@ -59,11 +65,16 @@ export type ApplicationEventMap = {
   'session:created': SessionUpsertEvent
   'session:updated': SessionUpsertEvent
   'session:deleted': SessionDeletedEvent
+  'sessions:flush-aborted': SessionPersistenceFlushAbortedEvent | undefined
+  'sessions:flush-request': SessionPersistenceFlushRequest
   'project-files:changed': ProjectFilesChangedEvent
   'permissions:changed': PermissionGrantsChangedEvent
   'tags:changed': TagsChangedEvent
+  'memory:changed': MemoryChangedEvent
   'connectors:approval-request': ConnectorApprovalRequest
   'connectors:approval-settled': string
+  'connectors:credential-request': ConnectorCredentialRequest
+  'connectors:credential-settled': string
   'skills:conversation-import-request': ConversationSkillImportApprovalRequest
   'skills:conversation-import-settled': string
   'skills:catalog-changed': undefined

@@ -157,7 +157,9 @@ const composeAcpRuntimeProviderSessionOwners = (
     ensureConnected,
     assertCurrentConnection,
     disconnectTimedOutConnection: async () => {
-      await lifecycle.connectionClose.disconnect(false)
+      if (session.sessionRegistry.entries(true).length === 0) {
+        await lifecycle.connectionClose.disconnect(false)
+      }
     },
     resumeCapabilityAdvertised: () => base.connectionResources.capabilities.resume,
     currentBackend: () => base.backendGeneration.current,

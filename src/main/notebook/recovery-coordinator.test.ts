@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs'
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { dirname, join, win32 } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
@@ -41,6 +41,292 @@ const beginInterruptedMaterialize = async (
 }
 
 describe('NotebookRecoveryCoordinator', () => {
+  it('finalizes a leftover working cache only after recovery has no blocked writer', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      finalizeWorkingCache
+    })
+
+    await coordinator.recover()
+
+    expect(finalizeWorkingCache).toHaveBeenCalledWith(runtimeRoot, {
+      mode: 'current-candidates'
+    })
+  })
+
+  it('publishes a committed archive intent before clearing its journal and working cache', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    const publications = [
+      {
+        workingRoot: 'D:\\OpenScienceTmp\\m-test',
+        authorizations: [
+          { file: 'python-1.conda', algorithm: 'sha256' as const, digest: 'a'.repeat(64) }
+        ]
+      }
+    ]
+    await journal.begin({
+      operationId: 'publish-after-crash',
+      kind: 'install',
+      runtimeId: 'analysis',
+      phase: 'install-python',
+      startedAt: 100,
+      archivePublications: publications
+    })
+    const publishWorkingCacheArchives = vi.fn().mockResolvedValue(undefined)
+    const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
+
+    await new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      publishWorkingCacheArchives,
+      finalizeWorkingCache
+    }).recover()
+
+    expect(publishWorkingCacheArchives).toHaveBeenCalledWith(runtimeRoot, publications)
+    expect(await journal.pending()).toEqual([])
+    expect(finalizeWorkingCache).toHaveBeenCalledWith(runtimeRoot, {
+      mode: 'exact',
+      workingRoots: [publications[0].workingRoot]
+    })
+  })
+
+  it('completes publication recovery when no disposable-cache finalizer is configured', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'publish-without-finalizer',
+      kind: 'install',
+      runtimeId: 'analysis',
+      phase: 'install-python',
+      startedAt: 100,
+      archivePublications: [
+        {
+          workingRoot: 'D:\\OpenScienceTmp\\m-test',
+          authorizations: [{ file: 'python-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
+        }
+      ]
+    })
+
+    await new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      publishWorkingCacheArchives: vi.fn().mockResolvedValue(undefined)
+    }).recover()
+
+    expect(await journal.pending()).toEqual([])
+  })
+
+  it('retains publication evidence and the working cache when recovered publication fails', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'publish-retry',
+      kind: 'materialize',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'create-python',
+      startedAt: 100,
+      archivePublications: [
+        {
+          workingRoot: 'D:\\OpenScienceTmp\\m-test',
+          authorizations: [{ file: 'python-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
+        }
+      ]
+    })
+    const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
+
+    await new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      publishWorkingCacheArchives: vi.fn().mockRejectedValue(new Error('disk full')),
+      finalizeWorkingCache
+    }).recover()
+
+    expect((await journal.pending()).map(({ operationId }) => operationId)).toEqual([
+      'publish-retry'
+    ])
+    expect(finalizeWorkingCache).not.toHaveBeenCalled()
+  })
+
+  it('cleans a distinct recovered fallback when a later publication remains retained', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    const completedRoot = 'E:\\PreviousTemp\\OpenScienceTmp\\m-complete'
+    const retainedRoot = 'F:\\PreviousTemp\\OpenScienceTmp\\m-retained'
+    for (const [operationId, workingRoot] of [
+      ['publish-complete', completedRoot],
+      ['publish-retained', retainedRoot]
+    ]) {
+      await journal.begin({
+        operationId,
+        kind: 'install',
+        runtimeId: operationId,
+        phase: 'install-python',
+        startedAt: 100,
+        archivePublications: [
+          {
+            workingRoot,
+            authorizations: [
+              {
+                file: `${operationId}.conda`,
+                algorithm: 'sha256',
+                digest: 'a'.repeat(64)
+              }
+            ]
+          }
+        ]
+      })
+    }
+    const publishWorkingCacheArchives = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('disk full'))
+    const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
+
+    await new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      publishWorkingCacheArchives,
+      finalizeWorkingCache
+    }).recover()
+
+    expect((await journal.pending()).map((record) => record.operationId)).toEqual([
+      'publish-retained'
+    ])
+    expect(finalizeWorkingCache).toHaveBeenCalledWith(runtimeRoot, {
+      mode: 'exact',
+      workingRoots: [completedRoot]
+    })
+  })
+
+  it('keeps the exact fallback durable until transient cleanup succeeds on a later startup', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    const workingRoot = 'E:\\PreviousTemp\\OpenScienceTmp\\m-retry'
+    await journal.begin({
+      operationId: 'cleanup-retry',
+      kind: 'install',
+      runtimeId: 'analysis',
+      phase: 'install-python',
+      startedAt: 100,
+      archivePublications: [
+        {
+          workingRoot,
+          authorizations: [{ file: 'analysis.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
+        }
+      ]
+    })
+    const publishWorkingCacheArchives = vi.fn().mockResolvedValue(undefined)
+    const finalizeWorkingCache = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true)
+
+    await new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      publishWorkingCacheArchives,
+      finalizeWorkingCache
+    }).recover()
+    expect((await journal.pending()).map((record) => record.operationId)).toEqual(['cleanup-retry'])
+
+    await new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      publishWorkingCacheArchives,
+      finalizeWorkingCache
+    }).recover()
+    expect(await journal.pending()).toEqual([])
+    expect(publishWorkingCacheArchives).toHaveBeenCalledTimes(2)
+  })
+
+  it('suppresses cleanup when the journal becomes corrupt during recovery', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'corrupt-after-publication',
+      kind: 'install',
+      runtimeId: 'analysis',
+      phase: 'install-python',
+      startedAt: 100,
+      archivePublications: [
+        {
+          workingRoot: 'D:\\OpenScienceTmp\\m-test',
+          authorizations: [{ file: 'python-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
+        }
+      ]
+    })
+    const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      publishWorkingCacheArchives: async () => {
+        await writeFile(operationJournalPath(runtimeRoot), '{ corrupt', 'utf8')
+      },
+      finalizeWorkingCache
+    })
+
+    await coordinator.recover()
+
+    expect(coordinator.snapshot().corruptJournal).toBe(true)
+    expect(finalizeWorkingCache).not.toHaveBeenCalled()
+  })
+
+  it('does not clean a cache retained under an equivalent Windows path spelling', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    const firstRoot = 'E:\\PreviousTemp\\OpenScienceTmp\\m-shared'
+    const secondRoot = 'e:/previoustemp/opensciencetmp/m-shared'
+    for (const [operationId, workingRoot] of [
+      ['shared-published', firstRoot],
+      ['shared-retained', secondRoot]
+    ]) {
+      await journal.begin({
+        operationId,
+        kind: 'install',
+        runtimeId: operationId,
+        phase: 'install-python',
+        startedAt: 100,
+        archivePublications: [
+          {
+            workingRoot,
+            authorizations: [
+              { file: `${operationId}.conda`, algorithm: 'sha256', digest: 'a'.repeat(64) }
+            ]
+          }
+        ]
+      })
+    }
+    const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
+
+    await new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      publishWorkingCacheArchives: vi
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('disk full')),
+      finalizeWorkingCache,
+      workingCacheKey: (path) => win32.normalize(path).toLowerCase()
+    }).recover()
+
+    expect(finalizeWorkingCache).not.toHaveBeenCalled()
+    expect((await journal.pending()).map((record) => record.operationId).sort()).toEqual([
+      'shared-published',
+      'shared-retained'
+    ])
+  })
+
+  it('blocks an ambiguous post-mutation publication and retains the working cache', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const targetPath = join(runtimeRoot, 'envs', 'analysis')
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'publication-crash-window',
+      kind: 'install',
+      runtimeId: 'analysis',
+      phase: 'install-python',
+      startedAt: 100,
+      targetPath,
+      archivePublicationPending: true
+    })
+    const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      finalizeWorkingCache
+    })
+
+    await coordinator.recover()
+
+    expect(coordinator.snapshot()).toMatchObject({
+      blockedPrefixes: [targetPath],
+      blockedRuntimeIds: ['analysis']
+    })
+    expect(await journal.pending()).toHaveLength(1)
+    expect(finalizeWorkingCache).not.toHaveBeenCalled()
+  })
+
   it('owns blocked and live-unconfirmed recovery state in one snapshot', async () => {
     const coordinator = new NotebookRecoveryCoordinator(await createRuntimeRoot())
 

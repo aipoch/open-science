@@ -232,9 +232,19 @@ const createSession = (): ChatSession => {
 }
 
 describe('release-gate Subagent surfaces', () => {
-  afterEach(cleanup)
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
 
   beforeEach(() => {
+    vi.stubGlobal('api', {
+      ...window.api,
+      reviewer: {
+        ...window.api?.reviewer,
+        getForSession: vi.fn().mockResolvedValue([])
+      }
+    } as Window['api'])
     runtimeUpdateHarness.reset()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSessionStore.setState({ ...createInitialSessionState(), sessions: [createSession()] })

@@ -8,7 +8,7 @@ import type {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { DelegatedQuestionAnswer } from '../../shared/session-persistence'
@@ -62,10 +62,10 @@ type ProductionDelegatedWorkOptions = Readonly<{
   }>
   resolveSpecialist?(
     profileId: string
-  ): Promise<SpecialistProfileView | undefined> | SpecialistProfileView | undefined
+  ): Promise<SpecialistView | undefined> | SpecialistView | undefined
   resolveSpecialistReference?(
     profileReference: string
-  ): Promise<SpecialistProfileView | undefined> | SpecialistProfileView | undefined
+  ): Promise<SpecialistView | undefined> | SpecialistView | undefined
   artifactEvidence?: DelegatedArtifactEvidenceOptions
   reviewEvidence?: DelegatedReviewEvidenceOptions
   parentMessages?: Readonly<{

@@ -9,6 +9,10 @@ import type {
   SshOverrides
 } from '../../../../shared/compute'
 import {
+  isHostConnectionPortValid,
+  parseHostConnectionPort
+} from '../../../../shared/compute-host-connection-profile'
+import {
   computeAuthenticationPresentation,
   isComputeAuthenticationErrorCode
 } from './compute-authentication-presentation'
@@ -60,8 +64,8 @@ const createSshConfigHost = (
 ): Promise<ComputeHost> => {
   const sshOverrides: SshOverrides = {}
   if (values.user.trim()) sshOverrides.user = values.user.trim()
-  const port = Number.parseInt(values.port.trim(), 10)
-  if (values.port.trim() && Number.isFinite(port)) sshOverrides.port = port
+  const port = parseHostConnectionPort(values.port)
+  if (port !== undefined) sshOverrides.port = port
   if (values.identityFile.trim()) sshOverrides.identityFile = values.identityFile.trim()
   return actions.createSshConfigHost({
     sshAlias: common.sshAlias,
@@ -93,7 +97,7 @@ const COMPUTE_AUTHENTICATION_STRATEGIES = {
     choiceDescription: (t) =>
       t('Recommended. Uses your existing SSH configuration, keys, and ssh-agent.'),
     progressLabel: (t) => t('Adding host…'),
-    isValid: () => true,
+    isValid: (values) => isHostConnectionPortValid(values.port),
     create: createSshConfigHost
   },
   password: {

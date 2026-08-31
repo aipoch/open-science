@@ -26,21 +26,18 @@ afterEach(() => {
   delete (window as unknown as { api?: unknown }).api
 })
 
-const renderStep = async (
-  onBack: () => void = vi.fn(),
-  onContinue: () => void = vi.fn()
-): Promise<void> => {
+const renderStep = async (onBack: () => void = vi.fn()): Promise<void> => {
   await act(async () => {
-    root.render(<NotebookStep onBack={onBack} onContinue={onContinue} />)
+    root.render(<NotebookStep onBack={onBack} />)
   })
   // Flush the RuntimesPanel discovery/enablement microtasks so its runtime cards render.
   await act(async () => {})
   await act(async () => {})
 }
 
-const continueButton = (): HTMLButtonElement | undefined =>
+const finishButton = (): HTMLButtonElement | undefined =>
   Array.from(container.querySelectorAll('button')).find(
-    (button) => button.textContent?.trim() === 'Continue'
+    (button) => button.textContent?.trim() === 'Finish'
   ) as HTMLButtonElement | undefined
 
 const backButton = (): HTMLButtonElement | undefined =>
@@ -57,18 +54,19 @@ const provisioningState = (): void => {
 }
 
 describe('NotebookStep', () => {
-  it('is optional: Continue is enabled by default and forwards the click', async () => {
+  it('is optional: Finish is enabled by default and completes onboarding', async () => {
     useSettingsStore.setState({ environmentCheck: environment(true) })
-    const onContinue = vi.fn()
+    const completeOnboarding = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ completeOnboarding })
 
-    await renderStep(vi.fn(), onContinue)
+    await renderStep()
 
     expect(container.textContent).toContain('Notebook runtime (optional)')
     expect(container.textContent).toContain('Optional — nothing here is required to finish setup.')
-    expect(continueButton()?.disabled).toBe(false)
+    expect(finishButton()?.disabled).toBe(false)
 
-    await act(async () => continueButton()?.click())
-    expect(onContinue).toHaveBeenCalledOnce()
+    await act(async () => finishButton()?.click())
+    expect(completeOnboarding).toHaveBeenCalledOnce()
   })
 
   it('returns to the provider step from the Back button', async () => {
@@ -125,7 +123,7 @@ describe('NotebookStep', () => {
     expect(container.textContent).toContain('Preparing Python environment')
   })
 
-  it('gates Back and Continue while a runtime setup is in flight, then enables both when idle', async () => {
+  it('gates Back and Finish while a runtime setup is in flight, then enables both when idle', async () => {
     // A user-started provision must finish (or be cancelled) before leaving the step — continuing
     // mid-create would strand a half-built env. The button must be DISABLED while provisioning even
     // though nothing on this optional step otherwise blocks continuation.
@@ -135,21 +133,21 @@ describe('NotebookStep', () => {
 
     await renderStep(onBack)
 
-    expect(continueButton()?.disabled).toBe(true)
+    expect(finishButton()?.disabled).toBe(true)
     expect(backButton()?.disabled).toBe(true)
     await act(async () => backButton()?.click())
     expect(onBack).not.toHaveBeenCalled()
     // The footer explains why the user can't continue yet.
     expect(container.textContent).toContain('Setting up the notebook runtime')
 
-    // Once the provision settles (idle), the same state re-enables Continue.
+    // Once the provision settles (idle), the same state re-enables Finish.
     await act(async () => {
       useNotebookEnvStore.setState({
         status: { pythonReady: true, rReady: false, version: 3, provisioning: false }
       })
     })
     await act(async () => {})
-    expect(continueButton()?.disabled).toBe(false)
+    expect(finishButton()?.disabled).toBe(false)
     expect(backButton()?.disabled).toBe(false)
   })
 
@@ -167,8 +165,39 @@ describe('NotebookStep', () => {
     await renderStep()
 
     expect(useNotebookEnvStore.getState().status.provisioning).toBe(false)
-    expect(continueButton()?.disabled).toBe(true)
+    expect(finishButton()?.disabled).toBe(true)
     expect(backButton()?.disabled).toBe(true)
     expect(container.textContent).toContain('Setting up the notebook runtime')
+  })
+
+  it('prevents duplicate completion while the settings write is pending', async () => {
+    const completeOnboarding = vi.fn().mockReturnValue(new Promise(() => undefined))
+    useSettingsStore.setState({ completeOnboarding })
+    await renderStep()
+
+    await act(async () => {
+      finishButton()?.click()
+      finishButton()?.click()
+      await Promise.resolve()
+    })
+
+    expect(completeOnboarding).toHaveBeenCalledOnce()
+    expect(finishButton()?.disabled).toBe(true)
+    expect(backButton()?.disabled).toBe(true)
+  })
+
+  it('keeps the final step recoverable when completion fails', async () => {
+    useSettingsStore.setState({
+      completeOnboarding: vi.fn().mockRejectedValue(new Error('Settings write failed.'))
+    })
+    await renderStep()
+
+    await act(async () => finishButton()?.click())
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Settings write failed.'
+    )
+    expect(finishButton()?.disabled).toBe(false)
+    expect(backButton()?.disabled).toBe(false)
   })
 })

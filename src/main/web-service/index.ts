@@ -14,6 +14,8 @@ import { projectTaskRuntimeEvents } from './application-event-projections'
 import { HeadlessTaskApi } from './task-api'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
 
+const log = createLogger('web-service')
+
 // A single-instance web service that can be started at launch (--serve) or later, on demand, when a
 // second launch forwards a --serve request to the already-running instance. Starting is idempotent: a
 // second ensureStarted while one is running (or in flight) reuses it rather than binding a new port.
@@ -124,6 +126,7 @@ const createWebServiceController = (
       }
     | undefined
   let starting: Promise<{ port: number; url: string }> | undefined
+  let closing: Promise<void> | undefined
   let disposal: Promise<void> | undefined
   let disposed = false
   const stoppedListeners = new Set<() => void>()
@@ -139,10 +142,18 @@ const createWebServiceController = (
     }
   }
 
-  const close = async (): Promise<void> => {
-    const pending = starting
-    if (pending) await pending.catch(() => undefined)
-    await closeRunning()
+  const close = (): Promise<void> => {
+    if (closing) return closing
+    const operation = (async () => {
+      const pending = starting
+      if (pending) await pending.catch(() => undefined)
+      await closeRunning()
+    })()
+    const settled = operation.finally(() => {
+      if (closing === settled) closing = undefined
+    })
+    closing = settled
+    return settled
   }
 
   const dispose = (): Promise<void> => {
@@ -213,12 +224,11 @@ const createWebServiceController = (
     }
 
     const url = authUrl(token, server.port)
-    createLogger('web-service').info('local web service started', {
+    log.info(`Open Science Web: http://127.0.0.1:${server.port}/`, {
       host: '127.0.0.1',
       port: server.port,
       attached
     })
-    console.log(`Open Science Web: http://127.0.0.1:${server.port}/`)
     return { port: server.port, url }
   }
 
@@ -226,6 +236,8 @@ const createWebServiceController = (
     port: number,
     { attached }: { attached: boolean }
   ): Promise<{ port: number; url: string }> => {
+    if (disposed) throw new Error('Web service controller is disposed.')
+    if (closing) await closing
     if (disposed) throw new Error('Web service controller is disposed.')
     if (running) {
       const token = await loadWebToken(running.configRoot)

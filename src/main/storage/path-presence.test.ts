@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { isDataRootMissing } from './path-presence'
+import { hasAnyExistingPath, isDataRootMissing } from './path-presence'
 
 // An errno error the way node's fs surfaces it.
 const errno = (code: string): NodeJS.ErrnoException =>
@@ -82,4 +82,37 @@ describe('isDataRootMissing', () => {
 
     expect(await isDataRootMissing('F:\\openscience产生数据\\OpenScience', { statFn })).toBe(true)
   })
+})
+
+describe('hasAnyExistingPath', () => {
+  it('returns false only when every path is proven absent', async () => {
+    const statFn = vi.fn().mockRejectedValue(errno('ENOENT'))
+
+    await expect(
+      hasAnyExistingPath(['/data/artifacts', '/data/runtime'], { statFn })
+    ).resolves.toBe(false)
+    expect(statFn).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns true as soon as one path is present', async () => {
+    const statFn = vi
+      .fn()
+      .mockRejectedValueOnce(errno('ENOENT'))
+      .mockResolvedValueOnce({ isDirectory: () => true })
+
+    await expect(
+      hasAnyExistingPath(['/data/artifacts', '/data/runtime'], { statFn })
+    ).resolves.toBe(true)
+  })
+
+  it.each(['EPERM', 'EBUSY', 'EINVAL', 'EIO'])(
+    'rejects an inconclusive %s check so callers can fail closed',
+    async (code) => {
+      const statFn = vi.fn().mockRejectedValue(errno(code))
+
+      await expect(hasAnyExistingPath(['/data/artifacts'], { statFn })).rejects.toMatchObject({
+        code
+      })
+    }
+  )
 })

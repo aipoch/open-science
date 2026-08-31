@@ -71,7 +71,13 @@ const markUpdateReady = (updater: FakeUpdater): void => {
 
 // Fake fetch returning a version.json manifest, so notes hydration never touches the network.
 const manifestFetch = (manifest: object): typeof fetch =>
-  vi.fn(async () => ({ ok: true, json: async () => manifest })) as unknown as typeof fetch
+  vi.fn(
+    async () =>
+      new Response(JSON.stringify(manifest), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+  ) as unknown as typeof fetch
 
 // Fake fetch that always fails, standing in for "no manifest reachable".
 const offlineFetch = (): typeof fetch =>
@@ -318,7 +324,7 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
   })
 
-  it('waits for notes hydration after update-available before starting an in-place download', async () => {
+  it('does not let pending notes hydration block an available in-place download', async () => {
     const updater = new FakeUpdater()
     let releaseNotes: (() => void) | undefined
     const notesGate = new Promise<void>((resolve) => {
@@ -326,16 +332,16 @@ describe('ElectronUpdaterStrategy', () => {
     })
     const fetchImpl = vi.fn(async () => {
       await notesGate
-      return {
-        ok: true,
-        json: async () => ({
+      return new Response(
+        JSON.stringify({
           version: '0.3.0',
           releaseDate: '',
           notes: 'cdn notes',
           localizedNotes: { 'zh-Hans': 'CDN 说明' },
           downloads: {}
-        })
-      }
+        }),
+        { status: 200 }
+      )
     }) as unknown as typeof fetch
     const strategy = new ElectronUpdaterStrategy({
       updater,
@@ -349,24 +355,37 @@ describe('ElectronUpdaterStrategy', () => {
       expect.objectContaining({ state: 'available', latest: '0.3.0', notes: 'notes' })
     )
     const downloading = strategy.download()
-    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(
+      await Promise.race([
+        checking.then(() => 'settled'),
+        new Promise<string>((resolve) => setTimeout(() => resolve('pending'), 0))
+      ])
+    ).toBe('settled')
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+    expect((await downloading).state).toBe('ready')
 
     releaseNotes?.()
-    expect(await checking).toEqual(
-      expect.objectContaining({
-        state: 'available',
-        notes: 'cdn notes',
-        localizedNotes: { 'zh-Hans': 'CDN 说明' }
-      })
-    )
-    expect((await downloading).state).toBe('ready')
-    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(strategy.getStatus()).toEqual(
+        expect.objectContaining({
+          state: 'ready',
+          notes: 'cdn notes',
+          localizedNotes: { 'zh-Hans': 'CDN 说明' }
+        })
+      )
+    })
   })
 
-  it('records a failed in-place download without the provider error message', async () => {
+  it('preserves the offer and retries after a failed in-place download', async () => {
     const updater = new FakeUpdater()
+    let starts = 0
     updater.runDownload = async () => {
-      throw new Error('private updater diagnostic detail')
+      starts += 1
+      if (starts === 1) throw new Error('private updater diagnostic detail')
+      updater.emit('update-downloaded', { version: '0.3.0' })
     }
     const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
@@ -381,9 +400,22 @@ describe('ElectronUpdaterStrategy', () => {
       vi.mocked(log[level]).mockClear()
     }
 
-    const status = await strategy.download()
+    const failed = await strategy.download()
+    const retry = await strategy.download()
 
-    expect(status.error).toBe('private updater diagnostic detail')
+    expect.soft(failed).toEqual(
+      expect.objectContaining({
+        state: 'error',
+        current: '0.2.0',
+        latest: '0.3.0',
+        notes: 'notes',
+        totalBytes: 10000,
+        error: 'private updater diagnostic detail'
+      })
+    )
+    expect.soft(retry.state).toBe('ready')
+    expect.soft(retry.error).toBeUndefined()
+    expect.soft(starts).toBe(2)
     const records = diagnosticRecords(log)
     expect(records).toEqual(
       expect.arrayContaining([
@@ -480,6 +512,24 @@ describe('ElectronUpdaterStrategy', () => {
     await Promise.all([first, second])
     expect(starts).toBe(1)
     expect(strategy.getStatus().state).toBe('ready')
+  })
+
+  it('does not download an installer again after the lifecycle is ready', async () => {
+    const updater = new FakeUpdater()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+
+    const ready = await strategy.download()
+    const repeated = await strategy.download()
+
+    expect(ready.state).toBe('ready')
+    expect(repeated).toBe(ready)
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
   })
 
   it('supports cancel followed by an immediate retry to completion', async () => {
@@ -974,8 +1024,10 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       fetchImpl: manifestFetch({ version: '0.3.0', downloads: {}, notes: '## Highlights\n- new' })
     })
-    const status = await strategy.check()
-    expect(status.notes).toBe('## Highlights\n- new')
+    await strategy.check()
+    await vi.waitFor(() => {
+      expect(strategy.getStatus().notes).toBe('## Highlights\n- new')
+    })
   })
 
   it('keeps the GitHub-link fallback when the manifest version does not match', async () => {

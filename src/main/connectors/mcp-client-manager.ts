@@ -12,12 +12,25 @@ import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-clie
 import type { StoredCustomMcpOAuthState } from '../settings/types'
 import { augmentedPathEnv } from '../settings/shell-path'
 import { netFetchStandard } from '../skills/net-fetch'
+import { redactSensitiveText } from '../diagnostic-redaction'
+import { createLogger } from '../logger'
+import { assertSecureCustomMcpUrl } from './custom-mcp-url'
+
+const log = createLogger('connectors:mcp-client')
+const STDERR_LINE_LIMIT = 4 * 1024
+const STDERR_TOTAL_LIMIT = 64 * 1024
+const STDERR_REDACTION_COMPARISON_LIMIT = 4 * 1024 * 1024
+const STDERR_TRUNCATION_MARKER = '…[truncated]'
+const MAX_MCP_REDIRECTS = 5
+const MCP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 // Config for a user-added custom MCP server. OAuth state is a transient main-process projection;
 // stdio remains non-OAuth and remote servers can use OAuth, static headers, or neither.
 export type CustomMcpServerConfig = {
   id: string
   name: string
+  configurationFingerprint?: string
+  oauthClientSecretRef?: string
   transport: 'stdio' | 'streamable_http' | 'sse'
   // stdio (local command):
   command?: string
@@ -52,6 +65,63 @@ export class McpToolCallError extends Error {
   }
 }
 
+const createCustomMcpFetch = (
+  configuredUrl: URL,
+  configuredHeaders?: Record<string, string>
+): typeof fetch =>
+  async function customMcpFetch(input, init): Promise<Response> {
+    const inputRequest = typeof input === 'string' || input instanceof URL ? undefined : input
+    let target = new URL(inputRequest?.url ?? input.toString())
+    const requestOrigin = target.origin
+    let requestInit = init
+
+    if (target.origin === configuredUrl.origin && configuredHeaders) {
+      const headers = new Headers(inputRequest?.headers)
+      new Headers(init?.headers).forEach((value, name) => headers.set(name, value))
+      new Headers(configuredHeaders).forEach((value, name) => headers.set(name, value))
+      requestInit = { ...init, headers }
+    }
+
+    for (let redirects = 0; ; redirects += 1) {
+      assertSecureCustomMcpUrl(target.toString())
+      if (target.origin !== requestOrigin) {
+        throw new Error('Remote MCP server redirects must stay on the configured origin.')
+      }
+
+      const response = await netFetchStandard(target, { ...requestInit, redirect: 'manual' })
+      if (!MCP_REDIRECT_STATUSES.has(response.status)) return response
+
+      const location = response.headers.get('location')
+      if (!location || redirects >= MAX_MCP_REDIRECTS) {
+        await response.body?.cancel()
+        throw new Error('Remote MCP server redirect is invalid.')
+      }
+
+      const next = new URL(location, target)
+      assertSecureCustomMcpUrl(next.toString())
+      if (next.origin !== requestOrigin) {
+        await response.body?.cancel()
+        throw new Error('Remote MCP server redirects must stay on the configured origin.')
+      }
+
+      const method = (requestInit?.method ?? inputRequest?.method ?? 'GET').toUpperCase()
+      if (
+        response.status === 303 ||
+        ((response.status === 301 || response.status === 302) && method === 'POST')
+      ) {
+        const headers = new Headers(requestInit?.headers ?? inputRequest?.headers)
+        headers.delete('content-encoding')
+        headers.delete('content-language')
+        headers.delete('content-location')
+        headers.delete('content-type')
+        requestInit = { ...requestInit, body: undefined, headers, method: 'GET' }
+      }
+
+      await response.body?.cancel()
+      target = next
+    }
+  }
+
 type McpClientManagerDeps = {
   createClient?: (
     config: CustomMcpServerConfig,
@@ -59,7 +129,12 @@ type McpClientManagerDeps = {
     signal?: AbortSignal
   ) => Promise<Client>
   openExternal?: (url: string) => Promise<void> | void
-  saveOAuthState?: (serverId: string, state: StoredCustomMcpOAuthState) => Promise<void>
+  saveOAuthState?: (
+    serverId: string,
+    state: StoredCustomMcpOAuthState,
+    expectedConfigurationFingerprint?: string,
+    expectedOAuthClientSecretRef?: string
+  ) => Promise<void>
 }
 
 type ConnectionAttempt = {
@@ -94,6 +169,188 @@ function waitForConnection(promise: Promise<Client>, signal?: AbortSignal): Prom
   })
 }
 
+const uniqueKnownValues = (values: readonly string[]): string[] =>
+  [
+    ...new Set(
+      values
+        .filter(Boolean)
+        .flatMap((value) => [value, value.replace(/\r/gu, '\\r').replace(/\n/gu, '\\n')])
+    )
+  ].sort((a, b) => b.length - a.length)
+
+const truncateUtf8 = (value: string, maxBytes: number): string => {
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
+  const markerBytes = Buffer.byteLength(STDERR_TRUNCATION_MARKER, 'utf8')
+  let result = ''
+  let resultBytes = 0
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, 'utf8')
+    if (resultBytes + characterBytes > maxBytes - markerBytes) break
+    result += character
+    resultBytes += characterBytes
+  }
+  return `${result}${STDERR_TRUNCATION_MARKER}`
+}
+
+const captureStdioStderr = (
+  stderr: import('node:stream').Stream | null,
+  config: CustomMcpServerConfig
+): void => {
+  if (!stderr) return
+  const readable = stderr as unknown as NodeJS.ReadableStream
+
+  const knownValues = uniqueKnownValues(Object.values(config.env ?? {}))
+  const knownValuesByInitial = new Map<string, string[]>()
+  for (const value of knownValues) {
+    const initial = value[0]
+    if (!initial) continue
+    const matches = knownValuesByInitial.get(initial) ?? []
+    matches.push(value)
+    knownValuesByInitial.set(initial, matches)
+  }
+  let redactionPending = ''
+  let heldKnownValuePrefixLength = 0
+  let linePending = ''
+  let receivedBytes = 0
+  let totalTruncationLogged = false
+  let redactionComparisonsRemaining = STDERR_REDACTION_COMPARISON_LIMIT
+  let redactionBudgetExceeded = false
+
+  const writeLine = (rawLine: string): void => {
+    const redacted = redactSensitiveText(rawLine.replace(/\r$/u, ''))
+    if (!redacted) return
+    const line = truncateUtf8(redacted, STDERR_LINE_LIMIT)
+    log.warn('custom MCP server stderr', { serverId: config.id, line })
+  }
+
+  const appendRedactedText = (text: string): void => {
+    linePending += text
+    const lines = linePending.split('\n')
+    linePending = lines.pop() ?? ''
+    for (const line of lines) writeLine(line)
+  }
+
+  const drainKnownValues = (): void => {
+    if (knownValues.length === 0) {
+      appendRedactedText(redactionPending)
+      redactionPending = ''
+      heldKnownValuePrefixLength = 0
+      return
+    }
+
+    let ready = ''
+    let cursor = 0
+    let emittedStart = 0
+    while (cursor < redactionPending.length) {
+      const candidates = knownValuesByInitial.get(redactionPending[cursor] ?? '') ?? []
+      if (candidates.length === 0) {
+        cursor += 1
+        continue
+      }
+      const remaining = redactionPending.slice(cursor)
+      let complete: string | undefined
+      let mayCompleteLongerValue = false
+      for (const value of candidates) {
+        const comparedCharacters = Math.min(value.length, remaining.length)
+        if (comparedCharacters > redactionComparisonsRemaining) {
+          if (ready) appendRedactedText(ready)
+          appendRedactedText('[REDACTED]')
+          redactionPending = ''
+          heldKnownValuePrefixLength = 0
+          redactionBudgetExceeded = true
+          log.warn('custom MCP server stderr redaction budget exceeded', {
+            serverId: config.id,
+            limitCharacters: STDERR_REDACTION_COMPARISON_LIMIT
+          })
+          return
+        }
+        redactionComparisonsRemaining -= comparedCharacters
+        if (value.length > remaining.length) {
+          if (value.startsWith(remaining)) mayCompleteLongerValue = true
+          continue
+        }
+        if (remaining.startsWith(value)) {
+          complete = value
+          break
+        }
+      }
+      if (mayCompleteLongerValue) {
+        ready += redactionPending.slice(emittedStart, cursor)
+        redactionPending = remaining
+        heldKnownValuePrefixLength = remaining.length
+        if (ready) appendRedactedText(ready)
+        return
+      }
+      if (
+        complete &&
+        (heldKnownValuePrefixLength === 0 || complete.length >= heldKnownValuePrefixLength)
+      ) {
+        ready += `${redactionPending.slice(emittedStart, cursor)}[REDACTED]`
+        cursor += complete.length
+        emittedStart = cursor
+        heldKnownValuePrefixLength = 0
+        continue
+      }
+      if (cursor === 0 && heldKnownValuePrefixLength > 0) {
+        ready += '[REDACTED]'
+        cursor = heldKnownValuePrefixLength
+        emittedStart = cursor
+        heldKnownValuePrefixLength = 0
+        continue
+      }
+      cursor += 1
+    }
+    ready += redactionPending.slice(emittedStart)
+    redactionPending = ''
+    heldKnownValuePrefixLength = 0
+    if (ready) appendRedactedText(ready)
+  }
+
+  const flushPending = (): void => {
+    drainKnownValues()
+    if (redactionPending) {
+      appendRedactedText('[REDACTED]')
+      redactionPending = ''
+      heldKnownValuePrefixLength = 0
+    }
+    if (linePending) writeLine(linePending)
+    linePending = ''
+  }
+
+  readable.setEncoding?.('utf8')
+  readable.on('data', (chunk: string | Buffer) => {
+    if (redactionBudgetExceeded) return
+    if (receivedBytes >= STDERR_TOTAL_LIMIT) {
+      if (!totalTruncationLogged) {
+        totalTruncationLogged = true
+        log.warn('custom MCP server stderr truncated', {
+          serverId: config.id,
+          limitBytes: STDERR_TOTAL_LIMIT
+        })
+      }
+      return
+    }
+    const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+    const remaining = STDERR_TOTAL_LIMIT - receivedBytes
+    const accepted = Buffer.from(text, 'utf8').subarray(0, remaining).toString('utf8')
+    receivedBytes += Buffer.byteLength(accepted, 'utf8')
+    redactionPending += accepted
+    drainKnownValues()
+
+    if (Buffer.byteLength(text, 'utf8') > remaining && !totalTruncationLogged) {
+      flushPending()
+      totalTruncationLogged = true
+      log.warn('custom MCP server stderr truncated', {
+        serverId: config.id,
+        limitBytes: STDERR_TOTAL_LIMIT
+      })
+    }
+  })
+  readable.on('end', () => {
+    flushPending()
+  })
+}
+
 // Pure factory: picks the transport for a custom server config. Exported so callers/tests can
 // build a transport without a full connect, and so defaultCreateClient below stays a thin wrapper.
 export function buildTransport(
@@ -105,33 +362,38 @@ export function buildTransport(
       if (!config.command) {
         throw new Error(`custom MCP server "${config.name}" is missing a command for stdio`)
       }
-      return new StdioClientTransport({
+      const transport = new StdioClientTransport({
         command: config.command,
         args: config.args,
+        stderr: 'pipe',
         env: augmentedPathEnv({
           ...getDefaultEnvironment(),
           ...config.env
         }) as Record<string, string>
       })
+      captureStdioStderr(transport.stderr, config)
+      return transport
     }
     case 'streamable_http': {
       if (!config.url) {
         throw new Error(`custom MCP server "${config.name}" is missing a url for streamable_http`)
       }
-      return new StreamableHTTPClientTransport(new URL(config.url), {
-        fetch: netFetchStandard,
-        ...(authProvider ? { authProvider } : {}),
-        ...(config.headers ? { requestInit: { headers: config.headers } } : {})
+      assertSecureCustomMcpUrl(config.url)
+      const url = new URL(config.url)
+      return new StreamableHTTPClientTransport(url, {
+        fetch: createCustomMcpFetch(url, config.headers),
+        ...(authProvider ? { authProvider } : {})
       })
     }
     case 'sse': {
       if (!config.url) {
         throw new Error(`custom MCP server "${config.name}" is missing a url for sse`)
       }
-      return new SSEClientTransport(new URL(config.url), {
-        fetch: netFetchStandard,
-        ...(authProvider ? { authProvider } : {}),
-        ...(config.headers ? { requestInit: { headers: config.headers } } : {})
+      assertSecureCustomMcpUrl(config.url)
+      const url = new URL(config.url)
+      return new SSEClientTransport(url, {
+        fetch: createCustomMcpFetch(url, config.headers),
+        ...(authProvider ? { authProvider } : {})
       })
     }
   }
@@ -166,7 +428,9 @@ export class McpClientManager {
   private readonly openExternal: (url: string) => Promise<void> | void
   private readonly saveOAuthState?: (
     serverId: string,
-    state: StoredCustomMcpOAuthState
+    state: StoredCustomMcpOAuthState,
+    expectedConfigurationFingerprint?: string,
+    expectedOAuthClientSecretRef?: string
   ) => Promise<void>
 
   constructor(deps?: McpClientManagerDeps) {
@@ -404,7 +668,14 @@ export class McpClientManager {
       saveState: this.saveOAuthState
         ? (state) =>
             generation === this.generation(config.id)
-              ? this.saveOAuthState!(config.id, state)
+              ? config.configurationFingerprint
+                ? this.saveOAuthState!(
+                    config.id,
+                    state,
+                    config.configurationFingerprint,
+                    config.oauthClientSecretRef
+                  )
+                : this.saveOAuthState!(config.id, state)
               : Promise.resolve()
         : undefined
     })

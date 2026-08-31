@@ -39,8 +39,8 @@ const buildStartupIssueBody = (
   if (diagnostics) {
     sections.push(
       '## Error stack\n\n' +
-        '_Automatically attached and lightly redacted (personal paths are replaced with ~). ' +
-        'Review before submitting — feel free to delete this section if you have any concerns._\n\n' +
+        '_Automatically attached and redacted for credentials and local paths. ' +
+        'Review before submitting — feel free to edit or delete this section._\n\n' +
         `\`\`\`text\n${diagnostics}\n\`\`\``
     )
   }
@@ -50,41 +50,35 @@ const buildStartupIssueBody = (
 const toIssueUrl = (error: DatabaseStartupError, diagnostics: string | undefined): string =>
   `${ISSUE_BASE_URL}?title=${encodeURIComponent(buildStartupIssueTitle(error))}&body=${encodeURIComponent(buildStartupIssueBody(error, diagnostics))}`
 
-const withTruncationNote = (diagnostics: string, end: number): string =>
-  `${diagnostics.slice(0, end).trimEnd()}\n${STACK_TRUNCATION_NOTE}`
+const withTruncationNote = (diagnostics: readonly string[], end: number): string =>
+  `${diagnostics.slice(0, end).join('').trimEnd()}\n${STACK_TRUNCATION_NOTE}`
 
-const fitDiagnosticsToUrl = (error: DatabaseStartupError): string | undefined => {
-  const diagnostics = error.diagnostics
+const fitDiagnosticsToUrl = (
+  error: DatabaseStartupError,
+  diagnostics: string | undefined
+): string | undefined => {
   if (!diagnostics) return undefined
   if (toIssueUrl(error, diagnostics).length <= MAX_URL_LENGTH) return diagnostics
+  const codePoints = [...diagnostics]
   // Binary search the longest prefix whose encoded URL still fits. Encoded length is not linear in
-  // the raw length (multibyte characters expand), so measure the real URL at each step.
+  // the raw length (multibyte characters expand), so measure the real URL at each step. Search code
+  // points rather than UTF-16 indexes so an edited emoji can never be sliced into a lone surrogate.
   let low = 0
-  let high = diagnostics.length
+  let high = codePoints.length
   while (low < high) {
     const mid = Math.ceil((low + high) / 2)
-    if (toIssueUrl(error, withTruncationNote(diagnostics, mid)).length <= MAX_URL_LENGTH) {
+    if (toIssueUrl(error, withTruncationNote(codePoints, mid)).length <= MAX_URL_LENGTH) {
       low = mid
     } else {
       high = mid - 1
     }
   }
-  return low > 0 ? withTruncationNote(diagnostics, low) : undefined
+  return low > 0 ? withTruncationNote(codePoints, low) : undefined
 }
 
-const buildStartupIssueUrl = (error: DatabaseStartupError): string =>
-  toIssueUrl(error, fitDiagnosticsToUrl(error))
+const buildStartupIssueUrl = (
+  error: DatabaseStartupError,
+  diagnostics: string | undefined = error.diagnostics
+): string => toIssueUrl(error, fitDiagnosticsToUrl(error, diagnostics))
 
-// Opening the draft is a stateless side effect, so it stays a plain function rather than a hook —
-// there is no React state or lifecycle for a hook to manage.
-const openStartupIssueDraft = (error: DatabaseStartupError): void => {
-  window.open(buildStartupIssueUrl(error), '_blank', 'noreferrer')
-}
-
-export {
-  ISSUE_BASE_URL,
-  buildStartupIssueBody,
-  buildStartupIssueTitle,
-  buildStartupIssueUrl,
-  openStartupIssueDraft
-}
+export { ISSUE_BASE_URL, buildStartupIssueBody, buildStartupIssueTitle, buildStartupIssueUrl }

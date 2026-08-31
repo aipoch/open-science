@@ -26,6 +26,14 @@ const readNotificationsEnabled = (request: unknown): boolean => {
   return enabled
 }
 
+const readShowNotificationContent = (request: unknown): boolean => {
+  const enabled = readField(request, 'enabled')
+  if (typeof enabled !== 'boolean') {
+    throw new Error(`Invalid show-notification-content flag: ${String(enabled)}`)
+  }
+  return enabled
+}
+
 const readReasoningEffort = (request: unknown): ReasoningEffort => {
   const effort = readField(request, 'effort')
   if (!isReasoningEffort(effort)) {
@@ -218,6 +226,7 @@ export {
   readGitHubToken,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
+  readShowNotificationContent,
   readProjectFilesFilter,
   readReasoningEffort,
   readReviewerModel,

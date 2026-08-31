@@ -19,6 +19,10 @@ type FileObservation = {
   changedAtMs: number
 }
 
+class FileObservationMismatchError extends Error {
+  readonly name = 'FileObservationMismatchError'
+}
+
 type FilePage = {
   page: Buffer
   offset: number
@@ -364,6 +368,7 @@ export {
   copyFileWithinBudget,
   copyOpenFileWithinBudget,
   digestFileWithinBudget,
+  FileObservationMismatchError,
   inlineDecodedSize,
   readFilePageAndDigest,
   readVerifiedFilePage,

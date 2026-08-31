@@ -15,12 +15,12 @@ import {
   type KernelLoopResponse
 } from '../notebook/kernel-protocol'
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
-import { createProfileService } from '../specialist/service'
+import { createSpecialistService } from '../specialist/service'
 import {
   resolveEffectiveSpecialistSkills,
   filterSpecialistConnectorSkills,
   type SpecialistSkillCatalogEntry,
-  type SpecialistProfileView
+  type SpecialistView
 } from '../../shared/specialist'
 import type { StoredConnectors } from '../settings/types'
 
@@ -112,9 +112,9 @@ const stubCatalog: AgentsCatalogSource = {
   })
 }
 
-// Projects the read-back into the SpecialistProfileView shape the runtime resolvers consume.
-const asProfile = (readBack: Record<string, unknown>): SpecialistProfileView =>
-  readBack as unknown as SpecialistProfileView
+// Projects the read-back into the SpecialistView shape the runtime resolvers consume.
+const asProfile = (readBack: Record<string, unknown>): SpecialistView =>
+  readBack as unknown as SpecialistView
 
 gate('host.agents repl runtime whitelist consumption', () => {
   let rpcServer: NotebookLocalRpcServer
@@ -127,8 +127,8 @@ gate('host.agents repl runtime whitelist consumption', () => {
   beforeAll(async () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-rt-profile-'))
     runtimeStorage = await mkdtemp(join(tmpdir(), 'os-agents-rt-runtime-'))
-    const profileService = createProfileService(profileStorage)
-    const agentsService = new AgentsService({ profileService, catalog: stubCatalog })
+    const specialistService = createSpecialistService(profileStorage)
+    const agentsService = new AgentsService({ specialistService, catalog: stubCatalog })
     const notebookService = new NotebookRuntimeService({
       configRoot: runtimeStorage,
       dataRoot: runtimeStorage,

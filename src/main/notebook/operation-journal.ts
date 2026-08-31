@@ -3,6 +3,8 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import type { MicromambaArchiveAuthorization } from './micromamba-archive-store'
+
 // The journal file for a runtime root (<storageRoot>/runtime). Derived from the root so the write side
 // (provisioner/fetch) and the startup recovery side agree on one path without sharing an instance.
 export const operationJournalPath = (runtimeRoot: string): string =>
@@ -237,6 +239,11 @@ export const listOperationChildren = (
 // next startup can reconcile (redownload/verify/repair). See notebook-runtime-crash-recovery.
 export type RuntimeOperationKind = 'download' | 'materialize' | 'upgrade' | 'install' | 'disable'
 
+export type RuntimeArchivePublication = {
+  workingRoot: string
+  authorizations: readonly MicromambaArchiveAuthorization[]
+}
+
 export type RuntimeOperationRecord = {
   operationId: string
   kind: RuntimeOperationKind
@@ -264,6 +271,18 @@ export type RuntimeOperationRecord = {
   // — a malformed value fails closed). Absent off Linux / on legacy records — a live pid with no token is
   // then always 'unknown' (a wall-clock start time can't soundly prove a live pid dead).
   childStartToken?: string
+  // Persisted before a mutation that can create relocatable package archives. If the process dies after
+  // the child commits but before exact filename/digest authority is recorded, recovery cannot safely
+  // publish or discard the working cache. It therefore blocks the target and retains the cache until an
+  // explicit repair. A normal settled operation atomically removes this flag while recording either its
+  // archivePublications or the fact that there are none.
+  archivePublicationPending?: true
+  // Present only after the runtime mutation itself has committed. Keeping the exact working-cache path
+  // and immutable transaction/lock digests in the journal makes archive publication crash-recoverable:
+  // recovery publishes these verified bytes before clearing this record and cleaning the disposable
+  // cache. Absence means the runtime operation itself may have been interrupted and needs its normal
+  // reconcile action.
+  archivePublications?: readonly RuntimeArchivePublication[]
   // TRANSIENT, recovery-only: set from the child-state sidecar during hydration when the op reached the
   // spawn stage ({ spawning: true }) but no PID was ever recorded. It is never persisted to the journal;
   // it tells recovery "a child MAY be live, PID unknown" so it blocks rather than reconciles.
@@ -469,6 +488,56 @@ const hasValidChildGroup = (record: Record<string, unknown>): boolean => {
   )
 }
 
+const isArchiveAuthorization = (value: unknown): value is MicromambaArchiveAuthorization => {
+  if (typeof value !== 'object' || value === null) return false
+  const authorization = value as Record<string, unknown>
+  return (
+    typeof authorization.file === 'string' &&
+    authorization.file.length > 0 &&
+    !/[\\/]/u.test(authorization.file) &&
+    /\.(?:conda|tar\.bz2)$/iu.test(authorization.file) &&
+    ((authorization.algorithm === 'sha256' &&
+      typeof authorization.digest === 'string' &&
+      /^[0-9a-f]{64}$/iu.test(authorization.digest)) ||
+      (authorization.algorithm === 'md5' &&
+        typeof authorization.digest === 'string' &&
+        /^[0-9a-f]{32}$/iu.test(authorization.digest)))
+  )
+}
+
+const hasValidArchivePublications = (record: Record<string, unknown>): boolean => {
+  if (
+    (record.archivePublicationPending !== undefined && record.archivePublicationPending !== true) ||
+    (record.archivePublicationPending === true && record.archivePublications !== undefined)
+  ) {
+    return false
+  }
+  if (record.archivePublications === undefined) return true
+  if (!Array.isArray(record.archivePublications) || record.archivePublications.length === 0) {
+    return false
+  }
+  // Publication intent is written only after the mutation and every child has settled. A record that
+  // claims both a pending publication and a live child is contradictory and must fail closed.
+  if (
+    record.childPid !== undefined ||
+    record.childStartedAt !== undefined ||
+    record.childStartToken !== undefined
+  ) {
+    return false
+  }
+  return record.archivePublications.every((value) => {
+    if (typeof value !== 'object' || value === null) return false
+    const publication = value as Record<string, unknown>
+    return (
+      typeof publication.workingRoot === 'string' &&
+      publication.workingRoot.length > 0 &&
+      Array.isArray(publication.authorizations) &&
+      publication.authorizations.length > 0 &&
+      publication.authorizations.every(isArchiveAuthorization)
+    )
+  })
+}
+
 const isOperationRecord = (value: unknown): value is RuntimeOperationRecord => {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
@@ -483,6 +552,7 @@ const isOperationRecord = (value: unknown): value is RuntimeOperationRecord => {
       record.repairReason === 'protected-identity-change') &&
     // Child fields are validated as a lifecycle GROUP (parity with the sidecar's exact-shape rule):
     // all-absent or a complete {childPid + childStartedAt (+ token?)}, never a partial subset.
-    hasValidChildGroup(record)
+    hasValidChildGroup(record) &&
+    hasValidArchivePublications(record)
   )
 }

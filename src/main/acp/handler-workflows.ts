@@ -13,6 +13,7 @@ import type {
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
+import { bindResumeRequestToProject } from './session-project-binding'
 import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
 import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
 import {
@@ -62,7 +63,7 @@ type SessionArchiveAvailability = {
   ): Promise<Result>
   withSessionAvailableById<Result>(
     sessionId: string,
-    operation: () => Promise<Result>
+    operation: (projectId: string) => Promise<Result>
   ): Promise<Result>
 }
 
@@ -198,6 +199,7 @@ const prepareSaveAsSkillContinuation = (
     continuation: {
       sessionId: session.id,
       text: SAVE_AS_SKILL_PROMPT,
+      memoryEnabled: session.memoryEnabled !== false,
       suppressUserMessage: true,
       provenanceContext,
       resumeFallback: {
@@ -294,16 +296,11 @@ const createAcpHandlerWorkflows = (
     logResumeDiagnostic('info', 'acp:resume-session started', context)
 
     try {
-      const resume = (): Promise<AcpCreateSessionResponse> => runtime.resumeSession(request)
+      const resume = (projectId: string): Promise<AcpCreateSessionResponse> =>
+        runtime.resumeSession(bindResumeRequestToProject(request, projectId))
       const result = archiveAvailability
-        ? request.projectId
-          ? await archiveAvailability.withSessionAvailable(
-              request.projectId,
-              request.sessionId,
-              resume
-            )
-          : await archiveAvailability.withSessionAvailableById(request.sessionId, resume)
-        : await resume()
+        ? await archiveAvailability.withSessionAvailableById(request.sessionId, resume)
+        : await runtime.resumeSession(request)
       logResumeDiagnostic('info', 'acp:resume-session completed', {
         ...context,
         durationMs: Math.max(0, Date.now() - startedAt),

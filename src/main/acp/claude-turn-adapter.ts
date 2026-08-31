@@ -20,7 +20,7 @@ const toClaudeModelStepUsage = (
   message: Record<string, unknown>
 ): AcpProviderModelCallUsage | undefined => {
   if (
-    message.parent_tool_use_id !== null ||
+    (message.parent_tool_use_id !== undefined && message.parent_tool_use_id !== null) ||
     typeof message.message !== 'object' ||
     message.message === null ||
     Array.isArray(message.message)
@@ -44,6 +44,16 @@ const toClaudeModelStepUsage = (
     ...(typeof inner.id === 'string' && inner.id.length > 0 ? { sourceInvocationId: inner.id } : {})
   }
 }
+
+const sameClaudeModelCallUsage = (
+  left: AcpProviderModelCallUsage,
+  right: AcpProviderModelCallUsage
+): boolean =>
+  left.inputTokens === right.inputTokens &&
+  left.cacheTokens === right.cacheTokens &&
+  left.cachedReadTokens === right.cachedReadTokens &&
+  left.cachedWriteTokens === right.cachedWriteTokens &&
+  left.outputTokens === right.outputTokens
 
 const hasExactClaudeCallCoverage = (
   calls: readonly AcpProviderModelCallUsage[],
@@ -91,12 +101,16 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
     let modelTurnCount = 0
     let lastModelStepUsage: AcpModelStepTokenUsage | undefined
     let modelCalls: AcpProviderModelCallUsage[] = []
+    let modelCallIndexes = new Map<string, number>()
+    let modelCallsTrusted = true
     let closed = false
     const close = (): void => {
       closed = true
       modelTurnCount = 0
       lastModelStepUsage = undefined
       modelCalls = []
+      modelCallIndexes = new Map()
+      modelCallsTrusted = true
     }
 
     return {
@@ -118,7 +132,16 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
           const modelCall = toClaudeModelStepUsage(message)
           if (modelCall) {
             lastModelStepUsage = modelCall
-            modelCalls.push(modelCall)
+            const sourceInvocationId = modelCall.sourceInvocationId
+            const existingIndex = sourceInvocationId
+              ? modelCallIndexes.get(sourceInvocationId)
+              : undefined
+            if (existingIndex === undefined) {
+              if (sourceInvocationId) modelCallIndexes.set(sourceInvocationId, modelCalls.length)
+              modelCalls.push(modelCall)
+            } else if (!sameClaudeModelCallUsage(modelCalls[existingIndex], modelCall)) {
+              modelCallsTrusted = false
+            }
           }
           return
         }
@@ -138,13 +161,15 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
         const finalModelTurnCount = modelTurnCount
         const finalLastModelStepUsage = lastModelStepUsage
         const finalModelCalls = modelCalls
+        const finalModelCallsTrusted = modelCallsTrusted
         close()
         const turnUsage = toAcpTurnTokenUsage(response.usage)
         const result: AcpProviderTurnResult = {
           ...(turnUsage ? { turnUsage } : {}),
           ...(finalModelTurnCount > 0 ? { modelTurnCount: finalModelTurnCount } : {}),
           ...(finalLastModelStepUsage ? { lastModelStepUsage: finalLastModelStepUsage } : {}),
-          ...(hasExactClaudeCallCoverage(finalModelCalls, finalModelTurnCount, turnUsage)
+          ...(finalModelCallsTrusted &&
+          hasExactClaudeCallCoverage(finalModelCalls, finalModelTurnCount, turnUsage)
             ? { modelCalls: finalModelCalls }
             : {})
         }

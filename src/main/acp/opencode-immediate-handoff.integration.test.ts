@@ -18,8 +18,8 @@ import {
 } from '../agents/completion-gate'
 import { AgentsService, type AgentsCatalogSource } from '../agents/agents-service'
 import type { ApprovalGateway } from '../../shared/agents-contract'
-import type { SpecialistProfileView } from '../../shared/specialist'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistView } from '../../shared/specialist'
+import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import {
@@ -151,7 +151,7 @@ const startFakeOpenCodeProvider = (
   }
 }
 
-const specialist: SpecialistProfileView = {
+const specialist: SpecialistView = {
   id: 'specialist-new',
   name: 'New Specialist',
   displayName: 'New Specialist',
@@ -233,13 +233,13 @@ describe('OpenCode immediate handoff production path', () => {
       decide: vi.fn(async () => ({ status: 'approved' as const }))
     }
     const agents = new AgentsService({
-      profileService: {
+      specialistService: {
         getByName: vi.fn(async () => specialist),
         getById: vi.fn(async () => specialist),
         resolveRunnableByName: vi.fn(async () => specialist),
         resolveRunnableById: vi.fn(async () => specialist),
         list: vi.fn(async () => [specialist])
-      } as unknown as ProfileService,
+      } as unknown as SpecialistService,
       catalog,
       approvalGateway,
       sessionBinding: {

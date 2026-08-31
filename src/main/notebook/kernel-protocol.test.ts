@@ -162,6 +162,9 @@ describe('parseLoopResponse', () => {
 describe('framePythonRequest', () => {
   it('builds a stable-order JSON line terminated by newline', () => {
     expect(framePythonRequest('id', 'print(1)')).toBe('{"req_id":"id","code":"print(1)"}\n')
+    expect(framePythonRequest('id', 'print(1)', undefined, ['/registered/generation-1'])).toBe(
+      '{"req_id":"id","code":"print(1)","protected_dirs":["/registered/generation-1"]}\n'
+    )
   })
 
   it('builds a distinct namespace operation without executable source', () => {

@@ -162,6 +162,10 @@ const codeReconstructionUnavailableLabel = (
       return t('The producer run could not be identified from the captured evidence.')
     case 'producer-script-missing':
       return t('The producer run did not retain a script to reconstruct.')
+    case 'helper-evidence-incomplete':
+      return t('Helper source evidence is incomplete for this version.')
+    case 'supporting-code-incomplete':
+      return t('Supporting code evidence is incomplete for this version.')
   }
 }
 
@@ -1156,7 +1160,11 @@ const ArtifactProvenancePanel = ({
                   {/* One sentence around the tab link, so each locale can place the link where its
                       own word order needs it. */}
                   <Trans
-                    i18nKey="LLM-generated reconstruction · see <logLink>Execution Log</logLink> for the raw record"
+                    i18nKey={
+                      generatedCode.origin === 'app-replay'
+                        ? 'Reconstructed directly from the immutable Execution Log · see <logLink>Execution Log</logLink> for the raw record'
+                        : 'LLM-generated reconstruction · see <logLink>Execution Log</logLink> for the raw record'
+                    }
                     components={{
                       logLink: (
                         <Button
@@ -1180,13 +1188,20 @@ const ArtifactProvenancePanel = ({
                 </p>
               ) : codeReconstructionResult?.status === 'generating' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">
-                  {t('Using the provider and model selected when generation started.')}
+                  {codeReconstructionState?.state === 'ready' &&
+                  codeReconstructionState.origin === 'app-replay'
+                    ? t('Reconstructing directly from recorded helper and execution evidence.')
+                    : t('Using the provider and model selected when generation started.')}
                 </p>
               ) : codeReconstructionState?.state === 'ready' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">
-                  {t(
-                    'Generate a standalone script from the immutable Execution Log with your current provider and model.'
-                  )}
+                  {codeReconstructionState.origin === 'app-replay'
+                    ? t(
+                        'This script can be reconstructed directly from the immutable Execution Log.'
+                      )
+                    : t(
+                        'Generate a standalone script from the immutable Execution Log with your current provider and model.'
+                      )}
                 </p>
               ) : (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">

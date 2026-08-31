@@ -67,6 +67,35 @@ const stubMobileViewport = (): void => {
   )
 }
 
+const stubMutableViewport = (): { setMobile: (mobile: boolean) => void } => {
+  let matches = false
+  const listeners = new Set<() => void>()
+  const media = {
+    get matches() {
+      return matches
+    },
+    media: '(max-width: 47.999rem)',
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn((_event: string, listener: () => void) => listeners.add(listener)),
+    removeEventListener: vi.fn((_event: string, listener: () => void) =>
+      listeners.delete(listener)
+    ),
+    dispatchEvent: vi.fn()
+  }
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn(() => media)
+  )
+  return {
+    setMobile: (mobile) => {
+      matches = mobile
+      listeners.forEach((listener) => listener())
+    }
+  }
+}
+
 describe('NotificationBell', () => {
   it('renders a red-dot entry point with an accessible unread count and pending state', async () => {
     await act(async () => root.render(<NotificationBell />))
@@ -462,6 +491,38 @@ describe('NotificationBell', () => {
     expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
   })
 
+  it('opens a credential wait without replaying it as a connector approval', async () => {
+    const replayConnectorApproval = vi.fn(async () => null)
+    const openSessionById = vi.fn()
+    window.api.settings.replayConnectorApproval = replayConnectorApproval
+    useNavigationStore.setState({ openSessionById })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead: vi.fn(async () => undefined),
+      items: item
+        ? [
+            {
+              ...item,
+              kind: 'task.needs-attention',
+              attentionReason: 'waiting-for-user',
+              sessionId: 'session-1'
+            }
+          ]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => message?.click())
+
+    expect(replayConnectorApproval).not.toHaveBeenCalled()
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+  })
+
   it('does not wait for the read write before navigating to the notification target', async () => {
     let completeMarkRead: (() => void) | undefined
     const markRead = vi.fn(
@@ -511,6 +572,7 @@ describe('NotificationBell', () => {
       } satisfies ConnectorApprovalRequest
       const computeRequest = {
         id: 'request-1',
+        operation: 'call_command',
         provider_id: 'ssh:cluster',
         provider_name: 'Cluster',
         shape: 'direct_ssh',
@@ -583,5 +645,162 @@ describe('NotificationBell', () => {
     expect(close).not.toBeNull()
     await act(async () => close?.click())
     expect(trigger?.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('keeps mobile message-center focus modal and restores its trigger on dismissal', async () => {
+    stubMobileViewport()
+    container.id = 'root'
+    await act(async () =>
+      root.render(
+        <>
+          <button type="button">Background action</button>
+          <NotificationBell />
+        </>
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')
+    trigger?.focus()
+    await act(async () => trigger?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[aria-label="Message center"]')
+    expect(container.inert).toBe(true)
+    expect(container.getAttribute('aria-hidden')).toBe('true')
+    expect(dialog?.contains(document.activeElement)).toBe(true)
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button')?.focus()
+    })
+    expect(dialog?.contains(document.activeElement)).toBe(true)
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(document.activeElement).toBe(trigger)
+    expect(container.inert).toBe(false)
+    expect(container.getAttribute('aria-hidden')).toBeNull()
+
+    trigger?.focus()
+    await act(async () => trigger?.click())
+    const dismiss = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Dismiss messages"]'
+    )
+    await act(async () => dismiss?.click())
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('restores a visible bell when the mobile opener becomes inert', async () => {
+    stubMobileViewport()
+    container.id = 'root'
+    await act(async () =>
+      root.render(
+        <>
+          <div data-testid="mobile-sidebar">
+            <NotificationBell
+              onOpen={() =>
+                container.querySelector('[data-testid="mobile-sidebar"]')?.setAttribute('inert', '')
+              }
+            />
+          </div>
+          <NotificationBell />
+        </>
+      )
+    )
+
+    const [sidebarTrigger, visibleTrigger] = container.querySelectorAll<HTMLButtonElement>(
+      '[data-notification-bell-trigger="true"]'
+    )
+    const visibleRect = (): DOMRect =>
+      ({
+        x: 0,
+        y: 0,
+        width: 36,
+        height: 36,
+        top: 0,
+        right: 36,
+        bottom: 36,
+        left: 0,
+        toJSON: () => ({})
+      }) as DOMRect
+    sidebarTrigger!.getBoundingClientRect = visibleRect
+    visibleTrigger!.getBoundingClientRect = visibleRect
+    sidebarTrigger?.focus()
+    await act(async () => sidebarTrigger?.click())
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(document.activeElement).toBe(visibleTrigger)
+  })
+
+  it.each([
+    ['while still mobile', false],
+    ['after becoming desktop', true]
+  ])(
+    'restores a visible bell when an open mobile center unmounts %s',
+    async (_, becomesDesktop) => {
+      const viewport = stubMutableViewport()
+      viewport.setMobile(true)
+      container.id = 'root'
+      await act(async () =>
+        root.render(
+          <>
+            <NotificationBell key="route-bell" />
+            <NotificationBell key="persistent-bell" />
+          </>
+        )
+      )
+
+      const [routeTrigger, persistentTrigger] = container.querySelectorAll<HTMLButtonElement>(
+        '[data-notification-bell-trigger="true"]'
+      )
+      persistentTrigger!.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: 0,
+          width: 36,
+          height: 36,
+          top: 0,
+          right: 36,
+          bottom: 36,
+          left: 0,
+          toJSON: () => ({})
+        }) as DOMRect
+      routeTrigger?.focus()
+      await act(async () => routeTrigger?.click())
+      if (becomesDesktop) await act(async () => viewport.setMobile(false))
+
+      await act(async () => root.render(<NotificationBell key="persistent-bell" />))
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+      expect(document.activeElement).toBe(persistentTrigger)
+    }
+  )
+
+  it('moves focus into an open message center when the viewport becomes mobile', async () => {
+    const viewport = stubMutableViewport()
+    container.id = 'root'
+    await act(async () => root.render(<NotificationBell />))
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')
+    trigger?.focus()
+    await act(async () => trigger?.click())
+    expect(
+      document.body
+        .querySelector<HTMLElement>('[aria-label="Message center"]')
+        ?.hasAttribute('aria-modal')
+    ).toBe(false)
+
+    await act(async () => viewport.setMobile(true))
+
+    const dialog = document.body.querySelector<HTMLElement>('[aria-label="Message center"]')
+    expect(dialog?.getAttribute('aria-modal')).toBe('true')
+    expect(container.inert).toBe(true)
+    expect(dialog?.contains(document.activeElement)).toBe(true)
+
+    await act(async () => trigger?.focus())
+    expect(dialog?.contains(document.activeElement)).toBe(true)
   })
 })

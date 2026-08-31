@@ -14,6 +14,25 @@ const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 
+const persistedMemoryState = async (
+  page: Page
+): Promise<{
+  memoryEnabled: boolean
+  autoReviewEnabled: boolean
+  pendingHistoryReplay: unknown
+} | null> =>
+  page.evaluate(async (title) => {
+    const session = (await window.api.sessions.loadAll()).sessions.find(
+      (candidate) => candidate.title === title
+    )
+    if (!session) return null
+    return {
+      memoryEnabled: session.memoryEnabled !== false,
+      autoReviewEnabled: session.autoReviewEnabled === true,
+      pendingHistoryReplay: session.pendingHistoryReplay ?? null
+    }
+  }, USER_MESSAGE)
+
 const createProject = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -94,6 +113,73 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await conversation.getByRole('button', { name: 'Next message revision' }).click()
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()
   await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('2/2')
+})
+
+test('keeps Memory reversible while the replacement session awaits history replay', async ({
+  app
+}) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  await page.evaluate(async () => window.api.memory.setEnabled({ enabled: true }))
+  await createProject(page)
+
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: /Agent controls:/ }).click()
+  const memory = page.getByRole('menuitem', {
+    name: 'Memory Let the agent recall and save memory in this conversation.'
+  })
+  await expect(memory).toBeEnabled()
+  await memory.click()
+
+  await expect
+    .poll(() => persistedMemoryState(page))
+    .toEqual({
+      memoryEnabled: false,
+      autoReviewEnabled: false,
+      pendingHistoryReplay: { kind: 'all' }
+    })
+
+  const autoReview = page.getByRole('menuitem', {
+    name: 'Auto-review A reviewer agent checks every change before it lands.'
+  })
+  const specialist = page.getByTestId('specialist-submenu-trigger')
+  const branch = page.getByRole('button', { name: 'Branch in new session' })
+  await expect(autoReview).toBeEnabled()
+  await expect(specialist).toBeEnabled()
+
+  await autoReview.click()
+  await expect
+    .poll(() => persistedMemoryState(page))
+    .toEqual({
+      memoryEnabled: false,
+      autoReviewEnabled: true,
+      pendingHistoryReplay: { kind: 'all' }
+    })
+  await expect(memory).toBeEnabled()
+  await memory.click()
+
+  await expect
+    .poll(() => persistedMemoryState(page))
+    .toEqual({
+      memoryEnabled: true,
+      autoReviewEnabled: true,
+      pendingHistoryReplay: { kind: 'all' }
+    })
+  await expect(memory).toBeEnabled()
+
+  await page.keyboard.press('Escape')
+  await page.getByText(AGENT_REPLY, { exact: true }).hover()
+  await expect(branch).toBeEnabled()
+  await branch.click()
+  await expect
+    .poll(async () => {
+      const sessions = (await page.evaluate(async () => window.api.sessions.loadAll())).sessions
+      return sessions.some((session) => session.branchSource !== undefined)
+    })
+    .toBe(true)
 })
 
 test('resolves Agent permission requests through both Allow and Deny decisions', async ({
@@ -359,7 +445,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await page.screenshot({ path: testInfo.outputPath('source-preview-loading.png') })
   await expect(sourceFrame).toHaveAttribute(
     'sandbox',
-    'allow-same-origin allow-scripts allow-forms allow-popups'
+    'allow-same-origin allow-scripts allow-forms'
   )
   await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
   await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')

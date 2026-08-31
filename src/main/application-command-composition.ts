@@ -72,6 +72,11 @@ import {
   tagApplicationCommandGroup,
   type TagCommandOwner
 } from './tags/application-commands'
+import {
+  memoryApplicationCommandGroup,
+  registerMemoryApplicationCommands,
+  type MemoryCommandOwner
+} from './memory/application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
 type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
@@ -108,6 +113,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   compute: ComputeApplicationCommandDependencies
   permissionGrants: PermissionGrantDependencies
   tags: TagCommandOwner
+  memory: MemoryCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
 }>
@@ -122,6 +128,9 @@ type ApplicationCommandComposition = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  'remote-access:detect',
+  'remote-access:disable',
+  'remote-access:set-mode',
   'sessions:export-conversation',
   'uploads:stage-local-file'
 ])
@@ -210,6 +219,9 @@ const createApplicationCommandModules = (
     defineApplicationCommandModule([tagApplicationCommandGroup], (registrar) =>
       registerTagApplicationCommands(registrar, dependencies.tags)
     ),
+    defineApplicationCommandModule([memoryApplicationCommandGroup], (registrar) =>
+      registerMemoryApplicationCommands(registrar, dependencies.memory)
+    ),
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)
     ),
@@ -232,6 +244,7 @@ const createRemoteAccessSlot = (): Readonly<{
   }
   const owner: RemoteAccessOwner = Object.freeze({
     snapshot: (...args) => current().snapshot(...args),
+    probe: (...args) => current().probe(...args),
     detect: (...args) => current().detect(...args),
     setMode: (...args) => current().setMode(...args),
     disable: (...args) => current().disable(...args),

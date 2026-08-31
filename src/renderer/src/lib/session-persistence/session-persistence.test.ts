@@ -22,8 +22,10 @@ import {
   useSessionStore
 } from '../../stores/session-store'
 import {
+  MAX_SESSION_REVISION_REBASE_ATTEMPTS,
   createOrderedSessionPersistence,
   createStoreSaver,
+  deriveSessionCatalogRecovery,
   flushSessionPersistence,
   loadPersistedSession,
   loadPersistedSessions,
@@ -65,6 +67,36 @@ const createApi = (overrides: Partial<SessionPersistenceApi> = {}): SessionPersi
 
 beforeEach(() => {
   useSessionStore.setState(createInitialSessionState())
+})
+
+describe('deriveSessionCatalogRecovery', () => {
+  it('preserves the affected Session file identities after corrupt authority is quarantined', () => {
+    expect(
+      deriveSessionCatalogRecovery({
+        isComplete: true,
+        warnings: [
+          {
+            kind: 'corrupt',
+            projectId: 'project-a',
+            fileName: 'session-1.json',
+            recovered: true
+          },
+          {
+            kind: 'corrupt',
+            projectId: 'project-b',
+            fileName: 'session-2.json',
+            recovered: true
+          }
+        ]
+      })
+    ).toEqual({
+      kind: 'damaged-authority',
+      affectedFiles: [
+        { projectId: 'project-a', fileName: 'session-1.json' },
+        { projectId: 'project-b', fileName: 'session-2.json' }
+      ]
+    })
+  })
 })
 
 describe('reconcilePendingArtifacts', () => {
@@ -1425,6 +1457,460 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it('rebases a completed turn across consecutive Main Session-details revisions', async () => {
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Summarize the deterministic fixture.',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const partial = {
+      id: 'agent-message-1',
+      role: 'agent' as const,
+      content: 'Deterministic reply',
+      status: 'streaming' as const,
+      streamId: 'run-1',
+      responseToMessageId: prompt.id,
+      eventIds: ['event-1'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        status: 'running',
+        activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+        messages: [prompt, partial],
+        sessionDetailsGenerationEligible: true
+      })
+    )
+    const queuedDetails = {
+      ...base,
+      revision: 9,
+      sessionDetailsGenerationEligible: undefined,
+      sessionDetailsSource: 'fallback' as const,
+      sessionDetailsGeneration: {
+        status: 'queued' as const,
+        sourceMessageId: prompt.id,
+        requestId: `${prompt.id}:session-details`,
+        queuedAt: 3
+      },
+      updatedAt: base.updatedAt + 1
+    }
+    const runningDetails = {
+      ...queuedDetails,
+      revision: 10,
+      sessionDetailsGeneration: {
+        ...queuedDetails.sessionDetailsGeneration,
+        status: 'running' as const,
+        startedAt: 4,
+        frameworkId: 'opencode' as const,
+        model: 'e2e-model',
+        reasoningEffort: 'low' as const
+      },
+      updatedAt: queuedDetails.updatedAt + 1
+    }
+    const terminalDetails = {
+      ...runningDetails,
+      revision: 11,
+      sessionDetailsGeneration: {
+        ...runningDetails.sessionDetailsGeneration,
+        status: 'failed' as const,
+        completedAt: 5,
+        usageUnavailable: true
+      },
+      updatedAt: runningDetails.updatedAt + 1
+    }
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockRejectedValueOnce(new SessionRevisionConflictError(9, 10))
+      .mockRejectedValueOnce(new SessionRevisionConflictError(10, 11))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 12 }))
+    const api = createApi({
+      loadOne: vi
+        .fn()
+        .mockResolvedValueOnce(queuedDetails)
+        .mockResolvedValueOnce(runningDetails)
+        .mockResolvedValueOnce(terminalDetails),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().finishRun(base.id, undefined, prompt.id)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(api.loadOne).toHaveBeenCalledTimes(3)
+    expect(saveSession).toHaveBeenCalledTimes(4)
+    expect(saveSession.mock.calls[3][0]).toMatchObject({
+      revision: 11,
+      status: 'idle',
+      activeRun: undefined,
+      messages: [
+        expect.objectContaining({ id: prompt.id }),
+        expect.objectContaining({ id: partial.id, status: 'complete' })
+      ],
+      sessionDetailsGeneration: { status: 'failed' }
+    })
+  })
+
+  it('rebases a completed turn across Session-details, status, and auxiliary usage revisions', async () => {
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Summarize the deterministic fixture.',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const partial = {
+      id: 'agent-message-1',
+      role: 'agent' as const,
+      content: 'Deterministic reply',
+      status: 'streaming' as const,
+      streamId: 'run-1',
+      responseToMessageId: prompt.id,
+      eventIds: ['event-1'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        status: 'running',
+        activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+        messages: [prompt, partial],
+        sessionDetailsGenerationEligible: true
+      })
+    )
+    const queuedDetails = {
+      ...base,
+      revision: 9,
+      sessionDetailsGenerationEligible: undefined,
+      sessionDetailsSource: 'fallback' as const,
+      sessionDetailsGeneration: {
+        status: 'queued' as const,
+        sourceMessageId: prompt.id,
+        requestId: `${prompt.id}:session-details`,
+        queuedAt: 3
+      },
+      updatedAt: base.updatedAt + 1
+    }
+    const runningDetails = {
+      ...queuedDetails,
+      revision: 10,
+      sessionDetailsGeneration: {
+        ...queuedDetails.sessionDetailsGeneration,
+        status: 'running' as const,
+        startedAt: 4,
+        frameworkId: 'opencode' as const,
+        model: 'e2e-model',
+        reasoningEffort: 'low' as const
+      },
+      updatedAt: queuedDetails.updatedAt + 1
+    }
+    const terminalDetails = {
+      ...runningDetails,
+      revision: 11,
+      sessionDetailsGeneration: {
+        ...runningDetails.sessionDetailsGeneration,
+        status: 'failed' as const,
+        completedAt: 5,
+        usageUnavailable: true
+      },
+      updatedAt: runningDetails.updatedAt + 1
+    }
+    const statusAuthority = {
+      ...terminalDetails,
+      revision: 12,
+      status: 'running' as const,
+      updatedAt: terminalDetails.updatedAt + 1
+    }
+    const runtimeAuthority = {
+      ...statusAuthority,
+      revision: 13,
+      runtimeContext: { version: 1 as const, revision: 2 },
+      updatedAt: statusAuthority.updatedAt + 1
+    }
+    const usageAuthority = {
+      ...runtimeAuthority,
+      revision: 14,
+      runtimeContext: { version: 1 as const, revision: 3 },
+      updatedAt: runtimeAuthority.updatedAt + 1
+    }
+    const overlappingAuthorities = [
+      queuedDetails,
+      runningDetails,
+      terminalDetails,
+      statusAuthority,
+      runtimeAuthority,
+      usageAuthority
+    ]
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>()
+    for (const authority of overlappingAuthorities) {
+      saveSession.mockRejectedValueOnce(
+        new SessionRevisionConflictError(authority.revision - 1, authority.revision)
+      )
+    }
+    saveSession.mockImplementationOnce(async (submitted) => ({
+      ...submitted,
+      revision: usageAuthority.revision + 1
+    }))
+    const api = createApi({
+      loadOne: vi.fn().mockImplementation(async () => overlappingAuthorities.shift()),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().finishRun(base.id, undefined, prompt.id)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(api.loadOne).toHaveBeenCalledTimes(6)
+    expect(saveSession).toHaveBeenCalledTimes(7)
+    expect(saveSession.mock.calls[6][0]).toMatchObject({
+      revision: 14,
+      status: 'idle',
+      activeRun: undefined,
+      runtimeContext: { revision: 3 },
+      messages: [
+        expect.objectContaining({ id: prompt.id }),
+        expect.objectContaining({ id: partial.id, status: 'complete' })
+      ],
+      sessionDetailsGeneration: { status: 'failed' }
+    })
+  })
+
+  it('rebases a first user prompt over Session-details admission and activeRun timestamps', async () => {
+    const promptContent = 'Summarize the deterministic fixture.'
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        status: 'idle',
+        title: 'New conversation',
+        messages: []
+      })
+    )
+    useSessionStore.getState().hydrateSessions([base])
+    const baseline = useSessionStore.getState()
+    const appended = useSessionStore.getState().appendUserMessage({
+      sessionId: base.id,
+      content: promptContent,
+      projectId: 'project-a'
+    })
+    if (!appended) throw new Error('Expected the first user Message to be appended.')
+
+    const submitted = toPersistedSession(
+      useSessionStore.getState().sessions.find((session) => session.id === base.id)!
+    )
+    const queuedDetails = materializeSessionConversationGraph({
+      ...submitted,
+      revision: 9,
+      title: promptContent,
+      description: 'The user wants a concise summary of the deterministic fixture.',
+      sessionDetailsSource: 'fallback' as const,
+      sessionDetailsGeneration: {
+        status: 'queued' as const,
+        sourceMessageId: appended.messageId,
+        requestId: `${appended.messageId}:session-details`,
+        queuedAt: 3
+      },
+      activeRun: {
+        promptMessageId: appended.messageId,
+        startedAt: (submitted.activeRun?.startedAt ?? 0) + 5_000
+      },
+      updatedAt: submitted.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(queuedDetails),
+      saveSession
+    })
+    const save = createStoreSaver(api, baseline)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(api.loadOne).toHaveBeenCalledOnce()
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 9,
+      status: 'running',
+      sessionDetailsGeneration: { status: 'queued' },
+      messages: [expect.objectContaining({ content: promptContent })]
+    })
+    expect(saveSession.mock.calls[1][0].activeRun?.promptMessageId).toBe(appended.messageId)
+  })
+
+  it('clears a finished run when overlapping authority only updates the same prompt timestamp', async () => {
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Summarize the deterministic fixture.',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const partial = {
+      id: 'agent-message-1',
+      role: 'agent' as const,
+      content: 'Deterministic reply',
+      status: 'streaming' as const,
+      streamId: 'run-1',
+      responseToMessageId: prompt.id,
+      eventIds: ['event-1'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        status: 'running',
+        activeRun: { promptMessageId: prompt.id, startedAt: 10 },
+        messages: [prompt, partial]
+      })
+    )
+    const overlappingRun = materializeSessionConversationGraph({
+      ...base,
+      revision: 9,
+      activeRun: { promptMessageId: prompt.id, startedAt: 20 },
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(overlappingRun),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().finishRun(base.id, undefined, prompt.id)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 9,
+      status: 'idle'
+    })
+    expect(saveSession.mock.calls[1][0].activeRun).toBeUndefined()
+  })
+
+  it('keeps renderer context usage when overlapping authority has a different snapshot', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 3,
+        contextUsage: { used: 10, size: 100 }
+      })
+    )
+    const overlappingUsage = materializeSessionConversationGraph({
+      ...base,
+      revision: 4,
+      contextUsage: { used: 20, size: 100 },
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(3, 4))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 5 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(overlappingUsage),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setContextUsage(base.id, { used: 40, size: 100 })
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 4,
+      contextUsage: { used: 40, size: 100 }
+    })
+  })
+
+  it('clears renderer context usage when overlapping authority still has a snapshot', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 3,
+        contextUsage: { used: 10, size: 100 }
+      })
+    )
+    const overlappingUsage = materializeSessionConversationGraph({
+      ...base,
+      revision: 4,
+      contextUsage: { used: 20, size: 100 },
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(3, 4))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 5 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(overlappingUsage),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setContextUsage(base.id, undefined)
+
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+    expect(saveSession.mock.calls[1][0].contextUsage).toBeUndefined()
+  })
+
+  it('stops rebasing when Main authority keeps advancing past the bounded retry window', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({ projectId: 'project-a', revision: 1 })
+    )
+    const authorities = Array.from({ length: MAX_SESSION_REVISION_REBASE_ATTEMPTS }, (_, index) => {
+      const revision = index + 2
+      return {
+        ...base,
+        revision,
+        runtimeContext: { version: 1 as const, revision },
+        updatedAt: base.updatedAt + revision
+      }
+    })
+    const conflicts = Array.from(
+      { length: MAX_SESSION_REVISION_REBASE_ATTEMPTS + 1 },
+      (_, index) => new SessionRevisionConflictError(index + 1, index + 2)
+    )
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>()
+    for (const conflict of conflicts) saveSession.mockRejectedValueOnce(conflict)
+    const api = createApi({
+      loadOne: vi.fn().mockImplementation(async () => authorities.shift()),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().togglePinned(base.id)
+
+    await expect(save(useSessionStore.getState())).rejects.toBe(
+      conflicts[MAX_SESSION_REVISION_REBASE_ATTEMPTS]
+    )
+    expect(api.loadOne).toHaveBeenCalledTimes(MAX_SESSION_REVISION_REBASE_ATTEMPTS)
+    expect(saveSession).toHaveBeenCalledTimes(MAX_SESSION_REVISION_REBASE_ATTEMPTS + 1)
+  })
+
   it('retries a pending tool activity save over disjoint concurrent Main graph changes', async () => {
     const base = materializeSessionConversationGraph(
       createPersistedSession({
@@ -2340,6 +2826,79 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[2][0]).toMatchObject({
       revision: 10,
       title: 'Later queued save'
+    })
+  })
+
+  it('rebases an explicit PDF message save across successive main-owned revisions', async () => {
+    const pdfContext = {
+      version: 1 as const,
+      bindings: [
+        {
+          version: 1 as const,
+          bindingId: 'binding-1',
+          sourceKind: 'upload-version' as const,
+          sourceFileId: 'upload-1',
+          sourceVersionId: 'version-1',
+          sourceSessionId: 'session-1',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf' as const,
+          sizeBytes: 12,
+          checksum: 'a'.repeat(64),
+          linkedAt: 1
+        }
+      ]
+    }
+    const message = {
+      id: 'message-1',
+      role: 'user' as const,
+      content: 'Explain this page',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = createPersistedSession({ revision: 1, messages: [message] })
+    const submitted = createPersistedSession({
+      revision: 1,
+      messages: [{ ...message, pdfContext }]
+    })
+    const linked = createPersistedSession({
+      revision: 2,
+      messages: [message],
+      runtimeContext: { version: 1, revision: 1, pdfContext }
+    })
+    const generatedDetails = createPersistedSession({
+      ...linked,
+      revision: 3,
+      title: 'Generated title',
+      description: 'Generated description',
+      sessionDetailsSource: 'generated'
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
+      .mockRejectedValueOnce(new SessionRevisionConflictError(2, 3))
+      .mockImplementationOnce(async (session) => ({ ...session, revision: 4 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValueOnce(linked).mockResolvedValueOnce(generatedDetails),
+      saveSession
+    })
+    const persistence = createOrderedSessionPersistence(api)
+    persistence.seedAcknowledgedSessions([base])
+
+    await expect(saveSessionInOrder(submitted, persistence, api)).resolves.toMatchObject({
+      revision: 4,
+      title: generatedDetails.title,
+      runtimeContext: linked.runtimeContext,
+      messages: [{ pdfContext }]
+    })
+    expect(api.loadOne).toHaveBeenCalledTimes(2)
+    expect(saveSession).toHaveBeenCalledTimes(3)
+    expect(saveSession.mock.calls[2][0]).toMatchObject({
+      revision: 3,
+      title: generatedDetails.title,
+      runtimeContext: linked.runtimeContext,
+      messages: [{ pdfContext }]
     })
   })
 })

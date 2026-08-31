@@ -20,7 +20,7 @@ import {
   type InstallSpawn,
   type SpawnResult
 } from './package-manager'
-import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
+import { micromambaCacheLockKey } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import {
@@ -92,6 +92,8 @@ const notManaged: SpawnResult = {
 const base = {
   micromamba: '/mm/bin/micromamba',
   storageRoot: '/root',
+  // Keep baseline tests hermetic on Windows; Windows cache behavior is covered by explicit overrides.
+  micromambaEnv: { platform: 'linux' as const },
   condaChannel: 'https://mirror.test/conda-forge',
   readCondaPackageIdentity: () => ({
     name: 'r-base',
@@ -180,7 +182,7 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
         `error: ['Invalid package cache; file is missing; Package cache error', String.fromCharCode(39) + 'C:/cache/' + 'p'.repeat(280) + String.fromCharCode(39), 'for ' + String.fromCharCode(39) + 'broken-package-1.0-0.conda' + String.fromCharCode(39)],`,
         `padding: 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}),`,
         `solver_problems: ['unsatisfiable dependency constraints'],`,
-        `actions: { LINK: [{ name: 'r-base', version: '4.5.0' }], UNLINK: [] }`,
+        `actions: { LINK: [{ name: 'r-base', version: '4.5.0' }], UNLINK: [], FETCH: [{ fn: 'r-base-4.5.0.conda', sha256: 'a'.repeat(64) }] }`,
         `};`,
         `process.stdout.write(JSON.stringify(value));`
       ].join(''),
@@ -197,10 +199,48 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
         LINK: [{ name: 'r-base', version: '4.5.0' }],
         UNLINK: []
       },
+      archives: [{ file: 'r-base-4.5.0.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }],
+      archiveEvidenceComplete: true,
       diagnostics: ['solver failed']
     })
     expect(result.maxPathRecoveryEvidence).toMatch(/Invalid package cache/)
     expect(result.maxPathRecoveryEvidence).toContain('broken-package-1.0-0.conda')
+  })
+
+  it('marks summarized archive evidence incomplete instead of silently capping it', async () => {
+    const result = await defaultSpawn(process.execPath, [
+      '-e',
+      [
+        `const fetch = Array.from({ length: 1025 }, (_, index) => ({ fn: 'pkg-' + index + '.conda', sha256: index.toString(16).padStart(64, '0') }));`,
+        `const value = { padding: 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}), actions: { FETCH: fetch } };`,
+        `process.stdout.write(JSON.stringify(value));`
+      ].join(''),
+      '--',
+      '--json'
+    ])
+
+    expect(result.code).toBe(0)
+    expect(result.stdoutDroppedBytes).toBeGreaterThan(0)
+    expect(result.structuredCondaResult?.archives).toHaveLength(1024)
+    expect(result.structuredCondaResult?.archiveEvidenceComplete).toBe(false)
+  })
+
+  it('retains archive authority from summarized URLs with query parameters', async () => {
+    const result = await defaultSpawn(process.execPath, [
+      '-e',
+      [
+        `const value = { padding: 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}), actions: { FETCH: [{ url: 'https://packages.example.test/pkg-1.0-0.conda?token=temporary', sha256: 'b'.repeat(64) }] } };`,
+        `process.stdout.write(JSON.stringify(value));`
+      ].join(''),
+      '--',
+      '--json'
+    ])
+
+    expect(result.stdoutDroppedBytes).toBeGreaterThan(0)
+    expect(result.structuredCondaResult?.archives).toEqual([
+      { file: 'pkg-1.0-0.conda', algorithm: 'sha256', digest: 'b'.repeat(64) }
+    ])
+    expect(result.structuredCondaResult?.archiveEvidenceComplete).toBe(true)
   })
 
   it('fails closed when micromamba JSON exceeds the bounded temporary capture', async () => {
@@ -304,6 +344,70 @@ describe('installPackages', () => {
     expect(result.ok).toBe(true)
     expect(runner.resolve).toHaveBeenCalledOnce()
     expect(calls[0][0]).toBe('/local-tools/micromamba-compat.exe')
+  })
+
+  it('reports archive digests from the successful micromamba transaction', async () => {
+    const digest = 'a'.repeat(64)
+    const transaction: SpawnResult = {
+      code: 0,
+      stdout: JSON.stringify({
+        success: true,
+        actions: { FETCH: [{ fn: 'numpy-1.conda', sha256: digest }] }
+      }),
+      stderr: ''
+    }
+    const { spawn } = scriptedSpawn([transaction])
+    const onCondaArchiveAuthorizations = vi.fn()
+
+    await installPackages(
+      { language: 'python', packages: ['numpy'] },
+      { spawn, ...base, onCondaArchiveAuthorizations }
+    )
+
+    expect(onCondaArchiveAuthorizations).toHaveBeenCalledWith(
+      [{ file: 'numpy-1.conda', algorithm: 'sha256', digest }],
+      expect.stringMatching(/[\\/]pkgs$/u),
+      true
+    )
+  })
+
+  it('does not report an empty archive publication for a transaction without fetch records', async () => {
+    const transaction: SpawnResult = {
+      code: 0,
+      stdout: JSON.stringify({ success: true, actions: { LINK: [] } }),
+      stderr: ''
+    }
+    const { spawn } = scriptedSpawn([transaction])
+    const onCondaArchiveAuthorizations = vi.fn()
+
+    await installPackages(
+      { language: 'python', packages: ['already-installed'] },
+      { spawn, ...base, onCondaArchiveAuthorizations }
+    )
+
+    expect(onCondaArchiveAuthorizations).not.toHaveBeenCalled()
+  })
+
+  it('reports incomplete archive evidence when successful JSON output was truncated', async () => {
+    const transaction: SpawnResult = {
+      code: 0,
+      stdout: 'truncated-json-tail',
+      stderr: '',
+      stdoutDroppedBytes: 1
+    }
+    const { spawn } = scriptedSpawn([transaction])
+    const onCondaArchiveAuthorizations = vi.fn()
+
+    await installPackages(
+      { language: 'python', packages: ['numpy'] },
+      { spawn, ...base, onCondaArchiveAuthorizations }
+    )
+
+    expect(onCondaArchiveAuthorizations).toHaveBeenCalledWith(
+      [],
+      expect.stringMatching(/[\\/]pkgs$/u),
+      false
+    )
   })
 
   it('routes python usePip installs to the env pip with the resolved index url', async () => {
@@ -799,6 +903,7 @@ describe('installPackages', () => {
       structuredCondaResult: {
         transaction: false,
         actions: { LINK: [], UNLINK: [] },
+        archives: [],
         diagnostics: ['solver failed']
       }
     }
@@ -884,6 +989,23 @@ describe('installPackages', () => {
     expect(env.REQUESTS_CA_BUNDLE).toBe('/etc/corp-ca.pem')
     expect(env.PIP_CERT).toBe('/etc/corp-ca.pem')
     expect(env.CURL_CA_BUNDLE).toBe('/etc/corp-ca.pem')
+  })
+
+  it('routes pip and R workload caches under the configured data storage runtime', async () => {
+    const { spawn, calls } = scriptedSpawn([ok])
+    await installPackages(
+      { language: 'python', packages: ['numpy'], usePip: true },
+      { spawn, ...base }
+    )
+    const env = calls[0][2] ?? {}
+    const cacheRoot = join(runtimeRoot(base.storageRoot), 'cache', 'notebook')
+
+    expect(env).toMatchObject({
+      OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
+      PIP_CACHE_DIR: join(cacheRoot, 'pip'),
+      UV_CACHE_DIR: join(cacheRoot, 'uv'),
+      R_USER_CACHE_DIR: join(cacheRoot, 'r')
+    })
   })
 
   it('does not set CA vars when no bundle is configured', async () => {
@@ -1787,12 +1909,12 @@ describe('installPackages shared pkgs cache lock', () => {
     // on the same key the source uses.
     const install = installPackages({ language: 'python', packages: ['numpy'] }, { spawn, ...base })
     await installStarted
-    const exclusive = withExclusiveCacheLock(
-      selectMicromambaCache(runtimeRoot('/root')).lockKey,
-      async () => {
-        order.push('repair')
-      }
-    )
+    const cacheKey = micromambaCacheLockKey(join(runtimeRoot(base.storageRoot), 'pkgs'), {
+      platform: 'linux'
+    })
+    const exclusive = withExclusiveCacheLock(cacheKey, async () => {
+      order.push('repair')
+    })
     await Promise.all([install, exclusive])
 
     expect(order).toEqual(['install-start', 'install-end', 'repair'])
@@ -1823,12 +1945,12 @@ describe('installPackages shared pkgs cache lock', () => {
       { spawn, ...base, pathExists: () => true }
     )
     await removeStarted
-    const exclusive = withExclusiveCacheLock(
-      selectMicromambaCache(runtimeRoot('/root')).lockKey,
-      async () => {
-        order.push('repair')
-      }
-    )
+    const cacheKey = micromambaCacheLockKey(join(runtimeRoot(base.storageRoot), 'pkgs'), {
+      platform: 'linux'
+    })
+    const exclusive = withExclusiveCacheLock(cacheKey, async () => {
+      order.push('repair')
+    })
     await Promise.all([remove, exclusive])
 
     expect(order).toEqual(['remove-start', 'remove-end', 'repair'])
@@ -1850,12 +1972,12 @@ describe('installPackages shared pkgs cache lock', () => {
       { language: 'python', packages: ['seaborn'], usePip: true, environment: 'my-analysis' },
       { spawn, ...base, pathExists: () => true }
     )
-    const exclusive = withExclusiveCacheLock(
-      selectMicromambaCache(runtimeRoot('/root')).lockKey,
-      async () => {
-        order.push('repair')
-      }
-    )
+    const cacheKey = micromambaCacheLockKey(join(runtimeRoot(base.storageRoot), 'pkgs'), {
+      platform: 'linux'
+    })
+    const exclusive = withExclusiveCacheLock(cacheKey, async () => {
+      order.push('repair')
+    })
     await Promise.all([install, exclusive])
 
     // The repair interleaved (ran before pip finished) because pip never held the shared lock.

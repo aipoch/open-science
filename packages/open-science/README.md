@@ -82,6 +82,13 @@ are not yielded to consumers. Malformed frames and a consumer backlog above 1024
 the iterator with `event_stream_invalid_message` or `event_stream_overflow` instead of throwing
 outside the iterator or growing memory without a bound.
 
+Every Run event includes top-level `sequence`, `runId`, `sessionId`, and `projectId` fields in
+addition to its existing `type` and `data`. After an established socket closes unexpectedly, the SDK
+reconnects with its last sequence and the daemon replays the retained suffix. Replay is bounded and
+process-local. If the daemon restarted or the suffix was evicted, the iterator yields
+`stream.resync-required` with reason `stream-changed` or `cursor-expired`; read the Run or Session
+through the HTTP API to restore authoritative state.
+
 Plan First runs can opt into actionable waiting with returnOnAttention. When the returned Run has
 attention.kind equal to plan-approval, use getSessionPlan and respondSessionPlan. Calling waitForRun
 without returnOnAttention keeps the original terminal-only behavior.

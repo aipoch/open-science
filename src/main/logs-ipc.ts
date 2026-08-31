@@ -2,34 +2,39 @@ import { shell } from 'electron'
 
 import { ipcMainHandle } from './ipc-handler-registry'
 
-import { getLogFilePath } from './logger'
-import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import { getLogFileStatus } from './logger'
+import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 
 type LogsCommandOwner = Readonly<{
-  getPath: () => string | null
+  getStatus: () => Promise<LogFileStatus>
   openFile: () => Promise<OpenLogFileResult>
-  revealInFolder: () => RevealLogFileResult
+  revealInFolder: () => Promise<RevealLogFileResult>
 }>
 
 const createLogsCommandOwner = (): LogsCommandOwner => ({
-  getPath: () => getLogFilePath() ?? null,
+  getStatus: () => getLogFileStatus(),
   openFile: async (): Promise<OpenLogFileResult> => {
-    const path = getLogFilePath()
+    const status = await getLogFileStatus()
 
-    if (!path) return { opened: false, error: 'No log file is available yet.' }
+    if (!status.path || !status.existing) {
+      return { opened: false, error: 'No log file is available yet.' }
+    }
 
     // shell.openPath resolves to '' on success or an error string on failure.
-    const error = await shell.openPath(path)
+    const error = await shell.openPath(status.path)
 
     return error ? { opened: false, error } : { opened: true }
   },
-  revealInFolder: (): RevealLogFileResult => {
-    const path = getLogFilePath()
+  revealInFolder: async (): Promise<RevealLogFileResult> => {
+    const status = await getLogFileStatus()
 
-    if (!path) return { revealed: false, error: 'No log file is available yet.' }
+    if (!status.path || !status.existing) {
+      return { revealed: false, error: 'No log file is available yet.' }
+    }
 
-    // Opens the containing folder with the log file selected; returns void, so success is assumed.
-    shell.showItemInFolder(path)
+    // Electron returns void here, so the only observable guarantee is that the file existed
+    // immediately before the shell request.
+    shell.showItemInFolder(status.path)
 
     return { revealed: true }
   }
@@ -40,7 +45,7 @@ const createLogsCommandOwner = (): LogsCommandOwner => ({
 const registerLogsIpcHandlers = (
   owner: LogsCommandOwner = createLogsCommandOwner()
 ): LogsCommandOwner => {
-  ipcMainHandle('logs:get-path', () => owner.getPath())
+  ipcMainHandle('logs:get-status', () => owner.getStatus())
   ipcMainHandle('logs:open-file', () => owner.openFile())
   ipcMainHandle('logs:reveal-in-folder', () => owner.revealInFolder())
   return owner

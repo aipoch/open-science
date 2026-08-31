@@ -1,6 +1,7 @@
 import type { ReviewScopeSnapshotBlock, TurnScope } from '../../shared/reviewer'
 import type { PersistedChatSession, PersistedToolActivity } from '../../shared/session-persistence'
 import { resolveReviewTurnProjection } from './scope'
+import type { ResolvedReviewerTurnEvidence } from './turn-evidence'
 
 const extractToolContentText = (toolContent: unknown[] | undefined): string | undefined => {
   if (!Array.isArray(toolContent)) return undefined
@@ -29,6 +30,17 @@ const activityPayload = (activity: PersistedToolActivity): Record<string, unknow
   terminalOutput: activity.terminalOutput,
   terminalExitCode: activity.terminalExitCode
 })
+
+const turnTerminationHistory = (
+  message: PersistedChatSession['messages'][number] | undefined
+): Array<Record<string, unknown>> | undefined => {
+  const history = message?.contextWindowSamples?.map((sample) => ({
+    kind: sample.termination.kind,
+    ...(sample.termination.kind === 'stop' ? { stopReason: sample.termination.stopReason } : {}),
+    timestamp: sample.timestamp
+  }))
+  return history && history.length > 0 ? history : undefined
+}
 
 const SECRET_KEY = /(authorization|cookie|credential|password|secret|token|api[_-]?key)/iu
 const MAX_ARRAY_ENTRIES = 200
@@ -74,7 +86,8 @@ const sanitizeValue = (value: unknown, depth = 0, key?: string): unknown => {
 
 export const buildReviewScopeSnapshot = (
   session: PersistedChatSession,
-  scope: TurnScope
+  scope: TurnScope,
+  evidence?: ResolvedReviewerTurnEvidence
 ): ReviewScopeSnapshotBlock[] => {
   const projection = resolveReviewTurnProjection(
     session,
@@ -84,6 +97,11 @@ export const buildReviewScopeSnapshot = (
   const messageMap = new Map(projection.messages.map((message) => [message.id, message]))
   const activityMap = new Map(projection.activities.map((activity) => [activity.id, activity]))
 
+  const startingUserBlockId = scope.blocks.find((block) => {
+    if (block.kind !== 'message') return false
+    return messageMap.get(block.sourceId)?.role === 'user'
+  })?.id
+
   return scope.blocks.map((block) => {
     const payload =
       block.kind === 'message'
@@ -92,6 +110,9 @@ export const buildReviewScopeSnapshot = (
             return {
               role: message?.role,
               content: message?.content,
+              responseToMessageId: message?.responseToMessageId,
+              interrupted: message?.interrupted,
+              turnTerminationHistory: turnTerminationHistory(message),
               artifactIds: message?.artifactIds
             }
           })()
@@ -100,13 +121,20 @@ export const buildReviewScopeSnapshot = (
             return activity ? activityPayload(activity) : {}
           })()
 
+    const fileEvidence = evidence?.fileEvidenceByBlockId.get(block.id)
     return {
       blockIndex: block.blockIndex,
       id: block.id,
       kind: block.kind,
       sourceId: block.sourceId,
       contentHash: block.contentHash,
-      payload: sanitizeValue(payload) as Record<string, unknown>
+      payload: sanitizeValue({
+        ...payload,
+        ...(block.id === startingUserBlockId && evidence?.turnPlan
+          ? { turnPlan: evidence.turnPlan }
+          : {}),
+        ...(fileEvidence && fileEvidence.length > 0 ? { fileEvidence } : {})
+      }) as Record<string, unknown>
     }
   })
 }

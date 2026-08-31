@@ -2,7 +2,7 @@
 import type { TFunction } from 'i18next'
 import { AlertTriangle, ChevronDown, FileUp, Upload, X } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import type { SkillPackageFileInfo, SkillReference } from '../../../../shared/settings'
@@ -12,13 +12,14 @@ import {
   SKILL_IMPORT_LIMITS
 } from '../../../../shared/skill-import-limits'
 import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
+import { ErrorNotice } from '@/components/error-notice'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
-import { SettingsIconAction } from './SettingsLayout'
+import { SettingsIconAction, SettingsLoadNotice } from './SettingsLayout'
 
 type SkillEditorReference = SkillReference & { sizeBytes?: number }
 
@@ -716,32 +717,75 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
   const { t } = useTranslation()
   const updateSkill = useSettingsStore((state) => state.updateSkill)
   const [draft, setDraft] = useState<SkillDraft | null>(null)
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error' | 'not-found'>('loading')
+  const loadRequestRef = useRef(0)
+
+  const requestDetail = useCallback(
+    (requestId: number): void => {
+      void window.api.settings.getSkillDetail(skillId).then(
+        (detail) => {
+          if (loadRequestRef.current !== requestId) return
+          setDraft({
+            id: detail.id,
+            name: detail.name,
+            description: detail.description,
+            body: detail.body,
+            metadata: detail.metadata,
+            references: detail.references.map((ref) => ({
+              path: ref.path,
+              sizeBytes: ref.sizeBytes
+            })),
+            packageFiles: detail.packageFiles
+          })
+          setLoadState('ready')
+        },
+        (error) => {
+          if (loadRequestRef.current !== requestId) return
+          const message = error instanceof Error ? error.message : String(error)
+          setLoadState(message.includes(`Unknown skill: ${skillId}`) ? 'not-found' : 'error')
+        }
+      )
+    },
+    [skillId]
+  )
+
+  const loadDetail = useCallback((): void => {
+    const requestId = ++loadRequestRef.current
+    setDraft(null)
+    setLoadState('loading')
+    requestDetail(requestId)
+  }, [requestDetail])
 
   useEffect(() => {
-    let active = true
-    void window.api.settings.getSkillDetail(skillId).then((detail) => {
-      if (active) {
-        setDraft({
-          id: detail.id,
-          name: detail.name,
-          description: detail.description,
-          body: detail.body,
-          metadata: detail.metadata,
-          references: detail.references.map((ref) => ({
-            path: ref.path,
-            sizeBytes: ref.sizeBytes
-          })),
-          packageFiles: detail.packageFiles
-        })
-      }
-    })
+    requestDetail(++loadRequestRef.current)
     return () => {
-      active = false
+      loadRequestRef.current += 1
     }
-  }, [skillId])
+  }, [requestDetail])
 
   if (!draft) {
-    return <div className="p-5 text-sm text-muted-foreground">{t('Loading…')}</div>
+    if (loadState === 'not-found') {
+      return (
+        <div role="alert" className="flex min-h-64 justify-center p-5">
+          <ErrorNotice
+            icon={AlertTriangle}
+            tone="red"
+            title={t('This Skill is no longer available.')}
+            primaryButton={{ label: t('Back'), onClick: onDone }}
+          />
+        </div>
+      )
+    }
+    return (
+      <div className="p-5">
+        <SettingsLoadNotice
+          state={loadState === 'error' ? 'error' : 'loading'}
+          loadingLabel={t('Loading Skill…')}
+          errorMessage={t('Open Science could not load this Skill.')}
+          onRetry={loadDetail}
+        />
+      </div>
+    )
   }
 
   return (

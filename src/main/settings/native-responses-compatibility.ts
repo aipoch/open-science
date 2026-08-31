@@ -30,6 +30,7 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
+import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
 
 // Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
 // permissive, then validate the fields this module rewrites before touching them.
@@ -573,9 +574,8 @@ export class NativeResponsesCompatibilityProxy {
     text: string,
     catalog: ResponsesBridgeSkillCandidate[],
     signal?: AbortSignal,
-    _observeUsage?: (observation: SkillSelectorUsageObservation) => void
+    observeUsage?: (observation: SkillSelectorUsageObservation) => void
   ): Promise<ResponsesBridgeSkillInput[]> {
-    void _observeUsage
     if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
     const explicit = selectExplicitConnectorSkills(text, catalog)
     if (explicit.length > 0) return explicit
@@ -640,6 +640,13 @@ export class NativeResponsesCompatibilityProxy {
         return []
       }
       const payload = (await response.json()) as JsonObject
+      const usage = normalizeOpenAiChatModelStepUsage(payload.usage)
+      if (usage) {
+        observeUsage?.({
+          usage,
+          ...(typeof payload.id === 'string' ? { sourceInvocationId: payload.id } : {})
+        })
+      }
       const output = Array.isArray(payload.output) ? payload.output : []
       const call = output.find(
         (item: unknown) =>
@@ -860,6 +867,7 @@ export class NativeResponsesCompatibilityProxy {
         ).length,
         promptCacheKeyPresent: promptCacheKey !== undefined,
         namespaceToolCount: aliases.size,
+        literatureToolPresent: aliases.has('mcp__open_science_literature__read_document'),
         stream: body.stream === true,
         reviewerScoped,
         toolLessScoped

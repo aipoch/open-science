@@ -58,10 +58,16 @@ import {
   UserSkillRepository,
   isReservedSkillName
 } from '../skills/user-skill-repository'
-import { createLogger } from '../logger'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
 import { encryptKey, maskKey, tryDecryptKey } from './crypto'
+import {
+  RegisteredSkillHelperCatalog,
+  type RegisteredHelperScope,
+  type RegisteredSkillPackage,
+  validateRegisteredSkillPackages
+} from '../skills/registered-helper-catalog'
 
 type SkillCatalogEntry = {
   name: string
@@ -85,6 +91,10 @@ type DiscoveredAgentHomeSkill = {
   aliases: AgentHomeSkillRef[]
   fallbackAliases: AgentHomeSkillRef[]
   matchedFallbackDirectoryNames: Set<string>
+  identityMigration?: {
+    skill: AgentHomeSkillRef
+    options: NonNullable<Parameters<UserSkillRepository['importAgentHomeSkill']>[2]>
+  }
 }
 
 const log = createLogger('skills')
@@ -98,6 +108,10 @@ type SkillCatalogModuleOptions = {
   skillRegistry?: SkillRegistry
   userSkills?: UserSkillRepository
   githubFetch?: FetchLike
+  authorizeRegisteredHelper?: (
+    skillId: string,
+    scope: RegisteredHelperScope | undefined
+  ) => boolean | Promise<boolean>
 }
 
 // Owns the installed Skill catalog and its filesystem rules. SettingsService remains a compatibility
@@ -106,12 +120,75 @@ class SkillCatalogModule {
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
   private readonly githubFetch: FetchLike
+  private readonly registeredHelpers: RegisteredSkillHelperCatalog
+  private readonly failedAgentHomeIdentityMigrationPaths = new Set<string>()
   private userSkillCatalogRead: Promise<BundledSkill[]> | undefined
 
   constructor(private readonly options: SkillCatalogModuleOptions) {
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
-    this.userSkills = options.userSkills ?? new UserSkillRepository(options.storageRoot)
+    this.userSkills =
+      options.userSkills ??
+      new UserSkillRepository(options.storageRoot, undefined, async (list) =>
+        this.validatePromotedRegisteredHelpers(await list())
+      )
     this.githubFetch = options.githubFetch ?? netFetch
+    this.registeredHelpers = new RegisteredSkillHelperCatalog({
+      storageRoot: options.storageRoot,
+      packages: () => this.registeredHelperPackages(),
+      trustedBuiltinPackages: async () =>
+        this.registeredHelperPackagesFromCatalog(await this.skillRegistry.list()),
+      authorize: async ({ skillId }, scope) => {
+        if (options.authorizeRegisteredHelper) {
+          return options.authorizeRegisteredHelper(skillId, scope)
+        }
+        const isSpecialistScope = scope?.allowedSkillIds !== undefined
+        if (isSpecialistScope) {
+          return Boolean(scope?.allowedSkillIds?.includes(skillId))
+        }
+        const disabled = new Set(
+          (await this.options.repository.getSettings()).disabledSkillIds ?? []
+        )
+        // A trusted Specialist scope may force-load a globally disabled Skill. Main Agent requests
+        // have no allowedSkillIds and continue to honor global enablement.
+        return !disabled.has(skillId)
+      }
+    })
+  }
+
+  registeredHelperCatalog(): Pick<
+    RegisteredSkillHelperCatalog,
+    'resolve' | 'protectedDirectories' | 'refresh'
+  > {
+    return this.registeredHelpers
+  }
+
+  private async refreshRegisteredHelpers(): Promise<void> {
+    await this.registeredHelpers.refresh()
+  }
+
+  private async registeredHelperPackages(): Promise<readonly RegisteredSkillPackage[]> {
+    return this.registeredHelperPackagesFromCatalog(await this.catalog())
+  }
+
+  private async registeredHelperPackagesFromCatalog(
+    skills: readonly BundledSkill[]
+  ): Promise<readonly RegisteredSkillPackage[]> {
+    const installed = skills
+      .filter((skill) => skill.helpers?.length)
+      .map((skill) => ({
+        skillId: skill.id,
+        origin: skill.source === 'featured' ? ('builtin' as const) : skill.source,
+        packageRoot: skill.sourceDir,
+        helpers: [...(skill.helpers ?? [])]
+      }))
+    return installed
+  }
+
+  private async validatePromotedRegisteredHelpers(user: readonly BundledSkill[]): Promise<void> {
+    const featured = await this.skillRegistry.list()
+    await validateRegisteredSkillPackages(
+      await this.registeredHelperPackagesFromCatalog(this.mergeCatalog(featured, user))
+    )
   }
 
   private async authenticatedGitHubFetch(): Promise<FetchLike> {
@@ -164,6 +241,13 @@ class SkillCatalogModule {
 
   private async catalog(): Promise<BundledSkill[]> {
     const [featured, user] = await Promise.all([this.skillRegistry.list(), this.listUserSkills()])
+    return this.mergeCatalog(featured, user)
+  }
+
+  private mergeCatalog(
+    featured: readonly BundledSkill[],
+    user: readonly BundledSkill[]
+  ): BundledSkill[] {
     const bundledNames = new Set(featured.map((skill) => skill.name))
     const bundledIds = new Set(featured.map((skill) => skill.id))
     const userIdCounts = new Map<string, number>()
@@ -240,12 +324,14 @@ class SkillCatalogModule {
   }
 
   async publishHostSkill(name: string, sourcePath: string, overwrite: boolean): Promise<string> {
-    return this.userSkills.publishPersonalDirectory(
+    const id = await this.userSkills.publishPersonalDirectory(
       name,
       sourcePath,
       overwrite,
       await this.bundledSkillNames()
     )
+    await this.refreshRegisteredHelpers()
+    return id
   }
 
   async listSkills(): Promise<SkillView[]> {
@@ -466,6 +552,7 @@ class SkillCatalogModule {
 
   async createSkill(request: CreateSkillRequest): Promise<SkillView[]> {
     await this.userSkills.createPersonal(request, await this.bundledSkillNames())
+    await this.refreshRegisteredHelpers()
     return this.listSkills()
   }
 
@@ -482,6 +569,7 @@ class SkillCatalogModule {
       metadata: request.metadata,
       references: request.references
     })
+    await this.refreshRegisteredHelpers()
     return this.listSkills()
   }
 
@@ -491,6 +579,7 @@ class SkillCatalogModule {
   ): Promise<SkillView[]> {
     await this.userSkills.delete(request.id, guard)
     await this.options.repository.setSkillEnabled(request.id, true)
+    await this.refreshRegisteredHelpers()
     return this.listSkills()
   }
 
@@ -501,6 +590,7 @@ class SkillCatalogModule {
       await this.bundledSkillNames(),
       { signal }
     )
+    await this.refreshRegisteredHelpers()
     return { ...outcome, skills: await this.listSkills() }
   }
 
@@ -511,6 +601,7 @@ class SkillCatalogModule {
       replaceId: request.replaceId,
       reservedNames: await this.bundledSkillNames()
     })
+    await this.refreshRegisteredHelpers()
     return { ...outcome, skills: await this.listSkills() }
   }
 
@@ -543,7 +634,13 @@ class SkillCatalogModule {
     zip: Buffer,
     items: ImportSkillZipBatchRequest['items']
   ): ReturnType<UserSkillRepository['importFromZipBatch']> {
-    return this.userSkills.importFromZipBatch(zip, items, await this.bundledSkillNames())
+    const outcomes = await this.userSkills.importFromZipBatch(
+      zip,
+      items,
+      await this.bundledSkillNames()
+    )
+    await this.refreshRegisteredHelpers()
+    return outcomes
   }
 
   async previewGitHubSkill(
@@ -591,6 +688,39 @@ class SkillCatalogModule {
     return (await this.discoverAgentHomeSkills(this.agentHomeDirs(framework))).map(
       (item) => item.skill
     )
+  }
+
+  async migrateAgentHomeSkillIdentities(): Promise<void> {
+    let discovered: DiscoveredAgentHomeSkill[]
+    let reservedNames: string[]
+    try {
+      ;[discovered, reservedNames] = await Promise.all([
+        this.discoverAgentHomeSkills(this.allAgentHomeDirs()),
+        this.bundledSkillNames()
+      ])
+    } catch (error) {
+      log.warn('Agent Home Skill identity migration scan failed', diagnosticErrorFields(error))
+      return
+    }
+
+    for (const item of discovered) {
+      if (!item.identityMigration) continue
+      const pathKey = process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath
+      try {
+        await this.userSkills.importAgentHomeSkill(item.realPath, item.identityMigration.skill, {
+          ...item.identityMigration.options,
+          reservedNames
+        })
+        this.failedAgentHomeIdentityMigrationPaths.delete(pathKey)
+      } catch (error) {
+        this.failedAgentHomeIdentityMigrationPaths.add(pathKey)
+        log.warn('Agent Home Skill identity migration failed', {
+          source: item.identityMigration.skill.source,
+          slug: item.identityMigration.skill.slug,
+          ...diagnosticErrorFields(error)
+        })
+      }
+    }
   }
 
   private async discoverAgentHomeSkills(
@@ -665,20 +795,18 @@ class SkillCatalogModule {
         if (!item) continue
         item.skill.alreadyImported = match.identityImported
         item.fallbackAliases.push(...match.fallbackAliases)
-        if (match.identityMigrationNeeded) {
-          try {
-            await this.userSkills.importAgentHomeSkill(
-              item.realPath,
-              { source: item.skill.source, slug: item.skill.slug },
-              {
-                aliases: item.aliases,
-                expectedSignature: match.matchedIdentitySignature,
-                expectedImportedIdentity: match.matchedImportedIdentity,
-                reservedNames: await this.bundledSkillNames()
-              }
-            )
-          } catch {
-            item.skill.alreadyImported = false
+        if (
+          match.identityMigrationNeeded &&
+          match.matchedIdentitySignature &&
+          match.matchedImportedIdentity
+        ) {
+          item.identityMigration = {
+            skill: { source: item.skill.source, slug: item.skill.slug },
+            options: {
+              aliases: item.aliases,
+              expectedSignature: match.matchedIdentitySignature,
+              expectedImportedIdentity: match.matchedImportedIdentity
+            }
           }
         }
       }
@@ -702,6 +830,13 @@ class SkillCatalogModule {
       for (const candidate of candidates) {
         candidate.item.skill.alreadyImported = true
         candidate.item.matchedFallbackDirectoryNames.add(fallbackSlug)
+      }
+    }
+    for (const item of discovered) {
+      if (!item.identityMigration) continue
+      const pathKey = process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath
+      if (this.failedAgentHomeIdentityMigrationPaths.has(pathKey)) {
+        item.skill.alreadyImported = false
       }
     }
     return discovered
@@ -825,28 +960,36 @@ class SkillCatalogModule {
         })
       }
     }
+    await this.refreshRegisteredHelpers()
     return { results, skills: await this.listSkills() }
   }
 
   private agentHomeDirs(framework: AgentFrameworkId): AgentHomeSkillDir[] {
-    const sources: AgentHomeSkillDir[] = [
+    const sources = this.allAgentHomeDirs()
+    if (framework === 'claude-code') {
+      return sources.filter(({ source }) => source === 'agents' || source === 'claude')
+    }
+    if (framework === 'codex') {
+      return sources.filter(({ source }) => source === 'agents' || source === 'codex')
+    }
+    return sources.filter(({ source }) => source === 'agents')
+  }
+
+  private allAgentHomeDirs(): AgentHomeSkillDir[] {
+    return [
       {
         source: 'agents',
         dir: join(this.options.userAgentsDir ?? join(homedir(), '.agents'), 'skills')
-      }
-    ]
-    if (framework === 'claude-code') {
-      sources.push({
+      },
+      {
         source: 'claude',
         dir: join(this.options.userClaudeDir ?? join(homedir(), '.claude'), 'skills')
-      })
-    } else if (framework === 'codex') {
-      sources.push({
+      },
+      {
         source: 'codex',
         dir: join(this.options.userCodexDir ?? join(homedir(), '.codex'), 'skills')
-      })
-    }
-    return sources
+      }
+    ]
   }
 
   private async resolveAgentHomeSkillPath(

@@ -115,6 +115,21 @@ describe('AppVersionSection', () => {
   })
 
   it.each([
+    ['restart', 'Restart to update'],
+    ['installer', 'Update downloaded — open the installer to finish']
+  ] as const)('shows the ready instruction for the %s apply strategy', (applyKind, message) => {
+    useUpdateStore.setState({
+      status: { state: 'ready', current: '0.2.0', latest: '0.3.0', applyKind }
+    })
+
+    act(() => {
+      root.render(<AppVersionSection />)
+    })
+
+    expect(container.textContent).toContain(message)
+  })
+
+  it.each([
     ['downloading', true],
     ['ready', false]
   ] as const)('sets check availability while the update is %s', (state, disabled) => {

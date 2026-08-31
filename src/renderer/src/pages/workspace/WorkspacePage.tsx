@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useTranslation } from 'react-i18next'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
@@ -70,7 +70,9 @@ import { useSideChatController } from './use-side-chat-controller'
 import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 import { createWorkspaceComputeHostAccessController } from './workspace-compute-host-access-controller'
 import { useWorkspaceSessionAgentConfiguration } from './workspace-session-agent-configuration-controller'
+import { resolveWorkspaceAgentControlAvailability } from './workspace-agent-control-availability'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
+import { annotationRequiresImageInput } from '../../../../shared/annotations'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -78,6 +80,11 @@ type WorkspacePageProps = {
   canDeleteConversations: boolean
   isPreviewPresentationActive?: boolean
 }
+
+type ManualReviewRequestState = Readonly<{
+  pending: boolean
+  error: string | null
+}>
 
 const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
 const OPEN_DIALOG_SELECTOR =
@@ -121,6 +128,7 @@ const WorkspacePage = ({
   const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
   const catalogSkills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
+  const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
   const scopedProjectId = activeProjectId ?? ''
   const activeProject = useProjectStore((state) =>
     state.projects.find((project) => project.id === scopedProjectId)
@@ -194,6 +202,10 @@ const WorkspacePage = ({
   // disabled as the first defense.
   const [isDownloadingProjectArtifacts, setIsDownloadingProjectArtifacts] = useState(false)
   const [isProjectDownloadOpen, setIsProjectDownloadOpen] = useState(false)
+  const [manualReviewRequests, setManualReviewRequests] = useState<
+    Record<string, ManualReviewRequestState>
+  >({})
+  const manualReviewPendingSessionIdsRef = useRef(new Set<string>())
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
   const runtime = useWorkspaceAgentRuntime()
   const {
@@ -220,6 +232,7 @@ const WorkspacePage = ({
   // conversation starts disabled; the user can toggle it on before sending. On send it is stamped
   // onto the created session through the Conversation submit transaction.
   const [newConversationAutoReviewEnabled, setNewConversationAutoReviewEnabled] = useState(false)
+  const [newConversationMemoryEnabled, setNewConversationMemoryEnabled] = useState(true)
   // Draft compute hosts for a not-yet-created conversation. Cleared when a new conversation draft
   // is started, and stamped onto the session by the Conversation submit transaction.
   const [newConversationEnabledComputeHosts, setNewConversationEnabledComputeHosts] = useState<
@@ -369,7 +382,7 @@ const WorkspacePage = ({
     pendingCustomizePrefill,
     onCustomizePrefillApplied: sessionController.actions.resetNewConversationSpecialist,
     historyEntries: composerHistoryEntries,
-    hasActiveSession: activeSession !== undefined,
+    activeSession,
     historyPolicy: composerHistoryPolicy,
     canStageAttachments: canEditDraft,
     supportsImageInput,
@@ -380,15 +393,24 @@ const WorkspacePage = ({
   const previewAnnotations = {
     activeAnnotations: composer.view.annotations,
     onAddAnnotation: (annotation: Parameters<typeof composer.actions.addAnnotation>[0]) => {
+      if (annotationRequiresImageInput(annotation) && supportsImageInput !== true) {
+        composer.actions.setError(annotationValidationMessage('visual-model-required', t))
+        return 'visual-model-required' as const
+      }
       const error = composer.actions.addAnnotation(annotation)
       composer.actions.setError(error ? annotationValidationMessage(error, t) : null)
       return error
     },
     onUpdateAnnotationNote: composer.actions.updateAnnotationNote,
     onRemoveAnnotation: composer.actions.removeAnnotation,
+    onUndoAnnotation: composer.actions.undo,
+    onRedoAnnotation: composer.actions.redo,
     onAnnotationError: (error: Parameters<typeof annotationValidationMessage>[0]) =>
-      composer.actions.setError(annotationValidationMessage(error, t))
+      composer.actions.setError(annotationValidationMessage(error, t)),
+    onLinkReadingContext: composer.actions.linkReadingContext,
+    onUnlinkReadingContext: composer.actions.unlinkReadingContext
   }
+
   const sideChat = useSideChatController(
     activeSession ? { sessionId: activeSession.id, projectId: activeSession.projectId } : undefined
   )
@@ -413,9 +435,18 @@ const WorkspacePage = ({
     () => pendingWorkspaceElicitations(activeSession),
     [activeSession]
   )
+  const visibleCredentialRequests = useMemo(
+    () =>
+      activeSession
+        ? pendingCredentialRequests.filter((request) => request.sessionId === activeSession.id)
+        : [],
+    [activeSession, pendingCredentialRequests]
+  )
   const activeSessionActionability = activeSession
     ? projectSessionActionability(activeSession, {
-        rootPermissionPending: resolveRootPermissionPending(pendingPermissions, activeSession.id)
+        rootPermissionPending: resolveRootPermissionPending(pendingPermissions, activeSession.id),
+        credentialPending: visibleCredentialRequests.length > 0,
+        presentedWaitReason: visibleCredentialRequests.length > 0 ? 'waiting-for-user' : undefined
       })
     : undefined
   const activeNotebookReference = activeSession ? notebookReferences[activeSession.id] : undefined
@@ -434,6 +465,9 @@ const WorkspacePage = ({
   const activeAutoReviewEnabled = activeSession
     ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
+  const activeMemoryEnabled = activeSession
+    ? activeSession.memoryEnabled !== false
+    : newConversationMemoryEnabled
   const computeHostAccess = createWorkspaceComputeHostAccessController({
     activeSession,
     newConversationEnabledComputeHosts,
@@ -442,9 +476,11 @@ const WorkspacePage = ({
     setNewConversationSelectedComputeHosts,
     setError: setAttachmentError
   })
-  // True while any review for the active session is in the 'running' lifecycle.
-  // Select the Project-scoped review array so pushes stay reactive without cross-Project collisions.
   const activeSessionId = activeSession?.id
+  const activeManualReviewRequest = activeSessionId
+    ? manualReviewRequests[activeSessionId]
+    : undefined
+  const isManualReviewRequestPending = activeManualReviewRequest?.pending === true
   const isReviewing = useReviewStore((state) => {
     if (!activeSessionId) return false
     const reviews = selectProjectSessionReviews(
@@ -454,6 +490,7 @@ const WorkspacePage = ({
     )
     return reviews.some((review) => review.lifecycle === 'running')
   })
+  const isReviewBusy = isReviewing || isManualReviewRequestPending
   const conversation = useWorkspaceConversationController({
     activeSession,
     projectId: scopedProjectId,
@@ -463,7 +500,7 @@ const WorkspacePage = ({
     agentConfiguration: activeAgentConfiguration,
     agentConfigurationReady: !agentConfigurationUnavailable,
     permissionProfile: activePermissionProfile,
-    isReviewing,
+    isReviewing: isReviewBusy,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
@@ -471,6 +508,7 @@ const WorkspacePage = ({
     hasPendingPermissionRequest: (sessionId) =>
       pendingPermissions.some((request) => request.sessionId === sessionId),
     newConversationAutoReviewEnabled,
+    newConversationMemoryEnabled,
     newConversationEnabledComputeHosts,
     newConversationSelectedComputeHosts,
     composer,
@@ -481,6 +519,7 @@ const WorkspacePage = ({
     setAutoReviewEnabled,
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
+      setNewConversationMemoryEnabled(true)
       setNewConversationEnabledComputeHosts([])
       setNewConversationSelectedComputeHosts([])
       resetNewConversationConfiguration()
@@ -506,7 +545,7 @@ const WorkspacePage = ({
     if (sessionAwaitsHistoryReplay(activeSession)) return true
     const lastAgentMessage = [...activeSession.messages].reverse().find((m) => m.role === 'agent')
     if (!lastAgentMessage) return true
-    if (isReviewing) return true
+    if (isReviewBusy) return true
     const reviews = selectProjectSessionReviews(
       state.reviewsBySession,
       activeSession.projectId,
@@ -567,12 +606,14 @@ const WorkspacePage = ({
     activeSession?.id,
     !canEditMessage || activeSessionSaveAsSkillPending || conversation.queue.items.length > 0
   )
-  const canChangeAgentControls =
+  const agentControlAvailability = resolveWorkspaceAgentControlAvailability(
     isSessionPersistenceReady &&
-    activeSessionActionability?.actions.changeAgentControls.allowed !== false &&
-    !activeSessionHasRuntimeInteraction &&
-    !activeSession?.compacting &&
-    conversation.queue.items.length === 0
+      !activeSessionHasRuntimeInteraction &&
+      !activeSession?.compacting &&
+      conversation.queue.items.length === 0,
+    sessionController.view.specialist.barrierInFlight,
+    activeSessionActionability?.actions
+  )
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     !activeSessionHasSendPreparation &&
@@ -620,6 +661,7 @@ const WorkspacePage = ({
     : null
   const visibleActionError =
     planProjectionRecoveryError ??
+    activeManualReviewRequest?.error ??
     attachmentError ??
     sessionController.view.exportError ??
     (activeSession ? durablePermissionError : actionError)
@@ -765,6 +807,7 @@ const WorkspacePage = ({
     setAttachmentError(null)
     setNewConversationPermissionProfile(defaultPermissionProfile)
     setNewConversationAutoReviewEnabled(false)
+    setNewConversationMemoryEnabled(true)
     setNewConversationEnabledComputeHosts([])
     setNewConversationSelectedComputeHosts([])
     resetNewConversationConfiguration()
@@ -835,8 +878,6 @@ const WorkspacePage = ({
     void setPermissionProfile(activeSession.id, profile)
   }
 
-  // Persists the auto-review toggle for the active session; for a not-yet-created conversation it
-  // updates the draft state, which the Conversation submit transaction stamps onto the new session.
   const changeAutoReviewEnabled = (enabled: boolean): void => {
     if (!activeSession) {
       setNewConversationAutoReviewEnabled(enabled)
@@ -846,8 +887,15 @@ const WorkspacePage = ({
     setAutoReviewEnabled(activeSession.id, enabled)
   }
 
-  // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the
-  // suppressAutoReviewOnceFor loop guard. Disabled logic is enforced by isRequestReviewDisabled.
+  const changeMemoryEnabled = (enabled: boolean): void => {
+    if (!activeSession) return setNewConversationMemoryEnabled(enabled)
+
+    setAttachmentError(null)
+    void runtime.setMemoryEnabled(activeSession.id, enabled).catch((error: unknown) => {
+      setAttachmentError(error instanceof Error ? error.message : String(error))
+    })
+  }
+
   const requestManualReview = (): void => {
     if (!activeSession) return
 
@@ -855,8 +903,37 @@ const WorkspacePage = ({
 
     if (!request) return
 
+    const sessionId = activeSession.id
+    if (manualReviewPendingSessionIdsRef.current.has(sessionId)) return
+
+    manualReviewPendingSessionIdsRef.current.add(sessionId)
+    setManualReviewRequests((current) => ({
+      ...current,
+      [sessionId]: { pending: true, error: null }
+    }))
+
     // Explicit user action: bypass main's auto-only per-turn idempotency so a manual review always runs.
-    void window.api.reviewer.run({ ...request, origin: 'manual' })
+    void (async () => {
+      let error: string | null = null
+      try {
+        const result = await window.api.reviewer.run({ ...request, origin: 'manual' })
+        if (!result.started && result.reason !== 'already-in-flight') {
+          error = t('Review could not start. Try again.')
+        }
+      } catch {
+        error = t('Review could not start. Try again.')
+      } finally {
+        manualReviewPendingSessionIdsRef.current.delete(sessionId)
+        setManualReviewRequests((current) => {
+          if (error) {
+            return { ...current, [sessionId]: { pending: false, error } }
+          }
+          const next = { ...current }
+          delete next[sessionId]
+          return next
+        })
+      }
+    })()
   }
 
   const requestSaveAsSkill = (): void => {
@@ -916,6 +993,7 @@ const WorkspacePage = ({
       <WorkspacePanelLayout
         hasPreviewItems={previewItems.length > 0}
         isPreviewPresentationActive={isPreviewPresentationActive}
+        onPdfContextError={setAttachmentError}
         restoredPlanResponder={
           activeSession
             ? {
@@ -1086,6 +1164,7 @@ const WorkspacePage = ({
             }}
             permissions={{
               requests: visiblePermissionRequests,
+              credentialRequests: visibleCredentialRequests,
               permissionProfile: activePermissionProfile,
               permissionProfileState: activePermissionProfileState,
               permissionGrants: activePermissionGrants,
@@ -1100,14 +1179,16 @@ const WorkspacePage = ({
               respond: respondToElicitation
             }}
             agentControls={{
-              canChange: canChangeAgentControls,
+              ...agentControlAvailability,
               modelConfiguration: activeAgentConfiguration,
               modelUnavailable: agentConfigurationUnavailable,
               changeModelConfiguration: changeAgentConfiguration,
               autoReviewEnabled: activeAutoReviewEnabled,
+              memoryEnabled: activeMemoryEnabled,
               enabledComputeHosts: computeHostAccess.enabledProviderIds,
               selectedComputeHosts: computeHostAccess.selectedProviderIds,
               toggleAutoReview: changeAutoReviewEnabled,
+              toggleMemory: changeMemoryEnabled,
               setComputeHostEnabled: computeHostAccess.setHostEnabled,
               setComputeHostSelected: computeHostAccess.setHostSelected
             }}
@@ -1120,7 +1201,7 @@ const WorkspacePage = ({
             workflows={{
               review: {
                 disabled: isRequestReviewDisabled,
-                running: isReviewing,
+                running: isReviewBusy,
                 request: requestManualReview
               },
               saveAsSkill: {
@@ -1172,13 +1253,11 @@ const WorkspacePage = ({
         session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
         onClose={sessionController.actions.closeDownloadArtifacts}
       />
-
       <ConversationExportDialog
         session={sessionController.view.dialogs.exportConversation ?? undefined}
         currentSession={currentExportConversationSession}
         onClose={sessionController.actions.closeExportConversation}
       />
-
       <DownloadProjectArtifactsDialog
         project={isProjectDownloadOpen ? activeProject : undefined}
         onClose={() => setIsProjectDownloadOpen(false)}
@@ -1193,6 +1272,7 @@ const WorkspacePage = ({
         }
         onClose={closeFileDialog}
         {...previewAnnotations}
+        onPdfContextError={setAttachmentError}
       />
 
       <SessionNotebookDialog

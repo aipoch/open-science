@@ -2,7 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
-import { sideChatAnnotationText, type Annotation } from '../../../../shared/annotations'
+import {
+  annotationRequiresImageInput,
+  sideChatAnnotationText,
+  type Annotation
+} from '../../../../shared/annotations'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import type {
   ChatMessage,
@@ -58,7 +62,7 @@ type PlanProjectionRecoveryPorts = {
 type ConversationComposer = {
   view: Pick<
     WorkspaceComposerController['view'],
-    'doc' | 'annotations' | 'attachments' | 'transfers'
+    'doc' | 'annotations' | 'attachments' | 'transfers' | 'readingContext'
   >
   actions: Pick<WorkspaceComposerController['actions'], 'setError'>
   lifecycle: Pick<
@@ -101,6 +105,7 @@ type WorkspaceConversationControllerOptions = {
   actionability: SessionActionabilityProjection | undefined
   hasPendingPermissionRequest: (sessionId: string) => boolean
   newConversationAutoReviewEnabled: boolean
+  newConversationMemoryEnabled?: boolean
   newConversationEnabledComputeHosts: string[]
   newConversationSelectedComputeHosts?: string[]
   composer: ConversationComposer
@@ -230,6 +235,7 @@ const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): 
     options.agentConfigurationReady &&
     !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
+    !composer.view.readingContext.isPending &&
     (!docIsEmpty(composer.view.doc) ||
       composer.view.attachments.length > 0 ||
       composer.view.annotations.length > 0) &&
@@ -250,6 +256,7 @@ const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean
     !options.sideChatOpen &&
     activeSession?.status === 'running' &&
     composer.view.transfers.length === 0 &&
+    !composer.view.readingContext.isPending &&
     (!docIsEmpty(composer.view.doc) ||
       composer.view.attachments.length > 0 ||
       composer.view.annotations.length > 0) &&
@@ -390,7 +397,7 @@ const useWorkspaceConversationController = (
         (composer.view.attachments.some((attachment) =>
           attachment.mimeType?.startsWith('image/')
         ) ||
-          composer.view.annotations.some((annotation) => annotation.kind === 'image-point'))
+          composer.view.annotations.some(annotationRequiresImageInput))
       ) {
         composer.actions.setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
         return
@@ -415,12 +422,15 @@ const useWorkspaceConversationController = (
         return
       }
 
-      const snapshot = composer.lifecycle.captureSend()
+      const snapshot = composer.lifecycle.captureSend(!branchInNewSession)
       if (inFlightDraftKeysRef.current.has(snapshot.draftKey)) return
       inFlightDraftKeysRef.current.add(snapshot.draftKey)
 
       const wasNewConversation = !activeSession
       const autoReviewEnabled = current.newConversationAutoReviewEnabled
+      const memoryEnabled = activeSession
+        ? activeSession.memoryEnabled !== false
+        : current.newConversationMemoryEnabled !== false
       const computeHosts = current.newConversationEnabledComputeHosts
       const selectedComputeHosts = current.newConversationSelectedComputeHosts ?? []
       const { draftSpecialistId, hasPendingSwitch, pendingSpecialistId } =
@@ -437,6 +447,7 @@ const useWorkspaceConversationController = (
               uploads: snapshot.attachments,
               annotations: snapshot.annotations,
               parts: docToMessageParts(snapshot.doc),
+              pdfContext: snapshot.pdfContext,
               createdAt: 0,
               updatedAt: 0
             }
@@ -455,10 +466,15 @@ const useWorkspaceConversationController = (
             annotations: snapshot.annotations,
             referencedArtifacts: docToArtifactRefs(snapshot.doc),
             parts: docToMessageParts(snapshot.doc),
+            pdfContext: snapshot.pdfContext,
+            pdfReadingPosition: snapshot.pdfReadingPosition,
+            pendingPdfContextAttachmentIds: snapshot.pendingPdfContextAttachmentIds,
+            pendingPdfContextVersions: snapshot.pendingPdfContextVersions,
             cwd: activeSession?.cwd,
             projectId: activeSession?.projectId ?? current.projectId,
             permissionProfile: current.permissionProfile,
             agentConfiguration: current.agentConfiguration,
+            memoryEnabled,
             forcedSkillIds,
             ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {}),
             specialistId: draftSpecialistId,
@@ -540,10 +556,7 @@ const useWorkspaceConversationController = (
         const current = optionsRef.current
         const sessionId = current.activeSession?.id
         if (!sessionId || (docIsEmpty(doc) && annotations.length === 0)) return { ok: false }
-        if (
-          current.supportsImageInput !== true &&
-          annotations.some((annotation) => annotation.kind === 'image-point')
-        ) {
+        if (current.supportsImageInput !== true && annotations.some(annotationRequiresImageInput)) {
           current.composer.actions.setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
           return { ok: false, displayMessage: VISION_MODEL_NOT_CONFIGURED_MESSAGE }
         }

@@ -421,6 +421,27 @@ describe('ComputeHostDetail', () => {
     expect(container.textContent).toContain('ssh:biowulf')
   })
 
+  it('labels a successful Probe as historical evidence instead of a live connection', () => {
+    useComputeStore.setState({
+      hosts: [
+        host({
+          probeResult: {
+            ok: true,
+            probedAt: '2020-01-01T00:00:00.000Z',
+            exitCode: 0,
+            errorTail: null
+          }
+        })
+      ],
+      isLoaded: true
+    })
+
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+
+    expect(container.textContent).toContain('Last probe succeeded')
+    expect(container.textContent).not.toContain('Connected')
+  })
+
   it('explains unavailable Credentials without offering reveal, export, or Forget actions', async () => {
     useComputeStore.setState({
       hosts: [
@@ -527,6 +548,61 @@ describe('ComputeHostDetail', () => {
     })
 
     expect(container.textContent).toContain('PINNED')
+  })
+
+  it('offers to restore auto-detection for a historically empty pinned scratch root', () => {
+    const clearScratch = vi.fn().mockResolvedValue(undefined)
+    useComputeStore.setState({
+      hosts: [host({ scratchRoot: '', scratchPinned: true })],
+      isLoaded: true,
+      clearScratch
+    })
+
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+
+    const restoreButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Restore auto-detection'
+    )
+    expect(restoreButton).toBeDefined()
+    act(() => restoreButton?.click())
+    expect(clearScratch).toHaveBeenCalledWith('ssh:biowulf')
+  })
+
+  it('shows a restore auto-detection failure while the scratch root remains pinned', async () => {
+    const clearScratch = vi.fn().mockRejectedValue(new Error('clear failed'))
+    useComputeStore.setState({
+      hosts: [host({ scratchRoot: '/scratch/user', scratchPinned: true })],
+      isLoaded: true,
+      clearScratch
+    })
+
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+    const restoreButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Restore auto-detection'
+    )
+    await act(async () => restoreButton?.click())
+
+    expect(container.textContent).toContain('clear failed')
+    expect(container.textContent).toContain('PINNED')
+  })
+
+  it('does not allow saving an empty scratch root', () => {
+    useComputeStore.setState({ hosts: [host()], isLoaded: true })
+
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+    const scratchHeading = Array.from(container.querySelectorAll('h4')).find(
+      (heading) => heading.textContent === 'Scratch root'
+    )
+    const scratchSection = scratchHeading?.parentElement?.parentElement?.parentElement
+    const editButton = Array.from(scratchSection?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent === 'Edit'
+    )
+    act(() => editButton?.click())
+
+    const saveButton = Array.from(scratchSection?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent === 'Save'
+    )
+    expect(saveButton?.disabled).toBe(true)
   })
 
   it('shows (default) when concurrencyLimit is not set', () => {

@@ -8,6 +8,7 @@ import {
 import type { SessionPersistenceFlushResponse } from '../../shared/session-persistence-flush'
 import {
   createElectronSessionPersistenceFlush,
+  createWebSessionPersistenceFlush,
   notifyRendererSessionPersistenceFlushAborted,
   rendererSessionPersistenceFlushBlocksShutdown,
   requestRendererSessionPersistenceFlush
@@ -150,10 +151,50 @@ describe('rendererSessionPersistenceFlushBlocksShutdown', () => {
       expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(false)
     }
   )
+
+  it.each([
+    'conflict',
+    'renderer-failed',
+    'unavailable',
+    'renderer-gone',
+    'send-failed',
+    'timeout'
+  ] as const)('blocks a data-root handoff for %s', (outcome) => {
+    expect(rendererSessionPersistenceFlushBlocksShutdown(outcome, 'data-root-handoff')).toBe(true)
+  })
+
+  it('allows a data-root handoff after a completed flush', () => {
+    expect(rendererSessionPersistenceFlushBlocksShutdown('completed', 'data-root-handoff')).toBe(
+      false
+    )
+  })
+
+  it('requires a post-teardown Web acknowledgement for a data-root handoff', () => {
+    expect(rendererSessionPersistenceFlushBlocksShutdown('unavailable', 'data-root-handoff')).toBe(
+      true
+    )
+  })
 })
 
 describe('createElectronSessionPersistenceFlush', () => {
   it('notifies a surviving renderer when quit is aborted', () => {
+    const webContents = {
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      isDestroyed: vi.fn(() => false),
+      webContents
+    }
+
+    notifyRendererSessionPersistenceFlushAborted(() => window as never, 'conflict')
+
+    expect(webContents.send).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, {
+      reason: 'conflict'
+    })
+  })
+
+  it('preserves the payload-free durability-abort notification', () => {
     const webContents = {
       isDestroyed: vi.fn(() => false),
       send: vi.fn()
@@ -262,5 +303,78 @@ describe('createElectronSessionPersistenceFlush', () => {
       'render-process-gone',
       rendererGoneListener
     )
+  })
+})
+
+describe('createWebSessionPersistenceFlush', () => {
+  it('publishes a post-teardown request and waits for its Web acknowledgement', async () => {
+    const publish = vi.fn()
+    const coordinator = createWebSessionPersistenceFlush({ publish }, 1_000)
+    const request = coordinator.flush('web:client-1')
+    const flushRequest = publish.mock.calls[0][1] as {
+      requestId: string
+      targetLifecycleClientId: string
+    }
+
+    expect(publish).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, flushRequest)
+    expect(flushRequest.targetLifecycleClientId).toBe('web:client-1')
+    coordinator.acknowledge({ requestId: 'stale', status: 'completed' }, 'web:client-1')
+    coordinator.acknowledge(
+      { requestId: flushRequest.requestId, status: 'completed' },
+      'web:client-1'
+    )
+
+    await expect(request).resolves.toBe('completed')
+  })
+
+  it('accepts an acknowledgement only from the Web client that requested the handoff', async () => {
+    const publish = vi.fn()
+    const coordinator = createWebSessionPersistenceFlush({ publish }, 1_000) as unknown as {
+      flush: (targetClientId: string) => Promise<RendererSessionPersistenceFlushOutcome>
+      acknowledge: (response: SessionPersistenceFlushResponse, clientId: string) => void
+    }
+    const request = coordinator.flush('web:client-a')
+    const flushRequest = publish.mock.calls[0][1] as { requestId: string }
+    let settled = false
+    void request.then(() => {
+      settled = true
+    })
+
+    coordinator.acknowledge(
+      { requestId: flushRequest.requestId, status: 'completed' },
+      'web:client-b'
+    )
+    const prematureOutcome = await Promise.race([
+      request,
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 0))
+    ])
+    expect(prematureOutcome).toBe('pending')
+    expect(settled).toBe(false)
+
+    coordinator.acknowledge(
+      { requestId: flushRequest.requestId, status: 'completed' },
+      'web:client-a'
+    )
+    await expect(request).resolves.toBe('completed')
+  })
+
+  it('notifies Web when a refused handoff must resume renderer activity', () => {
+    const publish = vi.fn()
+    const coordinator = createWebSessionPersistenceFlush({ publish })
+
+    coordinator.notifyAborted('renderer-failed')
+
+    expect(publish).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, {
+      reason: 'renderer-failed'
+    })
+  })
+
+  it('preserves the payload-free Web durability-abort notification', () => {
+    const publish = vi.fn()
+    const coordinator = createWebSessionPersistenceFlush({ publish })
+
+    coordinator.notifyAborted()
+
+    expect(publish).toHaveBeenCalledWith(SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL, undefined)
   })
 })

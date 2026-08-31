@@ -377,5 +377,25 @@ test('keeps representative conversation, project, and recovery states visually s
     await completedSessionDismiss.click()
     await expect(completedSessionDismiss).toBeHidden()
   }
+  const recoveryAction = recoveryAlert.getByRole('button', {
+    name: 'View affected conversations'
+  })
+  const recoveryMessage = recoveryAlert.locator('p').nth(1)
+  for (const width of [320, 375, 414, 768]) {
+    await setViewport(page, width)
+    const [alertBox, actionBox, messageBox] = await Promise.all([
+      recoveryAlert.boundingBox(),
+      recoveryAction.boundingBox(),
+      recoveryMessage.boundingBox()
+    ])
+    if (!alertBox || !actionBox || !messageBox) {
+      throw new Error(`Recovery alert layout was not measurable at ${width}px`)
+    }
+    expect(alertBox.x).toBeGreaterThanOrEqual(0)
+    expect(alertBox.x + alertBox.width).toBeLessThanOrEqual(width)
+    expect(actionBox.y).toBeGreaterThanOrEqual(messageBox.y + messageBox.height)
+    await expect(recoveryAction).toHaveCSS('white-space', 'nowrap')
+  }
+  await setViewport(page, 1280)
   await expectStableScreenshot(page, 'session-recovery-warning.png')
 })

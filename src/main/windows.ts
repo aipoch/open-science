@@ -575,7 +575,7 @@ const createMainWindow = (
       .resolveCloseAction()
       .then((choice) => {
         if (choice === 'minimize') window.hide()
-        else if (choice === 'quit') closeOptions!.requestQuit()
+        else if (choice === 'quit') closeOptions!.requestQuit(false)
       })
       .finally(() => {
         awaitingChoice = false

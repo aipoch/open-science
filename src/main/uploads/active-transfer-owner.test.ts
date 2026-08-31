@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
@@ -12,6 +14,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 import { ActiveTransferOwner } from './active-transfer-owner'
+import { STAGING_UPLOAD_SESSION_ID, getSessionUploadDir } from './storage-helpers'
 
 const actualFsPromises =
   await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
@@ -39,7 +42,21 @@ describe('ActiveTransferOwner staging initialization', () => {
       receivedBytes: 0,
       totalBytes: request.size
     })
-    expect(rm).toHaveBeenCalledTimes(2)
+    expect(rm).toHaveBeenNthCalledWith(
+      1,
+      getSessionUploadDir(storageRoot, STAGING_UPLOAD_SESSION_ID),
+      { recursive: true, force: true }
+    )
+    expect(rm).toHaveBeenNthCalledWith(
+      2,
+      getSessionUploadDir(storageRoot, STAGING_UPLOAD_SESSION_ID),
+      { recursive: true, force: true }
+    )
+    expect(rm).toHaveBeenNthCalledWith(
+      3,
+      getSessionUploadDir(storageRoot, PENDING_UPLOAD_SESSION_ID),
+      { recursive: true, force: true }
+    )
 
     await owner.abortTransfer({ transferId: request.transferId })
   })

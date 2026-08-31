@@ -80,6 +80,7 @@ import type {
   ComputeApprovalRequest,
   ComputeJobsListFilter,
   ComputeJobsPendingNotificationFilter,
+  ComputeJobAnalysisTransition,
   ComputeHost,
   ComputeHostDeletionStatus,
   ComputePasswordCapability,
@@ -106,13 +107,15 @@ import type {
   SetGrantedLocalRootAccessRequest
 } from './local-fs'
 import type { RendererFailureReport } from './diagnostics'
-import type { OpenLogFileResult, RevealLogFileResult } from './logs'
+import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from './logs'
 import type {
   NotificationInboxChanged,
   NotificationInboxSnapshot,
+  NotificationDesktopAvailability,
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
   NotificationMarkSessionCompletionsReadRequest,
+  NotificationTestResult,
   OpenSessionFromNotificationRequest,
   UnreadTaskViewState
 } from './notifications'
@@ -128,6 +131,7 @@ import type {
   HandoffRetryRequest
 } from './handoff-lifecycle'
 import type {
+  PermissionGrantDefaultsRestoreView,
   PermissionGrantMutationView,
   PermissionGrantRestoreRequest,
   PermissionGrantRevokeRequest,
@@ -190,6 +194,7 @@ import type {
   CreateProjectRequest,
   DeleteProjectRequest,
   Project,
+  ProjectDeletionOutcome,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from './projects'
@@ -202,6 +207,17 @@ import type {
   TagsChangedEvent,
   UpdateTagRequest
 } from './tags'
+import type {
+  CreateMemoryCategoryRequest,
+  CreateMemoryEntryRequest,
+  DeleteMemoryCategoryRequest,
+  DeleteMemoryEntryRequest,
+  MemoryChangedEvent,
+  MemorySnapshot,
+  SetMemoryEnabledRequest,
+  UpdateMemoryCategoryRequest,
+  UpdateMemoryEntryRequest
+} from './memory'
 import type {
   ArtifactGroupPage,
   GetProjectFilesOverviewRequest,
@@ -216,17 +232,24 @@ import type {
 import type {
   DeleteSessionRequest,
   EditSessionDetailsRequest,
+  FilterSessionPdfContextCandidatesRequest,
+  FilterSessionPdfContextCandidatesResult,
+  LinkSessionPdfContextRequest,
   SessionDeletionResult,
   LoadAllSessionsResult,
   ListSessionSummariesResult,
   LoadSessionRequest,
+  OpenSessionRecoveryFolderRequest,
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
+  SessionRuntimeContext,
   SessionUsageProjection,
+  UnlinkSessionPdfContextRequest,
   UpdateSessionArchiveRequest
 } from './session-persistence'
 import type {
+  SessionPersistenceFlushAbortedEvent,
   SessionPersistenceFlushRequest,
   SessionPersistenceFlushResponse
 } from './session-persistence-flush'
@@ -251,6 +274,7 @@ import type {
   SetAgentFrameworkRequest,
   SetConversationSkillImportEnabledRequest,
   SetNotificationsEnabledRequest,
+  SetShowNotificationContentRequest,
   SetClosePreferenceRequest,
   SetProjectFilesFilterRequest,
   SetDefaultPermissionProfileRequest,
@@ -299,15 +323,21 @@ import type {
   SetConnectorAutoAllowRequest,
   SetToolPermissionRequest,
   SetNcbiCredentialsRequest,
+  SetOpenAlexCredentialRequest,
+  ValidateOpenAlexCredentialRequest,
+  OpenAlexCredentialValidation,
   AddCustomServerRequest,
   AuthenticateCustomServerRequest,
+  DisconnectCustomServerRequest,
   SetCustomServerEnabledRequest,
   RemoveCustomServerRequest,
   UpdateCustomServerRequest,
   ConnectorApprovalRequest,
+  ConnectorCredentialRequest,
   ConversationSkillImportApprovalRequest,
   ConversationSkillImportApprovalResponse,
   RespondApprovalRequest,
+  RespondConnectorCredentialRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult
@@ -360,7 +390,7 @@ import type {
   SetSpecialistEnabledRequest,
   DuplicateSpecialistRequest,
   SpecialistCatalogSnapshot,
-  SpecialistProfileView,
+  SpecialistView,
   SetSessionSpecialistRequest,
   SetSessionSpecialistResponse,
   ResolveSessionSpecialistRequest,
@@ -836,6 +866,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.jobsPendingNotification': callable<
     (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   >()('compute', ['compute:jobs:pending-notification']),
+  'compute.jobsTransitionAnalysis': callable<
+    (request: ComputeJobAnalysisTransition) => Promise<JobSummary[]>
+  >()('compute', ['compute:jobs:transition-analysis']),
   'compute.list': callable<() => Promise<ComputeHost[]>>()('compute', ['compute:list']),
   'compute.listDir': callable<(providerId: string, path: string) => Promise<DirListing>>()(
     'compute',
@@ -881,6 +914,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ]),
   'compute.scratchSet': callable<(providerId: string, path: string) => Promise<void>>()('compute', [
     'compute:scratch:set'
+  ]),
+  'compute.scratchClear': callable<(providerId: string) => Promise<void>>()('compute', [
+    'compute:scratch:clear'
   ]),
   'compute.sshConfigAliases': callable<() => Promise<string[]>>()('compute', [
     'compute:ssh-config-aliases'
@@ -970,12 +1006,55 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'localFs.setGrantedRootAccess': callable<
     (request: SetGrantedLocalRootAccessRequest) => Promise<GrantedLocalRoot[]>
   >()('local-fs', ['local-fs:granted-roots:set-access', LOCAL]),
-  'logs.getPath': callable<() => Promise<string | null>>()('logs', ['logs:get-path']),
+  'logs.getStatus': callable<() => Promise<LogFileStatus>>()('logs', ['logs:get-status', LOCAL]),
   'logs.openFile': callable<() => Promise<OpenLogFileResult>>()('logs', ['logs:open-file', LOCAL]),
   'logs.revealInFolder': callable<() => Promise<RevealLogFileResult>>()('logs', [
     'logs:reveal-in-folder',
     LOCAL
   ]),
+  'memory.clearAll': callable<() => Promise<MemorySnapshot>>()('memory', [
+    'memory:clear-all',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'memory.createCategory': callable<
+    (request: CreateMemoryCategoryRequest) => Promise<MemorySnapshot>
+  >()('memory', ['memory:create-category', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'memory.createEntry': callable<(request: CreateMemoryEntryRequest) => Promise<MemorySnapshot>>()(
+    'memory',
+    ['memory:create-entry', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'memory.deleteCategory': callable<
+    (request: DeleteMemoryCategoryRequest) => Promise<MemorySnapshot>
+  >()('memory', ['memory:delete-category', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'memory.deleteEntry': callable<(request: DeleteMemoryEntryRequest) => Promise<MemorySnapshot>>()(
+    'memory',
+    ['memory:delete-entry', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'memory.onChanged': callable<(listener: AcpListener<MemoryChangedEvent>) => RemoveListener>()(
+    'memory',
+    ['memory:changed', EVENT]
+  ),
+  'memory.setEnabled': callable<(request: SetMemoryEnabledRequest) => Promise<MemorySnapshot>>()(
+    'memory',
+    ['memory:set-enabled', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'memory.snapshot': callable<() => Promise<MemorySnapshot>>()('memory', [
+    'memory:snapshot',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'memory.updateCategory': callable<
+    (request: UpdateMemoryCategoryRequest) => Promise<MemorySnapshot>
+  >()('memory', ['memory:update-category', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'memory.updateEntry': callable<(request: UpdateMemoryEntryRequest) => Promise<MemorySnapshot>>()(
+    'memory',
+    ['memory:update-entry', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'network.checkConnectivity': callable<() => Promise<boolean>>()('network', [
     'network:check-connectivity',
     ELECTRON
@@ -1067,6 +1146,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'notifications',
     ['notifications:get-snapshot']
   ),
+  'notifications.getDesktopAvailability': callable<
+    () => Promise<NotificationDesktopAvailability>
+  >()('notifications', ['notifications:get-desktop-availability', ELECTRON], {
+    optionalMember: true
+  }),
   'notifications.markAllRead': callable<
     (request: NotificationMarkAllReadRequest) => Promise<void>
   >()('notifications', ['notifications:mark-all-read']),
@@ -1077,6 +1161,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'notifications.markSessionCompletionsRead': callable<
     (request: NotificationMarkSessionCompletionsReadRequest) => Promise<void>
   >()('notifications', ['notifications:mark-session-completions-read']),
+  'notifications.sendTest': callable<() => Promise<NotificationTestResult>>()(
+    'notifications',
+    ['notifications:send-test', ELECTRON],
+    { optionalMember: true }
+  ),
   'notifications.onChanged': callable<
     (listener: AcpListener<NotificationInboxChanged>) => RemoveListener
   >()('notifications', ['notifications:changed', EVENT]),
@@ -1123,6 +1212,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'permissions.list': callable<() => Promise<PermissionGrantSnapshot>>()('permissions', [
     'permissions:list'
   ]),
+  'permissions.restoreDefaults': callable<() => Promise<PermissionGrantDefaultsRestoreView>>()(
+    'permissions',
+    ['permissions:restore-defaults']
+  ),
   'permissions.onChanged': callable<
     (listener: AcpListener<PermissionGrantsChangedEvent>) => RemoveListener
   >()('permissions', ['permissions:changed', EVENT]),
@@ -1179,13 +1272,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     undefined,
     RUNTIME_VALIDATED
   ]),
-  'projects.delete': callable<(request: DeleteProjectRequest) => Promise<void>>()('projects', [
-    'projects:delete',
-    WEB,
-    undefined,
-    undefined,
-    RUNTIME_VALIDATED
-  ]),
+  'projects.delete': callable<(request: DeleteProjectRequest) => Promise<ProjectDeletionOutcome>>()(
+    'projects',
+    ['projects:delete', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'projects.get': callable<(id: string) => Promise<Project | null>>()('projects', [
     'projects:get',
     WEB,
@@ -1227,10 +1317,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: ApproveRemotePairingRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:approve']),
   'remoteAccess.detect': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
-    'remote-access:detect'
+    'remote-access:detect',
+    ELECTRON
+  ]),
+  'remoteAccess.probe': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
+    'remote-access:probe',
+    LOCAL
   ]),
   'remoteAccess.disable': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
-    'remote-access:disable'
+    'remote-access:disable',
+    ELECTRON
   ]),
   'remoteAccess.getSnapshot': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
     'remote-access:get-snapshot'
@@ -1247,7 +1343,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('remote-access', ['remote-access:revoke-browser']),
   'remoteAccess.setMode': callable<
     (request: SetRemoteAccessModeRequest) => Promise<RemoteAccessSnapshot>
-  >()('remote-access', ['remote-access:set-mode']),
+  >()('remote-access', ['remote-access:set-mode', ELECTRON]),
   'reviewer.abortFixLoop': callable<(request: ReviewSessionRequest) => Promise<void>>()(
     'reviewer',
     ['reviewer:abort-fix-loop']
@@ -1338,6 +1434,20 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.list': callable<() => Promise<ListSessionSummariesResult>>()('sessions', [
     'sessions:list'
   ]),
+  'sessions.filterPdfContextCandidates': callable<
+    (
+      request: FilterSessionPdfContextCandidatesRequest
+    ) => Promise<FilterSessionPdfContextCandidatesResult>
+  >()('sessions', [
+    'sessions:filter-pdf-context-candidates',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.linkPdfContext': callable<
+    (request: LinkSessionPdfContextRequest) => Promise<SessionRuntimeContext>
+  >()('sessions', ['sessions:link-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.loadAll': callable<() => Promise<LoadAllSessionsResult>>()('sessions', [
     'sessions:load-all'
   ]),
@@ -1347,6 +1457,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.loadUsage': callable<() => Promise<SessionUsageProjection>>()('sessions', [
     'sessions:load-usage'
   ]),
+  'sessions.openRecoveryFolder': callable<
+    (request: OpenSessionRecoveryFolderRequest) => Promise<void>
+  >()('sessions', ['sessions:open-recovery-folder', MAPPED_ELECTRON], { optionalMember: true }),
   'sessions.onCreated': callable<(listener: AcpListener<SessionUpsertEvent>) => RemoveListener>()(
     'sessions',
     ['session:created', EVENT]
@@ -1355,14 +1468,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'sessions',
     ['session:deleted', EVENT]
   ),
-  'sessions.onFlushAborted': callable<(listener: () => void) => RemoveListener>()(
-    'sessions',
-    ['sessions:flush-aborted', ELECTRON_EVENT],
-    { optionalMember: true }
-  ),
+  'sessions.onFlushAborted': callable<
+    (listener: AcpListener<SessionPersistenceFlushAbortedEvent | undefined>) => RemoveListener
+  >()('sessions', ['sessions:flush-aborted', EVENT], { optionalMember: true }),
   'sessions.onFlushRequest': callable<
     (listener: AcpListener<SessionPersistenceFlushRequest>) => RemoveListener
-  >()('sessions', ['sessions:flush-request', ELECTRON_EVENT], { optionalMember: true }),
+  >()('sessions', ['sessions:flush-request', EVENT], { optionalMember: true }),
   'sessions.onUpdated': callable<(listener: AcpListener<SessionUpsertEvent>) => RemoveListener>()(
     'sessions',
     ['session:updated', EVENT]
@@ -1382,11 +1493,14 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.updateArchive': callable<
     (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
   >()('sessions', ['sessions:update-archive']),
+  'sessions.unlinkPdfContext': callable<
+    (request: UnlinkSessionPdfContextRequest) => Promise<SessionRuntimeContext>
+  >()('sessions', ['sessions:unlink-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'settings.addCustomServer': callable<
     (request: AddCustomServerRequest) => Promise<ConnectorsSnapshot>
-  >()('settings', ['settings:add-custom-server']),
+  >()('settings', ['settings:add-custom-server', LOCAL]),
   'settings.authenticateCustomServer': callable<
-    (request: AuthenticateCustomServerRequest) => Promise<ConnectorsSnapshot>
+    (request: DisconnectCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:authenticate-custom-server', LOCAL]),
   'settings.beginXaiOAuthLogin': callable<() => Promise<XaiOAuthDeviceAuthorization>>()(
     'settings',
@@ -1403,6 +1517,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.cancelCustomServerAuthentication': callable<
     (request: AuthenticateCustomServerRequest) => Promise<void>
   >()('settings', ['settings:cancel-custom-server-authentication', LOCAL]),
+  'settings.disconnectCustomServer': callable<
+    (request: AuthenticateCustomServerRequest) => Promise<ConnectorsSnapshot>
+  >()('settings', ['settings:disconnect-custom-server', LOCAL]),
   'settings.cancelIsolatedClaudeLogin': callable<() => Promise<void>>()('settings', [
     'settings:cancel-isolated-claude-login',
     LOCAL
@@ -1553,6 +1670,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.onConnectorApprovalSettled': callable<
     (listener: AcpListener<string>) => RemoveListener
   >()('settings', ['connectors:approval-settled', EVENT], { optionalMember: true }),
+  'settings.onConnectorCredentialRequest': callable<
+    (listener: AcpListener<ConnectorCredentialRequest>) => RemoveListener
+  >()('settings', ['connectors:credential-request', ELECTRON_EVENT], { optionalMember: true }),
+  'settings.onConnectorCredentialSettled': callable<
+    (listener: AcpListener<string>) => RemoveListener
+  >()('settings', ['connectors:credential-settled', ELECTRON_EVENT], { optionalMember: true }),
   'settings.onConnectorRuntimeChanged': callable<
     (listener: AcpListener<undefined>) => RemoveListener
   >()('settings', ['settings:connector-runtime-changed', EVENT]),
@@ -1585,7 +1708,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('settings', ['settings:refresh-provider-models']),
   'settings.removeCustomServer': callable<
     (request: RemoveCustomServerRequest) => Promise<ConnectorsSnapshot>
-  >()('settings', ['settings:remove-custom-server']),
+  >()('settings', ['settings:remove-custom-server', LOCAL]),
   'settings.removeGitHubToken': callable<() => Promise<GitHubTokenStatus>>()('settings', [
     'settings:remove-github-token',
     LOCAL
@@ -1598,12 +1721,20 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     ['connectors:approval-replay-pending'],
     { optionalMember: true }
   ),
+  'settings.replayPendingConnectorCredentialRequests': callable<() => Promise<void>>()(
+    'settings',
+    ['connectors:credential-replay-pending', ELECTRON],
+    { optionalMember: true }
+  ),
   'settings.replayPendingSkillImportApprovals': callable<() => Promise<void>>()('settings', [
     'skills:conversation-import-replay-pending'
   ]),
   'settings.respondConnectorApproval': callable<
     (request: RespondApprovalRequest) => Promise<void>
   >()('settings', ['connectors:approval-respond']),
+  'settings.respondConnectorCredentialRequest': callable<
+    (request: RespondConnectorCredentialRequest) => Promise<void>
+  >()('settings', ['connectors:credential-respond', ELECTRON], { optionalMember: true }),
   'settings.respondSkillImportApproval': callable<
     (response: ConversationSkillImportApprovalResponse) => Promise<void>
   >()('settings', ['skills:conversation-import-respond']),
@@ -1643,19 +1774,28 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('settings', ['settings:set-conversation-skill-import-enabled']),
   'settings.setCustomServerEnabled': callable<
     (request: SetCustomServerEnabledRequest) => Promise<ConnectorsSnapshot>
-  >()('settings', ['settings:set-custom-server-enabled']),
+  >()('settings', ['settings:set-custom-server-enabled', LOCAL]),
   'settings.setDefaultPermissionProfile': callable<
     (request: SetDefaultPermissionProfileRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:set-default-permission-profile', LOCAL]),
   'settings.setNcbiCredentials': callable<
     (request: SetNcbiCredentialsRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-ncbi-credentials']),
+  'settings.setOpenAlexCredential': callable<
+    (request: SetOpenAlexCredentialRequest) => Promise<ConnectorsSnapshot>
+  >()('settings', ['settings:set-openalex-credential', LOCAL]),
+  'settings.validateOpenAlexCredential': callable<
+    (request: ValidateOpenAlexCredentialRequest) => Promise<OpenAlexCredentialValidation>
+  >()('settings', ['settings:validate-openalex-credential', LOCAL]),
   'settings.setNetworkProxy': callable<
     (request: SetNetworkProxyRequest) => Promise<NetworkProxySettings>
   >()('settings', ['settings:set-network-proxy', LOCAL]),
   'settings.setNotificationsEnabled': callable<
     (request: SetNotificationsEnabledRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:set-notifications-enabled', LOCAL]),
+  'settings.setShowNotificationContent': callable<
+    (request: SetShowNotificationContentRequest) => Promise<SettingsSnapshot>
+  >()('settings', ['settings:set-show-notification-content', LOCAL]),
   'settings.setPackageMirror': callable<
     (request: SetPackageMirrorRequest) => Promise<PackageMirror>
   >()('settings', ['settings:set-package-mirror', LOCAL]),
@@ -1705,7 +1845,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ]),
   'settings.updateCustomServer': callable<
     (request: UpdateCustomServerRequest) => Promise<ConnectorsSnapshot>
-  >()('settings', ['settings:update-custom-server']),
+  >()('settings', ['settings:update-custom-server', LOCAL]),
   'settings.updateSkill': callable<(request: UpdateSkillRequest) => Promise<SkillView[]>>()(
     'settings',
     ['settings:update-skill']
@@ -1770,9 +1910,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'specialist.cancelPackage': callable<
     (request: SpecialistPackageInstallRequest) => Promise<void>
   >()('specialist', ['specialist:package-cancel', ELECTRON]),
-  'specialist.create': callable<
-    (request: CreateSpecialistRequest) => Promise<SpecialistProfileView>
-  >()('specialist', ['specialist:create', ELECTRON]),
+  'specialist.create': callable<(request: CreateSpecialistRequest) => Promise<SpecialistView>>()(
+    'specialist',
+    ['specialist:create', ELECTRON]
+  ),
   'specialist.delete': callable<
     (request: SpecialistDeleteRequest) => Promise<SpecialistDeleteResult>
   >()('specialist', ['specialist:delete', ELECTRON]),
@@ -1846,14 +1987,18 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     () => Promise<{ cancelled: true } | SpecialistPackageCandidatePreview>
   >()('specialist', ['specialist:package-select', ELECTRON]),
   'specialist.setEnabled': callable<
-    (request: SetSpecialistEnabledRequest) => Promise<SpecialistProfileView>
+    (request: SetSpecialistEnabledRequest) => Promise<SpecialistView>
   >()('specialist', ['specialist:set-enabled', ELECTRON]),
   'specialist.setSessionSpecialist': callable<
     (request: SetSessionSpecialistRequest) => Promise<SetSessionSpecialistResponse>
   >()('specialist', ['specialist:set-session-specialist', ELECTRON]),
-  'specialist.update': callable<
-    (request: UpdateSpecialistRequest) => Promise<SpecialistProfileView>
-  >()('specialist', ['specialist:update', ELECTRON]),
+  'specialist.update': callable<(request: UpdateSpecialistRequest) => Promise<SpecialistView>>()(
+    'specialist',
+    ['specialist:update', ELECTRON]
+  ),
+  'storage.ackDataRootHandoffFlush': callable<
+    (response: SessionPersistenceFlushResponse) => Promise<void>
+  >()('storage', ['storage:ack-data-root-handoff-flush', LOCAL]),
   'storage.cancelMigrate': callable<() => Promise<void>>()('storage', [
     'storage:cancel-migrate',
     LOCAL
@@ -1978,7 +2123,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ]),
   'uploads.finalizeSession': callable<
     (request: FinalizeUploadSessionRequest) => Promise<UploadedAttachment[]>
-  >()('uploads', ['uploads:finalize-session']),
+  >()('uploads', ['uploads:finalize-session', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'uploads.finishTransfer': callable<
     (request: UploadTransferRequest) => Promise<UploadedAttachment>
   >()('uploads', ['uploads:finish-transfer']),
@@ -2093,6 +2238,7 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'lifecycle',
   'locale',
   'local-fs',
+  'memory',
   'logs',
   'network',
   'notebook',

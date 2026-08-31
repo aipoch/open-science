@@ -18,6 +18,7 @@ import {
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ProjectRepository } from '../projects/repository'
 import { buildSessionProjection, SessionProjectionRepository } from './projection'
+import { SessionAuxiliaryTurnUsageRecorder } from './auxiliary-turn-usage'
 import { SessionRepository } from './repository'
 import type { SessionLoadDiagnostic } from './repository'
 
@@ -135,6 +136,9 @@ describe('Session projection', () => {
     expect(projected.turnUsage).toEqual([
       {
         messageId: 'session-1-usage',
+        frameworkId: 'opencode',
+        providerId: null,
+        model: 'gpt-5',
         completedAtMs: 104n,
         inputTokens: 10n,
         cacheTokens: 4n,
@@ -152,6 +156,7 @@ describe('Session projection', () => {
         callIndex: 0,
         sourceInvocationId: 'provider-call-1',
         frameworkId: 'opencode',
+        providerId: null,
         backendId: 'opencode-backend',
         model: 'gpt-5',
         inputTokens: 6n,
@@ -168,6 +173,7 @@ describe('Session projection', () => {
         callIndex: 1,
         sourceInvocationId: 'provider-call-2',
         frameworkId: 'opencode',
+        providerId: null,
         backendId: 'opencode-backend',
         model: 'gpt-5',
         inputTokens: 4n,
@@ -197,6 +203,75 @@ describe('Session projection', () => {
       cachedWriteTokens: 0n,
       modelCallCount: 0
     })
+  })
+
+  it('projects provider-reported Session Details usage as one auxiliary event', () => {
+    const input = session('session-details')
+    input.sessionDetailsGeneration = {
+      status: 'failed',
+      sourceMessageId: 'session-details-run',
+      requestId: 'details-request',
+      queuedAt: 110,
+      startedAt: 111,
+      completedAt: 112,
+      frameworkId: 'codex',
+      providerId: 'provider-1',
+      model: 'gpt-5',
+      reasoningEffort: 'low',
+      usage: {
+        inputTokens: 7,
+        cacheTokens: 2,
+        cachedReadTokens: 2,
+        cachedWriteTokens: 0,
+        outputTokens: 3,
+        turnCount: 1
+      }
+    }
+
+    expect(buildSessionProjection(input).sessionDetailsUsage).toEqual([
+      {
+        eventId: 'details-request',
+        source: 'session-details',
+        frameworkId: 'codex',
+        providerId: 'provider-1',
+        model: 'gpt-5',
+        completedAtMs: 112n,
+        inputTokens: 7n,
+        cacheTokens: 2n,
+        cachedReadTokens: 2n,
+        cachedWriteTokens: 0n,
+        outputTokens: 3n,
+        modelCallCount: 1
+      }
+    ])
+  })
+
+  it('projects the owning runtime provider onto turn and model-call usage', () => {
+    const input = session('attributed')
+    input.conversationGraph = createLinearConversationGraph({
+      sessionId: input.id,
+      messages: input.messages,
+      frameworkId: 'opencode',
+      providerId: 'provider-1',
+      backendId: 'opencode:provider-1',
+      model: 'gpt-5',
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt
+    })
+
+    const projected = buildSessionProjection(input)
+    expect(projected.turnUsage).toEqual([
+      expect.objectContaining({
+        messageId: 'attributed-usage',
+        frameworkId: 'opencode',
+        providerId: 'provider-1',
+        model: 'gpt-5'
+      })
+    ])
+    expect(projected.modelCalls).toEqual([
+      expect.objectContaining({ providerId: 'provider-1' }),
+      expect.objectContaining({ providerId: 'provider-1' })
+    ])
   })
 
   it('marks pending Artifact paths for one-time startup recovery', () => {
@@ -296,6 +371,71 @@ describe('Session projection', () => {
     await expect(client.session.count()).resolves.toBe(75)
     await expect(client.sessionTurnUsage.count()).resolves.toBe(75)
     await expect(client.sessionModelCallUsage.count()).resolves.toBe(150)
+  })
+
+  it('keeps direct auxiliary usage across rebuilds, aggregates it, and removes it on deletion', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-auxiliary-usage-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({
+      data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
+    })
+    const repository = new SessionProjectionRepository(async () => client!)
+    const projected = await repository.prepareSave(session('auxiliary', 100))
+    await repository.commitSave(projected)
+    const recorder = new SessionAuxiliaryTurnUsageRecorder(async () => client!)
+    const record = {
+      projectId: 'project-1',
+      sessionId: projected.id,
+      eventId: 'side-stop-1',
+      source: 'side-chat' as const,
+      frameworkId: 'codebuddy',
+      providerId: 'provider-a',
+      model: 'model-a',
+      completedAtMs: 120,
+      usage: {
+        inputTokens: 5,
+        cacheTokens: 2,
+        cachedReadTokens: 2,
+        cachedWriteTokens: 0,
+        outputTokens: 4,
+        turnCount: 1
+      }
+    }
+
+    await expect(recorder.record(record)).resolves.toBe(true)
+    await expect(
+      recorder.record({ ...record, usage: { ...record.usage, inputTokens: 999 } })
+    ).resolves.toBe(false)
+    await repository.replaceAll([projected])
+
+    await expect(
+      client.sessionAuxiliaryTurnUsage.findMany({ where: { sessionId: projected.id } })
+    ).resolves.toMatchObject([
+      {
+        eventId: 'side-stop-1',
+        source: 'side-chat',
+        providerId: 'provider-a',
+        inputTokens: 5n,
+        modelCallCount: 1
+      }
+    ])
+    await expect(repository.usage()).resolves.toMatchObject({
+      usageEvents: expect.arrayContaining([
+        expect.objectContaining({
+          timestamp: 120,
+          inputTokens: 5,
+          cacheTokens: 2,
+          outputTokens: 4,
+          rootRunUsage: false
+        })
+      ])
+    })
+
+    await repository.commitDelete(projected.projectId, projected.id)
+    await expect(
+      client.sessionAuxiliaryTurnUsage.count({ where: { sessionId: projected.id } })
+    ).resolves.toBe(0)
   })
 
   it('does not replace Session authority when an invalid projection integer rejects the save', async () => {

@@ -1,12 +1,14 @@
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import type { Project } from '../../shared/projects'
+import type { Project, ProjectDeletionOutcome } from '../../shared/projects'
 import type { ProjectSessionDeletionResult } from '../session-persistence/coordinator'
 import type { ProjectSessionDeletionState } from '../session-persistence/repository'
 import { withDataRootWrite } from '../storage/migration-state'
+import type { ApplicationEventPublisher } from '../application-events'
+import type { ProjectDeletionResult } from './repository'
 
 type ProjectDeletionRepository = {
   get(id: string): Promise<Project | null>
-  delete(id: string): Promise<void>
+  delete(id: string): Promise<ProjectDeletionResult | undefined>
   createDeletionIntent(projectId: string): Promise<void>
   deleteDeletionIntent(projectId: string): Promise<void>
   listDeletionIntents(): Promise<string[]>
@@ -55,6 +57,8 @@ type ProjectDeletionFailure = {
   error: unknown
 }
 
+type ProjectDeletionAttempt = { status: 'deleted' } | { status: 'cleanup-pending'; error: unknown }
+
 class ProjectDeletionRecoveryError extends AggregateError {
   readonly failures: readonly ProjectDeletionFailure[]
 
@@ -81,6 +85,7 @@ class ProjectDeletionRecoveryLoop {
   private timer: ReturnType<typeof setTimeout> | undefined
   private started = false
   private running = false
+  private rerunRequested = false
   private activeRun: Promise<void> | undefined
 
   constructor(
@@ -97,8 +102,22 @@ class ProjectDeletionRecoveryLoop {
     this.run()
   }
 
+  // Foreground deletion can create durable retry work after the one-shot startup scan has already
+  // completed. Wake immediately, while coalescing requests that arrive during an active run.
+  wake(): void {
+    if (!this.started) return
+    if (this.running) {
+      this.rerunRequested = true
+      return
+    }
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = undefined
+    this.run()
+  }
+
   async stop(): Promise<void> {
     this.started = false
+    this.rerunRequested = false
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
     await this.activeRun
@@ -112,9 +131,13 @@ class ProjectDeletionRecoveryLoop {
       .then(
         () => {
           this.running = false
+          if (!this.started || !this.rerunRequested) return
+          this.rerunRequested = false
+          this.run()
         },
         (error: unknown) => {
           this.running = false
+          this.rerunRequested = false
           try {
             this.onError(error)
           } catch {
@@ -149,28 +172,33 @@ class ProjectDeletionCoordinator {
     private readonly reviews?: ProjectReviewDeletion,
     private readonly provenance?: ProjectProvenanceDeletion,
     private readonly permissionGrants?: ProjectPermissionGrantDeletion,
-    private readonly lifecycle?: ProjectDeletionLifecycle
+    private readonly lifecycle?: ProjectDeletionLifecycle,
+    private readonly events?: Pick<ApplicationEventPublisher, 'publish'>
   ) {}
 
   // Enqueues before yielding so two callers in the same event-loop turn cannot publish competing
   // recovery promises. The queue tail swallows failures only to keep later recovery work runnable.
-  deleteProject(projectId: string): Promise<void> {
+  deleteProject(projectId: string): Promise<ProjectDeletionOutcome> {
     const deletion = this.operationQueue.then(() =>
       withDataRootWrite(async () => {
         const recoveryComplete = await this.waitForProjectOperationsNow([projectId])
         this.isRecoveryComplete = false
         try {
-          await this.runDeletion(projectId)
+          const outcome = await this.runDeletion(projectId)
           // Preserve sticky completion only when scoped admission did not suppress failures owned by
-          // other Projects. Suppressed durable intents must remain eligible for retry.
-          this.isRecoveryComplete = recoveryComplete
+          // other Projects. Suppressed or newly pending durable intents must remain eligible for retry.
+          this.isRecoveryComplete = outcome.status === 'deleted' && recoveryComplete
+          return outcome
         } catch (error) {
           this.isRecoveryComplete = false
           throw error
         }
       })
     )
-    this.operationQueue = deletion.catch(() => undefined)
+    this.operationQueue = deletion.then(
+      () => undefined,
+      () => undefined
+    )
     return deletion
   }
 
@@ -249,14 +277,15 @@ class ProjectDeletionCoordinator {
   // retry authority before any destructive runtime cleanup. Once the intent exists, every failure
   // remains fail-closed: the Project may still be visible, but recovery retains the fence and replays
   // quiescence before continuing durable deletion.
-  private async runDeletion(projectId: string): Promise<void> {
+  private async runDeletion(projectId: string): Promise<ProjectDeletionOutcome> {
     const project = await this.projects.get(projectId)
-    if (!project) return
+    if (!project) return { status: 'deleted' }
 
     await this.createDeletionIntentWithFence(projectId)
     await this.lifecycle?.beforeProjectDelete(projectId)
     await this.sessions.deleteProjectSessions(projectId)
-    await this.finishDeletion(projectId)
+    const attempt = await this.finishDeletion(projectId)
+    return attempt.status === 'deleted' ? attempt : { status: 'cleanup-pending' }
   }
 
   private async createDeletionIntentWithFence(projectId: string): Promise<void> {
@@ -304,7 +333,10 @@ class ProjectDeletionCoordinator {
           retainedProjectIds.add(projectId)
           continue
         }
-        await this.finishDeletion(projectId)
+        const attempt = await this.finishDeletion(projectId)
+        if (attempt.status === 'cleanup-pending') {
+          failures.push({ projectId, error: attempt.error })
+        }
       } catch (error) {
         failures.push({ projectId, error })
       }
@@ -333,7 +365,10 @@ class ProjectDeletionCoordinator {
           await this.lifecycle?.abortProjectDeletion?.(projectId)
           continue
         }
-        await this.finishDeletion(projectId)
+        const attempt = await this.finishDeletion(projectId)
+        if (attempt.status === 'cleanup-pending') {
+          failures.push({ projectId, error: attempt.error })
+        }
       } catch (error) {
         failures.push({ projectId, error })
       }
@@ -341,44 +376,65 @@ class ProjectDeletionCoordinator {
     return failures
   }
 
-  // The Project becomes an invisible metadata tombstone only after every fallible authority cleanup
-  // succeeds. Keeping it active with the deletion intent through pruning lets the renderer report a
-  // failure without publishing false success; replaying this tail is idempotent.
-  private async finishDeletion(projectId: string): Promise<void> {
+  // Authority pruning must succeed before the Project becomes an invisible metadata tombstone. The
+  // remaining fallible cleanup runs after that commit and is replayable from the durable intent, so
+  // foreground callers can distinguish an intact Project from committed deletion with pending cleanup.
+  private async finishDeletion(projectId: string): Promise<ProjectDeletionAttempt> {
     // Prune is transactional and idempotent. Run it before the soft delete so a Registry/database
     // failure retains the visible Project plus its durable intent for an explicit or startup retry.
     await this.permissionGrants?.prune({ kind: 'project', projectId })
-    if (await this.projects.get(projectId)) await this.projects.delete(projectId)
+    const projectExists = Boolean(await this.projects.get(projectId))
+    const projectDeletion = projectExists ? await this.projects.delete(projectId) : undefined
+    if (projectDeletion) {
+      this.events?.publish('memory:changed', { revision: projectDeletion.memoryRevision })
+    }
+    if (projectExists) {
+      // Metadata deletion is the user-visible commit point. Other renderer windows must evict their
+      // stale Project/Session projections immediately, while retaining an explicit pending marker
+      // until the terminal event below confirms that replayable cleanup has finished.
+      this.events?.publish('project:deleted', { projectId, status: 'cleanup-pending' })
+    }
     // The metadata tombstone commits outside the Registry mutation queue. A remember/restore already
     // in flight may have updated its cache around that commit, so enqueue one non-failing barrier.
     await this.permissionGrants
       ?.finalizeOwnerDeletion?.({ kind: 'project', projectId })
       .catch(() => undefined)
 
-    // Retain the durable intent on failure so startup or an explicit retry can finish cleanup.
+    // Retain the durable intent on failure so startup or background recovery can finish cleanup. The
+    // foreground caller receives an explicit committed outcome instead of mistaking this tail for an
+    // intact Project, while recovery keeps the original error for diagnostics and retry scheduling.
     try {
       await this.reviews?.deleteReviewsForProject(projectId)
     } catch (error) {
-      throw new AggregateError([error], 'Project derived cleanup failed: ' + projectId)
+      return {
+        status: 'cleanup-pending',
+        error: new AggregateError([error], 'Project derived cleanup failed: ' + projectId)
+      }
     }
 
-    // Session deletion retains provenance, but Project deletion is terminal. This tail is replayed
-    // from the durable intent after a crash, so derived SQLite rows and immutable bytes are
-    // eventually removed even after the Project metadata row has become an invisible tombstone.
-    await this.provenance?.deleteProjectProvenance(projectId)
+    try {
+      // Session deletion retains provenance, but Project deletion is terminal. This tail is replayed
+      // from the durable intent after a crash, so derived SQLite rows and immutable bytes are
+      // eventually removed even after the Project metadata row has become an invisible tombstone.
+      await this.provenance?.deleteProjectProvenance(projectId)
 
-    // Fallible runtime/profile cleanup must finish while the existing intent and Session tombstone
-    // still provide retry authority. The completion callback below is reserved for releasing the
-    // in-memory fences only after both durable markers have been removed.
-    await this.lifecycle?.finalizeProjectDeletion?.(projectId)
+      // Fallible runtime/profile cleanup must finish while the existing intent and Session tombstone
+      // still provide retry authority. The completion callback below is reserved for releasing the
+      // in-memory fences only after both durable markers have been removed.
+      await this.lifecycle?.finalizeProjectDeletion?.(projectId)
 
-    // The marked Session tombstone is the durable phase boundary. Remove it only after every Project
-    // tail has completed, and keep the intent if physical cleanup fails so recovery retries it.
-    await this.sessions.completeProjectSessionDeletion(projectId)
+      // The marked Session tombstone is the durable phase boundary. Remove it only after every Project
+      // tail has completed, and keep the intent if physical cleanup fails so recovery retries it.
+      await this.sessions.completeProjectSessionDeletion(projectId)
 
-    // Keep the intent until all derived and tombstone cleanup has completed.
-    await this.projects.deleteDeletionIntent(projectId)
+      // Keep the intent until all derived and tombstone cleanup has completed.
+      await this.projects.deleteDeletionIntent(projectId)
+    } catch (error) {
+      return { status: 'cleanup-pending', error }
+    }
     this.lifecycle?.completeProjectDeletion?.(projectId)
+    this.events?.publish('project:deleted', { projectId, status: 'deleted' })
+    return { status: 'deleted' }
   }
 }
 

@@ -12,7 +12,7 @@ import { listenForLocalRpc } from '../local-rpc-transport'
 import { hostSdkHelp } from '../host-sdk/help'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { AgentsService } from '../agents/agents-service'
-import { createProfileService } from '../specialist/service'
+import { createSpecialistService } from '../specialist/service'
 import { createDeterministicDelegateExecution } from '../delegation/deterministic-execution'
 import { createInMemoryDelegatedWorkRecords } from '../delegation/durable-delegated-work'
 import { createTestDurableDelegatedWork as createDurableDelegatedWork } from '../delegation/durable-delegated-work-test-fixture'
@@ -351,7 +351,7 @@ describe('repl_loop local RPC transport', () => {
 
   it('discovers a public Specialist and delegates by its stable id and exact name through the authenticated REPL', async () => {
     const profileStorage = await mkdtemp(join(tmpdir(), 'repl-delegate-profile-roundtrip-'))
-    const profiles = createProfileService(profileStorage)
+    const profiles = createSpecialistService(profileStorage)
     const selected = await profiles.create({
       name: 'EVIDENCE_ANALYST',
       displayName: 'Evidence Analyst'
@@ -370,7 +370,7 @@ describe('repl_loop local RPC transport', () => {
       resolveSpecialistReference: (reference) => profiles.resolveRunnableByReference(reference)
     })
     const agents = new AgentsService({
-      profileService: profiles,
+      specialistService: profiles,
       catalog: {
         listSkillCatalog: async () => [],
         getConnectors: async () => undefined

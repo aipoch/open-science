@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { AddCustomServerRequest, ConnectorsSnapshot } from '../../shared/settings'
 
-const keychain = vi.hoisted(() => ({ available: true }))
+const keychain = vi.hoisted(() => ({ available: true, encryptedValues: [] as string[] }))
 
 // Reversible fake safeStorage so secrets can be encrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -13,6 +13,7 @@ vi.mock('electron', () => ({
     isEncryptionAvailable: () => keychain.available,
     encryptString: (plaintext: string) => {
       if (!keychain.available) throw new Error('Encryption is unavailable')
+      keychain.encryptedValues.push(plaintext)
       return Buffer.from(`cipher:${plaintext}`, 'utf8')
     },
     decryptString: (buffer: Buffer) => {
@@ -40,6 +41,7 @@ describe('ConnectorSettingsModule', () => {
 
   beforeEach(async () => {
     keychain.available = true
+    keychain.encryptedValues.length = 0
     dir = await mkdtemp(join(tmpdir(), 'osci-svc-connectors-'))
     repository = new SettingsRepository(dir)
     service = new ConnectorSettingsModule(repository)
@@ -56,6 +58,7 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.connectors.every((c) => !c.autoAllow)).toBe(true)
     expect(snapshot.customServers).toEqual([])
     expect(snapshot.ncbi).toEqual({ contactEmail: undefined, hasApiKey: false })
+    expect(snapshot.openAlex).toEqual({ hasApiKey: false })
   })
 
   it('disables and re-enables one connector', async () => {
@@ -107,6 +110,15 @@ describe('ConnectorSettingsModule', () => {
     expect(c?.blockedToolIds ?? []).toContain(toolId)
   })
 
+  it('does not persist policy for an unknown connector tool', async () => {
+    await expect(
+      service.setToolPermission({ toolId: 'chemistry/not-a-real-tool', permission: 'ask' })
+    ).rejects.toThrow('Unknown')
+
+    const connectors = await service.getConnectors()
+    expect(connectors?.askToolIds ?? []).not.toContain('chemistry/not-a-real-tool')
+  })
+
   it('treats block as stronger than ask when reading inconsistent stored policy', async () => {
     const first = await service.getConnectorDetail('chemistry')
     const toolId = first.tools[0].id
@@ -140,8 +152,167 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.ncbi).toEqual({ contactEmail: 'second@lab.org', hasApiKey: false })
   })
 
+  it('does not report undecryptable credentials as configured', async () => {
+    await service.setNcbiCredentials({ apiKey: 'ncbi-secret' })
+    await service.setOpenAlexCredential({ apiKey: 'openalex-secret' })
+    await addCustomServer({
+      name: 'local-secrets',
+      transport: 'stdio',
+      command: 'example-mcp',
+      env: { API_TOKEN: 'local-secret', DAMAGED_TOKEN: 'damaged-secret' }
+    })
+    await addCustomServer({
+      name: 'remote-secrets',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      headers: { Authorization: 'Bearer remote-secret' }
+    })
+    await addCustomServer({
+      name: 'oauth-secrets',
+      transport: 'streamable_http',
+      url: 'https://example.com/oauth-mcp',
+      oauth: {
+        authorizationServerUrl: 'https://example.com/oauth',
+        clientId: 'registered-client',
+        clientSecret: 'client-secret'
+      }
+    })
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.find(
+      ({ name }) => name === 'local-secrets'
+    )
+    await repository.updateCustomServer(stored!.id, {
+      ...stored!,
+      envRefs: { ...stored!.envRefs, DAMAGED_TOKEN: 'not-a-key-ref' }
+    })
+    expect(
+      (await service.listConnectors()).customServers.find(({ name }) => name === 'local-secrets')
+    ).toMatchObject({ hasEnv: false, enabled: true, availability: 'credential_unavailable' })
+
+    keychain.available = false
+    const snapshot = await service.listConnectors()
+
+    expect({
+      ncbi: snapshot.ncbi.hasApiKey,
+      openAlex: snapshot.openAlex?.hasApiKey,
+      localEnv: snapshot.customServers.find(({ name }) => name === 'local-secrets')?.hasEnv,
+      remoteHeaders: snapshot.customServers.find(({ name }) => name === 'remote-secrets')
+        ?.hasHeaders,
+      oauthClientSecret: snapshot.customServers.find(({ name }) => name === 'oauth-secrets')?.oauth
+        ?.hasClientSecret,
+      oauthAvailability: snapshot.customServers.find(({ name }) => name === 'oauth-secrets')
+        ?.availability
+    }).toEqual({
+      ncbi: false,
+      openAlex: false,
+      localEnv: false,
+      remoteHeaders: false,
+      oauthClientSecret: false,
+      oauthAvailability: 'credential_unavailable'
+    })
+  })
+
+  it('refuses to persist enabled state when custom credentials are unavailable', async () => {
+    await repository.addCustomServer({
+      id: 'credential-unavailable-enable',
+      name: 'credential-unavailable-enable',
+      displayName: 'Credential unavailable enable',
+      transport: 'stdio',
+      enabled: false,
+      command: 'example-mcp',
+      envRefs: { API_TOKEN: 'not-a-key-ref' }
+    })
+
+    await expect(
+      service.setCustomServerEnabled({ id: 'credential-unavailable-enable', enabled: true })
+    ).rejects.toThrow('credential_unavailable')
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.find(
+      ({ id }) => id === 'credential-unavailable-enable'
+    )
+    expect(stored?.enabled).toBe(false)
+  })
+
+  it('encrypts OpenAlex at rest and exposes only configured state', async () => {
+    let snapshot = await service.setOpenAlexCredential({ apiKey: 'openalex-secret' })
+    expect(snapshot.openAlex).toEqual({ hasApiKey: true })
+    expect(JSON.stringify(snapshot)).not.toContain('openalex-secret')
+
+    const raw = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(raw).not.toContain('openalex-secret')
+    expect(JSON.parse(raw).connectors.openAlexApiKeyRef).toMatch(/^enc:/)
+
+    snapshot = await service.setOpenAlexCredential({ apiKey: '' })
+    expect(snapshot.openAlex).toEqual({ hasApiKey: false })
+  })
+
+  it('validates an OpenAlex key without persisting or returning the secret', async () => {
+    const openAlexFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response('{}', { status: 200 }))
+    const validatingService = new ConnectorSettingsModule(repository, openAlexFetch)
+
+    const result = await validatingService.validateOpenAlexCredential({
+      apiKey: 'openalex-secret'
+    })
+
+    expect(result).toEqual({ valid: true })
+    const requestUrl = openAlexFetch.mock.calls[0]?.[0]
+    expect(requestUrl).toBeInstanceOf(URL)
+    expect((requestUrl as URL).origin).toBe('https://api.openalex.org')
+    expect((requestUrl as URL).pathname).toBe('/rate-limit')
+    expect((requestUrl as URL).searchParams.get('api_key')).toBe('openalex-secret')
+    expect(JSON.stringify(result)).not.toContain('openalex-secret')
+    expect((await repository.getSettings()).connectors?.openAlexApiKeyRef).toBeUndefined()
+  })
+
+  it('accepts a rate-limited OpenAlex key as valid', async () => {
+    const rateLimitedService = new ConnectorSettingsModule(
+      repository,
+      vi.fn<typeof fetch>().mockResolvedValue(new Response('{}', { status: 429 }))
+    )
+
+    await expect(
+      rateLimitedService.validateOpenAlexCredential({ apiKey: 'rate-limited-key' })
+    ).resolves.toEqual({ valid: true })
+  })
+
+  it('classifies rejected, malformed, and unavailable OpenAlex validation attempts', async () => {
+    const rejectedFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response('{}', { status: 401 }))
+    const rejectedService = new ConnectorSettingsModule(repository, rejectedFetch)
+    await expect(
+      rejectedService.validateOpenAlexCredential({ apiKey: 'rejected-key' })
+    ).resolves.toEqual({ valid: false, reason: 'rejected' })
+
+    await expect(
+      rejectedService.validateOpenAlexCredential({ apiKey: 'contains spaces' })
+    ).resolves.toEqual({ valid: false, reason: 'invalid-format' })
+    expect(rejectedFetch).toHaveBeenCalledTimes(1)
+
+    const unavailableService = new ConnectorSettingsModule(
+      repository,
+      vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'))
+    )
+    await expect(
+      unavailableService.validateOpenAlexCredential({ apiKey: 'openalex-key' })
+    ).resolves.toEqual({ valid: false, reason: 'unavailable' })
+  })
+
   it('throws for an unknown connector id', async () => {
     await expect(service.getConnectorDetail('nope')).rejects.toThrow(/Unknown connector/)
+  })
+
+  it('does not synthesize persisted trust metadata from an ordinary add request', async () => {
+    await addCustomServer({
+      name: 'unverified-trust',
+      transport: 'stdio',
+      command: 'npx'
+    })
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored).not.toHaveProperty('trustedAt')
   })
 
   it('adds, toggles, and removes a local (stdio) custom server', async () => {
@@ -182,6 +353,216 @@ describe('ConnectorSettingsModule', () => {
     expect(afterRemoval?.autoAllowIds).not.toContain(added.name)
     expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.name}/lookup`)
     expect(afterRemoval?.pendingCustomServerDeletionIds).toBeUndefined()
+  })
+
+  it('rejects oversized manual Connector fields before persistence', async () => {
+    await expect(
+      addCustomServer({
+        name: 'oversized-args',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['x'.repeat(2_049)]
+      })
+    ).rejects.toThrow('Connector argument must not exceed 2048 characters.')
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it('rejects excessive manual Connector secrets before encryption', async () => {
+    const env = Object.fromEntries(
+      Array.from({ length: 65 }, (_, index) => [`TOKEN_${index}`, `secret-${index}`])
+    )
+
+    await expect(
+      addCustomServer({
+        name: 'oversized-env',
+        transport: 'stdio',
+        command: 'npx',
+        env
+      })
+    ).rejects.toThrow('Connector environment variables must not exceed 64 entries.')
+
+    expect(keychain.encryptedValues).toEqual([])
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it.each([
+    {
+      label: 'Windows environment variables',
+      platform: 'win32',
+      request: {
+        name: 'ambiguous-add-env',
+        transport: 'stdio' as const,
+        command: 'npx',
+        env: { API_TOKEN: 'first', api_token: 'second' }
+      }
+    },
+    {
+      label: 'HTTP headers',
+      platform: 'darwin',
+      request: {
+        name: 'ambiguous-add-headers',
+        transport: 'streamable_http' as const,
+        url: 'https://mcp.example.test',
+        headers: { Authorization: 'first', authorization: 'second' }
+      }
+    }
+  ])('rejects case-colliding $label before add persistence', async ({ platform, request }) => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: platform })
+    try {
+      await expect(addCustomServer(request)).rejects.toThrow(/duplicate credential name/i)
+      expect(keychain.encryptedValues).toEqual([])
+      expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+    }
+  })
+
+  it.each([
+    {
+      label: 'Windows environment variables',
+      platform: 'win32',
+      transport: 'stdio' as const,
+      replacement: { env: { API_TOKEN: 'first', api_token: 'second' } }
+    },
+    {
+      label: 'HTTP headers',
+      platform: 'darwin',
+      transport: 'streamable_http' as const,
+      replacement: { headers: { Authorization: 'first', authorization: 'second' } }
+    }
+  ])('rejects case-colliding $label before update persistence', async (testCase) => {
+    const added = await addCustomServer({
+      name: `ambiguous-update-${testCase.transport.replaceAll('_', '-')}`,
+      transport: testCase.transport,
+      ...(testCase.transport === 'stdio' ? { command: 'npx' } : { url: 'https://mcp.example.test' })
+    })
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: testCase.platform
+    })
+    keychain.encryptedValues.length = 0
+    try {
+      await expect(
+        service.updateCustomServer({
+          id: added.customServers[0].id,
+          transport: testCase.transport,
+          ...(testCase.transport === 'stdio'
+            ? { command: 'npx' }
+            : { url: 'https://mcp.example.test' }),
+          ...testCase.replacement
+        })
+      ).rejects.toThrow(/duplicate credential name/i)
+      expect(keychain.encryptedValues).toEqual([])
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+    }
+  })
+
+  it('includes retained secrets when validating an updated Connector total', async () => {
+    const retainedEnvironment = Object.fromEntries(
+      Array.from({ length: 15 }, (_, index) => [`TOKEN_${index}`, 'x'.repeat(16_384)])
+    )
+    const added = await addCustomServer({
+      name: 'combined-secret-budget',
+      transport: 'stdio',
+      command: 'npx',
+      env: retainedEnvironment,
+      headers: { Authorization: 'small' }
+    })
+    keychain.encryptedValues.length = 0
+
+    await expect(
+      service.updateCustomServer({
+        id: added.customServers[0].id,
+        transport: 'stdio',
+        command: 'npx',
+        headers: { Authorization: 'x'.repeat(16_384) }
+      })
+    ).rejects.toThrow('Connector secret data must not exceed 262144 bytes.')
+    expect(keychain.encryptedValues).toEqual([])
+  })
+
+  it('rejects a 65th custom Connector before persistence', async () => {
+    for (let index = 0; index < 64; index += 1) {
+      await addCustomServer({
+        name: `capacity-${index}`,
+        transport: 'stdio',
+        command: 'npx'
+      })
+    }
+
+    await expect(
+      addCustomServer({ name: 'capacity-overflow', transport: 'stdio', command: 'npx' })
+    ).rejects.toThrow('Custom Connector limit of 64 reached.')
+    expect((await repository.getSettings()).connectors?.customMcpServers).toHaveLength(64)
+  })
+
+  it('grandfathers an unchanged oversized public field on an existing Connector', async () => {
+    const historicalArgument = 'x'.repeat(2_049)
+    await repository.addCustomServer({
+      id: 'historical-oversized',
+      name: 'historical-oversized',
+      displayName: 'Historical',
+      transport: 'stdio',
+      command: 'npx',
+      args: [historicalArgument],
+      enabled: true,
+      trustedAt: Date.now()
+    })
+
+    await expect(
+      service.updateCustomServer({
+        id: 'historical-oversized',
+        displayName: 'Historical renamed',
+        transport: 'stdio',
+        command: 'npx',
+        args: [historicalArgument]
+      })
+    ).resolves.toMatchObject({
+      customServers: [expect.objectContaining({ displayName: 'Historical renamed' })]
+    })
+  })
+
+  it('clears inactive credential maps when the custom-server transport changes', async () => {
+    const added = await addCustomServer({
+      name: 'transport-secret-cleanup',
+      transport: 'stdio',
+      command: 'python3',
+      env: { API_TOKEN: 'stdio-secret' }
+    })
+    const id = added.customServers[0].id
+
+    await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      headers: { Authorization: 'Bearer remote-secret' }
+    })
+    let stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.envRefs).toBeUndefined()
+    expect(stored?.env).toBeUndefined()
+    expect(stored?.headerRefs).toBeDefined()
+
+    await service.updateCustomServer({
+      id,
+      transport: 'stdio',
+      command: 'python3',
+      args: ['-u', 'server.py'],
+      env: { API_TOKEN: 'next-stdio-secret' }
+    })
+    stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.headerRefs).toBeUndefined()
+    expect(stored?.headers).toBeUndefined()
+    expect(stored?.envRefs).toBeDefined()
   })
 
   it('retains a deletion journal and reserves its ID when permission pruning fails', async () => {
@@ -505,7 +886,7 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers[0]).toMatchObject({
       name: 'chemistry',
       displayName: 'Chemistry!',
-      enabled: false,
+      enabled: true,
       availability: 'unavailable'
     })
   })
@@ -530,9 +911,81 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers).toHaveLength(2)
     expect(snapshot.customServers).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ enabled: false, availability: 'unavailable' }),
-        expect.objectContaining({ enabled: false, availability: 'unavailable' })
+        expect.objectContaining({ enabled: true, availability: 'unavailable' }),
+        expect.objectContaining({ enabled: true, availability: 'unavailable' })
       ])
+    )
+  })
+
+  it('keeps persisted identity conflicts visible but unavailable', async () => {
+    const baseline = await repository.getSettings()
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        ...baseline,
+        connectors: {
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'duplicate-id',
+              name: 'duplicate-one',
+              displayName: 'Duplicate one',
+              transport: 'stdio',
+              command: 'first-command',
+              enabled: true
+            },
+            {
+              id: 'duplicate-id',
+              name: 'duplicate-two',
+              displayName: 'Duplicate two',
+              transport: 'stdio',
+              command: 'second-command',
+              enabled: true
+            },
+            {
+              id: 'chemistry',
+              name: 'built-in-id-collision',
+              displayName: 'Built-in ID collision',
+              transport: 'stdio',
+              command: 'third-command',
+              enabled: true
+            },
+            {
+              id: 'cross-id',
+              name: 'cross-name',
+              displayName: 'Cross one',
+              transport: 'stdio',
+              command: 'fourth-command',
+              enabled: true
+            },
+            {
+              id: 'cross-name',
+              name: 'cross-other',
+              displayName: 'Cross two',
+              transport: 'stdio',
+              command: 'fifth-command',
+              enabled: true
+            },
+            {
+              id: 'Invalid ID',
+              name: 'invalid-id-format',
+              displayName: 'Invalid ID format',
+              transport: 'stdio',
+              command: 'sixth-command',
+              enabled: true
+            }
+          ]
+        }
+      })
+    )
+    service = new ConnectorSettingsModule(new SettingsRepository(dir))
+
+    const snapshot = await service.listConnectors()
+
+    expect(snapshot.customServers).toHaveLength(6)
+    expect(snapshot.customServers.every((server) => server.availability === 'unavailable')).toBe(
+      true
     )
   })
 
@@ -573,6 +1026,19 @@ describe('ConnectorSettingsModule', () => {
     })
   })
 
+  it('rejects credentials over non-loopback HTTP before persistence', async () => {
+    await expect(
+      addCustomServer({
+        name: 'remote-http-credentials',
+        transport: 'streamable_http',
+        url: 'http://example.com/mcp',
+        headers: { Authorization: 'Bearer secret' }
+      })
+    ).rejects.toThrow(/HTTPS|loopback/)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
   it('stores OAuth configuration publicly and OAuth state encrypted', async () => {
     const snapshot = await addCustomServer({
       name: 'oauth-x',
@@ -610,6 +1076,119 @@ describe('ConnectorSettingsModule', () => {
 
     const enabled = await service.setCustomServerEnabled({ id, enabled: true })
     expect(enabled.customServers[0].enabled).toBe(true)
+  })
+
+  it('does not let a stale OAuth save replace a concurrent configuration edit', async () => {
+    const added = await addCustomServer({
+      name: 'oauth-config-race',
+      transport: 'streamable_http',
+      url: 'https://old.example/mcp',
+      oauth: { authorizationServerUrl: 'https://old.example/oauth' }
+    })
+    const id = added.customServers[0].id
+    const updateCustomServerOAuthState = repository.updateCustomServerOAuthState.bind(repository)
+    let releaseStaleSave!: () => void
+    const staleSaveReleased = new Promise<void>((resolve) => {
+      releaseStaleSave = resolve
+    })
+    let markStaleSaveStarted!: () => void
+    const staleSaveStarted = new Promise<void>((resolve) => {
+      markStaleSaveStarted = resolve
+    })
+    let intercepted = false
+    vi.spyOn(repository, 'updateCustomServerOAuthState').mockImplementation(
+      async (serverId, expectedFingerprint, expectedClientSecretRef, oauthRef) => {
+        if (!intercepted && oauthRef) {
+          intercepted = true
+          markStaleSaveStarted()
+          await staleSaveReleased
+        }
+        return updateCustomServerOAuthState(
+          serverId,
+          expectedFingerprint,
+          expectedClientSecretRef,
+          oauthRef
+        )
+      }
+    )
+
+    const staleSave = service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'stale-token', token_type: 'Bearer' }
+    })
+    await staleSaveStarted
+    await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://new.example/mcp',
+      oauth: { authorizationServerUrl: 'https://new.example/oauth' }
+    })
+    releaseStaleSave()
+    await staleSave
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.url).toBe('https://new.example/mcp')
+    expect(stored?.oauth?.authorizationServerUrl).toBe('https://new.example/oauth')
+    expect(stored?.oauthRef).toBeUndefined()
+  })
+
+  it('discards a stale OAuth save when only the client secret changed', async () => {
+    const added = await addCustomServer({
+      name: 'oauth-client-secret-race',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        clientSecret: 'old-client-secret'
+      }
+    })
+    const id = added.customServers[0].id
+    const updateCustomServerOAuthState = repository.updateCustomServerOAuthState.bind(repository)
+    let releaseStaleSave!: () => void
+    const staleSaveReleased = new Promise<void>((resolve) => {
+      releaseStaleSave = resolve
+    })
+    let markStaleSaveStarted!: () => void
+    const staleSaveStarted = new Promise<void>((resolve) => {
+      markStaleSaveStarted = resolve
+    })
+    vi.spyOn(repository, 'updateCustomServerOAuthState').mockImplementation(
+      async (serverId, expectedFingerprint, expectedClientSecretRef, oauthRef) => {
+        if (oauthRef) {
+          markStaleSaveStarted()
+          await staleSaveReleased
+        }
+        return updateCustomServerOAuthState(
+          serverId,
+          expectedFingerprint,
+          expectedClientSecretRef,
+          oauthRef
+        )
+      }
+    )
+
+    const staleSave = service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'stale-token', token_type: 'Bearer' }
+    })
+    await staleSaveStarted
+    await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        clientSecret: 'new-client-secret'
+      }
+    })
+    releaseStaleSave()
+    await staleSave
+
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.oauthRef).toBeUndefined()
+    expect((await service.getConnectors())?.customMcpServers?.[0].oauthClientSecret).toBe(
+      'new-client-secret'
+    )
   })
 
   it('stores a pre-registered client secret as an encrypted ref and applies explicit edit semantics', async () => {
@@ -834,6 +1413,157 @@ describe('ConnectorSettingsModule', () => {
     expect(stored?.headerRefs).toBeUndefined()
   })
 
+  it('rejects credential-bearing arguments when adding a custom server', async () => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-arguments',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args: ['--token=plaintext-secret']
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it('rejects a credential-bearing header argument when adding a custom server', async () => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-header-argument',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args: ['--header', 'Authorization: Bearer plaintext-secret']
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it('rejects a credential-bearing custom header argument when adding a custom server', async () => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-custom-header-argument',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args: ['--header', 'X-API-Token: plaintext-secret']
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it.each([
+    [
+      'client metadata URL',
+      { clientMetadataUrl: 'https://oauth-user:oauth-secret@client.example.test/metadata' }
+    ],
+    [
+      'authorization server URL',
+      { authorizationServerUrl: 'https://auth.example.test?api_key=oauth-secret' }
+    ],
+    [
+      'redirect URI',
+      {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client',
+        redirectUri: 'http://127.0.0.1/callback?access_token=oauth-secret'
+      }
+    ]
+  ])('rejects credentials embedded in an OAuth %s', async (_description, oauth) => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-oauth-url',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test',
+        oauth
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it('rejects a credential-bearing header argument after renderer whitespace tokenization', async () => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-tokenized-header-argument',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args: ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it.each([
+    ['split credential flag', ['--auth-token', 'plaintext-secret']],
+    ['split curl user credentials', ['--user', 'researcher:plaintext-secret']],
+    ['inline curl user credentials', ['--user=researcher:plaintext-secret']],
+    ['short curl user credentials', ['-uresearcher:plaintext-secret']],
+    [
+      'credential-bearing URL argument',
+      ['--endpoint', 'https://mcp.example.test?auth_token=plaintext-secret']
+    ]
+  ])('rejects a %s when adding a custom server', async (_description, args) => {
+    await expect(
+      addCustomServer({
+        name: 'unsafe-argument-form',
+        transport: 'stdio',
+        command: 'example-mcp',
+        args
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers ?? []).toEqual([])
+  })
+
+  it.each([
+    'https://user:plaintext-secret@mcp.example.test',
+    'https://mcp.example.test?api_key=plaintext-secret',
+    'https://mcp.example.test?auth_token=plaintext-secret'
+  ])('rejects a credential-bearing URL when updating a custom server', async (url) => {
+    const added = await addCustomServer({
+      name: 'unsafe-url-update',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test'
+    })
+
+    await expect(
+      service.updateCustomServer({
+        id: added.customServers[0].id,
+        transport: 'streamable_http',
+        url
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect((await repository.getSettings()).connectors?.customMcpServers?.[0]?.url).toBe(
+      'https://mcp.example.test'
+    )
+  })
+
+  it('rejects a credential-bearing OAuth URL when updating a custom server', async () => {
+    const added = await addCustomServer({
+      name: 'unsafe-oauth-url-update',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { authorizationServerUrl: 'https://auth.example.test' }
+    })
+
+    await expect(
+      service.updateCustomServer({
+        id: added.customServers[0].id,
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test',
+        oauth: { authorizationServerUrl: 'https://auth.example.test?api_key=oauth-secret' }
+      })
+    ).rejects.toThrow(/encrypted environment or header fields/i)
+
+    expect(
+      (await repository.getSettings()).connectors?.customMcpServers?.[0]?.oauth
+        ?.authorizationServerUrl
+    ).toBe('https://auth.example.test')
+  })
+
   it('rejects an invalid custom server (stdio without a command)', async () => {
     await expect(addCustomServer({ name: 'bad', transport: 'stdio' })).rejects.toThrow(
       /Invalid custom connector/
@@ -852,6 +1582,101 @@ describe('ConnectorSettingsModule', () => {
     expect(storedJson).not.toContain('super-secret')
     expect(storedJson).toContain('envRefs')
     expect(storedJson).toContain('enc:')
+  })
+
+  it('redacts credential-bearing fields from historical custom-server views', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-args-secret',
+      name: 'legacy-args-secret',
+      displayName: 'Legacy args secret',
+      transport: 'stdio',
+      command: 'example-mcp',
+      args: ['--token=legacy-plaintext-secret'],
+      enabled: true
+    })
+    await repository.addCustomServer({
+      id: 'legacy-url-secret',
+      name: 'legacy-url-secret',
+      displayName: 'Legacy URL secret',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test?api_key=legacy-plaintext-secret',
+      enabled: true
+    })
+
+    const snapshot = await service.listConnectors()
+    expect(snapshot.customServers).toEqual([
+      expect.objectContaining({
+        name: 'legacy-args-secret',
+        args: undefined,
+        enabled: true,
+        availability: 'credential_unavailable'
+      }),
+      expect.objectContaining({
+        name: 'legacy-url-secret',
+        url: undefined,
+        enabled: true,
+        availability: 'credential_unavailable'
+      })
+    ])
+    expect(JSON.stringify(snapshot)).not.toContain('legacy-plaintext-secret')
+
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).toContain('legacy-plaintext-secret')
+  })
+
+  it('redacts credential-bearing OAuth URLs from historical custom-server views', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-oauth-url-secret',
+      name: 'legacy-oauth-url-secret',
+      displayName: 'Legacy OAuth URL secret',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        clientMetadataUrl: 'https://oauth-user:client-secret@client.example.test/metadata',
+        authorizationServerUrl: 'https://auth.example.test?api_key=issuer-secret',
+        clientId: 'registered-client',
+        redirectUri: 'http://127.0.0.1/callback?access_token=redirect-secret'
+      },
+      enabled: true
+    })
+
+    const [server] = (await service.listConnectors()).customServers
+    expect(server).toMatchObject({
+      name: 'legacy-oauth-url-secret',
+      enabled: true,
+      availability: 'credential_unavailable'
+    })
+    expect(server.oauth).not.toHaveProperty('clientMetadataUrl')
+    expect(server.oauth).not.toHaveProperty('authorizationServerUrl')
+    expect(server.oauth).not.toHaveProperty('redirectUri')
+    expect(JSON.stringify(server)).not.toMatch(/client-secret|issuer-secret|redirect-secret/)
+
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).toMatch(/client-secret|issuer-secret|redirect-secret/)
+  })
+
+  it('redacts curl-style user credentials from historical custom-server views', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-user-credentials',
+      name: 'legacy-user-credentials',
+      displayName: 'Legacy user credentials',
+      transport: 'stdio',
+      command: 'example-mcp',
+      args: ['--user', 'legacy-user:legacy-password'],
+      enabled: true
+    })
+
+    const [server] = (await service.listConnectors()).customServers
+    expect(server).toMatchObject({
+      name: 'legacy-user-credentials',
+      args: undefined,
+      enabled: true,
+      availability: 'credential_unavailable'
+    })
+    expect(JSON.stringify(server)).not.toContain('legacy-password')
+
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).toContain('legacy-password')
   })
 
   it('migrates legacy plaintext custom-server secrets when secure storage is available', async () => {

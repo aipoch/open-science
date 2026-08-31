@@ -14,9 +14,11 @@ import type {
   ClaudeInstallSource,
   NpmAvailability
 } from '../../shared/settings'
+import { terminateProcessTree } from '../process-tree'
 import { augmentedPathEnv } from './shell-path'
 
 const execFileAsync = promisify(execFile)
+const INSTALL_CLEANUP_TIMEOUT_MS = 8_000
 
 // Constructs and runs the one-click claude installer for a chosen source, streaming output back so
 // the UI can show live progress and never spin silently. Command construction is pure and testable;
@@ -365,6 +367,7 @@ const runInstall = async ({
 
     let settled = false
     let timedOut = false
+    let cleanupTimer: ReturnType<typeof setTimeout> | undefined
     // Bounded tail of stdout+stderr, scanned on failure to spot a region-block HTML page.
     let captured = ''
 
@@ -378,6 +381,7 @@ const runInstall = async ({
 
       settled = true
       clearTimeout(timer)
+      if (cleanupTimer !== undefined) clearTimeout(cleanupTimer)
       publisher.flush()
       resolve(result)
     }
@@ -385,7 +389,17 @@ const runInstall = async ({
     const timer = setTimeout(() => {
       timedOut = true
       publisher.log('system', 'Install timed out; terminating.\n')
-      child.kill()
+      const cleanupDeadline = new Promise<void>((resolve) => {
+        cleanupTimer = setTimeout(resolve, INSTALL_CLEANUP_TIMEOUT_MS)
+        cleanupTimer.unref?.()
+      })
+      void Promise.race([
+        terminateProcessTree(child).then(
+          () => undefined,
+          () => undefined
+        ),
+        cleanupDeadline
+      ]).then(() => settle({ installId, ok: false, timedOut: true }))
     }, timeoutMs)
 
     child.stdout.on('data', (data: Buffer) => {
@@ -401,25 +415,25 @@ const runInstall = async ({
     })
 
     child.on('error', (error) => {
+      if (timedOut) return
       settle({ installId, ok: false, error: error.message })
     })
 
     child.on('exit', (code) => {
-      const ok = !timedOut && code === 0
+      if (timedOut) return
+      const ok = code === 0
 
       settle({
         installId,
         ok,
         exitCode: code ?? undefined,
-        timedOut: timedOut || undefined,
         // Only the official script can be served the region-block page; flag it so callers can retry
         // with npm instead of surfacing a cryptic `syntax error near '<'`.
         regionBlocked:
           !ok && source === 'official-script' && isRegionBlockedOutput(captured) ? true : undefined,
         // A non-zero exit that looks like a transient network fault; the caller retries the same
         // source. A timeout is not a clean network signature, so it is not treated as retryable here.
-        retryableNetworkFailure:
-          !ok && !timedOut && isRetryableInstallFailure(captured) ? true : undefined
+        retryableNetworkFailure: !ok && isRetryableInstallFailure(captured) ? true : undefined
       })
     })
   })

@@ -4,6 +4,14 @@ import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { extname, join } from 'node:path'
 
+import type { LogFileStatus, LogWriteFailureCategory } from '../shared/logs'
+import {
+  REDACTED_MARKER,
+  diagnosticKeyWords,
+  isSensitiveDiagnosticKey,
+  redactSensitiveText
+} from './diagnostic-redaction'
+
 // Lightweight structured file logger for the main process. Kept free of Electron imports so it stays
 // unit-testable and usable from the MCP-server entry modes; the caller resolves the log directory
 // (e.g. Electron's `app.getPath('logs')`) and passes it to `initLogger`. Every record is one JSON line
@@ -38,6 +46,8 @@ let config: LoggerConfig | undefined
 let writeChain: Promise<void> = Promise.resolve()
 // Running size of the live file; undefined until seeded from disk on the first write after init.
 let currentBytes: number | undefined
+let lastWriteSucceeded: boolean | null = null
+let lastFailureCategory: LogWriteFailureCategory | null = null
 const diagnosticCorrelation = new AsyncLocalStorage<string>()
 
 const runWithDiagnosticCorrelation = <Result>(operation: () => Result): Result => {
@@ -93,7 +103,6 @@ const MAX_TOTAL_NODES = 10000
 const MAX_TOTAL_CHARS = 256 * 1024
 
 // One mandatory policy for every logger sink. Callers may still pre-sanitize, but cannot opt out here.
-const REDACTED_MARKER = '[redacted]'
 const OVERSIZED_TEXT_MARKER = '[redacted: oversized text]'
 const CONTENT_BEARING_KEYS = new Set([
   'body',
@@ -103,42 +112,6 @@ const CONTENT_BEARING_KEYS = new Set([
   'requestpayload',
   'responsebody',
   'responsepayload'
-])
-const SENSITIVE_KEY_WORDS = new Set([
-  'auth',
-  'authentication',
-  'authorization',
-  'authorizations',
-  'bearer',
-  'cookie',
-  'cookies',
-  'credential',
-  'credentials',
-  'password',
-  'passwords',
-  'passphrase',
-  'passphrases',
-  'passwd',
-  'pat',
-  'pats',
-  'secret',
-  'secrets',
-  'token',
-  'tokens'
-])
-const TOKEN_METRIC_WORDS = new Set([
-  'budget',
-  'cached',
-  'count',
-  'counts',
-  'input',
-  'limit',
-  'max',
-  'output',
-  'reasoning',
-  'remaining',
-  'total',
-  'usage'
 ])
 
 // Mutable budget shared across one errorLogFields call: `nodes` bounds how many values are emitted,
@@ -152,107 +125,21 @@ const truncate = (value: string): string =>
     ? value
     : `${value.slice(0, MAX_STRING_LENGTH)}…[+${value.length - MAX_STRING_LENGTH} chars]`
 
-const logKeyWords = (key: string): string[] =>
-  key
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean)
-
-const isTokenMetricKey = (words: string[]): boolean =>
-  words.some((word) => word === 'token' || word === 'tokens') &&
-  words.some((word) => TOKEN_METRIC_WORDS.has(word)) &&
-  words.every((word) => word === 'token' || word === 'tokens' || TOKEN_METRIC_WORDS.has(word))
-
-const isSensitiveLogKey = (key: string): boolean => {
-  const words = logKeyWords(key)
-  const normalized = words.join('')
-
-  if (isTokenMetricKey(words)) return false
-  if (words.some((word) => SENSITIVE_KEY_WORDS.has(word))) return true
-
-  return [
-    'accesstoken',
-    'apikey',
-    'apikeys',
-    'authtoken',
-    'bearertoken',
-    'clientsecret',
-    'clientsecrets',
-    'privatekey',
-    'privatekeys',
-    'refreshtoken',
-    'secretaccesskey',
-    'securitytoken',
-    'sessiontoken',
-    'xapikey'
-  ].some((suffix) => normalized.endsWith(suffix))
-}
-
 const isContentBearingLogKey = (key: string): boolean =>
-  CONTENT_BEARING_KEYS.has(logKeyWords(key).join(''))
-
-const redactUrlCredentials = (rawUrl: string): string => {
-  try {
-    const url = new URL(rawUrl)
-    let changed = false
-
-    if (url.username || url.password) {
-      url.username = REDACTED_MARKER
-      url.password = ''
-      changed = true
-    }
-    for (const key of [...url.searchParams.keys()]) {
-      if (!isSensitiveLogKey(key) && key.toLowerCase() !== 'key') continue
-      url.searchParams.set(key, REDACTED_MARKER)
-      changed = true
-    }
-    if (url.hash) {
-      url.hash = ''
-      changed = true
-    }
-
-    return changed ? url.toString().replaceAll('%5Bredacted%5D', REDACTED_MARKER) : rawUrl
-  } catch {
-    return REDACTED_MARKER
-  }
-}
+  CONTENT_BEARING_KEYS.has(diagnosticKeyWords(key).join(''))
 
 const redactLogText = (value: string): string => {
   if (value.length > MAX_STRING_LENGTH) return OVERSIZED_TEXT_MARKER
-
-  return value
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, redactUrlCredentials)
-    .replace(
-      /\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b(\s*["']?\s*:\s*["']?)[^"'\r\n}]*/gi,
-      `$1$2${REDACTED_MARKER}`
-    )
-    .replace(
-      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
-      `$1$2${REDACTED_MARKER}`
-    )
-    .replace(
-      /\b([a-z][a-z0-9_-]*)(\s*=\s*)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
-      (match, key: string, separator: string) =>
-        isSensitiveLogKey(key) ? `${key}${separator}${REDACTED_MARKER}` : match
-    )
-    .replace(
-      /(--?(?:access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+/gi,
-      `$1$2${REDACTED_MARKER}`
-    )
-    .replace(/\bBearer\s+[^\s"']+/gi, `Bearer ${REDACTED_MARKER}`)
-    .replace(/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g, REDACTED_MARKER)
-    .replace(
-      /\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|sk-[A-Za-z0-9_-]{8,})\b/g,
-      REDACTED_MARKER
-    )
+  return redactSensitiveText(value)
 }
 
 const stringifyLogRecord = (record: Record<string, unknown>): string =>
   // JSON's replacer recursively covers every serializable descendant and prunes sensitive subtrees
   // before they can reach the file or the console mirror.
   JSON.stringify(record, (key, value: unknown) => {
-    if (key && (isSensitiveLogKey(key) || isContentBearingLogKey(key))) return REDACTED_MARKER
+    if (key && (isSensitiveDiagnosticKey(key) || isContentBearingLogKey(key))) {
+      return REDACTED_MARKER
+    }
     const serializable = toSerializable(value)
     return typeof serializable === 'string' ? redactLogText(serializable) : serializable
   })
@@ -743,24 +630,30 @@ const rotatedName = (fileName: string, index: number): string => {
   return `${base}.${index}${ext}`
 }
 
+const isMissingFileError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
+
 const fileSize = async (path: string): Promise<number> => {
   try {
     return (await stat(path)).size
-  } catch {
-    return 0
+  } catch (error) {
+    if (isMissingFileError(error)) return 0
+    throw error
   }
 }
 
 // Shifts the live file into backups, dropping any beyond `maxFiles`. Best-effort: a missing file at
 // any step is ignored so logging never fails because of rotation.
-const rotate = async (logDir: string, fileName: string, maxFiles: number): Promise<void> => {
+const rotate = async (logDir: string, fileName: string, maxFiles: number): Promise<boolean> => {
   const path = (name: string): string => join(logDir, name)
   const backups = Math.max(0, maxFiles - 1)
 
   if (backups === 0) {
     // No backups kept: just drop the live file so a fresh one starts.
-    await rm(path(fileName), { force: true }).catch(() => undefined)
-    return
+    return rm(path(fileName), { force: true }).then(
+      () => true,
+      () => false
+    )
   }
 
   // Delete the oldest backup, then shift each backup up one slot, then the live file becomes .1.
@@ -772,7 +665,10 @@ const rotate = async (logDir: string, fileName: string, maxFiles: number): Promi
     )
   }
 
-  await rename(path(fileName), path(rotatedName(fileName, 1))).catch(() => undefined)
+  return rename(path(fileName), path(rotatedName(fileName, 1))).then(
+    () => true,
+    () => false
+  )
 }
 
 const appendLine = (line: string): void => {
@@ -782,12 +678,14 @@ const appendLine = (line: string): void => {
 
   writeChain = writeChain.then(
     async () => {
+      let failureCategory: LogWriteFailureCategory = 'directory'
       try {
         await mkdir(logDir, { recursive: true })
 
         const filePath = join(logDir, fileName)
 
         if (currentBytes === undefined) {
+          failureCategory = 'inspect'
           currentBytes = await fileSize(filePath)
         }
 
@@ -795,13 +693,33 @@ const appendLine = (line: string): void => {
 
         // Rotate before writing when the next line would exceed the cap (but never rotate an empty file).
         if (currentBytes > 0 && currentBytes + lineBytes > maxBytes) {
-          await rotate(logDir, fileName, maxFiles)
-          currentBytes = 0
+          failureCategory = 'rotation'
+          const rotated = await rotate(logDir, fileName, maxFiles)
+          if (rotated) {
+            currentBytes = 0
+          } else {
+            // The live file may still have changed despite the failed operation (for example, another
+            // process removed it). Re-read the real size, and drop this line if it remains over cap.
+            currentBytes = await fileSize(filePath)
+            if (currentBytes > 0 && currentBytes + lineBytes > maxBytes) {
+              lastWriteSucceeded = false
+              lastFailureCategory = 'rotation'
+              return
+            }
+          }
         }
 
+        failureCategory = 'append'
         await appendFile(filePath, `${line}\n`, 'utf8')
         currentBytes += lineBytes
+        lastWriteSucceeded = true
+        lastFailureCategory = null
       } catch {
+        // An append can fail after a partial filesystem write. Re-seed from disk before the next
+        // attempt so the bounded-size decision never relies on a possibly stale byte count.
+        currentBytes = undefined
+        lastWriteSucceeded = false
+        lastFailureCategory = failureCategory
         // Logging must never throw or reject into the app; a failed write is silently dropped.
       }
     },
@@ -821,11 +739,48 @@ const initLogger = (options: { logDir: string } & Partial<Omit<LoggerConfig, 'lo
     ...options
   }
   currentBytes = undefined
+  lastWriteSucceeded = null
+  lastFailureCategory = null
 }
 
-// Absolute path of the active log file, or undefined before init. Used to reveal logs from the UI.
+// Absolute path of the configured log file, or undefined before init.
 const getLogFilePath = (): string | undefined =>
   config ? join(config.logDir, config.fileName) : undefined
+
+const getLogFileStatus = async (): Promise<LogFileStatus> => {
+  const activeConfig = config
+  if (!activeConfig) {
+    return {
+      configured: false,
+      path: null,
+      existing: false,
+      lastWriteSucceeded,
+      lastFailureCategory
+    }
+  }
+
+  await writeChain
+  const path = join(activeConfig.logDir, activeConfig.fileName)
+
+  try {
+    await stat(path)
+    return {
+      configured: true,
+      path,
+      existing: true,
+      lastWriteSucceeded,
+      lastFailureCategory
+    }
+  } catch (error) {
+    return {
+      configured: true,
+      path,
+      existing: false,
+      lastWriteSucceeded,
+      lastFailureCategory: isMissingFileError(error) ? lastFailureCategory : 'inspect'
+    }
+  }
+}
 
 // Resolves once all queued writes have flushed. Useful for tests and orderly shutdown.
 const flushLogs = (): Promise<void> => writeChain
@@ -904,6 +859,7 @@ export {
   flushLogs,
   formatLine,
   getLogFilePath,
+  getLogFileStatus,
   initLogger,
   runWithDiagnosticCorrelation,
   writeFatalLogSync

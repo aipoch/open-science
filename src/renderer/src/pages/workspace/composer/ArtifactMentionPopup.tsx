@@ -11,6 +11,7 @@ import { getExtensionPreservingFileNameParts } from '../extension-preserving-fil
 import { ArtifactFileIcon } from './artifact-file-icon'
 import { fuzzyScore, type FuzzyMatch } from './fuzzy-match'
 import { HighlightedText } from './HighlightedText'
+import { loadAllProjectFiles } from './load-project-files'
 
 // The reference passed back to the composer when an artifact row is picked.
 export type PickedArtifact = {
@@ -43,30 +44,6 @@ type ArtifactRow = PickedArtifact & {
 // Catalog keys for the section headers, ordered as they render.
 const SECTION_UPLOADS_KEY = 'User uploads'
 const SECTION_ARTIFACTS_KEY = 'Other artifacts'
-const PROJECT_FILE_PAGE_SIZE = 100
-
-const loadProjectFiles = async (projectId: string): Promise<ProjectFileItem[]> => {
-  const files: ProjectFileItem[] = []
-  const seenCursors = new Set<string>()
-  let cursor: string | undefined
-
-  do {
-    const page = await window.api.projectFiles.listFiles({
-      projectId,
-      collection: { kind: 'all' },
-      limit: PROJECT_FILE_PAGE_SIZE,
-      ...(cursor ? { cursor } : {})
-    })
-    files.push(...page.items)
-    cursor = page.nextCursor
-    if (cursor && seenCursors.has(cursor)) {
-      throw new Error('Project Files returned a repeated file cursor.')
-    }
-    if (cursor) seenCursors.add(cursor)
-  } while (cursor)
-
-  return files
-}
 
 export const ArtifactMentionPopup = ({
   query,
@@ -89,7 +66,7 @@ export const ArtifactMentionPopup = ({
     let cancelled = false
     if (!activeProjectId) return
 
-    void loadProjectFiles(activeProjectId)
+    void loadAllProjectFiles(activeProjectId)
       .then((files) => {
         if (!cancelled) setProjectFiles({ projectId: activeProjectId, files, state: 'loaded' })
       })

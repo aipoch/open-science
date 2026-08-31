@@ -7,7 +7,8 @@ import { PlanJsonPreview } from './renderers/PlanJsonPreview'
 import { TiffPreviewRenderer } from './renderers/TiffPreview'
 import { renderPreviewFile } from './preview-registry'
 
-vi.mock('./renderers/PdfPreview', () => ({ PdfPreviewRenderer: () => null }))
+const { PdfPreviewRenderer } = vi.hoisted(() => ({ PdfPreviewRenderer: (): null => null }))
+vi.mock('./renderers/PdfPreview', () => ({ PdfPreviewRenderer }))
 
 const createItem = (format: PreviewFileItem['format']): PreviewFileItem => ({
   id: `file-${format}`,
@@ -40,5 +41,31 @@ describe('preview registry Office routing', () => {
     const rendered = renderPreviewFile({ item: createItem('json') })
 
     expect(rendered?.type).toBe(PlanJsonPreview)
+  })
+
+  it('forwards the PDF reading-position observer to the PDF renderer', () => {
+    const onPdfReadingPositionChange = vi.fn()
+
+    const rendered = renderPreviewFile({
+      item: createItem('pdf'),
+      onPdfReadingPositionChange
+    })
+
+    expect(rendered?.props.onPdfReadingPositionChange).toBe(onPdfReadingPositionChange)
+  })
+
+  it('forwards annotation ports to the PDF renderer', () => {
+    const activeAnnotations = []
+    const onAddAnnotation = vi.fn()
+
+    const rendered = renderPreviewFile({
+      item: createItem('pdf'),
+      activeAnnotations,
+      onAddAnnotation
+    })
+
+    expect(rendered?.type).toBe(PdfPreviewRenderer)
+    expect(rendered?.props.activeAnnotations).toBe(activeAnnotations)
+    expect(rendered?.props.onAddAnnotation).toBe(onAddAnnotation)
   })
 })

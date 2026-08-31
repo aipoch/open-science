@@ -2,7 +2,7 @@ import type { ArtifactFile } from '../../shared/artifacts'
 import type { AcpAgentRuntimeUpdate, AcpPermissionScope } from '../../shared/acp'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { ReviewWithChecks } from '../../shared/reviewer'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
 import type { JsonSchema } from './structured-output'
 import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
@@ -36,10 +36,7 @@ type DurableDelegateRequest = Readonly<{
 }>
 
 type SpecialistDelegationProfile = Readonly<
-  Pick<
-    SpecialistProfileView,
-    'id' | 'name' | 'displayName' | 'enabled' | 'setupPending' | 'revision'
-  >
+  Pick<SpecialistView, 'id' | 'name' | 'displayName' | 'enabled' | 'setupPending' | 'revision'>
 >
 
 type ParentMessageDelivery = Readonly<{

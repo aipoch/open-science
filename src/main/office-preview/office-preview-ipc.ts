@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
+import { createLogger, diagnosticErrorFields } from '../logger'
 
 import type { OfficePreviewOpenRequest } from '../../shared/office-preview'
 import {
@@ -12,6 +13,8 @@ import {
 } from '../../shared/office-preview'
 import type { OfficePreviewSupervisor } from './office-preview-supervisor'
 import { OfficePreviewOpenSupersededError } from './office-preview-supervisor'
+
+const log = createLogger('office-preview:ipc')
 
 type OfficePreviewSupervisorPort = Pick<
   OfficePreviewSupervisor,
@@ -61,7 +64,7 @@ const registerOfficePreviewIpcHandlers = (supervisor: OfficePreviewSupervisorPor
     try {
       supervisor.reportState(event.sender.id, sessionId, state)
     } catch (error) {
-      console.error('Failed to report Office preview runtime state', error)
+      log.error('failed to report runtime state', diagnosticErrorFields(error))
     }
   })
 

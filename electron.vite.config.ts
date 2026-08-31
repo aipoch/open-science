@@ -44,7 +44,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
-          'office-preview': resolve('src/renderer/office-preview.html')
+          'office-preview': resolve('src/renderer/office-preview.html'),
+          'reviewer-paged-preview': resolve('src/renderer/reviewer-paged-preview.html')
         }
       }
     }

@@ -170,6 +170,7 @@ describe('home dialogs shared chrome', () => {
       agentContextField
     ].forEach((field) => expectDialogFormFieldClassName(field?.props.className))
     expect(descriptionField?.props['aria-describedby']).toBe('project-form-description-help')
+    expect(nameField?.props['aria-required']).toBe(true)
     expect(nameField?.props.maxLength).toBe(200)
     expect(descriptionField?.props.maxLength).toBe(1000)
     expect(descriptionField?.props.placeholder).toBe('Describe what this project is about…')

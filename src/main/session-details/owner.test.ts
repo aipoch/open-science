@@ -486,6 +486,27 @@ describe('SessionDetailsOwner', () => {
     expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({ timeout: true })
   })
 
+  it('records an immediate provider authentication failure without misclassifying it as timeout', async () => {
+    const authenticationFailure = Object.assign(new Error('Unauthorized'), {
+      code: -32603,
+      data: { errorKind: 'authentication_failed' },
+      name: 'RequestError'
+    })
+    const { owner, store, warn } = harness([queuedSession()], {
+      inference: async () => Promise.reject(authenticationFailure),
+      inferenceTimeoutMs: 30_000
+    })
+
+    await owner.start()
+    await waitFor(() => store.current().sessionDetailsGeneration?.status === 'failed')
+
+    expect(store.current().sessionDetailsGeneration).toMatchObject({
+      status: 'failed',
+      usageUnavailable: true
+    })
+    expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({ timeout: false })
+  })
+
   it('normalizes usage and drops an inconsistent cache breakdown', async () => {
     const { owner, store } = harness([queuedSession()], {
       inference: async () => ({

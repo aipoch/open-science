@@ -38,6 +38,7 @@ export type UpdateStatus = {
   // the dialog can render the shared DownloadProgressLine.
   downloadProgress?: import('./download-progress').DownloadProgress
   localPath?: string // set when state === 'ready'
+  // Terminal lifecycle failure, or retryable action feedback while a ready installer remains usable.
   error?: string
   // Active research that prevented an in-place install. This is deliberately not a new UpdateState:
   // the operation still failed, while callers that need automation can distinguish a safe block.
@@ -74,9 +75,12 @@ export const isNewer = (latest: string, current: string): boolean =>
 // Maps the host to its manifest download key. Linux prefers the deb; selectDownload falls back to
 // the AppImage when the deb is absent.
 export const platformDownloadKey = (platform: NodeJS.Platform, arch: string): string | null => {
-  if (platform === 'darwin') return arch === 'arm64' ? 'mac-arm64' : 'mac-x64'
-  if (platform === 'win32') return 'win-x64'
-  if (platform === 'linux') return 'linux-x64-deb'
+  if (platform === 'darwin') {
+    if (arch === 'arm64') return 'mac-arm64'
+    if (arch === 'x64') return 'mac-x64'
+  }
+  if (platform === 'win32' && arch === 'x64') return 'win-x64'
+  if (platform === 'linux' && arch === 'x64') return 'linux-x64-deb'
   return null
 }
 
@@ -87,7 +91,7 @@ export const selectDownload = (
 ): PlatformDownload | null => {
   const key = platformDownloadKey(platform, arch)
   if (key && manifest.downloads[key]) return manifest.downloads[key]
-  if (platform === 'linux' && manifest.downloads['linux-x64-appimage']) {
+  if (platform === 'linux' && arch === 'x64' && manifest.downloads['linux-x64-appimage']) {
     return manifest.downloads['linux-x64-appimage']
   }
   return null

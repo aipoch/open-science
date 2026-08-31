@@ -68,6 +68,30 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0016_compute_job_sensitive_data_encryption',
     checksum: 'b8cf55e358a0a99ad38b412c9e460560c79be4707c0906bc8d90c5c151cf9e3f'
+  },
+  {
+    id: '0017_agent_memory_project_scope',
+    checksum: '0e27d60b24a623fd0b080266be42e4560ad7dd4188c93b081ee94a655c800ba9'
+  },
+  {
+    id: '0018_session_auxiliary_turn_usage',
+    checksum: 'ceb7280f5f87150c99c5807bf88353ed0fa2b589f8c862fc62e4d2a81e2a01fc'
+  },
+  {
+    id: '0019_session_usage_attribution',
+    checksum: 'c505fe7e55e8428d29e8506ad305c04fd46d8def53385a1f7839fba21047ab9d'
+  },
+  {
+    id: '0020_compute_job_analysis_state',
+    checksum: 'b2bc8f9fd195a08a27af0e6ed2c78e0425002341ce1261952014130da1ea1a8d'
+  },
+  {
+    id: '0021_compute_job_analysis_constraints',
+    checksum: 'e842f932594ee6f4e250befc7f2e7966a680f556ca908bea2b61a9c45752f270'
+  },
+  {
+    id: '0022_memory_global_content_unique',
+    checksum: '0f02a6cace6991db4377da8a2f8d52dad221cb2fede595bf11bab90c64737ac8'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

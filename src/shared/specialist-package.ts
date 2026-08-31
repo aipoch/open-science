@@ -220,7 +220,7 @@ export type SpecialistPackageSkillConflictResolution = {
 }
 
 export type SpecialistPackageInstallResult =
-  | { status: 'installed'; specialist: import('./specialist').SpecialistProfileView }
+  | { status: 'installed'; specialist: import('./specialist').SpecialistView }
   | {
       status: 'failed'
       code:

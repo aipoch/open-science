@@ -14,6 +14,43 @@ type RenderOfficeFileOptions = {
   onStatus?: (status: OfficeRenderStatus) => void
 }
 
+type TargetedOfficeRenderSession = {
+  pageCount: number
+  pageCountComplete: boolean
+  availablePages: number[]
+  preparePage(pageNumber: number): Promise<HTMLElement>
+  dispose: OfficeRenderCleanup
+}
+
+type RenderTargetedOfficeFileOptions = Omit<
+  RenderOfficeFileOptions,
+  'extension' | 'name' | 'onStatus'
+> & {
+  extension: 'docx' | 'pptx'
+  targetPages: number[]
+}
+
+const MAX_TARGETED_DOCX_PAGE = 512
+
+const settleTargetImages = async (page: HTMLElement, signal: AbortSignal): Promise<void> => {
+  const images = [...page.querySelectorAll('img')]
+  for (let attempt = 0; images.some((image) => !image.src) && attempt < 120; attempt += 1) {
+    if (signal.aborted)
+      throw signal.reason ?? new DOMException('Office preview aborted', 'AbortError')
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  }
+  await Promise.all(
+    images.map(async (image) => {
+      if (!image.src || typeof image.decode !== 'function') return
+      try {
+        await image.decode()
+      } catch {
+        // A broken embedded image stays visible as the renderer's native broken-image state.
+      }
+    })
+  )
+}
+
 const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
   if (
     bytes.buffer instanceof ArrayBuffer &&
@@ -789,10 +826,174 @@ export const renderOfficeFile = async ({
   return destroyViewer
 }
 
+// Reviewer previews use this target-driven path so Office renderers never mount an entire
+// document merely to capture a few admitted pages. DOCX pagination is necessarily sequential,
+// but non-target pages are detached as soon as the next physical page starts and layout stops
+// before the page following the highest target. PPTX parsing remains lazy and only renderSlide()
+// materializes an admitted slide.
+export const renderTargetedOfficeFile = async ({
+  bytes,
+  extension,
+  container,
+  signal,
+  targetPages
+}: RenderTargetedOfficeFileOptions): Promise<TargetedOfficeRenderSession> => {
+  const targets = [...new Set(targetPages)].sort((left, right) => left - right)
+  if (
+    targets.length === 0 ||
+    targets.some((page) => !Number.isSafeInteger(page) || page < 1) ||
+    (extension === 'docx' && targets.at(-1)! > MAX_TARGETED_DOCX_PAGE)
+  ) {
+    throw new Error('Office preview targets exceed the bounded page range.')
+  }
+  const targetSet = new Set(targets)
+  const assertActive = (): void => {
+    if (signal.aborted) {
+      throw signal.reason ?? new DOMException('Office preview aborted', 'AbortError')
+    }
+  }
+  assertActive()
+
+  if (extension === 'pptx') {
+    const { PptxViewer, RECOMMENDED_ZIP_LIMITS, buildPresentation, parseZipLazyMedia } =
+      await import('@aiden0z/pptx-renderer')
+    assertActive()
+    const files = await parseZipLazyMedia(toArrayBuffer(bytes), RECOMMENDED_ZIP_LIMITS)
+    assertActive()
+    const presentation = buildPresentation(files, { lazySlides: true })
+    const viewer = new PptxViewer(container, {
+      width: container.clientWidth || PPTX_FALLBACK_WIDTH,
+      zipLimits: RECOMMENDED_ZIP_LIMITS,
+      lazySlides: true,
+      lazyMedia: true,
+      scrollContainer: container,
+      pdfjs: false
+    })
+    viewer.load(presentation)
+    let disposed = false
+    return {
+      pageCount: viewer.slideCount,
+      pageCountComplete: true,
+      availablePages: targets.filter((page) => page <= viewer.slideCount),
+      preparePage: async (pageNumber) => {
+        assertActive()
+        if (!targetSet.has(pageNumber) || pageNumber > viewer.slideCount) {
+          throw new Error(`Slide ${pageNumber} was not admitted for this Office preview.`)
+        }
+        await viewer.renderSlide(pageNumber - 1)
+        assertActive()
+        const item = container.querySelector<HTMLElement>(`[data-slide-index="${pageNumber - 1}"]`)
+        const slide = item?.firstElementChild?.firstElementChild
+        if (!(slide instanceof HTMLElement)) {
+          throw new Error(`Rendered presentation does not contain slide ${pageNumber}.`)
+        }
+        return slide
+      },
+      dispose: () => {
+        if (disposed) return
+        disposed = true
+        viewer.destroy()
+        clearContainer(container)
+      }
+    }
+  }
+
+  const { defaultOptions, parseAsync, renderDocument } = await import('docx-preview')
+  const maxTarget = targets.at(-1)!
+  const pages = new Map<number, HTMLElement>()
+  const styles = new Set<HTMLStyleElement>()
+  let pageOrdinal = 0
+  let pageCountComplete = true
+  let previousPage: { number: number; element: HTMLElement } | undefined
+  const stop = new Error('Targeted DOCX page limit reached.')
+  const baseOptions = {
+    breakPages: true,
+    ignoreLastRenderedPageBreak: false,
+    renderAltChunks: false,
+    renderComments: false,
+    useBase64URL: true
+  }
+  const documentModel = await parseAsync(bytes, baseOptions)
+  assertActive()
+  const boundedElementFactory: typeof defaultOptions.h = (descriptor) => {
+    assertActive()
+    if (
+      typeof descriptor === 'object' &&
+      !(descriptor instanceof Node) &&
+      descriptor.tagName === 'section' &&
+      descriptor.className?.split(/\s+/).includes('docx')
+    ) {
+      if (previousPage && !targetSet.has(previousPage.number)) {
+        previousPage.element.replaceChildren()
+      }
+      pageOrdinal += 1
+      if (pageOrdinal > maxTarget) throw stop
+    }
+    const node = defaultOptions.h(descriptor)
+    if (node instanceof HTMLStyleElement) styles.add(node)
+    if (
+      node instanceof HTMLElement &&
+      node.tagName === 'SECTION' &&
+      node.classList.contains('docx')
+    ) {
+      previousPage = { number: pageOrdinal, element: node }
+      if (targetSet.has(pageOrdinal)) pages.set(pageOrdinal, node)
+    }
+    return node
+  }
+
+  try {
+    await renderDocument(documentModel, { ...baseOptions, h: boundedElementFactory })
+  } catch (error) {
+    if (error !== stop) throw error
+    pageCountComplete = false
+  }
+  if (previousPage && !targetSet.has(previousPage.number)) previousPage.element.replaceChildren()
+  assertActive()
+  clearContainer(container)
+  for (const style of styles) {
+    if (!style.parentNode) container.appendChild(style)
+  }
+  const wrapper = container.ownerDocument.createElement('div')
+  wrapper.className = 'docx-wrapper'
+  for (const pageNumber of targets) {
+    const page = pages.get(pageNumber)
+    if (page) wrapper.appendChild(page)
+  }
+  container.appendChild(wrapper)
+  neutralizeDocxLinks(container)
+  const disposeFit = pages.size > 0 ? installDocxFit(container, wrapper) : undefined
+  const blobUrls = collectBlobUrls(container)
+  let disposed = false
+  return {
+    pageCount: Math.min(pageOrdinal, maxTarget),
+    pageCountComplete,
+    availablePages: targets.filter((page) => pages.has(page)),
+    preparePage: async (pageNumber) => {
+      assertActive()
+      const page = targetSet.has(pageNumber) ? pages.get(pageNumber) : undefined
+      if (!page) throw new Error(`Rendered document does not contain page ${pageNumber}.`)
+      await settleTargetImages(page, signal)
+      assertActive()
+      return page
+    },
+    dispose: () => {
+      if (disposed) return
+      disposed = true
+      disposeFit?.()
+      blobUrls.forEach((url) => URL.revokeObjectURL(url))
+      clearContainer(container)
+      pages.clear()
+    }
+  }
+}
+
 export {
   BoundedBlobUrlCache,
   collectReferencedPptxMediaUrls,
   installPptxMediaUrlCache,
   MAX_PPTX_MEDIA_URLS,
+  MAX_TARGETED_DOCX_PAGE,
   releaseDecodedPptxMedia
 }
+export type { RenderTargetedOfficeFileOptions, TargetedOfficeRenderSession }

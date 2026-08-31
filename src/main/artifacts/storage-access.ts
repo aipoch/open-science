@@ -396,6 +396,7 @@ class ArtifactStorageAccess {
       artifactId: request.metadata?.artifactId,
       versionId: request.metadata?.versionId,
       versionNumber: request.metadata?.versionNumber,
+      checksum: request.metadata?.checksum,
       size: fileStat.size,
       mtimeMs: fileStat.mtimeMs
     }

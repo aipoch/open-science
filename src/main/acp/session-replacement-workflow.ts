@@ -51,12 +51,15 @@ export class AcpSessionReplacementWorkflow {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectId = request.projectId?.trim() || this.deps.defaultProjectId
     const publishedSession = this.deps.registry.lookup(request.sessionId)?.attachment?.session
+    const aggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
+    const previousMemoryEnabled = aggregate?.snapshot().memoryEnabled
     const reserved = this.deps.reserveIdentity(
       request.sessionId,
       publishedSession ? request.sessionId : undefined
     )
     if (reserved.collision) throw reserved.collision
     const identity = reserved.reservation
+    aggregate?.setMemoryEnabled(request.memoryEnabled !== false)
 
     try {
       const connection = await this.deps.ensureConnected(cwd)
@@ -96,8 +99,16 @@ export class AcpSessionReplacementWorkflow {
         projectId,
         identity,
         permissionProfile: request.permissionProfile,
-        specialistId: request.specialistId
+        specialistId: request.specialistId,
+        memoryEnabled: request.memoryEnabled
       })
+    } catch (error) {
+      if (previousMemoryEnabled !== undefined) {
+        this.deps.registry
+          .lookup(request.sessionId)
+          ?.aggregate.setMemoryEnabled(previousMemoryEnabled)
+      }
+      throw error
     } finally {
       identity.release()
     }
@@ -138,7 +149,8 @@ export class AcpSessionReplacementWorkflow {
         projectId: snapshot.projectId,
         ...(snapshot.permissionProfile?.selectedProfile
           ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
-          : {})
+          : {}),
+        memoryEnabled: snapshot.memoryEnabled
       } as AcpResumeSessionRequest)
     }
 

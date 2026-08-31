@@ -90,7 +90,7 @@ export type AgentsReadRequest =
 
 // Placeholder write/switch ops. Their params intentionally mirror design.md §4/§5 and PRD §2/§4
 // (snake_case fields). They are UNVALIDATED beyond shape here on purpose: the real mutation modules
-// (issues 03/04/05) own the domain validation against ProfileService. We only enforce that an
+// (issues 03/04/05) own the domain validation against SpecialistService. We only enforce that an
 // unknown op is rejected and that a recognized op is allowed through, so the dispatcher union is
 // the extension point.
 export type AgentsWriteRequest =

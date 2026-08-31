@@ -18,7 +18,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
-import type { SpecialistListItem, SpecialistProfileView } from '../../../../shared/specialist'
+import type { SpecialistListItem, SpecialistView } from '../../../../shared/specialist'
 
 type RunnableSpecialistItem = Exclude<SpecialistListItem, { kind: 'reviewer' }>
 
@@ -36,7 +36,7 @@ type SpecialistSubmenuProps = {
 // "Unavailable" otherwise. Kept compact so the trigger never wraps. Takes the
 // resolved strings rather than calling t() so it stays a pure helper.
 const capsuleLabel = (
-  selected: SpecialistProfileView | undefined,
+  selected: SpecialistView | undefined,
   unavailable: boolean,
   labels: { none: string; unavailable: string }
 ): string => {

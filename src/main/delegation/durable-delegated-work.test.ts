@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import type { ArtifactFile } from '../../shared/artifacts'
 import type { ReviewWithChecks } from '../../shared/reviewer'
-import { createProfileService } from '../specialist/service'
+import { createSpecialistService } from '../specialist/service'
 import { createDeterministicDelegateExecution } from './deterministic-execution'
 import { DelegateMessagePreAcceptanceError } from './execution-port'
 import {
@@ -2180,7 +2180,7 @@ describe('durable delegated work', () => {
     const work = createDurableDelegatedWork({ execution, records, resolveSpecialist })
 
     const outcome = await work.delegate(
-      { ...caller, parentSpecialistProfileId: 'parent-specialist' },
+      { ...caller, parentSpecialistId: 'parent-specialist' },
       [
         { task: 'Inherited first', name: 'Inherited first' },
         { task: 'Explicit second', name: 'Explicit second', profile: 'explicit-specialist' },
@@ -2244,7 +2244,7 @@ describe('durable delegated work', () => {
 
     await expect(
       work.delegate(
-        { ...caller, parentSpecialistProfileId: 'deleted-parent-specialist' },
+        { ...caller, parentSpecialistId: 'deleted-parent-specialist' },
         [
           { task: 'Inherited child', name: 'Inherited child' },
           { task: 'Explicit child', name: 'Explicit child', profile: 'explicit-specialist' }
@@ -2261,7 +2261,7 @@ describe('durable delegated work', () => {
   it('accepts either a stable Specialist id or its unique exact public name while an omitted profile stays Main', async () => {
     const storage = await mkdtemp(join(tmpdir(), 'delegated-profile-reference-'))
     try {
-      const profiles = createProfileService(storage)
+      const profiles = createSpecialistService(storage)
       const selected = await profiles.create({
         name: 'EVIDENCE_ANALYST',
         displayName: 'Evidence Analyst'
@@ -4228,7 +4228,7 @@ describe('durable delegated work', () => {
     const resolveSpecialist = vi.fn(async () => liveProfile)
     const work = createDurableDelegatedWork({ execution, records, resolveSpecialist })
     const dispatched = await work.delegate(
-      { ...caller, parentSpecialistProfileId: liveProfile.id },
+      { ...caller, parentSpecialistId: liveProfile.id },
       { task: 'Specialist analysis', name: 'Specialist analysis' },
       { wait: false }
     )
@@ -4241,7 +4241,7 @@ describe('durable delegated work', () => {
     await work.sendMessage(
       {
         ...caller,
-        parentSpecialistProfileId: 'different-current-parent',
+        parentSpecialistId: 'different-current-parent',
         toolInvocationId: 'specialist-continuation'
       },
       dispatched.children[0].frameId,

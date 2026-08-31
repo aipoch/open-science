@@ -226,6 +226,13 @@ class HeadlessTaskApi {
     return this.runner.subscribeProgress(listener)
   }
 
+  resolveActiveRun(
+    sessionId: string,
+    promptMessageId?: string
+  ): ReturnType<TaskRunner['resolveActiveRun']> {
+    return this.runner.resolveActiveRun(sessionId, promptMessageId)
+  }
+
   listArtifacts(sessionId: string): Promise<PersistedArtifact[]> {
     return this.runner.listArtifacts(sessionId)
   }

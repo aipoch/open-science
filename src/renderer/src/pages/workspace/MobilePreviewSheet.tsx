@@ -4,12 +4,13 @@ import { useTranslation } from 'react-i18next'
 
 import { PreviewPanelSurface } from './PreviewPanel'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
-import type { PreviewAnnotationPort } from './previews/preview-types'
+import type { PreviewInteractionPort } from './previews/preview-types'
 
-type MobilePreviewSheetProps = PreviewAnnotationPort & {
+type MobilePreviewSheetProps = PreviewInteractionPort & {
   open: boolean
   onClose: () => void
   restoredPlanResponder?: RestoredPlanResponder
+  onPdfContextError?: (message: string | null) => void
 }
 
 // Mobile workbench presentation: generated files, code, and notebooks keep the desktop tab model,
@@ -18,6 +19,7 @@ const MobilePreviewSheet = ({
   open,
   onClose,
   restoredPlanResponder,
+  onPdfContextError,
   ...annotationPort
 }: MobilePreviewSheetProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -52,6 +54,7 @@ const MobilePreviewSheet = ({
             className="min-h-0 flex-1"
             restoredPlanResponder={restoredPlanResponder}
             {...annotationPort}
+            onPdfContextError={onPdfContextError}
           />
         </Dialog.Content>
       </Dialog.Portal>

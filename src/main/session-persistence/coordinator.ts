@@ -134,6 +134,7 @@ type SessionFileIndex = {
     token: ManagedFileSoftDeleteToken
   ): Promise<void>
   softDeleteProject(projectId: string): Promise<ManagedFileSoftDeleteToken>
+  reconcileProjectSessions(projectId: string, sessions: PersistedChatSession[]): Promise<void>
   reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void>
   markReconciliationIncomplete(): void
 }
@@ -932,14 +933,25 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    * deleted-owner event so already loaded renderer pages invalidate in the same operation.
    */
   deleteSession(projectId: string, sessionId: string): Promise<void> {
-    return this.operationScheduler.runSessionThenGlobal(
+    return this.operationScheduler.runSessionThenGlobalIfNeeded(
       projectId,
       sessionId,
       async () => {
         const key = sessionKey(projectId, sessionId)
         this.deletedSessions.add(key)
         try {
-          return await this.deletionOwner.deleteSession(projectId, sessionId)
+          const receiptKind = await this.deletionOwner.deleteSession(projectId, sessionId)
+          if (
+            this.stateOwner.metadataSnapshot().isComplete &&
+            (await this.deletionOwner.reconcileProjectSessionDeletion(
+              projectId,
+              sessionId,
+              receiptKind
+            ))
+          ) {
+            return undefined
+          }
+          return receiptKind
         } catch (error) {
           try {
             const authority = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)

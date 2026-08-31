@@ -35,6 +35,7 @@ type AcpProviderSessionAdoptionRequest = Readonly<{
   permissionProfile?: PermissionProfileId
   specialistId?: string
   specialistBindingPending?: true
+  memoryEnabled?: boolean
 }>
 
 type AcpProviderSessionAdopterDependencies = Readonly<{
@@ -95,7 +96,8 @@ export class AcpProviderSessionAdopter {
         bridgeMcpAliasesEnabled: startupBackend.adapter.bridgeMcpAliasesEnabled,
         policy: this.deps.capabilityPolicy,
         sessionCwd: request.cwd,
-        projectId: request.projectId
+        projectId: request.projectId,
+        memoryEnabled: request.memoryEnabled
       })
       const hasAuthoritativeSpecialistBinding =
         request.specialistBindingPending === true || request.specialistId !== undefined
@@ -182,6 +184,7 @@ export class AcpProviderSessionAdopter {
           frameworkId: backend.framework.id,
           backendId: backend.backendId,
           permissionProfile: structuredClone(configuration.permissionProfile),
+          memoryEnabled: request.memoryEnabled !== false,
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })

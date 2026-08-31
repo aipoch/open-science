@@ -63,7 +63,9 @@ const useAcpRuntime = (): {
     projectId?: string,
     permissionProfile?: PermissionProfileId,
     specialistId?: string,
-    agentTarget?: AcpSessionAgentTarget
+    agentTarget?: AcpSessionAgentTarget,
+    memoryEnabled?: boolean,
+    literatureContext?: true
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -76,14 +78,16 @@ const useAcpRuntime = (): {
     providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
     providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
     specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
-    agentTarget?: AcpSessionAgentTarget
+    agentTarget?: AcpSessionAgentTarget,
+    memoryEnabled?: boolean
   ) => Promise<AcpCreateSessionResponse>
   continueInterruptedTurn: (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateSnapshot>
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],
     cwd: AcpResumeSessionRequest['cwd'],
     projectId?: string,
-    permissionProfile?: PermissionProfileId
+    permissionProfile?: PermissionProfileId,
+    memoryEnabled?: boolean
   ) => Promise<AcpCreateSessionResponse>
   compactSession: (
     sessionId: string,
@@ -106,7 +110,9 @@ const useAcpRuntime = (): {
     contextReset?: AcpPromptRequest['contextReset'],
     planContinuation?: AcpPromptRequest['planContinuation'],
     turnIntent?: AcpPromptRequest['turnIntent'],
-    referencedSessions?: AcpPromptRequest['referencedSessions']
+    memoryEnabled?: boolean,
+    referencedSessions?: AcpPromptRequest['referencedSessions'],
+    currentImages?: AcpPromptRequest['currentImages']
   ) => Promise<AcpStateSnapshot>
   respondToPermission: (
     requestId: string,
@@ -279,14 +285,18 @@ const useAcpRuntime = (): {
       projectId?: string,
       permissionProfile?: PermissionProfileId,
       specialistId?: string,
-      agentTarget?: AcpSessionAgentTarget
+      agentTarget?: AcpSessionAgentTarget,
+      memoryEnabled = true,
+      literatureContext?: true
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.createSession({
           cwd,
           projectId,
           permissionProfile,
+          memoryEnabled,
           specialistId,
+          ...(literatureContext ? { literatureContext } : {}),
           ...(agentTarget ? { agentTarget } : {})
         })
       ),
@@ -306,7 +316,8 @@ const useAcpRuntime = (): {
       providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
       providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
       specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
-      agentTarget?: AcpSessionAgentTarget
+      agentTarget?: AcpSessionAgentTarget,
+      memoryEnabled = true
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.resumeSession({
@@ -314,6 +325,7 @@ const useAcpRuntime = (): {
           cwd,
           projectId,
           permissionProfile,
+          memoryEnabled,
           previousFrameworkId,
           previousBackendId,
           specialistId,
@@ -339,10 +351,17 @@ const useAcpRuntime = (): {
       sessionId: AcpResumeSessionRequest['sessionId'],
       cwd: AcpResumeSessionRequest['cwd'],
       projectId?: string,
-      permissionProfile?: PermissionProfileId
+      permissionProfile?: PermissionProfileId,
+      memoryEnabled = true
     ) =>
       runValueAction(setIsConnecting, () =>
-        window.api.acp.resetSessionContext({ sessionId, cwd, projectId, permissionProfile })
+        window.api.acp.resetSessionContext({
+          sessionId,
+          cwd,
+          projectId,
+          permissionProfile,
+          memoryEnabled
+        })
       ),
     [runValueAction]
   )
@@ -390,12 +409,15 @@ const useAcpRuntime = (): {
       contextReset?: AcpPromptRequest['contextReset'],
       planContinuation?: AcpPromptRequest['planContinuation'],
       turnIntent?: AcpPromptRequest['turnIntent'],
-      referencedSessions?: AcpPromptRequest['referencedSessions']
+      memoryEnabled = true,
+      referencedSessions?: AcpPromptRequest['referencedSessions'],
+      currentImages?: AcpPromptRequest['currentImages']
     ) =>
       runSendPromptAction(() =>
         window.api.acp.sendPrompt({
           sessionId,
           text,
+          memoryEnabled,
           attachments,
           // Omit the field entirely when no skills were picked so the request stays minimal.
           ...(forcedSkillIds && forcedSkillIds.length > 0 ? { forcedSkillIds } : {}),
@@ -406,6 +428,7 @@ const useAcpRuntime = (): {
           ...(historyPreamble ? { historyPreamble } : {}),
           ...(historyAttachments && historyAttachments.length > 0 ? { historyAttachments } : {}),
           ...(historyImages && historyImages.length > 0 ? { historyImages } : {}),
+          ...(currentImages && currentImages.length > 0 ? { currentImages } : {}),
           ...(resumeFallback ? { resumeFallback } : {}),
           ...(provenanceContext ? { provenanceContext } : {}),
           ...(contextReset ? { contextReset: true } : {}),

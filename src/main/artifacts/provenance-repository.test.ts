@@ -43,6 +43,196 @@ afterEach(async () => {
 })
 
 describe('artifact provenance repository', () => {
+  it('projects trusted Reviewer Work Product and immutable input descriptors', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-reviewer-turn-files-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const artifactBytes = 'report bytes'
+    const sourceBytes = 'source bytes'
+    const artifactChecksum = createHash('sha256').update(artifactBytes).digest('hex')
+    const sourceChecksum = createHash('sha256').update(sourceBytes).digest('hex')
+    const artifactStorageKey = 'artifacts/project-1/session-1/version-1/content'
+    const sourceStorageKey = 'uploads/project-1/source-version-1/content'
+    for (const [key, content] of [
+      [artifactStorageKey, artifactBytes],
+      [sourceStorageKey, sourceBytes]
+    ]) {
+      const path = join(storageRoot, ...(key as string).split('/'))
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, content as string)
+    }
+    await client.fileOriginSession.createMany({
+      data: [
+        { projectId: 'project-1', sessionId: 'session-1' },
+        { projectId: 'project-1', sessionId: 'source-session' }
+      ]
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'source-session',
+        filename: 'input.csv',
+        originalFilename: 'input.csv',
+        versions: {
+          create: {
+            id: 'source-version-1',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey: sourceStorageKey,
+            filename: 'input.csv',
+            originalFilename: 'input.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(Buffer.byteLength(sourceBytes)),
+            checksum: sourceChecksum
+          }
+        }
+      }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        normalizedFilename: 'report.csv',
+        filename: 'report.csv'
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'version-1',
+        artifactId: 'artifact-1',
+        versionNumber: 1,
+        filename: 'report.csv',
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: 'root-1',
+        agentFrameId: 'agent-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1',
+        promptMessageId: 'prompt-1',
+        producerRunId: 'run-1',
+        messageId: 'agent-message-1',
+        state: 'finalized',
+        contentStorageKey: artifactStorageKey,
+        evidenceStorageKey: 'artifacts/project-1/session-1/version-1/evidence.json',
+        contentType: 'text/csv',
+        sizeBytes: BigInt(Buffer.byteLength(artifactBytes)),
+        checksum: artifactChecksum,
+        evidenceJson: JSON.stringify({ producer: { state: 'available' } }),
+        evidenceChecksum: 'e'.repeat(64),
+        inputs: {
+          create: {
+            id: 'input-1',
+            ordinal: 0,
+            inputFileVersionId: 'source-version-1',
+            sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
+            sourceUploadVersionId: 'source-version-1',
+            sourceVersionNumber: 1,
+            sourceProjectId: 'project-1',
+            sourceSessionId: 'source-session',
+            filename: 'input.csv',
+            contentType: 'text/csv',
+            sizeBytes: BigInt(Buffer.byteLength(sourceBytes)),
+            checksum: sourceChecksum,
+            storageKey: sourceStorageKey,
+            strongestAssociation: 'turn-attached'
+          }
+        }
+      }
+    })
+
+    await expect(
+      repository.resolveReviewerTurnFileEvidence({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionIds: ['version-1'],
+        messageIds: ['prompt-1', 'agent-message-1']
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        versionId: 'version-1',
+        role: 'work_product',
+        messageId: 'agent-message-1',
+        checksum: artifactChecksum,
+        traceAvailable: true,
+        contentStatus: 'available'
+      }),
+      expect.objectContaining({
+        versionId: 'source-version-1',
+        role: 'source_document',
+        scopeReason: 'artifact-input',
+        executionId: 'run-1',
+        directlyRead: false,
+        checksum: sourceChecksum,
+        contentStatus: 'available'
+      })
+    ])
+
+    const runOnlyRepository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      notebookRepository: {
+        readSessionDocuments: async () => [
+          {
+            runs: [
+              {
+                runId: 'run-only',
+                promptMessageId: 'prompt-1',
+                inputFiles: [
+                  {
+                    inputFileVersionId: 'source-version-1',
+                    sourceKind: 'upload-version',
+                    sourceFileId: 'upload-1',
+                    sourceProjectId: 'project-1',
+                    sourceSessionId: 'source-session',
+                    filename: 'input.csv',
+                    contentType: 'text/csv',
+                    sizeBytes: Buffer.byteLength(sourceBytes),
+                    checksum: sourceChecksum,
+                    storageKey: sourceStorageKey,
+                    association: 'resolver-accessed'
+                  }
+                ]
+              }
+            ]
+          } as never
+        ]
+      }
+    })
+    await expect(
+      runOnlyRepository.resolveReviewerTurnFileEvidence({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionIds: ['version-1'],
+        messageIds: ['prompt-1', 'agent-message-1']
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({ versionId: 'version-1', role: 'work_product' }),
+      expect.objectContaining({
+        versionId: 'source-version-1',
+        role: 'source_document',
+        executionId: 'run-only',
+        scopeReason: 'read-by-turn'
+      })
+    ])
+    await expect(
+      repository.resolveVersionContentForStreamingVerification({
+        projectId: 'project-1',
+        versionId: 'source-version-1'
+      })
+    ).resolves.toMatchObject({
+      filename: 'input.csv',
+      contentType: 'text/csv',
+      checksum: sourceChecksum
+    })
+  })
+
   it('stores reconstruction cache beside the exact owned immutable Version', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-reconstruction-cache-'))
     const client = createProjectDbClient(storageRoot)

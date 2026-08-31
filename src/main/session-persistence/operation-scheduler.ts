@@ -47,6 +47,17 @@ class SessionPersistenceOperationScheduler {
     )
   }
 
+  runSessionThenGlobalIfNeeded<Result, FinalResult>(
+    projectId: string,
+    sessionId: string,
+    operation: ScopedOperation<Result | undefined>,
+    globalOperation: (result: Result) => Promise<FinalResult>
+  ): Promise<FinalResult | undefined> {
+    return this.runSession(projectId, sessionId, operation).then((result) =>
+      result === undefined ? undefined : this.runGlobal(() => globalOperation(result))
+    )
+  }
+
   runSessionIdentity<Result>(
     sessionId: string,
     operation: ScopedOperation<Result>

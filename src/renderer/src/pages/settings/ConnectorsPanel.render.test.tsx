@@ -83,6 +83,7 @@ beforeEach(() => {
     addCustomServer: vi.fn().mockResolvedValue(undefined),
     authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
     cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
+    disconnectCustomServer: vi.fn().mockResolvedValue(undefined),
     retryCustomServer: vi.fn().mockResolvedValue(undefined),
     setCustomServerEnabled: vi.fn().mockResolvedValue(undefined),
     removeCustomServer: vi.fn().mockResolvedValue(undefined)
@@ -668,9 +669,22 @@ describe('ConnectorsPanel (groups)', () => {
     const connectedStatus = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
     ).find((button) => button.textContent?.trim() === 'Connected')
-    expect(connectedStatus?.disabled).toBe(true)
+    expect(connectedStatus?.disabled).toBe(false)
     act(() => connectedStatus?.click())
-    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('Reauthenticate')
+    expect(document.body.textContent).toContain('Disconnect')
+    await act(async () => clickButtonByText('Disconnect'))
+    expect(useSettingsStore.getState().disconnectCustomServer).toHaveBeenCalledWith({
+      id: 'oauth-mcp'
+    })
+
+    const connectedAgain = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Connected')
+    act(() => connectedAgain?.click())
+    await act(async () => clickButtonByText('Reauthenticate'))
+    expect(useSettingsStore.getState().disconnectCustomServer).toHaveBeenCalledTimes(2)
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledTimes(2)
   })
 
   it('shows an unavailable custom Connector and retries it in place', async () => {
@@ -735,6 +749,59 @@ describe('ConnectorsPanel (groups)', () => {
     openMenu('Actions for Invalid MCP')
     clickItemByText('menuitem', 'Edit')
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'invalid-mcp' })
+  })
+
+  it('directs custom Connectors with unavailable credentials to Edit', () => {
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'credential-unavailable-mcp',
+          name: 'credential-unavailable-mcp',
+          displayName: 'Credential unavailable MCP',
+          transport: 'stdio',
+          enabled: false,
+          availability: 'credential_unavailable'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={onNavigate} />))
+
+    expect(document.body.textContent).toContain('Credentials unavailable')
+    expect(
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Toggle Credential unavailable MCP"]')
+        ?.getAttribute('aria-disabled')
+    ).toBe('true')
+    act(() => clickButtonByText('Configure'))
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'credential-unavailable-mcp' })
+  })
+
+  it('allows a durably enabled Connector with unavailable credentials to be disabled', () => {
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'enabled-credential-unavailable-mcp',
+          name: 'enabled-credential-unavailable-mcp',
+          displayName: 'Enabled credential unavailable MCP',
+          transport: 'stdio',
+          enabled: true,
+          availability: 'credential_unavailable'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    const toggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle Enabled credential unavailable MCP"]'
+    )
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+    expect(toggle?.getAttribute('aria-disabled')).toBeNull()
+    act(() => toggle?.click())
+    expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledWith(
+      'enabled-credential-unavailable-mcp',
+      false
+    )
   })
 
   it('shows checking while background discovery is still pending', () => {
@@ -945,18 +1012,14 @@ describe('ConnectorsPanel (groups)', () => {
 })
 
 describe('ConnectorsPanel (contact email)', () => {
-  it('saves the entered contact email on Edit then Save', () => {
+  it('opens the centralized credentials editor', () => {
+    const onOpenCredentials = vi.fn()
     act(() => {
-      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} onOpenCredentials={onOpenCredentials} />)
     })
 
-    clickButtonByText('Edit')
-    setValue('Contact email', 'me@example.com')
-    clickButtonByText('Save')
+    clickButtonByText('Manage credentials')
 
-    expect(useSettingsStore.getState().setNcbiCredentials).toHaveBeenCalledWith({
-      contactEmail: 'me@example.com',
-      apiKey: undefined
-    })
+    expect(onOpenCredentials).toHaveBeenCalledOnce()
   })
 })

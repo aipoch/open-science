@@ -213,12 +213,12 @@ should compose `ErrorNotice` instead of rolling their own layout.
 
 ### Startup issue draft helpers (`src/renderer/src/lib/startup-issue.ts`)
 
-- `buildStartupIssueUrl(error)` — GitHub `issues/new` URL with a prefilled title and body
+- `buildStartupIssueUrl(error, diagnostics?)` — GitHub `issues/new` URL with a prefilled title and body
   (What happened / Environment / Steps to reproduce / Error stack). Oversized stacks are trimmed
   by binary search against the real percent-encoded URL length (~7800-char budget).
-- `openStartupIssueDraft(error)` — opens that URL in a new browser window. This is a stateless
-  side effect, so it stays a plain function: don't wrap it in a hook unless React state or
-  lifecycle actually gets involved.
+- `StartupIssueDialog` owns the editable diagnostics preview and exact-payload consent. Keep the
+  external GitHub link disabled until the user has reviewed the current URL; editing diagnostics
+  invalidates prior consent.
 
 ## Known patterns
 

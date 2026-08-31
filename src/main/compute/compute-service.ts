@@ -25,6 +25,7 @@ import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ScpRunner } from './scp-runner'
 import type { SshRunner } from './ssh-runner'
+import { SessionCacheOwner } from './session-cache-owner'
 import {
   createSshConfigCompatibilityBroker,
   projectComputeCredentialStatus
@@ -49,6 +50,7 @@ export type ComputeServiceDependencies = Readonly<{
   onJobUpdated?: (job: ComputeJob) => void
   artifactResolver?: ArtifactResolver
   storageRoot?: string
+  sessionCacheOwner?: SessionCacheOwner
   concurrencyManager?: ConcurrencyManager
   connectionBroker?: ComputeConnectionBroker
   credentialVault?: Pick<CredentialVault, 'credentialStatus'>
@@ -74,6 +76,7 @@ export class ComputeService {
       onJobUpdated,
       artifactResolver,
       storageRoot,
+      sessionCacheOwner,
       concurrencyManager,
       connectionBroker,
       credentialVault
@@ -88,7 +91,8 @@ export class ComputeService {
       effectiveConnectionBroker,
       repository,
       approvalBroker,
-      overrideDownloadsDir
+      overrideDownloadsDir,
+      sessionCacheOwner ?? (storageRoot ? new SessionCacheOwner(storageRoot) : undefined)
     )
     this.jobWorkflow = new ComputeJobWorkflowOwner(
       effectiveConnectionBroker,
@@ -133,6 +137,10 @@ export class ComputeService {
 
   async setScratchRoot(providerId: string, path: string): Promise<void> {
     return this.hostProfiles.setScratchRoot(providerId, path)
+  }
+
+  async clearScratchRoot(providerId: string): Promise<void> {
+    return this.hostProfiles.clearScratchRoot(providerId)
   }
 
   async setConcurrencyLimit(providerId: string, limit: number): Promise<void> {

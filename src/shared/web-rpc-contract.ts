@@ -27,6 +27,7 @@ export const WEB_RPC_UNAVAILABLE_CHANNELS = [
   'file:save-blob',
   'file:save-managed',
   'sessions:export-conversation',
+  'sessions:open-recovery-folder',
   'file:save-session-artifacts',
   'file:save-project-artifacts',
   'uploads:stage-local-file',

@@ -258,6 +258,7 @@ export class ComputeJobWorkflowOwner {
         ? `${command.slice(0, COMMAND_PREVIEW_MAX_LEN)}…`
         : command
     const approvalInfo = {
+      operation: 'submit_job' as const,
       provider_id: host.providerId,
       provider_name: host.displayName,
       shape: host.shape,
@@ -265,13 +266,14 @@ export class ComputeJobWorkflowOwner {
       command_preview: commandPreview,
       command_full: command,
       inputs_summary: inputsSummary || undefined,
+      resources: options.resourceRequest,
       timeout_seconds: timeoutSeconds,
       remote_workdir: remoteWorkdir
     }
     const approvalContext = {
       sessionId: context.sessionId,
       projectId: context.projectId,
-      operation: 'submit_job',
+      operation: 'submit_job' as const,
       ownerId: host.id
     }
 

@@ -1470,6 +1470,9 @@ rm(namespace_state)
 base::local({
   state <- new.env(parent = emptyenv())
   state$during_read <- FALSE
+  # Retain the fully read frame until its response is emitted. A SIGINT can otherwise unwind
+  # read_request after consuming the body and discard the request before it is acknowledged.
+  state$current_req <- NULL
 
   read_request <- function() {
     empty_streak <- 0L
@@ -1515,8 +1518,25 @@ base::local({
         body_empty <- 0L
         acc <- c(acc, chunk)
       }
-      code <- if (n > 0L) rawToChar(acc, multiple = FALSE) else ""
-      return(list(req_id = req_id, code = code, operation = operation))
+      req <- tryCatch(
+        {
+          code <- if (n > 0L) rawToChar(acc, multiple = FALSE) else ""
+          req <- list(req_id = req_id, code = code, operation = operation)
+          state$current_req <- req
+          req
+        },
+        interrupt = function(cnd) {
+          state$during_read <- TRUE
+          req <- list(
+            req_id = req_id,
+            code = if (n > 0L) rawToChar(acc, multiple = FALSE) else "",
+            operation = operation
+          )
+          state$current_req <- req
+          req
+        }
+      )
+      return(req)
     }
   }
 
@@ -1551,34 +1571,61 @@ base::local({
     )
   }
 
+  # Keep one interrupt handler active across request-boundary transitions as well as response emit.
+  # The inner loop normally runs until EOF; a late interrupt unwinds only to this recovery point.
   repeat {
-    req <- tryCatch(
-      read_request(),
+    keep_running <- tryCatch(
+      {
+        repeat {
+          req <- tryCatch(
+            read_request(),
+            interrupt = function(cnd) {
+              req <- state$current_req
+              state$during_read <- TRUE
+              if (is.null(req)) "retry" else req
+            }
+          )
+          if (is.null(req)) break
+          if (identical(req, "retry")) next
+          resp <- tryCatch(
+            {
+              if (isTRUE(state$during_read)) {
+                state$during_read <- FALSE
+                interrupted_response(req$req_id)
+              } else {
+                result <- if (identical(req$operation, "inspect_namespace")) {
+                  list(namespace = inspect_namespace(identical(req$code, "private")))
+                } else {
+                  run(req)
+                }
+                result$req_id <- req$req_id
+                result
+              }
+            },
+            interrupt = function(cnd) interrupted_response(req$req_id)
+          )
+          suspendInterrupts({
+            emit(resp)
+            state$current_req <- NULL
+          })
+        }
+        FALSE
+      },
       interrupt = function(cnd) {
-        state$during_read <- TRUE
-        "retry"
+        req <- state$current_req
+        if (is.null(req)) {
+          state$during_read <- TRUE
+        } else {
+          state$during_read <- FALSE
+          suspendInterrupts({
+            emit(interrupted_response(req$req_id))
+            state$current_req <- NULL
+          })
+        }
+        TRUE
       }
     )
-    if (is.null(req)) break
-    if (identical(req, "retry")) next
-    resp <- tryCatch(
-      {
-        if (isTRUE(state$during_read)) {
-          state$during_read <- FALSE
-          interrupted_response(req$req_id)
-        } else {
-          result <- if (identical(req$operation, "inspect_namespace")) {
-            list(namespace = inspect_namespace(identical(req$code, "private")))
-          } else {
-            run(req)
-          }
-          result$req_id <- req$req_id
-          result
-        }
-      },
-      interrupt = function(cnd) interrupted_response(req$req_id)
-    )
-    emit(resp)
+    if (!isTRUE(keep_running)) break
   }
 }, envir = base::list2env(
   base::list(

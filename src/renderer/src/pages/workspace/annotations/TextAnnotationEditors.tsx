@@ -7,13 +7,15 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { AnnotationValidationError, TextAnnotation } from '../../../../../shared/annotations'
-import { AnnotationTrigger } from './AnnotationTrigger'
+import { AnnotationTrigger, type AnnotationTriggerAction } from './AnnotationTrigger'
 
 type AnnotationControl = Readonly<{
   annotation: TextAnnotation
   left: number
   top: number
 }>
+
+const annotationQuote = (annotation: TextAnnotation): string => annotation.quote
 
 type AnnotationEditorVariant = 'workspace' | 'preview'
 
@@ -82,7 +84,7 @@ const AnnotationMarkers = ({
                     }}
                     type="button"
                     data-text-annotation-edit="true"
-                    data-annotation-note={annotation.note ?? annotation.quote}
+                    data-annotation-note={annotation.note ?? annotationQuote(annotation)}
                     className="flex size-5 items-center justify-center rounded bg-transparent text-primary/70 hover:bg-muted hover:text-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                     aria-label={t('Edit annotation note')}
                     onClick={() => {
@@ -94,7 +96,7 @@ const AnnotationMarkers = ({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-72 truncate bg-muted text-foreground">
-                  {annotation.note ?? annotation.quote}
+                  {annotation.note ?? annotationQuote(annotation)}
                 </TooltipContent>
               </Tooltip>
             </span>
@@ -150,7 +152,7 @@ const AnnotationMarkers = ({
               className={presentation.hoverClassName}
               style={{ left, top: top + 18 }}
             >
-              {annotation.note ?? annotation.quote}
+              {annotation.note ?? annotationQuote(annotation)}
             </div>
           ) : null}
         </Popover>
@@ -169,7 +171,8 @@ const AnnotationDraftEditor = ({
   onOpenChange,
   onCancel,
   onNoteChange,
-  onAdd
+  onAdd,
+  triggerActions
 }: {
   range: Range
   backward: boolean
@@ -181,6 +184,7 @@ const AnnotationDraftEditor = ({
   onCancel: () => void
   onNoteChange: (note: string) => void
   onAdd: () => void
+  triggerActions?: readonly AnnotationTriggerAction[]
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const presentation = editorPresentation[variant]
@@ -193,6 +197,8 @@ const AnnotationDraftEditor = ({
         hidden={open}
         label={t('Annotate')}
         onActivate={() => onOpenChange(true)}
+        actions={triggerActions}
+        actionMenuLabel={triggerActions ? t('Selection actions') : undefined}
       />
       <PopoverContent
         align="start"

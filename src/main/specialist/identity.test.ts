@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { buildSpecialistIdentityAppend, buildSpecialistIdentityPrefix } from './identity'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
 
-const makeProfile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+const makeProfile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'uuid-1',
   name: 'RNA-seq Reviewer',
   description: 'Reviews RNA-seq analysis quality.',

@@ -135,6 +135,7 @@ describe('AcpDurableContinuationContextOwner', () => {
         { type: 'session', sessionId: 'referenced-session', title: 'Prior analysis' }
       ])
     ])
+    session.memoryEnabled = false
     setActivities(session, [pendingChoice()])
 
     await expect(
@@ -147,6 +148,7 @@ describe('AcpDurableContinuationContextOwner', () => {
         answers: [{ fieldId: 'question_0', value: 'Expanded' }]
       })
     ).resolves.toMatchObject({
+      memoryEnabled: false,
       request: {
         requestId: 'choice-1',
         sessionId: 'session-1',

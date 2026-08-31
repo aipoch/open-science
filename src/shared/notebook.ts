@@ -363,6 +363,67 @@ export type NotebookWorkingFile = {
   size?: number
   mtimeMs?: number
   createdByRunId?: string
+  // Optional immutable generation evidence. Historical working-file entries predate this capture.
+  generationId?: string
+  checksum?: string
+  change?: 'created' | 'modified'
+}
+
+export type NotebookFileEvidenceCoverage = 'complete' | 'partial' | 'unavailable'
+
+export type NotebookFileEvidenceReason =
+  | 'file-reads-not-observed'
+  | 'initial-file-generations-not-captured'
+  | 'external-paths-not-observed'
+  | 'remote-outputs-not-observed'
+  | 'transient-files-not-captured'
+  | 'delayed-writes-not-observed'
+  | 'writer-not-isolated'
+  | 'watcher-unavailable'
+  | 'observation-not-started'
+  | 'observer-conflict'
+  | 'observer-limit-exceeded'
+  | 'observer-failed'
+  | 'generation-budget-exceeded'
+  | 'generation-freeze-failed'
+  | 'evidence-persistence-failed'
+  | 'run-identity-missing'
+
+export type NotebookScientificOutputStorageShape = 'single-file' | 'file-set' | 'directory-tree'
+
+export type NotebookScientificOutputRisk =
+  | 'format-validity-not-verified'
+  | 'multi-file-consistency-not-verified'
+  | 'database-state-not-verified'
+  | 'runtime-dependent-serialization'
+
+export type NotebookScientificOutput = {
+  outputId: string
+  storageShape: NotebookScientificOutputStorageShape
+  formatHint?: string
+  classificationAuthority: 'path-heuristic'
+  // Portable relation paths from the same evidence sidecar. Members may include deleted paths when
+  // a run replaced a partition or companion file while producing the logical output.
+  members: string[]
+  riskCodes: NotebookScientificOutputRisk[]
+}
+
+export type NotebookRunFileEvidence = {
+  schemaVersion: 1
+  state: 'complete' | 'partial' | 'unavailable'
+  evidenceId?: string
+  checksum?: string
+  storageKey?: string
+  relationCount?: number
+  generationCount?: number
+  scientificOutputCount: number
+  initialViewState: NotebookFileEvidenceCoverage
+  managedRootsFinalState: NotebookFileEvidenceCoverage
+  scientificOutputAnalysis: NotebookFileEvidenceCoverage
+  fileReads: NotebookFileEvidenceCoverage
+  externalPaths: NotebookFileEvidenceCoverage
+  writerAttribution: NotebookFileEvidenceCoverage
+  reasonCodes: NotebookFileEvidenceReason[]
 }
 
 // Captures the interpreter metadata persisted alongside run history.
@@ -389,6 +450,27 @@ export type NotebookKernelMetadata = {
 export type NotebookKernelInstanceIdentity =
   { kind: 'python' | 'r'; environment: string } | { kind: 'repl' }
 
+// Immutable source evidence for one registered helper generation loaded into a Python kernel.
+// The host computes sourceDigest from the exact UTF-8 source stored here; callers never supply it.
+export type NotebookHelperModuleEvidence = {
+  helperId: string
+  skillIdentity: string
+  packageOrigin: string
+  interfaceRevision: string
+  registeredGeneration: string
+  exports: string[]
+  dependencies?: string[]
+  source: string
+  sourceDigest: string
+}
+
+export type NotebookHelperEvidenceStatus =
+  | { state: 'complete' }
+  | {
+      state: 'incomplete'
+      reasons: Array<'source-missing' | 'source-corrupt' | 'payload-limit'>
+    }
+
 // Stores one durable notebook execution, including code, output, and generated-file references.
 export type NotebookRunRecord = {
   runId: string
@@ -401,6 +483,10 @@ export type NotebookRunRecord = {
   // Whether this run's source was handed to the persistent data kernel. Pre-dispatch failures set
   // false so dependency projection never invents mutations; absent legacy evidence stays conservative.
   kernelDispatched?: boolean
+  // Sticky for the kernel epoch: every later Python run retains the complete loaded-helper set,
+  // even when that cell omitted helperModules.
+  helperModules?: NotebookHelperModuleEvidence[]
+  helperEvidenceStatus?: NotebookHelperEvidenceStatus
   // Stable identity of the external runtime used by this run. Managed runs are reproducible from
   // their environment; external runs need this identity to rebuild a missing derived sidecar.
   runtimeId?: string
@@ -421,6 +507,9 @@ export type NotebookRunRecord = {
   outputs: NotebookOutput[]
   artifacts: ArtifactFile[]
   workingFiles: NotebookWorkingFile[]
+  // Immutable file-generation evidence is stored in a checksummed per-run sidecar. Optional keeps
+  // historical run.json documents readable without fabricating capture coverage.
+  fileEvidence?: NotebookRunFileEvidence
   // New native runs persist the exact registered input Versions. Optional keeps legacy run.json
   // documents readable; repository normalization supplies an empty array for old records.
   inputFiles?: NotebookRunInputFile[]
@@ -618,6 +707,9 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
   // Injected only by the authenticated local RPC bridge after resolving the active turn registry.
   // Renderer IPC strips this field before calling the runtime service.
   registeredInputFiles?: NotebookRunInputFile[]
+  // Injected only by the authenticated local RPC bridge for a Specialist-bound session. Renderer
+  // IPC strips this field together with executionInvocationId; it is never caller authority.
+  registeredHelperSkillIds?: string[]
   // Identifies the exact active input lease for this execution. The bridge generates it and the
   // kernel returns it when resolving an immutable input so overlapping runs cannot claim access.
   inputRunLeaseId?: string
@@ -765,6 +857,14 @@ export type RunNotebookCellRequest = NotebookSessionRequest & {
 // Convenience request that writes a cell and runs it in one command.
 export type ExecuteNotebookCodeRequest = NotebookSessionRequest & {
   code: string
+  // Stable IDs resolved by the host-owned registered Skill catalog. Callers cannot provide helper
+  // implementation paths, source, or digests.
+  helperModules?: string[]
+  // Immutable Artifact Versions produced or selected during the current control-plane workflow.
+  // The main process resolves and validates these identities before dispatch, then records them as
+  // inputs of this Run. This is intentionally identities-only: callers cannot supply paths or
+  // provenance metadata.
+  artifactVersionInputs?: string[]
   timeoutMs?: number
   cellId?: string
   source?: NotebookRunSource

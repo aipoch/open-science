@@ -152,6 +152,7 @@ const bootUntilFailureHandlersAreInstalled = async (): Promise<
 
   await import('./index')
   await vi.waitFor(() => expect(mocks.registerRendererDiagnosticsIpc).toHaveBeenCalledOnce())
+  mocks.log.error.mockClear()
 
   return listeners
 }

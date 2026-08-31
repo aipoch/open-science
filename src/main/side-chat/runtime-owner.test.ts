@@ -68,6 +68,7 @@ const backend = (
   env: Record<string, string> = {}
 ): ResolvedAgentBackend => ({
   framework,
+  providerId: 'provider-a',
   executablePath: `/managed/${framework.id}`,
   env,
   sessionModel: 'model-a',
@@ -83,6 +84,7 @@ const target: ExplicitAgentBackendTarget = {
 
 const modelChangeTarget = (model: string): AgentModelChangeTarget => ({
   frameworkId: 'claude-code',
+  providerId: 'provider-a',
   backendId: 'claude-code:provider-a',
   route: 'claude-anthropic',
   model,
@@ -468,6 +470,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
   it('coalesces streamed transcript chunks into the latest durable projection', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-coalesce-'))
     const persistence = createPersistence()
+    const recordUsage = vi.fn(async () => undefined)
     let runtimeOptions: AcpRuntimeOptions | undefined
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
@@ -476,6 +479,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
       relay: createRelayOwner(),
       persistence,
+      recordUsage,
       onEvent: vi.fn(),
       createRuntime: (options) => {
         runtimeOptions = options
@@ -510,7 +514,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
               id: 'stop-coalesced',
               timestamp: 101,
               sessionId: request.sessionId,
-              kind: 'stop'
+              kind: 'stop',
+              turnUsage: { inputTokens: 9, cacheTokens: 2, outputTokens: 3, turnCount: 1 }
             } as never)
             return { stopReason: 'end_turn' as const }
           }),
@@ -527,7 +532,45 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       projectId: 'project-1',
       text: 'Stream'
     })
+    await expect(
+      runtimeOptions!.auxiliaryUsage!.projectIdForSession('provider-coalesce')
+    ).resolves.toBe('project-1')
+    await runtimeOptions!.auxiliaryUsage!.record({
+      projectId: 'project-1',
+      sessionId: 'provider-coalesce',
+      eventId: 'context-compaction:side-chat',
+      source: 'context-compaction',
+      frameworkId: 'claude-code',
+      providerId: 'provider-a',
+      model: 'model-a',
+      completedAtMs: 100,
+      usage: { inputTokens: 7, cacheTokens: 1, outputTokens: 2, turnCount: 1 }
+    })
     await vi.waitFor(() => expect(persistence.save).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(recordUsage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: 'project-1',
+          sessionId: 'main-coalesce',
+          eventId: `${started.sideSessionId}:user-1`,
+          source: 'side-chat',
+          frameworkId: 'claude-code',
+          providerId: 'provider-a',
+          model: 'model-a',
+          completedAtMs: 101,
+          usage: expect.objectContaining({ inputTokens: 9, outputTokens: 3 })
+        })
+      )
+    )
+    expect(recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'main-coalesce',
+        eventId: 'context-compaction:side-chat',
+        source: 'context-compaction',
+        providerId: 'provider-a'
+      })
+    )
     expect(owner.list().chats[0]?.entries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: 'assistant-coalesced', text: 'x'.repeat(20_000) })
@@ -971,6 +1014,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
   it('hydrates a dormant Side chat without starting ACP and resumes it on the next Follow up', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-resume-'))
     const persistence = createPersistence()
+    const recordUsage = vi.fn(async () => undefined)
     const resumeSession = vi.fn(async () => ({
       sessionId: 'side-chat-restored',
       providerSessionId: 'provider-restored',
@@ -1004,6 +1048,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       })),
       relay: createRelayOwner(),
       persistence,
+      recordUsage,
       onEvent: vi.fn(),
       createRuntime
     })
@@ -1016,6 +1061,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           id: 'side-chat-restored',
           lifecycle: 'open',
           frameworkId: 'claude-code',
+          providerId: 'provider-a',
           backendId: 'claude-code:provider-a',
           providerSessionId: 'provider-restored',
           historyPreamble: 'Original Main snapshot.',
@@ -1040,6 +1086,20 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
     await owner.send({ sideSessionId: 'side-chat-restored', text: 'Continue' })
 
+    await expect(
+      runtimeOptions!.auxiliaryUsage!.projectIdForSession('side-chat-restored')
+    ).resolves.toBe('project-1')
+    await runtimeOptions!.auxiliaryUsage!.record({
+      projectId: 'project-1',
+      sessionId: 'side-chat-restored',
+      eventId: 'context-compaction:restored-side-chat',
+      source: 'context-compaction',
+      frameworkId: 'claude-code',
+      providerId: 'provider-a',
+      completedAtMs: 30,
+      usage: { inputTokens: 5, cacheTokens: 0, outputTokens: 1, turnCount: 1 }
+    })
+
     expect(resumeSession).toHaveBeenCalledWith({
       sessionId: 'side-chat-restored',
       providerSessionId: 'provider-restored',
@@ -1052,6 +1112,15 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       expect.objectContaining({ sessionId: 'side-chat-restored', text: 'Continue' })
     )
     expect(sendPrompt.mock.calls[0]?.[0]).not.toHaveProperty('historyPreamble')
+    expect(recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'main-restored',
+        eventId: 'context-compaction:restored-side-chat',
+        source: 'context-compaction',
+        providerId: 'provider-a'
+      })
+    )
     expect(persistence.save).toHaveBeenCalledWith(
       expect.objectContaining({
         parentSessionId: 'main-restored',

@@ -408,6 +408,42 @@ describe('Compute password-host application handler', () => {
     })
   })
 
+  it('rejects an option-like alias before password validation or persistence', async () => {
+    const { owner, createPasswordHost, acquireWithPassword, encrypt } = setup()
+
+    await expect(
+      owner.createPassword({
+        sshAlias: '-oProxyCommand=touch /tmp/not-approved',
+        authenticationMode: 'password',
+        username: 'researcher',
+        port: 22,
+        password: 'secret',
+        operationId: 'operation-unsafe-alias'
+      })
+    ).rejects.toMatchObject({ code: 'unsupported_auth_configuration' })
+    expect(encrypt).not.toHaveBeenCalled()
+    expect(acquireWithPassword).not.toHaveBeenCalled()
+    expect(createPasswordHost).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid password-host display name before validation or persistence', async () => {
+    const { owner, createPasswordHost, acquireWithPassword } = setup()
+
+    await expect(
+      owner.createPassword({
+        sshAlias: 'cluster',
+        displayName: 'Cluster\0hidden',
+        authenticationMode: 'password',
+        username: 'researcher',
+        port: 22,
+        password: 'secret',
+        operationId: 'operation-invalid-profile'
+      })
+    ).rejects.toMatchObject({ code: 'unsupported_auth_configuration' })
+    expect(acquireWithPassword).not.toHaveBeenCalled()
+    expect(createPasswordHost).not.toHaveBeenCalled()
+  })
+
   it('replays a committed password-host creation without contacting the SSH transport', async () => {
     const committed = {
       ...publicHost(),

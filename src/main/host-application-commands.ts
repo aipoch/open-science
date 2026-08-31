@@ -9,7 +9,7 @@ import type {
   RemoveGrantedLocalRootRequest,
   SetGrantedLocalRootAccessRequest
 } from '../shared/local-fs'
-import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   NotificationInboxSnapshot,
   NotificationMarkAllReadRequest,
@@ -24,12 +24,15 @@ import type {
   RevokeRemoteBrowserRequest,
   SetRemoteAccessModeRequest
 } from '../shared/remote-access'
+import { remoteAccessApplicationCommandContracts } from '../shared/remote-access'
 import type {
   ReviewRunRequest,
   ReviewRunResult,
   ReviewSessionRequest,
   ReviewWithChecks
 } from '../shared/reviewer'
+import type { RendererSessionPersistenceTarget } from './session-persistence/renderer-flush'
+import type { SessionPersistenceFlushResponse } from '../shared/session-persistence-flush'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -135,7 +138,9 @@ const localFsCommands = Object.freeze({
 })
 
 const logsCommands = Object.freeze({
-  getPath: defineApplicationCommand<'logs:get-path', readonly [], string | null>('logs:get-path'),
+  getStatus: defineApplicationCommand<'logs:get-status', readonly [], LogFileStatus>(
+    'logs:get-status'
+  ),
   openFile: defineApplicationCommand<'logs:open-file', readonly [], OpenLogFileResult>(
     'logs:open-file'
   ),
@@ -184,33 +189,39 @@ const remoteAccessCommands = Object.freeze({
     'remote-access:approve',
     readonly [request: ApproveRemotePairingRequest],
     RemoteAccessSnapshot
-  >('remote-access:approve'),
+  >('remote-access:approve', remoteAccessApplicationCommandContracts.approve),
   detect: defineApplicationCommand<'remote-access:detect', readonly [], RemoteAccessSnapshot>(
-    'remote-access:detect'
+    'remote-access:detect',
+    remoteAccessApplicationCommandContracts.detect
+  ),
+  probe: defineApplicationCommand<'remote-access:probe', readonly [], RemoteAccessSnapshot>(
+    'remote-access:probe',
+    remoteAccessApplicationCommandContracts.probe
   ),
   disable: defineApplicationCommand<'remote-access:disable', readonly [], RemoteAccessSnapshot>(
-    'remote-access:disable'
+    'remote-access:disable',
+    remoteAccessApplicationCommandContracts.disable
   ),
   getSnapshot: defineApplicationCommand<
     'remote-access:get-snapshot',
     readonly [],
     RemoteAccessSnapshot
-  >('remote-access:get-snapshot'),
+  >('remote-access:get-snapshot', remoteAccessApplicationCommandContracts.getSnapshot),
   reject: defineApplicationCommand<
     'remote-access:reject',
     readonly [request: RemotePairingRequestId],
     RemoteAccessSnapshot
-  >('remote-access:reject'),
+  >('remote-access:reject', remoteAccessApplicationCommandContracts.reject),
   revokeBrowser: defineApplicationCommand<
     'remote-access:revoke-browser',
     readonly [request: RevokeRemoteBrowserRequest],
     RemoteAccessSnapshot
-  >('remote-access:revoke-browser'),
+  >('remote-access:revoke-browser', remoteAccessApplicationCommandContracts.revokeBrowser),
   setMode: defineApplicationCommand<
     'remote-access:set-mode',
     readonly [request: SetRemoteAccessModeRequest],
     RemoteAccessSnapshot
-  >('remote-access:set-mode')
+  >('remote-access:set-mode', remoteAccessApplicationCommandContracts.setMode)
 })
 
 const reviewerCommands = Object.freeze({
@@ -235,6 +246,11 @@ const reviewerCommands = Object.freeze({
 })
 
 const storageCommands = Object.freeze({
+  acknowledgeDataRootHandoffFlush: defineApplicationCommand<
+    'storage:ack-data-root-handoff-flush',
+    readonly [response: SessionPersistenceFlushResponse],
+    void
+  >('storage:ack-data-root-handoff-flush'),
   cancelMigrate: defineApplicationCommand<'storage:cancel-migrate', readonly [], void>(
     'storage:cancel-migrate'
   ),
@@ -366,10 +382,14 @@ type HostApplicationCommandDependencies = Readonly<{
   }>
   remoteAccess: Pick<
     RemoteAccessService,
-    'snapshot' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
+    'snapshot' | 'probe' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
   >
   reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
+    acknowledgeDataRootHandoffFlush: (
+      response: SessionPersistenceFlushResponse,
+      lifecycleClientId: string
+    ) => void
     getStatus: () => Promise<StorageStatus>
     getInfo: () => Promise<StorageInfo>
     revealAppStorage: () => Promise<RevealAppStorageResult>
@@ -377,10 +397,19 @@ type HostApplicationCommandDependencies = Readonly<{
     pickDirectory: () => Promise<string | null>
     validateDataRoot: (request: StorageParentRequest) => Promise<DataRootValidationResult>
     inspectDataRoot: (request: StorageParentRequest) => Promise<DataRootInspection>
-    migrate: (request: StorageParentRequest) => Promise<MigrationOutcome>
-    setDataRootAndRelaunch: (request: StorageRootRequest) => Promise<DataRootValidationResult>
+    migrate: (
+      request: StorageParentRequest,
+      target?: RendererSessionPersistenceTarget
+    ) => Promise<MigrationOutcome>
+    setDataRootAndRelaunch: (
+      request: StorageRootRequest,
+      target?: RendererSessionPersistenceTarget
+    ) => Promise<DataRootValidationResult>
     cancelMigrate: () => void
-    commitAndRelaunch: (request: StorageParentRequest) => Promise<MigrationOutcome>
+    commitAndRelaunch: (
+      request: StorageParentRequest,
+      target?: RendererSessionPersistenceTarget
+    ) => Promise<MigrationOutcome>
     discardMigratedCopy: (request: StorageParentRequest) => Promise<DiscardMigratedCopyResult>
     dismissLegacyMovePrompt: () => Promise<void>
   }>
@@ -397,6 +426,11 @@ const localCommand = <Result>(
   }
   return invoke()
 }
+
+const dataRootHandoffTarget = (context: CallerContext): RendererSessionPersistenceTarget =>
+  context.surface === 'web'
+    ? { surface: 'web-renderer', lifecycleClientId: context.lifecycleClientId }
+    : { surface: 'electron-renderer' }
 
 // Production composition registers all bounded command groups atomically; this group must not be
 // exposed through a live transport in isolation.
@@ -457,7 +491,8 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[3], {
-      'logs:get-path': () => dependencies.logs.getPath(),
+      'logs:get-status': ({ callerContext }) =>
+        localCommand(callerContext, 'logs:get-status', () => dependencies.logs.getStatus()),
       'logs:open-file': ({ callerContext }) =>
         localCommand(callerContext, 'logs:open-file', () => dependencies.logs.openFile()),
       'logs:reveal-in-folder': ({ callerContext }) =>
@@ -492,6 +527,8 @@ const registerHostApplicationCommands = (
         requireDesktopCaller(callerContext)
         return dependencies.remoteAccess.detect()
       },
+      'remote-access:probe': ({ callerContext }) =>
+        localCommand(callerContext, 'remote-access:probe', () => dependencies.remoteAccess.probe()),
       'remote-access:disable': ({ callerContext }) => {
         requireDesktopCaller(callerContext)
         return dependencies.remoteAccess.disable()
@@ -530,13 +567,27 @@ const registerHostApplicationCommands = (
       'reviewer:run': ({ args }) => dependencies.reviewer.run(args[0])
     })
     scope.registerGroup(hostApplicationCommandGroups[7], {
+      'storage:ack-data-root-handoff-flush': ({ args, callerContext }) =>
+        localCommand(callerContext, 'storage:ack-data-root-handoff-flush', () => {
+          const response = args[0]
+          if (
+            typeof response?.requestId !== 'string' ||
+            !['completed', 'conflict', 'failed'].includes(response.status)
+          ) {
+            throw new Error('Invalid data-root handoff flush acknowledgement.')
+          }
+          dependencies.storage.acknowledgeDataRootHandoffFlush(
+            response,
+            callerContext.lifecycleClientId
+          )
+        }),
       'storage:cancel-migrate': ({ callerContext }) =>
         localCommand(callerContext, 'storage:cancel-migrate', () =>
           dependencies.storage.cancelMigrate()
         ),
       'storage:commit-and-relaunch': ({ args, callerContext }) =>
         localCommand(callerContext, 'storage:commit-and-relaunch', () =>
-          dependencies.storage.commitAndRelaunch(args[0])
+          dependencies.storage.commitAndRelaunch(args[0], dataRootHandoffTarget(callerContext))
         ),
       'storage:detect-active': () => dependencies.storage.detectActive(),
       'storage:discard-migrated-copy': ({ args, callerContext }) =>
@@ -551,7 +602,9 @@ const registerHostApplicationCommands = (
           dependencies.storage.inspectDataRoot(args[0])
         ),
       'storage:migrate': ({ args, callerContext }) =>
-        localCommand(callerContext, 'storage:migrate', () => dependencies.storage.migrate(args[0])),
+        localCommand(callerContext, 'storage:migrate', () =>
+          dependencies.storage.migrate(args[0], dataRootHandoffTarget(callerContext))
+        ),
       'storage:pick-directory': ({ callerContext }) =>
         localCommand(callerContext, 'storage:pick-directory', () =>
           dependencies.storage.pickDirectory()
@@ -562,7 +615,7 @@ const registerHostApplicationCommands = (
         ),
       'storage:set-data-root-and-relaunch': ({ args, callerContext }) =>
         localCommand(callerContext, 'storage:set-data-root-and-relaunch', () =>
-          dependencies.storage.setDataRootAndRelaunch(args[0])
+          dependencies.storage.setDataRootAndRelaunch(args[0], dataRootHandoffTarget(callerContext))
         ),
       'storage:validate-data-root': ({ args, callerContext }) =>
         localCommand(callerContext, 'storage:validate-data-root', () =>

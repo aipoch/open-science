@@ -11,7 +11,7 @@ import type {
 import type {
   BuiltinSpecialistEntry,
   SpecialistCatalogSnapshot,
-  SpecialistProfileView,
+  SpecialistView,
   SpecialistListItem,
   CreateSpecialistInput,
   UpdateSpecialistInput,
@@ -20,6 +20,8 @@ import type {
   SpecialistSelectedConfig
 } from '../../shared/specialist'
 import {
+  CONNECTOR_TOOL_PATTERN_MAX_LENGTH,
+  CONNECTOR_TOOL_RULE_MAX_COUNT,
   inferSpecialistId,
   validateCreateSpecialistInput,
   validateUpdateSpecialistInput,
@@ -33,6 +35,7 @@ const isStringArray = (value: unknown): value is string[] =>
 
 const isConnectorToolRuleArray = (value: unknown): boolean =>
   Array.isArray(value) &&
+  value.length <= CONNECTOR_TOOL_RULE_MAX_COUNT &&
   value.every(
     (rule) =>
       rule &&
@@ -47,7 +50,13 @@ const isConnectorToolRuleArray = (value: unknown): boolean =>
       [
         (rule as { includeToolsPattern?: unknown }).includeToolsPattern,
         (rule as { excludeToolsPattern?: unknown }).excludeToolsPattern
-      ].every((pattern) => pattern === undefined || typeof pattern === 'string')
+      ].every(
+        (pattern) =>
+          pattern === undefined ||
+          (typeof pattern === 'string' &&
+            pattern.length > 0 &&
+            pattern.length <= CONNECTOR_TOOL_PATTERN_MAX_LENGTH)
+      )
   )
 
 const assertCapabilityConfigShape = (
@@ -91,7 +100,7 @@ const MAX_AVAILABLE_SPECIALIST_NAMES = 8
 
 const specialistReferenceError = (
   reason: 'unknown' | 'ambiguous' | 'unavailable',
-  profiles: readonly SpecialistProfileView[]
+  profiles: readonly SpecialistView[]
 ): Error => {
   const names = [
     ...new Set(
@@ -144,7 +153,7 @@ export class BuiltinSpecialistConformanceError extends Error {
 // View projection
 // ---------------------------------------------------------------------------
 
-const toView = (s: StoredSpecialist): SpecialistProfileView => ({
+const toView = (s: StoredSpecialist): SpecialistView => ({
   id: s.id,
   name: s.name,
   displayName: s.displayName ?? s.name,
@@ -216,13 +225,13 @@ const assertCreateInputShape = (input: CreateSpecialistInput): void => {
 }
 
 // ---------------------------------------------------------------------------
-// ProfileService
+// SpecialistService
 // ---------------------------------------------------------------------------
 
-// The single domain service for Specialist Profiles.
+// The single domain service for Specialists.
 // Settings, IPC handlers, and future SDK callers must use this — never bypass
 // it to write directly to the repository.
-export class ProfileService {
+export class SpecialistService {
   private readonly listeners: Set<() => void> = new Set()
   private builtinEntriesPromise: Promise<readonly BuiltinSpecialistRegistryEntry[]> | undefined
 
@@ -277,7 +286,7 @@ export class ProfileService {
   }
 
   // Returns all custom specialists as views (no Reviewer, no Main Agent, no None).
-  async list(): Promise<SpecialistProfileView[]> {
+  async list(): Promise<SpecialistView[]> {
     const doc = await this.repo.getAll()
     return doc.specialists.map(toView)
   }
@@ -299,7 +308,7 @@ export class ProfileService {
     return { items, integrity: snapshot.integrity }
   }
 
-  async resolveRunnableById(id: string): Promise<SpecialistProfileView> {
+  async resolveRunnableById(id: string): Promise<SpecialistView> {
     const custom = await this.list()
     const customMatch = custom.find((profile) => profile.id === id)
     if (customMatch) return customMatch
@@ -308,7 +317,7 @@ export class ProfileService {
     throw new Error(`Runnable Specialist ${id} not found.`)
   }
 
-  async resolveRunnableByName(name: string): Promise<SpecialistProfileView> {
+  async resolveRunnableByName(name: string): Promise<SpecialistView> {
     const custom = await this.list()
     const customMatch = custom.find((profile) => profile.name === name)
     if (customMatch) return customMatch
@@ -317,7 +326,7 @@ export class ProfileService {
     throw new Error(`Runnable Specialist "${name}" not found.`)
   }
 
-  async resolveRunnableByReference(reference: string): Promise<SpecialistProfileView> {
+  async resolveRunnableByReference(reference: string): Promise<SpecialistView> {
     const profiles = [
       ...(await this.list()),
       ...(await this.builtinEntries()).map((entry) => this.toBuiltinView(entry))
@@ -339,26 +348,26 @@ export class ProfileService {
     return selected
   }
 
-  async getById(id: string): Promise<SpecialistProfileView> {
+  async getById(id: string): Promise<SpecialistView> {
     const doc = await this.repo.getAll()
     const found = doc.specialists.find((s) => s.id === id)
     if (!found) throw new Error(`Specialist ${id} not found.`)
     return toView(found)
   }
 
-  async getByName(name: string): Promise<SpecialistProfileView> {
+  async getByName(name: string): Promise<SpecialistView> {
     const doc = await this.repo.getAll()
     const found = doc.specialists.find((s) => s.name === name)
     if (!found) throw new Error(`Specialist "${name}" not found.`)
     return toView(found)
   }
 
-  async resolveCustomMutationByName(name: string): Promise<SpecialistProfileView> {
+  async resolveCustomMutationByName(name: string): Promise<SpecialistView> {
     await this.assertCreatableName(name)
     return this.getByName(name)
   }
 
-  async create(input: CreateSpecialistInput): Promise<SpecialistProfileView> {
+  async create(input: CreateSpecialistInput): Promise<SpecialistView> {
     assertCreateInputShape(input)
     await this.assertCreatableName(input.name)
 
@@ -415,7 +424,7 @@ export class ProfileService {
     return toView(stored)
   }
 
-  async setEnabled(id: string, enabled: boolean): Promise<SpecialistProfileView> {
+  async setEnabled(id: string, enabled: boolean): Promise<SpecialistView> {
     if (typeof id !== 'string' || !id.trim()) {
       throw new Error('Specialist id must be a non-empty string.')
     }
@@ -437,7 +446,7 @@ export class ProfileService {
   // Atomically patches presentation/instructions fields on an existing specialist.
   // The stable name is immutable. `revision` must match the stored record
   // (optimistic concurrency); the repository bumps it and rejects stale writes.
-  async update(input: UpdateSpecialistInput): Promise<SpecialistProfileView> {
+  async update(input: UpdateSpecialistInput): Promise<SpecialistView> {
     if (!input || typeof input.id !== 'string' || typeof input.revision !== 'number') {
       throw new Error('Update requires id and revision.')
     }
@@ -506,10 +515,7 @@ export class ProfileService {
     return toView(updated)
   }
 
-  async markMarketplaceManaged(
-    id: string,
-    expectedRevision: number
-  ): Promise<SpecialistProfileView> {
+  async markMarketplaceManaged(id: string, expectedRevision: number): Promise<SpecialistView> {
     const current = await this.getById(id)
     if (current.revision !== expectedRevision) {
       throw new Error(`Revision conflict: expected ${expectedRevision}, found ${current.revision}.`)
@@ -573,7 +579,7 @@ export class ProfileService {
     field: 'skillIds' | 'connectorIds' | 'excludedSkillIds' | 'excludedConnectorIds',
     value: string,
     attach: boolean
-  ): Promise<SpecialistProfileView> {
+  ): Promise<SpecialistView> {
     await this.assertContentMutableId(id)
     const current = await this.getById(id)
     if (mode === 'full') {
@@ -597,7 +603,7 @@ export class ProfileService {
     skillId: string,
     expectedRevision: number,
     mode: SpecialistCapabilityMode = 'selected'
-  ): Promise<SpecialistProfileView> {
+  ): Promise<SpecialistView> {
     return this.patchCollection(
       id,
       expectedRevision,
@@ -613,7 +619,7 @@ export class ProfileService {
     skillId: string,
     expectedRevision: number,
     mode: SpecialistCapabilityMode = 'selected'
-  ): Promise<SpecialistProfileView> {
+  ): Promise<SpecialistView> {
     return this.patchCollection(
       id,
       expectedRevision,
@@ -629,7 +635,7 @@ export class ProfileService {
     connectorId: string,
     expectedRevision: number,
     mode: SpecialistCapabilityMode = 'selected'
-  ): Promise<SpecialistProfileView> {
+  ): Promise<SpecialistView> {
     return this.patchCollection(
       id,
       expectedRevision,
@@ -645,7 +651,7 @@ export class ProfileService {
     connectorId: string,
     expectedRevision: number,
     mode: SpecialistCapabilityMode = 'selected'
-  ): Promise<SpecialistProfileView> {
+  ): Promise<SpecialistView> {
     return this.patchCollection(
       id,
       expectedRevision,
@@ -678,9 +684,9 @@ export class ProfileService {
 // Factory
 // ---------------------------------------------------------------------------
 
-export const createProfileService = (
+export const createSpecialistService = (
   storageDir: string,
   builtinRegistry?: { load(): Promise<BuiltinSpecialistRegistryResult> }
-): ProfileService => {
-  return new ProfileService(new SpecialistRepository(storageDir), builtinRegistry)
+): SpecialistService => {
+  return new SpecialistService(new SpecialistRepository(storageDir), builtinRegistry)
 }

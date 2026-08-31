@@ -9,15 +9,30 @@ const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
 const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability journey.'
 const BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT =
   'Run the buffered text tool layout stability journey.'
+const AGENT_STDERR_SUMMARY = 'Agent process stderr: 1 chunk, 22 bytes; raw output omitted.'
 
-test.use({ windowMode: 'normal' })
+// Windows CI stalls the first fake-agent turn when the window is shown from launch. Keep it hidden
+// until that reply arrives, then show it for requestAnimationFrame sampling. macOS already passes
+// with a visible window, and showing mid-journey there shifts the buffered-tool measurement.
+const deferVisibleWindow = process.platform === 'win32'
+
+test.use({ windowMode: deferVisibleWindow ? 'hidden' : 'normal' })
+
+const revealWindowForLayoutSampling = async (
+  app: { showMainWindow: () => Promise<void> },
+  page: Page
+): Promise<void> => {
+  if (!deferVisibleWindow) return
+  await app.showMainWindow()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+}
 
 const cases = [
   { name: 'without agent status', prompt: TOOL_LAYOUT_SHIFT_PROMPT, agentStatus: undefined },
   {
     name: 'with agent status',
     prompt: TOOL_STATUS_LAYOUT_SHIFT_PROMPT,
-    agentStatus: 'Layout fixture status.'
+    agentStatus: AGENT_STDERR_SUMMARY
   }
 ] as const
 
@@ -25,6 +40,7 @@ const runLayoutStabilityJourney = async (
   app: {
     completeOnboarding: () => Promise<Page>
     configureFakeAgent: () => Promise<Page>
+    showMainWindow: () => Promise<void>
   },
   prompt: string,
   agentStatus?: string
@@ -45,6 +61,8 @@ const runLayoutStabilityJourney = async (
   await textbox.fill(USER_MESSAGE)
   await sendButton.click()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect(page.getByTestId('session-persistence-alert')).toHaveCount(0)
+  await revealWindowForLayoutSampling(app, page)
 
   await textbox.fill(prompt)
   await sendButton.click()
@@ -112,6 +130,8 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
   await textbox.fill(USER_MESSAGE)
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect(page.getByTestId('session-persistence-alert')).toHaveCount(0)
+  await revealWindowForLayoutSampling(app, page)
 
   await textbox.fill(BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT)
   await page.getByRole('button', { name: 'Send message' }).click()

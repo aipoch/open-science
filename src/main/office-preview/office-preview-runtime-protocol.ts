@@ -1,11 +1,14 @@
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import { createLogger, diagnosticErrorFields } from '../logger'
 import {
   OFFICE_PREVIEW_RUNTIME_HOST,
   OFFICE_PREVIEW_RUNTIME_ORIGIN,
   OFFICE_PREVIEW_RUNTIME_SCHEME
 } from '../../shared/office-preview'
+
+const log = createLogger('office-preview:protocol')
 
 const OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG = {
   scheme: OFFICE_PREVIEW_RUNTIME_SCHEME,
@@ -60,6 +63,12 @@ type OfficePreviewRuntimeProtocolRegistrar = {
 
 const createOfficePreviewRuntimeUrl = (sessionId: string): string => {
   const url = new URL('/office-preview.html', OFFICE_PREVIEW_RUNTIME_ORIGIN)
+  url.searchParams.set('sessionId', sessionId)
+  return url.toString()
+}
+
+const createReviewerPagedPreviewRuntimeUrl = (sessionId: string): string => {
+  const url = new URL('/reviewer-paged-preview.html', OFFICE_PREVIEW_RUNTIME_ORIGIN)
   url.searchParams.set('sessionId', sessionId)
   return url.toString()
 }
@@ -132,10 +141,10 @@ const createOfficePreviewRuntimeProtocolHandler = (
       })
     } catch (error) {
       const failedUrl = new URL(request.url)
-      console.warn('[office-preview] runtime asset request failed', {
+      log.warn('runtime asset request failed', {
         method: request.method,
         resource: failedUrl.pathname.endsWith('.html') ? 'document' : 'asset',
-        error
+        ...diagnosticErrorFields(error)
       })
       return new Response('Office preview runtime is unavailable.', {
         status: 404,
@@ -163,6 +172,7 @@ const registerOfficePreviewRuntimeProtocol = (
 export {
   createOfficePreviewRuntimeProtocolHandler,
   createOfficePreviewRuntimeUrl,
+  createReviewerPagedPreviewRuntimeUrl,
   OFFICE_PREVIEW_RUNTIME_HOST,
   OFFICE_PREVIEW_RUNTIME_ORIGIN,
   OFFICE_PREVIEW_RUNTIME_SCHEME,

@@ -327,6 +327,140 @@ describe('ACP runtime event normalization', () => {
     expect(JSON.stringify(event.toolContent).length).toBeLessThanOrEqual(32_000)
   })
 
+  it('preserves a Literature presentation block when the full result is truncated', () => {
+    const presentation = JSON.stringify({
+      openScienceLiteraturePresentation: {
+        retrievalMode: 'bm25',
+        documentNames: ['paper.pdf'],
+        passageCount: 4
+      }
+    })
+    const event = new AcpRuntimeSnapshotOwner('/workspace').appendEvent(
+      toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'literature-large-output',
+            status: 'completed',
+            content: [
+              { type: 'content', content: { type: 'text', text: presentation } },
+              {
+                type: 'content',
+                content: {
+                  type: 'text',
+                  text: JSON.stringify({ passages: [{ content: 'a'.repeat(40_000) }] })
+                }
+              }
+            ]
+          }
+        },
+        'event-literature-large-output'
+      )
+    )
+
+    expect(event.toolContent).toHaveLength(2)
+    expect(event.toolContent?.[0]).toEqual({
+      type: 'content',
+      content: { type: 'text', text: presentation }
+    })
+    expect(JSON.stringify(event.toolContent?.[1])).toContain('…')
+    expect(JSON.stringify(event.toolContent).length).toBeLessThanOrEqual(32_000)
+  })
+
+  it('recovers a Literature presentation block from an oversized native MCP result envelope', () => {
+    const presentation = JSON.stringify({
+      openScienceLiteraturePresentation: {
+        retrievalMode: 'bm25',
+        documentNames: ['paper.pdf'],
+        passageCount: 6
+      }
+    })
+    const event = toAcpRuntimeEvent(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'literature-native-large-output',
+          status: 'completed',
+          rawOutput: {
+            result: {
+              content: [
+                { type: 'text', text: presentation },
+                {
+                  type: 'text',
+                  text: JSON.stringify({ passages: [{ content: 'a'.repeat(40_000) }] })
+                }
+              ]
+            },
+            error: null
+          }
+        }
+      },
+      'event-literature-native-large-output'
+    )
+
+    expect(event.toolContent).toEqual([
+      { type: 'content', content: { type: 'text', text: presentation } }
+    ])
+    expect(event.rawOutput).toBeUndefined()
+  })
+
+  it.each([
+    'mcp__open-science-literature__read_document',
+    'open_science_literature_read_document',
+    'open-science-literature/read_document',
+    'mcp.open-science-literature.read_document'
+  ])('preserves page-batch metadata when a Literature result body is truncated for %s', (title) => {
+    const result = JSON.stringify({
+      scope: 'full-document',
+      document: {
+        id: 'private-binding-id',
+        name: 'paper.pdf',
+        checksum: 'private-checksum',
+        pageCount: 14
+      },
+      passage: {
+        pageStart: 1,
+        pageEnd: 5,
+        text: 'a'.repeat(40_000)
+      },
+      nextCursor: 'private-next-cursor'
+    })
+    const event = new AcpRuntimeSnapshotOwner('/workspace').appendEvent(
+      toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'literature-page-batch',
+            title,
+            status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text: result } }]
+          }
+        },
+        'event-literature-page-batch'
+      )
+    )
+
+    expect(event.toolContent?.[0]).toEqual({
+      type: 'content',
+      content: {
+        type: 'text',
+        text: JSON.stringify({
+          openScienceLiteraturePresentation: {
+            documentNames: ['paper.pdf'],
+            pageStart: 1,
+            pageEnd: 5,
+            hasMore: true
+          }
+        })
+      }
+    })
+    expect(JSON.stringify(event.toolContent?.[0])).not.toContain('private-binding-id')
+    expect(JSON.stringify(event.toolContent?.[0])).not.toContain('private-next-cursor')
+  })
+
   it('projects ACP tool-result images without retaining bytes in runtime or Session JSON', () => {
     const imageData = Buffer.from('tiny-image').toString('base64')
     const notification: SessionNotification = {

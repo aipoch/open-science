@@ -11,6 +11,7 @@ import {
   type ComputeConnectionLease
 } from './connection-broker'
 import {
+  computeRemoteWorkdir,
   quoteRemotePath,
   REMOTE_PROCESS_OWNERSHIP_FUNCTION,
   type RemoteHandle
@@ -19,6 +20,7 @@ import { parsePollOutput } from './job-poll-output'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { emitJobNotification } from './job-notifier'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
+import { cleanupCommand, validatedRemoteWorkdir } from './job-deletion-owner'
 
 // Polling interval: 15 seconds (design.md §8).
 export const POLL_INTERVAL_MS = 15_000
@@ -51,6 +53,34 @@ const POLLER_KILL_GRACE_SECONDS = 60
 
 // Maximum concurrent harvest operations (design.md §3: concurrency limit 2).
 const HARVEST_CONCURRENCY_LIMIT = 2
+
+const buildDispatchRecoveryCommand = (workdir: string): string => {
+  const marker = '/.openscience/jobs/'
+  const markerIndex = workdir.lastIndexOf(marker)
+  if (markerIndex < 0) throw new Error('Unsafe remote Compute Job recovery path.')
+  const scratchRoot = markerIndex === 0 ? '/' : workdir.slice(0, markerIndex)
+  const workdirSuffix = workdir.slice(markerIndex + 1)
+  const quotedScratchRoot = quoteRemotePath(scratchRoot)
+  const quotedWorkdirSuffix = quoteRemotePath(workdirSuffix)
+  const quotedWorkdir = quoteRemotePath(workdir)
+  const quotedPidFile = quoteRemotePath(`${workdir}/job.pid`)
+  const quotedExitCodeFile = quoteRemotePath(`${workdir}/exit_code`)
+
+  return [
+    `[ ! -L ${quotedWorkdir} ] || exit 3`,
+    `scratch_root=$(cd -- ${quotedScratchRoot} 2>/dev/null && pwd -P || true)`,
+    `workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P || true)`,
+    'expected_workdir=${scratch_root%/}/' + quotedWorkdirSuffix,
+    '[ -n "$workdir" ] && [ -n "$scratch_root" ] && [ "$workdir" = "$expected_workdir" ] || exit 3',
+    `pid=$(cat ${quotedPidFile} 2>/dev/null || true)`,
+    `case "$pid" in ''|*[!0-9]*) exit 2 ;; esac`,
+    REMOTE_PROCESS_OWNERSHIP_FUNCTION,
+    `if [ ! -f ${quotedExitCodeFile} ]; then process_owned_by_workdir "$pid" "$workdir" || exit 2; fi`,
+    `started_at=$(stat -c %Y ${quotedPidFile} 2>/dev/null || stat -f %m ${quotedPidFile} 2>/dev/null || true)`,
+    `case "$started_at" in ''|*[!0-9]*) exit 2 ;; esac`,
+    `printf '%s\n%s\n' "$pid" "$started_at"`
+  ].join('\n')
+}
 
 /** Injectable harvest operation. Production supplies `harvestJob` from harvest-engine.ts. */
 export type HarvestFn = (job: ComputeJob, signal?: AbortSignal) => Promise<void>
@@ -319,27 +349,18 @@ export class JobPoller {
       }
     }
 
-    for (const job of noHandle) {
+    if (withHandle.length === 0 && noHandle.length === 0) return
+
+    let recoveryFallbackRoot: string | undefined
+    let hasRecoveryFallback = false
+    if (noHandle.some((job) => !job.remote_workdir)) {
+      const host = await this.deps.hostRepository.get(providerId)
       if (signal.aborted) return
-      const transition = await this.lifecycle.recoverInterruptedDispatch(job.job_id)
-      if (transition.kind === 'ignored') continue
-      const updated = transition.job
-      // Emit compute_done notification for execution-error jobs (design §8: error is a final
-      // resting state). Fire-and-forget: notification failure must not break the poller tick.
-      if (this.deps.broadcast && this.deps.storageRoot) {
-        const task = emitJobNotification(updated, {
-          jobRepository: this.deps.jobRepository,
-          hostRepository: this.deps.hostRepository,
-          storageRoot: this.deps.storageRoot,
-          broadcast: this.deps.broadcast
-        }).catch(() => {
-          // Non-fatal: job status is already persisted.
-        })
-        this.trackBackground(task)
+      if (host) {
+        recoveryFallbackRoot = host.scratchRoot
+        hasRecoveryFallback = true
       }
     }
-
-    if (withHandle.length === 0) return
 
     let connection: ComputeConnectionLease
     try {
@@ -350,9 +371,21 @@ export class JobPoller {
     } catch (error) {
       if (signal.aborted) return
       const errorCode = error instanceof ComputeConnectionError ? error.code : 'host_unreachable'
-      await this._recordPollError(withHandle, errorCode, signal)
+      await this._recordPollError([...withHandle, ...noHandle], errorCode, signal)
       return
     }
+
+    for (const job of noHandle) {
+      if (signal.aborted) return
+      const fallbackWorkdir =
+        !job.remote_workdir && hasRecoveryFallback
+          ? computeRemoteWorkdir(recoveryFallbackRoot, job.job_id)
+          : undefined
+      const recovered = await this._recoverSubmittedJob(job, connection, signal, fallbackWorkdir)
+      if (recovered) withHandle.push(recovered)
+    }
+
+    if (withHandle.length === 0) return
 
     // Poll bounded sub-batches sequentially over one provider connection.
     for (let i = 0; i < withHandle.length; i += POLL_BATCH_MAX_JOBS) {
@@ -360,6 +393,114 @@ export class JobPoller {
       const batch = withHandle.slice(i, i + POLL_BATCH_MAX_JOBS)
       await this._pollBatch(batch, connection, signal)
     }
+  }
+
+  private async _recoverSubmittedJob(
+    job: ComputeJob,
+    connection: ComputeConnectionLease,
+    signal: AbortSignal,
+    fallbackWorkdir?: string
+  ): Promise<ComputeJob | undefined> {
+    let workdir: string
+    try {
+      workdir = validatedRemoteWorkdir(job, fallbackWorkdir)
+    } catch {
+      await this._recordPollError([job], 'dispatch_recovery_required', signal)
+      return undefined
+    }
+
+    let recoveryResult
+    try {
+      recoveryResult = await connection.run(buildDispatchRecoveryCommand(workdir), {
+        timeoutMs: POLL_TIMEOUT_MS,
+        loginShell: false,
+        maxOutputBytes: 64,
+        signal
+      })
+    } catch (error) {
+      if (signal.aborted) return undefined
+      const errorCode = error instanceof ComputeConnectionError ? error.code : 'host_unreachable'
+      await this._recordPollError([job], errorCode, signal)
+      return undefined
+    }
+
+    if (signal.aborted) return undefined
+    const connectionFailure = classifyConnectionFailure(recoveryResult, false)
+    if (connectionFailure) {
+      await this._recordPollError([job], connectionFailure.code, signal)
+      return undefined
+    }
+
+    const recoveryLines = recoveryResult.stdout.trim().split(/\r?\n/)
+    const [pidText = '', startedAtText = ''] = recoveryLines
+    const pid = /^[1-9][0-9]*$/.test(pidText) ? Number(pidText) : Number.NaN
+    const startedAtSeconds = /^[1-9][0-9]*$/.test(startedAtText)
+      ? Number(startedAtText)
+      : Number.NaN
+    const startedAt = new Date(startedAtSeconds * 1000)
+    if (
+      recoveryResult.exitCode === 0 &&
+      recoveryLines.length === 2 &&
+      Number.isSafeInteger(pid) &&
+      Number.isSafeInteger(startedAtSeconds) &&
+      Number.isFinite(startedAt.getTime())
+    ) {
+      const remoteHandle: RemoteHandle = {
+        pid,
+        exit_code_path: `${workdir}/exit_code`,
+        stdout_path: `${workdir}/stdout`,
+        stderr_path: `${workdir}/stderr`,
+        workdir
+      }
+      const transition = await this.lifecycle.dispatchRunning(
+        job.job_id,
+        JSON.stringify(remoteHandle),
+        startedAt,
+        job.remote_workdir ? undefined : workdir
+      )
+      return transition.kind === 'applied' ? transition.job : undefined
+    }
+
+    // The exact workdir was reachable but did not contain a valid launch receipt. Reuse the
+    // deletion owner's fail-closed cleanup: it only signals a PID whose cwd proves ownership, then
+    // removes the exact validated Job directory. Do not terminalize the row unless cleanup succeeds.
+    let cleanupResult
+    try {
+      cleanupResult = await connection.run(cleanupCommand(workdir, undefined), {
+        timeoutMs: POLL_TIMEOUT_MS,
+        loginShell: false,
+        maxOutputBytes: 64,
+        signal
+      })
+    } catch {
+      if (signal.aborted) return undefined
+      await this._recordPollError([job], 'dispatch_recovery_required', signal)
+      return undefined
+    }
+
+    if (signal.aborted) return undefined
+    if (classifyConnectionFailure(cleanupResult, false) || cleanupResult.exitCode !== 0) {
+      await this._recordPollError([job], 'dispatch_recovery_required', signal)
+      return undefined
+    }
+
+    const transition = await this.lifecycle.recoverInterruptedDispatch(job.job_id)
+    if (transition.kind === 'ignored') return undefined
+    this._notifyExecutionError(transition.job)
+    return undefined
+  }
+
+  private _notifyExecutionError(job: ComputeJob): void {
+    if (!this.deps.broadcast || !this.deps.storageRoot) return
+    const task = emitJobNotification(job, {
+      jobRepository: this.deps.jobRepository,
+      hostRepository: this.deps.hostRepository,
+      storageRoot: this.deps.storageRoot,
+      broadcast: this.deps.broadcast
+    }).catch(() => {
+      // Non-fatal: job status is already persisted.
+    })
+    this.trackBackground(task)
   }
 
   // Polls one sub-batch of jobs (all with handles) in a single SSH round-trip, sizing the output cap

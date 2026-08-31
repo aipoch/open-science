@@ -138,6 +138,66 @@ describe('ConnectorApprovalDialog', () => {
     )
   })
 
+  it('disambiguates a custom Connector target and exposes its full arguments', () => {
+    const argsJson = JSON.stringify({ query: 'x'.repeat(400) })
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          id: 'r-custom',
+          connector: 'Duplicate label',
+          connectorId: 'server-id',
+          connectorName: 'stable-server',
+          displayName: 'Duplicate label',
+          transport: 'streamable_http',
+          target: 'https://mcp.example.test',
+          method: 'lookup',
+          argsPreview: `${argsJson.slice(0, 300)}…`,
+          argsJson,
+          availableScopes: ['once', 'project', 'global']
+        } as never
+      ]
+    })
+
+    act(() => root.render(<ConnectorApprovalDialog />))
+
+    expect(document.body.textContent).toContain('stable-server')
+    expect(document.body.textContent).toContain('server-id')
+    expect(document.body.textContent).toContain('Streamable HTTP')
+    expect(document.body.textContent).toContain('https://mcp.example.test')
+    expect(document.body.textContent).toContain('Show full arguments')
+    act(() => button('Show full arguments')?.click())
+    expect(document.body.textContent).toContain(argsJson)
+  })
+
+  it('keeps oversized expanded arguments scrollable without displacing approval actions', () => {
+    const argsJson = JSON.stringify({ query: 'x'.repeat(64_000) })
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          id: 'r-large-args',
+          connector: 'biomart',
+          method: 'get_data',
+          argsPreview: `${argsJson.slice(0, 300)}…`,
+          argsJson,
+          argsJsonTruncated: true,
+          availableScopes: ['once']
+        } as never
+      ]
+    })
+
+    act(() => root.render(<ConnectorApprovalDialog />))
+    act(() => button('Show full arguments')?.click())
+
+    const args = Array.from(document.body.querySelectorAll<HTMLElement>('span')).find(
+      (element) => element.textContent === argsJson
+    )
+    expect(args?.className).toContain('max-h-48')
+    expect(args?.className).toContain('overflow-y-auto')
+    expect(document.body.textContent).toContain('Arguments were truncated for display.')
+    expect(button('Deny')).toBeDefined()
+    expect(button('Allow once')).toBeDefined()
+  })
+
   it('Allow once responds with one-call scope without changing Connector policy', () => {
     useSettingsStore.setState({
       pendingApprovals: [

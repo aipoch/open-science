@@ -27,6 +27,12 @@ describe('Office preview runtime protocol', () => {
     expect(runtimeUrl.hostname).toBe('runtime')
     expect(runtimeUrl.pathname).toBe('/office-preview.html')
     expect(runtimeUrl.searchParams.get('sessionId')).toBe('session / 1')
+    const reviewerUrl = new URL(
+      runtimeProtocol.createReviewerPagedPreviewRuntimeUrl('review-session')
+    )
+    expect(reviewerUrl.origin).toBe(runtimeUrl.origin)
+    expect(reviewerUrl.pathname).toBe('/reviewer-paged-preview.html')
+    expect(reviewerUrl.searchParams.get('sessionId')).toBe('review-session')
     expect(fetchRuntime).toHaveBeenCalledWith(
       'http://localhost:5173/src/office-preview/main.ts',
       expect.any(Request)

@@ -91,13 +91,33 @@ const createIpcHandlerRegistry = (
     const ownedLease = epoch.registry.acquire(callerContextForEvent(event))
     epoch.nativeCallers.set(sender, ownedLease)
     const lifecycleSender = event.sender as typeof event.sender & {
+      on?: (name: string, listener: (...args: never[]) => void) => unknown
       once?: (name: string, listener: () => void) => unknown
+      removeListener?: (name: string, listener: (...args: never[]) => void) => unknown
     }
+    const releaseCurrentLease = (): void => {
+      if (epoch.nativeCallers.get(sender) !== ownedLease) return
+      epoch.nativeCallers.delete(sender)
+      ownedLease.release()
+    }
+    const releaseOnMainFrameNavigation = (details: {
+      isMainFrame: boolean
+      isSameDocument: boolean
+    }): void => {
+      if (!details.isMainFrame || details.isSameDocument) return
+      releaseCurrentLease()
+    }
+    const removeNavigationBinding = (): void => {
+      lifecycleSender.removeListener?.('did-start-navigation', releaseOnMainFrameNavigation)
+    }
+    lifecycleSender.on?.('did-start-navigation', releaseOnMainFrameNavigation)
+    ownedLease.lease.signal.addEventListener('abort', removeNavigationBinding, { once: true })
     lifecycleSender.once?.('destroyed', () => {
       destroyedNativeCallers.add(sender)
-      ownedLease.release()
+      releaseCurrentLease()
     })
-    lifecycleSender.once?.('render-process-gone', ownedLease.release)
+    lifecycleSender.once?.('render-process-gone', releaseCurrentLease)
+    if (ownedLease.lease.signal.aborted) removeNavigationBinding()
     return ownedLease
   }
 

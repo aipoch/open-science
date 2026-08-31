@@ -1,5 +1,6 @@
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import {
+  MAX_COMPOSER_ATTACHMENTS,
   toPersistedUploadedAttachment,
   toRuntimeUploadedAttachment,
   type UploadedAttachment
@@ -44,11 +45,16 @@ export const reconcileBranchedAttachments = async (
   }
   if (stagedById.size === 0) return
 
-  const finalized = await window.api.uploads.finalizeSession({
-    projectId,
-    sessionId: sourceSessionId,
-    attachments: [...stagedById.values()]
-  })
+  const staged = [...stagedById.values()]
+  const finalized: UploadedAttachment[] = []
+  for (let offset = 0; offset < staged.length; offset += MAX_COMPOSER_ATTACHMENTS) {
+    const batch = await window.api.uploads.finalizeSession({
+      projectId,
+      sessionId: sourceSessionId,
+      attachments: staged.slice(offset, offset + MAX_COMPOSER_ATTACHMENTS)
+    })
+    finalized.push(...batch)
+  }
   const finalizedById = new Map(finalized.map((upload) => [upload.id, upload]))
   for (const stagedId of stagedById.keys()) {
     if (!finalizedById.has(stagedId)) {
@@ -81,6 +87,17 @@ export const branchWorkspaceSessionFromMessage = async (
     .getState()
     .sessions.find((session) => session.id === pending.sessionId)
   if (!pendingSession) return undefined
+  const pdfContext = pendingSession.messages.findLast((message) => message.pdfContext)?.pdfContext
+  const pdfContextSources = pdfContext
+    ? [
+        ...new Map(
+          pdfContext.bindings.map((binding) => [
+            `${binding.sourceKind}:${binding.sourceVersionId}`,
+            { sourceKind: binding.sourceKind, sourceVersionId: binding.sourceVersionId }
+          ])
+        ).values()
+      ]
+    : []
 
   let createdSessionId: string | undefined
   try {
@@ -100,13 +117,18 @@ export const branchWorkspaceSessionFromMessage = async (
           pendingSession.projectId,
           pendingSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
           pendingSession.specialistId,
-          target
+          target,
+          pendingSession.memoryEnabled !== false,
+          ...(pdfContextSources.length > 0 ? ([true] as const) : [])
         )
       : await runtime.createSession(
           pendingSession.cwd || undefined,
           pendingSession.projectId,
           pendingSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-          pendingSession.specialistId
+          pendingSession.specialistId,
+          undefined,
+          pendingSession.memoryEnabled !== false,
+          ...(pdfContextSources.length > 0 ? ([true] as const) : [])
         )
     const sessionId = created?.sessionId
     if (!sessionId) throw new Error('Agent session could not be created.')
@@ -128,6 +150,29 @@ export const branchWorkspaceSessionFromMessage = async (
       .sessions.find((session) => session.id === sessionId)
     if (!boundSession) throw new Error('Branched Session could not be created.')
     await saveSessionInOrder(toPersistedSession(boundSession))
+    if (pdfContextSources.length > 0) {
+      if (!boundSession.projectId) throw new Error('PDF context requires a Project.')
+      const runtimeContext = await window.api.sessions.linkPdfContext({
+        projectId: boundSession.projectId,
+        sessionId,
+        expectedRevision: boundSession.runtimeContext?.revision ?? 0,
+        sources: pdfContextSources
+      })
+      useSessionStore.getState().applyDurableSessionProjection({
+        source: boundSession,
+        session: {
+          ...toPersistedSession(boundSession),
+          runtimeContext,
+          updatedAt: Math.max(boundSession.updatedAt, Date.now())
+        },
+        mode: 'runtime-context-authority'
+      })
+      const linkedSession = useSessionStore
+        .getState()
+        .sessions.find((session) => session.id === sessionId)
+      if (!linkedSession) throw new Error('Branched Session could not be created.')
+      await saveSessionInOrder(toPersistedSession(linkedSession))
+    }
     return { sessionId, messageId: input.sourceMessageId }
   } catch (error) {
     const failedSessionId = createdSessionId ?? pending.sessionId

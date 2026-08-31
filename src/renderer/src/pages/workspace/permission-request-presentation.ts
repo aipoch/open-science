@@ -5,6 +5,10 @@ import {
   resolveNotebookLanguage,
   resolveNotebookRunToolName
 } from './notebook-tool-names'
+import {
+  buildLiteratureToolSummary,
+  isLiteratureReadDocumentTool
+} from './literature-tool-presentation'
 
 type NotebookRuntime = 'python' | 'r' | 'js' | 'bash'
 
@@ -250,6 +254,9 @@ const isArtifactWriteToolName = (toolName: string | undefined): boolean => {
 const isArtifactWriteRequest = (request: AcpPermissionRequest): boolean =>
   isMcpPermissionRequest(request) && isArtifactWriteToolName(request.mcpIdentity)
 
+const isLiteratureReadRequest = (request: AcpPermissionRequest): boolean =>
+  isMcpPermissionRequest(request) && isLiteratureReadDocumentTool(request.mcpIdentity)
+
 const planPermissionPresentation = (
   request: AcpPermissionRequest
 ): PermissionPresentation | undefined => {
@@ -336,6 +343,19 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
     }
   }
 
+  if (isLiteratureReadRequest(request)) {
+    const summary = buildLiteratureToolSummary(request.rawInput)
+    return {
+      actionTitle: summary.action === 'search' ? 'Search linked PDFs?' : 'Read linked PDF?',
+      categoryLabel: 'Reading',
+      description:
+        summary.action === 'search'
+          ? 'Searches the PDFs linked to this conversation for relevant passages without modifying them.'
+          : 'Reads the PDF linked to this conversation without modifying it.',
+      hideToolIdentity: true
+    }
+  }
+
   const planPresentation = planPermissionPresentation(request)
   if (planPresentation) return planPresentation
 
@@ -413,6 +433,7 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
 export {
   describePermissionRequest,
   isArtifactWriteRequest,
+  isLiteratureReadRequest,
   isMcpPermissionRequest,
   isSpecialistDeleteRequest,
   isSpecialistSwitchRequest

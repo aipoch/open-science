@@ -474,7 +474,14 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
     const reviewRepository = createMockReviewRepository()
-    registerSessionPersistenceIpcHandlers(repository, reviewRepository)
+    const openRecoveryFolder = vi.fn().mockResolvedValue(undefined)
+    registerSessionPersistenceIpcHandlers(
+      repository,
+      reviewRepository,
+      undefined,
+      undefined,
+      openRecoveryFolder
+    )
 
     expect([...ipcHandlers.keys()]).toEqual([
       'sessions:load-all',
@@ -483,7 +490,8 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-one',
       'sessions:save-session',
       'sessions:update-archive',
-      'sessions:save-manifest'
+      'sessions:save-manifest',
+      'sessions:open-recovery-folder'
     ])
 
     const deleteRequest = { projectId: 'project-a', sessionId: 'session-1' }
@@ -507,6 +515,7 @@ describe('session persistence IPC handlers', () => {
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
     await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
+    await ipcHandlers.get('sessions:open-recovery-folder')?.(event, { projectId: 'project-a' })
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
     expect(repository.loadOne).toHaveBeenCalledWith(deleteRequest)
@@ -514,6 +523,7 @@ describe('session persistence IPC handlers', () => {
     expect(repository.deleteSession).not.toHaveBeenCalled()
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
+    expect(openRecoveryFolder).toHaveBeenCalledWith({ projectId: 'project-a' })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:created', {
       session: durableSession,
       originClientId: 'electron:2'

@@ -55,6 +55,7 @@ type StartAttemptRuntimeInput = Readonly<{
   attemptId: string
   runtimeSegmentId: string
   frameworkId: AgentFrameworkId
+  providerId?: string
   backendId?: string
   agentName?: string
   model?: string
@@ -165,6 +166,7 @@ type StartPendingMessageTurnInput = Readonly<{
   promptMessageId: string
   runtimeSegmentId: string
   frameworkId: AgentFrameworkId
+  providerId?: string
   startedAt: number
 }>
 

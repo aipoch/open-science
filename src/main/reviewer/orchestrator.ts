@@ -12,11 +12,13 @@ import { createLogger } from '../logger'
 import type { DelegatedReviewEvidenceScope, ReviewWithChecks } from '../../shared/reviewer'
 import type { ReviewRepository } from './repository'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { ArtifactVersionContentResolver } from './host-sdk'
+import type { ArtifactVersionEvidenceResolvers } from './host-sdk'
+import type { ReviewerFileEvidenceResolver } from './turn-evidence'
 import { buildHistoryPreamble } from '../../shared/history-preamble'
 import { runReviewAssessment } from './review-assessment-owner'
 import { runReviewerFixLoop } from './reviewer-fix-loop-owner'
 import type { AcpSessionAgentTarget } from '../../shared/acp'
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 
 export { buildReviewerPrompt } from './review-assessment-owner'
 export { driveReviewerToStop } from './reviewer-session-driver'
@@ -71,7 +73,8 @@ export type RunReviewOptions = {
   artifactStorageRoot: string
   // Native Version resolver for current provenance rows. Tests and legacy callers may omit it and
   // retain the old session-path lookup.
-  artifactVersionContentResolver?: ArtifactVersionContentResolver
+  artifactVersionResolvers?: ArtifactVersionEvidenceResolvers
+  reviewerFileEvidenceResolver?: ReviewerFileEvidenceResolver
   // Main-process entry reused by the Windows-only Reviewer stdio proxy.
   reviewerMcpEntryPath?: string
   // The model/provider tag to record on the Review row.
@@ -107,6 +110,7 @@ export type RunReviewOptions = {
   // How long the fix loop waits for the correction turn to reach durable session storage. The main
   // agent can finish before the renderer's persistence queue flushes, so a single immediate read races.
   sessionRefreshTimeoutMs?: number
+  recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
 }
 
 // Default drive-loop guards. The wall-clock timeout is the primary backstop against a reviewer that
@@ -136,7 +140,8 @@ const runReviewWithSession = async (
     acpRuntime,
     reviewerAcpRuntime = acpRuntime,
     artifactStorageRoot,
-    artifactVersionContentResolver,
+    artifactVersionResolvers,
+    reviewerFileEvidenceResolver,
     reviewerMcpEntryPath,
     model = '',
     onReviewUpdate,
@@ -150,7 +155,8 @@ const runReviewWithSession = async (
     onFixLoopStart,
     onFixLoopEnd,
     fixLoopAbortSignal,
-    sessionRefreshTimeoutMs = DEFAULT_SESSION_REFRESH_TIMEOUT_MS
+    sessionRefreshTimeoutMs = DEFAULT_SESSION_REFRESH_TIMEOUT_MS,
+    recordUsage
   } = options
 
   const assessment = await runReviewAssessment({
@@ -165,14 +171,16 @@ const runReviewWithSession = async (
     runSessionMutation,
     acpRuntime: reviewerAcpRuntime,
     artifactStorageRoot,
-    artifactVersionContentResolver,
+    artifactVersionResolvers,
+    reviewerFileEvidenceResolver,
     reviewerMcpEntryPath,
     model,
     onReviewUpdate,
     onStarted,
     reviewerTimeoutMs,
     reviewerMaxUpdates,
-    abortSignal: fixLoopAbortSignal
+    abortSignal: fixLoopAbortSignal,
+    recordUsage
   })
   const finalReview = assessment.review
   if (finalReview.lifecycle === 'error') return finalReview
@@ -196,7 +204,8 @@ const runReviewWithSession = async (
         acpRuntime,
         reviewerAcpRuntime,
         artifactStorageRoot,
-        artifactVersionContentResolver,
+        artifactVersionResolvers,
+        reviewerFileEvidenceResolver,
         reviewerMcpEntryPath,
         model,
         onReviewUpdate,
@@ -206,7 +215,8 @@ const runReviewWithSession = async (
         reviewerMaxUpdates,
         maxRounds: fixLoopMaxRounds,
         sessionRefreshTimeoutMs,
-        abortSignal: fixLoopAbortSignal
+        abortSignal: fixLoopAbortSignal,
+        recordUsage
       })
     } finally {
       onFixLoopEnd?.()
@@ -284,6 +294,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
               cwd: session.cwd,
               projectId: session.projectId,
               permissionProfile: session.permissionProfile,
+              memoryEnabled: session.memoryEnabled !== false,
               previousFrameworkId: session.agentFrameworkId,
               previousBackendId: session.agentBackendId,
               specialistId: session.specialistId,

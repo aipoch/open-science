@@ -26,8 +26,8 @@ import type {
   TrustedCallingSession
 } from '../../shared/agents-contract'
 import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
-import type { SpecialistProfileView } from '../../shared/specialist'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistView } from '../../shared/specialist'
+import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 
@@ -46,7 +46,7 @@ class SwitchError extends AgentsSafeError {
 // no parallel switch service. The runtime reconfigure callback is intentionally NOT part of this
 // module: it runs at the safe next-message boundary, not inside this SDK call.
 export type SwitchOperationDeps = {
-  profileService: ProfileService
+  specialistService: SpecialistService
   sessionBinding: SessionBindingService
   approvalGateway: ApprovalGateway
   switchNotifier: SwitchNotifier
@@ -306,11 +306,11 @@ export class SwitchOperation {
   // Specialist; a disabled or unknown target fails closed before the approval gateway is consulted.
   private async resolveTarget(
     targetName: string | null
-  ): Promise<{ kind: 'main' } | { kind: 'specialist'; profile: SpecialistProfileView }> {
+  ): Promise<{ kind: 'main' } | { kind: 'specialist'; profile: SpecialistView }> {
     if (targetName === null) return { kind: 'main' }
-    let profile: SpecialistProfileView
+    let profile: SpecialistView
     try {
-      profile = await this.deps.profileService.resolveRunnableByName(targetName)
+      profile = await this.deps.specialistService.resolveRunnableByName(targetName)
     } catch (error) {
       throw new SwitchError(error)
     }
@@ -358,7 +358,7 @@ export class SwitchOperation {
     const specialistId = this.deps.sessionBinding.getBinding(sessionId)
     if (!specialistId) return undefined
     try {
-      const current = await this.deps.profileService.resolveRunnableById(specialistId)
+      const current = await this.deps.specialistService.resolveRunnableById(specialistId)
       return current.name
     } catch {
       return undefined
@@ -371,16 +371,16 @@ export class SwitchOperation {
   // Failure fails closed and never broadens to Main Agent. Returns the commit descriptor
   // (specialistId/revision or Main).
   private async resolveForCommit(
-    preResolved: { kind: 'main' } | { kind: 'specialist'; profile: SpecialistProfileView },
+    preResolved: { kind: 'main' } | { kind: 'specialist'; profile: SpecialistView },
     reviewedRevision: number | undefined
   ): Promise<PendingCommit> {
     if (preResolved.kind === 'main') {
       return { generation: 0, specialistId: undefined, targetName: null }
     }
     const name = preResolved.profile.name
-    let profile: SpecialistProfileView
+    let profile: SpecialistView
     try {
-      profile = await this.deps.profileService.resolveRunnableByName(name)
+      profile = await this.deps.specialistService.resolveRunnableByName(name)
     } catch (error) {
       // Renamed or deleted between approval and commit.
       throw new SwitchError(error)

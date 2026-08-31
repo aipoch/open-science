@@ -7,6 +7,7 @@ import {
   type ProviderTransportOwnerOptions
 } from './provider-transport-owner'
 import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
+import type { AnthropicProviderBridgeTarget } from './anthropic-provider-bridge'
 import type { ChatProviderCompatibilityTarget } from './chat-provider-compatibility'
 
 type ResponsesBridgeStub = ReturnType<
@@ -172,6 +173,7 @@ describe('ProviderTransportOwner generations', () => {
       key: 'openai-token-0',
       model: 'model-a'
     })
+    expect(generation.providerConfiguration).toBeUndefined()
     expect(generation.environment?.NO_PROXY).toBe(generation.environment?.no_proxy)
     await generation.release()
     expect(selector.close).toHaveBeenCalledOnce()
@@ -445,6 +447,12 @@ describe('ProviderTransportOwner generations', () => {
       ANTHROPIC_AUTH_TOKEN: 'anthropic-bridge-token',
       ANTHROPIC_API_KEY: 'anthropic-bridge-token'
     })
+    expect(generation.providerConfiguration).toEqual({
+      providerId: 'main',
+      apiType: 'anthropic',
+      baseUrl: 'http://127.0.0.1:43000',
+      headers: { 'x-api-key': 'anthropic-bridge-token' }
+    })
     expect(generation.environment?.NO_PROXY).toBe(generation.environment?.no_proxy)
     expect(generation.anthropicBridgeLease?.setTarget('provider-a/model-a')).toBe(true)
     await generation.release()
@@ -490,6 +498,49 @@ describe('ProviderTransportOwner generations', () => {
     expect(bridges[1]?.close).toHaveBeenCalledTimes(1)
   })
 
+  it('uses TokenHub x-api-key authentication for OpenCode Anthropic traffic', async () => {
+    const bridge = makeAnthropicBridge()
+    let targets: readonly AnthropicProviderBridgeTarget[] = []
+    const owner = new ProviderTransportOwner({
+      createAnthropicProviderBridge: (registered) => {
+        targets = registered
+        return bridge
+      }
+    })
+    const target: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      apiEndpoints: ['anthropic'],
+      needsChatResponsesBridge: false,
+      provider: {
+        ...makeTarget().provider,
+        vendorId: 'tencent',
+        apiEndpoints: ['anthropic']
+      }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget: target,
+      plan: {
+        ...makePlan({ kind: 'direct' }),
+        modelRoute: 'opencode-anthropic',
+        transport: {
+          kind: 'opencode-anthropic',
+          targets: [{ id: 'opencode/provider-a/model-a', target }]
+        }
+      }
+    })
+
+    expect(targets).toEqual([
+      expect.objectContaining({
+        baseUrl: 'https://provider.example',
+        key: 'plain-provider-key',
+        model: 'model-a',
+        useApiKeyHeader: true
+      })
+    ])
+    await generation.release()
+  })
+
   it('invalidates OpenCode replay caches across A to B to A target changes', async () => {
     const upstreamFetch = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { model: string }
@@ -527,6 +578,7 @@ describe('ProviderTransportOwner generations', () => {
     const providerA = generation.providerModelCatalog?.find(
       ({ provider }) => provider.model === 'model-a'
     )?.provider
+    expect(generation.providerConfiguration).toBeUndefined()
     if (!providerA?.openaiBaseUrl || !providerA.key) throw new Error('Missing provider A loopback')
     const sendA = (): Promise<Response> =>
       fetch(`${providerA.openaiBaseUrl}/chat/completions`, {
@@ -579,6 +631,7 @@ describe('ProviderTransportOwner generations', () => {
       model: 'model-a',
       apiEndpoints: ['responses']
     })
+    expect(generation.providerConfiguration).toBeUndefined()
     expect(generation.providerTransportLease?.setTarget(initialTargetId)).toBe(true)
     expect(generation.environment?.NO_PROXY).toBe(generation.environment?.no_proxy)
     await generation.release()

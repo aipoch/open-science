@@ -1,8 +1,8 @@
 import { vi, type Mock } from 'vitest'
 
 import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contract'
-import type { SpecialistProfileView } from '../../shared/specialist'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistView } from '../../shared/specialist'
+import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
 import {
@@ -22,9 +22,7 @@ const catalog: AgentsCatalogSource = {
   getConnectors: async () => ({ enabledIds: [], autoAllowIds: [] })
 }
 
-export const approvedSpecialist = (
-  overrides: Partial<SpecialistProfileView> = {}
-): SpecialistProfileView => ({
+export const approvedSpecialist = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'specialist-approved',
   name: 'Approved Specialist',
   displayName: 'Approved Specialist',
@@ -51,11 +49,11 @@ export const deferred = <T = void>(): {
 
 type HarnessOptions = {
   approval?: ApprovalResult
-  initialProfile?: SpecialistProfileView
+  initialProfile?: SpecialistView
   onApproval?: (
-    current: SpecialistProfileView | undefined,
+    current: SpecialistView | undefined,
     approvalIndex: number
-  ) => SpecialistProfileView | undefined
+  ) => SpecialistView | undefined
   approvalGateway?: ApprovalGateway
   runtime?: CompletionGateRuntime
   coordinator?: CompletionGateCoordinator
@@ -78,10 +76,9 @@ export type CapturedHandoff = Extract<CompletionDisposition, { kind: 'capture-fo
 export const createCompletionGateAgentHarness = (
   options: HarnessOptions = {}
 ): CompletionGateAgentHarness => {
-  let currentProfile: SpecialistProfileView | undefined =
-    options.initialProfile ?? approvedSpecialist()
+  let currentProfile: SpecialistView | undefined = options.initialProfile ?? approvedSpecialist()
   let approvalCount = 0
-  const profileService = {
+  const specialistService = {
     getByName: vi.fn(async (name: string) => {
       if (!currentProfile || currentProfile.name !== name) {
         throw new Error(`Specialist "${name}" not found.`)
@@ -107,7 +104,7 @@ export const createCompletionGateAgentHarness = (
       return currentProfile
     }),
     list: vi.fn(async () => (currentProfile ? [currentProfile] : []))
-  } as unknown as ProfileService
+  } as unknown as SpecialistService
   const defaultApprovalGateway: ApprovalGateway = {
     decide: vi.fn(async () => {
       approvalCount += 1
@@ -150,7 +147,7 @@ export const createCompletionGateAgentHarness = (
     setBinding: vi.fn()
   } as unknown as SessionBindingService
   const agents = new AgentsService({
-    profileService,
+    specialistService,
     catalog,
     approvalGateway,
     approvalLifecycle: lifecycle,

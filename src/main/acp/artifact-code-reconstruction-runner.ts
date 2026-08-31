@@ -1,8 +1,12 @@
+import { randomUUID } from 'node:crypto'
+
 import { isCodexSubscriptionProviderId, type AgentFrameworkId } from '../../shared/settings'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import { prepareRestrictedBackend } from './restricted-runtime-profile'
 import {
+  extractRestrictedInferenceUsage,
   RestrictedInferenceError,
   RestrictedInferenceRunner,
   resolveRestrictedInferenceModel
@@ -35,7 +39,10 @@ type ArtifactCodeReconstructionRunnerOptions = {
     }
   ) => Promise<ResolvedAgentBackend>
   now?: () => number
+  recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
 }
+
+type ArtifactCodeReconstructionRunContext = Readonly<{ projectId: string; sessionId: string }>
 
 export const prepareBackend = (
   backend: ResolvedAgentBackend,
@@ -86,11 +93,13 @@ export class ArtifactCodeReconstructionRunner {
 
   async run(
     prompt: string,
-    target: ExplicitAgentBackendTarget
+    target: ExplicitAgentBackendTarget,
+    context?: ArtifactCodeReconstructionRunContext
   ): Promise<ArtifactCodeReconstructionRunResult> {
     if (this.shuttingDown) throw new Error('Artifact code reconstruction is shutting down.')
     if (this.running) throw new Error('Artifact code reconstruction is already running.')
     this.running = true
+    const eventId = randomUUID()
     try {
       const result = await this.inference.run({
         prompt,
@@ -99,12 +108,28 @@ export class ArtifactCodeReconstructionRunner {
         agentName: RECONSTRUCTION_AGENT_NAME,
         description: 'One-shot Artifact code reconstruction without tools.'
       })
+      await this.recordUsage(
+        context,
+        eventId,
+        result.frameworkId,
+        target.providerId,
+        result.model,
+        result.usage
+      )
       return {
         text: result.text,
         frameworkId: result.frameworkId,
         model: result.model
       }
     } catch (error) {
+      await this.recordUsage(
+        context,
+        eventId,
+        target.frameworkId,
+        target.providerId,
+        target.model.kind === 'required' ? target.model.id : undefined,
+        extractRestrictedInferenceUsage(error)
+      )
       if (error instanceof RestrictedInferenceError && error.code === 'tool-violation') {
         throw new Error('The selected agent attempted to use a tool during code reconstruction.')
       }
@@ -130,8 +155,33 @@ export class ArtifactCodeReconstructionRunner {
     }
   }
 
+  private async recordUsage(
+    context: ArtifactCodeReconstructionRunContext | undefined,
+    eventId: string,
+    frameworkId: SessionAuxiliaryTurnUsageRecord['frameworkId'],
+    providerId: string,
+    model: string | undefined,
+    usage: SessionAuxiliaryTurnUsageRecord['usage'] | undefined
+  ): Promise<void> {
+    if (!context || !usage || !this.options.recordUsage) return
+    await this.options
+      .recordUsage({
+        ...context,
+        eventId,
+        source: 'artifact-code-reconstruction',
+        frameworkId,
+        providerId,
+        model,
+        completedAtMs: Date.now(),
+        usage
+      })
+      .catch(() => undefined)
+  }
+
   async shutdown(): Promise<void> {
     this.shuttingDown = true
     await this.inference.shutdown()
   }
 }
+
+export type { ArtifactCodeReconstructionRunContext }

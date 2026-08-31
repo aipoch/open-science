@@ -9,6 +9,8 @@ import { Readable, Writable } from 'node:stream'
 
 const VERSION = '1.0.0'
 const PERMISSION_PROMPT = 'Request fixture permission.'
+const MEMORY_RECALL_PROMPT = 'Verify automatic memory recall.'
+const MEMORY_RECALL_ENTRY = 'Keep every response concise and welcoming.'
 const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
 const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
 const PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT = 'Profile the notebook lifecycle.'
@@ -508,7 +510,12 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes(BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT)) {
+        if (prompt.includes(MEMORY_RECALL_PROMPT)) {
+          if (!prompt.includes('<memory_records>') || !prompt.includes(MEMORY_RECALL_ENTRY)) {
+            throw new Error('Automatic memory recall did not reach the provider prompt.')
+          }
+          reply = 'Automatic memory recall reached the provider.'
+        } else if (prompt.includes(BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT)) {
           const intentMessageId = `e2e-message-${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
@@ -571,7 +578,7 @@ if (process.argv.includes('--version')) {
           if (prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT)) {
             process.stderr.write('Layout fixture status.\n')
           }
-          await delay(750)
+          await delay(prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT) ? 2_000 : 750)
 
           const finalMessageId = `e2e-message-${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {

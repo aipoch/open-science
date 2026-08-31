@@ -59,7 +59,9 @@ const AppVersionSection = ({
       case 'downloading':
         return t('Downloading… {{percent}}%', { percent: status.progress ?? 0 })
       case 'ready':
-        return t('Update downloaded — open the installer to finish')
+        return status.applyKind === 'restart'
+          ? t('Restart to update')
+          : t('Update downloaded — open the installer to finish')
       case 'up-to-date':
         return t('You are on the latest version')
       case 'error':

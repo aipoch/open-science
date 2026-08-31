@@ -107,6 +107,57 @@ const assertNoRemovedDelegateContext = (requests: readonly unknown[]): void => {
   }
 }
 
+const assertDelegateRequestShape = (
+  requestOrRequests: DurableDelegateRequest | readonly DurableDelegateRequest[]
+): readonly DurableDelegateRequest[] => {
+  const rawRequests: readonly unknown[] = Array.isArray(requestOrRequests)
+    ? requestOrRequests
+    : [requestOrRequests]
+  assertNoRemovedDelegateContext(rawRequests)
+  if (
+    rawRequests.length === 0 ||
+    rawRequests.some(
+      (request) =>
+        typeof request !== 'object' ||
+        request === null ||
+        Array.isArray(request) ||
+        !('task' in request) ||
+        typeof request.task !== 'string' ||
+        collapseWhitespace(request.task).length === 0
+    )
+  ) {
+    throw new DurableDelegatedWorkError(
+      'admission_rejection',
+      'delegation requires a non-empty task'
+    )
+  }
+  const requests = rawRequests as readonly DurableDelegateRequest[]
+  if (requests.some((request) => !('name' in request) || typeof request.name !== 'string')) {
+    throw new DurableDelegatedWorkError(
+      'admission_rejection',
+      'delegation requires an explicit delegate name; provide a 1–48-code-point non-emoji name and retry'
+    )
+  }
+  requests.forEach((request) => normalizeExplicitDelegateName(request.name))
+  return requests
+}
+
+const assertDelegateInputShape = (requests: readonly DurableDelegateRequest[]): void => {
+  if (
+    requests.some(
+      (request) =>
+        request.inputs !== undefined &&
+        (!Array.isArray(request.inputs) ||
+          request.inputs.some((input) => typeof input !== 'string' || !input.trim()))
+    )
+  ) {
+    throw new DurableDelegatedWorkError(
+      'admission_rejection',
+      'delegation inputs must be immutable Version identities'
+    )
+  }
+}
+
 class DelegatedWorkAdmissionPolicy {
   constructor(
     private readonly resolveSpecialistById?: (
@@ -120,7 +171,7 @@ class DelegatedWorkAdmissionPolicy {
 
   async admit(
     requestOrRequests: DurableDelegateRequest | readonly DurableDelegateRequest[],
-    parentSpecialistProfileId?: string
+    parentSpecialistId?: string
   ): Promise<
     Readonly<{
       requests: readonly DurableDelegateRequest[]
@@ -128,63 +179,21 @@ class DelegatedWorkAdmissionPolicy {
       contracts: readonly (PreparedStructuredOutputSchema | undefined)[]
     }>
   > {
-    const rawRequests: readonly unknown[] = Array.isArray(requestOrRequests)
-      ? requestOrRequests
-      : [requestOrRequests]
-    assertNoRemovedDelegateContext(rawRequests)
-    if (
-      rawRequests.length === 0 ||
-      rawRequests.some(
-        (request) =>
-          typeof request !== 'object' ||
-          request === null ||
-          Array.isArray(request) ||
-          !('task' in request) ||
-          typeof request.task !== 'string' ||
-          collapseWhitespace(request.task).length === 0
-      )
-    ) {
-      throw new DurableDelegatedWorkError(
-        'admission_rejection',
-        'delegation requires a non-empty task'
-      )
-    }
-    const unnormalizedRequests = rawRequests as readonly DurableDelegateRequest[]
-    if (
-      unnormalizedRequests.some(
-        (request) => !('name' in request) || typeof request.name !== 'string'
-      )
-    )
-      throw new DurableDelegatedWorkError(
-        'admission_rejection',
-        'delegation requires an explicit delegate name; provide a 1–48-code-point non-emoji name and retry'
-      )
+    const unnormalizedRequests = assertDelegateRequestShape(requestOrRequests)
     const requests = unnormalizedRequests.map((request) => ({
       ...request,
       name: normalizeExplicitDelegateName(request.name)
     }))
-    if (
-      requests.some(
-        (request) =>
-          request.inputs !== undefined &&
-          (!Array.isArray(request.inputs) ||
-            request.inputs.some((input) => typeof input !== 'string' || !input.trim()))
-      )
-    ) {
-      throw new DurableDelegatedWorkError(
-        'admission_rejection',
-        'delegation inputs must be immutable Version identities'
-      )
-    }
+    assertDelegateInputShape(requests)
     const contracts = requests.map((request) =>
       request.outputSchema === undefined
         ? undefined
         : prepareStructuredOutputSchema(request.outputSchema)
     )
     const inheritedAgent = requests.some((request) => request.profile === undefined)
-      ? parentSpecialistProfileId === undefined
+      ? parentSpecialistId === undefined
         ? ({ kind: 'main' } as const)
-        : await this.resolveAgent(parentSpecialistProfileId)
+        : await this.resolveAgent(parentSpecialistId)
       : undefined
     const resolvedAgents = await Promise.all(
       requests.map((request) =>
@@ -331,6 +340,8 @@ class DelegatedWorkAdmissionPolicy {
 export {
   MAX_DELEGATE_NAME_CODE_POINTS,
   allocateDelegateNames,
+  assertDelegateInputShape,
+  assertDelegateRequestShape,
   assertNoRemovedDelegateContext,
   createAdmissionGate,
   DelegatedWorkAdmissionPolicy

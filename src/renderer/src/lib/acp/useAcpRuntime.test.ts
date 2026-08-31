@@ -90,6 +90,7 @@ let acpApi: {
   disconnect: ReturnType<typeof vi.fn>
   createSession: ReturnType<typeof vi.fn>
   resumeSession: ReturnType<typeof vi.fn>
+  resetSessionContext: ReturnType<typeof vi.fn>
   continueInterruptedTurn: ReturnType<typeof vi.fn>
   compactSession: ReturnType<typeof vi.fn>
   deleteSession: ReturnType<typeof vi.fn>
@@ -132,6 +133,7 @@ beforeEach(() => {
     disconnect: vi.fn().mockResolvedValue(createSnapshot({ status: 'idle' })),
     createSession: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
     resumeSession: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+    resetSessionContext: vi.fn().mockResolvedValue(createSnapshot()),
     continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot()),
     compactSession: vi.fn().mockResolvedValue(createSnapshot()),
     deleteSession: vi.fn().mockResolvedValue(createSnapshot()),
@@ -309,6 +311,7 @@ describe('useAcpRuntime payload construction', () => {
       text: 'analyze this dataset',
       forcedSkillIds: ['skill-analysis'],
       attachments: undefined,
+      memoryEnabled: true,
       turnIntent: 'plan-first'
     })
   })
@@ -345,12 +348,73 @@ describe('useAcpRuntime payload construction', () => {
       cwd: '/workspace/project',
       projectId: 'Project',
       permissionProfile: 'ask',
+      memoryEnabled: true,
       previousFrameworkId: 'opencode',
       previousBackendId: 'opencode:provider-a',
       specialistId: 'specialist-1',
       providerSessionId: 'provider-session-1',
-      providerContinuityToken: 'bridge-generation-1'
+      providerContinuityToken: 'bridge-generation-1',
+      specialistBindingPending: undefined
     })
+  })
+
+  it('forwards an explicitly disabled conversation Memory preference across ACP requests', async () => {
+    const { result } = await mountRuntime()
+
+    await act(async () => {
+      await result.current.createSession(
+        '/workspace',
+        'project-1',
+        'ask',
+        undefined,
+        undefined,
+        false
+      )
+      await result.current.resumeSession(
+        'session-1',
+        '/workspace',
+        'project-1',
+        'ask',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false
+      )
+      await result.current.resetSessionContext('session-1', '/workspace', 'project-1', 'ask', false)
+      await result.current.sendPrompt(
+        'session-1',
+        'answer without memory',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false
+      )
+    })
+
+    expect(acpApi.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ memoryEnabled: false })
+    )
+    expect(acpApi.resumeSession).toHaveBeenCalledWith(
+      expect.objectContaining({ memoryEnabled: false })
+    )
+    expect(acpApi.resetSessionContext).toHaveBeenCalledWith(
+      expect.objectContaining({ memoryEnabled: false })
+    )
+    expect(acpApi.sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ memoryEnabled: false })
+    )
   })
 
   it('forwards only the restricted interrupted-turn continuation contract', async () => {
@@ -368,11 +432,12 @@ describe('useAcpRuntime payload construction', () => {
     expect(acpApi.continueInterruptedTurn).toHaveBeenCalledWith(request)
   })
 
-  it('includes history preamble/attachments/images and resume fallback when a prompt replays context', async () => {
+  it('keeps current images separate from replay images in the prompt request', async () => {
     const { result } = await mountRuntime()
 
     const attachment = { id: 'up-1', name: 'a.txt', mimeType: 'text/plain', size: 1 }
     const image = { mimeType: 'image/png', data: 'aGVsbG8=' }
+    const currentImage = { mimeType: 'image/png', data: 'd29ybGQ=', byteLength: 5 }
     const resumeFallback = { historyPreamble: 'fallback transcript' }
 
     await act(async () => {
@@ -387,7 +452,12 @@ describe('useAcpRuntime payload construction', () => {
         [image] as never,
         resumeFallback as never,
         undefined,
-        true
+        true,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [currentImage] as never
       )
     })
 
@@ -398,6 +468,7 @@ describe('useAcpRuntime payload construction', () => {
       historyPreamble: 'prior transcript',
       historyAttachments: [attachment],
       historyImages: [image],
+      currentImages: [currentImage],
       resumeFallback,
       contextReset: true
     })
@@ -420,11 +491,17 @@ describe('useAcpRuntime payload construction', () => {
     })
 
     const [payload] = acpApi.sendPrompt.mock.calls[0] as [Record<string, unknown>]
-    expect(payload).toEqual({ sessionId: 'session-1', text: 'hello', attachments: undefined })
+    expect(payload).toEqual({
+      sessionId: 'session-1',
+      text: 'hello',
+      memoryEnabled: true,
+      attachments: undefined
+    })
     for (const field of [
       'historyPreamble',
       'historyAttachments',
       'historyImages',
+      'currentImages',
       'resumeFallback',
       'contextReset'
     ]) {

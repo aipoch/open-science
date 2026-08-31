@@ -1,12 +1,15 @@
 import type {
   AuthenticateCustomServerRequest,
+  DisconnectCustomServerRequest,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetOpenAlexCredentialRequest,
   SetToolPermissionRequest,
-  UpdateCustomServerRequest
+  UpdateCustomServerRequest,
+  ValidateOpenAlexCredentialRequest
 } from '../../../shared/settings'
 import { wireConnectorReload } from '../../connector-reload'
 import type { CustomServerSecurityChangeGuard } from '../connector-settings'
@@ -19,12 +22,15 @@ type ConnectorSettingsWorkflowStore = Pick<
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
   | 'setNcbiCredentials'
+  | 'setOpenAlexCredential'
+  | 'validateOpenAlexCredential'
   | 'addCustomServer'
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'disconnectCustomServer'
 >
 
 type ConnectorSettingsWorkflowEffects = {
@@ -72,6 +78,18 @@ class ConnectorSettingsWorkflows {
     return this.afterConnectorsChanged(() => this.settings.setNcbiCredentials(request))
   }
 
+  async setOpenAlexCredential(
+    request: SetOpenAlexCredentialRequest
+  ): WorkflowResult<'setOpenAlexCredential'> {
+    return this.afterConnectorsChanged(() => this.settings.setOpenAlexCredential(request))
+  }
+
+  async validateOpenAlexCredential(
+    request: ValidateOpenAlexCredentialRequest
+  ): WorkflowResult<'validateOpenAlexCredential'> {
+    return this.settings.validateOpenAlexCredential(request)
+  }
+
   async addCustomServer(request: AddCustomServerRequest): WorkflowResult<'addCustomServer'> {
     return this.afterConnectorsChanged(() => this.settings.addCustomServer(request))
   }
@@ -108,7 +126,7 @@ class ConnectorSettingsWorkflows {
   }
 
   async authenticateCustomServer(
-    request: AuthenticateCustomServerRequest
+    request: DisconnectCustomServerRequest
   ): WorkflowResult<'authenticateCustomServer'> {
     const snapshot = await this.settings.authenticateCustomServer(request.id)
     this.effects.clearCustomServerFailure(request.id)
@@ -120,6 +138,15 @@ class ConnectorSettingsWorkflows {
     request: AuthenticateCustomServerRequest
   ): WorkflowResult<'cancelCustomServerAuthentication'> {
     return this.settings.cancelCustomServerAuthentication(request.id)
+  }
+
+  async disconnectCustomServer(
+    request: AuthenticateCustomServerRequest
+  ): WorkflowResult<'disconnectCustomServer'> {
+    const snapshot = await this.settings.disconnectCustomServer(request.id)
+    this.effects.clearCustomServerFailure(request.id)
+    this.connectorsChanged()
+    return snapshot
   }
 
   async retryCustomServer(

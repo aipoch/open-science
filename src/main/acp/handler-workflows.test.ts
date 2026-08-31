@@ -86,6 +86,7 @@ const createHarness = (
   startContinuationWhenDispatchAdmitted: ReturnType<typeof vi.fn>
   hasLiveSession: ReturnType<typeof vi.fn>
   captureSessionBackend: ReturnType<typeof vi.fn>
+  resumeSession: ReturnType<typeof vi.fn>
   session: PersistedChatSession
   request: {
     projectId: string
@@ -100,6 +101,10 @@ const createHarness = (
   prepareControlTurn(session)
   const startPrompt = vi.fn(async (request: unknown) => void request)
   const startContinuation = vi.fn(async (request: unknown) => void request)
+  const resumeSession = vi.fn(async (request: { sessionId: string; cwd: string }) => ({
+    sessionId: request.sessionId,
+    cwd: request.cwd
+  }))
   const hasLiveSession = vi.fn(() => true)
   const captureSessionBackend = vi.fn(
     () =>
@@ -127,7 +132,7 @@ const createHarness = (
       getSnapshot: () => snapshot,
       hasLiveSession,
       captureSessionBackend,
-      resumeSession: vi.fn(),
+      resumeSession,
       startPrompt,
       getLatestUserPrompt: vi.fn(),
       startContinuation,
@@ -148,6 +153,7 @@ const createHarness = (
     startContinuationWhenDispatchAdmitted,
     hasLiveSession,
     captureSessionBackend,
+    resumeSession,
     session,
     request: {
       projectId: session.projectId,
@@ -158,6 +164,47 @@ const createHarness = (
     }
   }
 }
+
+describe('ACP resume Session workflow', () => {
+  const persistedProjectId = 'persisted-project'
+  const archiveAvailability = {
+    withSessionAvailable: async <Result>(
+      _projectId: string,
+      _sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result> => operation(),
+    withSessionAvailableById: async <Result>(
+      _sessionId: string,
+      operation: (projectId: string) => Promise<Result>
+    ): Promise<Result> => operation(persistedProjectId)
+  }
+
+  it('injects the persisted Project owner when the request omits projectId', async () => {
+    const harness = createHarness(undefined, archiveAvailability)
+    const request = { sessionId: 'session-1', cwd: '/workspace' }
+
+    await harness.workflows.resumeSession(request)
+
+    expect(harness.resumeSession).toHaveBeenCalledWith({
+      ...request,
+      projectId: persistedProjectId
+    })
+  })
+
+  it('rejects a request whose projectId disagrees with the persisted owner', async () => {
+    const harness = createHarness(undefined, archiveAvailability)
+
+    await expect(
+      harness.workflows.resumeSession({
+        sessionId: 'session-1',
+        cwd: '/workspace',
+        projectId: 'forged-project'
+      })
+    ).rejects.toThrow('Session does not belong to the requested Project.')
+
+    expect(harness.resumeSession).not.toHaveBeenCalled()
+  })
+})
 
 describe('ACP interrupted turn workflow', () => {
   it('does not re-enter archive admission while continuing an interrupted turn', async () => {
@@ -172,7 +219,8 @@ describe('ACP interrupted turn workflow', () => {
     }
     const harness = createHarness(undefined, {
       withSessionAvailable: (_projectId, _sessionId, operation) => enqueueArchive(operation),
-      withSessionAvailableById: (_sessionId, operation) => enqueueArchive(operation)
+      withSessionAvailableById: (_sessionId, operation) =>
+        enqueueArchive(() => operation('project-1'))
     })
     harness.session.status = 'error'
     harness.session.activeRun = undefined

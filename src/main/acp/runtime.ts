@@ -62,7 +62,7 @@ import { ConversationPermissionGrantStore } from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { AcpPermissionContext } from './permission-context'
 import { AgentMcpHttpHost } from './mcp-http-host'
-import type { SessionCapabilityPolicy } from './session-capability-owner'
+import type { AcpSessionCapabilityOwner, SessionCapabilityPolicy } from './session-capability-owner'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
@@ -75,6 +75,10 @@ import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { UploadRepository } from '../uploads/repository'
+import {
+  LITERATURE_MCP_SERVER_NAME,
+  type LiteratureReadDocumentRequest
+} from '../literature/mcp-server'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type {
@@ -175,6 +179,12 @@ type AcpRuntimeOptions = {
   appVersion: string
   defaultCwd: string
   callbacks?: AcpRuntimeCallbacks
+  auxiliaryUsage?: Readonly<{
+    projectIdForSession: (sessionId: string) => Promise<string | undefined>
+    record: (
+      input: import('../session-persistence/auxiliary-turn-usage').SessionAuxiliaryTurnUsageRecord
+    ) => Promise<unknown>
+  }>
   permissionGrantStore?: ConversationPermissionGrantStore
   permissionGrantRegistry?: PermissionGrantRegistry
   permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
@@ -196,6 +206,13 @@ type AcpRuntimeOptions = {
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
   notebook?: AcpRuntimeNotebookOptions
+  memory?: {
+    isEnabled?(): Promise<boolean>
+    recallForPrompt(
+      requestText: string,
+      context: { projectId: string }
+    ): Promise<string | undefined>
+  }
   skillImport?: AcpRuntimeSkillImportOptions
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
@@ -218,6 +235,15 @@ type AcpRuntimeOptions = {
       routingId: string,
       request: SideChatSendMessageRequest
     ) => Promise<SideChatSendMessageResult>
+  }>
+  literature?: Readonly<{
+    isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
+    readDocument: (request: {
+      projectId: string
+      sessionId: string
+      promptMessageId: string
+      input: LiteratureReadDocumentRequest
+    }) => Promise<unknown>
   }>
   sideChatRelays?: Readonly<{
     claim: (parentSessionId: string) =>
@@ -251,7 +277,7 @@ type AcpRuntimeOptions = {
   // Injectable only for the authenticated OpenCode loopback usage snapshots; production uses fetch.
   opencodeUsageFetch?: typeof fetch
   // Resolves the identity-inject text for a specialist UUID at session-creation time.
-  // The main process reads the latest Profile from ProfileService; the runtime never caches it.
+  // The main process reads the latest Profile from SpecialistService; the runtime never caches it.
   // Returns undefined when the specialist is not found, disabled, or its Profile is corrupt —
   // the caller should have validated before calling createSession.
   resolveSpecialistIdentity?: (
@@ -307,9 +333,12 @@ type AcpRuntimeNotebookOptions = {
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string
+  memoryTools?: boolean
+  isMemoryEnabled?: () => Promise<boolean>
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string
+    memoryTools: boolean
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   releaseSessionCapabilities?: (sessionId: string) => void
@@ -321,10 +350,15 @@ type AcpRuntimeNotebookOptions = {
     method: NotebookExecutionRpcMethod
     rawInput?: unknown
   }) => string | undefined
-  setArtifactProvenanceContext?: (
+  setArtifactTurnBinding?: (
     sessionId: string,
-    context: import('../../shared/notebook').NotebookRunProvenanceContext | undefined
+    binding: {
+      ownerExecutionId: string
+      projectId: string
+      provenanceContext: import('../../shared/notebook').NotebookRunProvenanceContext
+    }
   ) => void
+  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
   registerTurnInputs?: (request: {
     projectId: string
     appSessionId: string
@@ -386,6 +420,7 @@ const errorMessage = (error: unknown): string => {
 }
 
 const log = createLogger('acp')
+const literatureLog = createLogger('literature-reading-context')
 
 const PERMISSION_DENIED_CONTINUATION_TEXT =
   'The user explicitly denied this operation. You do not have authorization to perform it. ' +
@@ -401,6 +436,62 @@ const PERMISSION_CANCELLED_CONTINUATION_TEXT =
 
 const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
 const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
+const AGENT_STDERR_REPORT_WINDOW_MS = 1000
+const MAX_RAW_AGENT_STDERR_SAMPLE_BYTES = 4096
+// Support-only opt-in. Raw agent stderr can contain research data, local paths, and tool output.
+const RAW_AGENT_STDERR_ENV = 'OPEN_SCIENCE_AGENT_STDERR'
+
+// Preserve the renderer's existing suppression for the two exact informational diagnostics Codex
+// emits during successful turns. Evaluate each adapter-delivered stderr block independently, as the
+// pre-aggregation event path did; any additional content makes the whole window actionable.
+const isNonActionableCodexStderr = (text: string): boolean => {
+  const withoutSkillBudgetNotice = text.replace(
+    /Warning:\s*Skill descriptions were shortened to fit the 2% skills context budget\.\s*Codex can still see every skill, but some descriptions are shorter\.\s*Disable unused skills or plugins to leave more room for the rest\.\s*/gi,
+    ''
+  )
+  const withoutTransportFallback = withoutSkillBudgetNotice.replace(
+    /Warning:\s*Falling back from WebSockets to HTTPS transport\.\s*request timed out\s*/gi,
+    ''
+  )
+
+  return withoutTransportFallback.trim().length === 0
+}
+
+const utf8PrefixWithinBytes = (value: string, maxBytes: number): string => {
+  if (maxBytes <= 0) return ''
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
+
+  let low = 0
+  let high = Math.min(value.length, maxBytes)
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    if (Buffer.byteLength(value.slice(0, middle), 'utf8') <= maxBytes) low = middle
+    else high = middle - 1
+  }
+  // Do not retain half of a UTF-16 surrogate pair at the byte boundary.
+  if (low > 0 && value.charCodeAt(low - 1) >= 0xd800 && value.charCodeAt(low - 1) <= 0xdbff) {
+    low -= 1
+  }
+  return value.slice(0, low)
+}
+
+type AgentStderrWindow = {
+  process: ChildProcessWithoutNullStreams
+  framework: AgentFrameworkId
+  epoch: number
+  startedAt: number
+  chunkCount: number
+  byteCount: number
+  rawSample: string
+  rawSampleBytes: number
+  rawSampleTruncated: boolean
+  sessionId?: string
+  interactionSequence?: number
+  sessionAttributionConsistent: boolean
+  nonActionableCodexOnly: boolean
+  eventEligible: boolean
+  timer: ReturnType<typeof setTimeout>
+}
 
 type PlanContinuationClaimRetry = {
   commandId: string
@@ -439,6 +530,7 @@ class AcpRuntime {
     Readonly<{
       sessionId: string
       provenanceContext?: NonNullable<AcpPromptRequest['provenanceContext']>
+      memoryEnabled?: boolean
       referencedSessions?: AcpPromptRequest['referencedSessions']
     }>
   >()
@@ -451,6 +543,7 @@ class AcpRuntime {
   >
   private durablePlanContinuations?: Map<string, { projectId: string; commandId: string }>
   private readonly planContinuationClaimRetries = new Map<string, PlanContinuationClaimRetry>()
+  private readonly agentStderrWindows = new Map<ChildProcessWithoutNullStreams, AgentStderrWindow>()
   private restoredContinuationContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
@@ -463,6 +556,7 @@ class AcpRuntime {
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
+  private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly sessionUpdateProjector: AcpSessionUpdateProjector
   private readonly providerPromptExecutor: AcpProviderPromptExecutor
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
@@ -504,6 +598,7 @@ class AcpRuntime {
     this.connectionTransitions = base.connectionTransitions
     this.turnSkills = base.turnSkills
     this.sessionConfigurator = base.sessionConfigurator
+    this.sessionCapabilities = base.sessionCapabilities
     this.sessionRegistry = session.sessionRegistry
     this.sessionEnvironment = session.sessionEnvironment
     this.publication = session.publication
@@ -646,6 +741,16 @@ class AcpRuntime {
     return this.backend
   }
 
+  beginProviderTurnObservation(input: {
+    providerSessionId: string
+    cwd: string
+  }): ReturnType<AcpProviderPromptExecutor['beginObservation']> {
+    return this.providerPromptExecutor.beginObservation({
+      ...input,
+      frameworkId: this.framework.id
+    })
+  }
+
   captureSessionModel(
     sessionId: string
   ): Readonly<{ backend: AcpBackendGenerationView; appliedModel?: string }> | undefined {
@@ -703,6 +808,10 @@ class AcpRuntime {
       this.activeSessionFor(sessionId) !== undefined &&
       this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectId === projectId
     )
+  }
+
+  isSessionMemoryEnabled(sessionId: string): boolean {
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().memoryEnabled ?? false
   }
 
   liveSessionProjectId(sessionId: string): string | undefined {
@@ -811,6 +920,90 @@ class AcpRuntime {
       )
       return resumed
     })
+  }
+
+  async enableLiteratureContext(sessionId: string): Promise<void> {
+    if (!this.options.literature) return
+    this.sessionCapabilities.enableLiterature(sessionId)
+    if (
+      this.sessionCapabilities.mcpServerNamesFor(sessionId).includes(LITERATURE_MCP_SERVER_NAME)
+    ) {
+      return
+    }
+    const snapshot = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
+    if (!snapshot || !this.activeSessionFor(sessionId)) {
+      literatureLog.info('Literature MCP mount deferred until provider Session creation', {
+        sessionId
+      })
+      return
+    }
+    if (this.sessionInteractions.current(sessionId)) {
+      throw new Error('Cannot prepare Literature tools while the Agent is running.')
+    }
+    try {
+      await this.withOperationLease(() =>
+        this.providerSessionResumer.reconfigure({
+          sessionId,
+          cwd: snapshot.cwd ?? this.options.defaultCwd,
+          projectId: snapshot.projectId,
+          memoryEnabled: snapshot.memoryEnabled,
+          ...(snapshot.permissionProfile?.selectedProfile
+            ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
+            : {})
+        })
+      )
+      literatureLog.info('Literature MCP mounted with compatible provider resume', {
+        sessionId,
+        framework: this.framework.id,
+        replayedHistory: false
+      })
+    } catch (error) {
+      this.sessionCapabilities.rollbackLiteratureEnable(sessionId)
+      literatureLog.warn('Literature MCP mount failed', {
+        sessionId,
+        ...errorLogFields(error)
+      })
+      throw error
+    }
+  }
+
+  async disableLiteratureContext(sessionId: string): Promise<void> {
+    if (!this.options.literature || !this.sessionCapabilities.disableLiterature(sessionId)) return
+    if (
+      !this.sessionCapabilities.mcpServerNamesFor(sessionId).includes(LITERATURE_MCP_SERVER_NAME)
+    ) {
+      return
+    }
+    const snapshot = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
+    if (!snapshot || !this.activeSessionFor(sessionId)) return
+    if (this.sessionInteractions.current(sessionId)) {
+      literatureLog.info('Literature MCP unmount deferred until the Agent is idle', { sessionId })
+      return
+    }
+    try {
+      await this.withOperationLease(() =>
+        this.providerSessionResumer.reconfigure({
+          sessionId,
+          cwd: snapshot.cwd ?? this.options.defaultCwd,
+          projectId: snapshot.projectId,
+          memoryEnabled: snapshot.memoryEnabled,
+          ...(snapshot.permissionProfile?.selectedProfile
+            ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
+            : {})
+        })
+      )
+      literatureLog.info('Literature MCP disabled with compatible provider resume', {
+        sessionId,
+        framework: this.framework.id,
+        replayedHistory: false
+      })
+    } catch (error) {
+      literatureLog.warn('Literature MCP disable failed; message context remains authoritative', {
+        sessionId,
+        ...errorLogFields(error)
+      })
+      throw error
+    }
   }
 
   // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
@@ -1230,6 +1423,14 @@ class AcpRuntime {
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
+    if (
+      request.referencedArtifacts?.some(
+        (reference) =>
+          'pdfReadingPosition' in reference && reference.pdfReadingPosition !== undefined
+      )
+    ) {
+      await this.enableLiteratureContext(request.sessionId)
+    }
     return this.withOperationLease(() =>
       this.runPromptTurn(request, {
         kind: 'user',
@@ -1424,6 +1625,9 @@ class AcpRuntime {
         request: {
           sessionId: permissionRequest.sessionId,
           text: PERMISSION_DENIED_CONTINUATION_TEXT,
+          ...(promptInteraction.memoryEnabled !== undefined
+            ? { memoryEnabled: promptInteraction.memoryEnabled }
+            : {}),
           suppressUserMessage: true,
           ...(promptInteraction.promptMessageId
             ? { provenanceContext: { promptMessageId: promptInteraction.promptMessageId } }
@@ -1560,6 +1764,7 @@ class AcpRuntime {
       request: {
         sessionId: restored.sessionId,
         text,
+        memoryEnabled: continuation.memoryEnabled,
         suppressUserMessage: true,
         provenanceContext: continuation.provenanceContext,
         ...(continuation.referencedSessions?.length
@@ -1659,6 +1864,7 @@ class AcpRuntime {
         resolution.response,
         restoredContinuation?.historyReplay,
         restoredContinuation?.provenanceContext ?? livePromptContext?.provenanceContext,
+        restoredContinuation?.memoryEnabled ?? livePromptContext?.memoryEnabled,
         restoredContinuation?.referencedSessions ?? livePromptContext?.referencedSessions
       )
       if (continuation) {
@@ -1770,12 +1976,17 @@ class AcpRuntime {
     const referencedSessions = this.handoffContinuity.copyReferencedSessions(request.sessionId)
     if (
       promptInteraction?.kind === 'prompt' &&
-      (promptInteraction.provenanceContext || referencedSessions?.length)
+      (promptInteraction.provenanceContext ||
+        promptInteraction.memoryEnabled !== undefined ||
+        referencedSessions?.length)
     ) {
       this.userChoiceProvenanceContexts.set(requestId, {
         sessionId: request.sessionId,
         ...(promptInteraction.provenanceContext
           ? { provenanceContext: promptInteraction.provenanceContext }
+          : {}),
+        ...(promptInteraction.memoryEnabled !== undefined
+          ? { memoryEnabled: promptInteraction.memoryEnabled }
           : {}),
         ...(referencedSessions?.length ? { referencedSessions } : {})
       })
@@ -1788,6 +1999,7 @@ class AcpRuntime {
     response: CreateElicitationResponse,
     historyReplay?: ElicitationResponse['historyReplay'],
     provenanceContext?: AcpPromptRequest['provenanceContext'],
+    memoryEnabled?: boolean,
     referencedSessions?: AcpPromptRequest['referencedSessions']
   ): AcpPromptRequest | undefined {
     if (response.action === 'cancel') return undefined
@@ -1840,6 +2052,7 @@ class AcpRuntime {
     return {
       sessionId: request.sessionId,
       text,
+      ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
       suppressUserMessage: true,
       ...(continuationProvenance ? { provenanceContext: continuationProvenance } : {}),
       ...(referencedSessions?.length ? { referencedSessions } : {}),
@@ -2009,6 +2222,7 @@ class AcpRuntime {
           : 'The user approved the pending Session Plan. Continue execution of exactly that ' +
             `approved Plan Artifact Version (artifact_version_id=${plan.artifactVersionId}). ` +
             'Do not regenerate, broaden, or reinterpret the approved Plan.',
+      memoryEnabled: continuation.memoryEnabled,
       suppressUserMessage: true,
       provenanceContext: continuation.provenanceContext,
       ...(continuation.referencedSessions?.length
@@ -2434,29 +2648,131 @@ class AcpRuntime {
     text: string,
     context: Parameters<AcpAgentConnectionHooks['onProcessStderr']>[1]
   ): void {
-    // Always capture agent stderr in the log — it's the primary clue when a turn stalls or the
-    // agent misbehaves (auth loops, MCP connection failures, tool errors) in a packaged build.
-    if (text) {
-      log.warn('agent stderr', {
-        text,
-        framework: context.framework,
-        status: this.snapshotOwner.status,
-        sessionCount: this.activeSessionIds().length
-      })
+    if (!text) return
+
+    const disposition = this.processEventDisposition(context.process, context.epoch)
+    const inFlight = disposition === 'current' ? this.getInFlightSessionIds() : []
+    const sessionId = inFlight.length === 1 ? inFlight[0] : undefined
+    const interactionSequence = sessionId
+      ? this.sessionInteractions.current(sessionId)?.sequence
+      : undefined
+    const existing = this.agentStderrWindows.get(context.process)
+    if (existing) {
+      existing.chunkCount += 1
+      existing.byteCount += Buffer.byteLength(text, 'utf8')
+      existing.eventEligible &&= disposition === 'current'
+      existing.nonActionableCodexOnly &&=
+        context.framework === 'codex' && isNonActionableCodexStderr(text)
+      if (
+        existing.sessionId !== sessionId ||
+        existing.interactionSequence !== interactionSequence
+      ) {
+        existing.sessionId = undefined
+        existing.interactionSequence = undefined
+        existing.sessionAttributionConsistent = false
+      }
+      this.appendAgentStderrSample(existing, text)
+      return
     }
 
-    if (this.processEventDisposition(context.process, context.epoch) !== 'current' || !text) return
+    const timer = setTimeout(
+      () => this.flushAgentProcessStderr(context.process),
+      AGENT_STDERR_REPORT_WINDOW_MS
+    )
+    timer.unref?.()
+    const window: AgentStderrWindow = {
+      process: context.process,
+      framework: context.framework,
+      epoch: context.epoch,
+      startedAt: Date.now(),
+      chunkCount: 1,
+      byteCount: Buffer.byteLength(text, 'utf8'),
+      rawSample: '',
+      rawSampleBytes: 0,
+      rawSampleTruncated: false,
+      sessionId,
+      interactionSequence,
+      sessionAttributionConsistent: true,
+      nonActionableCodexOnly: context.framework === 'codex' && isNonActionableCodexStderr(text),
+      eventEligible: disposition === 'current',
+      timer
+    }
+    this.appendAgentStderrSample(window, text)
+    this.agentStderrWindows.set(context.process, window)
+  }
 
-    // Attribute stderr to a session only when exactly one prompt is in flight — then it's
-    // unambiguously that turn's. With zero or multiple concurrent prompts, omit the sessionId
-    // rather than risk pinning it to the wrong conversation's waiting indicator.
+  private includeRawAgentStderr(): boolean {
+    return process.env[RAW_AGENT_STDERR_ENV]?.trim().toLowerCase() === 'raw'
+  }
+
+  private appendAgentStderrSample(window: AgentStderrWindow, text: string): void {
+    if (!this.includeRawAgentStderr()) return
+    let available = MAX_RAW_AGENT_STDERR_SAMPLE_BYTES - window.rawSampleBytes
+    if (available <= 0) {
+      window.rawSampleTruncated = true
+      return
+    }
+    if (window.rawSample) {
+      window.rawSample += '\n'
+      window.rawSampleBytes += 1
+      available -= 1
+    }
+    const prefix = utf8PrefixWithinBytes(text, available)
+    window.rawSample += prefix
+    window.rawSampleBytes += Buffer.byteLength(prefix, 'utf8')
+    if (prefix.length < text.length) window.rawSampleTruncated = true
+  }
+
+  private flushAgentProcessStderr(process: ChildProcessWithoutNullStreams): void {
+    const window = this.agentStderrWindows.get(process)
+    if (!window) return
+    this.agentStderrWindows.delete(process)
+    clearTimeout(window.timer)
+
+    const windowMs = Math.max(1, Date.now() - window.startedAt)
+    const includeRaw = this.includeRawAgentStderr() && window.rawSample.length > 0
+    const chunkLabel = window.chunkCount === 1 ? 'chunk' : 'chunks'
+    const summary = `Agent process stderr: ${window.chunkCount} ${chunkLabel}, ${window.byteCount} bytes; ${includeRaw ? 'bounded raw sample follows' : 'raw output omitted'}.`
+    const rawSuffix = window.rawSampleTruncated ? '\n…[truncated]' : ''
+    log.warn('agent stderr summary', {
+      errorCategory: 'process-stderr',
+      framework: window.framework,
+      status: this.snapshotOwner.status,
+      sessionCount: this.activeSessionIds().length,
+      chunkCount: window.chunkCount,
+      byteCount: window.byteCount,
+      windowMs,
+      chunksPerSecond: Number(((window.chunkCount * 1000) / windowMs).toFixed(1)),
+      ...(includeRaw
+        ? { rawSample: window.rawSample, rawSampleTruncated: window.rawSampleTruncated }
+        : {})
+    })
+
+    if (
+      !window.eventEligible ||
+      this.processEventDisposition(window.process, window.epoch) !== 'current'
+    ) {
+      return
+    }
+    if (window.nonActionableCodexOnly) return
+
     const inFlight = this.getInFlightSessionIds()
+    const currentSessionId = inFlight.length === 1 ? inFlight[0] : undefined
+    const currentInteractionSequence = currentSessionId
+      ? this.sessionInteractions.current(currentSessionId)?.sequence
+      : undefined
+    const sessionId =
+      window.sessionAttributionConsistent &&
+      window.sessionId === currentSessionId &&
+      window.interactionSequence === currentInteractionSequence
+        ? window.sessionId
+        : undefined
     this.pushEvent({
       kind: 'system',
       level: 'warning',
-      sessionId: inFlight.length === 1 ? inFlight[0] : undefined,
+      sessionId,
       title: 'agent',
-      text
+      text: includeRaw ? `${summary}\n${window.rawSample}${rawSuffix}` : summary
     })
   }
 
@@ -2486,6 +2802,7 @@ class AcpRuntime {
     signal: NodeJS.Signals | null,
     context: Parameters<AcpAgentConnectionHooks['onProcessExit']>[2]
   ): void {
+    this.flushAgentProcessStderr(context.process)
     const processDisposition = this.processEventDisposition(context.process, context.epoch)
     log.info('agent process exit', {
       code,

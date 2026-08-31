@@ -259,6 +259,11 @@ describe('Compute service architecture', () => {
       'await projectDeletionCoordinator.recoverPendingDeletions()',
       backgroundSessionRecovery
     )
+    const committedDeletionWake = source.indexOf(
+      "event.payload.status === 'cleanup-pending'",
+      backgroundProjectRecovery
+    )
+    const wakeCall = source.indexOf('projectDeletionRecovery.wake()', committedDeletionWake)
 
     expect(projectBarriers).toBeGreaterThan(-1)
     expect(jobBarriers).toBeGreaterThan(projectBarriers)
@@ -268,6 +273,8 @@ describe('Compute service architecture', () => {
     expect(backgroundOrphanRecovery).toBeGreaterThan(backgroundRecovery)
     expect(backgroundSessionRecovery).toBeGreaterThan(backgroundOrphanRecovery)
     expect(backgroundProjectRecovery).toBeGreaterThan(backgroundSessionRecovery)
+    expect(committedDeletionWake).toBeGreaterThan(backgroundProjectRecovery)
+    expect(wakeCall).toBeGreaterThan(committedDeletionWake)
   })
 
   it('gives Compute Job shutdown the transport cancellation budget', () => {
@@ -372,7 +379,7 @@ describe('Compute service architecture', () => {
     const computeContracts = RENDERER_CONTRACT_CATALOG.filter(
       ({ channel }) => channel?.startsWith('compute:') === true
     )
-    expect(computeContracts).toHaveLength(33)
+    expect(computeContracts).toHaveLength(35)
     const remoteRestricted = computeContracts.filter(
       ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
     )
@@ -408,6 +415,7 @@ describe('Compute service architecture', () => {
     expect(computeService.ownerPaths).toEqual([
       'src/main/compute/approval-session-lifecycle.ts',
       'src/main/compute/agent-compute-service.ts',
+      'src/main/compute/bounded-child-termination.ts',
       'src/main/compute/compute-approval-broker.ts',
       'src/main/compute/compute-host-profile-owner.ts',
       'src/main/compute/compute-job-lifecycle.ts',
@@ -422,6 +430,10 @@ describe('Compute service architecture', () => {
       'src/main/compute/enabled-hosts-registry.ts',
       'src/main/compute/session-enabled-hosts-owner.ts',
       'src/main/compute/permission-grant-adapter.ts',
+      'src/main/compute/repository.ts',
+      'src/main/compute/scp-runner.ts',
+      'src/main/compute/session-cache-owner.ts',
+      'src/main/compute/ssh-runner.ts',
       'src/main/compute/compute-auth-owner.ts',
       'src/main/compute/connection-adapters.ts',
       'src/main/compute/credential-vault.ts',
@@ -447,6 +459,8 @@ describe('Compute service architecture', () => {
         'src/main/compute/compute-job-workflow-owner.test.ts',
         'src/main/compute/compute-remote-operation-owner.test.ts',
         'src/main/compute/permission-grant-adapter.test.ts',
+        'src/main/compute/repository.test.ts',
+        'src/main/compute/session-cache-owner.test.ts',
         'src/main/compute/compute-service.test.ts',
         'src/main/compute/compute-auth-owner.test.ts',
         'src/main/compute/credential-vault.test.ts',

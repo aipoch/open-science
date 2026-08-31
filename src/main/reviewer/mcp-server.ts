@@ -22,7 +22,23 @@ import {
   type NewCheck,
   type TurnScope
 } from '../../shared/reviewer'
-import { assertBlockInScope, type ReviewerHostServer } from './host-sdk'
+import {
+  assertBlockInScope,
+  toLimitedMediaArtifactMetadata,
+  toMediaArtifactMetadata,
+  type ReviewerArtifactReadOptions,
+  type ReviewerArtifactReadResult,
+  type MediaArtifactMetadata,
+  type ReviewLimitation,
+  type ReviewerHostServer
+} from './host-sdk'
+import {
+  MAX_SPREADSHEET_CELLS,
+  MAX_SPREADSHEET_COLUMNS,
+  MAX_SPREADSHEET_ROW_SPAN,
+  MAX_XLSX_ROWS,
+  type ArtifactReadTargets
+} from './bounded-artifact-content'
 import { createLogger } from '../logger'
 import { listenForLocalRpc, localRpcServerLogFields } from '../local-rpc-transport'
 import {
@@ -44,8 +60,14 @@ const log = createLogger('reviewer:mcp')
 
 type ReviewerEvidenceAccess = Pick<
   ReviewerHostServer,
-  'readTurn' | 'queryExecutionLog' | 'readArtifact'
->
+  'readTurn' | 'queryExecutionLog' | 'fileRole'
+> & {
+  readArtifact: (
+    id: string,
+    options?: ReviewerArtifactReadOptions,
+    signal?: AbortSignal
+  ) => Promise<ReviewerArtifactReadResult>
+}
 
 // Zod schema for the optional locator on a check submitted by the reviewer.
 const checkLocatorSchema = z.object({
@@ -169,8 +191,170 @@ export type ReviewerEvidenceAccessLedger = {
   turnRead: boolean
   allExecutionLogsRead: boolean
   executionLogActivityIds: ReadonlySet<string>
-  artifactVersionIds: ReadonlySet<string>
+  artifactVersionIds?: ReadonlySet<string>
+  artifactReads?: ReadonlyMap<string, ReviewerArtifactEvidenceCoverage>
 }
+
+export type ReviewerArtifactEvidenceCoverage = {
+  role: 'work_product' | 'source_document'
+  traceRead: boolean
+  contentRead: boolean
+  mediaRead: boolean
+  partial: boolean
+  requestedTargets: readonly ReviewerArtifactReadTarget[]
+  actualTargets: readonly ArtifactReadTargets[]
+  limitations: readonly ReviewLimitation[]
+}
+
+export type ReviewerArtifactReadTarget = ArtifactReadTargets & {
+  offset?: number
+  maxBytes?: number
+  includePreview?: boolean
+}
+
+export type PersistedReviewerEvidenceCoverage = {
+  turnRead: boolean
+  allExecutionLogsRead: boolean
+  executionLogActivityIds: string[]
+  artifactReads: Array<
+    ReviewerArtifactEvidenceCoverage & {
+      versionId: string
+    }
+  >
+  truncation?: {
+    kind: 'coverage-truncated'
+    omittedArtifactReads: number
+    omittedExecutionLogActivityIds: number
+    omittedRequestedTargets: number
+    omittedActualTargets: number
+    omittedLimitations: number
+  }
+}
+
+export const serializeReviewerEvidenceCoverage = (
+  coverage: ReviewerEvidenceAccessLedger
+): PersistedReviewerEvidenceCoverage => ({
+  turnRead: coverage.turnRead,
+  allExecutionLogsRead: coverage.allExecutionLogsRead,
+  executionLogActivityIds: [...coverage.executionLogActivityIds],
+  artifactReads: [...(coverage.artifactReads ?? new Map())].map(([versionId, read]) => ({
+    versionId,
+    ...read,
+    requestedTargets: read.requestedTargets.map((target) => ({ ...target })),
+    actualTargets: read.actualTargets.map((target) => ({ ...target })),
+    limitations: read.limitations.map((limitation) => ({ ...limitation }))
+  }))
+})
+
+const normalizeRequestedTarget = (
+  input: Omit<ReviewerArtifactReadOptions, 'view'>
+): ReviewerArtifactReadTarget | undefined => {
+  const target: ReviewerArtifactReadTarget = {
+    ...(input.offset === undefined ? {} : { offset: input.offset }),
+    ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
+    ...(input.pages === undefined ? {} : { pages: [...new Set(input.pages)] }),
+    ...(input.sheet === undefined ? {} : { sheet: input.sheet }),
+    ...(input.rowStart === undefined ? {} : { rowStart: input.rowStart }),
+    ...(input.rowEnd === undefined ? {} : { rowEnd: input.rowEnd }),
+    ...(input.columns === undefined
+      ? {}
+      : { columns: [...new Set(input.columns.map((column) => column.toUpperCase()))] }),
+    ...(input.includePreview === undefined ? {} : { includePreview: input.includePreview })
+  }
+  return Object.keys(target).length > 0 ? target : undefined
+}
+
+const limitationForReadError = (error: unknown, id: string): ReviewLimitation => {
+  const detail = toErrorMessage(error)
+  const normalized = detail.toLowerCase()
+  return {
+    kind:
+      error instanceof ResourceBudgetExceededError
+        ? 'budget-exhausted'
+        : normalized.includes('checksum mismatch')
+          ? 'checksum-mismatch'
+          : normalized.includes('corrupt') || normalized.includes('could not be parsed')
+            ? 'corrupt-content'
+            : normalized.includes('unsupported')
+              ? 'unsupported-format'
+              : 'content-missing',
+    subjectId: id,
+    detail
+  }
+}
+
+export const reviewerArtifactReadInputSchema = z
+  .object({
+    id: z.string().min(1).describe('In-scope immutable file Version id'),
+    view: z
+      .enum(['trace', 'content'])
+      .optional()
+      .describe('Trace provenance or final content; omitted remains content'),
+    offset: z.number().int().min(0).optional().describe('Byte offset for a bounded page'),
+    maxBytes: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Requested source bytes; the host clamps this to its page limit'),
+    pages: z
+      .array(z.number().int().positive())
+      .min(1)
+      .max(32)
+      .optional()
+      .describe('Exact 1-based PDF/DOCX pages or PPTX slides needed for the claim'),
+    sheet: z.string().min(1).max(255).optional().describe('Exact XLSX sheet name'),
+    rowStart: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_XLSX_ROWS)
+      .optional()
+      .describe('First 1-based XLSX row'),
+    rowEnd: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_XLSX_ROWS)
+      .optional()
+      .describe('Last 1-based XLSX row'),
+    columns: z
+      .array(
+        z
+          .string()
+          .max(3)
+          .regex(/^[A-Z]+$/i)
+      )
+      .min(1)
+      .max(MAX_SPREADSHEET_COLUMNS)
+      .optional()
+      .describe('Exact XLSX column letters needed for the claim'),
+    includePreview: z
+      .boolean()
+      .optional()
+      .describe('Include bounded page/slide preview images for a visual claim')
+  })
+  .strict()
+  .superRefine((input, context) => {
+    const start = input.rowStart ?? 1
+    const end = input.rowEnd ?? start + 99
+    const span = end - start + 1
+    if (span < 1 || span > MAX_SPREADSHEET_ROW_SPAN) {
+      context.addIssue({
+        code: 'custom',
+        path: ['rowEnd'],
+        message: `Spreadsheet row span must be between 1 and ${MAX_SPREADSHEET_ROW_SPAN}`
+      })
+    }
+    const cells = span * (input.columns?.length ?? MAX_SPREADSHEET_COLUMNS)
+    if (cells > MAX_SPREADSHEET_CELLS) {
+      context.addIssue({
+        code: 'custom',
+        path: ['columns'],
+        message: `Spreadsheet target exceeds ${MAX_SPREADSHEET_CELLS} cells`
+      })
+    }
+  })
 
 export const validateReviewerEvidenceAccess = (
   checks: SubmitFindingsInput['checks'],
@@ -197,9 +381,21 @@ export const validateReviewerEvidenceAccess = (
         )
       }
     }
-    if (check.artifactVersionId && !access.artifactVersionIds.has(check.artifactVersionId)) {
+    if (
+      check.artifactVersionId &&
+      !access.artifactVersionIds?.has(check.artifactVersionId) &&
+      !access.artifactReads?.has(check.artifactVersionId)
+    ) {
       throw new Error(
         `Artifact Version ${check.artifactVersionId} was not read before submitting its check.`
+      )
+    }
+    if (
+      check.artifactVersionId &&
+      access.artifactReads?.get(check.artifactVersionId)?.role === 'source_document'
+    ) {
+      throw new Error(
+        `Source Document Version ${check.artifactVersionId} must be cited in evidence, not persisted as artifactVersionId.`
       )
     }
   }
@@ -213,6 +409,7 @@ type ReviewerMcpServerOptions = {
   entryPath?: string
   transport?: 'tcp' | 'pipe'
   requestBytes?: number
+  supportsImageInput?: boolean | (() => boolean)
 }
 
 // Maps model-submitted checks onto the turn scope, enforcing the single-sourcing contract
@@ -290,7 +487,7 @@ export class ReviewerMcpServer {
     turnRead: false,
     allExecutionLogsRead: false,
     executionLogActivityIds: new Set<string>(),
-    artifactVersionIds: new Set<string>()
+    artifactReads: new Map<string, ReviewerArtifactEvidenceCoverage>()
   }
   private findingsSubmissionAttempted = false
   private findingsSubmissionState: 'idle' | 'submitting' | 'submitted' = 'idle'
@@ -353,6 +550,33 @@ export class ReviewerMcpServer {
 
   get submissionAttempted(): boolean {
     return this.findingsSubmissionAttempted
+  }
+
+  get evidenceCoverage(): ReviewerEvidenceAccessLedger {
+    return {
+      turnRead: this.evidenceAccess.turnRead,
+      allExecutionLogsRead: this.evidenceAccess.allExecutionLogsRead,
+      executionLogActivityIds: new Set(this.evidenceAccess.executionLogActivityIds),
+      artifactReads: new Map(
+        [...this.evidenceAccess.artifactReads].map(([id, coverage]) => [
+          id,
+          {
+            ...coverage,
+            requestedTargets: coverage.requestedTargets.map((target) => ({
+              ...target,
+              ...(target.pages ? { pages: [...target.pages] } : {}),
+              ...(target.columns ? { columns: [...target.columns] } : {})
+            })),
+            actualTargets: coverage.actualTargets.map((target) => ({
+              ...target,
+              ...(target.pages ? { pages: [...target.pages] } : {}),
+              ...(target.columns ? { columns: [...target.columns] } : {})
+            })),
+            limitations: coverage.limitations.map((limitation) => ({ ...limitation }))
+          }
+        ])
+      )
+    }
   }
 
   // Returns the native HTTP config, or the Windows stdio proxy config for a named pipe.
@@ -446,32 +670,199 @@ export class ReviewerMcpServer {
       server.registerTool(
         REVIEWER_MCP_TOOLS.readArtifact,
         {
-          title: 'Read audited artifact',
+          title: 'Read audited file Version',
           description:
-            'Read one artifact attached to the audited turn. Complete CSV/TSV data is returned by ' +
+            'Read one Work Product or trusted Source Document Version admitted by host provenance ' +
+            '(never by filename, contents, or Agent prose). Every result identifies its trusted role. ' +
+            'Use view=trace for execution, ' +
+            'generation, saving, method, producer, input, and existence claims; trace never returns ' +
+            'final file bytes. A Source Document trace reports immutable version origin and scope ' +
+            'reason without requiring producer code. Use view=content only for an existing content, presentation, visual, ' +
+            'or concrete value claim, never merely to prove that a binary file exists. When view is ' +
+            'omitted it remains content for compatibility. Complete CSV/TSV data is returned by ' +
             'column; paged CSV/TSV is returned as raw UTF-8 byte windows so record and quoting ' +
-            'semantics are not corrupted. When truncated is true, continue from nextOffset while ' +
-            'the review budget remains and report that the evidence was partial. An out-of-scope ' +
-            'artifact id is rejected.',
-          inputSchema: {
-            id: z.string().min(1).describe('In-scope artifact version id'),
-            offset: z.number().int().min(0).optional().describe('Byte offset for a bounded page'),
-            maxBytes: z
-              .number()
-              .int()
-              .positive()
-              .optional()
-              .describe('Requested source bytes; the host clamps this to its page limit')
-          }
+            'semantics are not corrupted. XLSX accepts exact sheet, 1-based row, and column-letter ' +
+            'targets; PDF/DOCX pages and PPTX slides use exact 1-based pages. DOCX pages come from ' +
+            'the rendered preview rather than manual page breaks. Set includePreview for bounded ' +
+            'page/slide image blocks when text alone cannot verify a visual claim. For source ' +
+            'attributions, request only the cited or current-Turn-used fields, rows, pages, or slides. ' +
+            'Structured responses ' +
+            'record the actual targets returned. partial=true means the response omits the rest of ' +
+            'the file and is sufficient when those targets fully cover the claim; do not create a ' +
+            'warning for that. Limitations distinguish target truncation, corrupt content, unsupported ' +
+            'formats, and budget exhaustion. PNG/JPEG/GIF/WebP content is returned as bounded MCP ' +
+            'image content, never base64 JSON text. If this Reviewer cannot accept images, the read ' +
+            'returns an unsupported-model-capability limitation; that limits Coverage and is not a ' +
+            'finding. For byte windows, continue from nextOffset while ' +
+            'the review budget remains. An out-of-scope ' +
+            'file Version id is rejected.',
+          inputSchema: reviewerArtifactReadInputSchema
         },
-        async ({ id, offset, maxBytes }, extra) => {
+        async (
+          { id, view, offset, maxBytes, pages, sheet, rowStart, rowEnd, columns, includePreview },
+          extra
+        ) => {
+          let trustedRole: ReviewerArtifactEvidenceCoverage['role']
           try {
-            const artifact = await evidence.readArtifact(id, { offset, maxBytes }, extra.signal)
-            this.evidenceAccess.artifactVersionIds.add(id)
+            trustedRole = evidence.fileRole(id)
+          } catch (error) {
+            return this.toolError(error)
+          }
+          const prior = this.evidenceAccess.artifactReads.get(id) ?? {
+            role: trustedRole,
+            traceRead: false,
+            contentRead: false,
+            mediaRead: false,
+            partial: false,
+            requestedTargets: [],
+            actualTargets: [],
+            limitations: []
+          }
+          const requestedTarget = normalizeRequestedTarget({
+            offset,
+            maxBytes,
+            pages,
+            sheet,
+            rowStart,
+            rowEnd,
+            columns,
+            includePreview
+          })
+          const attempted = {
+            ...prior,
+            role: trustedRole,
+            traceRead: prior.traceRead || view === 'trace',
+            contentRead: prior.contentRead || view !== 'trace',
+            requestedTargets: requestedTarget
+              ? [...prior.requestedTargets, requestedTarget]
+              : prior.requestedTargets
+          }
+          this.evidenceAccess.artifactReads.set(id, attempted)
+          try {
+            const artifact = await evidence.readArtifact(
+              id,
+              {
+                view,
+                offset,
+                maxBytes,
+                pages,
+                sheet,
+                rowStart,
+                rowEnd,
+                columns,
+                includePreview
+              },
+              extra.signal
+            )
+            if ('role' in artifact && artifact.role !== trustedRole) {
+              throw new Error(
+                `Trusted file role mismatch for Version ${id}: expected ${trustedRole}, got ${artifact.role}.`
+              )
+            }
+            let limitations =
+              'limitations' in artifact
+                ? artifact.limitations.map((limitation) => ({ ...limitation }))
+                : []
+            const isMedia = 'kind' in artifact && artifact.kind === 'media'
+            const media = 'media' in artifact ? artifact.media : undefined
+            const supportsImageInput =
+              typeof this.options.supportsImageInput === 'function'
+                ? this.options.supportsImageInput()
+                : this.options.supportsImageInput === true
+            const mediaDelivered =
+              isMedia && artifact.delivery === 'delivered' && supportsImageInput
+            const hasImageContent = isMedia || (media?.length ?? 0) > 0
+            if (
+              hasImageContent &&
+              !supportsImageInput &&
+              !limitations.some(({ kind }) => kind === 'unsupported-model-capability')
+            ) {
+              limitations = [
+                ...limitations,
+                {
+                  kind: 'unsupported-model-capability' as const,
+                  subjectId: id,
+                  detail: 'The active Reviewer model does not accept image content.'
+                }
+              ]
+            }
+            const partial =
+              ('partial' in artifact && artifact.partial === true) ||
+              ('truncated' in artifact && artifact.truncated === true) ||
+              limitations.some(
+                (limitation) =>
+                  limitation.kind === 'truncated' ||
+                  limitation.kind === 'budget-exhausted' ||
+                  limitation.kind === 'unsupported-model-capability'
+              )
+            this.evidenceAccess.artifactReads.set(id, {
+              role: trustedRole,
+              traceRead: attempted.traceRead,
+              contentRead: attempted.contentRead,
+              mediaRead:
+                attempted.mediaRead ||
+                mediaDelivered ||
+                (supportsImageInput && (media?.length ?? 0) > 0),
+              partial: attempted.partial || partial,
+              requestedTargets: attempted.requestedTargets,
+              actualTargets:
+                'targets' in artifact
+                  ? [...attempted.actualTargets, { ...(artifact.targets as ArtifactReadTargets) }]
+                  : attempted.actualTargets,
+              limitations: [...attempted.limitations, ...limitations]
+            })
+            if (isMedia) {
+              // Explicitly sever bytes before constructing JSON text. Base64 is allowed only in
+              // the MCP image block, never in the metadata response or an error path.
+              const { data: detachedData, ...withoutData } = artifact as MediaArtifactMetadata & {
+                data?: Buffer
+              }
+              const mediaData = artifact.delivery === 'delivered' ? detachedData : undefined
+              const byteFreeMedia = withoutData as MediaArtifactMetadata
+              const metadata = mediaDelivered
+                ? toMediaArtifactMetadata(byteFreeMedia)
+                : toLimitedMediaArtifactMetadata(byteFreeMedia, limitations)
+              return {
+                content: [
+                  { type: 'text' as const, text: JSON.stringify(metadata) },
+                  ...(mediaDelivered
+                    ? [
+                        {
+                          type: 'image' as const,
+                          data: mediaData!.toString('base64'),
+                          mimeType: artifact.mimeType
+                        }
+                      ]
+                    : [])
+                ]
+              }
+            }
+            const textArtifact = media
+              ? {
+                  ...artifact,
+                  media: media.map(({ pageNumber, mimeType }) => ({ pageNumber, mimeType })),
+                  limitations
+                }
+              : 'limitations' in artifact
+                ? { ...artifact, limitations }
+                : artifact
             return {
-              content: [{ type: 'text', text: JSON.stringify(artifact) }]
+              content: [
+                { type: 'text' as const, text: JSON.stringify(textArtifact) },
+                ...(supportsImageInput ? (media ?? []) : []).map(({ data, mimeType }) => ({
+                  type: 'image' as const,
+                  data,
+                  mimeType
+                }))
+              ]
             }
           } catch (error) {
+            const failed = this.evidenceAccess.artifactReads.get(id) ?? attempted
+            this.evidenceAccess.artifactReads.set(id, {
+              ...failed,
+              partial: true,
+              limitations: [...failed.limitations, limitationForReadError(error, id)]
+            })
             return this.toolError(error)
           }
         }
@@ -483,7 +874,9 @@ export class ReviewerMcpServer {
       {
         title: 'Submit review checks',
         description:
-          'Submit your structured review checks. Call this exactly once, then stop. ' +
+          'Complete the Review with one accepted structured submission, then stop. If validation ' +
+          'fails, correct the input and retry within the same Review Turn; a second accepted ' +
+          'submission is prohibited. ' +
           (this.mode === 'initial'
             ? 'For an initial review, submit an empty checks array only when the frozen turn ' +
               'contains no checkable claims. '
@@ -498,10 +891,12 @@ export class ReviewerMcpServer {
         // Keep the idle check and the transition to `submitting` free of awaits. JavaScript's
         // run-to-completion semantics then make this a single-writer gate for concurrent tool calls.
         if (this.findingsSubmissionState !== 'idle') {
+          const message =
+            this.findingsSubmissionState === 'submitted'
+              ? 'Validation error: a submission was already accepted; submit_findings was already called successfully.'
+              : 'Validation error: submit_findings was already called and is still in progress.'
           return {
-            content: [
-              { type: 'text', text: 'Validation error: submit_findings was already called.' }
-            ],
+            content: [{ type: 'text', text: message }],
             isError: true
           }
         }

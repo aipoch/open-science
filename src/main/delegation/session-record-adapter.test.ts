@@ -18,7 +18,7 @@ import {
   type SessionMutationRepository
 } from '../session-persistence/coordinator'
 import { SpecialistRepository } from '../specialist/repository'
-import { ProfileService } from '../specialist/service'
+import { SpecialistService } from '../specialist/service'
 import {
   createDeterministicDelegateExecution,
   type ExecutionControl
@@ -103,6 +103,7 @@ const createHarness = (): Readonly<{
     restoreSession: vi.fn(async () => undefined),
     softDeleteProject: vi.fn(async () => 'project-delete'),
     reconcileActiveSessions: vi.fn(async () => undefined),
+    reconcileProjectSessions: vi.fn(async () => undefined),
     markReconciliationIncomplete: vi.fn()
   }
   const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
@@ -1584,7 +1585,7 @@ describe('Session delegated-work adapter', () => {
       session: key,
       frameId: rootFrameId,
       role: 'main',
-      parentSpecialistProfileId: 'stable-specialist-id',
+      parentSpecialistId: 'stable-specialist-id',
       originMessageId: rootPrompt.id,
       toolInvocationId: 'specialist-tool-call'
     }
@@ -1638,7 +1639,7 @@ describe('Session delegated-work adapter', () => {
         selectedCapabilities: emptySelectedConfig()
       })
       const profileRepository = new SpecialistRepository(profileStorage)
-      const profiles = new ProfileService(profileRepository, {
+      const profiles = new SpecialistService(profileRepository, {
         load: async () => ({
           entries: [builtin('secret-builtin-id-a'), builtin('secret-builtin-id-b')],
           diagnostics: []

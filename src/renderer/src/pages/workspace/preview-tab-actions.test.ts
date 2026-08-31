@@ -29,10 +29,13 @@ const createToolItem = (overrides: Partial<PreviewToolItem> = {}): PreviewToolIt
 })
 
 const commandsOf = (groups: ReturnType<typeof getPreviewTabActionGroups>): string[] =>
-  [...groups.shared, ...groups.specific].map((action) => action.command)
+  [...groups.pdfContext, ...groups.shared, ...groups.specific].map((action) => action.command)
 
 const specificCommandsOf = (groups: ReturnType<typeof getPreviewTabActionGroups>): string[] =>
   groups.specific.map((action) => action.command)
+
+const pdfContextCommandsOf = (groups: ReturnType<typeof getPreviewTabActionGroups>): string[] =>
+  groups.pdfContext.map((action) => action.command)
 
 describe('getPreviewTabActionGroups', () => {
   it('offers close actions on every tab type', () => {
@@ -85,6 +88,45 @@ describe('getPreviewTabActionGroups', () => {
       const groups = getPreviewTabActionGroups(createToolItem({ toolKind }), { tabCount: 2 })
       expect(specificCommandsOf(groups)).toEqual([])
     }
+  })
+
+  it('leads with the reading-context command for a linkable PDF tab', () => {
+    const groups = getPreviewTabActionGroups(createFileItem({ format: 'pdf' }), {
+      tabCount: 2,
+      pdfContext: 'link'
+    })
+
+    expect(pdfContextCommandsOf(groups)).toEqual(['toggle-pdf-context'])
+    expect(commandsOf(groups)[0]).toBe('toggle-pdf-context')
+    expect(groups.pdfContext[0]).toMatchObject({
+      label: 'Read with agent',
+      danger: false,
+      disabled: false
+    })
+  })
+
+  it('labels the reading-context command by link state without danger styling', () => {
+    const item = createFileItem({ format: 'pdf' })
+
+    expect(
+      getPreviewTabActionGroups(item, { tabCount: 2, pdfContext: 'remove' }).pdfContext[0]
+    ).toMatchObject({ label: 'Remove PDF from context', danger: false })
+  })
+
+  it('omits the reading-context command for non-linkable tabs', () => {
+    expect(
+      pdfContextCommandsOf(
+        getPreviewTabActionGroups(createFileItem({ format: 'pdf' }), { tabCount: 2 })
+      )
+    ).toEqual([])
+    expect(
+      pdfContextCommandsOf(
+        getPreviewTabActionGroups(createToolItem({ toolKind: 'files' }), {
+          tabCount: 2,
+          pdfContext: 'link'
+        })
+      )
+    ).toEqual([])
   })
 })
 
@@ -193,5 +235,25 @@ describe('runPreviewTabAction', () => {
     runPreviewTabAction('download', createToolItem(), deps)
 
     expect(deps.saveManagedFile).not.toHaveBeenCalled()
+  })
+
+  it('routes the reading-context command to the injected toggle', () => {
+    const togglePdfContext = vi.fn()
+    const deps = createDeps({ togglePdfContext })
+    const item = createFileItem({ format: 'pdf' })
+
+    runPreviewTabAction('toggle-pdf-context', item, deps)
+
+    expect(togglePdfContext).toHaveBeenCalledWith(item)
+  })
+
+  it('ignores the reading-context command on tool tabs and without a toggle', () => {
+    const togglePdfContext = vi.fn()
+    const deps = createDeps({ togglePdfContext })
+
+    runPreviewTabAction('toggle-pdf-context', createToolItem(), deps)
+    runPreviewTabAction('toggle-pdf-context', createFileItem({ format: 'pdf' }), createDeps())
+
+    expect(togglePdfContext).not.toHaveBeenCalled()
   })
 })

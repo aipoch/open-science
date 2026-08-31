@@ -105,6 +105,7 @@ const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
   'permissionProfile',
   'autoReviewEnabled',
+  'memoryEnabled',
   'agentConfiguration',
   'pinned'
 ] as const satisfies readonly SessionConflictRebaseField[]
@@ -465,6 +466,35 @@ const rebaseSessionAfterRevisionConflict = (
         )
         if (!graph) return undefined
         rebased.conversationGraph = graph
+      } else if (key === 'activeRun') {
+        const submittedRun = submittedValue as PersistedChatSession['activeRun']
+        const latestRun = latestValue as PersistedChatSession['activeRun']
+        const baseRun = baseValue as PersistedChatSession['activeRun']
+        if (!submittedRun) {
+          if (!latestRun || latestRun.promptMessageId === baseRun?.promptMessageId) {
+            delete rebased.activeRun
+            continue
+          }
+          return undefined
+        }
+        if (!latestRun) {
+          rebased.activeRun = structuredClone(submittedRun)
+          continue
+        }
+        if (submittedRun.promptMessageId !== latestRun.promptMessageId) return undefined
+        rebased.activeRun = {
+          promptMessageId: submittedRun.promptMessageId,
+          startedAt: Math.min(submittedRun.startedAt, latestRun.startedAt)
+        }
+      } else if (key === 'contextUsage') {
+        // Main does not persist live context-window snapshots. Keep the renderer value, including
+        // an explicit clear, instead of resurrecting a stale durable copy.
+        if (submittedValue === undefined) delete rebased.contextUsage
+        else {
+          rebased.contextUsage = structuredClone(
+            submittedValue as PersistedChatSession['contextUsage']
+          )
+        }
       } else {
         return undefined
       }
@@ -496,6 +526,48 @@ const rebaseSessionAfterRevisionConflict = (
   rebased.revision = sessionRevision(latest)
   rebased.updatedAt = Math.max(base.updatedAt, submitted.updatedAt, latest.updatedAt) + 1
   return rebased
+}
+
+// A first-turn renderer transcript save can overlap several legitimate Main-owned advances:
+// Session details queued/running/terminal, Session status, runtime context, and auxiliary usage.
+// Rebase each newly observed authority in sequence. Keep a hard cap so a genuine second writer
+// cannot livelock persistence.
+const MAX_SESSION_REVISION_REBASE_ATTEMPTS = 8
+
+const saveAfterSessionRevisionConflict = async (
+  initialError: unknown,
+  initialBase: PersistedChatSession,
+  initialSubmitted: PersistedChatSession,
+  loadLatest: () => Promise<PersistedChatSession | undefined>,
+  save: (session: PersistedChatSession) => Promise<PersistedChatSession>
+): Promise<PersistedChatSession> => {
+  if (!isSessionRevisionConflictError(initialError)) throw initialError
+  let conflict: unknown = initialError
+  let base = initialBase
+  let submitted = initialSubmitted
+
+  for (let attempt = 0; attempt < MAX_SESSION_REVISION_REBASE_ATTEMPTS; attempt += 1) {
+    let latest: PersistedChatSession | undefined
+    try {
+      latest = await loadLatest()
+    } catch {
+      throw conflict
+    }
+    if (!latest) throw conflict
+    const rebased = rebaseSessionAfterRevisionConflict(base, submitted, latest)
+    if (!rebased) throw conflict
+
+    try {
+      return await save(rebased)
+    } catch (error) {
+      if (!isSessionRevisionConflictError(error)) throw error
+      conflict = error
+      base = latest
+      submitted = rebased
+    }
+  }
+
+  throw conflict
 }
 
 const mergeSaveSessionOptions = (
@@ -714,24 +786,20 @@ const saveSessionInOrder = async (
         if (!isSessionRevisionConflictError(error)) throw error
         const base = persistence.getAcknowledgedSession(submitted.id)
         if (!base) throw error
-
-        let latest: PersistedChatSession | undefined
-        try {
-          latest = await loadPersistedSession(
-            {
-              projectId: submitted.projectId,
-              sessionId: submitted.id
-            },
-            api
-          )
-        } catch {
-          throw error
-        }
-        const rebased = latest
-          ? rebaseSessionAfterRevisionConflict(base, submitted, latest)
-          : undefined
-        if (!rebased) throw error
-        return retry(rebased)
+        return saveAfterSessionRevisionConflict(
+          error,
+          base,
+          submitted,
+          () =>
+            loadPersistedSession(
+              {
+                projectId: submitted.projectId,
+                sessionId: submitted.id
+              },
+              api
+            ),
+          retry
+        )
       }
     )
     unresolvedSessionRevisionConflictTargets.delete(target)
@@ -825,7 +893,7 @@ type SessionCatalogRecovery =
     }
   | {
       kind: 'damaged-authority'
-      affectedFileCount: number
+      affectedFiles: Array<{ projectId: string; fileName: string }>
     }
   | {
       kind: 'unsupported-version'
@@ -869,7 +937,7 @@ const deriveSessionCatalogRecovery = (
   if (damagedWarnings.length > 0) {
     return {
       kind: 'damaged-authority',
-      affectedFileCount: damagedWarnings.length
+      affectedFiles: damagedWarnings.map(({ projectId, fileName }) => ({ projectId, fileName }))
     }
   }
 
@@ -1093,22 +1161,20 @@ const createStoreSaver = (
     if (!isSessionRevisionConflictError(error)) throw error
     const base = acknowledgedSessions.get(submitted.id)
     if (!base) throw error
-    let latest: PersistedChatSession | undefined
-    try {
-      latest = await loadPersistedSession(
-        {
-          projectId: submitted.projectId,
-          sessionId: submitted.id
-        },
-        api
-      )
-    } catch {
-      throw error
-    }
-    if (!latest) throw error
-    const rebased = rebaseSessionAfterRevisionConflict(base, submitted, latest)
-    if (!rebased) throw error
-    return options ? save(rebased, options) : save(rebased)
+    return saveAfterSessionRevisionConflict(
+      error,
+      base,
+      submitted,
+      () =>
+        loadPersistedSession(
+          {
+            projectId: submitted.projectId,
+            sessionId: submitted.id
+          },
+          api
+        ),
+      (rebased) => (options ? save(rebased, options) : save(rebased))
+    )
   }
 
   return (state, options) => {
@@ -1676,6 +1742,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
 }
 
 export {
+  MAX_SESSION_REVISION_REBASE_ATTEMPTS,
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,

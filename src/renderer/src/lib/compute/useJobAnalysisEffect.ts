@@ -18,8 +18,9 @@ import {
   loadPersistedSession
 } from '../session-persistence/session-persistence'
 import { useSessionJobStore } from '../../stores/session-job-store'
-import { useSessionStore } from '../../stores/session-store'
+import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
+import type { ComputeJobAnalysisState } from '../../../../shared/compute'
 
 // Matches the sendMessage signature returned by useWorkspaceAgentRuntime.
 type SendMessageFn = (input: {
@@ -28,6 +29,7 @@ type SendMessageFn = (input: {
   cwd?: string
   projectId?: string
   preserveSelection?: boolean
+  messageId?: string
 }) => Promise<{ sessionId: string; messageId: string } | undefined>
 
 type UseJobAnalysisEffectOptions = {
@@ -51,68 +53,111 @@ export const useJobAnalysisEffect = ({
     let isActive = true
     let pendingScanRetry: ReturnType<typeof setTimeout> | undefined
     const turnEndUnsubscribes = new Set<() => void>()
+
+    const loadAnalysisSession = async (sessionId: string): Promise<ChatSession | undefined> => {
+      let session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session || session.contentLoaded !== false) return session
+      const persisted = await loadPersistedSession({
+        projectId: session.projectId,
+        sessionId
+      })
+      if (!isActive || !persisted) return undefined
+      session = hydratePersistedSessionIfPresent(persisted)
+      return session
+    }
+
     const trigger = createJobAnalysisTrigger({
       isSessionInFlight: (sessionId) => {
         const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
         return (
           session?.status === 'running' ||
           session?.status === 'waiting-for-user' ||
-          session?.status === 'waiting-permission'
+          session?.status === 'waiting-permission' ||
+          session?.status === 'waiting-plan-approval'
         )
       },
-      sendPrompt: async (sessionId, text) => {
+      sendPrompt: async (sessionId, text, messageId) => {
         if (!isActive) return undefined
-        let session = useSessionStore
-          .getState()
-          .sessions.find((candidate) => candidate.id === sessionId)
-        if (!session) return undefined
-        if (session.contentLoaded === false) {
-          const persisted = await loadPersistedSession({
-            projectId: session.projectId,
-            sessionId
-          })
-          if (!isActive || !persisted) return undefined
-          session = hydratePersistedSessionIfPresent(persisted)
-          if (!session) return undefined
-        }
+        const session = await loadAnalysisSession(sessionId)
+        if (!isActive || !session) return undefined
         return sendLatestMessage({
           sessionId,
           text,
           cwd: session.cwd,
           projectId: session.projectId,
-          preserveSelection: true
+          preserveSelection: true,
+          messageId
         })
       },
-      markConsumed: async (sessionId, jobIds) => {
-        if (!isActive) return
-        if (typeof window.api?.compute?.jobsMarkConsumed === 'function') {
-          await window.api.compute.jobsMarkConsumed(sessionId, jobIds)
-          const consumedAt = Date.now()
-          const jobStore = useSessionJobStore.getState()
-          for (const jobId of jobIds) {
-            const job = jobStore.jobsById.get(jobId)
-            if (job?.session_id === sessionId) {
-              jobStore.applyUpdate({ ...job, notification_consumed_at: consumedAt })
-            }
-          }
+      createMessageId: () => `analysis-${globalThis.crypto.randomUUID()}`,
+      transitionAnalysis: async (request) => {
+        if (!isActive || typeof window.api?.compute?.jobsTransitionAnalysis !== 'function') {
+          throw new Error('Compute analysis persistence is unavailable.')
         }
+        const jobs = await window.api.compute.jobsTransitionAnalysis(request)
+        if (!isActive) return
+        const jobStore = useSessionJobStore.getState()
+        for (const job of jobs) jobStore.applyUpdate(job)
+      },
+      getJobsForSession: async (sessionId) => {
+        if (!isActive || typeof window.api?.compute?.jobsList !== 'function') {
+          throw new Error('Compute Job reconciliation is unavailable.')
+        }
+        const jobs = await window.api.compute.jobsList({ sessionId })
+        if (!isActive) return []
+        const jobStore = useSessionJobStore.getState()
+        for (const job of jobs) jobStore.applyUpdate(job)
+        return jobs
+      },
+      getTurnState: async (sessionId, messageId) => {
+        const session = await loadAnalysisSession(sessionId)
+        if (!session) return 'missing'
+        const prompt = session.messages.find((message) => message.id === messageId)
+        if (!prompt) return 'missing'
+        const response = session.messages.find(
+          (message) => message.role === 'agent' && message.responseToMessageId === messageId
+        )
+        if (response?.status === 'complete') return 'succeeded'
+        if (response?.status === 'error') return 'failed'
+        if (session.resumeRecovery?.promptMessageId === messageId) {
+          if (session.resumeRecovery.cause === 'cancelled') return 'cancelled'
+          if (session.resumeRecovery.cause === 'app-restart') return 'missing'
+          return 'failed'
+        }
+        if (session.activeRun?.promptMessageId === messageId) return 'running'
+        return 'missing'
       },
       onTurnEnd: (sessionId, callback) => {
         // Keep runtime completion listeners inside the same readiness lifecycle as dispatch.
-        const unsubscribe = useSessionStore.subscribe((state) => {
+        let settled = false
+        const settleIfTerminal = (state: ReturnType<typeof useSessionStore.getState>): void => {
+          if (settled) return
           const session = state.sessions.find((candidate) => candidate.id === sessionId)
           if (!session) return
           if (
             session.status !== 'running' &&
             session.status !== 'waiting-for-user' &&
-            session.status !== 'waiting-permission'
+            session.status !== 'waiting-permission' &&
+            session.status !== 'waiting-plan-approval'
           ) {
+            settled = true
             unsubscribe()
             turnEndUnsubscribes.delete(unsubscribe)
-            if (isActive) callback()
+            const outcome: Exclude<ComputeJobAnalysisState, 'dispatched'> =
+              session.status === 'idle'
+                ? 'succeeded'
+                : session.resumeRecovery?.cause === 'cancelled'
+                  ? 'cancelled'
+                  : 'failed'
+            if (isActive) callback(outcome)
           }
-        })
+        }
+        const unsubscribe = useSessionStore.subscribe(settleIfTerminal)
+        // Close the subscribe/check race when a fast turn ended before listener registration.
         turnEndUnsubscribes.add(unsubscribe)
+        settleIfTerminal(useSessionStore.getState())
       },
       log: (tag, message) => {
         console.log(`[compute] ${tag}: ${message}`)
@@ -160,6 +205,7 @@ export const useJobAnalysisEffect = ({
     return () => {
       isActive = false
       clearTimeout(pendingScanRetry)
+      trigger.dispose()
       unsubscribeJobs()
       for (const unsubscribe of turnEndUnsubscribes) unsubscribe()
       turnEndUnsubscribes.clear()

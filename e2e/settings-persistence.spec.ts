@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import type { Page } from 'playwright'
+import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
 const expectVisibleTextButtonsToFit = async (page: Page): Promise<void> => {
@@ -19,6 +19,19 @@ const expectVisibleTextButtonsToFit = async (page: Page): Promise<void> => {
   )
 
   expect(clippedButtons).toEqual([])
+}
+
+const expectMemoryConfirmDialogChrome = async (
+  dialog: Locator,
+  confirmLabel: string
+): Promise<void> => {
+  await expect(dialog).toHaveCSS('width', '440px')
+  await expect(dialog).toHaveCSS('padding', '0px')
+  await expect(dialog.getByRole('button', { name: 'Close' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: confirmLabel })).toHaveCSS(
+    'color',
+    'rgb(255, 255, 255)'
+  )
 }
 
 test('persists the selected theme after closing settings and relaunching', async ({ app }) => {
@@ -51,6 +64,262 @@ test('persists the selected theme after closing settings and relaunching', async
   page = await app.restart()
   await expect(page.locator('html')).toHaveClass(/dark/)
   await expect(page.getByRole('button', { name: 'Theme: Dark' })).toBeVisible()
+})
+
+test('persists editable memory across an application restart', async ({ app }) => {
+  let page = await app.completeOnboarding()
+  await page.evaluate(async () => {
+    await window.api.locale.setPreference({ preference: 'en' })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+
+  const openMemory = async (): Promise<Locator> => {
+    await page.getByRole('button', { name: 'Model settings' }).click()
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    await settings
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('button', { name: 'Memory', exact: true })
+      .click()
+    return settings
+  }
+
+  let settings = await openMemory()
+  await expect(
+    settings.getByText('Memory is off. Agents will not save or recall notes', { exact: false })
+  ).toBeVisible()
+  await expect(settings.getByRole('button', { name: 'About you', exact: false })).toBeVisible()
+
+  await settings.getByRole('button', { name: 'Add', exact: true }).click()
+  await settings.getByPlaceholder('Add a note…').fill('Prefers reproducible experiments.')
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  const initialAboutNote = settings
+    .getByRole('paragraph')
+    .filter({ hasText: 'Prefers reproducible experiments.' })
+  await expect(initialAboutNote).toBeVisible()
+
+  await initialAboutNote.hover()
+  await settings.getByRole('button', { name: 'Edit note' }).click()
+  const editor = settings.getByPlaceholder('Add a note…')
+  await editor.fill('Prefers reproducible and concise experiments.')
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(
+    settings
+      .getByRole('paragraph')
+      .filter({ hasText: 'Prefers reproducible and concise experiments.' })
+  ).toBeVisible()
+
+  await settings.getByRole('button', { name: 'New category' }).click()
+  await settings.getByRole('textbox', { name: 'Name' }).fill('Experiment results')
+  await settings
+    .getByRole('textbox', { name: 'When should the agent save a note here?' })
+    .fill('Save costly experimental findings.')
+  await settings.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(
+    settings.getByRole('button', { name: 'Experiment results', exact: false })
+  ).toBeVisible()
+
+  await settings.getByRole('button', { name: 'Experiment results', exact: false }).click()
+  await settings.getByRole('button', { name: 'Add', exact: true }).click()
+  await settings.getByPlaceholder('Add a note…').fill('Use a 30 second exposure.')
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Turn on' })).toHaveCount(0)
+  await settings.getByRole('switch', { name: 'Memory' }).click()
+  await expect(settings.getByRole('switch', { name: 'Memory' })).toBeChecked()
+
+  await settings.getByRole('button', { name: 'Close settings' }).click()
+  page = await app.restart()
+  settings = await openMemory()
+  await expect(settings.getByRole('switch', { name: 'Memory' })).toBeChecked()
+  await expect(
+    settings.getByRole('button', { name: 'Experiment results', exact: false })
+  ).toBeVisible()
+  await settings.getByRole('button', { name: 'Experiment results', exact: false }).click()
+  await expect(settings.getByText('Use a 30 second exposure.')).toBeVisible()
+  await settings.getByRole('button', { name: 'About you', exact: false }).click()
+  await expect(settings.getByText('Prefers reproducible and concise experiments.')).toBeVisible()
+})
+
+test('shows project-scoped memory and opens its project from Settings', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(async () => {
+    await window.api.locale.setPreference({ preference: 'en' })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+
+  const projectName = 'Memory project scope'
+  await page.getByRole('button', { name: 'New project' }).click()
+  const createProject = page.getByRole('dialog', { name: 'New project' })
+  await createProject.getByLabel('Name').fill(projectName)
+  await createProject.getByRole('button', { name: 'Create project' }).click()
+
+  await page.evaluate(async () => {
+    const project = (await window.api.projects.list()).find(
+      (candidate) => candidate.name === 'Memory project scope'
+    )
+    if (!project) throw new Error('Project was not created.')
+    const categorySnapshot = await window.api.memory.createCategory({
+      name: 'Research protocol',
+      guidance: 'Save durable protocol decisions.',
+      autoRecall: true
+    })
+    const category = categorySnapshot.categories.find(
+      (candidate) => 'name' in candidate && candidate.name === 'Research protocol'
+    )
+    if (!category) throw new Error('Memory category was not created.')
+    await window.api.memory.createEntry({
+      categoryId: category.id,
+      projectId: project.id,
+      content: 'Use a 15 minute incubation.'
+    })
+  })
+
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings
+    .getByRole('navigation', { name: 'Settings' })
+    .getByRole('button', { name: 'Memory', exact: true })
+    .click()
+  await settings.getByRole('button', { name: projectName, exact: false }).click()
+
+  const entry = settings
+    .locator('[data-slot="memory-entry"]')
+    .filter({ hasText: 'Use a 15 minute incubation.' })
+  await expect(entry).toContainText('Research protocol')
+  await expect(entry.locator('[data-slot="memory-entry-metadata"]')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('memory-project-scope.png') })
+
+  await settings.getByRole('button', { name: 'Open project' }).click()
+  await expect(settings).toBeHidden()
+  await expect(page.getByText(projectName, { exact: true }).first()).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Ask anything' })).toBeVisible()
+})
+
+test('injects recent auto-recall memory after reopen into an unrelated Agent turn', async ({
+  app
+}) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  await page.evaluate(async () => {
+    const snapshot = await window.api.memory.snapshot()
+    const aboutYou = snapshot.categories.find(
+      (category) => 'systemKey' in category && category.systemKey === 'about-you'
+    )
+    if (!aboutYou) throw new Error('About you category was not seeded.')
+    await window.api.memory.createEntry({
+      categoryId: aboutYou.id,
+      content: 'Keep every response concise and welcoming.'
+    })
+    await window.api.memory.setEnabled({ enabled: true })
+  })
+  page = await app.restart()
+
+  await page.getByRole('button', { name: 'New project' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New project' })
+  await dialog.getByLabel('Name').fill('Memory recall project')
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Verify automatic memory recall.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText('Automatic memory recall reached the provider.')).toBeVisible()
+})
+
+test('contains long memory lists and layers destructive confirmations above settings', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(async () => {
+    await window.api.locale.setPreference({ preference: 'en' })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+
+  await page.getByRole('button', { name: 'Model settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings
+    .getByRole('navigation', { name: 'Settings' })
+    .getByRole('button', { name: 'Memory', exact: true })
+    .click()
+
+  await settings.getByRole('button', { name: 'New category' }).click()
+  const create = settings.getByRole('button', { name: 'Create', exact: true })
+  await settings.getByRole('textbox', { name: 'Name' }).fill('Layer check')
+  await expect(create).toBeDisabled()
+  await settings
+    .getByRole('textbox', { name: 'When should the agent save a note here?' })
+    .fill('Save notes used to verify nested dialog behavior.')
+  await expect(create).toBeEnabled()
+  await create.click()
+
+  await page.evaluate(async () => {
+    const snapshot = await window.api.memory.snapshot()
+    const aboutYou = snapshot.categories.find(
+      (category) => 'systemKey' in category && category.systemKey === 'about-you'
+    )
+    if (!aboutYou) throw new Error('About you category was not seeded.')
+    for (let index = 1; index <= 24; index += 1) {
+      await window.api.memory.createEntry({
+        categoryId: aboutYou.id,
+        content: `Overflow note ${String(index).padStart(2, '0')}`
+      })
+    }
+  })
+
+  await settings.getByRole('button', { name: 'About you', exact: false }).click()
+  const entryList = settings.locator('[data-slot="memory-entry-list"]')
+  const entries = entryList.locator('[data-slot="memory-entry"]')
+  await expect(entries.first()).toContainText('Overflow note 24')
+  await expect
+    .poll(() => entryList.evaluate((element) => element.scrollHeight > element.clientHeight))
+    .toBe(true)
+  await entryList.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect(settings.getByText('Overflow note 01')).toBeVisible()
+  await expect
+    .poll(() =>
+      entryList
+        .locator('[data-slot="memory-entry"]')
+        .first()
+        .evaluate((element) => getComputedStyle(element).borderBottomWidth)
+    )
+    .toBe('0px')
+  await page.screenshot({ path: testInfo.outputPath('memory-long-list.png') })
+
+  await settings.getByRole('button', { name: 'Clear all' }).click()
+  const clearDialog = page.getByRole('alertdialog', { name: 'Clear all memory?' })
+  await expect(clearDialog).toBeVisible()
+  await expect(clearDialog).toHaveCSS('z-index', '70')
+  await expectMemoryConfirmDialogChrome(clearDialog, 'Clear all')
+  await page.screenshot({ path: testInfo.outputPath('memory-clear-confirmation.png') })
+  await clearDialog.getByRole('button', { name: 'Cancel' }).click()
+
+  await entryList.evaluate((element) => {
+    element.scrollTop = 0
+  })
+  const lastNote = settings.getByText('Overflow note 24')
+  const lastNoteRow = settings
+    .locator('[data-slot="memory-entry"]')
+    .filter({ hasText: 'Overflow note 24' })
+  await lastNoteRow.hover()
+  await expect(settings).toHaveCSS('z-index', '50')
+  await lastNoteRow.getByRole('button', { name: 'Delete note' }).click()
+  const noteDialog = page.getByRole('alertdialog', { name: 'Delete note?' })
+  await expect(noteDialog).toBeVisible()
+  await expect(noteDialog).toHaveCSS('z-index', '70')
+  await expectMemoryConfirmDialogChrome(noteDialog, 'Delete note')
+  await page.screenshot({ path: testInfo.outputPath('memory-note-confirmation.png') })
+  await noteDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(lastNote).toBeVisible()
+
+  await settings.getByRole('button', { name: 'Layer check', exact: false }).click()
+  await settings.getByRole('button', { name: 'Category actions' }).click()
+  await page.getByRole('menuitem', { name: 'Delete category' }).click()
+  const categoryDialog = page.getByRole('alertdialog', { name: 'Delete category?' })
+  await expect(categoryDialog).toBeVisible()
+  await expect(categoryDialog).toHaveCSS('z-index', '70')
+  await expectMemoryConfirmDialogChrome(categoryDialog, 'Delete category')
+  await page.screenshot({ path: testInfo.outputPath('memory-category-confirmation.png') })
+  await categoryDialog.getByRole('button', { name: 'Cancel' }).click()
 })
 
 test('persists Russian into the built main-process native quit dialog', async ({ app }) => {

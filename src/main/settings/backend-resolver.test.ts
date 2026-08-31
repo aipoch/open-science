@@ -618,6 +618,12 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         ANTHROPIC_DEFAULT_FABLE_MODEL: 'fable',
         ANTHROPIC_BASE_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/)
       })
+      expect(backend.providerConfiguration).toEqual({
+        providerId: 'main',
+        apiType: 'anthropic',
+        baseUrl: backend.env.ANTHROPIC_BASE_URL,
+        headers: { 'x-api-key': backend.env.ANTHROPIC_AUTH_TOKEN }
+      })
       expect(backend.env).not.toHaveProperty('ANTHROPIC_CUSTOM_MODEL_OPTION')
     } finally {
       await backend.anthropicBridgeLease?.release()
@@ -882,6 +888,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
 
     expect(target).toEqual({
       frameworkId: 'codex',
+      providerId: 'provider-a',
       backendId: 'codex:provider-a',
       route: 'codex-bridge',
       model: 'model-a',

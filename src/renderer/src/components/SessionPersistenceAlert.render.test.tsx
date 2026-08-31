@@ -59,7 +59,7 @@ describe('SessionPersistenceAlert', () => {
       '[data-testid="session-persistence-retry"]'
     )
 
-    expect(alert?.className).toContain('flex w-full max-w-md')
+    expect(alert?.className).toContain('w-full max-w-md')
     expect(alert?.className).toContain('border-border')
     expect(alert?.className).not.toContain('fixed')
     expect(alert?.className).not.toContain('border-destructive/40')
@@ -93,5 +93,31 @@ describe('SessionPersistenceAlert', () => {
     expect(dismiss?.className).toContain('focus-visible:ring-3')
     act(() => dismiss?.click())
     expect(onDismiss).toHaveBeenCalledOnce()
+  })
+
+  it('places a long action below the copy instead of squeezing the message row', () => {
+    act(() =>
+      root.render(
+        <SessionPersistenceAlert
+          variant="warning"
+          title="Project archive needs attention"
+          message="A damaged saved conversation was moved aside. Project archive stays unavailable because its state cannot be verified."
+          onAction={() => undefined}
+          actionLabel="View affected conversations"
+          onDismiss={() => undefined}
+        />
+      )
+    )
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    const action = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-action"]'
+    )
+    const dismiss = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-dismiss"]'
+    )
+
+    expect(action?.parentElement).not.toBe(alert)
+    expect(dismiss?.parentElement).not.toBe(action?.parentElement)
   })
 })

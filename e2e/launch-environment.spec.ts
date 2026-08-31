@@ -11,9 +11,16 @@ test('normalizes a Windows-style Path before injecting the fake Agent directory'
   expect(environment.PATH).toBe(`fake-agent-bin${delimiter}system-bin`)
   expect(environment.Path).toBeUndefined()
   expect(environment.ELECTRON_RENDERER_URL).toBeUndefined()
-  expect(environment.OPEN_SCIENCE_E2E_STORAGE_ROOT).toBeUndefined()
   expect(environment.OPEN_SCIENCE_STORAGE_ROOT).toBe('storage-root')
   expect(environment.OPEN_SCIENCE_E2E_WINDOW_MODE).toBe('hidden')
+})
+
+test('isolates source E2E data storage without changing the process home', () => {
+  const environment = launchEnvironment('storage-root', undefined, { HOME: 'host-home' })
+
+  expect(environment.OPEN_SCIENCE_E2E_STORAGE_ROOT).toBe('storage-root')
+  expect(environment.OPEN_SCIENCE_STORAGE_ROOT).toBe('storage-root')
+  expect(environment.HOME).toBe('host-home')
 })
 
 test('isolates packaged certification storage without changing the process home', () => {

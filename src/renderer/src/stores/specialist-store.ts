@@ -2,7 +2,7 @@ import { create, type StoreApi } from 'zustand'
 import type {
   SpecialistListItem,
   SpecialistDocumentIntegrity,
-  SpecialistProfileView,
+  SpecialistView,
   CreateSpecialistInput,
   UpdateSpecialistInput
 } from '../../../shared/specialist'
@@ -55,8 +55,8 @@ type SpecialistStoreData = {
 
 type SpecialistStoreActions = {
   load: () => Promise<void>
-  create: (input: CreateSpecialistInput) => Promise<SpecialistProfileView>
-  update: (input: UpdateSpecialistInput) => Promise<SpecialistProfileView>
+  create: (input: CreateSpecialistInput) => Promise<SpecialistView>
+  update: (input: UpdateSpecialistInput) => Promise<SpecialistView>
   setEnabled: (id: string, enabled: boolean) => Promise<void>
   previewDelete: (id: string) => Promise<SpecialistDeletePreview>
   delete: (

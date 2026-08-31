@@ -15,6 +15,12 @@ import {
 
 const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
 const showOpenDialog = vi.fn()
+const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: () => log
+}))
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -243,7 +249,7 @@ describe('runtime IPC adapter', () => {
   })
 
   it('returns null when the picker is cancelled or fails', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    log.error.mockClear()
     registerRuntime(fakeDeps(), { showOpenDialog: async () => null })
     await expect(invoke('runtime:pick-interpreter')).resolves.toBeNull()
 
@@ -254,8 +260,9 @@ describe('runtime IPC adapter', () => {
     })
 
     await expect(invoke('runtime:pick-interpreter')).resolves.toBeNull()
-    expect(log).toHaveBeenCalled()
-    log.mockRestore()
+    expect(log.error).toHaveBeenCalledWith('pick interpreter failed', {
+      errorCategory: 'error'
+    })
   })
 
   it('uses the Electron open-file picker when no override is injected', async () => {

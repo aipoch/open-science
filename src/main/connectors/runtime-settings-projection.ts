@@ -8,7 +8,10 @@ import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import { ALL_CONNECTOR_IDS } from './registry'
 import { customConnectorSkillName } from '../../shared/custom-connector'
 import type { McpClientManager } from './mcp-client-manager'
+import { createLogger, errorLogFields } from '../logger'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
+
+const log = createLogger('connectors:runtime-settings')
 
 type ConnectorRuntimeSettingsProjectionOptions = {
   readConnectors: () => Promise<StoredConnectors | undefined>
@@ -41,7 +44,7 @@ class ConnectorRuntimeSettingsProjection {
     this.reportError =
       options.reportError ??
       ((error) => {
-        console.error('Failed to sync connector skill docs:', error)
+        log.error('failed to sync connector skill docs', errorLogFields(error))
       })
   }
 

@@ -36,11 +36,17 @@ export class ComputeJobLifecycle {
     })
   }
 
-  async dispatchRunning(jobId: string, remoteHandle: string): Promise<ComputeJobTransitionResult> {
+  async dispatchRunning(
+    jobId: string,
+    remoteHandle: string,
+    startedAt = new Date(),
+    remoteWorkdir?: string
+  ): Promise<ComputeJobTransitionResult> {
     return this.apply(jobId, ['submitted'], {
       status: 'running',
       remoteHandle,
-      startedAt: new Date()
+      startedAt,
+      ...(remoteWorkdir === undefined ? {} : { remoteWorkdir })
     })
   }
 

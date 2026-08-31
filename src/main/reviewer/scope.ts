@@ -61,6 +61,16 @@ const hashMessage = (
   return hashContent({
     role: message.role,
     content: message.content,
+    ...(message.responseToMessageId ? { responseToMessageId: message.responseToMessageId } : {}),
+    ...(message.interrupted ? { interrupted: true } : {}),
+    ...(message.contextWindowSamples && message.contextWindowSamples.length > 0
+      ? {
+          turnTerminationHistory: message.contextWindowSamples.map((sample) => ({
+            timestamp: sample.timestamp,
+            termination: sample.termination
+          }))
+        }
+      : {}),
     artifactIds,
     ...(artifactIds.length > 0
       ? { artifactDigests: artifactIds.map((id) => artifactDigests.get(id) ?? null) }
@@ -169,8 +179,11 @@ const buildOrderedItems = (
   })
 }
 
-const isUserMessage = (item: TurnItem): boolean =>
-  item.kind === 'message' && item.message.role === 'user'
+// A routed user message with responseToMessageId is an intervention injected into an already-live
+// prompt. It changes that Turn's requirements; it does not start a second Turn. Only an ordinary
+// user message opens the next review boundary.
+const isTurnStartingUserMessage = (item: TurnItem): boolean =>
+  item.kind === 'message' && item.message.role === 'user' && !item.message.responseToMessageId
 
 // Resolves the flattened, ordered blocks for the single turn that contains turnMessageId. A turn runs
 // from a user message up to (but excluding) the next user message — the span the reviewer reads. Blocks
@@ -192,12 +205,12 @@ export const resolveTurnScope = (
   // Turn start = nearest user message at or before the target; fall back to the list head if the target
   // precedes any user message (e.g. a leading agent preamble).
   let startIndex = targetIndex
-  while (startIndex > 0 && !isUserMessage(items[startIndex])) startIndex -= 1
-  if (!isUserMessage(items[startIndex])) startIndex = 0
+  while (startIndex > 0 && !isTurnStartingUserMessage(items[startIndex])) startIndex -= 1
+  if (!isTurnStartingUserMessage(items[startIndex])) startIndex = 0
 
   // Turn end = the next user message after the start, exclusive; or the end of the transcript.
   let endIndex = startIndex + 1
-  while (endIndex < items.length && !isUserMessage(items[endIndex])) endIndex += 1
+  while (endIndex < items.length && !isTurnStartingUserMessage(items[endIndex])) endIndex += 1
 
   const turnItems = items.slice(startIndex, endIndex)
 

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ReviewRunRequest } from '../../shared/reviewer'
+import type { ReviewRunRequest, ReviewRunResult } from '../../shared/reviewer'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { AcpRuntime } from '../acp/runtime'
@@ -170,7 +170,7 @@ describe('reviewer IPC handlers', () => {
     expect(recoverInterruptedReviews).toHaveBeenCalledTimes(2)
   })
 
-  it('shares one in-flight arbitration owner between direct and IPC commands', async () => {
+  it('shares the in-flight start outcome between direct and IPC commands', async () => {
     let finishRun: (() => void) | undefined
     let backgroundRun: Promise<void> | undefined
     runReview.mockImplementation((options?: { onStarted?: () => void }) => {
@@ -186,8 +186,7 @@ describe('reviewer IPC handlers', () => {
 
     await expect(owner.run(createRequest())).resolves.toEqual({ started: true })
     await expect(handlers.get(REVIEWER_IPC.RUN)?.({}, createRequest())).resolves.toEqual({
-      started: false,
-      reason: 'already-in-flight'
+      started: true
     })
     expect(runReview).toHaveBeenCalledTimes(1)
 
@@ -439,15 +438,24 @@ describe('reviewer IPC handlers', () => {
     registerReviewerIpcHandlers({ acpRuntime })
 
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
-    runHandler?.({}, createRequest())
-    // Same turn, still in flight → dropped with the non-retryable already-in-flight reason so the
-    // auto path does NOT retry it into a duplicate review.
-    const dropped = await runHandler?.({}, createRequest())
-    expect(dropped).toEqual({ started: false, reason: 'already-in-flight' })
+    const first = runHandler?.({}, createRequest()) as unknown as Promise<ReviewRunResult>
+    let duplicateSettled = false
+    const duplicate = (
+      runHandler?.({}, createRequest()) as unknown as Promise<ReviewRunResult>
+    ).then((result) => {
+      duplicateSettled = true
+      return result
+    })
+
+    // The duplicate joins the authoritative start verdict instead of releasing its renderer gate
+    // before a running Review row exists (or before the original start attempt fails).
+    await Promise.resolve()
+    expect(duplicateSettled).toBe(false)
 
     await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
     resolveRun?.()
-    await Promise.resolve()
+    await expect(first).resolves.toEqual({ started: false, reason: 'run-failed' })
+    await expect(duplicate).resolves.toEqual({ started: false, reason: 'run-failed' })
     expect(runReview).toHaveBeenCalledTimes(1)
   })
 
@@ -586,6 +594,41 @@ describe('reviewer IPC handlers', () => {
     expect(result).toEqual({ started: true })
     expect(getReviewsForSession).not.toHaveBeenCalled()
     expect(runReview).toHaveBeenCalledTimes(1)
+  })
+
+  it('publishes the running and completed lifecycle for a manual re-review', async () => {
+    const runningReview = {
+      id: 'manual-review',
+      turnMessageId: 'message-1',
+      lifecycle: 'running'
+    }
+    const completedReview = {
+      ...runningReview,
+      lifecycle: 'complete',
+      outcome: 'pass'
+    }
+    runReview.mockImplementationOnce(
+      (opts?: { onStarted?: () => void; onReviewUpdate?: (review: unknown) => void }) => {
+        opts?.onStarted?.()
+        opts?.onReviewUpdate?.(runningReview)
+        opts?.onReviewUpdate?.(completedReview)
+        return Promise.resolve(completedReview)
+      }
+    )
+    getReviewsForSession.mockResolvedValue([{ turnMessageId: 'message-1' }])
+    registerReviewerIpcHandlers({ acpRuntime })
+
+    const runHandler = handlers.get(REVIEWER_IPC.RUN)
+    const result = await runHandler?.({}, { ...createRequest(), origin: 'manual' })
+
+    expect(result).toEqual({ started: true })
+    expect(getReviewsForSession).not.toHaveBeenCalled()
+    expect(broadcastToRenderers.mock.calls).toEqual(
+      expect.arrayContaining([
+        [REVIEWER_IPC.UPDATED, { review: runningReview }],
+        [REVIEWER_IPC.UPDATED, { review: completedReview }]
+      ])
+    )
   })
 
   describe('reviewer:get-for-session handler', () => {

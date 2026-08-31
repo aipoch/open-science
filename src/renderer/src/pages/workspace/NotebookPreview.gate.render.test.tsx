@@ -453,6 +453,160 @@ describe('NotebookPreview per-kernel tabs', () => {
     )
   })
 
+  it('suggests live variables and accepts the active option without executing', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+    vi.mocked(window.api.notebook.inspectNamespace).mockResolvedValue({
+      status: 'available',
+      language: 'python',
+      environment: 'default-python',
+      kernelEpochId: 'epoch-1',
+      variableCount: 2,
+      variablesTruncated: false,
+      variables: [
+        { name: 'frame', type: 'DataFrame', preview: '3 rows' },
+        { name: 'frameCount', type: 'int', preview: '3' }
+      ]
+    })
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'fr' } })
+
+    const listbox = await screen.findByRole('listbox', { name: 'Variables' })
+    const options = [...listbox.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(options.map((option) => option.textContent)).toEqual(['frameDataFrame', 'frameCountint'])
+    expect(options[0]?.getAttribute('aria-selected')).toBe('true')
+    expect(input.getAttribute('aria-activedescendant')).toBe(options[0]?.id)
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('listbox', { name: 'Variables' })).toBeNull()
+    fireEvent.change(input, { target: { value: 'f' } })
+    const reopened = await screen.findByRole('listbox', { name: 'Variables' })
+    const reopenedOptions = [...reopened.querySelectorAll<HTMLElement>('[role="option"]')]
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(reopenedOptions[1]?.getAttribute('aria-selected')).toBe('true')
+    expect(input.getAttribute('aria-activedescendant')).toBe(reopenedOptions[1]?.id)
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(input.value).toBe('frameCount')
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    expect(screen.queryByRole('listbox', { name: 'Variables' })).toBeNull()
+  })
+
+  it('replaces the identifier at the caret and leaves IME input untouched', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'print(fr + 1)' } })
+    input.setSelectionRange(8, 8)
+    fireEvent.select(input)
+    await screen.findByRole('listbox', { name: 'Variables' })
+
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(input.value).toBe('print(fr + 1)')
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(input.value).toBe('print(frame + 1)')
+    expect(input.selectionStart).toBe(11)
+    expect(input.selectionEnd).toBe(11)
+  })
+
+  it('closes variable suggestions as soon as the selected kernel becomes busy', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'fr' } })
+    await screen.findByRole('listbox', { name: 'Variables' })
+
+    const state = vi.mocked(window.api.notebook.state)
+    const idleState = await state.mock.results[0]?.value
+    state.mockResolvedValue({
+      ...idleState,
+      activeRunId: 'p1',
+      environments: idleState.environments.map((environment) => ({
+        ...environment,
+        status: 'running'
+      }))
+    })
+    const onChanged = vi.mocked(window.api.notebook.onChanged).mock.calls[0]?.[0]
+
+    await act(async () => {
+      onChanged?.(item.notebook)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.queryByRole('listbox', { name: 'Variables' })).toBeNull()
+    expect(input.disabled).toBe(true)
+  })
+
+  it('keeps notebook controls mounted for the responsive variables layout', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    const cellsBeforeOpen = container.querySelector('[data-testid="notebook-cells"]')
+    const terminalBeforeOpen = container.querySelector('[data-testid="kernel-terminal-input"]')
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Inspect variables' }))
+    })
+
+    const primaryView = container.querySelector<HTMLElement>(
+      '[data-testid="notebook-primary-view"]'
+    )
+    const variablesView = container.querySelector<HTMLElement>(
+      '[data-testid="notebook-variables-view"]'
+    )
+
+    expect(primaryView).not.toBeNull()
+    expect(primaryView?.className).toContain('flex-col')
+    expect(primaryView?.className).toContain('hidden')
+    expect(primaryView?.className).toContain('@min-[55rem]/notebook:flex')
+    expect(primaryView?.querySelector('[data-testid="notebook-cells"]')).toBe(cellsBeforeOpen)
+    expect(primaryView?.querySelector('[data-testid="kernel-terminal-input"]')).toBe(
+      terminalBeforeOpen
+    )
+    expect(variablesView?.className).toContain('@min-[55rem]/notebook:basis-[40%]')
+    expect(variablesView?.className).toContain('@min-[55rem]/notebook:border-l')
+
+    const closeButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="notebook-variables-close"]'
+    )
+    fireEvent.focus(closeButton as HTMLButtonElement)
+    await screen.findByRole('tooltip')
+    expect(
+      document.body.querySelector<HTMLElement>('[data-slot="tooltip-content"]')?.className
+    ).toContain('z-[70]')
+
+    const variablesButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="notebook-variables-button"]'
+    )
+    expect(variablesButton?.getAttribute('aria-pressed')).toBe('true')
+
+    await act(async () => {
+      fireEvent.click(variablesButton as HTMLButtonElement)
+    })
+
+    expect(container.querySelector('[data-testid="notebook-variables-view"]')).toBeNull()
+    expect(container.querySelector('[data-testid="notebook-cells"]')).toBe(cellsBeforeOpen)
+    expect(container.querySelector('[data-testid="kernel-terminal-input"]')).toBe(
+      terminalBeforeOpen
+    )
+    expect(
+      container
+        .querySelector('[data-testid="notebook-variables-button"]')
+        ?.getAttribute('aria-pressed')
+    ).toBe('false')
+  })
+
   it('clears a live namespace snapshot when its kernel terminates', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
 

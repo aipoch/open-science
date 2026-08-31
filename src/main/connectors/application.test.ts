@@ -63,12 +63,16 @@ const createHarness = (): ConnectorApplicationHarness => {
     broadcastConnectorApproval: vi.fn(),
     replayConnectorApproval: vi.fn(),
     onConnectorApprovalSettled: vi.fn(),
+    broadcastCredentialRequest: vi.fn(),
+    replayCredentialRequest: vi.fn(),
+    onCredentialRequestSettled: vi.fn(),
     broadcastSkillImportApproval: vi.fn(),
     onSkillImportSettled: vi.fn(),
     onSkillImportLifecycleSettled: vi.fn(),
     uploads: {} as ConnectorApplicationDeps['uploads'],
     fetchImpl: vi.fn() as unknown as typeof fetch,
     resolveApiKey: vi.fn(),
+    canRequestCredential: vi.fn().mockReturnValue(true),
     resolveSpecialistProfile: vi.fn().mockResolvedValue(undefined),
     mcpClientManager: mcpClientManager as unknown as NonNullable<
       ConnectorApplicationDeps['mcpClientManager']
@@ -105,6 +109,114 @@ describe('Connector application composition', () => {
     expect(mcpClientManager.closeAll).toHaveBeenCalledOnce()
   })
 
+  it('fails closed before OAuth authentication when the client secret cannot be decrypted', async () => {
+    const { settings, mcpClientManager, deps } = createHarness()
+    settings.getConnectors.mockResolvedValue({
+      customMcpServers: [
+        {
+          id: 'oauth-incomplete',
+          name: 'oauth-incomplete',
+          displayName: 'OAuth incomplete',
+          transport: 'streamable_http',
+          url: 'https://mcp.example.test',
+          enabled: false,
+          oauth: {
+            authorizationServerUrl: 'https://auth.example.test',
+            clientId: 'registered-client'
+          },
+          oauthClientSecretRef: 'enc:unavailable'
+        }
+      ]
+    })
+    const module = await createConnectorApplicationModule(deps)
+    const authenticate = settings.setCustomServerAuthenticator.mock.calls[0][0] as (
+      serverId: string
+    ) => Promise<void>
+
+    await expect(authenticate('oauth-incomplete')).rejects.toThrow(/credential_unavailable/)
+    expect(mcpClientManager.authenticate).not.toHaveBeenCalled()
+
+    await module.dispose?.()
+  })
+
+  it('captures the immutable custom Connector target and full arguments for approval', async () => {
+    const { settings, mcpClientManager, connectorApprovals, deps } = createHarness()
+    settings.getConnectors.mockResolvedValue({
+      enabledIds: [],
+      autoAllowIds: [],
+      askToolIds: ['stable-server/lookup'],
+      customMcpServers: [
+        {
+          id: 'server-id',
+          name: 'stable-server',
+          displayName: 'Duplicate label',
+          transport: 'streamable_http',
+          url: 'https://mcp.example.test/path',
+          enabled: true
+        }
+      ]
+    })
+    mcpClientManager.listTools.mockResolvedValue([
+      { name: 'lookup', description: 'Look up a record', inputSchema: { type: 'object' } }
+    ])
+    mcpClientManager.call.mockResolvedValue({ ok: true })
+    const module = await createConnectorApplicationModule(deps)
+    await module.capability.runtimeSettings.refresh()
+    const args = { query: 'x'.repeat(400) }
+
+    await module.capability.connectorService.call('stable-server', 'lookup', args, {
+      origin: 'internal'
+    })
+
+    expect(connectorApprovals.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectorId: 'server-id',
+        connectorName: 'stable-server',
+        displayName: 'Duplicate label',
+        transport: 'streamable_http',
+        target: 'https://mcp.example.test',
+        argsJson: JSON.stringify(args)
+      }),
+      undefined
+    )
+    await module.dispose?.()
+  })
+
+  it('bounds oversized approval arguments before broadcasting them', async () => {
+    const { settings, mcpClientManager, connectorApprovals, deps } = createHarness()
+    settings.getConnectors.mockResolvedValue({
+      enabledIds: [],
+      autoAllowIds: [],
+      askToolIds: ['stable-server/lookup'],
+      customMcpServers: [
+        {
+          id: 'server-id',
+          name: 'stable-server',
+          displayName: 'Stable server',
+          transport: 'streamable_http',
+          url: 'https://mcp.example.test/path',
+          enabled: true
+        }
+      ]
+    })
+    mcpClientManager.listTools.mockResolvedValue([
+      { name: 'lookup', description: 'Look up a record', inputSchema: { type: 'object' } }
+    ])
+    mcpClientManager.call.mockResolvedValue({ ok: true })
+    const module = await createConnectorApplicationModule(deps)
+    await module.capability.runtimeSettings.refresh()
+    const args = { query: 'x'.repeat(70_000) }
+
+    await module.capability.connectorService.call('stable-server', 'lookup', args, {
+      origin: 'internal'
+    })
+
+    const request = connectorApprovals.request.mock.calls[0][0]
+    expect(request.argsJson?.length).toBeLessThan(JSON.stringify(args).length)
+    expect(request.argsJsonTruncated).toBe(true)
+    await module.dispose?.()
+  })
+
   it('forwards the conversation cancellation signal to GitHub scanning', async () => {
     const { settings, skillImportApprovals, deps } = createHarness()
     const controller = new AbortController()
@@ -132,6 +244,25 @@ describe('Connector application composition', () => {
     expect(forwardedSignal.aborted).toBe(true)
 
     await runtime.dispose()
+  })
+
+  it('fails closed when no local credential owner is available', async () => {
+    const { deps } = createHarness()
+    vi.mocked(deps.canRequestCredential).mockReturnValue(false)
+    const module = await createConnectorApplicationModule(deps)
+
+    await expect(
+      module.capability.connectorService.call(
+        'literature',
+        'openalex_search_works',
+        { query: 'CRISPR', max_records: 1 },
+        { origin: 'internal' }
+      )
+    ).rejects.toThrow(/credential_required/)
+    expect(deps.broadcastCredentialRequest).not.toHaveBeenCalled()
+    expect(deps.fetchImpl).not.toHaveBeenCalled()
+
+    await module.dispose?.()
   })
 
   it('closes the MCP manager when construction fails before runtime ownership', async () => {

@@ -9,6 +9,7 @@ export type AppShellPresentationState = Readonly<{
   update: boolean
   computeApproval: boolean
   connectorApproval: boolean
+  credentialRequest?: boolean
   skillImportApproval: boolean
   globalSearch: boolean
   settings: boolean
@@ -50,6 +51,7 @@ const PRESENTATION_PRIORITY: ReadonlyArray<keyof AppShellPresentationState> = [
   'update',
   'computeApproval',
   'connectorApproval',
+  'credentialRequest',
   'skillImportApproval',
   'globalSearch',
   'settings',

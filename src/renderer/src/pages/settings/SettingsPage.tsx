@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+/* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open Science tokens · slop: pass */
 import {
   AlertTriangle,
   Archive,
@@ -5,9 +7,11 @@ import {
   ArrowRight,
   Bot,
   Brain,
+  BrainCircuit,
   ChartNoAxesCombined,
   Cloud,
   Globe,
+  KeyRound,
   LockKeyhole,
   Maximize2,
   Menu,
@@ -48,6 +52,8 @@ import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { preloadComputeHosts, useComputeStore } from '@/stores/compute-store'
+import { useMemoryStore } from '@/stores/memory-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
@@ -69,6 +75,9 @@ import { ResourceTagSummary } from './ResourceTagControls'
 import { ConnectorsNavIcon } from './connector-icons'
 import type { ComputeView } from './ComputePanel'
 import type { ArchivedView } from './ArchivedPanel'
+import type { MemoryView } from './MemoryPanel'
+import type { TagsView } from './TagsPanel'
+import type { CredentialsView } from './CredentialsPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
 import {
@@ -135,6 +144,10 @@ const SpecialistsPanel = lazy(async () => {
   )
   return { default: module.SpecialistsPanel }
 })
+const MemoryPanel = lazy(async () => {
+  const module = await import('./MemoryPanel')
+  return { default: module.MemoryPanel }
+})
 const TagsPanel = lazy(async () => {
   const tagState = useTagStore.getState()
   const module = await loadSettingsPanel(
@@ -184,6 +197,9 @@ const PermissionsPanel = lazy(async () => {
   )
   return { default: module.PermissionsPanel }
 })
+const CredentialsPanel = lazy(async () => ({
+  default: (await import('./CredentialsPanel')).CredentialsPanel
+}))
 const ArchivedPanel = lazy(async () => ({
   default: (await import('./ArchivedPanel')).ArchivedPanel
 }))
@@ -265,18 +281,19 @@ const PANEL_NAME_LOWER = {
   Connectors: 'connectors',
   Compute: 'compute',
   Specialists: 'specialists',
+  Memory: 'memory',
+  Tags: 'tags',
+  Credentials: 'credentials',
   Archived: 'archived'
 } as const
 
 type DrillablePanelName = keyof typeof PANEL_NAME_LOWER
 
 type SettingsGroup = {
-  // Absent for the bottom-pinned group, which renders no heading at all. The union rather than `string`
-  // is deliberate: a group added later cannot compile until its heading is a known catalog key, so it
-  // can never reach the nav as a raw untranslated label.
-  labelKey?: 'Capabilities' | 'Workspace'
+  // The union rather than `string` is deliberate: a group added later cannot compile until its
+  // heading is a known catalog key, so it can never reach the nav as a raw untranslated label.
+  labelKey: 'Capabilities' | 'Workspace'
   panels: ReadonlyArray<SettingsPanel>
-  bottom?: boolean
 }
 
 const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
@@ -286,6 +303,7 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
       { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'specialists', labelKey: 'Specialists', Icon: Users },
+      { id: 'memory', labelKey: 'Memory', Icon: BrainCircuit },
       { id: 'compute', labelKey: 'Compute', Icon: Zap },
       { id: 'network', labelKey: 'Network', Icon: Globe }
     ]
@@ -297,16 +315,14 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'agent', labelKey: 'Agent', Icon: Bot },
       { id: 'tags', labelKey: 'Tags', Icon: TagsIcon },
       { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
+      { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound },
       { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
       { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
-      { id: 'general', labelKey: 'General', Icon: Settings2 }
+      { id: 'general', labelKey: 'General', Icon: Settings2 },
+      { id: 'archived', labelKey: 'Archived', Icon: Archive }
     ]
-  },
-  {
-    panels: [{ id: 'archived', labelKey: 'Archived', Icon: Archive }],
-    bottom: true
   }
 ]
 
@@ -380,6 +396,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadTags = useTagStore((state) => state.load)
   const listenForTagChanges = useTagStore((state) => state.listen)
+  const loadMemory = useMemoryStore((state) => state.load)
+  const listenForMemoryChanges = useMemoryStore((state) => state.listen)
   const browserSelectedTagId = useTagStore((state) => state.browserSelectedId)
   const setSelectedTagId = useTagStore((state) => state.setBrowserSelectedId)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
@@ -416,6 +434,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     void loadTags()
     return listenForTagChanges()
   }, [listenForTagChanges, loadTags, open])
+
+  useEffect(() => {
+    if (!open) return
+    return listenForMemoryChanges()
+  }, [listenForMemoryChanges, open])
 
   useEffect(() => {
     if (isMobile && isMobileNavOpen) {
@@ -456,6 +479,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const currentRoute = history[historyIndex]
   const activePanel = currentRoute.panel
+
+  useEffect(() => {
+    if (open && activePanel === 'memory') void loadMemory()
+  }, [activePanel, loadMemory, open])
 
   // Auto-detect opencode the first time its detection card is shown without a known path, so the card
   // reflects reality without a manual re-detect. Guarded on path + in-flight to run at most once.
@@ -529,7 +556,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     currentRoute.panel === 'specialists' ? currentRoute.view : { kind: 'list' }
   const archivedView: ArchivedView =
     currentRoute.panel === 'archived' ? currentRoute.view : { kind: 'list' }
-  const activeTagId = currentRoute.panel === 'tags' ? currentRoute.tagId : undefined
+  const memoryView: MemoryView =
+    currentRoute.panel === 'memory' ? currentRoute.view : { kind: 'list' }
+  const tagsView: TagsView = currentRoute.panel === 'tags' ? currentRoute.view : { kind: 'list' }
+  const credentialsView: CredentialsView =
+    currentRoute.panel === 'credentials' ? currentRoute.view : { kind: 'list' }
+  const activeTagId =
+    tagsView.kind === 'list'
+      ? tagsView.tagId
+      : tagsView.kind === 'edit'
+        ? tagsView.tagId
+        : undefined
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
@@ -549,7 +586,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // entry point, so Back returns to the recovery panel the user just completed.
   const navigatePanel = (panel: SettingsPanelId): void => {
     if (panel === 'tags') {
-      navigate({ panel, tagId: browserSelectedTagId })
+      navigate({ panel, view: { kind: 'list', tagId: browserSelectedTagId } })
       return
     }
     navigate(settingsPanelRoute(panel))
@@ -557,16 +594,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const navigateTag = (tagId: string): void => {
     setSelectedTagId(tagId)
-    navigate({ panel: 'tags', tagId })
+    navigate({ panel: 'tags', view: { kind: 'list', tagId } })
   }
 
   const recordSelectedTag = useCallback(
     (tagId: string): void => {
       setHistory((entries) => {
         const entry = entries[historyIndex]
-        if (entry?.panel !== 'tags' || entry.tagId === tagId) return entries
+        if (entry?.panel !== 'tags' || entry.view.kind !== 'list' || entry.view.tagId === tagId) {
+          return entries
+        }
         return entries.map((candidate, index) =>
-          index === historyIndex ? { ...candidate, tagId } : candidate
+          index === historyIndex && candidate.panel === 'tags' && candidate.view.kind === 'list'
+            ? { ...candidate, view: { ...candidate.view, tagId } }
+            : candidate
         )
       })
     },
@@ -595,6 +636,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const navigateArchived = (archived: ArchivedView): void =>
     navigate({ panel: 'archived', view: archived })
+
+  const navigateMemory = (memory: MemoryView): void => navigate({ panel: 'memory', view: memory })
+
+  const navigateTags = (tags: TagsView): void => navigate({ panel: 'tags', view: tags })
+
+  const navigateCredentials = (credentials: CredentialsView): void =>
+    navigate({ panel: 'credentials', view: credentials })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
   // panel title shows). Covers both the skills and model panels.
@@ -720,6 +768,39 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       return {
         rootLabelKey: 'Specialists',
         rootTo,
+        leaf
+      }
+    }
+    if (activePanel === 'memory' && memoryView.kind !== 'list') {
+      return {
+        rootLabelKey: 'Memory',
+        rootTo: { panel: 'memory', view: { kind: 'list' } },
+        leaf: memoryView.kind === 'create' ? t('New category') : t('Edit category')
+      }
+    }
+    if (activePanel === 'tags' && tagsView.kind !== 'list') {
+      return {
+        rootLabelKey: 'Tags',
+        rootTo: {
+          panel: 'tags',
+          view: {
+            kind: 'list',
+            tagId: tagsView.kind === 'edit' ? tagsView.tagId : browserSelectedTagId
+          }
+        },
+        leaf: tagsView.kind === 'create' ? t('New Tag') : t('Edit Tag')
+      }
+    }
+    if (activePanel === 'credentials' && credentialsView.kind === 'service') {
+      const leaf =
+        credentialsView.serviceId === 'github'
+          ? t('GitHub')
+          : credentialsView.serviceId === 'openalex'
+            ? t('OpenAlex')
+            : t('Literature access')
+      return {
+        rootLabelKey: 'Credentials',
+        rootTo: { panel: 'credentials', view: { kind: 'list' } },
         leaf
       }
     }
@@ -998,66 +1079,67 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
                 inert={isMobile && !isMobileNavOpen ? true : undefined}
                 className={cn(
-                  'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 overflow-y-auto overscroll-contain border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0 md:overflow-y-visible',
+                  'fixed inset-y-0 left-0 z-[70] flex min-h-0 w-[min(86vw,320px)] shrink-0 flex-col overflow-hidden border-r border-border bg-background transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
                   isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
                 )}
               >
-                {SETTINGS_GROUPS.map((group) => (
-                  <div
-                    key={group.labelKey ?? group.panels[0]?.id}
-                    className={cn('flex flex-col gap-0.5', group.bottom && 'mt-auto')}
-                  >
-                    {group.labelKey ? (
+                <div
+                  data-slot="settings-navigation-scroll"
+                  className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-3"
+                >
+                  {SETTINGS_GROUPS.map((group) => (
+                    <div key={group.labelKey} className="flex flex-col gap-0.5">
                       <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
                         {t(group.labelKey)}
                       </div>
-                    ) : null}
-                    <ul className="flex flex-col gap-0.5">
-                      {group.bottom ? (
-                        <li>
-                          <a
-                            href={APP.links.githubFeedback}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground"
-                          >
-                            <MessageSquare
-                              className="size-4 shrink-0 text-muted-foreground"
-                              aria-hidden="true"
-                            />
-                            <span className="min-w-0 flex-1 truncate">{t('Feedback')}</span>
-                          </a>
-                        </li>
-                      ) : null}
-                      {group.panels.map(({ id, labelKey, Icon }) => {
-                        const isActive = activePanel === id
-                        return (
-                          <li key={id}>
-                            <button
-                              type="button"
-                              aria-current={isActive ? 'page' : undefined}
-                              onClick={() => {
-                                setIsMobileNavOpen(false)
-                                navigatePanel(id)
-                              }}
-                              className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
-                                isActive
-                                  ? 'bg-muted font-medium text-foreground'
-                                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                              }`}
-                            >
-                              <Icon
-                                className="size-4 shrink-0 text-muted-foreground"
-                                aria-hidden="true"
-                              />
-                              <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  </div>
-                ))}
+                      <ul className="flex flex-col gap-0.5">
+                        {group.panels.map(({ id, labelKey, Icon }) => {
+                          const isActive = activePanel === id
+                          return (
+                            <li key={id}>
+                              <button
+                                type="button"
+                                aria-current={isActive ? 'page' : undefined}
+                                onClick={() => {
+                                  setIsMobileNavOpen(false)
+                                  navigatePanel(id)
+                                }}
+                                className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
+                                  isActive
+                                    ? 'bg-muted font-medium text-foreground'
+                                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                                }`}
+                              >
+                                <Icon
+                                  className="size-4 shrink-0 text-muted-foreground"
+                                  aria-hidden="true"
+                                />
+                                <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+                <div
+                  data-slot="settings-navigation-footer"
+                  className="shrink-0 border-t border-border px-3 py-2"
+                >
+                  <a
+                    href={APP.links.githubFeedback}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground"
+                  >
+                    <MessageSquare
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{t('Feedback')}</span>
+                  </a>
+                </div>
               </nav>
             </div>
           </FocusScope>
@@ -1235,7 +1317,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             </TooltipProvider>
 
             <div data-slot="settings-content-scroll" className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto min-h-full w-full max-w-[880px]">
+              <div
+                className={cn(
+                  'mx-auto w-full max-w-[880px]',
+                  activePanel === 'memory' || activePanel === 'tags' ? 'h-full' : 'min-h-full'
+                )}
+              >
                 <SettingsPanelLoadingBoundary
                   panelKey={`${activePanel}:${historyIndex}`}
                   onClose={onClose}
@@ -1244,6 +1331,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     <SkillsPanel
                       view={skillsView}
                       onNavigate={navigateSkills}
+                      onOpenGitHubCredential={() =>
+                        navigate({
+                          panel: 'credentials',
+                          view: { kind: 'service', serviceId: 'github' }
+                        })
+                      }
                       onOpenTag={navigateTag}
                       onOpenSpecialist={(usage) =>
                         navigate({
@@ -1278,6 +1371,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     />
                   ) : activePanel === 'tags' ? (
                     <TagsPanel
+                      view={tagsView}
+                      onNavigate={navigateTags}
                       onSelectedTagChange={recordSelectedTag}
                       onOpenResource={(reference) => {
                         if (reference.resourceType === 'catalog.skill') {
@@ -1308,6 +1403,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         })
                       }}
                     />
+                  ) : activePanel === 'memory' ? (
+                    <MemoryPanel
+                      view={memoryView}
+                      onNavigate={navigateMemory}
+                      onOpenProject={(projectId) => {
+                        useNavigationStore.getState().openProject(projectId, 'user')
+                        onClose()
+                      }}
+                    />
                   ) : activePanel === 'connectors' ? (
                     connectorsView.kind === 'detail' ? (
                       <div>
@@ -1323,6 +1427,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           key={connectorsView.id}
                           id={connectorsView.id}
                           onManagePermissions={() => navigatePanel('permissions')}
+                          onManageCredentials={() =>
+                            navigate({
+                              panel: 'credentials',
+                              view: { kind: 'service', serviceId: 'openalex' }
+                            })
+                          }
                         />
                       </div>
                     ) : connectorsView.kind === 'add' ? (
@@ -1369,6 +1479,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     ) : (
                       <ConnectorsPanel
                         onNavigate={navigateConnectors}
+                        onOpenCredentials={() =>
+                          navigate({
+                            panel: 'credentials',
+                            view: { kind: 'service', serviceId: 'literature' }
+                          })
+                        }
                         onOpenTag={navigateTag}
                         onOpenSpecialist={(usage) =>
                           navigate({
@@ -1396,6 +1512,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     ) : (
                       <ComputePanel onNavigate={navigateCompute} />
                     )
+                  ) : activePanel === 'credentials' ? (
+                    <CredentialsPanel
+                      view={credentialsView}
+                      onNavigate={navigateCredentials}
+                      onOpenConnector={(id) =>
+                        navigate({ panel: 'connectors', view: { kind: 'edit', id } })
+                      }
+                      onOpenProvider={(provider) => openEdit(provider)}
+                    />
                   ) : activePanel === 'storage' ? (
                     <StoragePanel
                       onContinueToAgent={() => {

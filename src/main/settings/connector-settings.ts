@@ -10,29 +10,50 @@ import type {
   ConnectorView,
   CustomServerView,
   NcbiCredentialsView,
+  OpenAlexCredentialView,
+  OpenAlexCredentialValidation,
   RemoveCustomServerRequest,
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetCustomServerEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetOpenAlexCredentialRequest,
   SetToolPermissionRequest,
   ToolPermission,
-  UpdateCustomServerRequest
+  UpdateCustomServerRequest,
+  ValidateOpenAlexCredentialRequest
 } from '../../shared/settings'
 import { inferResourceId, validateResourceId } from '../../shared/resource-id'
 import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
+import {
+  assertAddCustomServerLimits,
+  assertCustomServerCapacity,
+  assertUpdateCustomServerLimits
+} from './connector-resource-limits'
 import {
   customConnectorNameFromSkillName,
   isCustomConnectorName
 } from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import { isCustomMcpServerRouteSafe } from '../connectors/custom-mcp-bootstrap'
+import {
+  hasUsableCustomMcpCredentials,
+  isCustomMcpServerRouteSafe
+} from '../connectors/custom-mcp-bootstrap'
+import { hasAmbiguousCustomMcpCredentialNames } from '../connectors/custom-mcp-windows-credential-names'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredCustomMcpServer } from './types'
-import { buildConnectorTemplateExport, parseConnectorTemplate } from './connector-template'
-import { CustomServerIdConflictError } from './custom-server-identity'
+import {
+  buildConnectorTemplateExport,
+  hasEmbeddedConnectorCredentials,
+  parseConnectorTemplate
+} from './connector-template'
+import {
+  CustomServerIdConflictError,
+  customServerSecurityFingerprint
+} from './custom-server-identity'
+import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp-url'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
@@ -81,6 +102,30 @@ const validateOAuthRegistration = (
   }
 }
 
+const hasResolvedSecretRecord = (
+  refs: Record<string, string> | undefined,
+  values: Record<string, string> | undefined
+): boolean => {
+  const names = Object.keys(refs ?? values ?? {})
+  return names.length > 0 && names.every((name) => Object.hasOwn(values ?? {}, name))
+}
+
+const assertCredentialFieldsAreEncrypted = (fields: {
+  args?: readonly string[]
+  url?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    redirectUri?: string
+  } | null
+}): void => {
+  if (hasEmbeddedConnectorCredentials(fields)) {
+    throw new Error(
+      'Credentials in arguments or URLs are not allowed. Use encrypted environment or header fields instead.'
+    )
+  }
+}
+
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
 // clients, approval decisions, Specialist bindings, and refresh workflows remain outside this module.
 class ConnectorSettingsModule {
@@ -90,7 +135,10 @@ class ConnectorSettingsModule {
     isRefreshing: () => false
   }
 
-  constructor(private readonly repository: SettingsRepository) {}
+  constructor(
+    private readonly repository: SettingsRepository,
+    private readonly openAlexFetch: typeof fetch = fetch
+  ) {}
 
   setCustomServerRuntimeProjectionProvider(provider: CustomServerRuntimeProjectionProvider): void {
     this.customServerRuntimeProjectionProvider = provider
@@ -278,13 +326,23 @@ class ConnectorSettingsModule {
   }
 
   async setToolPermission(request: SetToolPermissionRequest): Promise<ConnectorDetailView> {
+    const separator = request.toolId.indexOf('/')
+    const connectorId = separator > 0 ? request.toolId.slice(0, separator) : ''
+    const method = separator > 0 ? request.toolId.slice(separator + 1) : ''
+    const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === connectorId)
+    if (
+      !connector ||
+      !method ||
+      !getConnectorTools(connectorId).some((tool) => tool.id === method)
+    ) {
+      throw new Error(`Unknown connector tool: ${request.toolId}`)
+    }
+
     await this.repository.setToolPolicy(
       request.toolId,
       request.permission === 'ask',
       request.permission === 'block'
     )
-    const connectorId = request.toolId.split('/')[0]
-
     return this.getConnectorDetail(connectorId)
   }
 
@@ -303,11 +361,49 @@ class ConnectorSettingsModule {
     return this.connectorsSnapshot()
   }
 
+  async setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<ConnectorsSnapshot> {
+    const apiKey = request.apiKey.trim()
+    await this.repository.setOpenAlexCredential(apiKey ? encryptKey(apiKey) : undefined)
+    return this.connectorsSnapshot()
+  }
+
+  async validateOpenAlexCredential(
+    request: ValidateOpenAlexCredentialRequest
+  ): Promise<OpenAlexCredentialValidation> {
+    const apiKey = request.apiKey.trim()
+    if (!apiKey || /\s/u.test(apiKey)) return { valid: false, reason: 'invalid-format' }
+
+    try {
+      const url = new URL('https://api.openalex.org/rate-limit')
+      url.searchParams.set('api_key', apiKey)
+      const response = await this.openAlexFetch(url, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(10_000)
+      })
+      if (response.ok || response.status === 429) return { valid: true }
+      if (response.status === 401 || response.status === 403) {
+        return { valid: false, reason: 'rejected' }
+      }
+      return { valid: false, reason: 'unavailable' }
+    } catch {
+      return { valid: false, reason: 'unavailable' }
+    }
+  }
+
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
+    assertCredentialFieldsAreEncrypted(request)
+    if (hasAmbiguousCustomMcpCredentialNames(request)) {
+      throw new Error('Duplicate credential names are not allowed on this platform.')
+    }
+    if (request.transport !== 'stdio' && request.url) {
+      assertSecureCustomMcpUrl(request.url.trim())
+    }
     const name = request.name.trim()
     const displayName = request.displayName.trim()
     const connectors = (await this.repository.getSettings()).connectors
     const existingServers = connectors?.customMcpServers ?? []
+    assertCustomServerCapacity(existingServers.length)
+    assertAddCustomServerLimits(request)
     if (!displayName) throw new Error('Display name is required')
     if (!isCustomConnectorName(name)) {
       throw new Error('Connector name must use only lowercase letters, numbers, and hyphens')
@@ -346,7 +442,6 @@ class ConnectorSettingsModule {
       displayName,
       transport: request.transport,
       enabled: !request.oauth,
-      trustedAt: Date.now(),
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
       ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
@@ -385,6 +480,11 @@ class ConnectorSettingsModule {
         (candidate) => candidate.id === request.id
       )
       if (!server) throw new Error(`Unknown custom connector: ${request.id}`)
+      if (!hasUsableCustomMcpCredentials(server)) {
+        throw new Error(
+          `credential_unavailable: Re-enter credentials for "${server.displayName}" before enabling it`
+        )
+      }
       if (server.oauth && !server.oauthState?.tokens?.access_token) {
         throw new Error(`Sign in to "${server.displayName}" before enabling it`)
       }
@@ -418,18 +518,32 @@ class ConnectorSettingsModule {
       serverId: string
     ) => Promise<CustomServerSecurityChangeGuard | void>
   ): Promise<ConnectorsSnapshot> {
+    assertCredentialFieldsAreEncrypted(request)
+    if (hasAmbiguousCustomMcpCredentialNames(request)) {
+      throw new Error('Duplicate credential names are not allowed on this platform.')
+    }
+    if (request.transport !== 'stdio' && request.url) {
+      assertSecureCustomMcpUrl(request.url.trim())
+    }
     const existing = (await this.getConnectors())?.customMcpServers?.find(
       (server) => server.id === request.id
     )
 
     if (!existing) throw new Error(`Unknown custom connector: ${request.id}`)
+    assertUpdateCustomServerLimits(request, existing)
     const displayName = request.displayName?.trim() ?? existing.displayName
     if (!displayName) throw new Error('Display name is required')
 
-    const envRefs = request.env ? this.encryptSecretRecord(request.env) : existing.envRefs
+    const envRefs =
+      request.transport === 'stdio'
+        ? request.env
+          ? this.encryptSecretRecord(request.env)
+          : existing.envRefs
+        : undefined
     // Preserve legacy plaintext only when the caller leaves it untouched and safeStorage is still
     // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
-    const legacyEnv = request.env === undefined ? existing.env : undefined
+    const legacyEnv =
+      request.transport === 'stdio' && request.env === undefined ? existing.env : undefined
     const nextOAuth =
       request.transport === 'stdio' && request.oauth === undefined
         ? undefined
@@ -456,14 +570,14 @@ class ConnectorSettingsModule {
           ? undefined
           : existing.oauthClientSecretRef
     validateOAuthRegistration(nextOAuth ?? {}, Boolean(oauthClientSecretRef))
-    const headerRefs = nextOAuth
-      ? undefined
-      : request.headers
-        ? this.encryptSecretRecord(request.headers)
-        : existing.headerRefs
-    const legacyHeaders = nextOAuth
-      ? undefined
-      : request.headers === undefined
+    const headerRefs =
+      request.transport !== 'stdio' && !nextOAuth
+        ? request.headers
+          ? this.encryptSecretRecord(request.headers)
+          : existing.headerRefs
+        : undefined
+    const legacyHeaders =
+      request.transport !== 'stdio' && !nextOAuth && request.headers === undefined
         ? existing.headers
         : undefined
     const oauthChanged = !isDeepStrictEqual(existing.oauth ?? undefined, nextOAuth ?? undefined)
@@ -541,8 +655,27 @@ class ConnectorSettingsModule {
 
   async saveCustomServerOAuthState(
     serverId: string,
-    state: StoredCustomMcpOAuthState | undefined
+    state: StoredCustomMcpOAuthState | undefined,
+    expectedConfigurationFingerprint?: string,
+    expectedOAuthClientSecretRef?: string
   ): Promise<void> {
+    const stored = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
+      (server) => server.id === serverId
+    )
+    if (!stored) throw new Error(`Unknown custom connector: ${serverId}`)
+    if (!stored.oauth) throw new Error(`Custom connector "${serverId}" is not configured for OAuth`)
+
+    await this.repository.updateCustomServerOAuthState(
+      serverId,
+      expectedConfigurationFingerprint ?? customServerSecurityFingerprint(stored),
+      expectedConfigurationFingerprint === undefined
+        ? stored.oauthClientSecretRef
+        : expectedOAuthClientSecretRef,
+      state ? encryptKey(JSON.stringify(state)) : undefined
+    )
+  }
+
+  async disconnectCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
     const stored = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
       (server) => server.id === serverId
     )
@@ -551,8 +684,10 @@ class ConnectorSettingsModule {
 
     await this.repository.updateCustomServer(serverId, {
       ...stored,
-      ...(state ? { oauthRef: encryptKey(JSON.stringify(state)) } : { oauthRef: undefined })
+      enabled: false,
+      oauthRef: undefined
     })
+    return this.connectorsSnapshot()
   }
 
   private decryptOAuthState(ref: string): StoredCustomMcpOAuthState | undefined {
@@ -586,7 +721,14 @@ class ConnectorSettingsModule {
   }
 
   private ncbiView(connectors: StoredConnectors | undefined): NcbiCredentialsView {
-    return { contactEmail: connectors?.contactEmail, hasApiKey: !!connectors?.ncbiApiKeyRef }
+    return {
+      contactEmail: connectors?.contactEmail,
+      hasApiKey: tryDecryptKey(connectors?.ncbiApiKeyRef) !== undefined
+    }
+  }
+
+  private openAlexView(connectors: StoredConnectors | undefined): OpenAlexCredentialView {
+    return { hasApiKey: tryDecryptKey(connectors?.openAlexApiKeyRef) !== undefined }
   }
 
   private toCustomServerViews(connectors: StoredConnectors | undefined): CustomServerView[] {
@@ -594,6 +736,18 @@ class ConnectorSettingsModule {
     return customServers
       .map((server) => {
         const routeUnavailable = !isCustomMcpServerRouteSafe(server, customServers)
+        const argsContainCredentials = hasEmbeddedConnectorCredentials({ args: server.args })
+        const urlContainsCredentials = hasEmbeddedConnectorCredentials({ url: server.url })
+        const clientMetadataUrlContainsCredentials = hasEmbeddedConnectorCredentials({
+          url: server.oauth?.clientMetadataUrl
+        })
+        const authorizationServerUrlContainsCredentials = hasEmbeddedConnectorCredentials({
+          url: server.oauth?.authorizationServerUrl
+        })
+        const redirectUriContainsCredentials = hasEmbeddedConnectorCredentials({
+          url: server.oauth?.redirectUri
+        })
+        const credentialUnavailable = !hasUsableCustomMcpCredentials(server)
         const unavailable =
           routeUnavailable ||
           (server.transport === 'stdio' && !server.command) ||
@@ -601,9 +755,11 @@ class ConnectorSettingsModule {
         const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
         const configurationAvailability = unavailable
           ? ('unavailable' as const)
-          : unauthenticated
-            ? ('unauthenticated' as const)
-            : undefined
+          : credentialUnavailable
+            ? ('credential_unavailable' as const)
+            : unauthenticated
+              ? ('unauthenticated' as const)
+              : undefined
         const runtimeAvailability = server.enabled
           ? this.customServerRuntimeProjectionProvider.availability(server.id)
           : undefined
@@ -620,29 +776,38 @@ class ConnectorSettingsModule {
           displayName: server.displayName,
           description: server.description,
           transport: server.transport,
-          enabled: server.enabled && !unavailable && !unauthenticated,
+          enabled: server.enabled,
           command: server.command,
-          args: server.args,
-          url: server.url,
+          args: argsContainCredentials ? undefined : server.args,
+          url: urlContainsCredentials ? undefined : server.url,
           ...(server.transport !== 'stdio'
             ? {
-                hasHeaders: Boolean(Object.keys(server.headerRefs ?? server.headers ?? {}).length)
+                hasHeaders: hasResolvedSecretRecord(server.headerRefs, server.headers)
+              }
+            : {}),
+          ...(server.transport === 'stdio'
+            ? {
+                hasEnv: hasResolvedSecretRecord(server.envRefs, server.env),
+                environmentNames: Object.keys(server.envRefs ?? server.env ?? {}).sort()
               }
             : {}),
           ...(server.oauth
             ? {
                 oauth: {
-                  ...(server.oauth.clientMetadataUrl
+                  ...(server.oauth.clientMetadataUrl && !clientMetadataUrlContainsCredentials
                     ? { clientMetadataUrl: server.oauth.clientMetadataUrl }
                     : {}),
-                  ...(server.oauth.authorizationServerUrl
+                  ...(server.oauth.authorizationServerUrl &&
+                  !authorizationServerUrlContainsCredentials
                     ? { authorizationServerUrl: server.oauth.authorizationServerUrl }
                     : {}),
                   ...(server.oauth.scopes ? { scopes: server.oauth.scopes } : {}),
                   ...(server.oauth.clientId ? { clientId: server.oauth.clientId } : {}),
-                  ...(server.oauth.redirectUri ? { redirectUri: server.oauth.redirectUri } : {}),
+                  ...(server.oauth.redirectUri && !redirectUriContainsCredentials
+                    ? { redirectUri: server.oauth.redirectUri }
+                    : {}),
                   hasTokens: Boolean(server.oauthState?.tokens?.access_token),
-                  hasClientSecret: Boolean(server.oauthClientSecretRef)
+                  hasClientSecret: server.oauthClientSecret !== undefined
                 }
               }
             : {}),
@@ -660,7 +825,8 @@ class ConnectorSettingsModule {
       connectors: this.toConnectorViews(connectors),
       customServers: this.toCustomServerViews(connectors),
       reservedCustomServerIds: connectors?.pendingCustomServerDeletionIds ?? [],
-      ncbi: this.ncbiView(connectors)
+      ncbi: this.ncbiView(connectors),
+      openAlex: this.openAlexView(connectors)
     }
   }
 }

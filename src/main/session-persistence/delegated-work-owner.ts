@@ -306,6 +306,7 @@ class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommand
         id: input.runtimeSegmentId,
         agentFrameId: input.frameId,
         frameworkId: input.frameworkId,
+        ...(input.providerId ? { providerId: input.providerId } : {}),
         ...(input.backendId ? { backendId: input.backendId } : {}),
         ...(input.agentName ? { agentName: input.agentName } : {}),
         ...(input.model ? { model: input.model } : {}),

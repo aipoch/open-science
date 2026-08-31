@@ -1,4 +1,4 @@
-// Shared types and validation for Personal Specialist Profiles.
+// Shared types and validation for reusable Specialists.
 // All mutation rules live here so Settings, SDK, and runtime share one contract.
 
 import { RESOURCE_ID_MAX_LENGTH, inferResourceId, validateResourceId } from './resource-id'
@@ -79,7 +79,7 @@ export type PendingSwitchBroadcast = {
   targetName: string | null
 }
 
-// Session switching request types — resolution type is declared after SpecialistProfileView below.
+// Session switching request types — resolution type is declared after SpecialistView below.
 export type SetSessionSpecialistRequest = {
   sessionId: string
   // undefined clears the binding (reverts to Main Agent).
@@ -108,7 +108,11 @@ export type ResolveSessionSpecialistRequest = {
 // The capability scope mode for a specialist.
 export type SpecialistCapabilityMode = 'full' | 'selected'
 
-// Per-connector tool-level rules. Uses bare method names (no connector prefix).
+export const CONNECTOR_TOOL_RULE_MAX_COUNT = 128
+export const CONNECTOR_TOOL_PATTERN_MAX_LENGTH = 128
+
+// Per-connector tool-level rules. Uses bare method names (no connector prefix). Patterns are
+// anchored globs where `*` matches any characters and `?` matches one character.
 export type ConnectorToolRule = {
   connectorId: string
   includedMethods?: string[]
@@ -160,8 +164,7 @@ export type SpecialistMarketplaceProvenance = {
 // session. Full access includes future entries by construction, while selected is an explicit list.
 export const resolveEffectiveSpecialistSkills = (
   specialist:
-    | Pick<SpecialistProfileView, 'capabilityMode' | 'fullAccess' | 'selectedCapabilities'>
-    | undefined,
+    Pick<SpecialistView, 'capabilityMode' | 'fullAccess' | 'selectedCapabilities'> | undefined,
   catalog: SpecialistSkillCatalogEntry[]
 ): EffectiveSpecialistSkills => {
   if (specialist === undefined) return { kind: 'main' }
@@ -197,7 +200,7 @@ export const resolveEffectiveSpecialistSkills = (
 // The per-call ConnectorService gate enforces the same config at execution time.
 export const filterSpecialistConnectorSkills = (
   connectorSkillNames: string[],
-  specialist: Pick<SpecialistProfileView, 'capabilityMode' | 'fullAccess' | 'selectedCapabilities'>
+  specialist: Pick<SpecialistView, 'capabilityMode' | 'fullAccess' | 'selectedCapabilities'>
 ): string[] => {
   const isAllowed =
     specialist.capabilityMode === 'full'
@@ -209,8 +212,8 @@ export const filterSpecialistConnectorSkills = (
   })
 }
 
-// Renderer-safe view of one specialist profile (no secret fields).
-export type SpecialistProfileView = {
+// Renderer-safe view of one Specialist (no secret fields).
+export type SpecialistView = {
   id: string
   name: string // immutable-reference-safe public UPPER_SNAKE identifier
   displayName?: string
@@ -253,12 +256,12 @@ export type BuiltinSpecialistEntry = {
   kind: 'builtin'
   readonly: true
   version: string
-} & SpecialistProfileView
+} & SpecialistView
 
 // Exhaustive Settings/runtime catalog discriminant. Reviewer remains a placeholder, never a
-// runnable profile.
+// runnable Specialist.
 export type SpecialistListItem =
-  ({ kind: 'custom' } & SpecialistProfileView) | BuiltinSpecialistEntry | ReviewerEntry
+  ({ kind: 'custom' } & SpecialistView) | BuiltinSpecialistEntry | ReviewerEntry
 
 export type SpecialistDocumentIntegrityIssue = Readonly<{
   code:
@@ -284,13 +287,13 @@ export type SpecialistCatalogSnapshot = Readonly<{
   integrity: SpecialistDocumentIntegrity
 }>
 
-// Resolution of a session's specialist binding at send time (requires SpecialistProfileView above).
+// Resolution of a session's specialist binding at send time (requires SpecialistView above).
 // 'main'        — no binding, main agent is used.
-// 'bound'       — a valid enabled profile was found.
+// 'bound'       — a valid enabled Specialist was found.
 // 'unavailable' — the bound Specialist ID is unknown, disabled, or corrupt (send must be blocked).
 export type SessionSpecialistResolution =
   | { kind: 'main' }
-  | { kind: 'bound'; profile: SpecialistProfileView }
+  | { kind: 'bound'; profile: SpecialistView }
   | { kind: 'unavailable'; reason: string }
 
 // Input for creating a new specialist.

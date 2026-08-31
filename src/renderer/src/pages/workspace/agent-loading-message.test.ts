@@ -1,4 +1,9 @@
-import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
+import type {
+  ChatMessage,
+  ChatSession,
+  SessionActionabilityFacts,
+  ToolActivity
+} from '@/stores/session-store'
 import { describe, expect, it } from 'vitest'
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
@@ -39,7 +44,8 @@ const createActivity = (overrides: Partial<ToolActivity> = {}): ToolActivity => 
 
 const loadAgentLoadingMessageModule = async (): Promise<{
   getAgentLoadingPhase: (
-    session: ChatSession | undefined
+    session: ChatSession | undefined,
+    facts?: Pick<SessionActionabilityFacts, 'credentialPending'>
   ) =>
     | 'hidden'
     | 'thinking'
@@ -428,4 +434,22 @@ describe('agent loading message state', () => {
       ).toBe(phase)
     }
   )
+
+  it('shows a transient credential wait as waiting for a response', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+
+    expect(
+      getAgentLoadingPhase(
+        createSession({
+          status: 'running',
+          activeRun: {
+            promptMessageId: 'prompt-1',
+            startedAt: 1710000000100
+          },
+          messages: [createMessage({ id: 'prompt-1' })]
+        }),
+        { credentialPending: true }
+      )
+    ).toBe('waiting-for-response')
+  })
 })

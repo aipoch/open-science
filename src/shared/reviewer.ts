@@ -28,6 +28,7 @@ export type ReviewerLogEntry =
       rawInputTruncated?: boolean
       rawOutputTruncated?: boolean
       reviewLogTruncated?: boolean
+      evidenceKind?: 'media'
       status?: 'ok' | 'error'
       exitCode?: number | null
     }
@@ -43,6 +44,38 @@ export type ScopeBlock = {
   contentHash: string
 }
 
+export type ReviewerFileContentStatus = 'available' | 'missing' | 'checksum-mismatch'
+
+type ReviewerFileEvidenceDescriptorBase = {
+  versionId: string
+  filename: string
+  mimeType?: string
+  sizeBytes: number
+  checksum: string
+  traceAvailable: boolean
+  contentStatus: ReviewerFileContentStatus
+}
+
+export type ReviewerWorkProductEvidenceDescriptor = ReviewerFileEvidenceDescriptorBase & {
+  role: 'work_product'
+  scopeReason: 'produced-by-turn'
+}
+
+export type ReviewerSourceEvidenceDescriptor = ReviewerFileEvidenceDescriptorBase & {
+  role: 'source_document'
+  scopeReason: 'read-by-turn' | 'execution-input' | 'artifact-input'
+}
+
+export type ReviewerFileEvidenceDescriptor =
+  ReviewerWorkProductEvidenceDescriptor | ReviewerSourceEvidenceDescriptor
+
+export type ReviewerTurnPlanDescriptor = {
+  versionId: string
+  status: 'approved' | 'active' | 'completed' | 'superseded'
+  content: unknown
+  binding: 'current-turn'
+}
+
 // The audited window: the ordered blocks of exactly one turn plus the artifact version ids it produced.
 export type TurnScope = {
   turnMessageId: string
@@ -52,6 +85,9 @@ export type TurnScope = {
   messageBranchId?: string
   blocks: ScopeBlock[]
   artifactVersionIds: string[]
+  // Immutable inputs directly read by this Turn or reachable through one of its Work Products.
+  // Historical Reviews omit this additive field and retain their previous empty-source behavior.
+  sourceDocumentVersionIds?: string[]
 }
 
 // Immutable provenance supplied when the audited turn belongs to a completed delegate Attempt.

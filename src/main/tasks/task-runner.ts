@@ -46,6 +46,7 @@ import type {
   TaskApiErrorCode,
   TaskProject,
   TaskRun,
+  TaskRunIdentity,
   TaskRunProgressEvent,
   TaskRunProgressPhase,
   TaskRunReview,
@@ -108,6 +109,7 @@ type TaskAgentResumeSessionRequest = {
   cwd: string
   projectId: string
   permissionProfile: PermissionProfileId
+  memoryEnabled?: boolean
   previousFrameworkId?: AgentFrameworkId
   previousBackendId?: string
   previousModel?: string
@@ -546,6 +548,14 @@ class TaskRunner {
   subscribeProgress(listener: (event: TaskRunProgressEvent) => void): () => void {
     this.progressListeners.add(listener)
     return () => this.progressListeners.delete(listener)
+  }
+
+  resolveActiveRun(sessionId: string, promptMessageId?: string): TaskRunIdentity | undefined {
+    const runId = this.activeRunBySession.get(sessionId)
+    const run = runId ? this.runs.get(runId) : undefined
+    if (!run || run.status !== 'running') return undefined
+    if (promptMessageId !== undefined && promptMessageId !== run.promptMessageId) return undefined
+    return { runId: run.id, sessionId: run.sessionId, projectId: run.projectId }
   }
 
   async listProjects(): Promise<TaskProject[]> {
@@ -990,6 +1000,7 @@ class TaskRunner {
           previousModel: existing.agentModel,
           providerSessionId: existing.providerSessionId,
           providerContinuityToken: existing.providerContinuityToken,
+          memoryEnabled: existing.memoryEnabled !== false,
           ...(specialistId ? { specialistId } : {}),
           ...(existing.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
           ...(existing.agentConfiguration
@@ -1074,6 +1085,7 @@ class TaskRunner {
       const graphWithRuntime = ensureConversationRuntimeSegment(currentGraph, {
         id: `runtime-segment-${userMessageId}`,
         frameworkId: session.agentFrameworkId ?? 'claude-code',
+        providerId: session.agentConfiguration?.providerId,
         backendId: session.agentBackendId,
         model: session.agentModel,
         startedAt: now,

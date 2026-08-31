@@ -31,6 +31,10 @@ import {
 } from './micromamba'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 import {
+  archiveAuthorizationsFromCondaResult,
+  type MicromambaArchiveAuthorization
+} from './micromamba-archive-store'
+import {
   DEFAULT_MAX_CACHE_RELATIVE_PATH,
   micromambaCacheLockKey,
   selectMicromambaCache,
@@ -41,6 +45,7 @@ import {
   packageCacheCleanArgv
 } from './micromamba-cache-maintenance'
 import { recoverWindowsMaxPathPackage } from './micromamba-cache-recovery'
+import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
 import { withExclusiveCacheLocks, withSharedCacheLocks } from './pkgs-cache-lock'
 import { CHILD_UNCONFIRMED, killAndConfirmExit } from './provisioner-runtime'
 import {
@@ -111,6 +116,8 @@ type CondaStructuredResult = {
     LINK: Array<{ name: 'r-base'; version?: string }>
     UNLINK: Array<{ name: 'r-base'; version?: string }>
   }
+  archives: MicromambaArchiveAuthorization[]
+  archiveEvidenceComplete?: boolean
   diagnostics: string[]
 }
 
@@ -177,6 +184,13 @@ export type InstallDeps = {
   // Invoked after cache maintenance has either completed or failed with its child confirmed stopped.
   // The journal owner uses it to clear the maintenance child's evidence before any solver/install spawn.
   onCacheMaintenanceSettled?: () => Promise<void> | void
+  // Receives digest-bearing archive identities directly from a successful micromamba transaction.
+  // The caller may use these in-memory authorizations to publish notebook-writable cache bytes.
+  onCondaArchiveAuthorizations?: (
+    authorizations: readonly MicromambaArchiveAuthorization[],
+    workingRoot: string,
+    evidenceComplete?: boolean
+  ) => void
 }
 
 const DEFAULT_CONDA_CHANNEL = 'conda-forge'
@@ -238,6 +252,11 @@ const parseStructuredCondaResult = (result: SpawnResult): Record<string, unknown
     }
   }
   return undefined
+}
+
+const condaArchiveAuthorizations = (result: SpawnResult): MicromambaArchiveAuthorization[] => {
+  const structured = parseStructuredCondaResult(result)
+  return structured ? archiveAuthorizationsFromCondaResult(structured) : []
 }
 
 export type CondaPackageIdentity = {
@@ -611,12 +630,42 @@ const strings = (value) =>
 const summarize = (value) => {
   let transaction = false
   const actions = { LINK: [], UNLINK: [] }
+  const archives = []
+  let archiveEvidenceComplete = true
   const visit = (nested) => {
     if (Array.isArray(nested)) {
       nested.forEach(visit)
       return
     }
     if (typeof nested !== 'object' || nested === null) return
+    const file = typeof nested.fn === 'string'
+      ? nested.fn
+      : typeof nested.url === 'string'
+        ? (() => {
+            try {
+              return new URL(nested.url).pathname.split('/').pop()
+            } catch {
+              return undefined
+            }
+          })()
+        : undefined
+    const sha256 = typeof nested.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(nested.sha256)
+      ? nested.sha256.toLowerCase()
+      : undefined
+    const md5 = typeof nested.md5 === 'string' && /^[0-9a-f]{32}$/i.test(nested.md5)
+      ? nested.md5.toLowerCase()
+      : undefined
+    if (typeof file === 'string' && /\.(?:conda|tar\.bz2)$/i.test(file) && (sha256 || md5)) {
+      if (archives.length < 1024) {
+        archives.push({
+          file,
+          algorithm: sha256 ? 'sha256' : 'md5',
+          digest: sha256 || md5
+        })
+      } else {
+        archiveEvidenceComplete = false
+      }
+    }
     for (const [key, child] of Object.entries(nested)) {
       const normalized = key.toUpperCase()
       if (/^(?:LINK|UNLINK|FETCH|PREFIX_ACTIONS|TRANSACTION)$/.test(normalized)) {
@@ -656,6 +705,8 @@ const summarize = (value) => {
   return {
     transaction,
     actions,
+    archives,
+    archiveEvidenceComplete,
     diagnostics: canonicalDiagnostic ? [canonicalDiagnostic] : []
   }
 }
@@ -793,8 +844,19 @@ const isCondaStructuredResult = (value: unknown): value is CondaStructuredResult
     !candidate.actions ||
     !Array.isArray(candidate.actions.LINK) ||
     !Array.isArray(candidate.actions.UNLINK) ||
+    !Array.isArray(candidate.archives) ||
+    !candidate.archives.every(
+      (archive) =>
+        typeof archive === 'object' &&
+        archive !== null &&
+        typeof archive.file === 'string' &&
+        (archive.algorithm === 'md5' || archive.algorithm === 'sha256') &&
+        typeof archive.digest === 'string'
+    ) ||
     !Array.isArray(candidate.diagnostics) ||
-    !candidate.diagnostics.every((diagnostic) => typeof diagnostic === 'string')
+    !candidate.diagnostics.every((diagnostic) => typeof diagnostic === 'string') ||
+    (candidate.archiveEvidenceComplete !== undefined &&
+      typeof candidate.archiveEvidenceComplete !== 'boolean')
   ) {
     return false
   }
@@ -1147,6 +1209,7 @@ export async function installPackages(
     process.env.OPEN_SCIENCE_STORAGE_ROOT ??
     join(homedir(), PROD_SESSION_DIR_NAME)
   const root = runtimeRoot(storageRoot)
+  Object.assign(spawnEnv, notebookWorkloadCacheEnv(root))
   const channels = condaInstallChannels(deps.condaChannel ?? DEFAULT_CONDA_CHANNEL, req.channels)
   const prefix = envPrefix(root, envName)
   // micromamba install/remove extract into and mutate the SHARED pkgs cache (<root>/runtime/pkgs), so
@@ -1221,6 +1284,18 @@ export async function installPackages(
       baseSpawn(command, args, context.env)
     )
   }
+  const reportCondaArchives = (result: SpawnResult, workingRoot: string): void => {
+    const structured = parseStructuredCondaResult(result)
+    const authorizations = condaArchiveAuthorizations(result)
+    const summarizedCompleteness = result.structuredCondaResult?.archiveEvidenceComplete
+    const retainedOutputComplete =
+      (result.stdoutDroppedBytes ?? 0) === 0 && (result.stderrDroppedBytes ?? 0) === 0
+    const evidenceComplete =
+      summarizedCompleteness ?? (retainedOutputComplete && structured !== undefined)
+    if (authorizations.length > 0 || !evidenceComplete) {
+      deps.onCondaArchiveAuthorizations?.(authorizations, workingRoot, evidenceComplete)
+    }
+  }
   const runConda = async (
     command: string,
     args: string[],
@@ -1236,7 +1311,10 @@ export async function installPackages(
       baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
     )
     if (await stopAfterSpawn?.(result)) return result
-    if (result.code === 0) return result
+    if (result.code === 0) {
+      reportCondaArchives(result, context.cache.path)
+      return result
+    }
     const evidence = [result.maxPathRecoveryEvidence, result.stdout, result.stderr]
       .filter(Boolean)
       .join('\n')
@@ -1281,7 +1359,10 @@ export async function installPackages(
           `Retry result after MAX_PATH recovery (stderr):\n${retry.stderr}`
       }
     }
-    if (retry.code === 0) return retry
+    if (retry.code === 0) {
+      reportCondaArchives(retry, context.cache.path)
+      return retry
+    }
     return {
       ...retry,
       ...spawnLogTruncation(result, retry),

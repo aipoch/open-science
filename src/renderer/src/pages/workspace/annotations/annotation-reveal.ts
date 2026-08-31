@@ -13,14 +13,28 @@ const REVEAL_EVENT = 'annotation-reveal'
 const REVEAL_PREPARE_EVENT = 'annotation-reveal-prepare'
 const REVEAL_HIGHLIGHT_NAME = 'agent-annotation-reveal'
 const REVEAL_DURATION_MS = 1_600
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 
 let revealedRange: Range | undefined
 let revealTimer: ReturnType<typeof setTimeout> | undefined
 let pendingRevealId: string | undefined
+let pendingRevealAnnotation: Annotation | undefined
 
-const publishAnnotationReveal = (annotationId: string): void => {
-  pendingRevealId = annotationId
-  document.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: annotationId }))
+const fileAnnotationSource = (
+  annotation: Annotation
+):
+  | Extract<Annotation, { kind: 'image-point' | 'pdf' }>['source']
+  | Extract<Extract<Annotation, { kind: 'text' }>['source'], { kind: 'project-file' }>
+  | undefined => {
+  if (annotation.kind !== 'text') return annotation.source
+  return annotation.source.kind === 'project-file' ? annotation.source : undefined
+}
+
+const publishAnnotationReveal = (annotation: Annotation): void => {
+  pendingRevealId = annotation.id
+  pendingRevealAnnotation = annotation.kind === 'pdf' ? annotation : undefined
+  document.dispatchEvent(new CustomEvent(REVEAL_PREPARE_EVENT, { detail: annotation }))
+  document.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: annotation.id }))
 }
 
 const subscribeAnnotationReveal = (
@@ -28,7 +42,10 @@ const subscribeAnnotationReveal = (
 ): (() => void) => {
   const deliver = (annotationId: string): void => {
     if (!listener(annotationId)) return
-    if (pendingRevealId === annotationId) pendingRevealId = undefined
+    if (pendingRevealId === annotationId) {
+      pendingRevealId = undefined
+      pendingRevealAnnotation = undefined
+    }
   }
   const handler = (event: Event): void => deliver((event as CustomEvent<string>).detail)
   document.addEventListener(REVEAL_EVENT, handler)
@@ -41,12 +58,19 @@ const subscribeAnnotationRevealPreparation = (
 ): (() => void) => {
   const handler = (event: Event): void => listener((event as CustomEvent<Annotation>).detail)
   document.addEventListener(REVEAL_PREPARE_EVENT, handler)
+  if (pendingRevealAnnotation) listener(pendingRevealAnnotation)
   return () => document.removeEventListener(REVEAL_PREPARE_EVENT, handler)
 }
 
+const retryPendingAnnotationReveal = (): void => {
+  if (pendingRevealId) {
+    document.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: pendingRevealId }))
+  }
+}
+
 const fileSourceMatchesItem = (annotation: Annotation, item: PreviewFileItem): boolean => {
-  const source = annotation.source
-  if (source.kind === 'agent-message' || source.kind === 'session-item') return false
+  const source = fileAnnotationSource(annotation)
+  if (!source) return false
   if (item.projectId !== source.projectId || item.path !== source.path) return false
   const itemVersionId =
     item.selectedVersionId ??
@@ -60,8 +84,8 @@ const sourceName = (path: string, name?: string): string =>
   name ?? path.split(/[\\/]/).at(-1) ?? path
 
 const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | undefined => {
-  const source = annotation.source
-  if (source.kind === 'agent-message' || source.kind === 'session-item') return undefined
+  const source = fileAnnotationSource(annotation)
+  if (!source) return undefined
 
   const artifact = parseArtifactVersionLocator(source.path)
   const upload = parseUploadVersionReference(source.path)
@@ -79,7 +103,12 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
     sessionId,
     path: source.path,
     name,
-    mimeType: annotation.kind === 'image-point' ? annotation.source.mimeType : undefined,
+    mimeType:
+      annotation.kind === 'image-point'
+        ? annotation.source.mimeType
+        : annotation.kind === 'pdf'
+          ? 'application/pdf'
+          : undefined,
     source: upload ? 'upload' : undefined,
     artifactId: artifact?.artifactId,
     selectedVersionId: artifact ? versionId : undefined
@@ -87,9 +116,8 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
 }
 
 const requestAnnotationReveal = (annotation: Annotation): void => {
-  if (annotation.source.kind === 'agent-message' || annotation.source.kind === 'session-item') {
-    document.dispatchEvent(new CustomEvent(REVEAL_PREPARE_EVENT, { detail: annotation }))
-    publishAnnotationReveal(annotation.id)
+  if (!fileAnnotationSource(annotation)) {
+    publishAnnotationReveal(annotation)
     return
   }
 
@@ -101,11 +129,19 @@ const requestAnnotationReveal = (annotation: Annotation): void => {
   if (!item) return
 
   workbench.upsertAndActivateItem(item)
-  publishAnnotationReveal(annotation.id)
+  publishAnnotationReveal(annotation)
 }
 
+const annotationRevealScrollBehavior = (): ScrollBehavior =>
+  typeof globalThis.matchMedia === 'function' && globalThis.matchMedia(REDUCED_MOTION_QUERY).matches
+    ? 'auto'
+    : 'smooth'
+
 const revealTextAnnotationRange = (range: Range): void => {
-  range.startContainer.parentElement?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  range.startContainer.parentElement?.scrollIntoView({
+    block: 'center',
+    behavior: annotationRevealScrollBehavior()
+  })
   if (typeof Highlight === 'undefined' || !globalThis.CSS?.highlights) return
 
   const highlight = globalThis.CSS.highlights.get(REVEAL_HIGHLIGHT_NAME) ?? new Highlight()
@@ -122,7 +158,9 @@ const revealTextAnnotationRange = (range: Range): void => {
 }
 
 export {
+  annotationRevealScrollBehavior,
   requestAnnotationReveal,
+  retryPendingAnnotationReveal,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation

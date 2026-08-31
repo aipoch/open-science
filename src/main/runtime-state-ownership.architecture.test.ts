@@ -507,7 +507,7 @@ describe('runtime state ownership architecture', () => {
     ['../notebook/local-rpc-server', 'NotebookLocalRpcServer'],
     ['../artifacts/repository', 'ArtifactRepository'],
     ['../tasks/task-runner', 'TaskRunner'],
-    ['../specialist/service', 'ProfileService'],
+    ['../specialist/service', 'SpecialistService'],
     ['../ipc', 'createApplicationModules'],
     ['../renderer-broadcast', 'broadcastToRenderers'],
     ['../web-service/http-server', 'WebHttpServer'],

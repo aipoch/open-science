@@ -1,22 +1,17 @@
 import { readdir, stat, statfs } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import {
+  STORAGE_USAGE_CATEGORY_KEYS,
+  type StorageUsage,
+  type UsageChild
+} from '../../shared/storage'
 import { logicalEnvNameFromDirectory } from '../notebook/runtime-paths'
 
-export type UsageCategoryKey =
-  'artifacts' | 'delegation' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
-export type UsageChild = { name: string; bytes: number }
-export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
-export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
-
-const CATEGORY_KEYS: UsageCategoryKey[] = [
-  'artifacts',
-  'delegation',
-  'uploads',
-  'runtime',
-  'notebooks',
-  'workspaces'
-]
+const isMissingPathError = (error: unknown): boolean => {
+  const code = (error as NodeJS.ErrnoException)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
 
 // Recursively sums UNIQUE file sizes under `dir`, deduping hard links by (dev, ino) through `seen`
 // (like `du`): a file whose inode was already counted contributes 0. This is essential for the runtime
@@ -29,8 +24,9 @@ const dirSize = async (dir: string, seen: Set<string>): Promise<number> => {
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return 0
+  } catch (error) {
+    if (isMissingPathError(error)) return 0
+    throw error
   }
   let total = 0
   for (const entry of entries) {
@@ -47,8 +43,13 @@ const dirSize = async (dir: string, seen: Set<string>): Promise<number> => {
 
 // Size of one file, or 0 if its inode was already counted via `seen` (hard-link dedup).
 const fileSize = async (path: string, seen: Set<string>): Promise<number> => {
-  const info = await stat(path).catch(() => undefined)
-  if (!info) return 0
+  let info
+  try {
+    info = await stat(path)
+  } catch (error) {
+    if (isMissingPathError(error)) return 0
+    throw error
+  }
   const key = `${info.dev}:${info.ino}`
   if (seen.has(key)) return 0
   seen.add(key)
@@ -83,7 +84,8 @@ const runtimeUsage = async (dir: string): Promise<{ bytes: number; children: Usa
   let envEntries
   try {
     envEntries = await readdir(join(dir, 'envs'), { withFileTypes: true })
-  } catch {
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error
     envEntries = []
   }
   const envBytes = new Map<string, number>()
@@ -100,8 +102,9 @@ const runtimeUsage = async (dir: string): Promise<{ bytes: number; children: Usa
   let topEntries
   try {
     topEntries = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return { bytes: 0, children: [] }
+  } catch (error) {
+    if (isMissingPathError(error)) return { bytes: 0, children: [] }
+    throw error
   }
   for (const entry of topEntries) {
     if (entry.isSymbolicLink()) continue
@@ -125,8 +128,8 @@ const runtimeUsage = async (dir: string): Promise<{ bytes: number; children: Usa
 }
 
 export const computeStorageUsage = async (dataRoot: string): Promise<StorageUsage> => {
-  const categories: UsageCategory[] = []
-  for (const key of CATEGORY_KEYS) {
+  const categories: StorageUsage['categories'] = []
+  for (const key of STORAGE_USAGE_CATEGORY_KEYS) {
     const dir = join(dataRoot, key)
     if (key === 'runtime') {
       const { bytes, children } = await runtimeUsage(dir)

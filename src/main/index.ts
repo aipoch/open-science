@@ -35,6 +35,7 @@ const shouldRunReviewerMcpProxy = process.argv.includes(REVIEWER_MCP_PROXY_ARG)
 const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SERVER_ARG)
 const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_SERVER_ARG)
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
+const bootstrapLog = createLogger('bootstrap')
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush = flushLogs
 
@@ -43,7 +44,7 @@ if (shouldRunArtifactMcpServer) {
   void import('./artifacts/mcp-server')
     .then(({ runArtifactMcpServer }) => runArtifactMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('artifact MCP server failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunNotebookMcpServer) {
@@ -51,35 +52,35 @@ if (shouldRunArtifactMcpServer) {
   void import('./notebook/mcp-server')
     .then(({ runNotebookMcpServer }) => runNotebookMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('notebook MCP server failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunReviewerMcpProxy) {
   void import('./reviewer/mcp-stdio-proxy')
     .then(({ runReviewerMcpStdioProxy }) => runReviewerMcpStdioProxy())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('reviewer MCP proxy failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunSkillImportMcpServer) {
   void import('./skills/mcp-server')
     .then(({ runSkillImportMcpServer }) => runSkillImportMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('skill import MCP server failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunSkillRuntimeMcpServer) {
   void import('./skills/runtime-mcp-server')
     .then(({ runSkillRuntimeMcpServer }) => runSkillRuntimeMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('skill runtime MCP server failed', error)
       process.exitCode = 1
     })
 } else if (shouldRunPlanMcpServer) {
   void import('./session-plan/plan-mcp-server')
     .then(({ runPlanMcpServer }) => runPlanMcpServer())
     .catch((error: unknown) => {
-      console.error(error)
+      bootstrapLog.error('plan MCP server failed', error)
       process.exitCode = 1
     })
 } else {
@@ -89,7 +90,7 @@ if (shouldRunArtifactMcpServer) {
       error,
       flush: startupFlush
     })
-    console.error(error)
+    bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
     process.exitCode = 1
   })
 }
@@ -326,7 +327,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
       const databaseStartupOwner = createDatabaseStartupOwner({
         reportBlocked: databaseStartupLogging.reportBlocked,
-        buildDiagnostics: (error) => buildStartupDiagnostics(error),
+        buildDiagnostics: (error) =>
+          buildStartupDiagnostics(error, {
+            configRoot: resolveStorageRoot(),
+            dataRoot: startupSettings.dataRoot
+          }),
         environment: {
           appVersion: app.getVersion(),
           platform: process.platform,
@@ -482,6 +487,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               taskControls,
               computePreferences,
               detectActiveSessions,
+              hasActiveReviewerWork,
               prepareForQuit,
               abortQuitPreparation,
               dispose: disposeApplicationRuntime
@@ -492,14 +498,18 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               managedPreviewProtocol: managedPreviewProtocolBridge.registrar,
               handoffRuntime: 'production',
               headless: webMode.headless,
-              confirmUpdateRendererDurability: async () => {
+              confirmRendererDurability: async (policy) => {
                 const getWindow = (): InstanceType<typeof BrowserWindow> | undefined =>
                   mainWindowGetterBox.current?.()
                 const outcome = await createElectronSessionPersistenceFlush(getWindow)()
-                if (!rendererSessionPersistenceFlushBlocksShutdown(outcome)) return true
+                if (!rendererSessionPersistenceFlushBlocksShutdown(outcome, policy)) {
+                  return true
+                }
                 notifyRendererSessionPersistenceFlushAborted(getWindow)
                 return false
               },
+              notifyRendererDurabilityAborted: () =>
+                notifyRendererSessionPersistenceFlushAborted(() => mainWindowGetterBox.current?.()),
               onAppIconVariantChanged: (variant) => {
                 appIconControllerBox.current?.setVariant(variant)
                 // Keep the tray glyph on the same variant as the window icon. No-op before the lifecycle
@@ -601,14 +611,16 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               getAppIconVariant: () => appIconControllerBox.current?.getVariant() ?? initialVariant,
               disposeApplicationRuntime,
               detectActiveSessions,
+              hasActiveReviewerWork,
               prepareForQuit,
               abortQuitPreparation,
               createSessionPersistenceFlush: (
                 getWindow: () => InstanceType<typeof BrowserWindow> | undefined
               ) => createElectronSessionPersistenceFlush(getWindow),
               notifySessionPersistenceFlushAborted: (
-                getWindow: () => InstanceType<typeof BrowserWindow> | undefined
-              ) => notifyRendererSessionPersistenceFlushAborted(getWindow),
+                getWindow: () => InstanceType<typeof BrowserWindow> | undefined,
+                reason?: Parameters<typeof notifyRendererSessionPersistenceFlushAborted>[1]
+              ) => notifyRendererSessionPersistenceFlushAborted(getWindow, reason),
               createConfirmClose: (
                 getWindow: () => InstanceType<typeof BrowserWindow> | undefined
               ) =>
@@ -711,10 +723,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             countWindows: () => BrowserWindow.getAllWindows().length,
             createInitialWindow: !ctx.webMode.headless,
             detectActiveSessions: ctx.detectActiveSessions,
+            hasActiveReviewerWork: ctx.hasActiveReviewerWork,
             prepareForQuit: ctx.prepareForQuit,
-            abortQuitPreparation: () => {
+            abortQuitPreparation: (reason) => {
               ctx.abortQuitPreparation()
-              ctx.notifySessionPersistenceFlushAborted(() => ctx.mainWindowGetterBox.current?.())
+              ctx.notifySessionPersistenceFlushAborted(
+                () => ctx.mainWindowGetterBox.current?.(),
+                reason
+              )
             },
             flushSessionPersistence: ctx.createSessionPersistenceFlush(() =>
               ctx.mainWindowGetterBox.current?.()

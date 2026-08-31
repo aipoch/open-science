@@ -1,6 +1,9 @@
 import type {
   NotebookEnvironmentManifest,
+  NotebookHelperModuleEvidence,
+  NotebookHelperEvidenceStatus,
   NotebookOutput,
+  NotebookRunFileEvidence,
   NotebookRunEnvironmentCapture,
   NotebookRunRecord,
   NotebookRunStatus,
@@ -30,10 +33,13 @@ type NotebookRunTerminalResult = {
   outputs: NotebookOutput[]
   truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
+  fileEvidence?: NotebookRunFileEvidence
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
   environmentCapture?: NotebookRunEnvironmentCapture
   kernelDispatched?: boolean
+  helperModules?: NotebookHelperModuleEvidence[]
+  helperEvidenceStatus?: NotebookHelperEvidenceStatus
 }
 
 type TerminalizeNotebookRunRequest<Result extends NotebookRunTerminalResult> = {
@@ -46,6 +52,10 @@ type TerminalizeNotebookRunRequest<Result extends NotebookRunTerminalResult> = {
 type NotebookRunTerminalizationOwnerOptions = {
   repository: Pick<NotebookRunRepository, 'appendRun' | 'updateRun'>
   notifyChanged: (session: NotebookRunTerminalizationSession) => void
+  afterCommit?: (
+    session: NotebookRunTerminalizationSession,
+    run: NotebookRunRecord
+  ) => Promise<void>
   now?: () => number
 }
 
@@ -54,6 +64,28 @@ const outputPlainText = (stdout: string, stderr: string): string[] =>
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+const unavailableFileEvidence = (): NotebookRunFileEvidence => ({
+  schemaVersion: 1,
+  state: 'unavailable',
+  scientificOutputCount: 0,
+  initialViewState: 'unavailable',
+  managedRootsFinalState: 'unavailable',
+  scientificOutputAnalysis: 'unavailable',
+  fileReads: 'unavailable',
+  externalPaths: 'unavailable',
+  writerAttribution: 'unavailable',
+  reasonCodes: [
+    'external-paths-not-observed',
+    'remote-outputs-not-observed',
+    'file-reads-not-observed',
+    'initial-file-generations-not-captured',
+    'observation-not-started',
+    'delayed-writes-not-observed',
+    'transient-files-not-captured',
+    'writer-not-isolated'
+  ]
+})
 
 class NotebookRunTerminalizationOwner {
   private sequence = 0
@@ -192,10 +224,15 @@ class NotebookRunTerminalizationOwner {
       // make the preview render it twice.
       outputs: limitedResult.outputs,
       workingFiles: limitedResult.workingFiles ?? [],
+      fileEvidence: limitedResult.fileEvidence ?? unavailableFileEvidence(),
       ...(limitedResult.truncated ? { truncated: true } : {}),
       environmentCapture,
       ...(limitedResult.kernelDispatched !== undefined
         ? { kernelDispatched: limitedResult.kernelDispatched }
+        : {}),
+      ...(limitedResult.helperModules ? { helperModules: limitedResult.helperModules } : {}),
+      ...(limitedResult.helperEvidenceStatus
+        ? { helperEvidenceStatus: limitedResult.helperEvidenceStatus }
         : {}),
       ...(interruptionReason ? { interruptionReason } : {}),
       ...(environmentCapture.state !== 'unavailable' && limitedResult.environmentManifest
@@ -223,6 +260,8 @@ class NotebookRunTerminalizationOwner {
     if (!run) {
       throw new Error(`Notebook run not found after update: ${terminalRun.runId}`)
     }
+
+    await this.options.afterCommit?.(session, run)
 
     return run
   }

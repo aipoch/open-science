@@ -1623,6 +1623,14 @@ describe('mandatory product glossary', () => {
     }
   >
 
+  // Reviewed exceptions to the Agent/Skill glossary below: the confirmed literature-reading entry
+  // label (design decision D4, 2026-08-28) is an action phrase in Chinese ("start literature
+  // reading") that intentionally does not name the Agent.
+  const LOCALIZED_FEATURE_TERM_EXCEPTIONS = new Set([
+    'zh-Hans: Read with agent: 智能体',
+    'zh-Hant: Read with agent: 智能體'
+  ])
+
   it.each(TRANSLATED)('%s localizes Agent and Skill in user-visible prose', (locale) => {
     const expected = localizedFeatureTerms[locale]
     const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
@@ -1649,6 +1657,7 @@ describe('mandatory product glossary', () => {
               untranslated.test(prose))
         )
         .map(({ expected: term }) => `${key}: ${String(term)}`)
+        .filter((offender) => !LOCALIZED_FEATURE_TERM_EXCEPTIONS.has(`${locale}: ${offender}`))
     })
 
     expect(offenders).toEqual([])
@@ -2121,8 +2130,8 @@ describe('Russian catalog quality', () => {
     ['How to fix', 'Как исправить'],
     ['Still stuck? Create an issue for help', 'Проблема не решена? Создать обращение'],
     [
-      'Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.',
-      'На GitHub откроется заранее заполненное обращение с кодом ошибки, версией приложения и стеком вызовов. Личные пути в файловой системе будут скрыты (домашняя папка заменена на ~). Проверьте содержимое перед отправкой. При желании раздел со стеком вызовов можно удалить.'
+      'Review and edit the redacted report in Open Science before opening GitHub.',
+      'Просмотрите и отредактируйте обезличенный отчёт в Open Science перед открытием GitHub.'
     ],
     ['Skill import menu — 8 states', 'Меню импорта навыков — 8 состояний'],
     ['Import', 'Импортировать'],
@@ -3015,7 +3024,7 @@ describe('Brazilian Portuguese safety copy', () => {
   })
 
   it.each([
-    ['Back to Notebook', 'Voltar ao Notebook'],
+    ['Notebook evidence', 'Evidências do Notebook'],
     ['Could not inspect variables.', 'Não foi possível inspecionar as variáveis.'],
     ['Filter variables', 'Filtrar variáveis'],
     ['Filter variables...', 'Filtrar variáveis...'],
@@ -3071,6 +3080,38 @@ describe('Brazilian Portuguese safety copy', () => {
       'A solicitação excedeu o tempo limite e foi interrompida.'
     ]
   ])('keeps the action or status of %s clear and idiomatic', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Choose PDFs for Reading', 'Escolher PDFs para leitura'],
+    [
+      'Linked to this conversation. The Agent reads only the pages needed for your question.',
+      'Vinculado a esta conversa. O Agente lê apenas as páginas necessárias para responder à sua pergunta.'
+    ],
+    ['PDF interaction tools', 'Ferramentas de interação com o PDF'],
+    [
+      'Let the agent recall and save memory in this conversation.',
+      'Permitir que o Agente consulte e salve informações na memória desta conversa.'
+    ],
+    ['Auto-recall', 'Recuperação automática'],
+    [
+      'Used for GitHub Skill discovery and imports. The credential is verified before saving.',
+      'Usada para descobrir e importar Habilidades do GitHub. A credencial é verificada antes de ser salva.'
+    ],
+    [
+      'Contact information and an optional NCBI API key used by research-service Connector calls.',
+      'Informações de contato e uma chave de API opcional do NCBI usadas por chamadas do Conector de serviços de pesquisa.'
+    ],
+    [
+      'System notifications are supported on this device.',
+      'As notificações do sistema estão disponíveis neste dispositivo.'
+    ],
+    [
+      'This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.',
+      'Esta tarefa será executada com a sua conta no host, sem isolamento em sandbox. Antes de aprovar, revise o comando, os recursos, o diretório de trabalho remoto e o tempo limite.'
+    ]
+  ])('keeps new 0.22 and 0.23 product copy native in %s', (key, expected) => {
     expect(catalog('pt-BR')[key]).toBe(expected)
   })
 
@@ -3334,10 +3375,7 @@ describe('Brazilian Portuguese safety copy', () => {
     ['Browser link copied.', 'Link do navegador copiado.'],
     ['Description', 'Descrição'],
     ['Export Markdown', 'Exportar Markdown'],
-    [
-      'Host must be probed and reachable to browse files',
-      'O host precisa estar verificado e acessível para navegar pelos arquivos'
-    ],
+    ['Desktop only', 'Somente no aplicativo para desktop'],
     [
       'Optional provider-reported input cap.',
       'Limite opcional de entrada informado pelo provedor.'
@@ -3377,6 +3415,18 @@ describe('Brazilian Portuguese safety copy', () => {
     [
       '{{count}} protected Skills will be kept._many',
       '{{count}} habilidades protegidas serão mantidas.'
+    ],
+    [
+      '{{count}} of {{limit}} categories used_one',
+      '{{count}} de {{limit}} categorias usadas'
+    ],
+    [
+      '{{count}} of {{limit}} categories used_many',
+      '{{count}} de {{limit}} categorias usadas'
+    ],
+    [
+      '{{count}} of {{limit}} categories used_other',
+      '{{count}} de {{limit}} categorias usadas'
     ]
   ])('keeps reviewed agreement in %s', (key, expected) => {
     expect(catalog('pt-BR')[key]).toBe(expected)
@@ -3384,7 +3434,7 @@ describe('Brazilian Portuguese safety copy', () => {
 
   it.each([
     ['Host', 'Host'],
-    ['Host unreachable', 'Host inacessível'],
+    ['Last probe succeeded', 'A última verificação foi bem-sucedida'],
     ['Job ID', 'ID da tarefa'],
     ['Completed remote job: {{intent}}', 'Tarefa remota concluída: {{intent}}'],
     ['Notebook runtime', 'Ambiente de execução do Notebook'],
@@ -3617,7 +3667,10 @@ describe('Brazilian Portuguese safety copy', () => {
       'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.',
       'Este modelo não é compatível com a ponte Codex Chat Completions. Escolha outro modelo para uma sessão do Codex.'
     ],
-    ['Higher NCBI rate limits (optional).', 'Limites de taxa mais altos da NCBI (opcional).'],
+    [
+      'Contact email and optional NCBI API key for research services.',
+      'E-mail de contato e chave de API opcional do NCBI para serviços de pesquisa.'
+    ],
     ['Mermaid syntax could not be rendered', 'Não foi possível renderizar a sintaxe do Mermaid']
   ])('keeps protocol identifiers unchanged in %s', (key, expected) => {
     expect(catalog('pt-BR')[key]).toBe(expected)

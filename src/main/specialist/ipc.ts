@@ -7,14 +7,14 @@ import type {
   DuplicateSpecialistRequest,
   CreateSpecialistInput,
   SpecialistCatalogSnapshot,
-  SpecialistProfileView,
+  SpecialistView,
   SetSessionSpecialistRequest,
   SetSessionSpecialistResponse,
   ResolveSessionSpecialistRequest,
   SessionSpecialistResolution
 } from '../../shared/specialist'
 import { SPECIALIST_IPC } from '../../shared/specialist'
-import { ProfileService } from './service'
+import { SpecialistService } from './service'
 import { SessionBindingService } from './session-binding'
 import { createLogger } from '../logger'
 import { broadcastToRenderers } from '../renderer-broadcast'
@@ -233,14 +233,14 @@ const broadcastCatalogChanged = (): void => {
 }
 
 // Registers all specialist IPC handlers against ipcMain.
-// Call once per app lifecycle, after the ProfileService is ready.
+// Call once per app lifecycle, after the SpecialistService is ready.
 export const registerSpecialistIpcHandlers = (
-  service: ProfileService,
+  service: SpecialistService,
   sessionBindingService: SessionBindingService,
   // One owner commits desired+pending, applies runtime, then clears pending. Keeping this transaction
   // behind one port prevents IPC from independently advancing disk, Main memory, and runtime.
   sessionReconfiguration: Pick<SessionSpecialistReconfiguration, 'requestSwitch'>,
-  // Notifies the runtime that a specialist profile's capabilities changed (skills/connectors/enabled).
+  // Notifies the runtime that a Specialist's capabilities changed (skills/connectors/enabled).
   // The runtime reconnects so live sessions re-provision skills and re-apply the updated whitelist on
   // the next turn. Optional so headless/tests can omit it.
   onProfilesChanged?: () => void,
@@ -295,7 +295,7 @@ export const registerSpecialistIpcHandlers = (
 
   ipcMainHandle(
     SPECIALIST_IPC.CREATE,
-    async (_event, request: CreateSpecialistRequest): Promise<SpecialistProfileView> => {
+    async (_event, request: CreateSpecialistRequest): Promise<SpecialistView> => {
       // Re-validate in main process — renderer input is untrusted.
       try {
         return await service.create(request)
@@ -431,7 +431,7 @@ export const registerSpecialistIpcHandlers = (
 
   ipcMainHandle(
     SPECIALIST_IPC.UPDATE,
-    async (_event, request: UpdateSpecialistRequest): Promise<SpecialistProfileView> => {
+    async (_event, request: UpdateSpecialistRequest): Promise<SpecialistView> => {
       // Re-validate in main process — renderer input is untrusted.
       try {
         const updated = await service.update(request)
@@ -448,7 +448,7 @@ export const registerSpecialistIpcHandlers = (
 
   ipcMainHandle(
     SPECIALIST_IPC.SET_ENABLED,
-    async (_event, request: SetSpecialistEnabledRequest): Promise<SpecialistProfileView> => {
+    async (_event, request: SetSpecialistEnabledRequest): Promise<SpecialistView> => {
       try {
         const updated = await service.setEnabled(request.id, request.enabled)
         onProfilesChanged?.()

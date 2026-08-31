@@ -374,6 +374,7 @@ export class AgentBackendResolver {
       const transport = await this.transports.acquire({ activeTarget: target, plan })
       return {
         framework,
+        providerId: target.providerId,
         backendId: `${framework.id}:${target.providerId}`,
         modelRoute,
         executablePath: claudeExecutablePath,
@@ -383,6 +384,7 @@ export class AgentBackendResolver {
         contextWindow,
         ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: target.effectiveModel,
+        providerConfiguration: transport.providerConfiguration,
         systemPromptAppends: [userSkillDirectoryGuidance, connectorInstructions].filter(
           (append): append is string => Boolean(append)
         ),
@@ -459,6 +461,7 @@ export class AgentBackendResolver {
 
       return {
         framework,
+        providerId: target.providerId,
         backendId: `${framework.id}:${backendProviderId}`,
         modelRoute,
         ...(modelRoute === 'codex-bridge' && responsesBridge?.continuityToken

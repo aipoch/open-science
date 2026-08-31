@@ -1,0 +1,27 @@
+## ✨ Destaques
+
+- **Leia artigos com o Agente.** Vincule até três PDFs a uma sessão como contexto de leitura: o Agente pode ler a página atual, percorrer o documento inteiro e pesquisar os arquivos vinculados. Selecione um texto ou uma região na visualização aprimorada do PDF para enviá-los como evidência e localizá-los no documento de origem com um clique. (#1791)
+- **Variáveis do Notebook sempre à mão.** O terminal compartilhado sugere nomes de variáveis ativas do kernel durante a digitação e, em visualizações amplas, o painel Variáveis fica acoplado ao lado das células e do terminal, sem substituí-los. (#1919, #1918)
+- **Planos de assinatura da Tencent.** Tencent Coding Plan, para a China continental, e Token Plan, para outros países, passam a integrar os provedores disponíveis junto com o TokenHub pré-pago por uso. (#1901)
+- **Dados locais mais seguros.** A mudança do local de armazenamento de dados é atômica e preserva metadados de artefatos, rascunhos de uploads e a identidade das versões dos artefatos; relatórios de diagnóstico compartilhados com o suporte ocultam dados sensíveis por padrão. (#1882, #1904, #1905, #1907)
+
+## 🚀 Novos recursos
+
+- **Contexto de leitura e evidências em PDF** — vincule até três PDFs com várias páginas a uma sessão usando ações explícitas para vincular e desvincular; o Agente lê a página atual, percorre o documento inteiro em lotes ou pesquisa os PDFs vinculados, e o conteúdo lido permanece estável em envios na fila, novas tentativas, ramificações e retomadas. A visualização aprimorada do PDF oferece texto selecionável, seleção de áreas, sumário e miniaturas, pesquisa no documento, navegação entre páginas e controles de zoom. As seleções se tornam anotações de evidência que podem ser localizadas no documento de origem com um clique. (#1791)
+- **Sugestões de variáveis ativas do kernel** — o terminal do Notebook sugere nomes de variáveis correspondentes do kernel Python ou R em execução, junto com seus tipos, com navegação pelo teclado e compatibilidade segura com editores de método de entrada. (#1919)
+- **Painel Variáveis acoplado em visualizações amplas** — quando a visualização do Notebook tem largura suficiente, as variáveis ativas ficam em uma coluna lateral enquanto as células e o terminal permanecem visíveis; visualizações estreitas mantêm a tela focada em Variáveis, e o painel volta a ser acoplado automaticamente quando há espaço. (#1918)
+- **Tencent Coding Plan e Token Plan** — provedores dedicados a planos de assinatura, com endpoints para a China continental e outros países e uma lista própria de modelos selecionados, disponíveis junto com o Tencent TokenHub pré-pago por uso. (#1901)
+
+## 🔧 Melhorias
+
+- Os caches de carga de trabalho do Notebook passam a ficar no local de armazenamento de dados configurado. Assim, a mudança de local também leva os caches de pacotes e de carga de trabalho, em vez de deixá-los na unidade do sistema. (#1710)
+- Relatórios de diagnóstico compartilhados com o suporte ocultam dados sensíveis por padrão, e os diagnósticos locais têm limites para que sessões de pesquisa longas não os façam crescer indefinidamente. (#1907, #1909)
+- Sair durante um trabalho ativo agora exibe uma explicação em vez de ser bloqueado silenciosamente, incluindo um aviso antes de interromper um Revisor em execução. As notificações são localizadas, respeitam a configuração de privacidade do sistema para prévias e ignoram cliques obsoletos. (#1910, #1912, #1913, #1914)
+
+## 🐛 Correções de bugs
+
+- **Armazenamento e migração** — mudar o local de armazenamento de dados não deixa mais dados parcialmente copiados, e metadados de artefatos, rascunhos de uploads e a identidade das versões dos artefatos são preservados (#1882, #1885, #1893, #1904, #1905); arquivos de sessão danificados são informados em vez de ignorados silenciosamente, e a recuperação de exclusões fica restrita ao que foi excluído (#1899); os projetos informam quando ainda há limpeza pendente após a exclusão (#1896); e caminhos vinculados do sistema são rejeitados durante a migração (#1894).
+- **Acesso remoto** — sessões autorizadas do navegador são isoladas umas das outras, o ciclo de vida da autorização é aplicado de ponta a ponta e solicitações remotas seguem seus contratos. (#1915, #1917, #1897)
+- **Credenciais e provedores** — a recuperação de credenciais chega até você no compositor (#1883); credenciais que não podem ser descriptografadas deixam de ser informadas como íntegras (#1886); o armazenamento inseguro de segredos no Linux é rejeitado em vez de usado silenciosamente (#1887); o status do armazenamento seguro é atualizado de forma independente (#1888); e o catálogo de provedores não aplica mais gravações obsoletas (#1890).
+- **Computação, Notebook e uploads** — os resultados da análise automática permanecem após reinicializações (#1916); aliases de hosts SSH e caminhos da área temporária são validados (#1920); o kernel R continua funcionando após cancelamentos repetidos (#1892); e as solicitações de finalização de sessão são validadas (#1908).
+- **Serviço e plataforma** — o serviço local rejeita codificação de URL malformada (#1889); o tratamento das plataformas de atualização e da CLI foi corrigido (#1895), e o ciclo de vida do instalador está mais seguro (#1898); as permissões das ferramentas de Especialistas são aplicadas aos conectores (#1926); e o isolamento de documentos entre superfícies do aplicativo é imposto. (#1924)

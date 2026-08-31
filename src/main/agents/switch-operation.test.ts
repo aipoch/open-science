@@ -19,11 +19,11 @@ import type {
   PendingSwitch,
   SwitchNotifier
 } from '../../shared/agents-contract'
-import type { SpecialistProfileView } from '../../shared/specialist'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistView } from '../../shared/specialist'
+import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 
-const profile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+const profile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'sp-1',
   name: 'BIO_EXPERT',
   displayName: 'Bio Expert',
@@ -39,10 +39,10 @@ const profile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProf
   ...overrides
 })
 
-const makeProfileService = (
-  profiles: SpecialistProfileView[],
-  overrides: Partial<ProfileService> = {}
-): ProfileService => {
+const makeSpecialistService = (
+  profiles: SpecialistView[],
+  overrides: Partial<SpecialistService> = {}
+): SpecialistService => {
   const service = {
     list: vi.fn(async () => profiles),
     getByName: vi.fn(async (name: string) => {
@@ -56,7 +56,7 @@ const makeProfileService = (
       return found
     }),
     ...overrides
-  } as unknown as ProfileService
+  } as unknown as SpecialistService
   service.resolveRunnableByName =
     overrides.resolveRunnableByName ?? vi.fn(async (name: string) => service.getByName(name))
   service.resolveRunnableById =
@@ -90,7 +90,7 @@ const approvingGateway = (): ApprovalGateway => ({
 describe('SwitchOperation — target resolution', () => {
   it('switches to a builtin through the runnable resolver without exposing it to custom queries', async () => {
     const builtin = profile({ id: 'builtin-curator', name: 'BUILTIN_CURATOR', revision: 0 })
-    const ps = makeProfileService([builtin], {
+    const ps = makeSpecialistService([builtin], {
       getByName: vi.fn(async () => {
         throw new Error('custom-only query must not be used')
       }),
@@ -101,7 +101,7 @@ describe('SwitchOperation — target resolution', () => {
       resolveRunnableById: vi.fn(async () => builtin)
     })
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -118,12 +118,12 @@ describe('SwitchOperation — target resolution', () => {
   })
 
   it('resolves an enabled custom Specialist by exact public name and returns persisted binding', async () => {
-    const ps = makeProfileService([profile()])
+    const ps = makeSpecialistService([profile()])
     const binding = makeSessionBinding(new Map())
     const persist = vi.fn(async () => undefined)
     const notify = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: binding,
       approvalGateway: approvingGateway(),
       switchNotifier: { notify },
@@ -147,12 +147,12 @@ describe('SwitchOperation — target resolution', () => {
   })
 
   it('null name selects Main Agent without creating a mutable Main Profile', async () => {
-    const ps = makeProfileService([profile()])
+    const ps = makeSpecialistService([profile()])
     const binding = makeSessionBinding(new Map([['session-trusted', 'sp-1']]))
     const persist = vi.fn(async () => undefined)
     const notify = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: binding,
       approvalGateway: approvingGateway(),
       switchNotifier: { notify },
@@ -179,11 +179,11 @@ describe('SwitchOperation — target resolution', () => {
   })
 
   it('rejects a disabled Specialist with a host.agents.switch-prefixed error before approval', async () => {
-    const ps = makeProfileService([profile({ enabled: false })])
+    const ps = makeSpecialistService([profile({ enabled: false })])
     const gateway = approvingGateway()
     const binding = makeSessionBinding(new Map())
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: binding,
       approvalGateway: gateway,
       switchNotifier: { notify: vi.fn() },
@@ -198,9 +198,9 @@ describe('SwitchOperation — target resolution', () => {
   })
 
   it('rejects an unknown name with a host.agents.switch-prefixed error', async () => {
-    const ps = makeProfileService([])
+    const ps = makeSpecialistService([])
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: { decide: vi.fn() },
       switchNotifier: { notify: vi.fn() },
@@ -212,11 +212,11 @@ describe('SwitchOperation — target resolution', () => {
   })
 
   it('does not accept a sandbox-supplied session id: uses only the trusted context', async () => {
-    const ps = makeProfileService([profile()])
+    const ps = makeSpecialistService([profile()])
     const binding = makeSessionBinding(new Map())
     const persist = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: binding,
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -235,7 +235,7 @@ describe('SwitchOperation — target resolution', () => {
 
   it('fails closed when no trusted calling session identity is present', async () => {
     const op = new SwitchOperation({
-      profileService: makeProfileService([profile()]),
+      specialistService: makeSpecialistService([profile()]),
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: { decide: vi.fn() },
       switchNotifier: { notify: vi.fn() },
@@ -265,7 +265,7 @@ describe('SwitchOperation — approval gateway', () => {
         })
       }
       const op = new SwitchOperation({
-        profileService: makeProfileService([profile()]),
+        specialistService: makeSpecialistService([profile()]),
         sessionBinding: makeSessionBinding(new Map()),
         approvalGateway: gateway,
         approvalLifecycle: { onAwaitingApproval, settleApproval },
@@ -302,10 +302,10 @@ describe('SwitchOperation — approval gateway', () => {
   )
 
   it('emits the shared switch approval request shape with the trusted session', async () => {
-    const ps = makeProfileService([profile()])
+    const ps = makeSpecialistService([profile()])
     const decide = vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: { decide },
       switchNotifier: { notify: vi.fn() },
@@ -324,13 +324,13 @@ describe('SwitchOperation — approval gateway', () => {
   it('summary.name is the CURRENT specialist (not the target) for a specialist→specialist switch', async () => {
     // The approval card shows current → target. `summary.name` must carry the CURRENT binding's public
     // name so the struck-through label is correct; `summary.target` carries the destination.
-    const ps = makeProfileService([
+    const ps = makeSpecialistService([
       profile({ id: 'sp-current', name: 'CURRENT' }),
       profile({ id: 'sp-target', name: 'TARGET' })
     ])
     const decide = vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       // The session is currently bound to the "CURRENT" specialist.
       sessionBinding: makeSessionBinding(new Map([['session-trusted', 'sp-current']])),
       approvalGateway: { decide },
@@ -349,10 +349,10 @@ describe('SwitchOperation — approval gateway', () => {
 
   it('summary.name is the CURRENT specialist for a specialist→Main switch (target: null)', async () => {
     // Reverting to Main still names the current specialist in `summary.name`; `target` is null.
-    const ps = makeProfileService([profile({ id: 'sp-current', name: 'CURRENT' })])
+    const ps = makeSpecialistService([profile({ id: 'sp-current', name: 'CURRENT' })])
     const decide = vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map([['session-trusted', 'sp-current']])),
       approvalGateway: { decide },
       switchNotifier: { notify: vi.fn() },
@@ -371,10 +371,10 @@ describe('SwitchOperation — approval gateway', () => {
   it('summary.name is omitted when the session is currently on Main (no current binding)', async () => {
     // From Main → Specialist there is no current specialist name to show; `summary.name` is omitted
     // (it stays out of the object, never carries the target as the current name).
-    const ps = makeProfileService([profile({ id: 'sp-target', name: 'TARGET' })])
+    const ps = makeSpecialistService([profile({ id: 'sp-target', name: 'TARGET' })])
     const decide = vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: { decide },
       switchNotifier: { notify: vi.fn() },
@@ -398,7 +398,7 @@ describe('SwitchOperation — approval gateway', () => {
   })
 
   it('decline returns { status: "declined", operation: "switch" } and changes nothing', async () => {
-    const ps = makeProfileService([profile()])
+    const ps = makeSpecialistService([profile()])
     const binding = makeSessionBinding(new Map([['session-trusted', undefined]]))
     const persist = vi.fn(async () => undefined)
     const notify = vi.fn(async () => undefined)
@@ -409,7 +409,7 @@ describe('SwitchOperation — approval gateway', () => {
       }))
     }
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: binding,
       approvalGateway: gateway,
       switchNotifier: { notify },
@@ -428,7 +428,7 @@ describe('SwitchOperation — approval gateway', () => {
 describe('SwitchOperation — approval-time re-validation (fail closed)', () => {
   it('fails closed when the target was renamed between approval and commit', async () => {
     let resolveCount = 0
-    const ps = makeProfileService([profile()])
+    const ps = makeSpecialistService([profile()])
     // On the approval-time re-resolution, the profile is gone (renamed away / deleted).
     ps.getByName = vi.fn(async (name: string) => {
       resolveCount += 1
@@ -436,7 +436,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
       throw new Error(`Specialist "${name}" not found.`)
     })
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -450,7 +450,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
 
   it('fails closed when the target was disabled after approval', async () => {
     let resolveCount = 0
-    const ps = makeProfileService([profile()])
+    const ps = makeSpecialistService([profile()])
     ps.getByName = vi.fn(async (name: string) => {
       resolveCount += 1
       if (resolveCount === 1) return profile({ name, enabled: true })
@@ -458,7 +458,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
     })
     const persist = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -472,7 +472,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
 
   it('fails closed on revision drift when a reviewed revision was carried', async () => {
     let resolveCount = 0
-    const ps = makeProfileService([profile({ revision: 3 })])
+    const ps = makeSpecialistService([profile({ revision: 3 })])
     ps.getByName = vi.fn(async (name: string) => {
       resolveCount += 1
       if (resolveCount === 1) return profile({ name, revision: 3 })
@@ -480,7 +480,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
     })
     const persist = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -494,7 +494,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
 
   it('fails closed on revision drift observed during approval when the public SDK omitted a revision', async () => {
     let resolveCount = 0
-    const ps = makeProfileService([profile({ revision: 3 })])
+    const ps = makeSpecialistService([profile({ revision: 3 })])
     ps.getByName = vi.fn(async (name: string) => {
       resolveCount += 1
       if (resolveCount === 1) return profile({ name, revision: 3 })
@@ -502,7 +502,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
     })
     const persist = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -517,7 +517,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
 
   it('fails closed when a different profile takes over the approved public name', async () => {
     let resolveCount = 0
-    const ps = makeProfileService([profile({ id: 'approved-id' })])
+    const ps = makeSpecialistService([profile({ id: 'approved-id' })])
     ps.getByName = vi.fn(async (name: string) => {
       resolveCount += 1
       if (resolveCount === 1) return profile({ id: 'approved-id', name })
@@ -525,7 +525,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
     })
     const persist = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -539,11 +539,11 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
   })
 
   it('does not broaden to Main Agent on target failure', async () => {
-    const ps = makeProfileService([])
+    const ps = makeSpecialistService([])
     const binding = makeSessionBinding(new Map())
     const persist = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: binding,
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -560,14 +560,14 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
 
 describe('SwitchOperation — last-write-wins & restart survival', () => {
   it('multiple approved switches before the next message are last-write-wins', async () => {
-    const ps = makeProfileService([
+    const ps = makeSpecialistService([
       profile({ id: 'sp-1', name: 'A' }),
       profile({ id: 'sp-2', name: 'B' })
     ])
     const persist = vi.fn(async () => undefined)
     const notify = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify },
@@ -592,14 +592,14 @@ describe('SwitchOperation — last-write-wins & restart survival', () => {
   })
 
   it('a stale completion does not overwrite a newer approved target', async () => {
-    const ps = makeProfileService([
+    const ps = makeSpecialistService([
       profile({ id: 'sp-1', name: 'A' }),
       profile({ id: 'sp-2', name: 'B' })
     ])
     const persist = vi.fn(async () => undefined)
     const notify = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify },
@@ -624,7 +624,7 @@ describe('SwitchOperation — last-write-wins & restart survival', () => {
     // call. The guard must still order interleaved commits because the dispatcher shares ONE
     // sequencer across those instances — without it, per-instance counters reset and a stale older
     // completion overwrites the newer target.
-    const ps = makeProfileService([
+    const ps = makeSpecialistService([
       profile({ id: 'sp-1', name: 'A' }),
       profile({ id: 'sp-2', name: 'B' })
     ])
@@ -633,7 +633,7 @@ describe('SwitchOperation — last-write-wins & restart survival', () => {
     const sharedSequencer = new SwitchCommitSequencer()
     const makeOp = (): SwitchOperation =>
       new SwitchOperation({
-        profileService: ps,
+        specialistService: ps,
         sessionBinding: makeSessionBinding(new Map()),
         approvalGateway: approvingGateway(),
         switchNotifier: { notify },
@@ -655,9 +655,9 @@ describe('SwitchOperation — last-write-wins & restart survival', () => {
   })
 
   it('successful switch returns actual persisted binding/pending read-back', async () => {
-    const ps = makeProfileService([profile({ id: 'sp-9', name: 'Z', revision: 7 })])
+    const ps = makeSpecialistService([profile({ id: 'sp-9', name: 'Z', revision: 7 })])
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -676,7 +676,7 @@ describe('SwitchOperation — last-write-wins & restart survival', () => {
   })
 
   it('approval immediately persists + broadcasts a pending-reconfigure notification', async () => {
-    const ps = makeProfileService([profile()])
+    const ps = makeSpecialistService([profile()])
     const persist = vi.fn(async () => undefined)
     const order: string[] = []
     const notify = vi.fn(async () => {
@@ -686,7 +686,7 @@ describe('SwitchOperation — last-write-wins & restart survival', () => {
       order.push('persist')
     })
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify },
@@ -700,7 +700,7 @@ describe('SwitchOperation — last-write-wins & restart survival', () => {
 describe('SwitchOperation — sanitization and no-sensitive-data', () => {
   it('sanitizes persistence failure as a host.agents.switch-prefixed error', async () => {
     const op = new SwitchOperation({
-      profileService: makeProfileService([profile()]),
+      specialistService: makeSpecialistService([profile()]),
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -718,11 +718,11 @@ describe('SwitchOperation — sanitization and no-sensitive-data', () => {
     // applies at the next send. A notify rejection must NOT surface as a thrown error to the caller —
     // the switch has already committed (persisted + set in memory). Only persist/setBinding errors
     // remain fatal.
-    const ps = makeProfileService([profile({ id: 'sp-1', name: 'BIO_EXPERT' })])
+    const ps = makeSpecialistService([profile({ id: 'sp-1', name: 'BIO_EXPERT' })])
     const persist = vi.fn(async () => undefined)
     const binding = makeSessionBinding(new Map())
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: binding,
       approvalGateway: approvingGateway(),
       switchNotifier: {
@@ -745,7 +745,7 @@ describe('SwitchOperation — sanitization and no-sensitive-data', () => {
     const persist = vi.fn(async () => undefined)
     const binding = makeSessionBinding(new Map())
     const op = new SwitchOperation({
-      profileService: makeProfileService([profile({ id: 'sp-1', name: 'BIO_EXPERT' })]),
+      specialistService: makeSpecialistService([profile({ id: 'sp-1', name: 'BIO_EXPERT' })]),
       sessionBinding: binding,
       approvalGateway: approvingGateway(),
       switchNotifier: {
@@ -765,11 +765,11 @@ describe('SwitchOperation — sanitization and no-sensitive-data', () => {
   })
 
   it('approval summary and notifications contain no system instructions or sensitive data', async () => {
-    const ps = makeProfileService([profile({ systemPrompt: 'SECRET INSTRUCTIONS' })])
+    const ps = makeSpecialistService([profile({ systemPrompt: 'SECRET INSTRUCTIONS' })])
     const decide = vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
     const notify = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: { decide },
       switchNotifier: { notify },
@@ -795,7 +795,7 @@ describe('SwitchOperation — durable next-message reconfigure lifecycle', () =>
     const runtimeSwitch = vi.fn(async () => ({ contextReset: false }))
     // The deps deliberately have NO runtime-switch callback: the module physically cannot call it.
     const op = new SwitchOperation({
-      profileService: makeProfileService([profile()]),
+      specialistService: makeSpecialistService([profile()]),
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -806,10 +806,10 @@ describe('SwitchOperation — durable next-message reconfigure lifecycle', () =>
   })
 
   it('persists the binding immediately so it survives application restart before the next message', async () => {
-    const ps = makeProfileService([profile({ id: 'sp-7', name: 'Z' })])
+    const ps = makeSpecialistService([profile({ id: 'sp-7', name: 'Z' })])
     const persist = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -823,7 +823,7 @@ describe('SwitchOperation — durable next-message reconfigure lifecycle', () =>
   it('broadcasts the pending-reconfigure intent the renderer/runtime consumes at the next send', async () => {
     const notify = vi.fn(async () => undefined) as unknown as SwitchNotifier['notify']
     const op = new SwitchOperation({
-      profileService: makeProfileService([profile({ name: 'SQL_WRANGLER' })]),
+      specialistService: makeSpecialistService([profile({ name: 'SQL_WRANGLER' })]),
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify },
@@ -839,7 +839,7 @@ describe('SwitchOperation — durable next-message reconfigure lifecycle', () =>
     // operation has already failed closed at approval-time re-validation — there is no path that
     // clears the binding to Main on failure.
     let resolveCount = 0
-    const ps = makeProfileService([profile({ name: 'FLAKY' })])
+    const ps = makeSpecialistService([profile({ name: 'FLAKY' })])
     ps.getByName = vi.fn(async (name: string) => {
       resolveCount += 1
       if (resolveCount === 1) return profile({ name, enabled: true })
@@ -847,7 +847,7 @@ describe('SwitchOperation — durable next-message reconfigure lifecycle', () =>
     })
     const persist = vi.fn(async () => undefined)
     const op = new SwitchOperation({
-      profileService: ps,
+      specialistService: ps,
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify: vi.fn() },
@@ -869,7 +869,7 @@ describe('SwitchOperation — does not import issue 03/04 implementation', () =>
     // The notifier contract is the single sink; confirming it is invoked with PendingSwitch shape.
     const notify = vi.fn(async () => undefined) as unknown as SwitchNotifier['notify']
     const op = new SwitchOperation({
-      profileService: makeProfileService([profile()]),
+      specialistService: makeSpecialistService([profile()]),
       sessionBinding: makeSessionBinding(new Map()),
       approvalGateway: approvingGateway(),
       switchNotifier: { notify },

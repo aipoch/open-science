@@ -16,6 +16,7 @@ import {
   resolveVendorModelsUrl,
   resolveVendorModelReasoningEffort,
   resolveVendorOpenAiBaseUrl,
+  usesVendorAnthropicApiKeyHeader,
   vendorHasRegions,
   type OfficialVendorId
 } from './provider-registry'
@@ -36,6 +37,9 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('deepseek')).toBe(true)
     expect(isOfficialVendorId('openai')).toBe(true)
     expect(isOfficialVendorId('xai')).toBe(true)
+    expect(isOfficialVendorId('tencent')).toBe(true)
+    expect(isOfficialVendorId('tencentcodingplan')).toBe(true)
+    expect(isOfficialVendorId('tencenttokenplan')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
   })
@@ -415,6 +419,100 @@ describe('provider registry', () => {
     // so refresh-from-vendor is hidden and the Doubao Seed chat catalog stays curated.
     expect(resolveVendorModelsUrl('volcengine')).toBeUndefined()
     expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260628')
+  })
+
+  it('routes Tencent TokenHub through all three APIs with regional keys and curated models', () => {
+    expect(resolveVendorApiEndpoints('tencent')).toEqual(['anthropic', 'openai', 'responses'])
+    expect(usesVendorAnthropicApiKeyHeader('tencent')).toBe(true)
+    expect(usesVendorAnthropicApiKeyHeader('deepseek')).toBe(false)
+    expect(vendorHasRegions('tencent')).toBe(true)
+    expect(resolveVendorBaseUrl('tencent')).toBe('https://tokenhub-intl.tencentcloudmaas.com')
+    expect(resolveVendorOpenAiBaseUrl('tencent')).toBe(
+      'https://tokenhub-intl.tencentcloudmaas.com/v1'
+    )
+    expect(resolveVendorApiKeyUrl('tencent')).toBe(
+      'https://console.tencentcloud.com/tokenhub/apikey'
+    )
+    expect(resolveVendorBaseUrl('tencent', 'china')).toBe('https://tokenhub.tencentmaas.com')
+    expect(resolveVendorOpenAiBaseUrl('tencent', 'china')).toBe(
+      'https://tokenhub.tencentmaas.com/v1'
+    )
+    expect(resolveVendorApiKeyUrl('tencent', 'china')).toBe(
+      'https://console.cloud.tencent.com/tokenhub/apikey'
+    )
+    expect(resolveVendorModelsUrl('tencent')).toBeUndefined()
+    expect(defaultVendorModel('tencent')).toBe('hy4-preview')
+    expect(getOfficialVendor('tencent')?.models.map(({ id }) => id)).toEqual([
+      'hy4-preview',
+      'glm-5.3',
+      'glm-5.3-flash',
+      'kimi-k3',
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'minimax-m3'
+    ])
+    expect(resolveModelContextWindow('tencent', 'hy4-preview')).toBe(1_000_000)
+    expect(resolveModelContextWindow('tencent', 'kimi-k3')).toBe(1_048_576)
+    expect(isVendorModelResponsesSupported('tencent', 'glm-5.3')).toBe(true)
+    expect(isVendorModelResponsesSupported('tencent', 'deepseek-v4-flash')).toBe(true)
+    expect(isVendorModelResponsesSupported('tencent', 'deepseek-v4-pro')).toBe(true)
+    expect(isVendorModelResponsesSupported('tencent', 'minimax-m3')).toBe(true)
+    expect(isVendorModelResponsesSupported('tencent', 'hy4-preview')).toBe(true)
+    expect(isVendorModelMultimodal('tencent', 'hy4-preview')).toBe(false)
+    expect(resolveVendorModelReasoningEffort('tencent', 'hy4-preview')).toEqual({
+      supported: false
+    })
+  })
+
+  it('routes Tencent Coding Plan through its mainland subscription endpoints', () => {
+    expect(resolveVendorApiEndpoints('tencentcodingplan')).toEqual(['anthropic', 'openai'])
+    expect(vendorHasRegions('tencentcodingplan')).toBe(false)
+    expect(resolveVendorBaseUrl('tencentcodingplan')).toBe(
+      'https://api.lkeap.cloud.tencent.com/coding/anthropic'
+    )
+    expect(resolveVendorOpenAiBaseUrl('tencentcodingplan')).toBe(
+      'https://api.lkeap.cloud.tencent.com/coding/v3'
+    )
+    expect(resolveVendorApiKeyUrl('tencentcodingplan')).toBe(
+      'https://console.cloud.tencent.com/tokenhub/codingplan'
+    )
+    expect(getOfficialVendor('tencentcodingplan')?.models.map(({ id }) => id)).toEqual([
+      'deepseek-v4-flash-202605',
+      'deepseek-v4-pro-202606',
+      'minimax-m2.7',
+      'glm-5',
+      'glm-5.1',
+      'glm-5.2',
+      'hy3'
+    ])
+    expect(defaultVendorModel('tencentcodingplan')).toBe('deepseek-v4-flash-202605')
+    expect(resolveVendorModelsUrl('tencentcodingplan')).toBeUndefined()
+    expect(isVendorModelResponsesSupported('tencentcodingplan', 'glm-5.2')).toBe(false)
+  })
+
+  it('routes Tencent Token Plan through its international subscription endpoints', () => {
+    expect(resolveVendorApiEndpoints('tencenttokenplan')).toEqual(['anthropic', 'openai'])
+    expect(vendorHasRegions('tencenttokenplan')).toBe(false)
+    expect(resolveVendorBaseUrl('tencenttokenplan')).toBe(
+      'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic'
+    )
+    expect(resolveVendorOpenAiBaseUrl('tencenttokenplan')).toBe(
+      'https://tokenhub-intl.tencentcloudmaas.com/plan/v3'
+    )
+    expect(resolveVendorApiKeyUrl('tencenttokenplan')).toBe(
+      'https://console.intl.cloud.tencent.com/tokenhub/tokenplan'
+    )
+    expect(getOfficialVendor('tencenttokenplan')?.models.map(({ id }) => id)).toEqual([
+      'glm-5.2',
+      'kimi-k2.6',
+      'deepseek-v4-pro-202606',
+      'deepseek-v4-flash-202605',
+      'minimax-m3'
+    ])
+    expect(defaultVendorModel('tencenttokenplan')).toBe('glm-5.2')
+    expect(resolveVendorModelsUrl('tencenttokenplan')).toBeUndefined()
+    expect(isVendorModelMultimodal('tencenttokenplan', 'kimi-k2.6')).toBe(true)
+    expect(isVendorModelMultimodal('tencenttokenplan', 'glm-5.2')).toBe(false)
   })
 
   it('routes Grok through xAI Chat Completions and Responses with a curated model catalog', () => {

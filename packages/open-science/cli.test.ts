@@ -29,6 +29,11 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 ]
 
 describe('task CLI', () => {
+  it('rejects ports that are not complete decimal values', () => {
+    expect(() => parseCliArgs(['start', '--port', '44100xyz'])).toThrow('Invalid port: 44100xyz')
+    expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')
+  })
+
   it('parses the first milestone run interface', () => {
     expect(
       parseCliArgs(['project', 'create', 'Research', '--agent-context', 'Always cite sources.'])
@@ -1003,12 +1008,22 @@ describe('task CLI', () => {
     const stableSessionId = 'stable-app-session'
     const providerSessionId = 'provider-session'
     const stableEvent = {
+      runId: 'run-1',
+      sessionId: stableSessionId,
+      projectId: 'project-1',
       type: 'run.event',
       data: { sessionId: stableSessionId, kind: 'tool' }
     }
     const client = {
       listProjects,
       events: async function* () {
+        yield {
+          runId: 'previous-run',
+          sessionId: stableSessionId,
+          projectId: 'project-1',
+          type: 'run.event',
+          data: { sessionId: stableSessionId, kind: 'tool' }
+        }
         yield { type: 'run.event', data: { sessionId: providerSessionId, kind: 'tool' } }
         yield stableEvent
       },
@@ -1058,6 +1073,10 @@ describe('task CLI', () => {
       type: string
       data: { sessionId: string }
     }> {
+      yield {
+        type: 'stream.resync-required',
+        data: { sessionId: 'session-1' }
+      }
       yield { type: 'permission.requested', data: { sessionId: 'session-1' } }
     }
     const client = {
@@ -1099,9 +1118,10 @@ describe('task CLI', () => {
     )
 
     expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 60_000 })
-    expect(warn).toHaveBeenCalledWith(
+    expect(warn.mock.calls.map(([message]) => message)).toEqual([
+      'Run event history could not be fully replayed. Final Run state will still be read from Open Science.',
       'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'
-    )
+    ])
   })
 
   it('prints provider-neutral Run progress and liveness heartbeats while waiting', async () => {
@@ -1445,11 +1465,15 @@ describe('task CLI', () => {
       throw new Error(`Unexpected command: ${channel}`)
     })
     const setExitCode = vi.fn()
+    const stopService = vi.fn().mockResolvedValue(undefined)
 
     const result = await updateCommand(
       { open: true, json: true },
       {
-        ensureService: vi.fn().mockResolvedValue({ started: true }),
+        ensureService: vi.fn().mockResolvedValue({
+          started: true,
+          state: { configRoot: '/data/open-science-owned' }
+        }),
         connect: vi.fn().mockResolvedValue({}),
         getBootstrap: vi.fn().mockResolvedValue({
           appVersion: '1.0.0',
@@ -1458,6 +1482,7 @@ describe('task CLI', () => {
         supportsCommand: vi.fn().mockResolvedValue(true),
         invokeCommand,
         sleep: vi.fn().mockResolvedValue(undefined),
+        stopService,
         log: vi.fn(),
         setExitCode
       }
@@ -1467,7 +1492,119 @@ describe('task CLI', () => {
       outcome: 'manual-action-required',
       installerPath: 'C:\\Users\\test\\Downloads\\Open-Science.exe'
     })
+    expect(stopService).toHaveBeenCalledWith(
+      expect.objectContaining({
+        open: true,
+        json: true,
+        configRoot: '/data/open-science-owned'
+      })
+    )
     expect(setExitCode).toHaveBeenCalledWith(6)
+  })
+
+  it('requires stopping a pre-existing service before running a manual installer', async () => {
+    const installerPath = '/data/update/Open-Science.dmg'
+    const stopService = vi.fn()
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({ started: false }),
+        stopService,
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand: vi.fn().mockResolvedValue({
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          localPath: installerPath
+        }),
+        log: vi.fn(),
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(stopService).not.toHaveBeenCalled()
+    expect(result).toMatchObject({
+      installerPath,
+      nextAction: expect.stringContaining('open-science stop')
+    })
+  })
+
+  it('requires quitting an attached desktop app before running a manual installer', async () => {
+    const installerPath = '/data/update/Open-Science.dmg'
+    const stopService = vi.fn()
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({
+          started: true,
+          state: { attached: true }
+        }),
+        stopService,
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand: vi.fn().mockResolvedValue({
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          localPath: installerPath
+        }),
+        log: vi.fn(),
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(stopService).not.toHaveBeenCalled()
+    expect(result).toMatchObject({
+      installerPath,
+      nextAction: expect.stringContaining('Quit the running Open Science app')
+    })
+  })
+
+  it('keeps the installer handoff when stopping a service started by update fails', async () => {
+    const installerPath = '/data/update/Open-Science.dmg'
+    const stopService = vi.fn().mockRejectedValue(new Error('service still running'))
+    const result = await updateCommand(
+      { open: true, json: true },
+      {
+        ensureService: vi.fn().mockResolvedValue({
+          started: true,
+          state: { configRoot: '/data/open-science-owned' }
+        }),
+        stopService,
+        connect: vi.fn().mockResolvedValue({}),
+        getBootstrap: vi.fn().mockResolvedValue({
+          appVersion: '1.0.0',
+          rpcCapabilities: ['update-cli-v1']
+        }),
+        supportsCommand: vi.fn().mockResolvedValue(true),
+        invokeCommand: vi.fn().mockResolvedValue({
+          state: 'ready',
+          current: '1.0.0',
+          latest: '1.1.0',
+          applyKind: 'installer',
+          localPath: installerPath
+        }),
+        log: vi.fn(),
+        setExitCode: vi.fn()
+      }
+    )
+
+    expect(stopService).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({
+      installerPath,
+      nextAction: expect.stringContaining('open-science stop')
+    })
   })
 
   it('reports an already-current installation without downloading or applying', async () => {

@@ -14,6 +14,7 @@ import {
 
 type CapturedRequest = {
   authorization?: string
+  apiKey?: string
   body: Record<string, unknown>
   path?: string
 }
@@ -46,6 +47,9 @@ const createUpstream = (): {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
       requests.push({
         authorization: request.headers.authorization,
+        ...(typeof request.headers['x-api-key'] === 'string'
+          ? { apiKey: request.headers['x-api-key'] }
+          : {}),
         body,
         path: request.url
       })
@@ -148,6 +152,39 @@ describe('AnthropicProviderBridge', () => {
 
     expect(response.status).toBe(401)
     expect(upstream.requests).toEqual([])
+  })
+
+  it('uses x-api-key for an upstream target that requires Anthropic API-key authentication', async () => {
+    const upstream = createUpstream()
+    servers.push(upstream.server)
+    const target: AnthropicProviderBridgeTarget = {
+      id: 'tencent/hy4-preview',
+      baseUrl: await listen(upstream.server),
+      key: 'tokenhub-key',
+      model: 'hy4-preview',
+      useApiKeyHeader: true
+    }
+    const bridge = new AnthropicProviderBridge([target], target.id)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+
+    await fetch(`${connection.baseUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(upstream.requests).toEqual([
+      {
+        authorization: undefined,
+        apiKey: 'tokenhub-key',
+        body: { model: 'hy4-preview', messages: [] },
+        path: '/v1/messages'
+      }
+    ])
   })
 
   it('filters Fetch Metadata headers before invoking the upstream fetch', async () => {

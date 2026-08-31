@@ -24,6 +24,7 @@ import {
 } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import { usePdfContextAction } from './use-pdf-context-action'
 
 // Capture the ConversationPanel props the page computes on each render.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
@@ -81,6 +82,25 @@ vi.mock('./SessionNotebookDialog', () => ({
 
 const { WorkspacePage } = await import('./WorkspacePage')
 
+// Renders the shared link action for a preview item exactly as the header pill and tab menu do.
+const PdfContextActionProbe = ({ itemId }: { itemId: string }): React.JSX.Element => {
+  const item = usePreviewWorkbenchStore((state) =>
+    state.items.find((candidate) => candidate.id === itemId)
+  )
+  const { action } = usePdfContextAction(item?.type === 'file' ? item : undefined)
+  return (
+    <button
+      type="button"
+      data-testid="pdf-context-action-probe"
+      data-state={action?.state ?? 'none'}
+      disabled={action?.disabled}
+      onClick={() => action?.run()}
+    >
+      {action?.label ?? 'none'}
+    </button>
+  )
+}
+
 const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => {
   const now = Date.now()
 
@@ -109,6 +129,9 @@ const createProvider = (supportsImageInput: boolean): ProviderView => ({
 
 const imageFile = (): File =>
   new File([new Uint8Array([1, 2, 3])], 'pic.png', { type: 'image/png' })
+
+const pdfFile = (name = 'paper.pdf'): File =>
+  new File([new Uint8Array([1, 2, 3])], name, { type: 'application/pdf' })
 
 const IMAGE_BLOCKED_MESSAGE = VISION_MODEL_NOT_CONFIGURED_MESSAGE
 
@@ -364,5 +387,185 @@ describe('WorkspacePage image attachment gating', () => {
       await vi.waitFor(() => expect(conversationProps.view.actionError).toBe(IMAGE_BLOCKED_MESSAGE))
     })
     expect(runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps one to three staged PDFs as ordinary attachments until the first send', async () => {
+    setActiveProviderImageSupport(false)
+    useSessionStore.setState(createInitialSessionState())
+    const staged = ['paper-a.pdf', 'paper-b.pdf', 'paper-c.pdf'].map((name, index) => ({
+      id: `pdf-${index + 1}`,
+      sessionId: '.pending',
+      name,
+      originalName: name,
+      path: `/uploads/.pending/${name}`,
+      mimeType: 'application/pdf',
+      size: 3
+    })) satisfies UploadedAttachment[]
+    staged.forEach((attachment) => stageLocalFile.mockResolvedValueOnce(attachment))
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([
+        pdfFile('paper-a.pdf'),
+        pdfFile('paper-b.pdf'),
+        pdfFile('paper-c.pdf')
+      ])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toHaveLength(3))
+    })
+
+    const preview = usePreviewWorkbenchStore.getState()
+    expect(preview.items).toEqual([])
+    expect(preview.activeItemId).toBeUndefined()
+    expect(preview.panelState).toBe('collapsed')
+    expect(preview.pendingPdfContextByProject['proj-1']).toBeUndefined()
+    expect(conversationProps.composer.view.readingContext.bindings).toEqual([])
+  })
+
+  it('keeps a manually picked pending PDF context when PDFs are staged', async () => {
+    setActiveProviderImageSupport(false)
+    useSessionStore.setState(createInitialSessionState())
+    const manualSelection = {
+      kind: 'version' as const,
+      sourceKind: 'artifact-version' as const,
+      sourceVersionId: 'version-9',
+      previewItemId: 'other-preview'
+    }
+    usePreviewWorkbenchStore.setState({
+      pendingPdfContextByProject: { 'proj-1': manualSelection }
+    })
+    stageLocalFile.mockResolvedValueOnce({
+      id: 'pdf-1',
+      sessionId: '.pending',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: '/uploads/.pending/paper.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment)
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([pdfFile('paper.pdf')])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toHaveLength(1))
+    })
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['proj-1']).toEqual(
+      manualSelection
+    )
+  })
+
+  it('does not auto-link staged PDFs while a Session is active', async () => {
+    setActiveProviderImageSupport(false)
+    stageLocalFile.mockResolvedValueOnce({
+      id: 'pdf-1',
+      sessionId: '.pending',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: '/uploads/.pending/paper.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment)
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([pdfFile('paper.pdf')])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toHaveLength(1))
+    })
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['proj-1']).toBeUndefined()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('allows explicitly linking a staged PDF from the preview surface', async () => {
+    setActiveProviderImageSupport(false)
+    useSessionStore.setState(createInitialSessionState())
+    stageLocalFile.mockResolvedValueOnce({
+      id: 'current-pdf',
+      sessionId: '.pending',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: '/uploads/.pending/paper.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment)
+
+    await renderPage()
+    act(() => {
+      usePreviewWorkbenchStore.getState().upsertItem({
+        id: 'upload:stale-pdf',
+        type: 'file',
+        source: 'upload',
+        projectId: 'proj-1',
+        sessionId: '.pending',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        path: '/uploads/.pending/stale-pdf/paper.pdf',
+        format: 'pdf',
+        mimeType: 'application/pdf'
+      })
+    })
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([pdfFile('paper.pdf')])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toHaveLength(1))
+    })
+
+    act(() => {
+      usePreviewWorkbenchStore.getState().upsertItem({
+        id: 'upload:current-pdf',
+        type: 'file',
+        source: 'upload',
+        projectId: 'proj-1',
+        sessionId: '.pending',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        path: '/uploads/.pending/paper.pdf',
+        format: 'pdf',
+        mimeType: 'application/pdf'
+      })
+    })
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['proj-1']).toBeUndefined()
+    expect(usePreviewWorkbenchStore.getState().draftStagedUploadIds).toEqual(['current-pdf'])
+
+    // The attached upload's preview tab offers the link action — enabled. A stale
+    // same-named preview item must remain unavailable instead of borrowing the current attachment.
+    const probeContainer = document.createElement('div')
+    document.body.appendChild(probeContainer)
+    const probeRoot = createRoot(probeContainer)
+    await act(async () => {
+      probeRoot.render(
+        <>
+          <PdfContextActionProbe itemId="upload:current-pdf" />
+          <PdfContextActionProbe itemId="upload:stale-pdf" />
+        </>
+      )
+    })
+    const [currentProbe, staleProbe] = probeContainer.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="pdf-context-action-probe"]'
+    )
+    expect(currentProbe?.dataset.state).toBe('link')
+    expect(currentProbe?.disabled).toBe(false)
+    expect(staleProbe?.dataset.state).toBe('link')
+    expect(staleProbe?.disabled).toBe(true)
+
+    // And running it re-establishes the pending draft selection.
+    await act(async () => currentProbe?.click())
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['proj-1']).toEqual({
+      kind: 'staged-upload',
+      attachmentId: 'current-pdf',
+      previewItemId: 'upload:current-pdf'
+    })
+
+    await act(async () => {
+      probeRoot.unmount()
+    })
+    probeContainer.remove()
   })
 })

@@ -66,6 +66,7 @@ const PUBLIC_METHODS = [
   'reconcileSession',
   'getLineage',
   'getVersionProvenance',
+  'getReviewerVersionTrace',
   'resolveVersionDescriptors',
   'getVersionCore',
   'readDependencyRelations',
@@ -74,6 +75,7 @@ const PUBLIC_METHODS = [
   'getVersionReview',
   'readCodeReconstructionCache',
   'writeCodeReconstructionCache',
+  'resolveReviewerTurnFileEvidence',
   'resolveVersionContentForStreamingVerification',
   'resolveVersionContent',
   'deleteProjectProvenance'

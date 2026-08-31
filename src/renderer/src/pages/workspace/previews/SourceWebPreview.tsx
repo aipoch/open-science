@@ -279,7 +279,7 @@ const SourceWebPreviewContent = ({
             name={SOURCE_PREVIEW_FRAME_NAME}
             title={t('Source preview: {{title}}', { title: item.title })}
             src={sourceUrl.href}
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+            sandbox="allow-same-origin allow-scripts allow-forms"
             referrerPolicy="no-referrer"
             aria-hidden={loadState.phase === 'failed' || undefined}
             className={cn(

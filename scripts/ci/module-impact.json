@@ -37,6 +37,7 @@
         "src/renderer/src/lib/acp/workspace-runtime-attachment-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-session-memory-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts",
         "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts"
@@ -49,6 +50,7 @@
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx",
           "src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts",
+          "src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts",
           "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
           "src/renderer/src/lib/acp/workspace-events.test.ts"
         ],
@@ -222,6 +224,7 @@
       "ownerPaths": [
         "src/main/compute/approval-session-lifecycle.ts",
         "src/main/compute/agent-compute-service.ts",
+        "src/main/compute/bounded-child-termination.ts",
         "src/main/compute/compute-approval-broker.ts",
         "src/main/compute/compute-host-profile-owner.ts",
         "src/main/compute/compute-job-lifecycle.ts",
@@ -236,6 +239,10 @@
         "src/main/compute/enabled-hosts-registry.ts",
         "src/main/compute/session-enabled-hosts-owner.ts",
         "src/main/compute/permission-grant-adapter.ts",
+        "src/main/compute/repository.ts",
+        "src/main/compute/scp-runner.ts",
+        "src/main/compute/session-cache-owner.ts",
+        "src/main/compute/ssh-runner.ts",
         "src/main/compute/compute-auth-owner.ts",
         "src/main/compute/connection-adapters.ts",
         "src/main/compute/credential-vault.ts",
@@ -260,8 +267,10 @@
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",
           "src/main/compute/compute-remote-operation-owner.test.ts",
+          "src/main/compute/session-cache-owner.test.ts",
           "src/main/compute/session-enabled-hosts-owner.test.ts",
           "src/main/compute/permission-grant-adapter.test.ts",
+          "src/main/compute/repository.test.ts",
           "src/main/compute/compute-service.test.ts",
           "src/main/compute/compute-auth-owner.test.ts",
           "src/main/compute/connection-broker.test.ts",
@@ -663,6 +672,7 @@
         "src/main/artifacts/provenance-storage.ts",
         "src/main/artifacts/provenance-unindexed-recovery.ts",
         "src/main/artifacts/provenance-version-writer.ts",
+        "src/main/artifacts/reviewer-turn-file-evidence-reader.ts",
         "src/main/artifacts/write-budget-owner.ts"
       ],
       "interfacePaths": [

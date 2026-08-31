@@ -34,12 +34,15 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
   | 'setNcbiCredentials'
+  | 'setOpenAlexCredential'
+  | 'validateOpenAlexCredential'
   | 'addCustomServer'
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'disconnectCustomServer'
   | 'retryCustomServer'
 >
 
@@ -127,6 +130,16 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'setNcbiCredentials'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'setNcbiCredentials'>
   >('settings:set-ncbi-credentials'),
+  setOpenAlexCredential: defineApplicationCommand<
+    'settings:set-openalex-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'setOpenAlexCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'setOpenAlexCredential'>
+  >('settings:set-openalex-credential'),
+  validateOpenAlexCredential: defineApplicationCommand<
+    'settings:validate-openalex-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'validateOpenAlexCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'validateOpenAlexCredential'>
+  >('settings:validate-openalex-credential'),
   addCustomServer: defineApplicationCommand<
     'settings:add-custom-server',
     OwnerArgs<ConnectorIntegrationWorkflows, 'addCustomServer'>,
@@ -157,6 +170,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>
   >('settings:cancel-custom-server-authentication'),
+  disconnectCustomServer: defineApplicationCommand<
+    'settings:disconnect-custom-server',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'disconnectCustomServer'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'disconnectCustomServer'>
+  >('settings:disconnect-custom-server'),
   retryCustomServer: defineApplicationCommand<
     'settings:retry-custom-server',
     OwnerArgs<ConnectorIntegrationWorkflows, 'retryCustomServer'>,
@@ -208,12 +226,15 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.setConnectorAutoAllow,
     settingsIntegrationApplicationCommands.setToolPermission,
     settingsIntegrationApplicationCommands.setNcbiCredentials,
+    settingsIntegrationApplicationCommands.setOpenAlexCredential,
+    settingsIntegrationApplicationCommands.validateOpenAlexCredential,
     settingsIntegrationApplicationCommands.addCustomServer,
     settingsIntegrationApplicationCommands.setCustomServerEnabled,
     settingsIntegrationApplicationCommands.removeCustomServer,
     settingsIntegrationApplicationCommands.updateCustomServer,
     settingsIntegrationApplicationCommands.authenticateCustomServer,
     settingsIntegrationApplicationCommands.cancelCustomServerAuthentication,
+    settingsIntegrationApplicationCommands.disconnectCustomServer,
     settingsIntegrationApplicationCommands.retryCustomServer
   ] as const
 )
@@ -267,13 +288,30 @@ const registerIntegrationSettingsApplicationCommands = (
         dependencies.connectors.setToolPermission(args[0]),
       'settings:set-ncbi-credentials': ({ args }) =>
         dependencies.connectors.setNcbiCredentials(args[0]),
-      'settings:add-custom-server': ({ args }) => dependencies.connectors.addCustomServer(args[0]),
-      'settings:set-custom-server-enabled': ({ args }) =>
-        dependencies.connectors.setCustomServerEnabled(args[0]),
-      'settings:remove-custom-server': ({ args }) =>
-        dependencies.connectors.removeCustomServer(args[0]),
-      'settings:update-custom-server': ({ args }) =>
-        dependencies.connectors.updateCustomServer(args[0]),
+      'settings:set-openalex-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-openalex-credential')
+        return dependencies.connectors.setOpenAlexCredential(args[0])
+      },
+      'settings:validate-openalex-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:validate-openalex-credential')
+        return dependencies.connectors.validateOpenAlexCredential(args[0])
+      },
+      'settings:add-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:add-custom-server')
+        return dependencies.connectors.addCustomServer(args[0])
+      },
+      'settings:set-custom-server-enabled': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-custom-server-enabled')
+        return dependencies.connectors.setCustomServerEnabled(args[0])
+      },
+      'settings:remove-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:remove-custom-server')
+        return dependencies.connectors.removeCustomServer(args[0])
+      },
+      'settings:update-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:update-custom-server')
+        return dependencies.connectors.updateCustomServer(args[0])
+      },
       'settings:authenticate-custom-server': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:authenticate-custom-server')
         return dependencies.connectors.authenticateCustomServer(args[0])
@@ -281,6 +319,10 @@ const registerIntegrationSettingsApplicationCommands = (
       'settings:cancel-custom-server-authentication': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:cancel-custom-server-authentication')
         return dependencies.connectors.cancelCustomServerAuthentication(args[0])
+      },
+      'settings:disconnect-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:disconnect-custom-server')
+        return dependencies.connectors.disconnectCustomServer(args[0])
       },
       'settings:retry-custom-server': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:retry-custom-server')

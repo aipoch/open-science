@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest'
 
 import { projectPermissionGrantSnapshot } from './catalog'
+import { DEFAULT_GLOBAL_PERMISSION_CAPABILITIES } from './defaults'
 
 describe('permission grant renderer projection', () => {
+  it('projects whether every default Global grant is present', () => {
+    const records = DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.map((capability, index) => ({
+      id: `default-${index}`,
+      revision: 1,
+      capability,
+      scope: { kind: 'global' as const }
+    }))
+
+    expect(projectPermissionGrantSnapshot(records).missingDefaultGlobalGrantCount).toBe(0)
+    expect(projectPermissionGrantSnapshot(records.slice(1)).missingDefaultGlobalGrantCount).toBe(1)
+  })
+
   it('uses owner names and never exposes an exact qualifier digest', () => {
     const digest = `sha256:v1:${'a'.repeat(64)}`
     const snapshot = projectPermissionGrantSnapshot(

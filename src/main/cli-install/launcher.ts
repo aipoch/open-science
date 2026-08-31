@@ -1,9 +1,22 @@
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
-import { lstat, mkdir, open, rm, type FileHandle } from 'node:fs/promises'
-import { join, posix } from 'node:path'
+import { lstat, mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises'
+import { basename, join, posix } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
+import { defaultFileDurability } from '../storage/file-durability'
+
+const MANAGED_LAUNCHER_HEADER_V1 =
+  'Open Science command-line launcher. Managed by the app. Format version: 1.'
+const LEGACY_POSIX_HEADER =
+  '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line'
+const LEGACY_POSIX_BODIES = new Set([
+  "# tool); edits will be overwritten on reinstall. Runs the app's Electron in Node mode.",
+  '# tool); edits will be overwritten on reinstall. Mounts the AppImage for this CLI process.'
+])
+const LEGACY_WINDOWS_HEADER =
+  'rem Open Science command-line launcher. Managed by the app; edits are overwritten on reinstall.'
 
 // Everything the launcher planner needs, injected so the pure path/shim logic is testable without
 // Electron or the real filesystem. The IPC wrapper fills these from `app`/`process` at call time.
@@ -35,12 +48,18 @@ export type CliLauncherPlan = {
 
 // PATH entries are ';'-separated on Windows and ':'-separated elsewhere. Derive the separator from the
 // target platform (not the host's path.delimiter) so the check is correct regardless of where it runs.
+const normalizeWindowsPathEntry = (entry: string): string =>
+  entry.replace(/[\\/]+$/, '').toLowerCase()
+
 const isOnPath = (binDir: string, pathVar: string, platform: NodeJS.Platform): boolean => {
   const separator = platform === 'win32' ? ';' : ':'
+  const normalize =
+    platform === 'win32' ? normalizeWindowsPathEntry : (entry: string): string => entry
+  const normalizedBinDir = normalize(binDir)
   return pathVar
     .split(separator)
     .filter(Boolean)
-    .some((entry) => entry === binDir)
+    .some((entry) => normalize(entry) === normalizedBinDir)
 }
 
 const isLinuxAppImage = (env: CliLauncherEnv): boolean =>
@@ -73,8 +92,8 @@ const posixShim = (env: CliLauncherEnv): string => {
     const { executable, cliEntry } = appImagePayloadPaths(env)
     return [
       '#!/bin/sh',
-      '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line',
-      '# tool); edits will be overwritten on reinstall. Mounts the AppImage for this CLI process.',
+      `# ${MANAGED_LAUNCHER_HEADER_V1}`,
+      '# Edits are overwritten on reinstall. Mounts the AppImage for this CLI process.',
       `app_image=${quote(env.appImagePath!)}`,
       'mount_output=$(mktemp "${TMPDIR:-/tmp}/open-science-cli.XXXXXX") || {',
       "  echo 'Open Science could not create a temporary file for the AppImage mount.' >&2",
@@ -121,8 +140,8 @@ const posixShim = (env: CliLauncherEnv): string => {
   const appPathLine = env.packaged ? `OPEN_SCIENCE_APP_PATH=${quote(env.appExecPath)} ` : ''
   return [
     '#!/bin/sh',
-    '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line',
-    "# tool); edits will be overwritten on reinstall. Runs the app's Electron in Node mode.",
+    `# ${MANAGED_LAUNCHER_HEADER_V1}`,
+    "# Edits are overwritten on reinstall. Runs the app's Electron in Node mode.",
     `${appPathLine}ELECTRON_RUN_AS_NODE=1 exec ${quote(env.appExecPath)} ${quote(env.cliEntryPath)} "$@"`,
     ''
   ].join('\n')
@@ -132,7 +151,8 @@ const windowsShim = (env: CliLauncherEnv): string => {
   const appPathLine = env.packaged ? `set "OPEN_SCIENCE_APP_PATH=${env.appExecPath}"\r\n` : ''
   return [
     '@echo off',
-    'rem Open Science command-line launcher. Managed by the app; edits are overwritten on reinstall.',
+    `rem ${MANAGED_LAUNCHER_HEADER_V1}`,
+    'rem Edits are overwritten on reinstall.',
     'set ELECTRON_RUN_AS_NODE=1',
     `${appPathLine}"${env.appExecPath}" "${env.cliEntryPath}" %*`,
     ''
@@ -169,20 +189,190 @@ const defaultRunCommand: CommandRunner = (command, args) => {
   return result.status === 0
 }
 
+const WINDOWS_PATH_PENDING_NAME = '.open-science-path-pending'
+const WINDOWS_PATH_RECEIPT_NAME = '.open-science-path-receipt'
+const WINDOWS_PATH_RECEIPT_OWNER = 'Open Science Windows PATH entry. Managed by the app.'
+// The file name is the journal state: pending is flushed before the registry mutation, then renamed
+// to the owned receipt as the commit step. The snapshots let a later run reconcile a crash safely.
+const windowsPathPendingPath = (binDir: string): string => join(binDir, WINDOWS_PATH_PENDING_NAME)
+const windowsPathReceiptPath = (binDir: string): string => join(binDir, WINDOWS_PATH_RECEIPT_NAME)
+const powershellLiteral = (value: string): string => `'${value.replace(/'/g, "''")}'`
+
+type WindowsPathJournal = {
+  version: 1
+  owner: typeof WINDOWS_PATH_RECEIPT_OWNER
+  binDir: string
+  beforePath: string | null
+  afterPath: string
+}
+
+const parseWindowsPathJournal = (
+  content: string | undefined,
+  binDir: string
+): WindowsPathJournal | undefined => {
+  if (content === undefined) return undefined
+  try {
+    const value = JSON.parse(content) as Partial<WindowsPathJournal>
+    const beforePath = value.beforePath
+    if (
+      value.version !== 1 ||
+      value.owner !== WINDOWS_PATH_RECEIPT_OWNER ||
+      typeof value.binDir !== 'string' ||
+      normalizeWindowsPathEntry(value.binDir) !== normalizeWindowsPathEntry(binDir) ||
+      (beforePath !== null && typeof beforePath !== 'string') ||
+      typeof value.afterPath !== 'string' ||
+      isOnPath(binDir, beforePath ?? '', 'win32')
+    ) {
+      return undefined
+    }
+    const expectedAfterPath = [...(beforePath ?? '').split(';').filter(Boolean), binDir].join(';')
+    return value.afterPath === expectedAfterPath ? (value as WindowsPathJournal) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 // Builds the PowerShell invocation that appends binDir to the persistent per-user PATH
 // (HKCU\Environment), without an admin prompt. The path is embedded as a single-quoted PowerShell
 // literal (single quotes doubled) rather than passed via `-args`: under `-Command`, trailing tokens
 // like `-args <dir>` are unreliable and can leave $args empty, writing the wrong value into PATH.
 export const buildWindowsPathCommand = (binDir: string): { command: string; args: string[] } => {
-  const literal = `'${binDir.replace(/'/g, "''")}'`
+  const pendingPath = windowsPathPendingPath(binDir)
+  const receiptPath = windowsPathReceiptPath(binDir)
   const script = [
-    `$binDir = ${literal}`,
+    "$ErrorActionPreference = 'Stop'",
+    `$binDir = ${powershellLiteral(binDir)}`,
+    `$pendingPath = ${powershellLiteral(pendingPath)}`,
+    `$receiptPath = ${powershellLiteral(receiptPath)}`,
+    `$receiptOwner = ${powershellLiteral(WINDOWS_PATH_RECEIPT_OWNER)}`,
+    "$pendingTempPath = [IO.Path]::Combine([IO.Path]::GetDirectoryName($pendingPath), '.open-science-path-pending.' + [Guid]::NewGuid().ToString('N') + '.tmp')",
+    'function Get-PathParts($value) {',
+    "  return @($value -split ';' | Where-Object { $_ -ne '' })",
+    '}',
+    'function Get-MatchCount($value) {',
+    "  $normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
+    '  return @(Get-PathParts $value | Where-Object {',
+    "    $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir",
+    '  }).Count',
+    '}',
+    'function Read-PathJournal($path) {',
+    '  try { $journal = [IO.File]::ReadAllText($path) | ConvertFrom-Json }',
+    "  catch { throw 'The PATH ownership journal is not managed by Open Science.' }",
+    '  $beforeIsValid = $null -eq $journal.beforePath -or $journal.beforePath -is [string]',
+    "  $expectedAfter = (@(Get-PathParts $journal.beforePath) + $binDir) -join ';'",
+    '  if ($journal.version -ne 1 -or $journal.owner -cne $receiptOwner -or',
+    "      $journal.binDir.TrimEnd([char[]]'\\/') -ine $binDir.TrimEnd([char[]]'\\/') -or",
+    '      -not $beforeIsValid -or (Get-MatchCount $journal.beforePath) -ne 0 -or',
+    '      $journal.afterPath -isnot [string] -or',
+    '      $journal.afterPath -cne $expectedAfter) {',
+    "    throw 'The PATH ownership journal is not managed by Open Science.'",
+    '  }',
+    '  return $journal',
+    '}',
+    'function Write-PendingJournal($beforePath, $afterPath) {',
+    '  $content = [ordered]@{',
+    '    version = 1',
+    '    owner = $receiptOwner',
+    '    binDir = $binDir',
+    '    beforePath = $beforePath',
+    '    afterPath = $afterPath',
+    '  } | ConvertTo-Json -Compress',
+    '  $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($content)',
+    '  $pendingTempCreated = $false',
+    '  try {',
+    '    $stream = [IO.File]::Open($pendingTempPath, [IO.FileMode]::CreateNew,',
+    '      [IO.FileAccess]::Write, [IO.FileShare]::None)',
+    '    $pendingTempCreated = $true',
+    '    try {',
+    '      $stream.Write($bytes, 0, $bytes.Length)',
+    '      $stream.Flush($true)',
+    '    } finally {',
+    '      $stream.Dispose()',
+    '    }',
+    '    [IO.File]::Move($pendingTempPath, $pendingPath)',
+    '  } catch {',
+    '    if ($pendingTempCreated -and [IO.File]::Exists($pendingTempPath)) {',
+    '      [IO.File]::Delete($pendingTempPath)',
+    '    }',
+    '    throw',
+    '  }',
+    '}',
+    "$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
+    'if ([IO.File]::Exists($pendingPath) -and [IO.File]::Exists($receiptPath)) {',
+    "  throw 'The PATH ownership journal is ambiguous.'",
+    '}',
+    'if ([IO.File]::Exists($pendingPath)) {',
+    '  $journal = Read-PathJournal $pendingPath',
+    '  if ($current -ceq $journal.afterPath) {',
+    '    [IO.File]::Move($pendingPath, $receiptPath)',
+    '    return',
+    '  }',
+    '  if ($current -cne $journal.beforePath) {',
+    "    throw 'The pending PATH ownership journal cannot be reconciled.'",
+    '  }',
+    "  [Environment]::SetEnvironmentVariable('Path', $journal.afterPath, 'User')",
+    '  [IO.File]::Move($pendingPath, $receiptPath)',
+    '  return',
+    '}',
+    'if ([IO.File]::Exists($receiptPath)) {',
+    '  $null = Read-PathJournal $receiptPath',
+    '  if ((Get-MatchCount $current) -gt 0) { return }',
+    '  [IO.File]::Delete($receiptPath)',
+    '}',
+    'if ((Get-MatchCount $current) -gt 0) { return }',
+    "$next = (@(Get-PathParts $current) + $binDir) -join ';'",
+    'Write-PendingJournal $current $next',
+    "[Environment]::SetEnvironmentVariable('Path', $next, 'User')",
+    '[IO.File]::Move($pendingPath, $receiptPath)'
+  ].join('\n')
+  return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
+}
+
+const buildWindowsPathRemovalCommand = (
+  binDir: string,
+  journalPath: string,
+  state: 'pending' | 'owned'
+): { command: string; args: string[] } => {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$binDir = ${powershellLiteral(binDir)}`,
+    `$journalPath = ${powershellLiteral(journalPath)}`,
+    `$receiptOwner = ${powershellLiteral(WINDOWS_PATH_RECEIPT_OWNER)}`,
+    `$state = ${powershellLiteral(state)}`,
+    'try { $journal = [IO.File]::ReadAllText($journalPath) | ConvertFrom-Json }',
+    "catch { throw 'The PATH ownership journal is not managed by Open Science.' }",
+    '  $beforeIsValid = $null -eq $journal.beforePath -or $journal.beforePath -is [string]',
+    "$beforeParts = @($journal.beforePath -split ';' | Where-Object { $_ -ne '' })",
+    "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
+    '  $beforeMatchCount = @($beforeParts | Where-Object {',
+    "    $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir",
+    '  }).Count',
+    "  $expectedAfter = (@($beforeParts) + $binDir) -join ';'",
+    'if ($journal.version -ne 1 -or $journal.owner -cne $receiptOwner -or',
+    "    $journal.binDir.TrimEnd([char[]]'\\/') -ine $binDir.TrimEnd([char[]]'\\/') -or",
+    '    -not $beforeIsValid -or $beforeMatchCount -ne 0 -or',
+    '    $journal.afterPath -isnot [string] -or',
+    '    $journal.afterPath -cne $expectedAfter) {',
+    "  throw 'The PATH ownership journal is not managed by Open Science.'",
+    '}',
+    '$beforePath = $journal.beforePath',
+    '$afterPath = $journal.afterPath',
     "$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
     "$parts = @($current -split ';' | Where-Object { $_ -ne '' })",
-    'if ($parts -notcontains $binDir) {',
-    "  $next = (@($parts) + $binDir) -join ';'",
-    "  [Environment]::SetEnvironmentVariable('Path', $next, 'User')",
-    '}'
+    '$matches = @($parts | Where-Object {',
+    "  $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir",
+    '})',
+    "if ($state -ceq 'pending') {",
+    '  if ($current -ceq $beforePath) { return }',
+    '  if ($current -cne $afterPath) {',
+    "    throw 'The pending PATH ownership journal cannot be reconciled.'",
+    '  }',
+    '}',
+    'if ($matches.Count -eq 0) { return }',
+    'if ($current -cne $afterPath) {',
+    "  throw 'The owned PATH entry no longer matches its recorded snapshot.'",
+    '}',
+    "[Environment]::SetEnvironmentVariable('Path', $beforePath, 'User')"
   ].join('\n')
   return { command: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
 }
@@ -275,12 +465,43 @@ const readCliLauncher = async (target: string): Promise<string | undefined> => {
   }
 }
 
-const isManagedCliLauncher = (content: string): boolean =>
-  content.includes('Open Science command-line launcher. Managed by the app')
+const openManagedWindowsPathJournal = async (
+  target: string,
+  binDir: string
+): Promise<OpenCliLauncher | undefined> => {
+  const opened = await openStableCliLauncher(target, constants.O_RDONLY)
+  if (opened === undefined) return undefined
+
+  try {
+    const content = await opened.handle.readFile('utf8')
+    const journal = parseWindowsPathJournal(content, binDir)
+    if (journal !== undefined && (await isOpenCliLauncherCurrent(target, opened.stats))) {
+      return opened
+    }
+  } catch (error) {
+    await opened.handle.close()
+    throw error
+  }
+  await opened.handle.close()
+  return undefined
+}
+
+const isManagedCliLauncher = (content: string): boolean => {
+  const lines = content.split(/\r?\n/)
+  if (lines[0] === '#!/bin/sh') {
+    return (
+      lines[1] === `# ${MANAGED_LAUNCHER_HEADER_V1}` ||
+      (lines[1] === LEGACY_POSIX_HEADER && LEGACY_POSIX_BODIES.has(lines[2] ?? ''))
+    )
+  }
+  return (
+    lines[0]?.toLowerCase() === '@echo off' &&
+    (lines[1] === `rem ${MANAGED_LAUNCHER_HEADER_V1}` || lines[1] === LEGACY_WINDOWS_HEADER)
+  )
+}
 
 const writeCliLauncher = async (handle: FileHandle, plan: CliLauncherPlan): Promise<void> => {
   const content = Buffer.from(plan.shim)
-  await handle.truncate(0)
   let offset = 0
   while (offset < content.length) {
     const { bytesWritten } = await handle.write(content, offset, content.length - offset, offset)
@@ -288,6 +509,47 @@ const writeCliLauncher = async (handle: FileHandle, plan: CliLauncherPlan): Prom
     offset += bytesWritten
   }
   if (plan.mode !== undefined) await handle.chmod(plan.mode)
+}
+
+// Publish an existing launcher through a same-directory temporary file while retaining the handle
+// whose managed contents were validated. Until rename succeeds the old command remains untouched; a
+// write/flush failure therefore cannot truncate a working launcher.
+const replaceCliLauncher = async (
+  plan: CliLauncherPlan,
+  expected: OpenCliLauncher
+): Promise<void> => {
+  const temporaryPath = join(
+    plan.binDir,
+    `.${basename(plan.target)}.${process.pid}-${randomUUID()}.tmp`
+  )
+  let handle: FileHandle | undefined
+  let published = false
+  try {
+    handle = await open(
+      temporaryPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+      plan.mode ?? 0o666
+    )
+    await writeCliLauncher(handle, plan)
+    await handle.sync()
+    await handle.close()
+    handle = undefined
+
+    const opened = await expected.handle.stat()
+    if (
+      !isDirectRegularFile(opened) ||
+      !isSameFile(expected.stats, opened) ||
+      !(await isOpenCliLauncherCurrent(plan.target, opened))
+    ) {
+      refuseUnmanagedCliLauncher(plan.target)
+    }
+    await rename(temporaryPath, plan.target)
+    published = true
+    await defaultFileDurability.syncDirectory(plan.binDir)
+  } finally {
+    await handle?.close().catch(() => undefined)
+    if (!published) await rm(temporaryPath, { force: true }).catch(() => undefined)
+  }
 }
 
 const tryCreateCliLauncher = async (plan: CliLauncherPlan): Promise<boolean> => {
@@ -324,6 +586,21 @@ export const installCliLauncher = async (
   const plan = planCliLauncher(env)
   await mkdir(plan.binDir, { recursive: true })
 
+  if (env.platform === 'win32') {
+    const journalPaths = [windowsPathPendingPath(plan.binDir), windowsPathReceiptPath(plan.binDir)]
+    const existingJournalPaths: string[] = []
+    for (const journalPath of journalPaths) {
+      if ((await statCliLauncher(journalPath)) === undefined) continue
+      existingJournalPaths.push(journalPath)
+      if (parseWindowsPathJournal(await readCliLauncher(journalPath), plan.binDir) === undefined) {
+        refuseUnmanagedCliLauncher(journalPath)
+      }
+    }
+    if (existingJournalPaths.length > 1) {
+      throw new Error('The Windows PATH ownership journal is ambiguous.')
+    }
+  }
+
   let written = false
   for (let attempt = 0; attempt < 3 && !written; attempt += 1) {
     if (await tryCreateCliLauncher(plan)) {
@@ -331,15 +608,12 @@ export const installCliLauncher = async (
       break
     }
 
-    const opened = await openStableCliLauncher(plan.target, constants.O_RDWR)
+    const opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
     if (opened === undefined) continue
     try {
       const existing = await opened.handle.readFile('utf8')
       if (!isManagedCliLauncher(existing)) refuseUnmanagedCliLauncher(plan.target)
-      await writeCliLauncher(opened.handle, plan)
-      if (!(await isOpenCliLauncherCurrent(plan.target, opened.stats))) {
-        refuseUnmanagedCliLauncher(plan.target)
-      }
+      await replaceCliLauncher(plan, opened)
       written = true
     } finally {
       await opened.handle.close()
@@ -363,20 +637,68 @@ export const installCliLauncher = async (
   return { installed: true, target: plan.target, onPath, pathHint }
 }
 
-export const uninstallCliLauncher = async (env: CliLauncherEnv): Promise<CliLauncherStatus> => {
+export const uninstallCliLauncher = async (
+  env: CliLauncherEnv,
+  runCommand: CommandRunner = defaultRunCommand
+): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
   const opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
-  if (opened !== undefined) {
-    try {
+  let pathJournal: OpenCliLauncher | undefined
+  try {
+    if (opened !== undefined) {
       const existing = await opened.handle.readFile('utf8')
       if (!isManagedCliLauncher(existing)) refuseUnmanagedCliLauncher(plan.target)
       if (!(await isOpenCliLauncherCurrent(plan.target, opened.stats))) {
         refuseUnmanagedCliLauncher(plan.target)
       }
-    } finally {
-      await opened.handle.close()
     }
 
+    if (env.platform === 'win32') {
+      const journalPaths = [
+        windowsPathPendingPath(plan.binDir),
+        windowsPathReceiptPath(plan.binDir)
+      ]
+      const existingJournalPaths: string[] = []
+      for (const journalPath of journalPaths) {
+        if ((await statCliLauncher(journalPath)) !== undefined) {
+          existingJournalPaths.push(journalPath)
+        }
+      }
+      if (existingJournalPaths.length > 1) {
+        throw new Error('The Windows PATH ownership journal is ambiguous.')
+      }
+      const journalPath = existingJournalPaths[0]
+      if (journalPath !== undefined) {
+        const openedJournal =
+          (await openManagedWindowsPathJournal(journalPath, plan.binDir)) ??
+          refuseUnmanagedCliLauncher(journalPath)
+        pathJournal = openedJournal
+
+        const journalStats = openedJournal.stats
+        const state = journalPath === journalPaths[0] ? 'pending' : 'owned'
+        const { command, args } = buildWindowsPathRemovalCommand(plan.binDir, journalPath, state)
+        if (!runCommand(command, args)) {
+          throw new Error(`Could not remove ${plan.binDir} from the user PATH.`)
+        }
+        if (!(await isOpenCliLauncherCurrent(journalPath, openedJournal.stats))) {
+          refuseUnmanagedCliLauncher(journalPath)
+        }
+        await openedJournal.handle.close()
+        pathJournal = undefined
+
+        const finalJournal = await statCliLauncher(journalPath)
+        if (finalJournal !== undefined) {
+          if (!isDirectRegularFile(finalJournal) || !isSameFile(finalJournal, journalStats)) {
+            refuseUnmanagedCliLauncher(journalPath)
+          }
+          await rm(journalPath)
+        }
+      }
+    }
+
+    if (opened === undefined) {
+      return { installed: false, target: plan.target, onPath: false }
+    }
     const final = await statCliLauncher(plan.target)
     if (final !== undefined) {
       if (!isDirectRegularFile(final) || !isSameFile(opened.stats, final)) {
@@ -384,6 +706,9 @@ export const uninstallCliLauncher = async (env: CliLauncherEnv): Promise<CliLaun
       }
       await rm(plan.target)
     }
+  } finally {
+    await pathJournal?.handle.close()
+    await opened?.handle.close()
   }
   return { installed: false, target: plan.target, onPath: false }
 }

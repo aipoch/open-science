@@ -26,6 +26,13 @@ CREATE UNIQUE INDEX "Probe_value_key" ON "Probe"("value");
           name: 'Probe_value_check',
           expression: 'length(trim("value")) > 0'
         }
+      ],
+      indexes: [
+        {
+          tableName: 'Probe',
+          name: 'Probe_nonempty_value_key',
+          sql: `CREATE UNIQUE INDEX "Probe_nonempty_value_key" ON "Probe"("value") WHERE "value" <> ''`
+        }
       ]
     }
 
@@ -36,6 +43,9 @@ CREATE UNIQUE INDEX "Probe_value_key" ON "Probe"("value");
     expect(first).toContain('CREATE TABLE IF NOT EXISTS "Probe"')
     expect(first).toContain('CONSTRAINT "Probe_value_check" CHECK (length(trim("value")) > 0)')
     expect(first).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "Probe_value_key"')
+    expect(first).toContain(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "Probe_nonempty_value_key" ON "Probe"("value") WHERE "value" <> ''`
+    )
   })
 
   it('keeps the committed runtime schema generated from the current Prisma target', async () => {
@@ -61,6 +71,15 @@ CREATE UNIQUE INDEX "Probe_value_key" ON "Probe"("value");
           source: `// schema-locality: begin frozen-0001-repairs
 const ddl = \`ALTER TABLE "Legacy" ADD COLUMN "value" TEXT\`
 // schema-locality: end frozen-0001-repairs`
+        }
+      ])
+    ).not.toThrow()
+
+    expect(() =>
+      assertRuntimeDdlLocality([
+        {
+          path: 'src/main/literature/migrations/index-0001.ts',
+          source: 'const ddl = `CREATE TABLE "LiteratureIndex" ("id" TEXT)`'
         }
       ])
     ).not.toThrow()

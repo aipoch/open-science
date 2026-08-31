@@ -4,6 +4,7 @@ import type {
   ValidationCategory
 } from '../../shared/settings'
 import { preferredEndpoint } from '../../shared/settings'
+import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
 import {
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
@@ -134,7 +135,11 @@ const buildAnthropicValidationRequest = (provider: ResolvedProvider): Validation
   }
 
   if (provider.key) {
-    headers.authorization = `Bearer ${provider.key}`
+    if (provider.vendorId && usesVendorAnthropicApiKeyHeader(provider.vendorId)) {
+      headers['x-api-key'] = provider.key
+    } else {
+      headers.authorization = `Bearer ${provider.key}`
+    }
   }
 
   const body = JSON.stringify({

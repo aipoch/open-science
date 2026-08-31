@@ -9,6 +9,7 @@ import {
 } from '../../../shared/acp'
 import {
   sanitizeMessageImages,
+  type MessagePdfContextSnapshot,
   type PersistedArtifact,
   type PersistedUploadedAttachment
 } from '../../../shared/session-persistence'
@@ -67,6 +68,12 @@ export type ReplaceMessageUploadsInput = {
   sessionId: string
   messageId: string
   uploads: PersistedUploadedAttachment[]
+}
+
+export type ReplaceMessagePdfContextInput = {
+  sessionId: string
+  messageId: string
+  pdfContext: MessagePdfContextSnapshot
 }
 
 type SessionProjectionResult = {
@@ -608,6 +615,32 @@ export const projectMessageUploads = (
       )
     },
     filesRevision: (session.filesRevision ?? 0) + 1,
+    updatedAt: now
+  }
+}
+
+export const projectMessagePdfContext = (
+  session: ChatSession,
+  input: ReplaceMessagePdfContextInput
+): ChatSession => {
+  const targetMessage = session.messages.find((message) => message.id === input.messageId)
+  if (
+    !targetMessage ||
+    JSON.stringify(targetMessage.pdfContext) === JSON.stringify(input.pdfContext)
+  ) {
+    return session
+  }
+
+  const now = Date.now()
+  const messages = session.messages.map((message) =>
+    message.id === input.messageId
+      ? { ...message, pdfContext: input.pdfContext, updatedAt: now }
+      : message
+  )
+  return {
+    ...session,
+    messages,
+    conversationGraph: synchronizeSessionGraph(session, messages, now),
     updatedAt: now
   }
 }

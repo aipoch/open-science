@@ -113,6 +113,18 @@ describe('createCloseConfirm', () => {
     expect(h.sent).toHaveLength(0)
   })
 
+  it('confirms quit when only Reviewer work is active', async () => {
+    const h = makeHarness()
+    const pending = h.confirm('quit', [], true)
+    h.ack()
+    h.choose('cancel')
+
+    await expect(pending).resolves.toBe('cancel')
+    expect(h.sent).toEqual([
+      { requestId: 'req-1', variant: 'quit', sessions: [], reviewerActive: true }
+    ])
+  })
+
   it('sends a request and resolves the renderer choice', async () => {
     const h = makeHarness()
     const pending = h.confirm('close-to-tray', [session])

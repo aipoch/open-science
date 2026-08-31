@@ -25,6 +25,7 @@ import type {
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolDiffBlock } from './WorkspaceToolDiffBlock'
+import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import type { ToolExecutionPhase } from './tool-execution-phase'
 import type { SessionTextAnnotationItemType } from '../../../../shared/annotations'
 import type { AnnotationPort } from './annotations/annotation-port'
@@ -56,12 +57,16 @@ const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
   'Input',
   'Log',
   'Manage packages',
+  'Memory categories',
   'Notebook run',
   'Output',
   'Packages',
   'Prompt',
   'Request',
   'Result',
+  'Reading',
+  'Save memory',
+  'Search memory',
   'Shell',
   'Skill',
   'Tool search',
@@ -223,6 +228,10 @@ const WorkspaceToolDetailsRow = ({
   }, [isNearViewport, notebookRunId, onNotebookRunNearViewport])
 
   const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
+    if (section.kind === 'literature') {
+      return <WorkspaceLiteratureToolCard key={index} summary={section.summary} />
+    }
+
     if (section.kind === 'diff') {
       const diffBody = <WorkspaceToolDiffBlock section={section} />
       return (

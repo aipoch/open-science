@@ -17,7 +17,9 @@ const run = (
   args: Record<string, unknown>,
   fetchImpl: ReturnType<typeof vi.fn>
 ): Promise<unknown> =>
-  new ParserEngine({ fetchImpl: fetchImpl as unknown as typeof fetch }).call(tool(id), args, {})
+  new ParserEngine({ fetchImpl: fetchImpl as unknown as typeof fetch }).call(tool(id), args, {
+    openAlexApiKey: 'OPENALEX_KEY'
+  })
 
 // A representative full work object; helpers pick the fields they need.
 const workW1 = {
@@ -64,6 +66,19 @@ const workW1 = {
 }
 
 describe('openalex_search_works', () => {
+  it('declares the credential requirement and attaches the key only at the OpenAlex fetch seam', async () => {
+    expect(
+      OPENALEX_LITERATURE_TOOLS.every((descriptor) => descriptor.requiredCredential === 'openalex')
+    ).toBe(true)
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ meta: { count: 0 }, results: [] }))
+
+    await run('openalex_search_works', { query: 'credential test', max_records: 1 }, fetchImpl)
+
+    const url = new URL(String(fetchImpl.mock.calls[0][0]))
+    expect(url.origin).toBe('https://api.openalex.org')
+    expect(url.searchParams.get('api_key')).toBe('OPENALEX_KEY')
+  })
+
   it('assembles year/type/oa filters, maps sort, paginates with cap and lean records', async () => {
     const fetchImpl = vi
       .fn()

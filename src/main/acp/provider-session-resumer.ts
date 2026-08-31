@@ -1,5 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
-import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import type { ActiveSession, ClientConnection, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 
 import type {
@@ -100,6 +100,71 @@ export class AcpProviderSessionResumer {
     const attached = this.deps.registry.lookup(request.sessionId)?.attachment
     if (attached) return this.resumeAttached(request, attached)
 
+    return this.resumeDetached(request, false)
+  }
+
+  async reconfigure(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    const entry = this.deps.registry.lookup(request.sessionId)
+    const attachment = entry?.attachment
+    const snapshot = entry?.aggregate.snapshot()
+    const providerSessionId = attachment?.providerSessionId ?? request.providerSessionId
+    if (!attachment) {
+      return this.resumeDetached(
+        { ...request, ...(providerSessionId ? { providerSessionId } : {}) },
+        true
+      )
+    }
+    this.deps.registry.detach(attachment, 'provider')
+    try {
+      const result = await this.resumeDetached(
+        { ...request, providerSessionId: attachment.providerSessionId },
+        true
+      )
+      attachment.session.dispose()
+      return result
+    } catch (error) {
+      if (
+        snapshot?.cwd &&
+        snapshot.projectId &&
+        snapshot.frameworkId &&
+        snapshot.permissionProfile
+      ) {
+        const restored = this.deps.registry.reserve({
+          sessionIds: [request.sessionId, attachment.providerSessionId],
+          blockStartup: false
+        })
+        if (!restored.collision) {
+          try {
+            this.deps.registry.publish(restored.reservation, request.sessionId, {
+              session: attachment.session,
+              cwd: snapshot.cwd,
+              projectId: snapshot.projectId,
+              frameworkId: snapshot.frameworkId,
+              ...(snapshot.backendId ? { backendId: snapshot.backendId } : {}),
+              permissionProfile: {
+                ...snapshot.permissionProfile,
+                availableModeIds: [...snapshot.permissionProfile.availableModeIds]
+              },
+              ...(snapshot.appliedModel ? { appliedModel: snapshot.appliedModel } : {}),
+              ...(snapshot.configOptions
+                ? {
+                    configOptions: structuredClone(snapshot.configOptions) as SessionConfigOption[]
+                  }
+                : {})
+            })
+          } finally {
+            restored.reservation.release()
+          }
+        }
+      }
+      throw error
+    }
+  }
+
+  private async resumeDetached(
+    request: AcpResumeSessionRequest,
+    compatibleOnly: boolean
+  ): Promise<AcpCreateSessionResponse> {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectId = request.projectId?.trim() || this.deps.defaultProjectId
     const reserved = this.deps.reserveIdentity(request.sessionId)
@@ -111,7 +176,16 @@ export class AcpProviderSessionResumer {
       this.deps.assertCurrentConnection(connection)
       identity.renew()
       return await this.withTimeout(
-        () => this.resumeConnected(request, connection, cwd, projectId, identity),
+        (cancellationSignal) =>
+          this.resumeConnected(
+            request,
+            connection,
+            cwd,
+            projectId,
+            identity,
+            compatibleOnly,
+            cancellationSignal
+          ),
         this.progressSessionIds(request)
       )
     } finally {
@@ -176,9 +250,10 @@ export class AcpProviderSessionResumer {
   }
 
   private async withTimeout<Result>(
-    operation: () => Promise<Result>,
+    operation: (cancellationSignal: AbortSignal) => Promise<Result>,
     progressSessionIds: readonly string[] = []
   ): Promise<Result> {
+    const cancellation = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
     let settled = false
@@ -191,14 +266,16 @@ export class AcpProviderSessionResumer {
       if (timer !== undefined) this.deps.clearTimer(timer)
       timer = this.deps.setTimer(() => {
         timedOut = true
-        rejectTimeout(new Error('ACP session resume timed out.'))
+        const error = new Error('ACP session resume timed out.')
+        cancellation.abort(error)
+        rejectTimeout(error)
       }, this.deps.resumeTimeoutMs)
     }
     const unsubscribe = this.subscribeToProgress(progressSessionIds, renewTimeout)
     renewTimeout()
 
     try {
-      return await Promise.race([operation(), timeout])
+      return await Promise.race([operation(cancellation.signal), timeout])
     } catch (error) {
       if (timedOut) await this.deps.disconnectTimedOutConnection()
       throw error
@@ -240,17 +317,35 @@ export class AcpProviderSessionResumer {
     connection: ClientConnection,
     cwd: string,
     projectId: string,
-    identity: AcpPrimarySessionIdentityReservation
+    identity: AcpPrimarySessionIdentityReservation,
+    compatibleOnly: boolean,
+    cancellationSignal: AbortSignal
   ): Promise<AcpCreateSessionResponse> {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()
     if (request.specialistBindingPending === true) {
+      if (compatibleOnly) {
+        throw new Error('ACP capability reconfiguration requires a compatible provider resume.')
+      }
       log.info('adopting fresh provider context for pending Specialist binding', {
         sessionId: request.sessionId,
         ...this.deps.diagnosticContext()
       })
       return this.adopt(request, connection, cwd, projectId, identity)
+    }
+    if (compatibleOnly && persistedProviderSessionId) {
+      return this.resumeCompatible(
+        request,
+        connection,
+        cwd,
+        projectId,
+        identity,
+        persistedProviderSessionId,
+        true,
+        true,
+        cancellationSignal
+      )
     }
     const decision = this.policy.decide({
       appSessionId: request.sessionId,
@@ -266,6 +361,11 @@ export class AcpProviderSessionResumer {
     })
 
     if (decision.action === 'adopt') {
+      if (compatibleOnly) {
+        throw new Error(
+          `ACP capability reconfiguration cannot replace provider context (${decision.reason}).`
+        )
+      }
       log.info('skipping incompatible provider resume; adopting a fresh session', {
         sessionId: request.sessionId,
         reason: decision.reason,
@@ -280,7 +380,9 @@ export class AcpProviderSessionResumer {
       projectId,
       identity,
       decision.providerSessionId,
-      persistedProviderSessionId !== undefined
+      persistedProviderSessionId !== undefined,
+      compatibleOnly,
+      cancellationSignal
     )
   }
 
@@ -291,7 +393,9 @@ export class AcpProviderSessionResumer {
     projectId: string,
     identity: AcpPrimarySessionIdentityReservation,
     providerSessionId: string,
-    providerSessionIdPersisted: boolean
+    providerSessionIdPersisted: boolean,
+    compatibleOnly: boolean,
+    cancellationSignal: AbortSignal
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
@@ -304,7 +408,8 @@ export class AcpProviderSessionResumer {
         bridgeMcpAliasesEnabled: backend.adapter.bridgeMcpAliasesEnabled,
         policy: this.deps.capabilityPolicy,
         sessionCwd: cwd,
-        projectId
+        projectId,
+        memoryEnabled: request.memoryEnabled
       })
       const capabilityDescriptor = capability.descriptor
       const existingAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
@@ -349,19 +454,23 @@ export class AcpProviderSessionResumer {
 
       let resumeResponse: unknown
       try {
-        resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
-          sessionId: providerSessionId,
-          cwd,
-          mcpServers: sessionCapabilities.mcpServers,
-          ...specialistProjection.setup.metaArg
-        })
+        resumeResponse = await connection.agent.request(
+          acp.methods.agent.session.resume,
+          {
+            sessionId: providerSessionId,
+            cwd,
+            mcpServers: sessionCapabilities.mcpServers,
+            ...specialistProjection.setup.metaArg
+          },
+          { cancellationSignal }
+        )
       } catch (error) {
         const failure = this.policy.classifyFailure(error, {
           currentFrameworkId: backend.framework.id,
           currentModelRoute: backend.modelRoute,
           providerSessionIdPersisted
         })
-        if (failure.disposition !== 'adoptable') throw error
+        if (failure.disposition !== 'adoptable' || compatibleOnly) throw error
         try {
           identity.assertCurrent()
         } catch (supersededError) {
@@ -435,6 +544,7 @@ export class AcpProviderSessionResumer {
           frameworkId: backend.framework.id,
           backendId: backend.backendId,
           permissionProfile: structuredClone(configuration.permissionProfile),
+          memoryEnabled: request.memoryEnabled !== false,
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })
@@ -486,7 +596,8 @@ export class AcpProviderSessionResumer {
       identity,
       permissionProfile: request.permissionProfile,
       specialistId: request.specialistId,
-      specialistBindingPending: request.specialistBindingPending
+      specialistBindingPending: request.specialistBindingPending,
+      memoryEnabled: request.memoryEnabled
     })
   }
 

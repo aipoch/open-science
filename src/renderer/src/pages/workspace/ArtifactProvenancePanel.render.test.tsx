@@ -417,12 +417,14 @@ beforeEach(async () => {
   getVersionReview = vi.fn().mockResolvedValue({ review: completeProvenance.review })
   getCodeReconstruction = vi.fn().mockResolvedValue({
     state: 'ready',
+    origin: 'llm',
     language: 'python',
     sourceTruncated: false
   })
   generateCodeReconstruction = vi.fn().mockResolvedValue({
     state: 'cached',
     value: {
+      origin: 'llm',
       code: 'import numpy as np\nnp.sin(0)',
       language: 'python',
       generatedAt: '2026-07-27T20:05:00.000Z',
@@ -601,6 +603,7 @@ describe('ArtifactProvenancePanel', () => {
     const generated = {
       state: 'cached' as const,
       value: {
+        origin: 'llm' as const,
         code: 'import numpy as np\nnp.sin(0)',
         language: 'python' as const,
         generatedAt: '2026-07-27T20:05:00.000Z',
@@ -678,6 +681,47 @@ describe('ArtifactProvenancePanel', () => {
     await act(async () => executionLinks.at(-1)?.click())
     await flush()
     expect(getVersionExecution).toHaveBeenCalledOnce()
+  })
+
+  it('labels deterministic helper replay without attributing it to an LLM', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    getCodeReconstruction.mockResolvedValue({
+      state: 'ready',
+      origin: 'app-replay',
+      language: 'python',
+      sourceTruncated: false
+    })
+    generateCodeReconstruction.mockResolvedValue({
+      state: 'cached',
+      value: {
+        origin: 'app-replay',
+        code: 'print(1)',
+        language: 'python',
+        generatedAt: '2026-07-27T20:05:00.000Z',
+        sourceTruncated: false
+      }
+    })
+
+    await act(async () =>
+      root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+    )
+    await flush()
+    expect(container.textContent).toContain(
+      'This script can be reconstructed directly from the immutable Execution Log.'
+    )
+
+    const generate = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    await act(async () => generate?.click())
+    await flush()
+
+    expect(container.textContent).toContain(
+      'Reconstructed directly from the immutable Execution Log'
+    )
+    expect(container.textContent).not.toContain('LLM-generated reconstruction')
   })
 
   it('does not present Review absence while the lazy section is loading', async () => {

@@ -11,7 +11,7 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import {
   SPECIALIST_DESCRIPTION_MAX_LENGTH,
   SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH,
-  type SpecialistProfileView
+  type SpecialistView
 } from '../../../../shared/specialist'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -1233,7 +1233,7 @@ describe('SpecialistEditor', () => {
   })
 
   it('restores an unsaved edit after navigating to a detail page and back', async () => {
-    const profile: SpecialistProfileView = {
+    const profile: SpecialistView = {
       id: 'skills-bot',
       name: 'Skills Bot',
       description: 'Original description',
@@ -1332,7 +1332,7 @@ describe('SpecialistEditor', () => {
   })
 
   it('drops the editor draft after a successful save or an explicit cancel', async () => {
-    const profile: SpecialistProfileView = {
+    const profile: SpecialistView = {
       id: 'draft-bot',
       name: 'Draft Bot',
       description: 'Original description',
@@ -1398,7 +1398,7 @@ describe('SpecialistEditor', () => {
   })
 
   it('ignores a stale draft when the specialist revision advanced meanwhile', async () => {
-    const profile: SpecialistProfileView = {
+    const profile: SpecialistView = {
       id: 'stale-bot',
       name: 'Stale Bot',
       description: 'Original description',
@@ -1526,7 +1526,7 @@ describe('SpecialistEditor', () => {
   })
 
   it('clears the editor draft from the store after a successful save', async () => {
-    const profile: SpecialistProfileView = {
+    const profile: SpecialistView = {
       id: 'save-clears-draft',
       name: 'Save Clears Draft',
       description: 'Original',

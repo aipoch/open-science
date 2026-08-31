@@ -3,14 +3,14 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
-import type { SpecialistProfileView } from '../../../../shared/specialist'
+import type { SpecialistView } from '../../../../shared/specialist'
 import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const sqlProfile: SpecialistProfileView = {
+const sqlProfile: SpecialistView = {
   id: 'spc-sql',
   name: 'SQL_WRANGLER',
   displayName: 'SQL Wrangler',

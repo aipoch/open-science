@@ -261,6 +261,7 @@ class ProjectFilesQueryOwner {
   async readHostArtifactCatalog(request: {
     projectId: string
     versionId?: string
+    finalizedArtifactsOnly?: boolean
   }): Promise<HostArtifactCatalogItem[]> {
     requireIdentifier(request.projectId, 'projectId')
     const client = await this.getClient()
@@ -270,7 +271,7 @@ class ProjectFilesQueryOwner {
         client.artifactVersion.findMany({
           where: {
             id: request.versionId,
-            state: { in: ['pending', 'finalized'] },
+            state: request.finalizedArtifactsOnly ? 'finalized' : { in: ['pending', 'finalized'] },
             artifact: { is: { projectId: request.projectId } }
           },
           include: { artifact: true },

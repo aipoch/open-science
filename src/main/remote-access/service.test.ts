@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -42,6 +43,27 @@ const remoteResponse = (): ServerResponse =>
     writeHead: vi.fn().mockReturnThis(),
     end: vi.fn().mockReturnThis()
   }) as unknown as ServerResponse
+
+const capturedRemoteResponse = (): {
+  response: ServerResponse
+  header: (name: string) => string | string[] | undefined
+} => {
+  const headers = new Map<string, string | string[]>()
+  const response = {
+    setHeader: (name: string, value: string | string[]) => {
+      headers.set(name.toLowerCase(), value)
+      return response
+    },
+    writeHead: vi.fn().mockReturnThis(),
+    end: vi.fn().mockReturnThis()
+  }
+  return {
+    response: response as unknown as ServerResponse,
+    header: (name) => headers.get(name.toLowerCase())
+  }
+}
+
+const cookiePair = (header: string): string => header.split(';', 1)[0]
 
 const webController = (port = 4180): WebServiceController => ({
   ensureStarted: vi.fn().mockResolvedValue({
@@ -228,6 +250,79 @@ describe('RemoteAccessService', () => {
     })
   })
 
+  it('probes Browser access without closing or invalidating a one-time session', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const controller = webController()
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    service.attachWebController(controller)
+    await service.setMode('remoteit-public')
+
+    const host = 'open-science.connect.remote.it'
+    const pairingResponse = capturedRemoteResponse()
+    await service.webAccess.authorizeHttp(
+      remoteRequest(host),
+      pairingResponse.response,
+      new URL(`https://${host}/`)
+    )
+    const pairingCookie = cookiePair(pairingResponse.header('set-cookie') as string)
+    const [pending] = service.snapshot(true).pendingRequests
+    await service.approve({ requestId: pending.id, decision: 'once' })
+
+    const statusResponse = capturedRemoteResponse()
+    await service.webAccess.authorizeHttp(
+      {
+        ...remoteRequest(host),
+        url: '/__open_science_remote/pair/status',
+        headers: { host, cookie: pairingCookie }
+      } as IncomingMessage,
+      statusResponse.response,
+      new URL(`https://${host}/__open_science_remote/pair/status`)
+    )
+    const sessionCookie = cookiePair((statusResponse.header('set-cookie') as string[])[0])
+    const websocketRequest = {
+      ...remoteRequest(host),
+      url: '/api/v1/events',
+      headers: { host, cookie: sessionCookie, origin: `https://${host}` }
+    } as IncomingMessage
+
+    const authorization = await service.webAccess.authorizeWebSocket(
+      websocketRequest,
+      new URL(`https://${host}/api/v1/events`)
+    )
+    expect(authorization?.isCurrent()).toBe(true)
+
+    await service.probe()
+
+    expect(controller.closeExternalConnections).not.toHaveBeenCalled()
+    expect(authorization?.isCurrent()).toBe(true)
+    const repeatedAuthorization = await service.webAccess.authorizeWebSocket(
+      websocketRequest,
+      new URL(`https://${host}/api/v1/events`)
+    )
+    expect(repeatedAuthorization?.isCurrent()).toBe(true)
+  })
+
+  it('keeps provider observations from a probe current without persisting configuration', async () => {
+    const repository = await createRepository()
+    const before = await repository.load()
+    const deps = createReadyDeps()
+    const observed = readyInstallation('observed-service')
+    deps.detectRemoteIt.mockResolvedValueOnce(observed)
+    const broadcast = vi.fn()
+    const service = await RemoteAccessService.create({ repository, ...deps, broadcast })
+
+    await expect(service.probe()).resolves.toMatchObject({ remoteIt: observed })
+
+    expect(service.snapshot(true).remoteIt).toEqual(observed)
+    expect(await repository.load()).toEqual(before)
+    expect(broadcast).not.toHaveBeenCalled()
+  })
+
   it('keeps separate service IDs while switching between App and Browser access', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()
@@ -302,7 +397,7 @@ describe('RemoteAccessService', () => {
   it('ignores an invalid legacy Browser URL when authorizing App access', async () => {
     const repository = await createRepository()
     await repository.save({
-      version: 4,
+      version: 5,
       mode: 'remoteit',
       remoteItAppServiceId: 'app-service',
       remoteItBrowserServiceId: 'browser-service',
@@ -330,7 +425,7 @@ describe('RemoteAccessService', () => {
   it('disconnects the revoked trusted browser immediately', async () => {
     const repository = await createRepository()
     await repository.save({
-      version: 4,
+      version: 5,
       mode: 'remoteit-public',
       trustedBrowsers: [
         {
@@ -339,7 +434,8 @@ describe('RemoteAccessService', () => {
           platform: 'macOS',
           tokenHash: '00',
           createdAt: 1,
-          lastSeenAt: 1
+          lastSeenAt: 1,
+          expiresAt: Number.MAX_SAFE_INTEGER
         }
       ]
     })
@@ -366,6 +462,80 @@ describe('RemoteAccessService', () => {
     )
     releaseSave?.()
     await revocation
+  })
+
+  it('keeps other trusted browser authorizations current when one browser is revoked', async () => {
+    const repository = await createRepository()
+    const now = Date.now()
+    const tokenHash = (secret: string): string => createHash('sha256').update(secret).digest('hex')
+    await repository.save({
+      version: 5,
+      mode: 'remoteit-public',
+      trustedBrowsers: [
+        {
+          id: 'browser-a',
+          browser: 'Safari',
+          platform: 'macOS',
+          tokenHash: tokenHash('secret-a'),
+          createdAt: now,
+          lastSeenAt: now,
+          expiresAt: Number.MAX_SAFE_INTEGER
+        },
+        {
+          id: 'browser-b',
+          browser: 'Firefox',
+          platform: 'Linux',
+          tokenHash: tokenHash('secret-b'),
+          createdAt: now,
+          lastSeenAt: now,
+          expiresAt: Number.MAX_SAFE_INTEGER
+        }
+      ]
+    })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    const controller = {
+      ...webController(),
+      closeExternalConnections: vi.fn()
+    }
+    service.attachWebController(controller)
+    await service.setMode('remoteit-public')
+    const host = 'open-science.connect.remote.it'
+    const authorizationFor = (
+      browserId: string,
+      secret: string
+    ): ReturnType<typeof service.webAccess.authorizeHttp> =>
+      service.webAccess.authorizeHttp(
+        {
+          method: 'POST',
+          url: '/rpc/projects:list',
+          headers: {
+            host,
+            origin: `https://${host}`,
+            cookie: `open_science_remote_session=${browserId}.${secret}`
+          },
+          socket: { remoteAddress: '203.0.113.10' }
+        } as unknown as IncomingMessage,
+        remoteResponse(),
+        new URL(`https://${host}/rpc/projects:list`)
+      )
+
+    const browserA = await authorizationFor('browser-a', 'secret-a')
+    const browserB = await authorizationFor('browser-b', 'secret-b')
+    if (typeof browserA !== 'object' || typeof browserB !== 'object') {
+      throw new Error('Expected both trusted browsers to be authorized.')
+    }
+    expect(browserA.isCurrent()).toBe(true)
+    expect(browserB.isCurrent()).toBe(true)
+
+    await service.revoke('browser-a')
+
+    expect(browserA.isCurrent()).toBe(false)
+    expect(browserB.isCurrent()).toBe(true)
+    expect(controller.closeExternalConnections).toHaveBeenCalledWith('browser-a')
   })
 
   it('does not retain an unclaimed trusted browser when access is disabled during approval', async () => {
