@@ -64,6 +64,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'locale.setPreference',
   'network.checkConnectivity',
   'network.getInfo',
+  'network.onSystemResume',
   'notifications.getDesktopAvailability',
   'notifications.onOpenSession',
   'notifications.onViewProbe',
