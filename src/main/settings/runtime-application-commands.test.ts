@@ -13,6 +13,12 @@ import {
   settingsRuntimeApplicationCommands,
   type RuntimeSettingsApplicationCommandDependencies
 } from './runtime-application-commands'
+import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
+
+const passThroughSnapshotCommits = {
+  currentSnapshotAfter: (pending: Promise<unknown>) => pending,
+  projectAfter: (pending: Promise<unknown>) => pending
+} as unknown as SettingsSnapshotCommitOwner
 
 const expectedChannels = [
   'settings:uninstall-claude',
@@ -77,7 +83,7 @@ const createDependencies = (): Readonly<{
   ) as RuntimeSettingsApplicationCommandDependencies['workflows']
 
   return {
-    dependencies: { workflows },
+    dependencies: { workflows, snapshotCommits: passThroughSnapshotCommits },
     workflowMethod: (name) => workflows[name] as ReturnType<typeof vi.fn>
   }
 }

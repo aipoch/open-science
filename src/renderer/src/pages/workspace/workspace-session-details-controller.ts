@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 
 import type { EditSessionDetailsRequest } from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
@@ -29,7 +29,9 @@ const useWorkspaceSessionDetailsController = (
   onLoadFailure: () => void
 ): WorkspaceSessionDetailsController => {
   const [dialog, setDialog] = useState<SessionDetailsDialog | null>(null)
+  const dialogIntentRef = useRef(0)
   const open = (session: ChatSession): void => {
+    const intent = ++dialogIntentRef.current
     if (!isPersistenceReady) return
     const show = (authoritative: ChatSession): void =>
       setDialog({
@@ -46,16 +48,20 @@ const useWorkspaceSessionDetailsController = (
       .then((persisted) => {
         if (!persisted) throw new Error('Selected Session JSON is missing.')
         const hydrated = hydratePersistedSessionIfPresent(persisted)
-        if (hydrated) show(hydrated)
+        if (hydrated && intent === dialogIntentRef.current) show(hydrated)
       })
-      .catch(onLoadFailure)
+      .catch(() => {
+        if (intent === dialogIntentRef.current) onLoadFailure()
+      })
   }
   const confirm = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     if (!isPersistenceReady || !dialog || dialog.isSaving || !dialog.titleDraft.trim()) return
+    const intent = dialogIntentRef.current
+    const sessionId = dialog.session.id
     const request: EditSessionDetailsRequest = {
       projectId: dialog.session.projectId,
-      sessionId: dialog.session.id,
+      sessionId,
       title: dialog.titleDraft,
       description: dialog.descriptionDraft
     }
@@ -64,11 +70,17 @@ const useWorkspaceSessionDetailsController = (
       .editDetails(request)
       .then((persisted) => {
         useSessionStore.getState().upsertPersistedSession(persisted)
-        setDialog(null)
+        setDialog((current) =>
+          intent === dialogIntentRef.current && current?.session.id === sessionId ? null : current
+        )
       })
       .catch((error: unknown) => {
         console.warn('editSessionDetails failed', error)
-        setDialog((current) => (current ? { ...current, isSaving: false } : current))
+        setDialog((current) =>
+          intent === dialogIntentRef.current && current?.session.id === sessionId
+            ? { ...current, isSaving: false }
+            : current
+        )
       })
   }
   // Title-only rename (sidebar hover card inline editor). Routes through the session-details
@@ -109,7 +121,11 @@ const useWorkspaceSessionDetailsController = (
   return {
     dialog,
     open,
-    close: () => setDialog((current) => (current?.isSaving ? current : null)),
+    close: () => {
+      if (dialog?.isSaving) return
+      dialogIntentRef.current += 1
+      setDialog(null)
+    },
     changeTitle: (titleDraft) =>
       setDialog((current) => (current ? { ...current, titleDraft } : current)),
     changeDescription: (descriptionDraft) =>

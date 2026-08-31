@@ -107,6 +107,49 @@ describe('project store', () => {
     expect(useProjectStore.getState().projects[0]).toEqual(created)
   })
 
+  it('does not let a late update result replace a newer lifecycle projection', async () => {
+    const original = createProject({ name: 'Original', updatedAt: 1 })
+    const command = createDeferred<Project>()
+    setProjectsApi({ update: vi.fn().mockReturnValue(command.promise) })
+    useProjectStore.setState({ projects: [original], isLoaded: true })
+
+    const update = useProjectStore
+      .getState()
+      .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'Command' })
+    const lifecycle = createProject({ name: 'Lifecycle', updatedAt: 3 })
+    useProjectStore.getState().upsertProject(lifecycle)
+    command.resolve(createProject({ name: 'Command', updatedAt: 2 }))
+
+    await update
+
+    expect(useProjectStore.getState().projects).toEqual([lifecycle])
+  })
+
+  it('lets the later-started update win when both commands begin from the same projection', async () => {
+    const original = createProject({ name: 'Original', updatedAt: 1 })
+    const first = createDeferred<Project>()
+    const second = createDeferred<Project>()
+    setProjectsApi({
+      update: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    })
+    useProjectStore.setState({ projects: [original], isLoaded: true })
+
+    const firstUpdate = useProjectStore
+      .getState()
+      .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'First' })
+    const secondUpdate = useProjectStore
+      .getState()
+      .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'Second' })
+    first.resolve(createProject({ name: 'First', updatedAt: 2 }))
+    await firstUpdate
+    second.resolve(createProject({ name: 'Second', updatedAt: 3 }))
+    await secondUpdate
+
+    expect(useProjectStore.getState().projects).toEqual([
+      createProject({ name: 'Second', updatedAt: 3 })
+    ])
+  })
+
   it('returns cleanup-pending while dropping a committed Project deletion from the cache', async () => {
     useProjectStore.setState({
       projects: [createProject({ id: 'keep' }), createProject({ id: 'drop' })],

@@ -192,6 +192,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // reviewer session id). Project deletion owns the same signal, so user cancellation and Project
   // quiescence converge on one operation without maintaining competing AbortControllers.
   const fixLoopAbortControllers = new Map<string, () => void>()
+  const fixLoopLifecycles = new Map<string, Promise<void>>()
   // Task cancellation targets the whole admitted Review chain, including the initial assessment.
   // Keep this separate from the renderer's fix-loop-only affordance and allow concurrent manual
   // Reviews for different turns in one Session to be cancelled together.
@@ -425,6 +426,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         activeReviewAbortControllers.get(effectiveMainSessionKey) ?? new Set<() => void>()
       activeControllers.add(projectAdmission.abort)
       activeReviewAbortControllers.set(effectiveMainSessionKey, activeControllers)
+      let releaseFixLoop: (() => void) | undefined
 
       void runReview({
         sessionId,
@@ -480,13 +482,34 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           }
         },
         // Broadcast fix-loop lifecycle events and register/deregister the admitted abort capability.
-        onFixLoopStart: () => {
+        onFixLoopStart: async () => {
+          const previous = fixLoopLifecycles.get(effectiveMainSessionKey)
+          let release!: () => void
+          const hold = new Promise<void>((resolve) => {
+            release = resolve
+          })
+          const lifecycle = previous ? previous.catch(() => undefined).then(() => hold) : hold
+          fixLoopLifecycles.set(effectiveMainSessionKey, lifecycle)
+          if (previous) await previous.catch(() => undefined)
+
+          let released = false
+          releaseFixLoop = () => {
+            if (released) return
+            released = true
+            release()
+            void lifecycle.then(() => {
+              if (fixLoopLifecycles.get(effectiveMainSessionKey) === lifecycle) {
+                fixLoopLifecycles.delete(effectiveMainSessionKey)
+              }
+            })
+          }
           fixLoopAbortControllers.set(effectiveMainSessionKey, projectAdmission.abort)
           broadcastFixLoopStart(projectId, effectiveMainSessionId)
         },
         onFixLoopEnd: () => {
           fixLoopAbortControllers.delete(effectiveMainSessionKey)
           broadcastFixLoopEnd(projectId, effectiveMainSessionId)
+          releaseFixLoop?.()
         },
         fixLoopAbortSignal: projectAdmission.signal,
         recordUsage: options.recordUsage

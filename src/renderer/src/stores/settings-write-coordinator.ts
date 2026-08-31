@@ -58,6 +58,7 @@ export type SettingsWriteCoordinator = {
     key: OptimisticSettingsWriteKey,
     confirmedValue: T
   ) => OptimisticSettingsWrite<T>
+  acceptCommitted: (key: OptimisticSettingsWriteKey, value: unknown) => void
   hasPending: (key: OptimisticSettingsWriteKey) => boolean
   clearFailures: () => void
 }
@@ -170,6 +171,10 @@ export const createSettingsWriteCoordinator = (
         run: (write) => runQueued(key, write),
         complete: (value) => completeOptimistic(key, state, value)
       }
+    },
+    acceptCommitted: (key, value) => {
+      const state = optimisticStates.get(key)
+      if (state) state.confirmedValue = value
     },
     hasPending: (key) => (optimisticStates.get(key)?.pendingCount ?? 0) > 0,
     clearFailures: () => {

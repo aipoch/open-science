@@ -23,6 +23,16 @@ vi.mock('electron', () => ({
 
 const { registerSettingsIpcHandlers } = await import('./ipc')
 const { createSettingsWorkflows } = await import('./workflows')
+const { addRendererBroadcastSink, broadcastToRenderers } = await import('../renderer-broadcast')
+const { SettingsSnapshotCommitOwner } = await import('./settings-snapshot-commit-owner')
+
+const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
 
 // A fake service whose methods are all spies; cast to SettingsService only when registering handlers.
 type FakeSettingsService = Record<
@@ -32,9 +42,11 @@ type FakeSettingsService = Record<
   | 'isNpmAvailable'
   | 'checkEnvironment'
   | 'detectClaude'
+  | 'detectCodeBuddy'
   | 'detectOpencode'
   | 'detectCodex'
   | 'installClaude'
+  | 'installCodeBuddy'
   | 'installOpencode'
   | 'installCodex'
   | 'uninstallClaude'
@@ -70,7 +82,15 @@ type FakeSettingsService = Record<
   | 'loginIsolatedClaudeBrowser'
   | 'cancelClaudeIsolatedLogin'
   | 'logoutIsolatedClaude'
+  | 'beginXaiOAuthLogin'
+  | 'waitXaiOAuthLogin'
+  | 'cancelXaiOAuthLogin'
+  | 'logoutXaiOAuth'
+  | 'refreshProviderModels'
   | 'markOnboardingComplete'
+  | 'getPackageMirror'
+  | 'setPackageMirror'
+  | 'setNetworkProxy'
   | 'listSkills'
   | 'getSkillDetail'
   | 'buildSkillExport'
@@ -89,7 +109,8 @@ type FakeSettingsService = Record<
   | 'previewCustomServerTemplateImport'
   | 'setConnectorEnabled'
   | 'updateCustomServer'
-  | 'cancelCustomServerAuthentication',
+  | 'cancelCustomServerAuthentication'
+  | 'setComputeBookmarks',
   ReturnType<typeof vi.fn>
 >
 
@@ -100,11 +121,15 @@ const createFakeService = (): FakeSettingsService => ({
   isNpmAvailable: vi.fn().mockResolvedValue(true),
   checkEnvironment: vi.fn().mockResolvedValue({ ready: true, checks: [] }),
   detectClaude: vi.fn().mockResolvedValue({ found: false }),
+  detectCodeBuddy: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], agentFrameworkId: 'codebuddy' }),
   detectOpencode: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], agentFrameworkId: 'opencode' }),
   detectCodex: vi.fn().mockResolvedValue({ codex: {}, providers: [], agentFrameworkId: 'codex' }),
   installClaude: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
+  installCodeBuddy: vi.fn().mockResolvedValue({ installId: 'cb', ok: true }),
   installOpencode: vi.fn().mockResolvedValue({ installId: 'oc', ok: true }),
   installCodex: vi.fn().mockResolvedValue({ installId: 'cx', ok: true }),
   uninstallClaude: vi.fn().mockResolvedValue({
@@ -183,7 +208,15 @@ const createFakeService = (): FakeSettingsService => ({
   loginIsolatedClaudeBrowser: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelClaudeIsolatedLogin: vi.fn(),
   logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  beginXaiOAuthLogin: vi.fn().mockResolvedValue({ userCode: 'XAI-1234' }),
+  waitXaiOAuthLogin: vi.fn().mockResolvedValue({ accountEmail: 'user@example.com' }),
+  cancelXaiOAuthLogin: vi.fn(),
+  logoutXaiOAuth: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
+  refreshProviderModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),
   markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
+  getPackageMirror: vi.fn().mockResolvedValue({}),
+  setPackageMirror: vi.fn().mockResolvedValue({}),
+  setNetworkProxy: vi.fn().mockResolvedValue({ mode: 'system' }),
   listSkills: vi.fn().mockResolvedValue([]),
   getSkillDetail: vi.fn().mockResolvedValue({
     id: 'demo',
@@ -242,7 +275,8 @@ const createFakeService = (): FakeSettingsService => ({
   }),
   setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
   updateCustomServer: vi.fn().mockResolvedValue({ connectors: [], customServers: [] }),
-  cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined)
+  cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
+  setComputeBookmarks: vi.fn().mockResolvedValue([])
 })
 
 // Adapts the spy bag into the SettingsService shape the registration function expects.
@@ -278,6 +312,9 @@ const registerTestSettingsIpcHandlers = ({
 }: TestSettingsIpcOptions): void => {
   registerSettingsIpcHandlers({
     service,
+    snapshotCommits: new SettingsSnapshotCommitOwner(service, {
+      publish: (channel, payload) => broadcastToRenderers(channel, payload)
+    }),
     workflows: createSettingsWorkflows(service, {
       runtime: {
         requestProviderReconnect: onActiveProviderChanged ?? (() => undefined),
@@ -1020,6 +1057,7 @@ describe('settings IPC handlers', () => {
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], agentFrameworkId: 'opencode' }
     service.detectOpencode.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     registerTestSettingsIpcHandlers({ service: asService(service) })
 
     const result = await invoke('settings:detect-opencode')
@@ -1061,6 +1099,7 @@ describe('settings IPC handlers', () => {
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], agentFrameworkId: 'opencode' }
     service.setAgentFramework.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     const onActiveProviderChanged = vi.fn()
     const onAgentFrameworkChanged = vi.fn()
     registerTestSettingsIpcHandlers({
@@ -1084,6 +1123,7 @@ describe('settings IPC handlers', () => {
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], reasoningEffort: 'high' }
     service.setReasoningEffort.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     const onActiveProviderChanged = vi.fn()
     registerTestSettingsIpcHandlers({
       service: asService(service),
@@ -1096,6 +1136,169 @@ describe('settings IPC handlers', () => {
     expect(service.resolveActiveReasoningEffort).not.toHaveBeenCalled()
     expect(onActiveProviderChanged).not.toHaveBeenCalled()
     expect(result).toBe(snapshot)
+  })
+
+  it('broadcasts every committed optimistic preference snapshot', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+    const changed: unknown[] = []
+    const removeSink = addRendererBroadcastSink((channel, payload) => {
+      if (channel === 'settings:changed') changed.push(payload)
+    })
+
+    try {
+      const expected = await Promise.all([
+        invoke('settings:set-reasoning-effort', { effort: 'high' }),
+        invoke('settings:set-session-details-model', {
+          configuration: { mode: 'inherit', reasoningEffort: 'low' }
+        }),
+        invoke('settings:set-notifications-enabled', { enabled: false }),
+        invoke('settings:set-show-notification-content', { enabled: false }),
+        invoke('settings:set-conversation-skill-import-enabled', { enabled: false }),
+        invoke('settings:set-close-preference', { preference: 'quit' }),
+        invoke('settings:set-app-icon-variant', { variant: 'dark' }),
+        invoke('settings:set-project-files-filter', { filter: { sourceMode: 'local' } }),
+        invoke('settings:set-default-permission-profile', { profile: 'auto' })
+      ])
+
+      expect(changed).toEqual(expect.arrayContaining(expected))
+      expect(changed).toHaveLength(expected.length)
+    } finally {
+      removeSink()
+    }
+  })
+
+  it('returns and broadcasts a current snapshot when an older mutation snapshot resolves late', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const staleSnapshot = { claude: {}, providers: [], notificationsEnabled: false }
+    const newerMutationSnapshot = {
+      claude: {},
+      providers: [],
+      notificationsEnabled: true,
+      showNotificationContent: false
+    }
+    const currentSnapshot = {
+      claude: {},
+      providers: [],
+      notificationsEnabled: false,
+      showNotificationContent: false
+    }
+    const staleMutation = deferred<typeof staleSnapshot>()
+    service.setNotificationsEnabled.mockReturnValueOnce(staleMutation.promise)
+    service.setShowNotificationContent.mockResolvedValueOnce(newerMutationSnapshot)
+    service.getSettingsView.mockResolvedValue(currentSnapshot)
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+    const changed: unknown[] = []
+    const removeSink = addRendererBroadcastSink((channel, payload) => {
+      if (channel === 'settings:changed') changed.push(payload)
+    })
+
+    try {
+      const older = invoke('settings:set-notifications-enabled', { enabled: false })
+      const newer = invoke('settings:set-show-notification-content', { enabled: false })
+      await expect(newer).resolves.toBe(currentSnapshot)
+      staleMutation.resolve(staleSnapshot)
+      await expect(older).resolves.toBe(currentSnapshot)
+      expect(changed).toEqual([currentSnapshot, currentSnapshot])
+    } finally {
+      removeSink()
+    }
+  })
+
+  it('serializes current snapshot reads and broadcasts in mutation-completion order', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const firstSnapshot = { claude: {}, providers: [], notificationsEnabled: false }
+    const secondSnapshot = {
+      claude: {},
+      providers: [],
+      notificationsEnabled: false,
+      showNotificationContent: false
+    }
+    const firstRead = deferred<typeof firstSnapshot>()
+    service.getSettingsView
+      .mockReturnValueOnce(firstRead.promise)
+      .mockResolvedValueOnce(secondSnapshot)
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+    const changed: unknown[] = []
+    const removeSink = addRendererBroadcastSink((channel, payload) => {
+      if (channel === 'settings:changed') changed.push(payload)
+    })
+
+    try {
+      const first = invoke('settings:set-notifications-enabled', { enabled: false })
+      await vi.waitFor(() => expect(service.getSettingsView).toHaveBeenCalledOnce())
+      const second = invoke('settings:set-show-notification-content', { enabled: false })
+      await Promise.resolve()
+      expect(service.getSettingsView).toHaveBeenCalledOnce()
+
+      firstRead.resolve(firstSnapshot)
+      await expect(first).resolves.toBe(firstSnapshot)
+      await expect(second).resolves.toBe(secondSnapshot)
+      expect(changed).toEqual([firstSnapshot, secondSnapshot])
+    } finally {
+      removeSink()
+    }
+  })
+
+  it.each([
+    ['settings:check-environment', undefined],
+    ['settings:detect-codebuddy', undefined],
+    ['settings:install-codebuddy', { source: 'managed' }],
+    ['settings:uninstall-codex', undefined],
+    ['settings:upsert-provider', { type: 'custom', name: 'Lab' }],
+    ['settings:set-agent-framework', { id: 'opencode' }],
+    ['settings:validate-provider', { providerId: 'p1' }],
+    ['settings:login-isolated-codex', undefined],
+    ['settings:wait-xai-oauth-login', undefined],
+    ['settings:refresh-provider-models', { providerId: 'p1' }],
+    ['settings:mark-onboarding-complete', undefined],
+    ['settings:set-package-mirror', {}],
+    ['settings:set-network-proxy', { mode: 'system' }]
+  ])('broadcasts the current SettingsSnapshot after %s', async (channel, payload) => {
+    handlers.clear()
+    const service = createFakeService()
+    const currentSnapshot = { claude: {}, providers: [], notificationsEnabled: true }
+    service.getSettingsView.mockResolvedValue(currentSnapshot)
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+    const changed: unknown[] = []
+    const removeSink = addRendererBroadcastSink((broadcastChannel, broadcastPayload) => {
+      if (broadcastChannel === 'settings:changed') changed.push(broadcastPayload)
+    })
+
+    try {
+      await invoke(channel, payload)
+      expect(changed).toEqual([currentSnapshot])
+    } finally {
+      removeSink()
+    }
+  })
+
+  it('does not broadcast SettingsSnapshot for Skill, Connector, or Bookmark directory changes', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+    const changed: unknown[] = []
+    const removeSink = addRendererBroadcastSink((channel, payload) => {
+      if (channel === 'settings:changed') changed.push(payload)
+    })
+
+    try {
+      await invoke('settings:set-skill-enabled', { id: 'skill-a', enabled: false })
+      await invoke('settings:set-connector-enabled', { id: 'connector-a', enabled: false })
+      await (
+        handlers.get('compute:bookmarks:set') as unknown as (
+          event: unknown,
+          providerId: string,
+          folders: string[]
+        ) => Promise<unknown>
+      )({ sender: ipcSender }, 'compute-a', ['/work'])
+      expect(changed).toEqual([])
+    } finally {
+      removeSink()
+    }
   })
 
   it('rejects an unknown reasoning effort without touching the service or the agent', async () => {
@@ -1129,6 +1332,7 @@ describe('settings IPC handlers', () => {
     }
     const snapshot = { claude: {}, providers: [], subagentModel: configuration }
     service.setSubagentModel.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     registerTestSettingsIpcHandlers({ service: asService(service) })
 
     await expect(invoke('settings:set-subagent-model', { configuration })).resolves.toBe(snapshot)
@@ -1153,6 +1357,7 @@ describe('settings IPC handlers', () => {
     }
     const snapshot = { claude: {}, providers: [], reviewerModel: configuration }
     service.setReviewerModel.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     registerTestSettingsIpcHandlers({ service: asService(service) })
 
     await expect(invoke('settings:set-reviewer-model', { configuration })).resolves.toBe(snapshot)
@@ -1172,6 +1377,7 @@ describe('settings IPC handlers', () => {
     const configuration = { mode: 'inherit' as const, reasoningEffort: 'low' as const }
     const snapshot = { claude: {}, providers: [], sessionDetailsModel: configuration }
     service.setSessionDetailsModel.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     registerTestSettingsIpcHandlers({ service: asService(service) })
 
     await expect(invoke('settings:set-session-details-model', { configuration })).resolves.toBe(
@@ -1193,6 +1399,7 @@ describe('settings IPC handlers', () => {
     }
     const snapshot = { claude: {}, providers: [], visionModel: configuration }
     service.setVisionModel.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     registerTestSettingsIpcHandlers({ service: asService(service) })
 
     await expect(invoke('settings:set-vision-model', { configuration })).resolves.toBe(snapshot)
@@ -1211,6 +1418,7 @@ describe('settings IPC handlers', () => {
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], notificationsEnabled: false }
     service.setNotificationsEnabled.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     registerTestSettingsIpcHandlers({ service: asService(service) })
 
     const result = await invoke('settings:set-notifications-enabled', { enabled: false })
@@ -1240,6 +1448,7 @@ describe('settings IPC handlers', () => {
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], showNotificationContent: true }
     service.setShowNotificationContent.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     registerTestSettingsIpcHandlers({ service: asService(service) })
 
     const result = await invoke('settings:set-show-notification-content', { enabled: true })
@@ -1267,6 +1476,7 @@ describe('settings IPC handlers', () => {
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], conversationSkillImportEnabled: false }
     service.setConversationSkillImportEnabled.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     const onSkillsChanged = vi.fn()
     registerTestSettingsIpcHandlers({ service: asService(service), onSkillsChanged })
 
@@ -1335,6 +1545,7 @@ describe('settings IPC handlers', () => {
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], appIconVariant: 'dark' }
     service.setAppIconVariant.mockResolvedValue(snapshot)
+    service.getSettingsView.mockResolvedValue(snapshot)
     const onAppIconVariantChanged = vi.fn()
     registerTestSettingsIpcHandlers({ service: asService(service), onAppIconVariantChanged })
 
@@ -1349,6 +1560,11 @@ describe('settings IPC handlers', () => {
   it('persists valid default permission profiles and rejects unknown values', async () => {
     handlers.clear()
     const service = createFakeService()
+    service.getSettingsView.mockResolvedValue({
+      claude: {},
+      providers: [],
+      defaultPermissionProfile: 'auto'
+    })
     registerTestSettingsIpcHandlers({ service: asService(service) })
 
     const result = await invoke('settings:set-default-permission-profile', { profile: 'auto' })

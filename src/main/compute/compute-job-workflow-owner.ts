@@ -327,12 +327,14 @@ export class ComputeJobWorkflowOwner {
 
     let allowUnencryptedPersistence = !this.jobRepository.isFieldProtectionAvailable()
     await requestApproval(allowUnencryptedPersistence)
+    signal?.throwIfAborted()
 
     const commandHash = hashCommand(command)
     const inputManifest = stagedEntries.length > 0 ? JSON.stringify(stagedEntries) : undefined
     const jobRepository = this.jobRepository
     let dispatchHandoffHeld = false
     const createRow = async (initialStatus: 'submitted' | 'queued'): Promise<void> => {
+      signal?.throwIfAborted()
       if (initialStatus === 'submitted') {
         sharedDispatchTracker.begin(jobId)
         dispatchHandoffHeld = true

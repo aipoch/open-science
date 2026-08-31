@@ -14,6 +14,21 @@ import {
   settingsCoreApplicationCommands,
   type CoreSettingsApplicationCommandDependencies
 } from './application-commands'
+import { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
+
+const passThroughSnapshotCommits = {
+  currentSnapshotAfter: (pending: Promise<unknown>) => pending,
+  projectAfter: (pending: Promise<unknown>) => pending,
+  readCurrentSnapshot: () => Promise.resolve(undefined)
+} as unknown as SettingsSnapshotCommitOwner
+
+const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
 
 const expectedChannels = [
   'settings:cancel-claude-login',
@@ -87,7 +102,9 @@ const invocation = <Args extends readonly unknown[]>(
     args
   })
 
-const createDependencies = (): Readonly<{
+const createDependencies = (
+  snapshotCommits: SettingsSnapshotCommitOwner = passThroughSnapshotCommits
+): Readonly<{
   appearance: ReturnType<typeof vi.fn>
   dependencies: CoreSettingsApplicationCommandDependencies
   emitInstallEvent: ReturnType<typeof vi.fn>
@@ -117,6 +134,7 @@ const createDependencies = (): Readonly<{
     dependencies: {
       service,
       appearance: { setAppIconVariant: appearance },
+      snapshotCommits,
       emitInstallEvent,
       listAppIconPreviews: vi.fn(() => [])
     },
@@ -126,6 +144,48 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings core application commands', () => {
+  it('returns and publishes current snapshots when an older command result resolves late', async () => {
+    const currentSnapshot = {
+      claude: {},
+      providers: [],
+      notificationsEnabled: false,
+      showNotificationContent: false
+    }
+    const staleSnapshot = { claude: {}, providers: [], notificationsEnabled: false }
+    const staleMutation = deferred<typeof staleSnapshot>()
+    const published: unknown[] = []
+    const snapshotCommits = new SettingsSnapshotCommitOwner(
+      { getSettingsView: vi.fn().mockResolvedValue(currentSnapshot) },
+      {
+        publish: (channel, payload) => {
+          if (channel === 'settings:changed') published.push(payload)
+        }
+      }
+    )
+    const { dependencies, serviceMethod } = createDependencies(snapshotCommits)
+    serviceMethod('setNotificationsEnabled').mockReturnValueOnce(staleMutation.promise)
+    serviceMethod('setShowNotificationContent').mockResolvedValueOnce({
+      ...currentSnapshot,
+      notificationsEnabled: true
+    })
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+
+    const older = router.dispatcher.invoke(
+      settingsCoreApplicationCommands.setNotificationsEnabled,
+      invocation([{ enabled: false }] as const)
+    )
+    const newer = router.dispatcher.invoke(
+      settingsCoreApplicationCommands.setShowNotificationContent,
+      invocation([{ enabled: false }] as const)
+    )
+
+    await expect(newer).resolves.toBe(currentSnapshot)
+    staleMutation.resolve(staleSnapshot)
+    await expect(older).resolves.toBe(currentSnapshot)
+    expect(published).toEqual([currentSnapshot, currentSnapshot])
+  })
+
   it('installs the exact command inventory and dispatches a remote-safe preflight query', async () => {
     const { dependencies, serviceMethod } = createDependencies()
     const preflight = { agentReady: true }

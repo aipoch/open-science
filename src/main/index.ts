@@ -484,6 +484,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               taskNotifications,
               notificationInbox,
               settingsService,
+              commitClosePreference,
               taskAgent,
               taskControls,
               computePreferences,
@@ -631,7 +632,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
                   {
                     get: () => settingsService.getClosePreference(),
                     set: async (preference) => {
-                      await settingsService.setClosePreference(preference)
+                      await commitClosePreference(preference)
                     }
                   },
                   translate

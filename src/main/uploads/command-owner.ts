@@ -355,11 +355,20 @@ const createUploadCommandOwner = (
 
       try {
         await writer.ready
-        if (writer.cancelled) {
-          await writer.cleanup
-          throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
-        }
-        writer.settling = true
+      } catch (error) {
+        await abortChunkWriter(request.transferId, writer)
+        throw error
+      }
+      if (writer.cancelled) {
+        await writer.cleanup
+        throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
+      }
+      if (writer.settling) {
+        throw new Error(`Upload transfer is already finishing: ${request.transferId}`)
+      }
+      writer.settling = true
+
+      try {
         await Promise.allSettled([...writer.inFlight])
         return await repository.finishTransfer(request)
       } catch (error) {
@@ -375,6 +384,9 @@ const createUploadCommandOwner = (
 
       const writer = getOwnedChunkWriter(callerLease, request.transferId)
       if (!writer) return withDataRootWrite(() => repository.abortTransfer(request))
+      if (writer.settling) {
+        throw new Error(`Upload transfer is already finishing: ${request.transferId}`)
+      }
 
       await abortChunkWriter(request.transferId, writer)
     },

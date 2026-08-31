@@ -135,16 +135,27 @@ const createCommands = (persisted: Partial<SettingsSnapshot>): CommandMocks => {
     setAppIconVariant: vi.fn(({ variant }) => save('appIconVariant', variant)),
     setProjectFilesFilter: vi.fn(({ filter }) => save('projectFilesFilter', filter)),
     setDefaultPermissionProfile: vi.fn(({ profile }) => save('defaultPermissionProfile', profile)),
-    markOnboardingComplete: vi.fn().mockResolvedValue(snapshot({ onboardingCompletedAt: 42 })),
-    setPackageMirror: vi.fn((mirror) => Promise.resolve(mirror)),
-    setNetworkProxy: vi.fn((settings) => Promise.resolve(settings)),
-    setNotebookNetwork: vi.fn((settings) =>
-      Promise.resolve({
+    markOnboardingComplete: vi.fn(() => {
+      persisted.onboardingCompletedAt = 42
+      return Promise.resolve(snapshot(persisted))
+    }),
+    setPackageMirror: vi.fn((mirror) => {
+      persisted.packageMirror = mirror
+      return Promise.resolve(mirror)
+    }),
+    setNetworkProxy: vi.fn((settings) => {
+      persisted.networkProxy = settings
+      return Promise.resolve(settings)
+    }),
+    setNotebookNetwork: vi.fn((settings) => {
+      const saved = {
         allowedDomains: settings.allowedDomains,
         disabledOpenScienceDomainGroups: settings.disabledOpenScienceDomainGroups,
         disabledOpenScienceDomains: settings.disabledOpenScienceDomains
-      })
-    )
+      }
+      persisted.notebookNetwork = saved
+      return Promise.resolve(saved)
+    })
   }
 }
 
@@ -289,6 +300,7 @@ describe('settings preferences slice', () => {
     })
 
     commands.setPackageMirror.mockResolvedValueOnce({})
+    commands.getSettings.mockResolvedValueOnce(snapshot({ onboardingCompletedAt: 42 }))
     await store.getState().setPackageMirror({})
     expect(store.getState().packageMirror).toBeUndefined()
   })

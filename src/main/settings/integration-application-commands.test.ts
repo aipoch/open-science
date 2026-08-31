@@ -26,6 +26,12 @@ import {
   settingsSkillApplicationCommandGroup,
   type IntegrationSettingsApplicationCommandDependencies
 } from './integration-application-commands'
+import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
+
+const passThroughSnapshotCommits = {
+  currentSnapshotAfter: (pending: Promise<unknown>) => pending,
+  projectAfter: (pending: Promise<unknown>) => pending
+} as unknown as SettingsSnapshotCommitOwner
 
 const expectedSkillChannels = [
   'settings:set-conversation-skill-import-enabled',
@@ -130,6 +136,7 @@ const createDependencies = (): Readonly<{
     dependencies: {
       skills: skills.port,
       connectors: connectors.port,
+      snapshotCommits: passThroughSnapshotCommits,
       connectorApprovals: {
         getPending: vi.fn(() => null),
         replayPending: vi.fn(),

@@ -7,6 +7,7 @@ import {
 } from '../application-command-router'
 import type { CallerContext } from '../caller-context'
 import { readIsolatedClaudeToken, readReasoningEffort } from './transport-validation'
+import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import type { RuntimeSettingsWorkflows } from './workflows/runtime'
 
 type RuntimeSettingsCommandWorkflows = Pick<
@@ -168,6 +169,7 @@ const settingsRuntimeApplicationCommandGroup = defineApplicationCommandGroup('se
 
 type RuntimeSettingsApplicationCommandDependencies = Readonly<{
   workflows: RuntimeSettingsCommandWorkflows
+  snapshotCommits: SettingsSnapshotCommitOwner
 }>
 
 const requireLocalCaller = (context: CallerContext, channel: string): void => {
@@ -186,55 +188,87 @@ const registerRuntimeSettingsApplicationCommands = (
     scope.registerGroup(settingsRuntimeApplicationCommandGroup, {
       'settings:uninstall-claude': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:uninstall-claude')
-        return dependencies.workflows.uninstallRuntime('uninstallClaude', 'claude-code')
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.uninstallRuntime('uninstallClaude', 'claude-code')
+        )
       },
       'settings:uninstall-codex': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:uninstall-codex')
-        return dependencies.workflows.uninstallRuntime('uninstallCodex', 'codex')
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.uninstallRuntime('uninstallCodex', 'codex')
+        )
       },
       'settings:uninstall-codebuddy': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:uninstall-codebuddy')
-        return dependencies.workflows.uninstallRuntime('uninstallCodeBuddy', 'codebuddy')
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.uninstallRuntime('uninstallCodeBuddy', 'codebuddy')
+        )
       },
       'settings:uninstall-opencode': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:uninstall-opencode')
-        return dependencies.workflows.uninstallRuntime('uninstallOpencode', 'opencode')
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.uninstallRuntime('uninstallOpencode', 'opencode')
+        )
       },
-      'settings:upsert-provider': ({ args }) => dependencies.workflows.upsertProvider(args[0]),
-      'settings:delete-provider': ({ args }) => dependencies.workflows.deleteProvider(args[0].id),
+      'settings:upsert-provider': ({ args }) =>
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.upsertProvider(args[0])
+        ),
+      'settings:delete-provider': ({ args }) =>
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.deleteProvider(args[0].id)
+        ),
       'settings:set-active-provider': ({ args }) =>
-        dependencies.workflows.setActiveProvider(args[0]),
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.setActiveProvider(args[0])
+        ),
       'settings:set-agent-framework': ({ args }) =>
-        dependencies.workflows.setAgentFramework(args[0]),
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.setAgentFramework(args[0])
+        ),
       'settings:set-reasoning-effort': ({ args }) =>
-        dependencies.workflows.setReasoningEffort({ effort: readReasoningEffort(args[0]) }),
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.setReasoningEffort({ effort: readReasoningEffort(args[0]) })
+        ),
       'settings:login-shared-claude': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:login-shared-claude')
-        return dependencies.workflows.loginClaudeShared()
+        return dependencies.snapshotCommits.projectAfter(dependencies.workflows.loginClaudeShared())
       },
       'settings:logout-shared-claude': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:logout-shared-claude')
-        return dependencies.workflows.logoutClaudeShared()
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.workflows.logoutClaudeShared()
+        )
       },
       'settings:login-isolated-claude': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:login-isolated-claude')
-        return dependencies.workflows.loginIsolatedClaude(readIsolatedClaudeToken(args[0]))
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.workflows.loginIsolatedClaude(readIsolatedClaudeToken(args[0]))
+        )
       },
       'settings:login-isolated-claude-browser': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:login-isolated-claude-browser')
-        return dependencies.workflows.loginIsolatedClaudeBrowser()
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.workflows.loginIsolatedClaudeBrowser()
+        )
       },
       'settings:logout-isolated-claude': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:logout-isolated-claude')
-        return dependencies.workflows.logoutIsolatedClaude()
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.workflows.logoutIsolatedClaude()
+        )
       },
       'settings:login-isolated-codex': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:login-isolated-codex')
-        return dependencies.workflows.loginIsolatedCodex()
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.workflows.loginIsolatedCodex()
+        )
       },
       'settings:logout-isolated-codex': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:logout-isolated-codex')
-        return dependencies.workflows.logoutIsolatedCodex()
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.workflows.logoutIsolatedCodex()
+        )
       },
       'settings:begin-xai-oauth-login': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:begin-xai-oauth-login')
@@ -242,7 +276,7 @@ const registerRuntimeSettingsApplicationCommands = (
       },
       'settings:wait-xai-oauth-login': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:wait-xai-oauth-login')
-        return dependencies.workflows.waitXaiOAuthLogin()
+        return dependencies.snapshotCommits.projectAfter(dependencies.workflows.waitXaiOAuthLogin())
       },
       'settings:cancel-xai-oauth-login': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:cancel-xai-oauth-login')
@@ -250,7 +284,9 @@ const registerRuntimeSettingsApplicationCommands = (
       },
       'settings:logout-xai-oauth': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:logout-xai-oauth')
-        return dependencies.workflows.logoutXaiOAuth()
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.logoutXaiOAuth()
+        )
       }
     })
     return scope.complete()

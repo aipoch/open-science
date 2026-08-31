@@ -36,4 +36,9 @@ describe('main startup ordering', () => {
     expect(createCloseConfirm).toBeGreaterThan(bindTranslator)
     expect(closeConfirmTranslation).toBeGreaterThan(createCloseConfirm)
   })
+
+  it('routes native close-preference writes through the settings commit owner', () => {
+    expect(mainSource).toContain('await commitClosePreference(preference)')
+    expect(mainSource).not.toContain('await settingsService.setClosePreference(preference)')
+  })
 })

@@ -275,6 +275,27 @@ describe('CompletionHandoffLifecycle', () => {
     expect(await repository.get(context)).toMatchObject({ stage: 'continued' })
   })
 
+  it('joins concurrent retries so handoff side effects run exactly once', async () => {
+    const repository = new InMemoryCompletionHandoffRepository()
+    const { runtime } = createRuntime({
+      reconfigure: vi.fn().mockRejectedValueOnce(new Error('target unavailable'))
+    })
+    const lifecycle = new CompletionHandoffLifecycle(repository, runtime)
+
+    await lifecycle.approve({ context, targetName: 'Approved Specialist', generation: 1 })
+    await lifecycle.capture(context, { kind: 'returned', value: 'captured' })
+    await expect(lifecycle.run(context)).resolves.toMatchObject({ stage: 'failed' })
+
+    await expect(
+      Promise.all([lifecycle.retry(context), lifecycle.retry(context)])
+    ).resolves.toEqual([
+      expect.objectContaining({ stage: 'continued' }),
+      expect.objectContaining({ stage: 'continued' })
+    ])
+    expect(runtime.reconfigure).toHaveBeenCalledTimes(2)
+    expect(runtime.continueAsApproved).toHaveBeenCalledOnce()
+  })
+
   it('does not create a binding when cancellation happens before approval, and cancellation after approval never permits the old identity to resume', async () => {
     const repository = new InMemoryCompletionHandoffRepository()
     const { runtime, requests } = createRuntime()
