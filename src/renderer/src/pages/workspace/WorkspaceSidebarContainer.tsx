@@ -6,6 +6,7 @@ import {
   loadPersistedSession
 } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -37,6 +38,11 @@ const WorkspaceSidebarContainer = ({
     )
   )
   const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const unreadSessionIdsSnapshot = useNotificationInboxStore((state) => state.unreadSessionIds)
+  const unreadSessionIds = useMemo(
+    () => new Set(unreadSessionIdsSnapshot),
+    [unreadSessionIdsSnapshot]
+  )
   const credentialPendingSessionIds = useMemo(
     () =>
       new Set(
@@ -93,6 +99,7 @@ const WorkspaceSidebarContainer = ({
       onMobileClose={onMobileClose}
       starNudgeKey={projectId}
       sessions={sessions}
+      unreadSessionIds={unreadSessionIds}
       credentialPendingSessionIds={credentialPendingSessionIds}
       otherProjects={otherProjects}
       onOpenProject={handleOpenProject}

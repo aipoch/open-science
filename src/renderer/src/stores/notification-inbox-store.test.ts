@@ -14,6 +14,7 @@ describe('notification inbox store', () => {
     const getSnapshot = vi.fn(async () => ({
       revision: 2,
       unreadCount: 1,
+      unreadSessionIds: ['session-1'],
       latestSequence: 4,
       items: []
     }))
@@ -30,6 +31,7 @@ describe('notification inbox store', () => {
     const getSnapshot = vi.fn(async () => ({
       revision: 2,
       unreadCount: 0,
+      unreadSessionIds: [],
       latestSequence: 3,
       items: []
     }))
@@ -46,7 +48,13 @@ describe('notification inbox store', () => {
   })
 
   it('accepts a lower revision from a restarted backend as authoritative', async () => {
-    const snapshot = { revision: 1, unreadCount: 0, latestSequence: 0, items: [] }
+    const snapshot = {
+      revision: 1,
+      unreadCount: 0,
+      unreadSessionIds: [],
+      latestSequence: 0,
+      items: []
+    }
     vi.stubGlobal('window', {
       api: { notifications: { getSnapshot: vi.fn(async () => snapshot) } }
     })
@@ -65,6 +73,7 @@ describe('notification inbox store', () => {
     const getSnapshot = vi.fn(async () => ({
       revision: 2,
       unreadCount: 1,
+      unreadSessionIds: ['session-1'],
       latestSequence: 3,
       items: []
     }))
@@ -100,6 +109,7 @@ describe('notification inbox store', () => {
     const getSnapshot = vi.fn(async () => ({
       revision: 2,
       unreadCount: 1,
+      unreadSessionIds: ['session-1'],
       latestSequence: 3,
       items: []
     }))

@@ -63,6 +63,7 @@ describe('NotificationInboxDbRepository', () => {
     expect((await repository.snapshot()).items.every((item) => item.readAt === undefined)).toBe(
       true
     )
+    expect((await repository.snapshot()).unreadSessionIds).toEqual(['session-one', 'session-two'])
   })
 
   it('returns every active pending action in addition to recent history', async () => {
@@ -100,6 +101,7 @@ describe('NotificationInboxDbRepository', () => {
 
     const snapshot = await repository.snapshot()
     expect(snapshot.unreadCount).toBe(1)
+    expect(snapshot.unreadSessionIds).toEqual(['session-after'])
     expect(snapshot.items.find((item) => item.originId === 'before')?.readAt).toBe(1000)
     expect(snapshot.items.find((item) => item.originId === 'after')?.readAt).toBeUndefined()
   })
@@ -225,7 +227,7 @@ describe('NotificationInboxDbRepository', () => {
     expect(snapshot.items.find((item) => item.kind === 'task.failed')?.readAt).toBeUndefined()
   })
 
-  it('marks only the latest notification for each session unread and promotes it into snapshots', async () => {
+  it('restores only the latest notification per session without advancing its sequence', async () => {
     const repository = await createRepository()
     for (const originId of ['older', 'latest']) {
       await repository.record({
@@ -244,16 +246,19 @@ describe('NotificationInboxDbRepository', () => {
     expect((await repository.snapshot()).items.some((item) => item.id === 'item-latest')).toBe(
       false
     )
+    const latestSequence = (await repository.snapshot()).latestSequence
 
     await repository.markSessionUnread(['session-shared'])
 
     const snapshot = await repository.snapshot()
     expect(snapshot.unreadCount).toBe(51)
-    expect(snapshot.items[0]).toMatchObject({
+    expect(snapshot.latestSequence).toBe(latestSequence)
+    expect(snapshot.unreadSessionIds).toContain('session-shared')
+    expect(snapshot.items.find((item) => item.id === 'item-latest')).toMatchObject({
       id: 'item-latest',
       sessionId: 'session-shared'
     })
-    expect(snapshot.items[0]).not.toHaveProperty('readAt')
+    expect(snapshot.items.find((item) => item.id === 'item-latest')).not.toHaveProperty('readAt')
     expect(
       await client!.notificationInboxItem.findUnique({ where: { id: 'item-older' } })
     ).toMatchObject({

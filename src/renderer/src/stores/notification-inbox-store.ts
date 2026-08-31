@@ -16,6 +16,7 @@ type NotificationInboxStore = NotificationInboxSnapshot & {
 const EMPTY_SNAPSHOT: NotificationInboxSnapshot = {
   revision: 0,
   unreadCount: 0,
+  unreadSessionIds: [],
   latestSequence: 0,
   items: []
 }

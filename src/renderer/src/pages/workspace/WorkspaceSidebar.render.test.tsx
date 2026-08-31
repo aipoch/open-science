@@ -135,7 +135,8 @@ const createMessage = (): ChatSession['messages'][number] => ({
 const renderSidebar = async (
   sessions: ChatSession[],
   mobileMode = false,
-  credentialPendingSessionIds?: ReadonlySet<string>
+  credentialPendingSessionIds?: ReadonlySet<string>,
+  unreadSessionIds?: ReadonlySet<string>
 ): Promise<string> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
 
@@ -143,6 +144,7 @@ const renderSidebar = async (
     <WorkspaceSidebar
       projectName="Example project"
       sessions={sessions}
+      unreadSessionIds={unreadSessionIds}
       credentialPendingSessionIds={credentialPendingSessionIds}
       activeSessionId={sessions[0]?.id}
       canCreateConversation
@@ -1439,6 +1441,39 @@ describe('WorkspaceSidebar accessible render', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('fills the idle status dot green and emphasizes the title for unread Sessions', async () => {
+    const session = createSession({
+      id: 'session-unread',
+      title: 'Read this later',
+      status: 'idle'
+    })
+    const container = document.createElement('div')
+    container.innerHTML = await renderSidebar([session], false, undefined, new Set([session.id]))
+
+    const title = container.querySelector<HTMLElement>('[data-slot="session-title-marquee"]')
+    const status = container.querySelector<HTMLElement>('[data-slot="session-status-indicator"]')
+
+    expect(title?.classList).toContain('font-semibold')
+    expect(status?.classList).toContain('bg-success-000')
+    expect(status?.classList).not.toContain('bg-destructive')
+    expect(container.querySelector('[data-slot="session-unread-indicator"]')).toBeNull()
+    expect(container.textContent).toContain('Unread')
+  })
+
+  it('keeps lifecycle status colors ahead of unread green', async () => {
+    const session = createSession({
+      id: 'session-waiting-unread',
+      title: 'Needs approval',
+      status: 'waiting-permission'
+    })
+    const container = document.createElement('div')
+    container.innerHTML = await renderSidebar([session], false, undefined, new Set([session.id]))
+
+    const status = container.querySelector<HTMLElement>('[data-slot="session-status-indicator"]')
+    expect(status?.classList).toContain('bg-session-waiting')
+    expect(status?.classList).not.toContain('bg-success-000')
   })
 
   it('wires session open and row menu actions to the matching session', async () => {

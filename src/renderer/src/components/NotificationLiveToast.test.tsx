@@ -109,6 +109,27 @@ afterEach(() => {
 })
 
 describe('NotificationLiveToast', () => {
+  it('does not toast when an existing Session is marked unread', async () => {
+    useNotificationInboxStore.setState({
+      unreadCount: 0,
+      unreadSessionIds: [],
+      latestSequence: 1,
+      items: [item(1, { readAt: 1000 })]
+    })
+    await act(async () => root.render(<NotificationLiveToast />))
+
+    await act(async () => {
+      useNotificationInboxStore.setState({
+        unreadCount: 1,
+        unreadSessionIds: ['session-1'],
+        latestSequence: 1,
+        items: [item(1)]
+      })
+    })
+
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+  })
+
   it('does not replay existing messages and anchors a newly arrived message above the bell', async () => {
     await act(async () => root.render(<NotificationLiveToast />))
     expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()

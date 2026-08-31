@@ -53,6 +53,7 @@ type WorkspaceSidebarProps = {
   onOpenProject?: (projectId: string) => void
   starNudgeKey?: string
   sessions: ChatSession[]
+  unreadSessionIds?: ReadonlySet<string>
   credentialPendingSessionIds?: ReadonlySet<string>
   activeSessionId: string | undefined
   canCreateConversation: boolean
@@ -129,7 +130,7 @@ const sessionStatusLabelKeys = {
 } as const satisfies Record<SessionStatus, string>
 
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
-const EMPTY_CREDENTIAL_SESSION_IDS = new Set<string>()
+const EMPTY_SESSION_IDS = new Set<string>()
 const INITIAL_PROJECT_MENU_LIMIT = 5
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
@@ -247,7 +248,8 @@ const WorkspaceSidebarView = ({
   onOpenProject,
   starNudgeKey,
   sessions,
-  credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
+  unreadSessionIds = EMPTY_SESSION_IDS,
+  credentialPendingSessionIds = EMPTY_SESSION_IDS,
   activeSessionId,
   canCreateConversation,
   canMutateConversations,
@@ -543,6 +545,7 @@ const WorkspaceSidebarView = ({
                   </div>
                   {section.items.map((session) => {
                     const isActive = session.id === activeSessionId
+                    const isUnread = unreadSessionIds.has(session.id)
                     const shortcutNumber = shortcutNumberBySessionId.get(session.id)
                     const presentedStatus = getPresentedSessionStatus(
                       session,
@@ -572,9 +575,12 @@ const WorkspaceSidebarView = ({
                           aria-hidden="true"
                         >
                           <span
+                            data-slot="session-status-indicator"
                             className={cn(
                               'size-[7px] shrink-0 rounded-full',
-                              sessionStatusDotClassName[presentedStatus]
+                              presentedStatus === 'idle' && isUnread
+                                ? 'bg-success-000 ring-2 ring-success-000/20'
+                                : sessionStatusDotClassName[presentedStatus]
                             )}
                           />
                         </span>
@@ -586,11 +592,12 @@ const WorkspaceSidebarView = ({
                         <SessionTitleMarquee
                           title={session.title}
                           className={cn(
-                            section.label === 'Active' &&
-                              presentedStatus !== 'idle' &&
+                            ((section.label === 'Active' && presentedStatus !== 'idle') ||
+                              isUnread) &&
                               'font-semibold'
                           )}
                         />
+                        {isUnread ? <span className="sr-only">{t('Unread')}</span> : null}
                         {showSessionShortcuts && shortcutNumber ? (
                           <kbd
                             aria-hidden="true"
@@ -822,11 +829,7 @@ const WorkspaceSidebarView = ({
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
-  const {
-    credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
-    onOpenSession,
-    sessions
-  } = props
+  const { credentialPendingSessionIds = EMPTY_SESSION_IDS, onOpenSession, sessions } = props
   const [now, setNow] = useState(Date.now)
   const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)

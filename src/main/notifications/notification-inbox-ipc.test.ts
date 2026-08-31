@@ -13,7 +13,13 @@ describe('notification inbox Electron IPC adapter', () => {
   beforeEach(() => handlers.clear())
 
   it('registers snapshot and read mutations against the shared owner', async () => {
-    const snapshot = { revision: 1, unreadCount: 0, latestSequence: 0, items: [] }
+    const snapshot = {
+      revision: 1,
+      unreadCount: 0,
+      unreadSessionIds: [],
+      latestSequence: 0,
+      items: []
+    }
     const owner = {
       getSnapshot: vi.fn(async () => snapshot),
       markRead: vi.fn(async () => undefined),
@@ -44,6 +50,7 @@ describe('notification inbox Electron IPC adapter', () => {
       getSnapshot: vi.fn(async () => ({
         revision: 1,
         unreadCount: 0,
+        unreadSessionIds: [],
         latestSequence: 0,
         items: []
       })),

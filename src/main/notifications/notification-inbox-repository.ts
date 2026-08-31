@@ -59,6 +59,7 @@ type NotificationRepositoryState = Readonly<{
 
 type NotificationRepositorySnapshot = Readonly<{
   unreadCount: number
+  unreadSessionIds: readonly string[]
   latestSequence: number
   items: readonly NotificationInboxItem[]
 }>
@@ -164,7 +165,7 @@ export class NotificationInboxDbRepository {
     )
     return this.enqueue(async () => {
       const client = await this.getClient()
-      const [pendingRows, historyRows, metadata] = await Promise.all([
+      const [pendingRows, historyRows, unreadSessionRows, metadata] = await Promise.all([
         client.notificationInboxItem.findMany({
           where: ACTIVE_PENDING_WHERE,
           orderBy: { sequence: 'desc' }
@@ -174,12 +175,30 @@ export class NotificationInboxDbRepository {
           orderBy: { sequence: 'desc' },
           take: limit
         }),
+        client.notificationInboxItem.findMany({
+          where: {
+            readAt: null,
+            sessionId: { not: null },
+            targetInvalidatedAt: null
+          },
+          distinct: ['sessionId'],
+          orderBy: { sequence: 'desc' },
+          take: MAX_SNAPSHOT_LIMIT
+        }),
         stateFor(client, false)
       ])
-      const rows = [...pendingRows, ...historyRows].sort(
-        (left, right) => right.sequence - left.sequence
-      )
-      return { ...metadata, items: rows.map(toInboxItem) }
+      const rows = [
+        ...new Map(
+          [...pendingRows, ...unreadSessionRows, ...historyRows].map((row) => [row.id, row])
+        ).values()
+      ].sort((left, right) => right.sequence - left.sequence)
+      return {
+        ...metadata,
+        unreadSessionIds: normalizeIds(
+          unreadSessionRows.flatMap((row) => (row.sessionId ? [row.sessionId] : []))
+        ).sort(),
+        items: rows.map(toInboxItem)
+      }
     })
   }
 
@@ -311,15 +330,15 @@ export class NotificationInboxDbRepository {
           return row.readAt ? [row] : []
         })
         if (latestReadRows.length === 0) return stateFor(transaction, false)
-        // Reinsert the stable notification identity so its new sequence crosses the bounded
-        // snapshot window. Updating readAt alone could leave an older session outside Messages.
-        await transaction.notificationInboxItem.deleteMany({
-          where: { id: { in: latestReadRows.map((row) => row.id) } }
-        })
-        await transaction.notificationInboxItem.createMany({
-          data: latestReadRows.map((row) => ({ ...row, sequence: undefined, readAt: null }))
-        })
-        return stateFor(transaction, true)
+        const count = await mutateInChunks(
+          latestReadRows.map((row) => row.id),
+          (ids) =>
+            transaction.notificationInboxItem.updateMany({
+              where: { id: { in: ids }, readAt: { not: null } },
+              data: { readAt: null }
+            })
+        )
+        return stateFor(transaction, count > 0)
       })
     })
   }

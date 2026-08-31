@@ -61,6 +61,7 @@ export type NotificationInboxItem = Readonly<{
 export type NotificationInboxSnapshot = Readonly<{
   revision: number
   unreadCount: number
+  unreadSessionIds: readonly string[]
   latestSequence: number
   items: readonly NotificationInboxItem[]
 }>

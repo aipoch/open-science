@@ -89,6 +89,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     getSnapshot: vi.fn(async () => ({
       revision: 1,
       unreadCount: 0,
+      unreadSessionIds: [],
       latestSequence: 0,
       items: []
     })),

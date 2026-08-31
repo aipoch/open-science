@@ -17,7 +17,12 @@ const repository = (
       unreadCount: 0,
       latestSequence: 0
     })),
-    snapshot: vi.fn(async () => ({ unreadCount: 0, latestSequence: 0, items: [] })),
+    snapshot: vi.fn(async () => ({
+      unreadCount: 0,
+      unreadSessionIds: [],
+      latestSequence: 0,
+      items: []
+    })),
     record: vi.fn(async () => ({ changed: true, unreadCount: 1, latestSequence: 1 })),
     settle: vi.fn(async () => ({ changed: true, unreadCount: 1, latestSequence: 1 })),
     markRead: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 1 })),
