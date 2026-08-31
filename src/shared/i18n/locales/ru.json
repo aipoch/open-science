@@ -4250,6 +4250,8 @@
     "Access token · Stored": "Токен доступа · Сохранён",
     "OAuth · Connected": "OAuth · Подключено",
     "OAuth · Sign-in required": "OAuth · Требуется вход",
+    "Temporarily unavailable": "Временно недоступно",
+    "Replacement required": "Требуется замена",
     "{{count}} Connectors_one": "{{count}} Коннектор",
     "{{count}} Connectors_few": "{{count}} Коннектора",
     "{{count}} Connectors_many": "{{count}} Коннекторов",

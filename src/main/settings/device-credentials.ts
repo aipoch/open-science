@@ -355,16 +355,25 @@ export class DeviceCredentialStore {
     credential: StoredDeviceCredential,
     consumers: readonly string[] = []
   ): DeviceCredentialView {
+    const oauthState =
+      credential.kind === 'oauth' ? this.decryptState(credential.stateRef) : undefined
+    const needsSecret =
+      credential.kind === 'oauth'
+        ? (credential.clientSecretRef !== undefined &&
+            tryDecryptKey(credential.clientSecretRef) === undefined) ||
+          (credential.stateRef !== undefined && oauthState === undefined)
+        : tryDecryptKey(credential.secretRef) === undefined
     return {
       id: credential.id,
       displayName: credential.displayName,
       kind: credential.kind,
       status:
         credential.kind === 'oauth'
-          ? this.decryptState(credential.stateRef)?.tokens?.access_token
+          ? oauthState?.tokens?.access_token
             ? 'connected'
             : 'disconnected'
           : 'stored',
+      needsSecret,
       ...(credential.kind === 'oauth'
         ? {
             resourceUri: credential.resourceUri,

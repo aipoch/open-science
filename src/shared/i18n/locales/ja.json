@@ -3813,6 +3813,8 @@
     "Access token · Stored": "アクセストークン · 保存済み",
     "OAuth · Connected": "OAuth · 接続済み",
     "OAuth · Sign-in required": "OAuth · サインインが必要",
+    "Temporarily unavailable": "一時的に利用できません",
+    "Replacement required": "再設定が必要",
     "{{count}} Connectors_other": "{{count}} 個のコネクタ",
     "Remove this credential from its Connectors first.": "先に、この資格情報を使用しているコネクタから削除してください。",
     "Remove this credential from this device?": "このデバイスから資格情報を削除しますか？",

@@ -9,7 +9,11 @@ import type {
   UpdateCustomServerRequest
 } from '../../shared/settings'
 
-const keychain = vi.hoisted(() => ({ available: true, encryptedValues: [] as string[] }))
+const keychain = vi.hoisted(() => ({
+  available: true,
+  decryptable: true,
+  encryptedValues: [] as string[]
+}))
 
 // Reversible fake safeStorage so secrets can be encrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -22,6 +26,7 @@ vi.mock('electron', () => ({
     },
     decryptString: (buffer: Buffer) => {
       if (!keychain.available) throw new Error('Encryption is unavailable')
+      if (!keychain.decryptable) throw new Error('Ciphertext is corrupted')
       return buffer.toString('utf8').slice('cipher:'.length)
     }
   },
@@ -90,6 +95,7 @@ describe('ConnectorSettingsModule', () => {
 
   beforeEach(async () => {
     keychain.available = true
+    keychain.decryptable = true
     keychain.encryptedValues.length = 0
     dir = await mkdtemp(join(tmpdir(), 'osci-svc-connectors-'))
     repository = new SettingsRepository(dir)
@@ -109,6 +115,63 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.ncbi).toEqual({ contactEmail: undefined, hasApiKey: false })
     expect(snapshot.openAlex).toEqual({ hasApiKey: false })
   })
+
+  it.each([
+    ['locked secure storage', () => (keychain.available = false)],
+    ['corrupted ciphertext', () => (keychain.decryptable = false)]
+  ])(
+    'marks device credentials as needing secret resolution when %s',
+    async (_case, makeSecretsUnreadable) => {
+      const credentialStore = new DeviceCredentialStore(dir)
+      service = new ConnectorSettingsModule(repository, fetch, credentialStore)
+      const staticCredential = await service.createDeviceCredential({
+        displayName: 'Lab API',
+        kind: 'api_key',
+        secret: 'api-secret'
+      })
+      const oauth = await service.createDeviceCredential({
+        displayName: 'Lab OAuth',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: {
+          authorizationServerUrl: 'https://auth.example.test/',
+          clientId: 'registered-client',
+          clientSecret: 'oauth-secret'
+        }
+      })
+      await service.saveCustomServerOAuthState(`credential:${oauth.createdCredential.id}`, {
+        tokens: { access_token: 'oauth-access', token_type: 'Bearer' }
+      })
+
+      makeSecretsUnreadable()
+
+      await expect(
+        credentialStore.resolveStatic(staticCredential.createdCredential.id, {
+          kind: 'header',
+          name: 'X-Api-Key'
+        })
+      ).rejects.toThrow('Static credential is unavailable')
+      await expect(
+        service.resolveDeviceOAuthCredential(oauth.createdCredential.id)
+      ).resolves.toMatchObject({
+        hasClientSecret: true,
+        clientSecret: undefined,
+        state: undefined
+      })
+      expect(await service.listDeviceCredentials()).toMatchObject({
+        credentials: [
+          { displayName: 'Lab API', status: 'stored', needsSecret: true },
+          {
+            displayName: 'Lab OAuth',
+            status: 'disconnected',
+            hasClientSecret: true,
+            needsSecret: true
+          }
+        ]
+      })
+    }
+  )
 
   it('returns the exact credential created by each concurrent request', async () => {
     service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))

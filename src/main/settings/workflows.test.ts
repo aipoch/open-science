@@ -116,6 +116,7 @@ const fakeStore = () => {
         displayName: 'Created',
         kind: 'token',
         status: 'stored',
+        needsSecret: false,
         consumerCount: 0,
         consumerNames: [],
         createdAt: 1,

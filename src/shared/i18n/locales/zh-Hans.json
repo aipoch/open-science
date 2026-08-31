@@ -3813,6 +3813,8 @@
     "Access token · Stored": "访问令牌 · 已存储",
     "OAuth · Connected": "OAuth · 已连接",
     "OAuth · Sign-in required": "OAuth · 需要登录",
+    "Temporarily unavailable": "暂时不可用",
+    "Replacement required": "需要替换",
     "{{count}} Connectors_other": "{{count}} 个连接器",
     "Remove this credential from its Connectors first.": "请先从使用此凭据的连接器中移除它。",
     "Remove this credential from this device?": "从此设备移除此凭据？",

@@ -21,6 +21,7 @@ const credential: DeviceCredentialView = {
   displayName: 'Example API token',
   kind: 'token',
   status: 'stored',
+  needsSecret: false,
   consumerCount: 0,
   consumerNames: [],
   createdAt: 1,

@@ -52,6 +52,7 @@ describe('CredentialsPanel', () => {
           displayName: 'Lab OAuth',
           kind: 'oauth',
           status: 'connected',
+          needsSecret: false,
           resourceUri: 'https://mcp.example.test/',
           transport: 'streamable_http',
           consumerCount: 1,
@@ -91,6 +92,47 @@ describe('CredentialsPanel', () => {
     expect(remove?.getAttribute('aria-disabled')).toBe('true')
   })
 
+  it.each([
+    [false, 'Temporarily unavailable'],
+    [true, 'Replacement required']
+  ])(
+    'surfaces unreadable device credentials when secure storage availability is %s',
+    async (encryptionAvailable, expectedStatus) => {
+      useSettingsStore.setState({
+        encryptionAvailable,
+        deviceCredentials: [
+          {
+            id: 'credential-unreadable',
+            displayName: 'Unreadable key',
+            kind: 'api_key',
+            status: 'stored',
+            needsSecret: true,
+            consumerCount: 0,
+            consumerNames: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        loadDeviceCredentials: vi.fn().mockResolvedValue(undefined)
+      })
+
+      await act(async () => {
+        root.render(
+          <CredentialsPanel
+            view={{ kind: 'list' }}
+            onNavigate={vi.fn()}
+            onOpenConnector={vi.fn()}
+            onOpenProvider={vi.fn()}
+          />
+        )
+        await Promise.resolve()
+      })
+
+      expect(document.body.textContent).toContain(`API key · ${expectedStatus}`)
+      expect(document.body.textContent).not.toContain('API key · Stored')
+    }
+  )
+
   it('confirms device credential removal with the shared alert dialog', async () => {
     const removeDeviceCredential = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
@@ -100,6 +142,7 @@ describe('CredentialsPanel', () => {
           displayName: 'Temporary token',
           kind: 'token',
           status: 'stored',
+          needsSecret: false,
           consumerCount: 0,
           consumerNames: [],
           createdAt: 1,

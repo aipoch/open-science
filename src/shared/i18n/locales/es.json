@@ -4121,6 +4121,8 @@
     "Access token · Stored": "Token de acceso · Guardado",
     "OAuth · Connected": "OAuth · Conectado",
     "OAuth · Sign-in required": "OAuth · Inicio de sesión necesario",
+    "Temporarily unavailable": "No disponible temporalmente",
+    "Replacement required": "Reemplazo necesario",
     "{{count}} Connectors_one": "{{count}} Conector",
     "{{count}} Connectors_many": "{{count}} Conectores",
     "{{count}} Connectors_other": "{{count}} Conectores",

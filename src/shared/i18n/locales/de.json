@@ -3982,6 +3982,8 @@
     "Access token · Stored": "Zugriffstoken · Gespeichert",
     "OAuth · Connected": "OAuth · Verbunden",
     "OAuth · Sign-in required": "OAuth · Anmeldung erforderlich",
+    "Temporarily unavailable": "Vorübergehend nicht verfügbar",
+    "Replacement required": "Ersatz erforderlich",
     "{{count}} Connectors_one": "{{count}} Konnektor",
     "{{count}} Connectors_other": "{{count}} Konnektoren",
     "Remove this credential from its Connectors first.": "Entfernen Sie diese Anmeldeinformation zuerst aus den zugehörigen Konnektoren.",

@@ -4121,6 +4121,8 @@
     "Access token · Stored": "Jeton d’accès · Enregistré",
     "OAuth · Connected": "OAuth · Connecté",
     "OAuth · Sign-in required": "OAuth · Connexion requise",
+    "Temporarily unavailable": "Temporairement indisponible",
+    "Replacement required": "Remplacement requis",
     "{{count}} Connectors_one": "{{count}} Connecteur",
     "{{count}} Connectors_many": "{{count}} Connecteurs",
     "{{count}} Connectors_other": "{{count}} Connecteurs",

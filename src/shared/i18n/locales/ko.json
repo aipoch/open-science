@@ -3811,6 +3811,8 @@
     "Access token · Stored": "액세스 토큰 · 저장됨",
     "OAuth · Connected": "OAuth · 연결됨",
     "OAuth · Sign-in required": "OAuth · 로그인 필요",
+    "Temporarily unavailable": "일시적으로 사용할 수 없음",
+    "Replacement required": "교체 필요",
     "{{count}} Connectors_other": "커넥터 {{count}}개",
     "Remove this credential from its Connectors first.": "먼저 이 자격 증명을 사용하는 커넥터에서 제거하세요.",
     "Remove this credential from this device?": "이 기기에서 자격 증명을 제거하시겠습니까?",
