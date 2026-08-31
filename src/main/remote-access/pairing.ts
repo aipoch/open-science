@@ -23,8 +23,12 @@ import {
 const PAIRING_COOKIE = 'open_science_remote_pairing'
 const SESSION_COOKIE = 'open_science_remote_session'
 const PAIRING_TTL_MS = 10 * 60 * 1_000
+const PAIRING_IDLE_TTL_MS = 30_000
+const PAIRING_RATE_WINDOW_MS = 10 * 60 * 1_000
 const ONE_TIME_SESSION_TTL_MS = 12 * 60 * 60 * 1_000
 const MAX_PENDING_REQUESTS = 20
+const MAX_PAIRING_REQUESTS_PER_SOURCE = 3
+const MAX_PAIRING_REQUESTS_PER_WINDOW = 40
 const LAST_SEEN_WRITE_INTERVAL_MS = 60_000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 const CLEANUP_RETRY_MS = 1_000
@@ -44,6 +48,7 @@ type PendingPairing = BrowserDescription & {
   address?: string
   requestedAt: number
   expiresAt: number
+  lastPolledAt?: number
   status: 'pending' | 'approving' | 'approved' | 'rejected'
   grant?: PairingGrant
 }
@@ -162,6 +167,8 @@ export class RemoteSessionPairingManager {
   private readonly oneTimeSessions = new Map<string, OneTimeSession>()
   private readonly pendingRevocations = new Set<string>()
   private readonly unclaimedTrustedBrowserCleanup = new Set<string>()
+  private readonly pairingAdmissions: number[] = []
+  private readonly pairingAdmissionsBySource = new Map<string, number[]>()
   private readonly now: () => number
   private storedMutationQueue: Promise<void> = Promise.resolve()
   private unclaimedTrustedBrowserCleanupTask: Promise<void> | undefined
@@ -253,16 +260,18 @@ export class RemoteSessionPairingManager {
   }
 
   trustedViews(): TrustedRemoteBrowserView[] {
-    this.pruneExpired()
+    // Snapshot reads should not start persistence work; the cleanup timer retries failed cleanup.
+    this.pruneExpired(false)
     return [...this.stored.trustedBrowsers]
       .filter((browser) => !this.unclaimedTrustedBrowserCleanup.has(browser.id))
       .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
-      .map(({ id, browser, platform, createdAt, lastSeenAt }) => ({
+      .map(({ id, browser, platform, createdAt, lastSeenAt, expiresAt }) => ({
         id,
         browser,
         platform,
         createdAt,
-        lastSeenAt
+        lastSeenAt,
+        expiresAt
       }))
   }
 
@@ -431,18 +440,18 @@ export class RemoteSessionPairingManager {
       await this.handlePairingStatus(request, response)
       return 'handled'
     }
-    if (request.method !== 'GET' && request.method !== 'HEAD') return 'denied'
+    if (request.method !== 'GET' || url.pathname !== '/') return 'denied'
 
-    const pending = this.ensurePending(request, response)
-    if (!pending) {
-      const retryAt = Math.min(...[...this.pending.values()].map((entry) => entry.expiresAt))
+    const admission = this.ensurePending(request, response)
+    if ('retryAt' in admission) {
       response.setHeader(
         'retry-after',
-        String(Math.max(1, Math.ceil((retryAt - this.now()) / 1_000)))
+        String(Math.max(1, Math.ceil((admission.retryAt - this.now()) / 1_000)))
       )
       json(response, 429, { error: 'Too many pairing requests. Try again later.' })
       return 'handled'
     }
+    const pending = admission.pending
     const page = renderPairingPage(pending)
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
@@ -451,7 +460,7 @@ export class RemoteSessionPairingManager {
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer'
     })
-    response.end(request.method === 'HEAD' ? undefined : page.html)
+    response.end(page.html)
     return 'handled'
   }
 
@@ -522,32 +531,72 @@ export class RemoteSessionPairingManager {
   private ensurePending(
     request: IncomingMessage,
     response: ServerResponse
-  ): PendingPairing | undefined {
+  ): { pending: PendingPairing } | { retryAt: number } {
     this.pruneExpired()
     const existing = this.readPendingCookie(request)
-    if (existing) return existing
+    if (existing) return { pending: existing }
 
-    if (this.pending.size >= MAX_PENDING_REQUESTS) return undefined
+    const requestedAt = this.now()
+    const address = clientAddress(request) ?? '<unknown>'
+    const retryAt = this.pairingAdmissionRetryAt(address, requestedAt)
+    if (retryAt !== undefined) return { retryAt }
 
     const id = randomUUID()
     const secret = randomBytes(24).toString('base64url')
     const description = describeBrowser(request.headers['user-agent'])
-    const requestedAt = this.now()
     const pending: PendingPairing = {
       id,
       secretHash: hash(secret),
       code: randomInt(0, 1_000_000).toString().padStart(6, '0'),
       ...description,
-      address: clientAddress(request),
+      address: address === '<unknown>' ? undefined : address,
       requestedAt,
       expiresAt: requestedAt + PAIRING_TTL_MS,
       status: 'pending'
     }
     this.pending.set(id, pending)
+    this.pairingAdmissions.push(requestedAt)
+    const sourceAdmissions = this.pairingAdmissionsBySource.get(address) ?? []
+    sourceAdmissions.push(requestedAt)
+    this.pairingAdmissionsBySource.set(address, sourceAdmissions)
     this.scheduleExpirationTimer()
     response.setHeader('set-cookie', pairingCookie(`${id}.${secret}`))
     this.options.onChanged()
-    return pending
+    return { pending }
+  }
+
+  private pairingAdmissionRetryAt(address: string, now: number): number | undefined {
+    const cutoff = now - PAIRING_RATE_WINDOW_MS
+    while (this.pairingAdmissions[0] !== undefined && this.pairingAdmissions[0] <= cutoff) {
+      this.pairingAdmissions.shift()
+    }
+    for (const [source, admissions] of this.pairingAdmissionsBySource) {
+      while (admissions[0] !== undefined && admissions[0] <= cutoff) admissions.shift()
+      if (admissions.length === 0) this.pairingAdmissionsBySource.delete(source)
+    }
+
+    const retryDeadlines: number[] = []
+    if (this.pending.size >= MAX_PENDING_REQUESTS) {
+      retryDeadlines.push(
+        Math.min(...[...this.pending.values()].map((entry) => this.pendingExpiration(entry)))
+      )
+    }
+    if (this.pairingAdmissions.length >= MAX_PAIRING_REQUESTS_PER_WINDOW) {
+      retryDeadlines.push(this.pairingAdmissions[0] + PAIRING_RATE_WINDOW_MS)
+    }
+    const sourceAdmissions = this.pairingAdmissionsBySource.get(address) ?? []
+    if (sourceAdmissions.length >= MAX_PAIRING_REQUESTS_PER_SOURCE) {
+      retryDeadlines.push(sourceAdmissions[0] + PAIRING_RATE_WINDOW_MS)
+    }
+    return retryDeadlines.length === 0 ? undefined : Math.max(...retryDeadlines)
+  }
+
+  private pendingExpiration(request: PendingPairing): number {
+    if (request.status !== 'pending') return request.expiresAt
+    return Math.min(
+      request.expiresAt,
+      (request.lastPolledAt ?? request.requestedAt) + PAIRING_IDLE_TTL_MS
+    )
   }
 
   private readPendingCookie(request: IncomingMessage): PendingPairing | undefined {
@@ -573,6 +622,10 @@ export class RemoteSessionPairingManager {
       return
     }
     if (pending.status === 'pending' || pending.status === 'approving') {
+      if (pending.status === 'pending') {
+        pending.lastPolledAt = this.now()
+        this.scheduleExpirationTimer()
+      }
       json(response, 200, { status: 'pending', expiresAt: pending.expiresAt })
       return
     }
@@ -714,12 +767,12 @@ export class RemoteSessionPairingManager {
     this.unclaimedTrustedBrowserCleanupTask = cleanupTask
   }
 
-  private pruneExpired(): void {
+  private pruneExpired(retryUnclaimedCleanup = true): void {
     const now = this.now()
     let pendingViewsChanged = false
     const expiredPrincipalIds = new Set<string>()
     for (const [id, request] of this.pending) {
-      if (request.expiresAt > now) continue
+      if (this.pendingExpiration(request) > now) continue
       if (request.status === 'pending' || request.status === 'approving') {
         pendingViewsChanged = true
       }
@@ -747,7 +800,7 @@ export class RemoteSessionPairingManager {
     for (const principalId of expiredPrincipalIds) {
       this.options.onAuthorizationExpired?.(principalId)
     }
-    this.scheduleUnclaimedTrustedBrowserCleanup()
+    if (retryUnclaimedCleanup) this.scheduleUnclaimedTrustedBrowserCleanup()
     this.scheduleExpirationTimer()
     if (pendingViewsChanged) this.options.onChanged()
   }
@@ -759,7 +812,7 @@ export class RemoteSessionPairingManager {
 
     const now = this.now()
     const deadlines = [
-      ...[...this.pending.values()].map((request) => request.expiresAt),
+      ...[...this.pending.values()].map((request) => this.pendingExpiration(request)),
       ...[...this.oneTimeSessions.values()].map((session) => session.expiresAt),
       ...this.stored.trustedBrowsers.flatMap((browser) =>
         this.unclaimedTrustedBrowserCleanup.has(browser.id) ||

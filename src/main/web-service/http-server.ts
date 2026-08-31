@@ -65,6 +65,8 @@ const MAX_WEBSOCKET_BUFFERED_BYTES = 16 * 1024 * 1024 + 64 * 1024
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
 const MAX_TASK_IDEMPOTENCY_BYTES = 64 * 1024 * 1024
+const MAX_TASK_IDEMPOTENCY_ENTRIES_PER_PRINCIPAL = 128
+const MAX_TASK_IDEMPOTENCY_BYTES_PER_PRINCIPAL = 8 * 1024 * 1024
 const MIN_TASK_IDEMPOTENCY_ENTRY_BYTES = 16 * 1024
 const MAX_IDEMPOTENCY_KEY_LENGTH = 255
 const MAX_CACHED_TASK_ERROR_MESSAGE_LENGTH = 4_096
@@ -639,6 +641,7 @@ class IdempotencyUnavailableError extends Error {
 }
 
 type TaskIdempotencyEntry = {
+  ownerScope: string
   fingerprint: string
   expiresAt: number
   reservedBytes: number
@@ -647,19 +650,23 @@ type TaskIdempotencyEntry = {
 
 export class TaskIdempotencyRegistry {
   private readonly entries = new Map<string, TaskIdempotencyEntry>()
+  private readonly usageByOwner = new Map<string, { entries: number; reservedBytes: number }>()
   private reservedBytes = 0
 
   constructor(
     private readonly maxEntries = MAX_TASK_IDEMPOTENCY_ENTRIES,
     private readonly maxBytes = MAX_TASK_IDEMPOTENCY_BYTES,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly maxEntriesPerOwner = MAX_TASK_IDEMPOTENCY_ENTRIES_PER_PRINCIPAL,
+    private readonly maxBytesPerOwner = MAX_TASK_IDEMPOTENCY_BYTES_PER_PRINCIPAL
   ) {}
 
   async run<Result>(
     scope: string,
     fingerprint: string,
     reservedBytes: number,
-    operation: () => Promise<Result>
+    operation: () => Promise<Result>,
+    ownerScope = 'default'
   ): Promise<Result> {
     const now = this.now()
     for (const [key, entry] of this.entries) {
@@ -672,9 +679,12 @@ export class TaskIdempotencyRegistry {
       return existing.result as Promise<Result>
     }
 
+    const ownerUsage = this.usageByOwner.get(ownerScope) ?? { entries: 0, reservedBytes: 0 }
     if (
       this.entries.size >= this.maxEntries ||
-      reservedBytes > this.maxBytes - this.reservedBytes
+      reservedBytes > this.maxBytes - this.reservedBytes ||
+      ownerUsage.entries >= this.maxEntriesPerOwner ||
+      reservedBytes > this.maxBytesPerOwner - ownerUsage.reservedBytes
     ) {
       throw new IdempotencyUnavailableError()
     }
@@ -691,23 +701,39 @@ export class TaskIdempotencyRegistry {
         throw new Error(INTERNAL_SERVER_ERROR_MESSAGE)
       })
     this.entries.set(scope, {
+      ownerScope,
       fingerprint,
       expiresAt: now + TASK_IDEMPOTENCY_TTL_MS,
       reservedBytes,
       result
     })
     this.reservedBytes += reservedBytes
+    this.usageByOwner.set(ownerScope, {
+      entries: ownerUsage.entries + 1,
+      reservedBytes: ownerUsage.reservedBytes + reservedBytes
+    })
     return result
   }
 
   clear(): void {
     this.entries.clear()
+    this.usageByOwner.clear()
     this.reservedBytes = 0
   }
 
   private delete(key: string, entry: TaskIdempotencyEntry): void {
     if (!this.entries.delete(key)) return
     this.reservedBytes -= entry.reservedBytes
+    const ownerUsage = this.usageByOwner.get(entry.ownerScope)
+    if (!ownerUsage) return
+    if (ownerUsage.entries === 1) {
+      this.usageByOwner.delete(entry.ownerScope)
+      return
+    }
+    this.usageByOwner.set(entry.ownerScope, {
+      entries: ownerUsage.entries - 1,
+      reservedBytes: ownerUsage.reservedBytes - entry.reservedBytes
+    })
   }
 }
 
@@ -728,6 +754,7 @@ const runIdempotentTask = <Result>(
   request: IncomingMessage,
   url: URL,
   callerContext: CallerContext,
+  ownerScope: string,
   body: unknown,
   operation: () => Promise<Result>
 ): Promise<Result> => {
@@ -748,7 +775,7 @@ const runIdempotentTask = <Result>(
     MIN_TASK_IDEMPOTENCY_ENTRY_BYTES,
     Buffer.byteLength(serializedBody) * 2 + MIN_TASK_IDEMPOTENCY_ENTRY_BYTES
   )
-  return registry.run(scope, fingerprint, reservedBytes, operation)
+  return registry.run(scope, fingerprint, reservedBytes, operation, ownerScope)
 }
 
 const assertExternalAuthorizationCurrent = (
@@ -890,6 +917,7 @@ const handleTaskApiRequest = async (
   url: URL,
   tasks: NonNullable<WebServerOptions['tasks']>,
   callerContext: CallerContext,
+  idempotencyOwnerScope: string,
   requestBodyClientId: string,
   requestBodyBudgetRegistry: RequestBodyBudgetRegistry,
   idempotencyRegistry: TaskIdempotencyRegistry,
@@ -916,6 +944,7 @@ const handleTaskApiRequest = async (
             request,
             url,
             callerContext,
+            idempotencyOwnerScope,
             body,
             () => tasks.createProject(body)
           )
@@ -957,6 +986,7 @@ const handleTaskApiRequest = async (
             request,
             url,
             callerContext,
+            idempotencyOwnerScope,
             body,
             () => tasks.startRun(body)
           )
@@ -1241,6 +1271,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                 }
               : {})
           }),
+          clientPrincipalId,
           requestBodyClientId,
           requestBodyBudgetRegistry,
           taskIdempotencyRegistry,

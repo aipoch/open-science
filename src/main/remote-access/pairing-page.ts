@@ -110,7 +110,7 @@ export const renderPairingPage = (params: {
             return;
           }
         } catch { /* retry while the home computer reconnects */ }
-        window.setTimeout(poll, 1200);
+        window.setTimeout(poll, 2000);
       };
       poll();
     </script>

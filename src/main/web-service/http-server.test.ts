@@ -659,6 +659,38 @@ describe('startWebHttpServer', () => {
     expect(first).toHaveBeenCalledOnce()
   })
 
+  it('limits one idempotency principal without consuming another principal capacity', async () => {
+    const registry = new TaskIdempotencyRegistry(2, 8_192, Date.now, 1, 4_096)
+
+    await expect(
+      registry.run(
+        'principal-a:first',
+        'first fingerprint',
+        4_096,
+        async () => 'first',
+        'principal-a'
+      )
+    ).resolves.toBe('first')
+    await expect(
+      registry.run(
+        'principal-a:second',
+        'second fingerprint',
+        4_096,
+        async () => 'second',
+        'principal-a'
+      )
+    ).rejects.toThrow('Idempotency replay capacity is temporarily unavailable.')
+    await expect(
+      registry.run(
+        'principal-b:first',
+        'third fingerprint',
+        4_096,
+        async () => 'third',
+        'principal-b'
+      )
+    ).resolves.toBe('third')
+  })
+
   it('serves static resources with browser security policies', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
@@ -3254,6 +3286,70 @@ describe('startWebHttpServer', () => {
 
     expect([first.status, second.status]).toEqual([201, 201])
     expect(createProject).toHaveBeenCalledTimes(2)
+  })
+
+  it('applies idempotency capacity to the authorized principal across rotated clients', async () => {
+    const createProject = vi
+      .fn()
+      .mockImplementation(async (request: { name: string }) => ({ id: request.name }))
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      tasks: {
+        runWithCallerContext,
+        subscribeProgress: vi.fn(() => vi.fn()),
+        listProjects: vi.fn(),
+        createProject,
+        updateProject: vi.fn(),
+        listSessions: vi.fn(),
+        getSession: vi.fn(),
+        startRun: vi.fn(),
+        getRun: vi.fn(),
+        cancelRun: vi.fn(),
+        listArtifacts: vi.fn(),
+        acquireArtifact: vi.fn(),
+        releaseArtifact: vi.fn()
+      },
+      externalAccess: {
+        authorizeHttp: vi.fn(async (request: IncomingMessage) =>
+          accessOnlyExternalAccess(String(request.headers['x-test-principal']))
+        ),
+        authorizeWebSocket: vi.fn().mockResolvedValue(undefined)
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const create = (principal: string, client: string, index: number): Promise<Response> =>
+      fetch(`http://127.0.0.1:${server.port}/api/v1/projects`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'idempotency-key': `create-project-${index}`,
+          'x-open-science-client': client,
+          'x-test-principal': principal
+        },
+        body: JSON.stringify({ name: `${principal}-${index}` })
+      })
+
+    for (let index = 0; index < 128; index += 1) {
+      expect((await create('principal-a', `rotated-${index}`, index)).status).toBe(201)
+    }
+    const limited = await create('principal-a', 'rotated-128', 128)
+    const otherPrincipal = await create('principal-b', 'client-1', 1)
+
+    expect(limited.status).toBe(503)
+    expect(await limited.json()).toMatchObject({ error: { code: 'idempotency_unavailable' } })
+    expect(otherPrincipal.status).toBe(201)
   })
 
   it('serves the versioned task API without exposing internal RPC channels', async () => {

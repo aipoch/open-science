@@ -70,6 +70,9 @@ const configurationLoadError = (error: unknown): Error => {
   )
 }
 
+const isAddressInUseError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'EADDRINUSE'
+
 export class RemoteAccessService {
   private lifecycle: RemoteAccessSnapshot['lifecycle'] = 'disabled'
   private remoteIt: RemoteItInstallation = {
@@ -190,8 +193,7 @@ export class RemoteAccessService {
       remoteIt: this.remoteIt,
       pendingRequests:
         canManagePairing && this.showsPairingManagement() ? this.pairing.pendingViews() : [],
-      trustedBrowsers:
-        canManagePairing && this.showsPairingManagement() ? this.pairing.trustedViews() : []
+      trustedBrowsers: canManagePairing ? this.pairing.trustedViews() : []
     }
   }
 
@@ -313,7 +315,13 @@ export class RemoteAccessService {
       if (this.shutdownStarted) return this.snapshot(true)
       this.assertProviderReady()
 
-      const web = await this.webController.ensureStarted(DEFAULT_WEB_PORT, { attached: true })
+      let web: Awaited<ReturnType<WebServiceController['ensureStarted']>>
+      try {
+        web = await this.webController.ensureStarted(DEFAULT_WEB_PORT, { attached: true })
+      } catch (error) {
+        if (!isAddressInUseError(error)) throw error
+        web = await this.webController.ensureStarted(0, { attached: true })
+      }
       if (this.shutdownStarted) return this.snapshot(true)
       const binaryPath = this.remoteIt.binaryPath
       if (!binaryPath) throw new Error('The remote access app is unavailable.')

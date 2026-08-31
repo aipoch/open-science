@@ -1090,7 +1090,7 @@ describe('mandatory product glossary', () => {
   it('uses concise infinitive labels for representative German interface actions', () => {
     expect({
       addSshHost: de.renderer['Add SSH host'],
-      alwaysTrustBrowser: de.renderer['Always trust this browser'],
+      trustBrowserFor180Days: de.renderer['Trust this browser for 180 days'],
       askEveryTime: de.renderer['Ask every time'],
       askForApproval: de.renderer['Ask for approval'],
       attachSkill: de.renderer['Attach skill'],
@@ -1117,7 +1117,7 @@ describe('mandatory product glossary', () => {
       uncheckAll: de.renderer['Uncheck all']
     }).toEqual({
       addSshHost: 'SSH-Host hinzufügen',
-      alwaysTrustBrowser: 'Diesem Browser immer vertrauen',
+      trustBrowserFor180Days: 'Diesem Browser 180 Tage vertrauen',
       askEveryTime: 'Jedes Mal nachfragen',
       askForApproval: 'Freigabe anfordern',
       attachSkill: 'Fähigkeit anhängen',
@@ -3212,7 +3212,7 @@ describe('Russian catalog quality', () => {
     expect(catalog('ru').Approve).toBe('Утвердить')
     expect(
       catalog('ru')[
-        'Choose "Always trust this browser" to skip approval on future visits to the same remote address.'
+        'Choose "Trust this browser for 180 days" to skip approval on future visits to the same remote address.'
       ]
     ).toContain('разрешение на доступ')
   })
