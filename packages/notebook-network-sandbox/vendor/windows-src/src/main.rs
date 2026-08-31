@@ -493,9 +493,22 @@ mod windows_host {
         Ok((count, entries))
     }
 
+    fn loopback_entries_snapshot(
+        count: u32,
+        entries: *const SID_AND_ATTRIBUTES,
+    ) -> Result<Vec<SID_AND_ATTRIBUTES>> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        if entries.is_null() {
+            bail!("Windows returned a null AppContainer loopback configuration");
+        }
+        Ok(unsafe { std::slice::from_raw_parts(entries, count as usize) }.to_vec())
+    }
+
     fn loopback_contains(sid: PSID) -> Result<bool> {
         let (count, entries) = loopback_entries()?;
-        let found = unsafe { std::slice::from_raw_parts(entries, count as usize) }
+        let found = loopback_entries_snapshot(count, entries)?
             .iter()
             .any(|entry| unsafe { EqualSid(entry.Sid, sid) }.is_ok());
         unsafe { release_loopback_list(count, entries) };
@@ -504,7 +517,7 @@ mod windows_host {
 
     fn add_loopback(sid: PSID) -> Result<()> {
         let (count, entries) = loopback_entries()?;
-        let current = unsafe { std::slice::from_raw_parts(entries, count as usize) };
+        let mut current = loopback_entries_snapshot(count, entries)?;
         if current
             .iter()
             .any(|entry| unsafe { EqualSid(entry.Sid, sid) }.is_ok())
@@ -512,12 +525,11 @@ mod windows_host {
             unsafe { release_loopback_list(count, entries) };
             return Ok(());
         }
-        let mut merged = current.to_vec();
-        merged.push(SID_AND_ATTRIBUTES {
+        current.push(SID_AND_ATTRIBUTES {
             Sid: sid,
             Attributes: 0,
         });
-        let code = unsafe { NetworkIsolationSetAppContainerConfig(&merged) };
+        let code = unsafe { NetworkIsolationSetAppContainerConfig(&current) };
         unsafe { release_loopback_list(count, entries) };
         if code != 0 {
             bail!("configure AppContainer loopback access: Windows error {code}");
@@ -527,7 +539,7 @@ mod windows_host {
 
     fn remove_loopback(sid: PSID) -> Result<()> {
         let (count, entries) = loopback_entries()?;
-        let current = unsafe { std::slice::from_raw_parts(entries, count as usize) };
+        let current = loopback_entries_snapshot(count, entries)?;
         let retained = current
             .iter()
             .copied()
@@ -703,7 +715,7 @@ mod windows_host {
                 ownership_token,
                 gateway_port: allocate_gateway_port()?,
                 wfp_sublayer_key: new_resource_key()?,
-                wfp_filter_keys: (0..4)
+                wfp_filter_keys: (0..3)
                     .map(|_| new_resource_key())
                     .collect::<Result<Vec<_>>>()?,
             };
@@ -719,25 +731,7 @@ mod windows_host {
             replace_journal(&ownership_root, &creating)?;
             record = Some(creating);
         }
-        let record = record.context("ownership record disappeared during setup")?;
-        let sid = profile_sid(&record.profile_name)?;
-        if !profile_exists(sid.0)? {
-            let name = wide(&record.profile_name);
-            let display = wide("Open Science Notebook");
-            let description = wide("Local Notebook process isolation profile");
-            let created = unsafe {
-                CreateAppContainerProfile(
-                    PCWSTR(name.as_ptr()),
-                    PCWSTR(display.as_ptr()),
-                    PCWSTR(description.as_ptr()),
-                    None,
-                )
-            }
-            .context("create AppContainer profile")?;
-            unsafe {
-                FreeSid(created);
-            }
-        }
+        record.context("ownership record disappeared during setup")?;
         Ok(())
     }
 
@@ -784,6 +778,23 @@ mod windows_host {
             validate_record(previous, installation_id)?;
         }
         let sid = profile_sid(&record.profile_name)?;
+        if !profile_exists(sid.0)? {
+            let name = wide(&record.profile_name);
+            let display = wide("Open Science Notebook");
+            let description = wide("Local Notebook process isolation profile");
+            let created = unsafe {
+                CreateAppContainerProfile(
+                    PCWSTR(name.as_ptr()),
+                    PCWSTR(display.as_ptr()),
+                    PCWSTR(description.as_ptr()),
+                    None,
+                )
+            }
+            .context("create AppContainer profile")?;
+            unsafe {
+                FreeSid(created);
+            }
+        }
         let loopback_was_present = loopback_contains(sid.0)?;
         let install_result = (|| -> Result<()> {
             wfp::install(&wfp_descriptor(&record), sid.0)?;
@@ -1368,7 +1379,15 @@ mod windows_host {
             )
         }
         .ok()
-        .with_context(|| format!("commit filesystem ACL control for {}", snapshot.path))
+        .with_context(|| format!("commit filesystem ACL control for {}", snapshot.path))?;
+        if snapshot.dacl_auto_inherited && !snapshot.dacl_protected {
+            run_icacls(
+                &snapshot.path,
+                &["/inheritancelevel:e", "/Q"],
+                "restore automatic ACL inheritance on",
+            )?;
+        }
+        Ok(())
     }
 
     fn run_icacls(path: &str, arguments: &[&str], action: &str) -> Result<()> {
@@ -1900,6 +1919,59 @@ mod windows_host {
             (Err(error), Err(release_error)) => Err(error.context(format!(
                 "release command filesystem ACLs also failed: {release_error:#}"
             ))),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn unique_test_root(label: &str) -> PathBuf {
+            std::env::temp_dir().join(format!(
+                "open-science-{label}-{}-{:?}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ))
+        }
+
+        #[test]
+        fn prepare_setup_does_not_create_profile_before_elevation() {
+            let installation_id = "fedcba9876543210fedcba98";
+            let parent = unique_test_root("prepare-setup");
+            let root = parent.join(installation_id);
+            let path = root.to_string_lossy().into_owned();
+
+            prepare_setup(installation_id, &path).unwrap();
+            let creating = read_record(&journal_path(&root)).unwrap().unwrap();
+            let sid = profile_sid(&creating.profile_name).unwrap();
+            let exists = profile_exists(sid.0).unwrap();
+            cancel_setup(installation_id, &path).unwrap();
+            fs::remove_dir_all(&parent).unwrap();
+
+            assert!(!exists);
+        }
+
+        #[test]
+        fn acl_snapshot_restore_preserves_inheritance_control() {
+            let root = unique_test_root("acl-restore");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&path).unwrap();
+
+            run_icacls(
+                &path,
+                &["/grant:r", "*S-1-1-0:(OI)(CI)RX", "/Q"],
+                "modify test ACL on",
+            )
+            .unwrap();
+            restore_acl_snapshot(&original).unwrap();
+            let restored = capture_acl_snapshot(&path).unwrap();
+            fs::remove_dir_all(&root).unwrap();
+
+            assert_eq!(restored, original);
         }
     }
 }

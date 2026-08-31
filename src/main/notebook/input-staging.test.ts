@@ -80,11 +80,14 @@ describe('Notebook immutable input staging paths', () => {
   it('rejects a staged-path symlink that escapes the Session input root', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notebook-inputs-'))
     const currentRoot = getNotebookInputRoot(storageRoot, 'project-a', 'session-a')
-    const outside = join(storageRoot, 'outside.txt')
-    const staged = join(currentRoot, 'upload-version', 'b'.repeat(64), 'content')
-    await mkdir(join(staged, '..'), { recursive: true })
+    const outsideRoot = join(storageRoot, 'outside')
+    const outside = join(outsideRoot, 'content')
+    const stagedVersion = join(currentRoot, 'upload-version', 'b'.repeat(64))
+    const staged = join(stagedVersion, 'content')
+    await mkdir(join(stagedVersion, '..'), { recursive: true })
+    await mkdir(outsideRoot)
     await writeFile(outside, 'outside')
-    await symlink(outside, staged)
+    await symlink(outsideRoot, stagedVersion, process.platform === 'win32' ? 'junction' : 'dir')
 
     await expect(
       resolveNotebookStagedInputPath(storageRoot, 'project-a', 'session-a', staged)

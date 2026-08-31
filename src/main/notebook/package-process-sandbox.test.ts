@@ -1,9 +1,19 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { NotebookProcessSandbox } from './process-sandbox'
+
+const temporaryDirectories: string[] = []
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 describe('sandboxedPackageSpawn', () => {
   it('runs an installer through the Notebook sandbox and preserves its lifecycle', async () => {
@@ -20,6 +30,8 @@ describe('sandboxedPackageSpawn', () => {
       }))
     }
     const storageRoot = process.cwd()
+    const packageCache = mkdtempSync(join(tmpdir(), 'open-science-package-cache-'))
+    temporaryDirectories.push(packageCache)
     const spawn = sandboxedPackageSpawn({
       processSandbox,
       request: {
@@ -36,7 +48,7 @@ describe('sandboxedPackageSpawn', () => {
     const result = await spawn(process.execPath, ['-e', 'process.stderr.write("installer")'], {
       PATH: process.env.PATH,
       PIP_CERT: '/trusted/bundle.pem',
-      CONDA_PKGS_DIRS: '/tmp',
+      CONDA_PKGS_DIRS: packageCache,
       OPENAI_API_KEY: 'must-not-cross'
     })
 
@@ -58,7 +70,7 @@ describe('sandboxedPackageSpawn', () => {
       'OPENAI_API_KEY'
     )
     expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].filesystem.readWriteRoots).toContain(
-      '/tmp'
+      packageCache
     )
     expect(endExecution).toHaveBeenCalledOnce()
     expect(cleanup).toHaveBeenCalledOnce()

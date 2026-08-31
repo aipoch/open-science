@@ -81,7 +81,7 @@ try {
   }
   $gatewayPort = [int]$status.gatewayPort
   $ownedReceipt = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
-  if ($ownedReceipt.schemaVersion -ne 4 -or [string]::IsNullOrWhiteSpace($ownedReceipt.wfpSublayerKey) -or $ownedReceipt.wfpFilterKeys.Count -ne 4) {
+  if ($ownedReceipt.schemaVersion -ne 4 -or [string]::IsNullOrWhiteSpace($ownedReceipt.wfpSublayerKey) -or $ownedReceipt.wfpFilterKeys.Count -ne 3) {
     throw 'Notebook AppContainer receipt does not identify the owned WFP fence.'
   }
   $networkPortsAvailable = Test-LoopbackPortAvailable $gatewayPort
@@ -264,10 +264,11 @@ try {
   while (-not $launchA.HasExited -and (Get-Date) -le $deadline) {
     Start-Sleep -Milliseconds 100
   }
+  if ($launchA.HasExited) { $launchA.WaitForExit() }
   $aError = if (Test-Path -LiteralPath $aStderr) { Get-Content -LiteralPath $aStderr -Raw } else { '<missing>' }
-  if (-not $launchA.HasExited -or -not (Test-Path -LiteralPath $aComplete) -or -not [string]::IsNullOrWhiteSpace($aError)) {
+  if (-not $launchA.HasExited -or $launchA.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $aComplete)) {
     $stdout = if (Test-Path -LiteralPath $aStdout) { Get-Content -LiteralPath $aStdout -Raw } else { '<missing>' }
-    throw "The first concurrent lease did not complete cleanly (exited: $($launchA.HasExited), complete: $(Test-Path -LiteralPath $aComplete)).`nstdout: $stdout`nstderr: $aError"
+    throw "The first concurrent lease did not complete cleanly (exited: $($launchA.HasExited), exit code: $($launchA.ExitCode), complete: $(Test-Path -LiteralPath $aComplete)).`nstdout: $stdout`nstderr: $aError"
   }
   Set-Content -LiteralPath $bWrite -Value write -NoNewline
   $deadline = (Get-Date).AddSeconds(15)
@@ -281,10 +282,11 @@ try {
   while (-not $launchB.HasExited -and (Get-Date) -le $deadline) {
     Start-Sleep -Milliseconds 100
   }
+  if ($launchB.HasExited) { $launchB.WaitForExit() }
   $bError = if (Test-Path -LiteralPath $bStderr) { Get-Content -LiteralPath $bStderr -Raw } else { '<missing>' }
-  if (-not $launchB.HasExited -or -not (Test-Path -LiteralPath $bComplete) -or -not [string]::IsNullOrWhiteSpace($bError)) {
+  if (-not $launchB.HasExited -or $launchB.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $bComplete)) {
     $stdout = if (Test-Path -LiteralPath $bStdout) { Get-Content -LiteralPath $bStdout -Raw } else { '<missing>' }
-    throw "The second concurrent lease did not complete cleanly (exited: $($launchB.HasExited), complete: $(Test-Path -LiteralPath $bComplete)).`nstdout: $stdout`nstderr: $bError"
+    throw "The second concurrent lease did not complete cleanly (exited: $($launchB.HasExited), exit code: $($launchB.ExitCode), complete: $(Test-Path -LiteralPath $bComplete)).`nstdout: $stdout`nstderr: $bError"
   }
   $concurrentAclAfter = (Get-Acl -LiteralPath $concurrentRoot).Sddl
   if ($concurrentAclAfter -ne $concurrentAclBefore) {
@@ -293,7 +295,7 @@ try {
 
   Write-Host '[windows-smoke] WFP loopback network boundary'
   if ($networkPortsAvailable) {
-    # The profile may reach only TCP on the single authenticated gateway port on loopback.
+    # The profile may reach only TCP on the single authenticated IPv4 gateway port.
     $outsideListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $outsideListener.Start()
     $outsidePort = $outsideListener.LocalEndpoint.Port
@@ -326,7 +328,7 @@ try {
     & $hostExe launch $installationId $ownershipRoot (& $connectSpec '::1' $outsidePortV6)
     if ($LASTEXITCODE -eq 0) { throw 'AppContainer bypassed the IPv6 loopback gateway fence.' }
     & $hostExe launch $installationId $ownershipRoot (& $connectSpec '::1' $gatewayPort)
-    if ($LASTEXITCODE -ne 0) { throw 'AppContainer could not reach the IPv6 gateway port.' }
+    if ($LASTEXITCODE -eq 0) { throw 'AppContainer used the IPv4 gateway exception for IPv6.' }
 
     # The gateway exception is TCP-only. A datagram sent to either an unrelated port or the gateway
     # port must never reach a host listener.

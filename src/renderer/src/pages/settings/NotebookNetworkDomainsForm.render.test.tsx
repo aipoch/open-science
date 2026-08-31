@@ -148,6 +148,37 @@ describe('NotebookNetworkDomainsForm', () => {
     expect(button('Set up')).not.toBeUndefined()
   })
 
+  it('shows each Windows setup explanation only once', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      platform: 'win32',
+      settings: {
+        getNotebookNetworkStatus: vi.fn().mockResolvedValue({
+          kind: 'setupRequired',
+          platform: 'win32',
+          reasons: [
+            'windowsProfileMissing',
+            'windowsLoopbackMissing',
+            'windowsNetworkFenceMissing',
+            'windowsOwnershipMissing',
+            'windowsGatewayPortUnavailable'
+          ]
+        }),
+        installNotebookNetwork: vi.fn(),
+        removeNotebookNetwork: vi.fn()
+      }
+    }
+
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await flush()
+
+    expect(
+      container.textContent?.match(/The Windows sandbox needs administrator setup\./g)
+    ).toHaveLength(1)
+    expect(container.textContent).toContain(
+      'The Windows sandbox gateway port is unavailable. Set up the sandbox again.'
+    )
+  })
+
   it('returns to standard execution after removing Windows protection', async () => {
     const notSetUp = {
       kind: 'setupRequired' as const,

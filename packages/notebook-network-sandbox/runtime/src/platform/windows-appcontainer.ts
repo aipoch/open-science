@@ -120,7 +120,7 @@ const connectionProbeSpecification = (port: number): string => {
     `try { $connect = $client.ConnectAsync('127.0.0.1', ${port}); if (-not $connect.Wait(5000)) { exit 34 }; $connect.GetAwaiter().GetResult(); exit 0 }`,
     'catch { exit 33 }',
     'finally { $client.Dispose() }'
-  ].join('; ')
+  ].join('\n')
   return Buffer.from(
     JSON.stringify({
       executable: 'powershell.exe',
@@ -196,13 +196,23 @@ const checkWindowsAppContainer = async (
         errors.push(`Notebook AppContainer gateway port ${status.gatewayPort} is unavailable`)
       } else if (
         errors.length === 0 &&
-        !(await verifyWindowsNetworkFence(hostPath, installationId, ownershipRoot, status.gatewayPort))
+        !(await verifyWindowsNetworkFence(
+          hostPath,
+          installationId,
+          ownershipRoot,
+          status.gatewayPort
+        ))
       ) {
         errors.push('Notebook AppContainer loopback network fence is not installed')
       }
     } else if (
       errors.length === 0 &&
-      !(await verifyWindowsNetworkFence(hostPath, installationId, ownershipRoot, status.gatewayPort))
+      !(await verifyWindowsNetworkFence(
+        hostPath,
+        installationId,
+        ownershipRoot,
+        status.gatewayPort
+      ))
     ) {
       errors.push('Notebook AppContainer loopback network fence is not installed')
     }
@@ -213,6 +223,19 @@ const checkWindowsAppContainer = async (
 }
 
 const powershellString = (value: string): string => `'${value.replaceAll("'", "''")}'`
+
+const windowsElevationScript = (
+  hostPath: string,
+  installationId: string,
+  ownershipRoot: string,
+  command: 'setup' | 'remove'
+): string =>
+  [
+    'try {',
+    `$process = Start-Process -FilePath ${powershellString(hostPath)} -ArgumentList @('${command}', ${powershellString(installationId)}, ${powershellString(ownershipRoot)}) -Verb RunAs -Wait -PassThru`,
+    'exit $process.ExitCode',
+    '} catch { exit 1223 }'
+  ].join('; ')
 
 const runHostCommand = async (
   hostPath: string,
@@ -232,12 +255,7 @@ const runElevatedHostCommand = async (
   ownershipRoot: string,
   command: 'setup' | 'remove'
 ): Promise<{ cancelled: boolean }> => {
-  const script = [
-    'try {',
-    `$process = Start-Process -FilePath ${powershellString(hostPath)} -ArgumentList @('${command}', ${powershellString(installationId)}, ${powershellString(ownershipRoot)}) -Verb RunAs -Wait -PassThru`,
-    'exit $process.ExitCode',
-    '} catch { if ($_.Exception.NativeErrorCode -eq 1223) { exit 1223 }; throw }'
-  ].join('; ')
+  const script = windowsElevationScript(hostPath, installationId, ownershipRoot, command)
   const encoded = Buffer.from(script, 'utf16le').toString('base64')
   const result = await runCapture('powershell.exe', [
     '-NoLogo',
@@ -361,16 +379,13 @@ const windowsStandardLaunch = (
 
 export {
   checkWindowsAppContainer,
+  connectionProbeSpecification,
   installWindowsAppContainer,
   removeWindowsAppContainer,
   readAppContainerStatus,
   loopbackPortAvailable,
+  windowsElevationScript,
   windowsLaunch,
   windowsStandardLaunch
 }
-export type {
-  AppContainerStatus,
-  WindowsLaunchRequest,
-  WindowsShell,
-  WindowsStandardLaunchRequest
-}
+export type { AppContainerStatus, WindowsLaunchRequest, WindowsShell, WindowsStandardLaunchRequest }

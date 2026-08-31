@@ -3,9 +3,9 @@ use std::ffi::c_void;
 use anyhow::{Result, bail};
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::NetworkManagement::WindowsFilteringPlatform::{
-    FWP_ACTION_BLOCK, FWP_ACTION_PERMIT, FWP_BYTE_ARRAY16, FWP_BYTE_ARRAY16_TYPE, FWP_BYTE_BLOB,
-    FWP_CONDITION_VALUE0, FWP_CONDITION_VALUE0_0, FWP_MATCH_EQUAL, FWP_SID, FWP_UINT8, FWP_UINT16,
-    FWP_UINT64, FWP_V4_ADDR_AND_MASK, FWP_V4_ADDR_MASK, FWP_VALUE0, FWP_VALUE0_0, FWPM_ACTION0,
+    FWP_ACTION_BLOCK, FWP_ACTION_PERMIT, FWP_BYTE_BLOB, FWP_CONDITION_VALUE0,
+    FWP_CONDITION_VALUE0_0, FWP_MATCH_EQUAL, FWP_SID, FWP_UINT8, FWP_UINT16, FWP_UINT64,
+    FWP_V4_ADDR_AND_MASK, FWP_V4_ADDR_MASK, FWP_VALUE0, FWP_VALUE0_0, FWPM_ACTION0,
     FWPM_CONDITION_ALE_PACKAGE_ID, FWPM_CONDITION_IP_PROTOCOL, FWPM_CONDITION_IP_REMOTE_ADDRESS,
     FWPM_CONDITION_IP_REMOTE_PORT, FWPM_DISPLAY_DATA0, FWPM_FILTER_CONDITION0,
     FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT, FWPM_FILTER_FLAG_PERSISTENT, FWPM_FILTER0,
@@ -23,7 +23,7 @@ const FWP_E_SUBLAYER_NOT_FOUND: u32 = 0x8032_0007;
 const SUBLAYER_WEIGHT: u16 = 0x7000;
 const PERMIT_WEIGHT: u64 = 0x0f00_0000_0000_0000;
 const BLOCK_WEIGHT: u64 = 0x0e00_0000_0000_0000;
-const FILTER_ROLES: [&str; 4] = ["permit-v4", "block-v4", "permit-v6", "block-v6"];
+const FILTER_ROLES: [&str; 3] = ["permit-v4", "block-v4", "block-v6"];
 
 pub struct FenceDescriptor<'a> {
     pub installation_id: &'a str,
@@ -110,21 +110,21 @@ fn parse_guid(value: &str) -> Result<GUID> {
     Ok(GUID::from_u128(u128::from_str_radix(value, 16)?))
 }
 
-fn keys(descriptor: &FenceDescriptor<'_>) -> Result<(GUID, [GUID; 4])> {
+fn keys(descriptor: &FenceDescriptor<'_>) -> Result<(GUID, [GUID; 3])> {
     let sublayer = parse_guid(descriptor.sublayer_key)?;
     let filters = descriptor
         .filter_keys
         .iter()
         .map(|key| parse_guid(key))
         .collect::<Result<Vec<_>>>()?;
-    let filters: [GUID; 4] = filters
+    let filters: [GUID; 3] = filters
         .try_into()
         .map_err(|_| anyhow::anyhow!("invalid Windows Filtering Platform filter key count"))?;
     let mut unique = vec![sublayer.to_u128()];
     unique.extend(filters.iter().map(GUID::to_u128));
     unique.sort_unstable();
     unique.dedup();
-    if unique.len() != 5 {
+    if unique.len() != 4 {
         bail!("Windows Filtering Platform resource keys must be unique");
     }
     Ok((sublayer, filters))
@@ -231,7 +231,6 @@ fn ensure_sublayer(engine: HANDLE, descriptor: &FenceDescriptor<'_>, key: &GUID)
 enum FilterKind {
     PermitV4,
     BlockV4,
-    PermitV6,
     BlockV6,
 }
 
@@ -259,10 +258,6 @@ fn add_filter(
         addr: 0x7f00_0001,
         mask: u32::MAX,
     };
-    let mut v6_loopback = FWP_BYTE_ARRAY16 {
-        byteArray16: [0; 16],
-    };
-    v6_loopback.byteArray16[15] = 1;
     let mut address_condition = FWPM_FILTER_CONDITION0 {
         fieldKey: FWPM_CONDITION_IP_REMOTE_ADDRESS,
         matchType: FWP_MATCH_EQUAL,
@@ -314,26 +309,6 @@ fn add_filter(
             FWPM_FILTER_FLAG_PERSISTENT | FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT,
             vec![sid_condition],
         ),
-        FilterKind::PermitV6 => {
-            address_condition.conditionValue = FWP_CONDITION_VALUE0 {
-                r#type: FWP_BYTE_ARRAY16_TYPE,
-                Anonymous: FWP_CONDITION_VALUE0_0 {
-                    byteArray16: &mut v6_loopback,
-                },
-            };
-            (
-                FWPM_LAYER_ALE_AUTH_CONNECT_V6,
-                FWP_ACTION_PERMIT,
-                PERMIT_WEIGHT,
-                FWPM_FILTER_FLAG_PERSISTENT,
-                vec![
-                    sid_condition,
-                    address_condition,
-                    port_condition,
-                    protocol_condition,
-                ],
-            )
-        }
         FilterKind::BlockV6 => (
             FWPM_LAYER_ALE_AUTH_CONNECT_V6,
             FWP_ACTION_BLOCK,
@@ -388,7 +363,6 @@ pub fn install(descriptor: &FenceDescriptor<'_>, package_sid: PSID) -> Result<()
         for ((key, role), kind) in filter_keys.iter().zip(FILTER_ROLES).zip([
             FilterKind::PermitV4,
             FilterKind::BlockV4,
-            FilterKind::PermitV6,
             FilterKind::BlockV6,
         ]) {
             let expected_tag = tag(descriptor, role);

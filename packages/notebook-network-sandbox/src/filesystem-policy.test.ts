@@ -12,6 +12,8 @@ import { seatbeltProfile } from '../runtime/src/platform/macos-isolation.js'
 import { linuxLaunch } from '../runtime/src/platform/linux-isolation.js'
 import { ViolationLog } from '../runtime/src/gateway/violation-log.js'
 
+const linuxIt = it.skipIf(process.platform === 'win32')
+
 describe('Notebook filesystem policy', () => {
   it('deduplicates nested roots without widening them', () => {
     const root = mkdtempSync(join(tmpdir(), 'open-science-fs-'))
@@ -109,7 +111,7 @@ describe('Notebook filesystem policy', () => {
     ).not.toContain('OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED')
   })
 
-  it('keeps hidden Linux mounts read-only while restoring workspace writes', async () => {
+  linuxIt('keeps hidden Linux mounts read-only while restoring workspace writes', async () => {
     const privateRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-mount-'))
     const bin = join(privateRoot, 'bin')
     const workspace = join(privateRoot, 'workspace')

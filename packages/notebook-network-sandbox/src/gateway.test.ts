@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createServer, connect, type Socket } from 'node:net'
 import { createServer as createHttpServer, request } from 'node:http'
 import { createServer as createTlsServer } from 'node:tls'
@@ -199,7 +200,10 @@ describe('Notebook command gateway', () => {
 
   it('brokers authenticated local RPC without consulting the external domain policy', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'notebook-rpc-broker-'))
-    const socketPath = join(directory, 'rpc.sock')
+    const socketPath =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\open-science-notebook-rpc-${process.pid}-${randomUUID()}`
+        : join(directory, 'rpc.sock')
     const received: Array<{ url?: string; authorization?: string }> = []
     const rpc = createHttpServer((incoming, response) => {
       received.push({

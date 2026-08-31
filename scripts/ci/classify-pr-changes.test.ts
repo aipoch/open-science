@@ -356,7 +356,8 @@ describe('pull request change classification', () => {
     ['CodeBuddy framework', 'src/main/agent-framework/codebuddy.ts'],
     ['CodeBuddy detect', 'src/main/settings/codebuddy-detect.ts'],
     ['managed CodeBuddy', 'src/main/settings/managed-codebuddy.ts'],
-    ['immutable notebook inputs', 'src/main/immutable-input-authority.ts']
+    ['immutable notebook inputs', 'src/main/immutable-input-authority.ts'],
+    ['notebook package process sandbox', 'src/main/notebook/package-process-sandbox.ts']
   ])('adds native Windows lanes for %s changes', (_category, path) => {
     const plan = classifyChanges([{ path, status: 'modified' }])
 

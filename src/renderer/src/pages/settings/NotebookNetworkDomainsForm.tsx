@@ -200,7 +200,9 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
               ) : null}
               {status.kind === 'setupRequired' && status.reasons.length > 0 ? (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {status.reasons.map((reason) => statusReasonLabel(reason, t)).join(' · ')}
+                  {[...new Set(status.reasons.map((reason) => statusReasonLabel(reason, t)))].join(
+                    ' · '
+                  )}
                 </p>
               ) : null}
             </div>

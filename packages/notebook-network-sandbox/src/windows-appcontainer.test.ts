@@ -1,6 +1,37 @@
 import { describe, expect, it } from 'vitest'
 
-import { windowsLaunch } from '../runtime/src/platform/windows-appcontainer.js'
+import {
+  connectionProbeSpecification,
+  windowsElevationScript,
+  windowsLaunch
+} from '../runtime/src/platform/windows-appcontainer.js'
+
+describe('Windows AppContainer network fence probe', () => {
+  it('keeps PowerShell catch and finally clauses attached to the try statement', () => {
+    const specification = JSON.parse(
+      Buffer.from(connectionProbeSpecification(49700), 'base64url').toString('utf8')
+    ) as { arguments: string[] }
+    const command = specification.arguments.at(-1)
+
+    expect(command).toContain("ConnectAsync('127.0.0.1', 49700)")
+    expect(command).toContain('}\ncatch { exit 33 }\nfinally { $client.Dispose() }')
+    expect(command).not.toContain('}; catch')
+  })
+})
+
+describe('Windows AppContainer elevation', () => {
+  it('recognizes a wrapped Windows UAC cancellation without matching localized text', () => {
+    const script = windowsElevationScript(
+      "C:\\Program Files\\Open Science\\host's.exe",
+      '0123456789abcdef01234567',
+      'C:\\Users\\Researcher\\AppData\\Local\\sandbox',
+      'setup'
+    )
+
+    expect(script).toContain('} catch { exit 1223 }')
+    expect(script).toContain("'C:\\Program Files\\Open Science\\host''s.exe'")
+  })
+})
 
 describe('Windows AppContainer launch', () => {
   it('routes local RPC through the authenticated command gateway', () => {
