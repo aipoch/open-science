@@ -71,6 +71,9 @@ export type NotificationInboxChanged = Readonly<{
   latestSequence: number
 }>
 
+export type NotificationDesktopAvailability = 'supported' | 'unavailable'
+export type NotificationTestResult = 'shown' | 'failed' | 'unconfirmed' | 'unavailable'
+
 export type NotificationMarkReadRequest = Readonly<{ ids: readonly string[] }>
 
 export type NotificationMarkAllReadRequest = Readonly<{ throughSequence: number }>

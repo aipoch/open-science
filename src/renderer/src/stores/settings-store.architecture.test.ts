@@ -308,9 +308,9 @@ const importBoundaryViolations = (path: string, source = readSource(path)): read
   return violations
 }
 
-// Exact declaration counts for every facade binding. `load` now publishes the Settings snapshot
-// before runtime probes finish, so its locals (and the two `catch (error)` bindings) must stay
-// inventoried here instead of being treated as new facade state.
+// Exact declaration counts for every facade binding. `load` publishes the Settings snapshot before
+// capability probes finish, so its probe-result locals stay inventoried here instead of being
+// treated as new facade state.
 const allowedFacadeVariableCounts = new Map<string, number>([
   ['createInitialSettingsState', 1],
   ['applySnapshot', 1],
@@ -327,11 +327,13 @@ const allowedFacadeVariableCounts = new Map<string, number>([
   ['generation', 1],
   ['shouldInitializeRuntime', 1],
   ['settingsPromise', 1],
+  ['encryptionAvailability', 1],
   ['runtimeInitialization', 1],
   ['snapshot', 1],
-  ['[preflight, encryptionAvailable, npmAvailable]', 1],
+  ['[[encryptionResult], runtimeResults]', 1],
+  ['[preflightResult, npmAvailableResult]', 1],
   ['loadPromise', 1],
-  ['error', 2],
+  ['error', 1],
   ['useSettingsStore', 1]
 ])
 

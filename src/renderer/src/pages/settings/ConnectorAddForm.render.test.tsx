@@ -21,6 +21,7 @@ let root: Root
 beforeEach(() => {
   useSettingsStore.setState({
     ...createInitialSettingsState(),
+    encryptionAvailable: true,
     addCustomServer: vi.fn().mockResolvedValue(undefined)
   })
   container = document.createElement('div')
@@ -121,6 +122,32 @@ describe('ConnectorAddForm (local command)', () => {
     expect(document.activeElement).toBe(radios[1])
   })
 
+  it('does not let hidden local environment errors block remote submission', async () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Remote after local')
+    openAdvancedSettings()
+    setValue('Environment variables', 'missing-equals')
+    const remote = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+    ).find((radio) => radio.textContent?.trim() === 'Remote server')
+    act(() => remote?.click())
+    setValue('Server URL', 'https://mcp.example.test')
+    checkTrust()
+
+    expect(addButton()?.disabled).toBe(false)
+    await act(async () => addButton()?.click())
+    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayName: 'Remote after local',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test'
+      })
+    )
+  })
+
   it('adds a stdio server with the default npx command, then calls onDone', async () => {
     const onDone = vi.fn()
     act(() => {
@@ -146,6 +173,25 @@ describe('ConnectorAddForm (local command)', () => {
       })
     )
     expect(onDone).toHaveBeenCalled()
+  })
+
+  it('submits whitespace-separated header input as separate arguments', async () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Header Server')
+    openAdvancedSettings()
+    setValue('Arguments', '--header Authorization: Bearer plaintext-secret')
+    checkTrust()
+
+    await act(async () => addButton()?.click())
+
+    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']
+      })
+    )
   })
 
   it('previews an ID from the name and submits a valid user override', async () => {
@@ -242,6 +288,18 @@ describe('ConnectorAddForm (local command)', () => {
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
     })
+
+    expect(
+      document.body.querySelector('[aria-label="Display name"]')?.getAttribute('aria-required')
+    ).toBe('true')
+    expect(
+      document.body.querySelector('[aria-label="Command"]')?.getAttribute('aria-required')
+    ).toBe('true')
+    expect(
+      document.body
+        .querySelector('[aria-label="I trust this connector"]')
+        ?.getAttribute('aria-required')
+    ).toBe('true')
 
     setValue('Display name', 'Memory')
     expect(addButton()?.disabled).toBe(true)
@@ -341,6 +399,14 @@ describe('ConnectorAddForm (local command)', () => {
       document.body.querySelector<HTMLTextAreaElement>('[aria-label="Environment variables"]')
         ?.value
     ).toBe('API_TOKEN=')
+    const environment = document.body.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Environment variables"]'
+    )
+    expect(environment?.getAttribute('aria-required')).toBe('true')
+    expect(environment?.getAttribute('aria-describedby')).toBe('connector-env-help')
+    expect(document.body.querySelector('#connector-env-help')?.textContent).toContain(
+      'Required: API_TOKEN.'
+    )
     checkTrust()
     expect(addButton()?.disabled).toBe(true)
 
@@ -368,7 +434,36 @@ describe('ConnectorAddForm (remote server)', () => {
       )
     })
 
-    expect(document.body.querySelector('[aria-label="Server URL"]')).not.toBeNull()
+    expect(
+      document.body.querySelector('[aria-label="Server URL"]')?.getAttribute('aria-required')
+    ).toBe('true')
+  })
+
+  it('associates imported required header names with the Headers field', () => {
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          initialTemplate={{
+            schemaVersion: 1,
+            kind: 'open-science.connector',
+            name: 'header-auth',
+            displayName: 'Header Auth',
+            transport: 'streamable_http',
+            url: 'https://mcp.example.test',
+            requiredSecrets: { headers: ['Authorization'] }
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    const headers = document.body.querySelector('[aria-label="Headers"]')
+    expect(headers?.getAttribute('aria-required')).toBe('true')
+    expect(headers?.getAttribute('aria-describedby')).toBe('connector-headers-help')
+    expect(document.body.querySelector('#connector-headers-help')?.textContent).toContain(
+      'Required: Authorization.'
+    )
   })
 
   it('reveals uncommon OAuth registration settings only when selected', () => {
@@ -421,6 +516,19 @@ describe('ConnectorAddForm (remote server)', () => {
         '(optional)'
       )
     }
+    expect(authorizationServer?.getAttribute('aria-required')).toBe('true')
+    const clientId = document.body.querySelector('[aria-label="Client ID"]')
+    expect(clientId?.getAttribute('aria-required')).toBe('true')
+
+    setValue('Client secret', 'configured-secret')
+    expect(authorizationServer?.getAttribute('aria-invalid')).toBe('true')
+    expect(authorizationServer?.getAttribute('aria-describedby')).toBe(
+      'connector-oauth-server-error'
+    )
+    expect(clientId?.getAttribute('aria-invalid')).toBe('true')
+    expect(clientId?.getAttribute('aria-describedby')).toBe('connector-oauth-client-id-error')
+    expect(document.body.querySelector('#connector-oauth-server-error')).not.toBeNull()
+    expect(document.body.querySelector('#connector-oauth-client-id-error')).not.toBeNull()
     expect(document.body.querySelector('[aria-label="Default callback URI"]')).not.toBeNull()
   })
 
@@ -493,6 +601,54 @@ describe('ConnectorAddForm (remote server)', () => {
     expect(onDone).toHaveBeenCalledOnce()
   })
 
+  it('keeps Cancel disabled while an OAuth server is being added', async () => {
+    const created = {
+      id: 'oauth-mcp',
+      name: 'oauth-mcp',
+      displayName: 'OAuth MCP',
+      transport: 'streamable_http' as const,
+      enabled: false,
+      url: 'https://mcp.example.test',
+      oauth: { hasTokens: false }
+    }
+    let resolveAdd!: (server: typeof created) => void
+    const onCancel = vi.fn()
+    useSettingsStore.setState({
+      addCustomServer: vi.fn(
+        () =>
+          new Promise<typeof created>((resolve) => {
+            resolveAdd = resolve
+          })
+      ),
+      authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
+      cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined)
+    })
+    act(() => {
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={onCancel} />
+      )
+    })
+
+    setValue('Display name', 'OAuth MCP')
+    setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
+    selectOption('Authentication', 'OAuth')
+    checkTrust()
+    act(() => addButton()?.click())
+
+    const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Cancel'
+    )
+    expect(cancel?.disabled).toBe(true)
+    act(() => cancel?.click())
+    expect(onCancel).not.toHaveBeenCalled()
+
+    await act(async () => resolveAdd(created))
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledWith({
+      id: 'oauth-mcp'
+    })
+  })
+
   it('shows the default callback before revealing a different registered URI', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {
@@ -533,6 +689,7 @@ describe('ConnectorAddForm (remote server)', () => {
   })
 
   it('requires an imported OAuth client secret locally and submits pre-registered credentials', async () => {
+    useSettingsStore.setState({ encryptionAvailable: true })
     act(() => {
       root.render(
         <ConnectorAddForm
@@ -562,6 +719,9 @@ describe('ConnectorAddForm (remote server)', () => {
     expect(
       document.body.querySelector<HTMLInputElement>('[aria-label="Redirect URI"]')?.value
     ).toBe('http://127.0.0.1:8080/callback')
+    expect(
+      document.body.querySelector('[aria-label="Client secret"]')?.getAttribute('aria-required')
+    ).toBe('true')
     checkTrust()
     expect(addButton()?.disabled).toBe(true)
     setValue('Client secret', 'local-client-secret')
@@ -643,6 +803,194 @@ describe('ConnectorAddForm (edit)', () => {
       .calls[0][0]
     expect(call).not.toHaveProperty('name')
     expect(onDone).toHaveBeenCalled()
+  })
+
+  it('shows saved environment names and can explicitly clear them', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{
+            ...editServer,
+            hasEnv: true,
+            environmentNames: ['API_TOKEN', 'ORG_ID']
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    openAdvancedSettings()
+    expect(document.body.textContent).toContain('API_TOKEN, ORG_ID')
+    selectOption('Environment variable action', 'Clear saved variables')
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    await act(async () => save?.click())
+
+    expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ env: {} }))
+  })
+
+  it('preserves named environment variables when their encrypted values are unavailable', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{
+            ...editServer,
+            hasEnv: false,
+            environmentNames: ['API_TOKEN']
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    openAdvancedSettings()
+    expect(document.body.textContent).toContain('API_TOKEN')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    await act(async () => save?.click())
+
+    const request = updateCustomServer.mock.calls[0]?.[0]
+    expect(request).not.toHaveProperty('env')
+  })
+
+  it('reports malformed environment lines instead of silently dropping them', () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'GOOD=value\nBROKEN')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: use KEY=VALUE.')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
+  it('reports malformed header lines instead of silently dropping them', () => {
+    act(() => {
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
+    })
+
+    setValue('Display name', 'Remote memory')
+    setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
+    selectOption('Authentication', 'Static headers')
+    setValue('Headers', 'Authorization: Bearer secret\nBROKEN')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: use Name: Value.')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
+  it('reports duplicate environment names instead of overwriting them', () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'API_TOKEN=first\nAPI_TOKEN=second')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: API_TOKEN is duplicated.')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
+  it('reports environment names that collide case-insensitively on Windows', () => {
+    const originalApi = window.api
+    window.api = { ...originalApi, platform: 'win32' } as Window['api']
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'API_TOKEN=first\napi_token=second')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: api_token is duplicated.')
+    expect(addButton()?.disabled).toBe(true)
+    window.api = originalApi
+  })
+
+  it('keeps case-distinct environment names valid on Unix', () => {
+    const originalApi = window.api
+    window.api = { ...originalApi, platform: 'darwin' } as Window['api']
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'API_TOKEN=first\napi_token=second')
+    checkTrust()
+
+    expect(document.body.textContent).not.toContain('Line 2: api_token is duplicated.')
+    expect(addButton()?.disabled).toBe(false)
+    window.api = originalApi
+  })
+
+  it('reports duplicate header names instead of overwriting them', () => {
+    act(() => {
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
+    })
+    setValue('Display name', 'Remote memory')
+    setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
+    selectOption('Authentication', 'Static headers')
+    setValue('Headers', 'Authorization: first\nAuthorization: second')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Line 2: Authorization is duplicated.')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
+  it('requires secure storage before submitting static credentials', () => {
+    useSettingsStore.setState({ encryptionAvailable: false })
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Local memory')
+    openAdvancedSettings()
+    setValue('Environment variables', 'API_TOKEN=secret')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Secure credential storage is unavailable')
+    expect(addButton()?.disabled).toBe(true)
+  })
+
+  it('requires secure storage before submitting static remote headers', () => {
+    useSettingsStore.setState({ encryptionAvailable: false })
+    act(() => {
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
+    })
+
+    setValue('Display name', 'Remote memory')
+    setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
+    selectOption('Authentication', 'Static headers')
+    setValue('Headers', 'Authorization: Bearer secret')
+    checkTrust()
+
+    expect(document.body.textContent).toContain('Secure credential storage is unavailable')
+    expect(addButton()?.disabled).toBe(true)
   })
 
   it('keeps a legacy Connector editable when its name matches another stored ID', () => {
@@ -738,7 +1086,11 @@ describe('ConnectorAddForm (edit)', () => {
 
   it('clears OAuth state when switching a remote server to static headers', async () => {
     const updateCustomServer = vi.fn().mockResolvedValue(undefined)
-    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      encryptionAvailable: true,
+      updateCustomServer
+    })
     act(() => {
       root.render(
         <ConnectorAddForm

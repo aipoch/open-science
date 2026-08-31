@@ -25,6 +25,7 @@ type ProjectDeletionPath =
   | 'compute-job-project-delete'
   | 'delegated-runtime-quiescence'
   | 'notification-session-invalidation'
+  | 'notebook-file-evidence-tail'
   | 'project-deletion-intent-protocol'
   | 'project-file-projection-delete'
   | 'project-metadata-soft-delete'
@@ -87,6 +88,32 @@ const optionalOwner = (name: ProjectOwnerFieldName): ProjectOwnerField => ({
 })
 
 const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
+  {
+    id: 'project-memory',
+    medium: 'sqlite',
+    resources: ['MemoryEntry'],
+    prismaModels: [
+      {
+        name: 'MemoryEntry',
+        ownerFields: [optionalOwner('projectId'), optionalOwner('sourceSessionId')],
+        relationContracts: [
+          {
+            field: 'project',
+            target: 'Project',
+            fromFields: ['projectId'],
+            onDelete: 'Cascade'
+          }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Project memories are removed before the Project metadata row is retained as history.'
+    }
+  },
   {
     id: 'permission-grants',
     medium: 'sqlite',
@@ -405,6 +432,18 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'compute-session-cache',
+    medium: 'filesystem',
+    resources: ['compute/session-cache/<projectId>/<sessionId>/'],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'compute-job-project-delete',
+      operation: 'SessionCacheOwner.removeProject',
+      note: 'The composed Compute deletion owner drains and removes Session cache bytes after job cleanup.'
+    }
+  },
+  {
     id: 'project-session-json',
     medium: 'filesystem',
     resources: ['sessions/<projectId>/', 'deleted-sessions/<projectId>/'],
@@ -523,6 +562,18 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
         'Retained until the user removes the Project working folder outside Project deletion.',
       reason:
         'The delete confirmation promises that files in the Project working folder are not deleted.'
+    }
+  },
+  {
+    id: 'notebook-file-evidence',
+    medium: 'filesystem',
+    resources: ['notebook-file-evidence/<projectId>/'],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'notebook-file-evidence-tail',
+      operation: 'NotebookRuntimeService.deleteProjectFileEvidence',
+      note: 'The durable Project deletion intent retries removal of frozen Notebook file generations after runtime quiescence.'
     }
   }
 ]

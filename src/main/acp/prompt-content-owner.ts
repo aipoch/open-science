@@ -2,9 +2,20 @@ import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile, stat } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
-import type { AcpReplayMessageImage } from '../../shared/acp'
+import {
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
+  sanitizeAcpMessageImage,
+  type AcpMessageImage,
+  type AcpReplayMessageImage
+} from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
 import { estimateHistoryTokens, truncateTextToEstimatedTokens } from '../../shared/history-preamble'
+import {
+  resolvePdfPreparationScope,
+  type PdfPreparationScope
+} from '../../shared/pdf-preparation-scope'
+import type { PdfReadingPosition } from '../../shared/session-persistence'
 import {
   createUploadVersionReference,
   imageAttachmentMimeType,
@@ -49,8 +60,6 @@ import type { FileReferenceResolver, TrustedFileReferenceLease } from './file-re
 import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
 import type { VisionEvidenceSource } from './vision-evidence-repository'
 
-const log = createLogger('acp-prompt-content-owner')
-
 type CodexSkillInput = {
   name: string
   path: string
@@ -70,6 +79,7 @@ type PrepareAcpPromptContentInput = {
   connectionGeneration?: number
   text: string
   historyImages: ReadonlyArray<AcpReplayMessageImage>
+  currentImages?: ReadonlyArray<AcpMessageImage>
   historyUploads: ReadonlyArray<UploadedAttachment>
   currentUploads: ReadonlyArray<UploadedAttachment>
   references: ReadonlyArray<FileReference>
@@ -108,6 +118,47 @@ type ResolvedPromptFile = {
 type PromptFileTextBudget = {
   remaining: number
   perFileLimit: number
+}
+
+type PdfExtractionResult = {
+  block: ContentBlock
+  status: 'extracted' | 'no-selectable-text' | 'failed'
+  pageCount?: number
+  extractedChars: number
+  extractorTruncated: boolean
+}
+
+type LinkedPdfContext = Readonly<{
+  documentId: string
+  documentCount: number
+  active: boolean
+}>
+
+type PromptFileSource = 'current-upload' | 'history-upload' | 'file-reference'
+const log = createLogger('literature-reading-context')
+
+const PDF_COLLECTION_INTENT =
+  /这些|全部|所有|三篇|两篇|逐篇|对比|比较|共同|差异|\b(?:these|all|both|three|compare|comparison)\b|\bacross (?:the )?(?:papers|documents)\b/i
+
+const buildPdfReadingContext = (name: string, position: PdfReadingPosition): string =>
+  [
+    '<current_pdf_reading_context>',
+    JSON.stringify({ name, ...position, capturedAtSend: true }),
+    '</current_pdf_reading_context>',
+    'The pageNumber above is the page visible in the user’s PDF reader when this message was sent. Answer current-page questions directly from it; do not use tools to rediscover the page.'
+  ].join('\n')
+
+const sanitizePdfReadingPosition = (value: unknown): PdfReadingPosition | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const { pageNumber, pageCount } = value as Record<string, unknown>
+  return typeof pageNumber === 'number' &&
+    typeof pageCount === 'number' &&
+    Number.isSafeInteger(pageNumber) &&
+    Number.isSafeInteger(pageCount) &&
+    pageNumber >= 1 &&
+    pageCount >= pageNumber
+    ? { pageNumber, pageCount }
+    : undefined
 }
 
 const isImageBlock = (block: ContentBlock): boolean =>
@@ -169,13 +220,35 @@ class AcpPromptContentOwner {
     close: () => void
   ): Promise<PreparedAcpPromptContent> {
     const hasUploads = input.historyUploads.length > 0 || input.currentUploads.length > 0
+    if ((input.currentImages?.length ?? 0) > MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE) {
+      throw new Error(
+        `A prompt can include at most ${MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE} current images.`
+      )
+    }
+    let currentImageBytes = 0
+    const currentImages = (input.currentImages ?? []).map((candidate, index) => {
+      const image = sanitizeAcpMessageImage(candidate)
+      if (!image) throw new Error(`Invalid current image at index ${index}.`)
+      currentImageBytes += image.byteLength
+      if (currentImageBytes > MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE) {
+        throw new Error(
+          `Current images exceed the ${MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE}-byte per-message budget.`
+        )
+      }
+      return image
+    })
     let promptUploads: UploadedAttachment[] = []
     const resolvedReferences: FileReference[] = []
     let historyImageCount = 0
     const imageSources: Array<VisionEvidenceSource | undefined> = []
 
     let content: string | ContentBlock[]
-    if (!hasUploads && input.references.length === 0 && input.historyImages.length === 0) {
+    if (
+      !hasUploads &&
+      input.references.length === 0 &&
+      input.historyImages.length === 0 &&
+      currentImages.length === 0
+    ) {
       content = input.text
     } else {
       const contentBlocks: ContentBlock[] = input.text.trim()
@@ -238,6 +311,10 @@ class AcpPromptContentOwner {
       }
       if (input.historyImages.length > 0) {
         this.setSessionInlineImageBytes(input, imageBudget.base64Bytes)
+      }
+
+      for (const image of currentImages) {
+        appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
       }
 
       if (hasUploads) {
@@ -450,7 +527,8 @@ class AcpPromptContentOwner {
               trustedLease: lease
             },
             fileTextBudget,
-            isHistoryUpload
+            isHistoryUpload,
+            isHistoryUpload ? 'history-upload' : 'current-upload'
           )
         }
       } catch (error) {
@@ -487,7 +565,8 @@ class AcpPromptContentOwner {
           allowSkillImportReference: true
         },
         fileTextBudget,
-        isHistoryUpload
+        isHistoryUpload,
+        isHistoryUpload ? 'history-upload' : 'current-upload'
       )
     }
   }
@@ -548,7 +627,23 @@ class AcpPromptContentOwner {
             }
           : reference
       prepared = {
-        blocks: await this.buildFileContentBlocks(input, promptReference, fileTextBudget, false),
+        blocks: await this.buildFileContentBlocks(
+          input,
+          promptReference,
+          fileTextBudget,
+          false,
+          'file-reference',
+          reference.source === 'linked-folder'
+            ? undefined
+            : sanitizePdfReadingPosition(reference.pdfReadingPosition),
+          reference.source === 'linked-folder' || !reference.pdfContextDocumentId
+            ? undefined
+            : {
+                documentId: reference.pdfContextDocumentId,
+                documentCount: Math.min(Math.max(reference.pdfContextDocumentCount ?? 1, 1), 3),
+                active: reference.pdfContextActive === true
+              }
+        ),
         reference: exactReference
       }
     } catch (error) {
@@ -572,7 +667,10 @@ class AcpPromptContentOwner {
     input: PrepareAcpPromptContentInput,
     descriptor: ResolvedPromptFile,
     fileTextBudget: PromptFileTextBudget,
-    isHistoryUpload: boolean
+    isHistoryUpload: boolean,
+    source: PromptFileSource,
+    pdfReadingPosition?: PdfReadingPosition,
+    linkedPdfContext?: LinkedPdfContext
   ): Promise<ContentBlock[]> {
     const { absolutePath, uri, skillImportUri, name, mimeType, size, allowSkillImportReference } =
       descriptor
@@ -691,17 +789,172 @@ class AcpPromptContentOwner {
     }
 
     if (this.isPdfFile(name, mimeType)) {
+      const pdfScope = resolvePdfPreparationScope(input.text, pdfReadingPosition)
+      const targetPageNumber =
+        pdfScope === 'current-page' ? pdfReadingPosition?.pageNumber : undefined
+      const retrievalMode = targetPageNumber ? 'page-snapshot' : 'document-extraction'
+      if (linkedPdfContext && pdfScope === 'full-document') {
+        const collectionRequested = PDF_COLLECTION_INTENT.test(input.text)
+        const text = [
+          ...(pdfReadingPosition ? [buildPdfReadingContext(name, pdfReadingPosition)] : []),
+          '<linked_pdf_reading_route>',
+          JSON.stringify({
+            documentId: linkedPdfContext.documentId,
+            name,
+            documentCount: linkedPdfContext.documentCount,
+            active: linkedPdfContext.active,
+            pageCount: pdfReadingPosition?.pageCount,
+            route: 'literature-mcp',
+            target: collectionRequested ? 'linked-collection' : 'active-document',
+            fullTextEmbedded: false
+          }),
+          '</linked_pdf_reading_route>',
+          ...(linkedPdfContext.active
+            ? [
+                collectionRequested
+                  ? 'For whole-document synthesis across the linked collection, call `read_document` separately for each linked documentId and read every sequential batch until nextCursor is null.'
+                  : `For whole-document synthesis, call \`read_document\` with documentId ${JSON.stringify(linkedPdfContext.documentId)} and read every sequential batch until nextCursor is null.`,
+                'Do not call MCP resource-discovery tools, and do not use Notebook, shell, filesystem, or Python to extract linked PDFs.'
+              ]
+            : [])
+        ].join('\n')
+        log.info('PDF prepared for Agent', {
+          sessionId: input.appSessionId,
+          source,
+          retrievalMode: 'literature-tool',
+          scope: pdfScope,
+          routingReason: 'intent-full-document',
+          documentCount: linkedPdfContext.documentCount,
+          collectionRequested,
+          pageCount: pdfReadingPosition?.pageCount,
+          deliveryMode: 'literature-mcp-reference',
+          injectedChars: text.length,
+          fullDocumentInjected: false,
+          bm25Status: 'not-requested'
+        })
+        return [{ type: 'text', text }]
+      }
+      if (linkedPdfContext && pdfScope === 'auto') {
+        const text = [
+          ...(pdfReadingPosition ? [buildPdfReadingContext(name, pdfReadingPosition)] : []),
+          '<linked_pdf_reading_route>',
+          JSON.stringify({
+            documentId: linkedPdfContext.documentId,
+            name,
+            documentCount: linkedPdfContext.documentCount,
+            active: linkedPdfContext.active,
+            pageCount: pdfReadingPosition?.pageCount,
+            route: 'literature-mcp',
+            retrieval: 'query',
+            fullTextEmbedded: false
+          }),
+          '</linked_pdf_reading_route>',
+          ...(linkedPdfContext.active
+            ? [
+                'For questions about linked literature, call `read_document` with a focused query and omit documentIds to retrieve relevant passages across all linked PDFs. Use documentIds only when the user identifies a subset. Use sequential batches only for whole-document synthesis.',
+                'Do not call MCP resource-discovery tools, and do not use Notebook, shell, filesystem, or Python to extract linked PDFs.'
+              ]
+            : [])
+        ].join('\n')
+        log.info('PDF prepared for Agent', {
+          sessionId: input.appSessionId,
+          source,
+          retrievalMode: 'literature-tool',
+          scope: pdfScope,
+          routingReason: 'intent-auto',
+          pageNumber: pdfReadingPosition?.pageNumber,
+          pageCount: pdfReadingPosition?.pageCount,
+          documentCount: linkedPdfContext.documentCount,
+          deliveryMode: 'literature-mcp-reference',
+          injectedChars: text.length,
+          fullDocumentInjected: false,
+          bm25Status: 'pending-read-document-query'
+        })
+        return [{ type: 'text', text }]
+      }
       if (size > MAX_AUTO_EXTRACT_PDF_BYTES) {
-        return [
+        const blocks: ContentBlock[] = [
+          ...(pdfReadingPosition
+            ? [
+                {
+                  type: 'text' as const,
+                  text: buildPdfReadingContext(name, pdfReadingPosition)
+                }
+              ]
+            : []),
           {
             type: 'text',
             text: buildDeferredMediaNotice({ name, size, kind: 'PDF' })
           },
           { type: 'resource_link', uri, name, title: name, mimeType: 'application/pdf', size }
         ]
+        log.info('PDF prepared for Agent', {
+          sessionId: input.appSessionId,
+          source,
+          retrievalMode,
+          scope: pdfScope,
+          routingReason: `intent-${pdfScope}`,
+          pageNumber: targetPageNumber,
+          pageCount: pdfReadingPosition?.pageCount,
+          deliveryMode: 'deferred-resource-link',
+          fullDocumentInjected: false,
+          bm25Used: false,
+          bm25ResultCount: null,
+          sourceBytes: size,
+          extractionLimitBytes: MAX_AUTO_EXTRACT_PDF_BYTES
+        })
+        return blocks
       }
-      const block = await this.createPdfContentBlock(name, descriptor, uri)
-      return this.admitTextResource(block, descriptor, fileTextBudget, false)
+      const budgetBefore = fileTextBudget.remaining
+      const extraction = await this.createPdfContentBlock(
+        name,
+        absolutePath,
+        uri,
+        pdfReadingPosition,
+        pdfScope
+      )
+      const blocks = await this.admitTextResource(
+        extraction.block,
+        descriptor,
+        fileTextBudget,
+        false
+      )
+      const deliveryMode = blocks.some((block) => block.type === 'resource')
+        ? 'extracted-text-resource'
+        : blocks.some((block) => block.type === 'text')
+          ? 'budgeted-text-preview'
+          : 'resource-link'
+      const injectedChars = blocks.reduce((total, block) => {
+        if (block.type === 'text') return total + block.text.length
+        if (block.type === 'resource' && 'text' in block.resource) {
+          return total + block.resource.text.length
+        }
+        return total
+      }, 0)
+      log.info('PDF prepared for Agent', {
+        sessionId: input.appSessionId,
+        source,
+        retrievalMode,
+        scope: pdfScope,
+        routingReason: `intent-${pdfScope}`,
+        pageNumber: targetPageNumber,
+        deliveryMode,
+        extractionStatus: extraction.status,
+        pageCount: extraction.pageCount,
+        extractedChars: extraction.extractedChars,
+        injectedChars,
+        extractorTruncated: extraction.extractorTruncated,
+        fullDocumentInjected:
+          extraction.status === 'extracted' &&
+          pdfScope !== 'current-page' &&
+          !extraction.extractorTruncated &&
+          deliveryMode === 'extracted-text-resource',
+        fileTextBudgetBefore: budgetBefore,
+        fileTextBudgetAfter: fileTextBudget.remaining,
+        bm25Used: false,
+        bm25ResultCount: null
+      })
+      return blocks
     }
 
     if (isTextLikeAttachment(name, mimeType)) {
@@ -898,9 +1151,11 @@ class AcpPromptContentOwner {
 
   private async createPdfContentBlock(
     name: string,
-    descriptor: ResolvedPromptFile,
-    uri: string
-  ): Promise<ContentBlock> {
+    filePath: string,
+    uri: string,
+    readingPosition: PdfReadingPosition | undefined,
+    scope: PdfPreparationScope
+  ): Promise<PdfExtractionResult> {
     const toResource = (text: string): ContentBlock => ({
       type: 'resource',
       resource: { uri, mimeType: 'text/plain', text }
@@ -908,33 +1163,70 @@ class AcpPromptContentOwner {
 
     try {
       const { text, pageCount, truncated } = await extractPdfText(
-        descriptor.absolutePath,
-        descriptor.trustedLease
-          ? {
-              size: descriptor.size,
-              readBytes: () => this.readPromptFileBytes(descriptor)
-            }
-          : undefined
+        filePath,
+        scope === 'current-page' ? readingPosition?.pageNumber : undefined
       )
       if (!text) {
-        return toResource(
-          `[No selectable text could be extracted from "${name}" (${pageCount} page(s)). It may be a scanned or image-only PDF.]`
-        )
+        const pageNumber = readingPosition
+          ? Math.min(readingPosition.pageNumber, pageCount)
+          : undefined
+        return {
+          block: toResource(
+            [
+              ...(pageNumber ? [buildPdfReadingContext(name, { pageNumber, pageCount })] : []),
+              `[No selectable text could be extracted from "${name}" (${pageCount} page(s)). It may be a scanned or image-only PDF.]`
+            ].join('\n\n')
+          ),
+          status: 'no-selectable-text',
+          pageCount,
+          extractedChars: 0,
+          extractorTruncated: false
+        }
+      }
+
+      if (readingPosition && scope === 'current-page') {
+        const pageNumber = Math.min(readingPosition.pageNumber, pageCount)
+        return {
+          block: toResource(
+            [buildPdfReadingContext(name, { pageNumber, pageCount }), text].join('\n\n')
+          ),
+          status: 'extracted',
+          pageCount,
+          extractedChars: text.length,
+          extractorTruncated: truncated
+        }
       }
 
       const header = `[PDF text extracted from "${name}" — ${pageCount} page(s)${
         truncated ? ', truncated' : ''
       }]`
-      return toResource(`${header}\n\n${text}`)
+      return {
+        block: toResource(
+          [
+            ...(readingPosition ? [buildPdfReadingContext(name, readingPosition)] : []),
+            header,
+            text
+          ].join('\n\n')
+        ),
+        status: 'extracted',
+        pageCount,
+        extractedChars: text.length,
+        extractorTruncated: truncated
+      }
     } catch (error) {
-      return toResource(
-        `[Failed to extract text from "${name}": ${errorMessage(error)}. The PDF was not sent to avoid exceeding the request size limit.]`
-      )
+      return {
+        block: toResource(
+          `[Failed to extract text from "${name}": ${errorMessage(error)}. The PDF was not sent to avoid exceeding the request size limit.]`
+        ),
+        status: 'failed',
+        extractedChars: 0,
+        extractorTruncated: false
+      }
     }
   }
 }
 
-export { AcpPromptContentOwner }
+export { AcpPromptContentOwner, resolvePdfPreparationScope }
 export type {
   AcpPromptContentOwnerOptions,
   AcpPromptTurnInputs,

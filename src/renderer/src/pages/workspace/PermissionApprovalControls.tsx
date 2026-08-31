@@ -19,6 +19,7 @@ import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-
 import {
   describePermissionRequest,
   isArtifactWriteRequest,
+  isLiteratureReadRequest,
   isMcpPermissionRequest,
   isSpecialistDeleteRequest,
   isSpecialistSwitchRequest,
@@ -33,6 +34,8 @@ import {
 import { SpecialistDeleteDetail } from './SpecialistDeleteDetail'
 import { SpecialistSwitchDetail } from './SpecialistSwitchDetail'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
+import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
+import { buildLiteratureToolSummary } from './literature-tool-presentation'
 
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
@@ -629,6 +632,9 @@ const PermissionApprovalCard = ({
   // Guard against a stale scope no longer offered by the current request.
   const effectiveScope = availableScopes.has(scope) ? scope : defaultScope
   const permCode = extractPermissionCode(request)
+  const literatureSummary = isLiteratureReadRequest(request)
+    ? buildLiteratureToolSummary(request.rawInput)
+    : undefined
   const sourcePresentation = describePermissionRequest(request)
   const presentation: PermissionPresentation = {
     ...sourcePresentation,
@@ -783,7 +789,9 @@ const PermissionApprovalCard = ({
             <span className="font-semibold text-foreground">{request.delegated.childTitle}</span>
             <span className="text-muted-foreground">{request.delegated.riskScope}</span>
           </div>
-          <span className="break-words text-muted-foreground">{request.title}</span>
+          <span className="break-words text-muted-foreground">
+            {literatureSummary ? presentation.description : request.title}
+          </span>
         </div>
       ) : null}
       {/* Header: plain-language action plus its classification and notebook context. */}
@@ -834,7 +842,9 @@ const PermissionApprovalCard = ({
 
       {/* Specialist switch/delete requests show a friendly detail block instead of the raw
           redacted payload; all other requests keep the activity-style code preview. */}
-      {isSpecialistSwitchRequest(request) ? (
+      {literatureSummary ? (
+        <WorkspaceLiteratureToolCard summary={literatureSummary} />
+      ) : isSpecialistSwitchRequest(request) ? (
         <SpecialistSwitchDetail request={request} />
       ) : isSpecialistDeleteRequest(request) ? (
         <SpecialistDeleteDetail request={request} />

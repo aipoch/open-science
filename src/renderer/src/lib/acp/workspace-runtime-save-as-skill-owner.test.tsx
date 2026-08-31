@@ -173,7 +173,8 @@ describe('workspace Save as skill owner', () => {
       undefined,
       undefined,
       undefined,
-      sessionRuntimeSelection().agentTarget
+      sessionRuntimeSelection().agentTarget,
+      true
     )
     expect(useSessionStore.getState().sessions[0].agentModel).toBe('selected-model')
 

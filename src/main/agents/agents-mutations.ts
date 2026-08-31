@@ -1,15 +1,15 @@
 // host.agents ordinary-mutation operation module (issue 03).
 //
-// This module implements ordinary Profile mutations + read-back: create, mutable-field update,
+// This module implements ordinary Specialist mutations + read-back: create, mutable-field update,
 // enable/disable, and incremental whole-Skill/whole-Connector attach/detach. It is deliberately a
 // standalone module so issue 08 can compose it into the shared dispatcher without changing issues
 // 04/05. The privileged delete and switch operations stay out of scope here — they
 // require the injected approval gateway.
 //
 // Design rules (design.md §4/§5/§8, PRD §2/§4):
-//  - ProfileService is the SINGLE domain mutation service. This module never writes the repository
+//  - SpecialistService is the SINGLE domain mutation service. This module never writes the repository
 //    directly and never re-implements the Full/Selected collection rules; it only translates the
-//    private snake_case transport input into ProfileService input and delegates.
+//    private snake_case transport input into SpecialistService input and delegates.
 //  - Every successful mutation returns an actual post-write camelCase Profile read-back, never an
 //    echo of the requested input.
 //  - Skill/Connector references resolve an exact catalog ID first, otherwise an unambiguous public
@@ -26,12 +26,12 @@
 
 import type { ConnectorReadModel, SkillCatalogReadModel } from './agents-service'
 import { applyNameOrIdFilter } from './agents-service'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistService } from '../specialist/service'
 import type {
   CreateSpecialistInput,
   SpecialistCapabilityMode,
   SpecialistFullAccessConfig,
-  SpecialistProfileView,
+  SpecialistView,
   SpecialistSelectedConfig,
   UpdateSpecialistInput
 } from '../../shared/specialist'
@@ -54,7 +54,7 @@ export type AgentsMutationCatalog = {
 // stable for the privileged slices, but ordinary mutations never call it (ordinary mutations do not
 // request a system permission card).
 export type AgentsMutationDeps = {
-  profileService: ProfileService
+  specialistService: SpecialistService
   catalog: AgentsMutationCatalog
   approvalGateway?: ApprovalGateway
 }
@@ -188,7 +188,7 @@ export type CapabilityProjection = {
 // collections and connectorTools). `method` scopes error messages.
 export const projectCapabilityFields = async (
   patch: Record<string, unknown>,
-  current: SpecialistProfileView,
+  current: SpecialistView,
   catalog: AgentsMutationCatalog,
   method: string
 ): Promise<CapabilityProjection> => {
@@ -244,7 +244,7 @@ const CREATE_ALLOWED_KEYS = new Set([
 const handleCreate = async (
   params: Record<string, unknown>,
   deps: AgentsMutationDeps
-): Promise<SpecialistProfileView> => {
+): Promise<SpecialistView> => {
   rejectUnknownKeys(params, CREATE_ALLOWED_KEYS, 'create')
 
   const name = isString(params.name) ? params.name : throwShape('name is required')
@@ -256,7 +256,7 @@ const handleCreate = async (
   const iconKey = optionalStringOrThrow(params.icon_key, 'icon key')
   const colorKey = optionalStringOrThrow(params.color_key, 'color key')
 
-  // `enabled` is accepted (design.md §4 create object) but ProfileService.create always starts a
+  // `enabled` is accepted (design.md §4 create object) but SpecialistService.create always starts a
   // new specialist enabled; the update op toggles it. We validate the shape and ignore the value so
   // a malformed boolean is rejected before reaching the repository.
   if (params.enabled !== undefined && !isBoolean(params.enabled)) {
@@ -308,7 +308,7 @@ const handleCreate = async (
     input.selectedCapabilities = emptySelectedConfig()
   }
 
-  return deps.profileService.create(input)
+  return deps.specialistService.create(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +333,7 @@ export const UPDATE_ALLOWED_KEYS = new Set([
 const handleUpdate = async (
   params: Record<string, unknown>,
   deps: AgentsMutationDeps
-): Promise<SpecialistProfileView> => {
+): Promise<SpecialistView> => {
   const name = isString(params.name) ? params.name : throwShape('name is required')
 
   // params.name resolves the immutable Specialist name; every field in patch is a change.
@@ -346,7 +346,7 @@ const handleUpdate = async (
     throw agentsPublicError('revision must be a positive integer.')
   }
 
-  const current = await deps.profileService.resolveCustomMutationByName(name)
+  const current = await deps.specialistService.resolveCustomMutationByName(name)
   if (current.revision !== revision) {
     throw agentsPublicError('revision does not match the current specialist revision.')
   }
@@ -381,7 +381,7 @@ const handleUpdate = async (
     input.fullAccess = capability.fullAccess
   }
 
-  return deps.profileService.update(input)
+  return deps.specialistService.update(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -396,7 +396,7 @@ const handleAttachDetach = async (
   op: AttachDetachOp,
   params: Record<string, unknown>,
   deps: AgentsMutationDeps
-): Promise<SpecialistProfileView> => {
+): Promise<SpecialistView> => {
   rejectUnknownKeys(params, ATTACH_DETACH_ALLOWED_KEYS, op)
 
   const name = isString(params.name) ? params.name : throwShape('name is required')
@@ -410,7 +410,7 @@ const handleAttachDetach = async (
     ? (params[refKey] as string)
     : throwShape(`${refKey} is required`)
 
-  const current = await deps.profileService.resolveCustomMutationByName(name)
+  const current = await deps.specialistService.resolveCustomMutationByName(name)
   if (current.revision !== revision) {
     throw agentsPublicError('revision does not match the current specialist revision.')
   }
@@ -436,13 +436,13 @@ const handleAttachDetach = async (
   }
 
   if (op === 'attach_skill')
-    return deps.profileService.attachSkill(current.id, stableId, revision, mode)
+    return deps.specialistService.attachSkill(current.id, stableId, revision, mode)
   if (op === 'detach_skill')
-    return deps.profileService.detachSkill(current.id, stableId, revision, mode)
+    return deps.specialistService.detachSkill(current.id, stableId, revision, mode)
   if (op === 'attach_connector') {
-    return deps.profileService.attachConnector(current.id, stableId, revision, mode)
+    return deps.specialistService.attachConnector(current.id, stableId, revision, mode)
   }
-  return deps.profileService.detachConnector(current.id, stableId, revision, mode)
+  return deps.specialistService.detachConnector(current.id, stableId, revision, mode)
 }
 
 // Resolves a reference to a stable id when it matches the catalog, otherwise returns the literal
@@ -494,7 +494,7 @@ function throwShape(message: string): never {
 export async function executeAgentsMutation(
   request: AgentsOrdinaryMutationRequest,
   deps: AgentsMutationDeps
-): Promise<SpecialistProfileView> {
+): Promise<SpecialistView> {
   const method = request.op
   const params = request.params
   try {

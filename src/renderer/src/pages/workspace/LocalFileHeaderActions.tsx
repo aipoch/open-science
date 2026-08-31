@@ -16,6 +16,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ActionToast } from '@/components/ActionToast'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -28,6 +29,40 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useNavigationStore } from '@/stores/navigation-store'
 
+type LocalFileActionFailure = Readonly<{
+  title: string
+  detail?: string
+  retry: () => void
+}>
+
+const errorDetail = (error: unknown): string | undefined => {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  return undefined
+}
+
+const LocalFileActionErrorToast = ({
+  failure,
+  onDismiss
+}: {
+  failure: LocalFileActionFailure
+  onDismiss: () => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <ActionToast
+      title={failure.title}
+      detail={failure.detail}
+      actionLabel={t('Retry')}
+      dismissLabel={t('Close')}
+      onAction={failure.retry}
+      onDismiss={onDismiss}
+      testId="local-file-action-error-toast"
+    />
+  )
+}
+
 // Primary labeled action for the "Preview unavailable" fallback of a local file: opening it in its
 // default OS app is the local analogue of the artifact/upload "Download" affordance.
 export const LocalFileFallbackAction = ({
@@ -38,18 +73,38 @@ export const LocalFileFallbackAction = ({
   className?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const [failure, setFailure] = useState<LocalFileActionFailure>()
+
+  const open = async (): Promise<void> => {
+    setFailure(undefined)
+    try {
+      const result = await window.api.localFs.openPath(path)
+      if (result) throw new Error(result)
+    } catch (error) {
+      setFailure({
+        title: t('Could not open this file.'),
+        detail: errorDetail(error),
+        retry: () => void open()
+      })
+    }
+  }
 
   return (
-    <Button
-      type="button"
-      variant="default"
-      size="sm"
-      className={className}
-      onClick={() => void window.api.localFs.openPath(path)}
-    >
-      <ExternalLink className="size-4" aria-hidden="true" />
-      <span>{t('Open')}</span>
-    </Button>
+    <>
+      <Button
+        type="button"
+        variant="default"
+        size="sm"
+        className={className}
+        onClick={() => void open()}
+      >
+        <ExternalLink className="size-4" aria-hidden="true" />
+        <span>{t('Open')}</span>
+      </Button>
+      {failure ? (
+        <LocalFileActionErrorToast failure={failure} onDismiss={() => setFailure(undefined)} />
+      ) : null}
+    </>
   )
 }
 
@@ -69,6 +124,7 @@ export const LocalFileHeaderActions = ({
   const { t } = useTranslation()
 
   const [copied, setCopied] = useState(false)
+  const [failure, setFailure] = useState<LocalFileActionFailure>()
   // In-memory only by design: the staged upload joins the normal upload lifecycle, and the header
   // just reflects that this preview already handed the file over.
   const [saveAsArtifactState, setSaveAsArtifactState] = useState<SaveAsArtifactState>('idle')
@@ -79,16 +135,38 @@ export const LocalFileHeaderActions = ({
   useEffect(() => () => clearTimeout(copiedTimer.current), [])
 
   const copyPath = async (): Promise<void> => {
-    await navigator.clipboard.writeText(path)
-    setCopied(true)
-    clearTimeout(copiedTimer.current)
-    copiedTimer.current = setTimeout(() => setCopied(false), 1500)
+    setFailure(undefined)
+    if (!navigator.clipboard?.writeText) {
+      setFailure({
+        title: t('Could not copy the file path.'),
+        retry: () => void copyPath()
+      })
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(path)
+      setCopied(true)
+      clearTimeout(copiedTimer.current)
+      copiedTimer.current = setTimeout(() => setCopied(false), 1500)
+    } catch (error) {
+      setFailure({
+        title: t('Could not copy the file path.'),
+        detail: errorDetail(error),
+        retry: () => void copyPath()
+      })
+    }
   }
   const download = async (): Promise<void> => {
+    setFailure(undefined)
     try {
       await window.api.saveManagedFile({ source: 'local', path, suggestedName: name })
     } catch (error) {
       console.error(`Failed to download local file: ${name}`, error)
+      setFailure({
+        title: t('Could not download this file.'),
+        detail: errorDetail(error),
+        retry: () => void download()
+      })
     }
   }
   const stageLocalPath = window.api.uploads.stageLocalPath
@@ -96,6 +174,7 @@ export const LocalFileHeaderActions = ({
   const saveAsArtifact = async (): Promise<void> => {
     if (!stageLocalPath || saveAsArtifactState === 'saving') return
 
+    setFailure(undefined)
     setSaveAsArtifactState('saving')
     try {
       await stageLocalPath({
@@ -108,6 +187,11 @@ export const LocalFileHeaderActions = ({
     } catch (error) {
       console.error(`Failed to save local file as artifact: ${name}`, error)
       setSaveAsArtifactState('idle')
+      setFailure({
+        title: t('Could not save this file as an artifact.'),
+        detail: errorDetail(error),
+        retry: () => void saveAsArtifact()
+      })
     }
   }
 
@@ -194,6 +278,9 @@ export const LocalFileHeaderActions = ({
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
+      {failure ? (
+        <LocalFileActionErrorToast failure={failure} onDismiss={() => setFailure(undefined)} />
+      ) : null}
     </>
   )
 }

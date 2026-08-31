@@ -8,7 +8,6 @@ import {
   PROD_SESSION_DIR_NAME,
   getSessionPersistenceDir
 } from './session-persistence/repository'
-import { hasPendingMigrationMarker } from './storage/migration-marker'
 import { RELOCATABLE_DATA_DIRS } from './storage/data-directories'
 
 const resolveE2eStorageRoot = (): string | undefined => {
@@ -86,17 +85,14 @@ const dataRootForPicked = (picked: string): string => {
 const computeDefaultDataRoot = (): string => {
   const configRoot = resolveConfigRoot()
   const homeDefault = dataRootForParent(defaultDataParent())
-  // A marker-bearing homeDefault is a half-copied/uncommitted staging dir, NOT the committed default:
-  // treat it as "not there yet" so a crashed or in-flight migration can't fool the legacy fallback into
-  // thinking the modern data folder already exists (which would split a legacy user's data).
-  // The explicit setting is the commit record. A crash between mkdir and marker creation, or a rollback
-  // that couldn't fully remove staging, can leave a markerless partial homeDefault; it must not strand
-  // a legacy user's live data in the config root.
+  // The explicit setting is the commit record. A marker may remain after that commit while old-root
+  // cleanup is retried, so it must not make the live homeDefault look like uncommitted staging. Without
+  // an explicit setting, neither a marker-bearing nor a markerless partial homeDefault is enough to
+  // strand a legacy user's live data in the config root.
   const homeDefaultIsCommitted =
     configuredDataRoot !== undefined &&
     samePath(configuredDataRoot, homeDefault) &&
-    existsSync(homeDefault) &&
-    !hasPendingMigrationMarker(homeDefault)
+    existsSync(homeDefault)
   const isLegacyInstall =
     RELOCATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir))) &&
     !existsSync(join(configRoot, dataFolderName())) &&

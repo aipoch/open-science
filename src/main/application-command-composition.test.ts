@@ -191,6 +191,15 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.electron.commandNames()).toEqual([
+      'memory:clear-all',
+      'memory:create-category',
+      'memory:create-entry',
+      'memory:delete-category',
+      'memory:delete-entry',
+      'memory:set-enabled',
+      'memory:snapshot',
+      'memory:update-category',
+      'memory:update-entry',
       'projects:create',
       'projects:delete',
       'projects:get',
@@ -198,12 +207,16 @@ describe('application command composition', () => {
       'projects:update',
       'projects:update-archive',
       'sessions:delete-session',
+      'sessions:filter-pdf-context-candidates',
+      'sessions:link-pdf-context',
+      'sessions:unlink-pdf-context',
       'tags:create',
       'tags:delete',
       'tags:reorder',
       'tags:set-assignment',
       'tags:snapshot',
-      'tags:update'
+      'tags:update',
+      'uploads:finalize-session'
     ])
   })
 
@@ -287,10 +300,20 @@ describe('application command composition', () => {
   })
 
   it('late-binds the single Remote Access owner and fails closed around its lifetime', async () => {
-    const snapshot = Object.freeze({ lifecycle: 'disabled' })
+    const snapshot = Object.freeze({
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off' as const,
+      enabled: false,
+      lifecycle: 'disabled' as const,
+      remoteIt: Object.freeze({ installed: false, loggedIn: false, registered: false }),
+      pendingRequests: Object.freeze([]),
+      trustedBrowsers: Object.freeze([])
+    })
     const firstSnapshot = vi.fn(() => snapshot)
     const firstOwner = {
       snapshot: firstSnapshot,
+      probe: vi.fn(),
       detect: vi.fn(),
       setMode: vi.fn(),
       disable: vi.fn(),
@@ -298,7 +321,9 @@ describe('application command composition', () => {
       reject: vi.fn(),
       revoke: vi.fn()
     }
-    const replacementSnapshot = vi.fn(() => Object.freeze({ lifecycle: 'running' }))
+    const replacementSnapshot = vi.fn(() =>
+      Object.freeze({ ...snapshot, mode: 'remoteit' as const, enabled: true, lifecycle: 'running' })
+    )
     const replacementOwner = { ...firstOwner, snapshot: replacementSnapshot }
     const composition = createApplicationCommandComposition(dependencies())
 

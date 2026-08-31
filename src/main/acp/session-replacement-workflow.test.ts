@@ -77,7 +77,8 @@ describe('AcpSessionReplacementWorkflow', () => {
         sessionId: 'app-session',
         cwd: '/new-workspace',
         projectId: 'new-project',
-        permissionProfile: 'ask'
+        permissionProfile: 'ask',
+        memoryEnabled: false
       })
     ).resolves.toEqual(replacement)
 
@@ -89,13 +90,15 @@ describe('AcpSessionReplacementWorkflow', () => {
     expect(resetPromptContent).toHaveBeenCalledWith('app-session')
     expect(resetContextUsage).toHaveBeenCalledWith('app-session')
     expect(supersedeInteraction).toHaveBeenCalledWith('app-session')
+    expect(registry.lookup('app-session')?.aggregate.snapshot().memoryEnabled).toBe(false)
     expect(adopt).toHaveBeenCalledWith('app-session', {
       connection,
       cwd: resolve('/new-workspace'),
       projectId: 'new-project',
       identity: expect.any(Object),
       permissionProfile: 'ask',
-      specialistId: undefined
+      specialistId: undefined,
+      memoryEnabled: false
     })
   })
 

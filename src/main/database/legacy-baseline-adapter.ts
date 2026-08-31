@@ -380,6 +380,11 @@ type RuntimeSchemaTarget = {
   indexes: ReadonlyMap<string, TargetIndex>
 }
 
+type RuntimeSchemaExtensions = Readonly<{
+  tableNames?: readonly string[]
+  triggerNames?: readonly string[]
+}>
+
 const BASELINE_SCHEMA_TARGET: RuntimeSchemaTarget = {
   tableNames: RUNTIME_SCHEMA_BASELINE_TABLES,
   tables: TARGET_TABLES,
@@ -541,7 +546,18 @@ const adaptMigrationOperationsForCurrentSchema = async (
   return { operations: adaptedOperations, currentTableNames: [...currentTableNames] }
 }
 
-const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
+type LegacySchemaExtensions = {
+  tableNames?: readonly string[]
+  schemaObjects?: readonly { type: 'trigger' | 'view'; name: string }[]
+}
+
+const classifyLegacySchema = async (
+  client: PrismaClient,
+  extensions: LegacySchemaExtensions = {}
+): Promise<void> => {
+  const allowedSchemaObjects = new Set(
+    (extensions.schemaObjects ?? []).map(({ type, name }) => `${type}:${name}`)
+  )
   const unsupportedObjects = await migrationSqlExecutor.query<
     Array<{ name: string; type: string }>
   >(
@@ -550,10 +566,13 @@ const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
      WHERE "type" IN ('trigger', 'view') AND "name" NOT LIKE 'sqlite_%'
      ORDER BY "type", "name"`
   )
-  if (unsupportedObjects.length > 0) {
+  const unknownObjects = unsupportedObjects.filter(
+    ({ type, name }) => !allowedSchemaObjects.has(`${type}:${name}`)
+  )
+  if (unknownObjects.length > 0) {
     throw new DatabaseValidationError(
       `Legacy database classification blocked by unsupported schema objects.`,
-      { kind: 'unsupported-schema-objects', actual: unsupportedObjects }
+      { kind: 'unsupported-schema-objects', actual: unknownObjects }
     )
   }
 
@@ -567,7 +586,10 @@ const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
   )
   const unknownTables = tables
     .map((table) => table.name)
-    .filter((tableName) => !CURRENT_TABLE_COLUMNS.has(tableName))
+    .filter(
+      (tableName) =>
+        !CURRENT_TABLE_COLUMNS.has(tableName) && !extensions.tableNames?.includes(tableName)
+    )
   if (unknownTables.length > 0) {
     throw new DatabaseValidationError(`Legacy database classification found unknown tables.`, {
       kind: 'unknown-tables',
@@ -576,7 +598,8 @@ const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
   }
 
   for (const { name: tableName } of tables) {
-    const currentColumns = CURRENT_TABLE_COLUMNS.get(tableName)!
+    const currentColumns = CURRENT_TABLE_COLUMNS.get(tableName)
+    if (!currentColumns) continue
     const allowedColumns = new Set([
       ...currentColumns,
       ...(RETIRED_LEGACY_COLUMNS[tableName] ?? [])
@@ -629,9 +652,10 @@ const targetColumnDiagnostic = (column: TargetColumn): Record<string, unknown> =
 })
 
 const prepareRuntimeSchemaBaseline = async (
-  client: PrismaClient
+  client: PrismaClient,
+  extensions: LegacySchemaExtensions = {}
 ): Promise<PreparedRuntimeSchemaBaseline> => {
-  await classifyLegacySchema(client)
+  await classifyLegacySchema(client, extensions)
   const verificationTarget = (await hasCurrentManagedFileVersionFoundation(client))
     ? 'current'
     : 'baseline'
@@ -650,7 +674,8 @@ const verifyRuntimeSchemaTarget = async (
   client: PrismaClient,
   target: RuntimeSchemaTarget,
   exact: boolean = false,
-  allowedSuffixChecks: AllowedSuffixCheckConstraints = {}
+  allowedSuffixChecks: AllowedSuffixCheckConstraints = {},
+  extensions: RuntimeSchemaExtensions = {}
 ): Promise<void> => {
   const tables = await migrationSqlExecutor.query<SqliteSchemaName[]>(
     client,
@@ -660,7 +685,7 @@ const verifyRuntimeSchemaTarget = async (
      ORDER BY "name"`
   )
   const actualTables = new Set(tables.map((table) => table.name))
-  const expectedTables = new Set(target.tableNames)
+  const expectedTables = new Set([...target.tableNames, ...(extensions.tableNames ?? [])])
   const missingTables = target.tableNames.filter((tableName) => !actualTables.has(tableName))
   if (missingTables.length > 0) {
     throw new DatabaseValidationError(`Database baseline verification found missing tables.`, {
@@ -676,6 +701,23 @@ const verifyRuntimeSchemaTarget = async (
       kind: 'unexpected-tables',
       actual: unexpectedTables
     })
+  }
+
+  if (exact) {
+    const triggers = await migrationSqlExecutor.query<SqliteSchemaName[]>(
+      client,
+      `SELECT "name" FROM "sqlite_schema" WHERE "type" = 'trigger' ORDER BY "name"`
+    )
+    const expectedTriggers = new Set(extensions.triggerNames ?? [])
+    const unexpectedTriggers = triggers
+      .map(({ name }) => name)
+      .filter((name) => !expectedTriggers.has(name))
+    if (unexpectedTriggers.length > 0) {
+      throw new DatabaseValidationError(
+        'Database baseline verification found unexpected triggers.',
+        { kind: 'unexpected-triggers', actual: unexpectedTriggers }
+      )
+    }
   }
 
   const foreignKeyKey = (foreignKey: TargetForeignKey): string =>
@@ -982,8 +1024,15 @@ const verifyRuntimeSchemaBaseline = (
 ): Promise<void> =>
   verifyRuntimeSchemaTarget(client, BASELINE_SCHEMA_TARGET, false, allowedSuffixChecks)
 
-const verifyCurrentRuntimeSchema = (client: PrismaClient): Promise<void> =>
-  verifyRuntimeSchemaTarget(client, CURRENT_SCHEMA_TARGET, true)
+const normalizeSchemaObjectSql = (value: string | null): string | null =>
+  normalizeSqlFragment(value)
+    ?.replace(/\bif not exists\b/gu, '')
+    .replaceAll(/\s+/gu, ' ') ?? null
+
+const verifyCurrentRuntimeSchema = (
+  client: PrismaClient,
+  extensions: RuntimeSchemaExtensions = {}
+): Promise<void> => verifyRuntimeSchemaTarget(client, CURRENT_SCHEMA_TARGET, true, {}, extensions)
 
 const verifyCurrentRuntimeSchemaTables = (
   client: PrismaClient,
@@ -1079,6 +1128,7 @@ export {
   adaptMigrationOperationsForCurrentSchema,
   hasCurrentManagedFileVersionFoundation,
   prepareRuntimeSchemaBaseline,
+  normalizeSchemaObjectSql,
   verifyCurrentRuntimeSchema,
   verifyCurrentRuntimeSchemaTables,
   verifyRuntimeSchemaBaseline

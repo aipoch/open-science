@@ -66,12 +66,29 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
     expect(view).toMatchObject({
       models: ['lab-model'],
-      maskedKey: 'secr…-key',
+      maskedKey: '••••-key',
       hasKey: true,
       needsKey: false
     })
     expect(JSON.stringify(view)).not.toContain('secret-key')
     expect(provider).toEqual(before)
+  })
+
+  it('hardens historical persisted key masks before projecting them', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'provider-1',
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      keyRef: encryptKey('secret-key'),
+      keyMask: 'secr…-key',
+      apiEndpoints: ['openai']
+    }
+
+    expect(owner.toProviderView(provider).maskedKey).toBe('••••-key')
+    expect(provider.keyMask).toBe('secr…-key')
   })
 
   it('routes DeepSeek V4 Pro through native Responses for Codex', () => {
@@ -125,6 +142,97 @@ describe('ProviderRuntimeProjectionOwner', () => {
       ).provider.supportsImageInput
     ).toBe(false)
     expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
+  })
+
+  it('projects regional Tencent Hy4 across every supported framework', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'tencent-tokenhub',
+      type: 'official',
+      vendorId: 'tencent',
+      region: 'international',
+      name: 'Tencent TokenHub'
+    }
+
+    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model: 'hy4-preview' },
+          getAgentFramework(frameworkId)
+        )
+      ).toMatchObject({
+        effectiveModel: 'hy4-preview',
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        frameworkCompatible: true,
+        provider: {
+          vendorId: 'tencent',
+          baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
+          openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
+          model: 'hy4-preview',
+          contextWindow: 1_000_000,
+          supportsImageInput: false
+        }
+      })
+    }
+
+    expect(
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'hy4-preview' },
+        getAgentFramework('codex')
+      )
+    ).toMatchObject({
+      needsChatResponsesBridge: false,
+      needsNativeResponsesCompatibility: true
+    })
+  })
+
+  it.each([
+    {
+      vendorId: 'tencentcodingplan' as const,
+      name: 'Tencent Coding Plan',
+      model: 'deepseek-v4-flash-202605',
+      baseUrl: 'https://api.lkeap.cloud.tencent.com/coding/anthropic',
+      openaiBaseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3'
+    },
+    {
+      vendorId: 'tencenttokenplan' as const,
+      name: 'Tencent Token Plan',
+      model: 'glm-5.2',
+      baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic',
+      openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/v3'
+    }
+  ])('projects $name across every supported framework', (expected) => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: expected.vendorId,
+      type: 'official',
+      vendorId: expected.vendorId,
+      name: expected.name
+    }
+
+    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model: expected.model },
+          getAgentFramework(frameworkId)
+        )
+      ).toMatchObject({
+        effectiveModel: expected.model,
+        apiEndpoints: ['anthropic', 'openai'],
+        frameworkCompatible: true,
+        needsChatResponsesBridge: frameworkId === 'codex',
+        needsNativeResponsesCompatibility: false,
+        provider: {
+          vendorId: expected.vendorId,
+          baseUrl: expected.baseUrl,
+          openaiBaseUrl: expected.openaiBaseUrl,
+          model: expected.model
+        }
+      })
+    }
   })
 
   it('routes mixed OpenCode Zen models only through their documented protocol', () => {

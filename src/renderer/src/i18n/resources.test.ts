@@ -1550,6 +1550,14 @@ describe('mandatory product glossary', () => {
     }
   >
 
+  // Reviewed exceptions to the Agent/Skill glossary below: the confirmed literature-reading entry
+  // label (design decision D4, 2026-08-28) is an action phrase in Chinese ("start literature
+  // reading") that intentionally does not name the Agent.
+  const LOCALIZED_FEATURE_TERM_EXCEPTIONS = new Set([
+    'zh-Hans: Read with agent: 智能体',
+    'zh-Hant: Read with agent: 智能體'
+  ])
+
   it.each(TRANSLATED)('%s localizes Agent and Skill in user-visible prose', (locale) => {
     const expected = localizedFeatureTerms[locale]
     const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
@@ -1576,6 +1584,7 @@ describe('mandatory product glossary', () => {
               untranslated.test(prose))
         )
         .map(({ expected: term }) => `${key}: ${String(term)}`)
+        .filter((offender) => !LOCALIZED_FEATURE_TERM_EXCEPTIONS.has(`${locale}: ${offender}`))
     })
 
     expect(offenders).toEqual([])
@@ -2044,8 +2053,8 @@ describe('Russian catalog quality', () => {
     ['How to fix', 'Как исправить'],
     ['Still stuck? Create an issue for help', 'Проблема не решена? Создать обращение'],
     [
-      'Opens GitHub with a pre-filled issue: the error code, app version, and error stack. Personal paths are redacted (your home folder becomes ~). Please review before submitting — you can delete the stack section if you prefer.',
-      'На GitHub откроется заранее заполненное обращение с кодом ошибки, версией приложения и стеком вызовов. Личные пути в файловой системе будут скрыты (домашняя папка заменена на ~). Проверьте содержимое перед отправкой. При желании раздел со стеком вызовов можно удалить.'
+      'Review and edit the redacted report in Open Science before opening GitHub.',
+      'Просмотрите и отредактируйте обезличенный отчёт в Open Science перед открытием GitHub.'
     ],
     ['Skill import menu — 8 states', 'Меню импорта навыков — 8 состояний'],
     ['Import', 'Импортировать'],

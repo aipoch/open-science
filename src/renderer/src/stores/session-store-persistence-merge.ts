@@ -183,6 +183,10 @@ const mergeRuntimeContextByOwner = (
   )
   const authoritative = incomingAdvanced ? incoming : current
   const fallback = incomingAdvanced ? current : incoming
+  const pdfContext =
+    incoming.revision === current.revision
+      ? (authoritative.pdfContext ?? fallback.pdfContext)
+      : authoritative.pdfContext
   return {
     version: 1,
     revision: Math.max(current.revision, incoming.revision),
@@ -194,7 +198,8 @@ const mergeRuntimeContextByOwner = (
     ...(authoritative.sideChat ? { sideChat: structuredClone(authoritative.sideChat) } : {}),
     ...(authoritative.sideChatRelays
       ? { sideChatRelays: structuredClone(authoritative.sideChatRelays) }
-      : {})
+      : {}),
+    ...(pdfContext ? { pdfContext: structuredClone(pdfContext) } : {})
   }
 }
 
@@ -216,7 +221,8 @@ const mergeDelegatedRuntimeAuthority = (
     ...(delegatedWork ? { delegatedWork } : {}),
     ...(current?.permission ? { permission: structuredClone(current.permission) } : {}),
     ...(current?.sideChat ? { sideChat: structuredClone(current.sideChat) } : {}),
-    ...(current?.sideChatRelays ? { sideChatRelays: structuredClone(current.sideChatRelays) } : {})
+    ...(current?.sideChatRelays ? { sideChatRelays: structuredClone(current.sideChatRelays) } : {}),
+    ...(current?.pdfContext ? { pdfContext: structuredClone(current.pdfContext) } : {})
   }
 }
 
@@ -375,9 +381,15 @@ export const retainRuntimePlanProjection = (
 export const mergePersistedRuntimeIdentityProjection = (
   current: Pick<PersistedChatSession, 'conversationGraph' | 'runtimeContext'>,
   incoming: Pick<PersistedChatSession, 'conversationGraph' | 'runtimeContext'>,
-  options: Readonly<{ incomingOwnsFrameConflicts: boolean }>
+  options: Readonly<{
+    incomingOwnsFrameConflicts: boolean
+    incomingOwnsRuntimeContext?: boolean
+  }>
 ): Pick<PersistedChatSession, 'conversationGraph' | 'runtimeContext'> => ({
-  runtimeContext: mergeRuntimeContextByOwner(current.runtimeContext, incoming.runtimeContext),
+  runtimeContext:
+    options.incomingOwnsRuntimeContext === false
+      ? mergeDelegatedRuntimeAuthority(current.runtimeContext, incoming.runtimeContext)
+      : mergeRuntimeContextByOwner(current.runtimeContext, incoming.runtimeContext),
   ...(incoming.conversationGraph
     ? {
         conversationGraph: current.conversationGraph

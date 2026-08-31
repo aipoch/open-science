@@ -11,7 +11,10 @@ export const PreviewFileContent = ({
   onAddAnnotation,
   onUpdateAnnotationNote,
   onRemoveAnnotation,
-  onAnnotationError
+  onUndoAnnotation,
+  onRedoAnnotation,
+  onAnnotationError,
+  onPdfReadingPositionChange
 }: PreviewFileRendererProps & {
   downloadVersionContext?: PreviewDownloadVersionContext
 }): React.JSX.Element => {
@@ -21,7 +24,10 @@ export const PreviewFileContent = ({
     onAddAnnotation,
     onUpdateAnnotationNote,
     onRemoveAnnotation,
-    onAnnotationError
+    onUndoAnnotation,
+    onRedoAnnotation,
+    onAnnotationError,
+    onPdfReadingPositionChange
   })
 
   return (

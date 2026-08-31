@@ -5,7 +5,8 @@ import {
   consumeComputeHostsPreload,
   createInitialComputeState,
   preloadComputeHosts,
-  useComputeStore
+  useComputeStore,
+  type ComputeApproval
 } from './compute-store'
 
 const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
@@ -453,6 +454,21 @@ describe('compute store — scratch root', () => {
     expect(scratchSet).toHaveBeenCalledWith('ssh:biowulf', '/my/scratch')
     expect(useComputeStore.getState().hosts[0].scratchPinned).toBe(true)
   })
+
+  it('clearScratch calls scratchClear and re-fetches the unpinned host', async () => {
+    const unpinnedHost = createHost({ scratchRoot: undefined, scratchPinned: false })
+    const scratchClear = vi.fn().mockResolvedValue(undefined)
+    const get = vi.fn().mockResolvedValue(unpinnedHost)
+    setComputeApi({ scratchClear, get })
+    useComputeStore.setState({
+      hosts: [createHost({ scratchRoot: '', scratchPinned: true })]
+    })
+
+    await useComputeStore.getState().clearScratch('ssh:biowulf')
+
+    expect(scratchClear).toHaveBeenCalledWith('ssh:biowulf')
+    expect(useComputeStore.getState().hosts[0].scratchPinned).toBe(false)
+  })
 })
 
 describe('compute store — concurrency limit', () => {
@@ -474,26 +490,46 @@ describe('compute store - approval replay', () => {
   it('deduplicates a replayed approval request by its stable id', () => {
     const request: ComputeApprovalRequest = {
       id: 'approval-1',
+      operation: 'call_command',
       session_id: 'session-1',
       provider_id: 'ssh:lab',
       provider_name: 'Lab',
       shape: 'direct_ssh',
-      intent: 'Run analysis'
+      intent: 'Run analysis',
+      command_preview: 'run-analysis',
+      command_full: 'run-analysis'
     }
 
     useComputeStore.getState().enqueueApproval(request)
     useComputeStore.getState().enqueueApproval(request)
 
-    expect(useComputeStore.getState().pendingApprovals).toEqual([request])
+    expect(useComputeStore.getState().pendingApprovals).toEqual([
+      {
+        id: 'approval-1',
+        operation: 'call_command',
+        sessionId: 'session-1',
+        providerId: 'ssh:lab',
+        providerName: 'Lab',
+        shape: 'direct_ssh',
+        intent: 'Run analysis',
+        commandPreview: 'run-analysis',
+        commandFull: 'run-analysis',
+        willPersistUnencrypted: false
+      }
+    ])
   })
 
   it('dismisses a settled approval idempotently', () => {
-    const first: ComputeApprovalRequest = {
+    const first: ComputeApproval = {
       id: 'approval-1',
-      provider_id: 'ssh:lab',
-      provider_name: 'Lab',
+      operation: 'call_command',
+      providerId: 'ssh:lab',
+      providerName: 'Lab',
       shape: 'direct_ssh',
-      intent: 'Run analysis'
+      intent: 'Run analysis',
+      commandPreview: 'run-analysis',
+      commandFull: 'run-analysis',
+      willPersistUnencrypted: false
     }
     const second = { ...first, id: 'approval-2' }
 

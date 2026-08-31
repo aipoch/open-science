@@ -931,6 +931,43 @@ describe('HomePage activity overview', () => {
     expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
   })
 
+  it('shows Session credential recovery as waiting for an answer on Home', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [session('credential', 'OpenAlex lookup', 'running', 600_000)]
+    })
+    useSettingsStore.setState({
+      pendingCredentialRequests: [
+        {
+          id: 'credential-request',
+          credentialId: 'openalex',
+          connector: 'literature',
+          method: 'openalex_search_works',
+          sessionId: 'credential'
+        }
+      ]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      container.querySelector(
+        '[aria-label="Open session OpenAlex lookup, waiting for your answer"]'
+      )
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 waiting on you"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
+  })
+
   it.each(['idle', 'error'] as const)(
     'shows a current delegated Attempt as Running while the root Session is %s',
     async (status) => {

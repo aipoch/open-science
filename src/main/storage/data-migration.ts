@@ -1,17 +1,25 @@
-import { createReadStream, createWriteStream } from 'node:fs'
-import { createHash } from 'node:crypto'
-import { chmod, lstat, mkdir, readdir, readlink, rm, rmdir, stat, symlink } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { createReadStream, createWriteStream, type Stats } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  readdir,
+  readlink,
+  realpath,
+  rm,
+  rmdir,
+  stat,
+  statfs,
+  symlink,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
-export type MigrationPhase = 'scan' | 'copy' | 'verify' | 'delete'
-export type MigrationProgress = {
-  phase: MigrationPhase
-  copiedBytes: number
-  totalBytes: number
-  currentPath?: string
-}
-export type MigrationResult = { ok: true } | { ok: false; error: string; cancelled?: boolean }
+import type { MigrationProgress, MigrationResult } from '../../shared/storage'
 
 type MigrateOpts = {
   from: string
@@ -19,10 +27,6 @@ type MigrateOpts = {
   dirs: string[]
   signal: AbortSignal
   onProgress: (p: MigrationProgress) => void
-  // Accepted for interface compatibility (test hook to "force" the byte-copy branch);
-  // this implementation always byte-copies, so it is a no-op. See report for rationale:
-  // rename is skipped entirely to keep multi-dir rollback simple and safe.
-  forceCopy?: boolean
 }
 
 // Thrown internally to unwind to the single catch site; never escapes copyAndVerify.
@@ -39,6 +43,17 @@ class NonRegularEntryError extends Error {
   }
 }
 
+class AbsoluteInternalSymlinkError extends Error {
+  constructor(public readonly relPath: string) {
+    super(`absolute symbolic link into the current data folder: ${relPath}`)
+  }
+}
+
+const isPathInsideOrEqual = (parent: string, candidate: string): boolean => {
+  const rel = relative(parent, candidate)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
 const exists = async (path: string): Promise<boolean> => {
   try {
     await stat(path)
@@ -48,20 +63,49 @@ const exists = async (path: string): Promise<boolean> => {
   }
 }
 
+const canonicalizeExistingPathPrefix = async (input: string): Promise<string> => {
+  const resolvedInput = resolve(input)
+  let candidate = resolvedInput
+  while (true) {
+    try {
+      const canonicalCandidate = resolve(await realpath(candidate))
+      return resolve(canonicalCandidate, relative(candidate, resolvedInput))
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+      const parent = dirname(candidate)
+      if (parent === candidate) return resolvedInput
+      candidate = parent
+    }
+  }
+}
+
 type ScanResult = {
-  files: string[]
-  directories: string[]
+  files: { relPath: string; stats: Stats }[]
+  directories: { relPath: string; stats: Stats }[]
   symlinks: string[]
   present: boolean
   rootFile: boolean
+}
+
+type PortableMetadataEntry = {
+  relativePath: string
+  mode: number
+  atime: Date
+  mtime: Date
+}
+
+export type PortableMetadataSnapshot = {
+  files: PortableMetadataEntry[]
+  directories: PortableMetadataEntry[]
 }
 
 // Recursively lists regular files, nested directories, and symbolic links under `root` (empty lists
 // if `root` doesn't exist). Directories are tracked separately so empty nested folders survive the
 // move; symlinks are recreated as links (never followed) so a conda cache's internal links survive.
 const listEntries = async (root: string): Promise<ScanResult> => {
-  const files: string[] = []
-  const directories: string[] = []
+  const files: ScanResult['files'] = []
+  const directories: ScanResult['directories'] = []
   const symlinks: string[] = []
   const walk = async (dir: string): Promise<void> => {
     const entries = await readdir(join(root, dir), { withFileTypes: true })
@@ -72,10 +116,11 @@ const listEntries = async (root: string): Promise<ScanResult> => {
       // escape out of the tree and no symlink-cycle risk.
       if (entry.isSymbolicLink()) symlinks.push(rel)
       else if (entry.isDirectory()) {
-        directories.push(rel)
+        directories.push({ relPath: rel, stats: await stat(join(root, rel)) })
         await walk(rel)
-      } else if (entry.isFile()) files.push(rel)
-      else throw new NonRegularEntryError(rel)
+      } else if (entry.isFile()) {
+        files.push({ relPath: rel, stats: await stat(join(root, rel)) })
+      } else throw new NonRegularEntryError(rel)
     }
   }
   // A top-level source dir that is itself a symlink/special node must be rejected up front: exists()
@@ -92,21 +137,120 @@ const listEntries = async (root: string): Promise<ScanResult> => {
     throw err
   }
   if (info.isFile()) {
-    files.push('')
+    files.push({ relPath: '', stats: info })
     return { files, directories, symlinks, present: true, rootFile: true }
   }
   if (!info.isDirectory()) throw new NonRegularEntryError(basename(root))
+  directories.push({ relPath: '', stats: info })
   await walk('.')
   return { files, directories, symlinks, present: true, rootFile: false }
+}
+
+const metadataSnapshotFromEntries = (
+  dirs: string[],
+  entriesByDir: ReadonlyMap<string, ScanResult>
+): PortableMetadataSnapshot => {
+  const snapshot: PortableMetadataSnapshot = { files: [], directories: [] }
+  for (const dir of dirs) {
+    const entries = entriesByDir.get(dir)
+    if (!entries?.present) continue
+    for (const file of entries.files) {
+      snapshot.files.push({
+        relativePath: join(dir, file.relPath),
+        mode: file.stats.mode,
+        atime: file.stats.atime,
+        mtime: file.stats.mtime
+      })
+    }
+    for (const directory of entries.directories) {
+      snapshot.directories.push({
+        relativePath: join(dir, directory.relPath),
+        mode: directory.stats.mode,
+        atime: directory.stats.atime,
+        mtime: directory.stats.mtime
+      })
+    }
+  }
+  return snapshot
+}
+
+export const capturePortableMetadata = async (
+  root: string,
+  dirs: string[]
+): Promise<PortableMetadataSnapshot> => {
+  const entriesByDir = new Map<string, ScanResult>()
+  for (const dir of dirs) entriesByDir.set(dir, await listEntries(join(root, dir)))
+  return metadataSnapshotFromEntries(dirs, entriesByDir)
+}
+
+const restoreTimestamps = async (
+  root: string,
+  snapshot: PortableMetadataSnapshot
+): Promise<void> => {
+  for (const file of snapshot.files) {
+    await utimes(join(root, file.relativePath), file.atime, file.mtime)
+  }
+  for (const directory of [...snapshot.directories].reverse()) {
+    await utimes(join(root, directory.relativePath), directory.atime, directory.mtime)
+  }
+}
+
+export const restorePortableMetadata = async (
+  root: string,
+  snapshot: PortableMetadataSnapshot
+): Promise<void> => {
+  for (const file of snapshot.files) {
+    const destination = join(root, file.relativePath)
+    await chmod(destination, file.mode)
+    await utimes(destination, file.atime, file.mtime)
+  }
+  for (const directory of [...snapshot.directories].reverse()) {
+    const destination = join(root, directory.relativePath)
+    await chmod(destination, directory.mode)
+    await utimes(destination, directory.atime, directory.mtime)
+  }
 }
 
 // Copies a single file, streaming, creating parent dirs as needed.
 const copyFile = async (src: string, dest: string): Promise<void> => {
   await mkdir(dirname(dest), { recursive: true })
   await pipeline(createReadStream(src), createWriteStream(dest))
-  // A stream copy creates dest at the default 0o644; re-apply the source mode so an executable
-  // runtime/pkgs binary (Rscript, a .dylib) micromamba hard-links into a rebuilt env keeps +x.
-  await chmod(dest, (await stat(src)).mode)
+}
+
+// Only files with more than one link participate in hard-link grouping. Some filesystems report an
+// unusable zero inode; treating those as independent avoids accidentally linking unrelated files.
+const hardLinkIdentity = (stats: Stats): string | undefined =>
+  stats.nlink > 1 && stats.ino !== 0 ? `${stats.dev}:${stats.ino}` : undefined
+
+const destinationAvailableBytes = async (path: string): Promise<number> => {
+  const stats = await statfs(path)
+  return stats.bavail * stats.bsize
+}
+
+const HARD_LINK_UNSUPPORTED_CODES = new Set([
+  'EACCES',
+  'EINVAL',
+  'ENOTSUP',
+  'EOPNOTSUPP',
+  'EPERM',
+  'EXDEV'
+])
+
+const destinationSupportsHardLinks = async (path: string): Promise<boolean> => {
+  const probe = `.open-science-hard-link-test-${randomUUID()}`
+  const source = join(path, `${probe}.source`)
+  const target = join(path, `${probe}.target`)
+  try {
+    await writeFile(source, '', { flag: 'wx' })
+    await link(source, target)
+    return true
+  } catch (error) {
+    if (HARD_LINK_UNSUPPORTED_CODES.has((error as NodeJS.ErrnoException)?.code ?? '')) return false
+    throw error
+  } finally {
+    await rm(target, { force: true })
+    await rm(source, { force: true })
+  }
 }
 
 const hashFile = async (path: string): Promise<string> => {
@@ -123,6 +267,54 @@ const copySymlink = async (src: string, dest: string): Promise<void> => {
   await mkdir(dirname(dest), { recursive: true })
   await rm(dest, { force: true }).catch(() => undefined)
   await symlink(target, dest)
+}
+
+const migrationSourceError = (error: unknown): string =>
+  error instanceof NonRegularEntryError
+    ? `Can't move your data: "${error.relPath}" is a special file (device, socket, or pipe) that can't be copied. Remove it, then try again.`
+    : error instanceof AbsoluteInternalSymlinkError
+      ? `Can't move your data: "${error.relPath}" is an absolute symbolic link into the current data folder. Replace it with a relative link or remove it, then try again.`
+      : error instanceof Error
+        ? error.message
+        : String(error)
+
+export const validateMigrationSourceLinks = async (
+  from: string,
+  dirs: readonly string[]
+): Promise<MigrationResult> => {
+  try {
+    const normalizedSourceRoot = resolve(from)
+    let canonicalSourceRoot: string
+    try {
+      canonicalSourceRoot = resolve(await realpath(from))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true }
+      throw error
+    }
+    for (const dir of dirs) {
+      const srcDir = join(from, dir)
+      const entries = await listEntries(srcDir)
+      for (const rel of entries.symlinks) {
+        const sourceLink = join(srcDir, rel)
+        const linkTarget = await readlink(sourceLink)
+        if (!isAbsolute(linkTarget)) continue
+        const normalizedTarget = resolve(linkTarget)
+        if (
+          isPathInsideOrEqual(normalizedSourceRoot, normalizedTarget) ||
+          isPathInsideOrEqual(canonicalSourceRoot, normalizedTarget)
+        ) {
+          throw new AbsoluteInternalSymlinkError(join(dir, rel))
+        }
+        const canonicalTarget = await canonicalizeExistingPathPrefix(linkTarget)
+        if (isPathInsideOrEqual(canonicalSourceRoot, resolve(canonicalTarget))) {
+          throw new AbsoluteInternalSymlinkError(join(dir, rel))
+        }
+      }
+    }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: migrationSourceError(error) }
+  }
 }
 
 // Scans, copies, and verifies `from/<dir>` into `to/<dir>` for every dir in `dirs`. `from` is
@@ -143,19 +335,45 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
   try {
     checkAbort()
     const entriesByDir = new Map<string, ScanResult>()
+    const sourceHardLinks = new Set<string>()
+    let hasRepeatedHardLink = false
     for (const dir of dirs) {
       const srcDir = join(from, dir)
       const entries = await listEntries(srcDir)
       entriesByDir.set(dir, entries)
-      for (const rel of entries.files) {
-        totalBytes += (await stat(join(srcDir, rel))).size
+      for (const file of entries.files) {
+        const identity = hardLinkIdentity(file.stats)
+        if (!identity) continue
+        if (sourceHardLinks.has(identity)) hasRepeatedHardLink = true
+        else sourceHardLinks.add(identity)
+      }
+    }
+    const sourceMetadata = metadataSnapshotFromEntries(dirs, entriesByDir)
+    const sourceValidation = await validateMigrationSourceLinks(from, dirs)
+    if (!sourceValidation.ok) {
+      await restorePortableMetadata(from, sourceMetadata).catch(() => undefined)
+      return sourceValidation
+    }
+    checkAbort()
+    const preserveHardLinks = !hasRepeatedHardLink || (await destinationSupportsHardLinks(to))
+    const sizedHardLinks = new Set<string>()
+    for (const entries of entriesByDir.values()) {
+      for (const file of entries.files) {
+        const identity = preserveHardLinks ? hardLinkIdentity(file.stats) : undefined
+        if (identity && sizedHardLinks.has(identity)) continue
+        if (identity) sizedHardLinks.add(identity)
+        totalBytes += file.stats.size
       }
     }
     onProgress({ phase: 'scan', copiedBytes, totalBytes })
     checkAbort()
+    if ((await destinationAvailableBytes(to)) < totalBytes) {
+      throw new Error("Can't move your data: the new location does not have enough free space.")
+    }
 
     // Copy every existing from/<dir> into `to`, even if empty — an existing source
     // dir must be mirrored at `to`, not silently dropped.
+    const copiedHardLinks = new Map<string, string>()
     for (const dir of dirs) {
       const srcDir = join(from, dir)
       const entries =
@@ -172,13 +390,29 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
       copiedInto.push(destDir)
       if (!entries.rootFile) {
         await mkdir(destDir, { recursive: true })
-        for (const rel of entries.directories) await mkdir(join(destDir, rel), { recursive: true })
+        for (const directory of entries.directories) {
+          await mkdir(join(destDir, directory.relPath), { recursive: true })
+        }
       }
-      for (const rel of entries.files) {
+      for (const file of entries.files) {
         checkAbort()
-        await copyFile(join(srcDir, rel), join(destDir, rel))
-        copiedBytes += (await stat(join(destDir, rel))).size
-        onProgress({ phase: 'copy', copiedBytes, totalBytes, currentPath: join(dir, rel) })
+        const destination = join(destDir, file.relPath)
+        const identity = preserveHardLinks ? hardLinkIdentity(file.stats) : undefined
+        const existingDestination = identity ? copiedHardLinks.get(identity) : undefined
+        if (existingDestination) {
+          await mkdir(dirname(destination), { recursive: true })
+          await link(existingDestination, destination)
+        } else {
+          await copyFile(join(srcDir, file.relPath), destination)
+          copiedBytes += file.stats.size
+          if (identity) copiedHardLinks.set(identity, destination)
+        }
+        onProgress({
+          phase: 'copy',
+          copiedBytes,
+          totalBytes,
+          currentPath: join(dir, file.relPath)
+        })
         checkAbort()
       }
       // Symlinks after files so their parent dirs already exist; recreated as links (see copySymlink).
@@ -202,26 +436,32 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
           present: false,
           rootFile: false
         } as ScanResult)
-      for (const rel of entries.directories) {
+      for (const directory of entries.directories) {
         checkAbort()
-        const destStat = await stat(join(to, dir, rel)).catch(() => undefined)
-        if (!destStat?.isDirectory()) throw new Error(`verification failed for ${join(dir, rel)}`)
+        const destStat = await stat(join(to, dir, directory.relPath)).catch(() => undefined)
+        if (!destStat?.isDirectory()) {
+          throw new Error(`verification failed for ${join(dir, directory.relPath)}`)
+        }
       }
-      for (const rel of entries.files) {
+      for (const file of entries.files) {
         checkAbort()
-        const srcSize = (await stat(join(from, dir, rel))).size
-        const destStat = await stat(join(to, dir, rel)).catch(() => undefined)
-        if (!destStat || destStat.size !== srcSize) {
-          throw new Error(`verification failed for ${join(dir, rel)}`)
+        const destStat = await stat(join(to, dir, file.relPath)).catch(() => undefined)
+        if (!destStat || destStat.size !== file.stats.size) {
+          throw new Error(`verification failed for ${join(dir, file.relPath)}`)
         }
         const [sourceChecksum, destinationChecksum] = await Promise.all([
-          hashFile(join(from, dir, rel)),
-          hashFile(join(to, dir, rel))
+          hashFile(join(from, dir, file.relPath)),
+          hashFile(join(to, dir, file.relPath))
         ])
         if (sourceChecksum !== destinationChecksum) {
-          throw new Error(`verification failed for ${join(dir, rel)}: checksum mismatch`)
+          throw new Error(`verification failed for ${join(dir, file.relPath)}: checksum mismatch`)
         }
-        onProgress({ phase: 'verify', copiedBytes, totalBytes, currentPath: join(dir, rel) })
+        onProgress({
+          phase: 'verify',
+          copiedBytes,
+          totalBytes,
+          currentPath: join(dir, file.relPath)
+        })
       }
       // A symlink is verified by its presence AS a link (lstat, not stat, so a dangling target — e.g.
       // a relative conda link resolved before its sibling files land — is not a false failure).
@@ -233,6 +473,13 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
         onProgress({ phase: 'verify', copiedBytes, totalBytes, currentPath: join(dir, rel) })
       }
     }
+
+    // Copying and hash verification read the source and destination. Restore the source timestamps so
+    // the commit phase can take a faithful in-memory snapshot, then restore the staged copy. The
+    // service reapplies that snapshot after its own downstream verification reads.
+    checkAbort()
+    await restoreTimestamps(from, sourceMetadata)
+    await restorePortableMetadata(to, sourceMetadata)
     checkAbort()
   } catch (err) {
     // Rollback: remove whatever was written under `to`; `from` was never touched.
@@ -245,12 +492,7 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
     // trace. rmdir only removes it if empty, so any unrelated pre-existing content is left intact.
     await rmdir(to).catch(() => undefined)
     const cancelled = err instanceof AbortedError || signal.aborted
-    const error =
-      err instanceof NonRegularEntryError
-        ? `Can't move your data: "${err.relPath}" is a special file (device, socket, or pipe) that can't be copied. Remove it, then try again.`
-        : err instanceof Error
-          ? err.message
-          : String(err)
+    const error = migrationSourceError(err)
     return {
       ok: false,
       error,
@@ -275,8 +517,14 @@ export const deleteSources = async (
 
   for (const dir of dirs) {
     const srcDir = join(from, dir)
-    if (!(await exists(srcDir))) continue
     try {
+      try {
+        await stat(srcDir)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'ENOTDIR') continue
+        throw err
+      }
       await rm(srcDir, { recursive: true, force: true })
       deleted.push(dir)
       onProgress?.({ phase: 'delete', copiedBytes: 0, totalBytes: 0, currentPath: dir })

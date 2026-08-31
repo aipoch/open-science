@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
 import type { ApprovalGateway, ApprovalResult, SwitchNotifier } from '../../shared/agents-contract'
-import type { SpecialistProfileView } from '../../shared/specialist'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistView } from '../../shared/specialist'
+import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 
 const noopCatalog = (): AgentsCatalogSource => ({
@@ -11,14 +11,14 @@ const noopCatalog = (): AgentsCatalogSource => ({
   getConnectors: vi.fn(async () => ({ enabledIds: [], autoAllowIds: [] }))
 })
 
-const withExplicitResolvers = (service: ProfileService): ProfileService => {
+const withExplicitResolvers = (service: SpecialistService): SpecialistService => {
   service.resolveRunnableByName = vi.fn(async (name: string) => service.getByName(name))
   service.resolveRunnableById = vi.fn(async (id: string) => service.getById(id))
   service.resolveCustomMutationByName = vi.fn(async (name: string) => service.getByName(name))
   return service
 }
 
-const noopProfileService = (): ProfileService =>
+const noopSpecialistService = (): SpecialistService =>
   withExplicitResolvers({
     list: vi.fn(async () => []),
     getByName: vi.fn(async () => {
@@ -27,12 +27,12 @@ const noopProfileService = (): ProfileService =>
     getById: vi.fn(async () => {
       throw new Error('not found')
     })
-  } as unknown as ProfileService)
+  } as unknown as SpecialistService)
 
 describe('AgentsService.dispatch — extensible operation dispatcher', () => {
   it('routes a read op identically to read()', async () => {
     const service = new AgentsService({
-      profileService: {
+      specialistService: {
         list: vi.fn(async () => [
           {
             id: 'sp-1',
@@ -48,7 +48,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
           }
         ]),
         getByName: vi.fn()
-      } as unknown as ProfileService,
+      } as unknown as SpecialistService,
       catalog: noopCatalog()
     })
     const viaDispatch = await service.dispatch({ op: 'list' })
@@ -61,7 +61,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
 
   it('rejects an unknown op with a sanitized host.agents.<op>: error', async () => {
     const service = new AgentsService({
-      profileService: noopProfileService(),
+      specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
     await expect(service.dispatch({ op: 'rename' })).rejects.toThrow(/host\.agents\.rename:/)
@@ -69,7 +69,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
 
   it('rejects a malformed request (no op) with a host.agents.unknown: error', async () => {
     const service = new AgentsService({
-      profileService: noopProfileService(),
+      specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
     await expect(service.dispatch({})).rejects.toThrow(/host\.agents\.unknown:/)
@@ -90,10 +90,10 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
           fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
           selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
           revision: 1
-        }) as SpecialistProfileView
+        }) as SpecialistView
     )
     const service = new AgentsService({
-      profileService: { list: vi.fn(), getByName } as unknown as ProfileService,
+      specialistService: { list: vi.fn(), getByName } as unknown as SpecialistService,
       catalog: noopCatalog()
     })
     // Sandbox tries to forge a session, a specialist id, a switch target, and a reconfigure flag.
@@ -119,7 +119,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
     // With no gateway wired, delete surfaces a sanitized "not configured" error rather than
     // silently no-op'ing.
     const service = new AgentsService({
-      profileService: noopProfileService(),
+      specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
     await expect(service.dispatch({ op: 'delete', params: {} })).rejects.toThrow(
@@ -127,7 +127,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
     )
   })
 
-  it('ordinary mutations route to ProfileService (no longer fail-closed)', async () => {
+  it('ordinary mutations route to SpecialistService (no longer fail-closed)', async () => {
     const created = vi.fn(async () => ({
       id: 'sp-1',
       name: 'Bio',
@@ -141,7 +141,10 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
       revision: 1
     }))
     const service = new AgentsService({
-      profileService: { ...noopProfileService(), create: created } as unknown as ProfileService,
+      specialistService: {
+        ...noopSpecialistService(),
+        create: created
+      } as unknown as SpecialistService,
       catalog: noopCatalog()
     })
     const result = (await service.dispatch({ op: 'create', params: { name: 'Bio' } })) as {
@@ -173,7 +176,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
 
   it('switch fails closed when its approval/binding/persistence seams are not configured', async () => {
     const service = new AgentsService({
-      profileService: noopProfileService(),
+      specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
     await expect(
@@ -183,7 +186,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
 
   it('reads unchanged: existing list/get/list_skills behavior preserved', async () => {
     const service = new AgentsService({
-      profileService: noopProfileService(),
+      specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
     await expect(service.read({ op: 'list' })).resolves.toEqual([])
@@ -196,7 +199,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
 })
 
 describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
-  const specialist = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+  const specialist = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
     id: 'sp-1',
     name: 'BIO_EXPERT',
     displayName: 'Bio Expert',
@@ -212,7 +215,7 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
 
   type BuildServiceResult = {
     service: AgentsService
-    profileService: ProfileService
+    specialistService: SpecialistService
     sessionBinding: SessionBindingService
     persist: (sessionId: string, specialistId: string | undefined) => Promise<void>
     notify: SwitchNotifier['notify']
@@ -220,11 +223,11 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
   }
 
   const buildService = (opts: {
-    profiles?: SpecialistProfileView[]
+    profiles?: SpecialistView[]
     decision?: ApprovalResult
   }): BuildServiceResult => {
     const profiles = opts.profiles ?? [specialist()]
-    const profileService = withExplicitResolvers({
+    const specialistService = withExplicitResolvers({
       list: vi.fn(async () => profiles),
       getByName: vi.fn(async (name: string) => {
         const found = profiles.find((p) => p.name === name)
@@ -236,7 +239,7 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
         if (!found) throw new Error(`Specialist ${id} not found.`)
         return found
       })
-    } as unknown as ProfileService)
+    } as unknown as SpecialistService)
     const sessionBinding = {
       setBinding: vi.fn(),
       getBinding: vi.fn()
@@ -248,14 +251,14 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
     }
     const notifier: SwitchNotifier = { notify }
     const service = new AgentsService({
-      profileService,
+      specialistService,
       catalog: noopCatalog(),
       approvalGateway: gateway,
       switchNotifier: notifier,
       sessionBinding,
       persistSessionSpecialist: persist
     })
-    return { service, profileService, sessionBinding, persist, notify, gateway }
+    return { service, specialistService, sessionBinding, persist, notify, gateway }
   }
 
   it('routes an approved switch through the dispatcher and persists + broadcasts', async () => {
@@ -334,7 +337,7 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
 })
 
 describe('AgentsService.dispatch — mutation routing (privileged delete + ordinary update)', () => {
-  const specialist = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+  const specialist = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
     id: 'sp-1',
     name: 'Bio',
     displayName: 'Bio',
@@ -349,16 +352,16 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
   })
 
   const buildService = (opts: {
-    profiles?: SpecialistProfileView[]
+    profiles?: SpecialistView[]
     decision?: ApprovalResult
   }): {
     service: AgentsService
-    profileService: ProfileService
+    specialistService: SpecialistService
     gateway: ApprovalGateway
     invalidateCatalog: ReturnType<typeof vi.fn>
   } => {
     const profiles = opts.profiles ?? [specialist()]
-    const profileService = withExplicitResolvers({
+    const specialistService = withExplicitResolvers({
       list: vi.fn(async () => profiles),
       getByName: vi.fn(async (name: string) => {
         const found = profiles.find((p) => p.name === name)
@@ -369,22 +372,22 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         throw new Error('unexpected')
       }),
       delete: vi.fn(async () => undefined)
-    } as unknown as ProfileService)
+    } as unknown as SpecialistService)
     const gateway: ApprovalGateway = {
       decide: vi.fn(async (): Promise<ApprovalResult> => opts.decision ?? { status: 'approved' })
     }
     const invalidateCatalog = vi.fn(async () => undefined)
     const service = new AgentsService({
-      profileService,
+      specialistService,
       catalog: noopCatalog(),
       approvalGateway: gateway,
       invalidateCatalog
     })
-    return { service, profileService, gateway, invalidateCatalog }
+    return { service, specialistService, gateway, invalidateCatalog }
   }
 
   it('routes a displayName edit through the ordinary mutation path', async () => {
-    // The ProfileService returns the real post-write record; the dispatcher
+    // The SpecialistService returns the real post-write record; the dispatcher
     // must surface it verbatim, not echo the request patch.
     const updated = specialist({
       displayName: 'Biology',
@@ -392,23 +395,23 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
       systemPrompt: 'UPDATE READ-BACK PROMPT SENTINEL',
       revision: 4
     })
-    const { service, profileService, gateway } = buildService({
+    const { service, specialistService, gateway } = buildService({
       profiles: [specialist()]
     })
-    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
+    ;(specialistService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
 
     const result = (await service.dispatch({
       op: 'update',
       params: { name: 'Bio', patch: { display_name: 'Biology', description: 'new', revision: 3 } }
-    })) as SpecialistProfileView
+    })) as SpecialistView
 
-    // Ordinary path returns a projected AgentDetailReadModel (no {status:'updated'} envelope).
+    // Ordinary path returns a projected SpecialistDetailReadModel (no {status:'updated'} envelope).
     expect(result.name).toBe('Bio')
     expect(result.displayName).toBe('Biology')
     expect(result.revision).toBe(4)
     expect(result.systemPrompt).toBe('UPDATE READ-BACK PROMPT SENTINEL')
     // The ordinary path pinned the re-resolved name -> id and revision before update.
-    const updateArgs = (profileService.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    const updateArgs = (specialistService.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(updateArgs.id).toBe('sp-1')
     expect(updateArgs.revision).toBe(3)
     expect(updateArgs.name).toBeUndefined()
@@ -418,16 +421,16 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
 
   it('a non-name update stays on the ordinary-mutation path (not the privileged module)', async () => {
     const ordinaryReturn = specialist({ description: 'edited', revision: 4 })
-    const profileService = withExplicitResolvers({
-      ...noopProfileService(),
+    const specialistService = withExplicitResolvers({
+      ...noopSpecialistService(),
       getByName: vi.fn(async () => specialist()),
       update: vi.fn(async () => ordinaryReturn)
-    } as unknown as ProfileService)
+    } as unknown as SpecialistService)
     const gateway: ApprovalGateway = {
       decide: vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
     }
     const service = new AgentsService({
-      profileService,
+      specialistService,
       catalog: noopCatalog(),
       approvalGateway: gateway
     })
@@ -437,7 +440,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
       params: { name: 'Bio', patch: { description: 'edited', revision: 3 } }
     })) as { id: string; description: string }
 
-    // Ordinary path returns a projected AgentDetailReadModel (no {status:'updated'} envelope).
+    // Ordinary path returns a projected SpecialistDetailReadModel (no {status:'updated'} envelope).
     expect(result.id).toBe('sp-1')
     expect(result.description).toBe('edited')
     // The privileged gateway was NOT consulted for a non-name update.
@@ -455,13 +458,13 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
       revision: 4
     })
     const attachSkill = vi.fn(async () => attached)
-    const profileService = withExplicitResolvers({
-      ...noopProfileService(),
+    const specialistService = withExplicitResolvers({
+      ...noopSpecialistService(),
       getByName: vi.fn(async () => specialist()),
       attachSkill
-    } as unknown as ProfileService)
+    } as unknown as SpecialistService)
     const service = new AgentsService({
-      profileService,
+      specialistService,
       catalog: {
         ...noopCatalog(),
         listSkillCatalog: vi.fn(async () => [
@@ -480,7 +483,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     const result = (await service.dispatch({
       op: 'attach_skill',
       params: { name: 'Bio', skill_ref: 'skill-1', revision: 3 }
-    })) as SpecialistProfileView
+    })) as SpecialistView
 
     expect(result.systemPrompt).toBe('ATTACH READ-BACK PROMPT SENTINEL')
     expect(result.selectedCapabilities.skillIds).toEqual(['skill-1'])
@@ -488,11 +491,11 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
   })
 
   it('routes delete through applyDelete and returns { status: deleted, name }', async () => {
-    const { service, profileService, invalidateCatalog } = buildService({
+    const { service, specialistService, invalidateCatalog } = buildService({
       profiles: [specialist()]
     })
     // getByName throws "not found" after delete -> absence verified.
-    ;(profileService.getByName as ReturnType<typeof vi.fn>)
+    ;(specialistService.getByName as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(specialist())
       .mockRejectedValueOnce(new Error('Specialist "Bio" not found.'))
 
@@ -502,12 +505,12 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     })) as { status: string; name: string }
 
     expect(result).toEqual({ status: 'deleted', name: 'Bio' })
-    expect(profileService.delete as ReturnType<typeof vi.fn>).toHaveBeenCalledWith('sp-1', 3)
+    expect(specialistService.delete as ReturnType<typeof vi.fn>).toHaveBeenCalledWith('sp-1', 3)
     expect(invalidateCatalog).toHaveBeenCalledTimes(1)
   })
 
   it('a declined delete returns the structured declined shape and mutates nothing', async () => {
-    const { service, profileService, invalidateCatalog } = buildService({
+    const { service, specialistService, invalidateCatalog } = buildService({
       profiles: [specialist()],
       decision: { status: 'declined', operation: 'delete', reason: 'user cancelled' }
     })
@@ -518,12 +521,12 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     })
 
     expect(result).toEqual({ status: 'declined', operation: 'delete', reason: 'user cancelled' })
-    expect(profileService.delete as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    expect(specialistService.delete as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
     expect(invalidateCatalog).not.toHaveBeenCalled()
   })
 
   it('a stale revision fails closed with a sanitized error (no mutation, no retry)', async () => {
-    const { service, profileService, invalidateCatalog } = buildService({
+    const { service, specialistService, invalidateCatalog } = buildService({
       // Live revision drifted to 5 while the reviewed revision was 3.
       profiles: [specialist({ revision: 5 })]
     })
@@ -531,14 +534,14 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     await expect(
       service.dispatch({ op: 'delete', params: { name: 'Bio', revision: 3 } })
     ).rejects.toThrow(/host\.agents\.delete:.*reviewed revision 3/)
-    expect(profileService.delete as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    expect(specialistService.delete as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
     expect(invalidateCatalog).not.toHaveBeenCalled()
   })
 
   it('delete never clears session bindings (no binding sink invoked)', async () => {
-    const { service, profileService } = buildService({ profiles: [specialist()] })
+    const { service, specialistService } = buildService({ profiles: [specialist()] })
     // getByName resolves the live record pre-delete, then throws "not found" post-delete (absence).
-    ;(profileService.getByName as ReturnType<typeof vi.fn>)
+    ;(specialistService.getByName as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(specialist())
       .mockRejectedValueOnce(new Error('Specialist "Bio" not found.'))
     // The result surface and dispatcher carry NO binding-clearance path; the contract is that bound
@@ -564,15 +567,15 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
   })
 
   const buildServiceWithSkills = (opts: {
-    profiles: SpecialistProfileView[]
+    profiles: SpecialistView[]
     decision?: ApprovalResult
   }): {
     service: AgentsService
-    profileService: ProfileService
+    specialistService: SpecialistService
     gateway: ApprovalGateway
     invalidateCatalog: ReturnType<typeof vi.fn>
   } => {
-    const profileService = withExplicitResolvers({
+    const specialistService = withExplicitResolvers({
       list: vi.fn(async () => opts.profiles),
       getByName: vi.fn(async (name: string) => {
         const found = opts.profiles.find((p) => p.name === name)
@@ -583,33 +586,33 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         throw new Error('unexpected')
       }),
       delete: vi.fn(async () => undefined)
-    } as unknown as ProfileService)
+    } as unknown as SpecialistService)
     const gateway: ApprovalGateway = {
       decide: vi.fn(async (): Promise<ApprovalResult> => opts.decision ?? { status: 'approved' })
     }
     const invalidateCatalog = vi.fn(async () => undefined)
     const service = new AgentsService({
-      profileService,
+      specialistService,
       catalog: skillCatalog(),
       approvalGateway: gateway,
       invalidateCatalog
     })
-    return { service, profileService, gateway, invalidateCatalog }
+    return { service, specialistService, gateway, invalidateCatalog }
   }
 
   it('a displayName patch that also edits skill_names applies both atomically', async () => {
-    // The ProfileService returns the real post-write record (new label, bumped revision, and the new
+    // The SpecialistService returns the real post-write record (new label, bumped revision, and the new
     // selected capability collection). The dispatcher must surface it verbatim, not echo the request.
-    const updated: SpecialistProfileView = {
+    const updated: SpecialistView = {
       ...specialist({ displayName: 'Biology', revision: 4 }),
       capabilityMode: 'selected',
       selectedCapabilities: { skillIds: ['sk-reviewer'], connectorIds: [], connectorTools: [] },
       fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] }
     }
-    const { service, profileService, gateway } = buildServiceWithSkills({
+    const { service, specialistService, gateway } = buildServiceWithSkills({
       profiles: [specialist()]
     })
-    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
+    ;(specialistService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
 
     const result = (await service.dispatch({
       op: 'update',
@@ -617,7 +620,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         name: 'Bio',
         patch: { display_name: 'Biology', skill_names: ['sk-reviewer'], revision: 3 }
       }
-    })) as SpecialistProfileView
+    })) as SpecialistView
 
     expect(result.name).toBe('Bio')
     expect(result.displayName).toBe('Biology')
@@ -627,7 +630,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
 
     // The ordinary path received the complete patch: displayName + resolved capability fields. The
     // skill ref was resolved to its stable id and projected onto the patch (not stripped).
-    const updateArgs = (profileService.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    const updateArgs = (specialistService.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(updateArgs.name).toBeUndefined()
     expect(updateArgs.displayName).toBe('Biology')
     expect(updateArgs.capabilityMode).toBe('selected')
@@ -641,7 +644,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
 
   it('a combined displayName+capability patch with a stale revision fails closed', async () => {
     // Live revision drifted to 5 while the reviewed revision was 3.
-    const { service, profileService, invalidateCatalog } = buildServiceWithSkills({
+    const { service, specialistService, invalidateCatalog } = buildServiceWithSkills({
       profiles: [specialist({ revision: 5 })]
     })
 
@@ -654,32 +657,32 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         }
       })
     ).rejects.toThrow(/host\.agents\.update:.*revision/)
-    expect(profileService.update as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    expect(specialistService.update as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
     expect(invalidateCatalog).not.toHaveBeenCalled()
   })
 
   // A displayName patch that also toggles `enabled` must land both in one CAS-backed update.
   it('a displayName patch that also toggles enabled applies both changes atomically', async () => {
     const updated = specialist({ displayName: 'Biology', revision: 4, enabled: false })
-    const { service, profileService } = buildService({ profiles: [specialist()] })
-    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
+    const { service, specialistService } = buildService({ profiles: [specialist()] })
+    ;(specialistService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
 
     const result = (await service.dispatch({
       op: 'update',
       params: { name: 'Bio', patch: { display_name: 'Biology', enabled: false, revision: 3 } }
-    })) as SpecialistProfileView
+    })) as SpecialistView
 
     expect(result.name).toBe('Bio')
     expect(result.displayName).toBe('Biology')
     expect(result.enabled).toBe(false)
     expect(result.revision).toBe(4)
-    expect(profileService.update as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+    expect(specialistService.update as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'sp-1', revision: 3, displayName: 'Biology', enabled: false })
     )
   })
 
   it('rejects a displayName patch carrying an unknown field with a sanitized error', async () => {
-    const { service, profileService, invalidateCatalog } = buildService({
+    const { service, specialistService, invalidateCatalog } = buildService({
       profiles: [specialist()]
     })
 
@@ -692,7 +695,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         }
       })
     ).rejects.toThrow(/host\.agents\.update:.*Unknown field "malicious_field"/)
-    expect(profileService.update as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    expect(specialistService.update as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
     expect(invalidateCatalog).not.toHaveBeenCalled()
   })
 })
@@ -707,7 +710,7 @@ describe('AgentsService — injected seams are fake-able and routed (composition
     }
     const fakeNotifier: SwitchNotifier = { notify: vi.fn() }
     const service = new AgentsService({
-      profileService: noopProfileService(),
+      specialistService: noopSpecialistService(),
       catalog: noopCatalog(),
       approvalGateway: fakeGateway,
       switchNotifier: fakeNotifier

@@ -5,11 +5,13 @@ import {
   annotationPayloadText,
   imageAnnotationSourceIsFixed,
   parseSideChatAnnotationText,
+  prepareAnnotationsForAgent,
   sanitizeAnnotations,
   sideChatAnnotationText,
   validateAnnotations,
   type Annotation,
   type ImagePointAnnotation,
+  type PdfAnnotation,
   type TextAnnotation
 } from './annotations'
 
@@ -42,6 +44,45 @@ const imageAnnotation = (): ImagePointAnnotation => ({
   },
   point: { x: 0.5, y: 0.25 },
   naturalSize: { width: 1000, height: 800 }
+})
+
+const pdfAnnotation = (overrides: Partial<PdfAnnotation> = {}): PdfAnnotation => ({
+  id: 'pdf-1',
+  kind: 'pdf',
+  target: 'agent',
+  source: {
+    kind: 'upload-version',
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    versionId: 'version-7',
+    name: 'paper.pdf',
+    path: 'upload-version:project-1/session-1/version-7',
+    checksum: 'a'.repeat(64)
+  },
+  selector: {
+    kind: 'text',
+    pageNumber: 4,
+    exact: 'The confidence intervals overlap.',
+    prefix: 'Result: ',
+    suffix: ' This matters.',
+    position: { start: 8, end: 41 },
+    quads: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.03 }],
+    extractorVersion: 'pdfjs-5.4.624'
+  },
+  ...overrides
+})
+
+const pdfRegionAnnotation = (): PdfAnnotation => ({
+  ...pdfAnnotation(),
+  id: 'pdf-region-1',
+  selector: {
+    kind: 'region',
+    pageNumber: 6,
+    rect: { x: 0.2, y: 0.3, width: 0.4, height: 0.25 },
+    pageRotation: 0,
+    text: 'Figure 2. Retrieval evaluator.',
+    image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+  }
 })
 
 describe('annotations', () => {
@@ -139,6 +180,74 @@ describe('annotations', () => {
           ]
         })
     )
+  })
+
+  it('keeps immutable PDF text anchors in persisted and Agent context', () => {
+    const annotation = pdfAnnotation()
+
+    const sanitized = sanitizeAnnotations([annotation])
+
+    expect(sanitized).toEqual([annotation])
+    expect(annotationPayloadText(sanitized)).toBe(
+      '[Annotations]\n' +
+        JSON.stringify({
+          items: [
+            {
+              type: 'quote',
+              content: 'The confidence intervals overlap.',
+              source: {
+                kind: 'pdf',
+                versionId: 'version-7',
+                name: 'paper.pdf',
+                checksum: 'a'.repeat(64),
+                page: 4,
+                selector: {
+                  prefix: 'Result: ',
+                  suffix: ' This matters.',
+                  position: { start: 8, end: 41 },
+                  quads: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.03 }],
+                  extractorVersion: 'pdfjs-5.4.624'
+                }
+              }
+            }
+          ]
+        })
+    )
+    expect(parseSideChatAnnotationText(sideChatAnnotationText('', sanitized))).toEqual({
+      text: '',
+      items: [
+        {
+          type: 'quote',
+          content: 'The confidence intervals overlap.',
+          source: expect.objectContaining({
+            kind: 'pdf',
+            versionId: 'version-7',
+            checksum: 'a'.repeat(64),
+            page: 4
+          })
+        }
+      ]
+    })
+    expect(
+      sanitizeAnnotations([
+        {
+          ...annotation,
+          selector: { ...annotation.selector, pageNumber: 0 }
+        }
+      ])
+    ).toEqual([])
+  })
+
+  it('keeps a bounded PDF region image out of prompt text and returns it as visual input', () => {
+    const annotation = pdfRegionAnnotation()
+    const sanitized = sanitizeAnnotations([annotation])
+
+    expect(sanitized).toEqual([annotation])
+    expect(annotationPayloadText(sanitized)).toContain('"type":"pdf-region"')
+    expect(annotationPayloadText(sanitized)).not.toContain('AQID')
+    expect(prepareAnnotationsForAgent('', sanitized).images).toEqual([
+      { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+    ])
   })
 
   it('sanitizes and serializes a Session item text annotation', () => {

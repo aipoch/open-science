@@ -117,7 +117,7 @@ describe('notebook run repository', () => {
     expect(document.runs[0]?.agentFrameId).toBe('root-frame-session-1')
   })
 
-  it('round-trips optional kernel dispatch and external runtime evidence', async () => {
+  it('round-trips optional kernel, runtime, and file-generation evidence', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
     const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
@@ -145,7 +145,33 @@ describe('notebook run repository', () => {
         text: { stdout: '', stderr: '', traceback: '', plain: [] },
         outputs: [],
         artifacts: [],
-        workingFiles: []
+        workingFiles: [
+          {
+            path: join(document.notebookSessionRoot, 'data', 'result.csv'),
+            relativePath: 'data/result.csv',
+            kind: 'other',
+            generationId: 'generation-1',
+            checksum: 'b'.repeat(64),
+            change: 'created'
+          }
+        ],
+        fileEvidence: {
+          schemaVersion: 1,
+          evidenceId: 'notebook-file-evidence-external-run',
+          state: 'partial',
+          checksum: 'a'.repeat(64),
+          storageKey: 'file-evidence/runs/external-run.json',
+          relationCount: 1,
+          generationCount: 1,
+          scientificOutputCount: 1,
+          initialViewState: 'complete',
+          managedRootsFinalState: 'partial',
+          scientificOutputAnalysis: 'partial',
+          fileReads: 'unavailable',
+          externalPaths: 'unavailable',
+          writerAttribution: 'unavailable',
+          reasonCodes: ['file-reads-not-observed']
+        }
       }
     })
 
@@ -157,7 +183,31 @@ describe('notebook run repository', () => {
           runId: 'external-run',
           kernelEpochId: 'epoch-1',
           kernelDispatched: true,
-          runtimeId: '/external/python'
+          runtimeId: '/external/python',
+          workingFiles: [
+            expect.objectContaining({
+              generationId: 'generation-1',
+              checksum: 'b'.repeat(64),
+              change: 'created'
+            })
+          ],
+          fileEvidence: {
+            schemaVersion: 1,
+            evidenceId: 'notebook-file-evidence-external-run',
+            state: 'partial',
+            checksum: 'a'.repeat(64),
+            storageKey: 'file-evidence/runs/external-run.json',
+            relationCount: 1,
+            generationCount: 1,
+            scientificOutputCount: 1,
+            initialViewState: 'complete',
+            managedRootsFinalState: 'partial',
+            scientificOutputAnalysis: 'partial',
+            fileReads: 'unavailable',
+            externalPaths: 'unavailable',
+            writerAttribution: 'unavailable',
+            reasonCodes: ['file-reads-not-observed']
+          }
         })
       ]
     })
@@ -1028,6 +1078,7 @@ describe('notebook run repository', () => {
     const reloaded = await repository.findExisting('default-project', 'session-1')
 
     expect(reloaded?.runs[0]).toMatchObject({ runId: 'repl-run-1', kernelKind: 'repl' })
+    expect(reloaded?.runs[0]).not.toHaveProperty('fileEvidence')
   })
 
   it('rejects unsafe project and session path segments', async () => {

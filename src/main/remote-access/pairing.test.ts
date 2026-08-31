@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RemoteSessionPairingManager } from './pairing'
-import { RemoteAccessRepository } from './repository'
+import { RemoteAccessRepository, TRUSTED_BROWSER_TTL_MS } from './repository'
 import type { RemotePairingDecision } from '../../shared/remote-access'
 
 const roots: string[] = []
@@ -127,6 +127,18 @@ describe('RemoteSessionPairingManager', () => {
         new URL('https://home.example.ts.net/api/bootstrap')
       )
     ).resolves.toMatchObject({ kind: 'authorized' })
+    await expect(
+      manager.webAccess.authorizeWebSocket(
+        request('/api/v1/events', {
+          cookie: sessionCookie,
+          origin: 'https://home.example.ts.net'
+        }),
+        new URL('https://home.example.ts.net/api/v1/events')
+      )
+    ).resolves.toMatchObject({
+      principalId: expect.any(String),
+      isCurrent: expect.any(Function)
+    })
     expect(manager.trustedViews()).toHaveLength(0)
     expect(changed).toHaveBeenCalled()
   })
@@ -190,7 +202,8 @@ describe('RemoteSessionPairingManager', () => {
     )
     const pendingCookie = cookiePair(firstResponse.headers.get('set-cookie') as string)
     await manager.approve(manager.pendingViews()[0].id, 'always')
-    expect((await repository.load()).trustedBrowsers).toHaveLength(1)
+    const [trustedBrowser] = (await repository.load()).trustedBrowsers
+    if (!trustedBrowser) throw new Error('Expected a persisted trusted browser.')
 
     const statusResponse = response()
     await manager.webAccess.authorizeHttp(
@@ -209,13 +222,27 @@ describe('RemoteSessionPairingManager', () => {
       isEnabled: () => true,
       onChanged: vi.fn()
     })
+    const httpAuthorization = await restartedManager.webAccess.authorizeHttp(
+      request('/', { cookie: sessionCookie }),
+      response().response,
+      new URL('https://home.example.ts.net/')
+    )
+    expect(httpAuthorization).toMatchObject({
+      kind: 'authorized-pairing-manager',
+      principalId: trustedBrowser.id
+    })
     await expect(
-      restartedManager.webAccess.authorizeHttp(
-        request('/', { cookie: sessionCookie }),
-        response().response,
-        new URL('https://home.example.ts.net/')
+      restartedManager.webAccess.authorizeWebSocket(
+        request('/events', {
+          cookie: sessionCookie,
+          origin: 'https://home.example.ts.net'
+        }),
+        new URL('https://home.example.ts.net/events')
       )
-    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
+    ).resolves.toMatchObject({
+      principalId: trustedBrowser.id,
+      isCurrent: expect.any(Function)
+    })
     expect(restartedManager.pendingViews()).toHaveLength(0)
 
     await expect(
@@ -248,6 +275,155 @@ describe('RemoteSessionPairingManager', () => {
         new URL('https://home.example.ts.net/rpc/test')
       )
     ).resolves.toBe('denied')
+  })
+
+  it('rejects and removes a trusted browser after its 180-day authorization expires', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+    roots.push(root)
+    const repository = new RemoteAccessRepository(root)
+    let now = 0
+    const options = {
+      repository,
+      isAllowedRemoteHost: (hostname: string) => hostname === 'home.example.ts.net',
+      isEnabled: () => true,
+      onChanged: vi.fn(),
+      now: () => now
+    }
+    const manager = await RemoteSessionPairingManager.create(options)
+    const pairingResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/'),
+      pairingResponse.response,
+      new URL('https://home.example.ts.net/')
+    )
+    const pendingCookie = cookiePair(pairingResponse.headers.get('set-cookie') as string)
+    await manager.approve(manager.pendingViews()[0].id, 'always')
+    const statusResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/__open_science_remote/pair/status', { cookie: pendingCookie }),
+      statusResponse.response,
+      new URL('https://home.example.ts.net/__open_science_remote/pair/status')
+    )
+    const sessionCookie = cookiePair((statusResponse.headers.get('set-cookie') as string[])[0])
+
+    now = 15_552_000_001
+    const restartedManager = await RemoteSessionPairingManager.create(options)
+    await expect(
+      restartedManager.webAccess.authorizeHttp(
+        request('/', { cookie: sessionCookie }),
+        response().response,
+        new URL('https://home.example.ts.net/')
+      )
+    ).resolves.toBe('handled')
+    await vi.waitFor(async () => {
+      expect((await repository.load()).trustedBrowsers).toHaveLength(0)
+    })
+  })
+
+  it('rejects a trusted browser that expires while its last-seen update is queued', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+    roots.push(root)
+    const repository = new RemoteAccessRepository(root)
+    let now = 0
+    const manager = await RemoteSessionPairingManager.create({
+      repository,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      isEnabled: () => true,
+      onChanged: vi.fn(),
+      now: () => now
+    })
+    const pairingResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/'),
+      pairingResponse.response,
+      new URL('https://home.example.ts.net/')
+    )
+    const pendingCookie = cookiePair(pairingResponse.headers.get('set-cookie') as string)
+    await manager.approve(manager.pendingViews()[0].id, 'always')
+    const statusResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/__open_science_remote/pair/status', { cookie: pendingCookie }),
+      statusResponse.response,
+      new URL('https://home.example.ts.net/__open_science_remote/pair/status')
+    )
+    const sessionCookie = cookiePair((statusResponse.headers.get('set-cookie') as string[])[0])
+
+    let releaseSave: (() => void) | undefined
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve
+    })
+    const persist = repository.save.bind(repository)
+    const save = vi
+      .spyOn(repository, 'save')
+      .mockReturnValueOnce(saveGate)
+      .mockImplementation((value) => persist(value))
+    const preferenceUpdate = manager.setModePreference('off')
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+
+    now = TRUSTED_BROWSER_TTL_MS - 1
+    const authorization = manager.webAccess.authorizeHttp(
+      request('/', { cookie: sessionCookie }),
+      response().response,
+      new URL('https://home.example.ts.net/')
+    )
+    now = TRUSTED_BROWSER_TTL_MS
+    releaseSave?.()
+    await preferenceUpdate
+
+    await expect(authorization).resolves.toBe('handled')
+    expect((await repository.load()).trustedBrowsers).toHaveLength(0)
+  })
+
+  it('rejects a trusted browser that expires while its last-seen update is saving', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+    roots.push(root)
+    const repository = new RemoteAccessRepository(root)
+    let now = 0
+    const manager = await RemoteSessionPairingManager.create({
+      repository,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      isEnabled: () => true,
+      onChanged: vi.fn(),
+      now: () => now
+    })
+    const pairingResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/'),
+      pairingResponse.response,
+      new URL('https://home.example.ts.net/')
+    )
+    const pendingCookie = cookiePair(pairingResponse.headers.get('set-cookie') as string)
+    await manager.approve(manager.pendingViews()[0].id, 'always')
+    const statusResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/__open_science_remote/pair/status', { cookie: pendingCookie }),
+      statusResponse.response,
+      new URL('https://home.example.ts.net/__open_science_remote/pair/status')
+    )
+    const sessionCookie = cookiePair((statusResponse.headers.get('set-cookie') as string[])[0])
+
+    let releaseSave: (() => void) | undefined
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve
+    })
+    const persist = repository.save.bind(repository)
+    const save = vi.spyOn(repository, 'save').mockImplementationOnce(async (value) => {
+      await saveGate
+      await persist(value)
+    })
+    now = TRUSTED_BROWSER_TTL_MS - 1
+    const authorization = manager.webAccess.authorizeHttp(
+      request('/', { cookie: sessionCookie }),
+      response().response,
+      new URL('https://home.example.ts.net/')
+    )
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+
+    now = TRUSTED_BROWSER_TTL_MS
+    releaseSave?.()
+
+    await expect(authorization).resolves.toBe('handled')
+    expect((await repository.load()).trustedBrowsers).toHaveLength(0)
   })
 
   it('keeps a trusted browser authorized when revocation cannot be persisted', async () => {
@@ -327,7 +503,7 @@ describe('RemoteSessionPairingManager', () => {
     roots.push(root)
     const repository = new RemoteAccessRepository(root)
     await repository.save({
-      version: 4,
+      version: 5,
       mode: 'remoteit-public',
       trustedBrowsers: [
         {
@@ -336,7 +512,8 @@ describe('RemoteSessionPairingManager', () => {
           platform: 'macOS',
           tokenHash: 'first-token',
           createdAt: 1,
-          lastSeenAt: 1
+          lastSeenAt: 1,
+          expiresAt: Number.MAX_SAFE_INTEGER
         },
         {
           id: 'second-browser',
@@ -344,7 +521,8 @@ describe('RemoteSessionPairingManager', () => {
           platform: 'Windows',
           tokenHash: 'second-token',
           createdAt: 2,
-          lastSeenAt: 2
+          lastSeenAt: 2,
+          expiresAt: Number.MAX_SAFE_INTEGER
         }
       ]
     })
@@ -489,6 +667,222 @@ describe('RemoteSessionPairingManager', () => {
       expect((await repository.load()).trustedBrowsers).toHaveLength(0)
     })
     expect(save).toHaveBeenCalledTimes(2)
+  })
+
+  it('publishes pending-request expiration without waiting for another pairing operation', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+      roots.push(root)
+      const onChanged = vi.fn()
+      const manager = await RemoteSessionPairingManager.create({
+        repository: new RemoteAccessRepository(root),
+        isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+        isEnabled: () => true,
+        onChanged
+      })
+      await manager.webAccess.authorizeHttp(
+        request('/'),
+        response().response,
+        new URL('https://home.example.ts.net/')
+      )
+      expect(manager.pendingViews()).toHaveLength(1)
+      onChanged.mockClear()
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1_000 + 1)
+
+      expect(onChanged).toHaveBeenCalledOnce()
+      expect(manager.pendingViews()).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('publishes expiration while a persistent approval is still saving', async () => {
+    vi.useFakeTimers()
+    let releaseSave: (() => void) | undefined
+    let approval: Promise<void> | undefined
+    let manager: RemoteSessionPairingManager | undefined
+    try {
+      vi.setSystemTime(0)
+      const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+      roots.push(root)
+      const repository = new RemoteAccessRepository(root)
+      const onChanged = vi.fn()
+      manager = await RemoteSessionPairingManager.create({
+        repository,
+        isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+        isEnabled: () => true,
+        onChanged
+      })
+      await manager.webAccess.authorizeHttp(
+        request('/'),
+        response().response,
+        new URL('https://home.example.ts.net/')
+      )
+      const saveGate = new Promise<void>((resolve) => {
+        releaseSave = resolve
+      })
+      vi.spyOn(repository, 'save').mockReturnValueOnce(saveGate)
+      onChanged.mockClear()
+
+      approval = manager.approve(manager.pendingViews()[0].id, 'always')
+      await vi.waitFor(() => expect(repository.save).toHaveBeenCalledOnce())
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1_000 + 1)
+
+      expect(onChanged).toHaveBeenCalledOnce()
+      expect(manager.pendingViews()).toHaveLength(0)
+    } finally {
+      releaseSave?.()
+      await approval?.catch(() => undefined)
+      manager?.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('removes an unclaimed persistent approval without waiting for another operation', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+      roots.push(root)
+      const repository = new RemoteAccessRepository(root)
+      const onChanged = vi.fn()
+      const manager = await RemoteSessionPairingManager.create({
+        repository,
+        isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+        isEnabled: () => true,
+        onChanged
+      })
+      await manager.webAccess.authorizeHttp(
+        request('/'),
+        response().response,
+        new URL('https://home.example.ts.net/')
+      )
+      await manager.approve(manager.pendingViews()[0].id, 'always')
+      expect((await repository.load()).trustedBrowsers).toHaveLength(1)
+      onChanged.mockClear()
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1_000 + 1)
+
+      await vi.waitFor(async () => {
+        expect((await repository.load()).trustedBrowsers).toHaveLength(0)
+      })
+      expect(onChanged).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('actively removes a claimed trusted browser when its 180-day authorization expires', async () => {
+    vi.useFakeTimers()
+    let manager: RemoteSessionPairingManager | undefined
+    try {
+      vi.setSystemTime(0)
+      const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+      roots.push(root)
+      const repository = new RemoteAccessRepository(root)
+      const onChanged = vi.fn()
+      manager = await RemoteSessionPairingManager.create({
+        repository,
+        isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+        isEnabled: () => true,
+        onChanged
+      })
+      const pairingResponse = response()
+      await manager.webAccess.authorizeHttp(
+        request('/'),
+        pairingResponse.response,
+        new URL('https://home.example.ts.net/')
+      )
+      const pendingCookie = cookiePair(pairingResponse.headers.get('set-cookie') as string)
+      await manager.approve(manager.pendingViews()[0].id, 'always')
+      await manager.webAccess.authorizeHttp(
+        request('/__open_science_remote/pair/status', { cookie: pendingCookie }),
+        response().response,
+        new URL('https://home.example.ts.net/__open_science_remote/pair/status')
+      )
+      onChanged.mockClear()
+
+      await vi.advanceTimersByTimeAsync(TRUSTED_BROWSER_TTL_MS + 1)
+
+      await vi.waitFor(async () => {
+        expect((await repository.load()).trustedBrowsers).toHaveLength(0)
+      })
+      expect(onChanged).toHaveBeenCalledOnce()
+    } finally {
+      manager?.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports each naturally expired authorization by stable principal ID', async () => {
+    vi.useFakeTimers()
+    let manager: RemoteSessionPairingManager | undefined
+    try {
+      vi.setSystemTime(0)
+      const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+      roots.push(root)
+      const onAuthorizationExpired = vi.fn()
+      const options = {
+        repository: new RemoteAccessRepository(root),
+        isAllowedRemoteHost: (hostname: string) => hostname === 'home.example.ts.net',
+        isEnabled: () => true,
+        onChanged: vi.fn(),
+        onAuthorizationExpired
+      }
+      manager = await RemoteSessionPairingManager.create(options)
+
+      const grant = async (
+        decision: RemotePairingDecision
+      ): Promise<{ principalId: string; isCurrent: () => boolean }> => {
+        const pairingResponse = response()
+        await manager!.webAccess.authorizeHttp(
+          request('/'),
+          pairingResponse.response,
+          new URL('https://home.example.ts.net/')
+        )
+        const pendingCookie = cookiePair(pairingResponse.headers.get('set-cookie') as string)
+        await manager!.approve(manager!.pendingViews()[0].id, decision)
+        const statusResponse = response()
+        await manager!.webAccess.authorizeHttp(
+          request('/__open_science_remote/pair/status', { cookie: pendingCookie }),
+          statusResponse.response,
+          new URL('https://home.example.ts.net/__open_science_remote/pair/status')
+        )
+        const sessionCookie = cookiePair((statusResponse.headers.get('set-cookie') as string[])[0])
+        const authorization = await manager!.webAccess.authorizeWebSocket(
+          request('/api/v1/events', {
+            cookie: sessionCookie,
+            origin: 'https://home.example.ts.net'
+          }),
+          new URL('https://home.example.ts.net/api/v1/events')
+        )
+        return authorization!
+      }
+
+      const oneTimeAuthorization = await grant('once')
+      const trustedAuthorization = await grant('always')
+      expect(oneTimeAuthorization.isCurrent()).toBe(true)
+      expect(trustedAuthorization.isCurrent()).toBe(true)
+      onAuthorizationExpired.mockClear()
+
+      const oneTimeTtlMs = 12 * 60 * 60 * 1_000
+      await vi.advanceTimersByTimeAsync(oneTimeTtlMs + 1)
+      expect(onAuthorizationExpired).toHaveBeenCalledOnce()
+      expect(onAuthorizationExpired).toHaveBeenLastCalledWith(oneTimeAuthorization.principalId)
+      expect(oneTimeAuthorization.isCurrent()).toBe(false)
+      expect(trustedAuthorization.isCurrent()).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(TRUSTED_BROWSER_TTL_MS - oneTimeTtlMs)
+      expect(onAuthorizationExpired).toHaveBeenCalledTimes(2)
+      expect(onAuthorizationExpired).toHaveBeenLastCalledWith(trustedAuthorization.principalId)
+      expect(trustedAuthorization.isCurrent()).toBe(false)
+    } finally {
+      manager?.dispose()
+      vi.useRealTimers()
+    }
   })
 
   it('rejects an invalid pairing decision without granting or persisting access', async () => {

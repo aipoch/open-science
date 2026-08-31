@@ -1273,7 +1273,7 @@ describe('useLifecycleSync', () => {
       root.render(<Harness isSessionPersistenceHydrated={false} />)
     })
     await act(async () => {
-      listeners.projectDeleted?.({ projectId: project.id })
+      listeners.projectDeleted?.({ projectId: project.id, status: 'deleted' })
     })
 
     await act(async () => {
@@ -1297,11 +1297,39 @@ describe('useLifecycleSync', () => {
     })
     await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
     await act(async () => {
-      listeners.projectDeleted?.({ projectId: project.id })
+      listeners.projectDeleted?.({ projectId: project.id, status: 'deleted' })
     })
 
     expect(useProjectStore.getState().projects).toEqual([])
     expect(useSessionStore.getState().sessions).toEqual([])
     expect(useNavigationStore.getState().view).toBe('home')
+  })
+
+  it('removes another window committed deletion while tracking cleanup until terminal recovery', async () => {
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'web:external' })
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
+    await act(async () => {
+      listeners.projectDeleted?.({
+        projectId: project.id,
+        status: 'cleanup-pending'
+      })
+    })
+
+    expect(useProjectStore.getState().projects).toEqual([])
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has(project.id)).toBe(true)
+    expect(useNavigationStore.getState().view).toBe('home')
+
+    await act(async () => {
+      listeners.projectDeleted?.({
+        projectId: project.id,
+        status: 'deleted'
+      })
+    })
+
+    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has(project.id)).toBe(false)
   })
 })

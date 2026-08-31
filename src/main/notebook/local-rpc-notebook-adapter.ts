@@ -52,6 +52,7 @@ const notebookSessionRequestSchema = z
     provenanceContext: provenanceContextSchema.optional(),
     executionInvocationId: z.string().optional(),
     registeredInputFiles: z.array(registeredInputFileSchema).optional(),
+    registeredHelperSkillIds: z.array(z.string()).optional(),
     inputRunLeaseId: z.string().optional(),
     delegatedWorkAttemptId: z.string().optional()
   })
@@ -90,6 +91,8 @@ const notebookLocalRpcRequestSchemas = {
   }),
   execute: notebookSessionRequestSchema.extend({
     code: z.string(),
+    kernelSkillIds: z.array(z.string().min(1).max(128)).optional(),
+    artifactVersionInputs: z.array(z.string().min(1).max(256)).max(64).optional(),
     timeoutMs: positiveTimeoutSchema.optional(),
     cellId: z.string().optional(),
     source: runSourceSchema.optional(),
@@ -240,6 +243,16 @@ const assertSessionParams = (params: Record<string, unknown>): void => {
   }
 }
 
+const toExecuteNotebookCodeRequest = (
+  request: z.output<NotebookLocalRpcRequestSchemas['execute']>
+): ExecuteNotebookCodeRequest => {
+  const { kernelSkillIds, ...runtimeRequest } = request
+  return {
+    ...runtimeRequest,
+    ...(kernelSkillIds ? { helperModules: kernelSkillIds } : {})
+  }
+}
+
 const resolveNotebookLocalRpcHandler = (
   capability: NotebookLocalRpcCapability,
   method: string,
@@ -266,8 +279,10 @@ const resolveNotebookLocalRpcHandler = (
       return (request, signal) =>
         capability.runCell(parseNotebookLocalRpcRequest('runCell', request), signal)
     case 'execute':
-      return (request, signal) =>
-        capability.execute(parseNotebookLocalRpcRequest('execute', request), signal)
+      return (request, signal) => {
+        const parsed = parseNotebookLocalRpcRequest('execute', request)
+        return capability.execute(toExecuteNotebookCodeRequest(parsed), signal)
+      }
     case 'executeControl':
       return (request) =>
         capability.executeControl(parseNotebookLocalRpcRequest('executeControl', request))

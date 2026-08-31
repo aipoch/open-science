@@ -43,30 +43,58 @@ const parseArgs = (raw: string, onePerLine = false): string[] =>
     .map((token) => token.trim())
     .filter((token) => token.length > 0)
 
-// Parses one KEY=VALUE per line into a record; blank lines and lines without '=' are ignored.
-const parseEnv = (raw: string): Record<string, string> => {
+type ParsedNamedValues = {
+  values: Record<string, string>
+  invalidLines: number[]
+  duplicateLines: Array<{ line: number; name: string }>
+}
+type EnvironmentUpdateMode = 'keep' | 'replace' | 'clear'
+
+// Parses one KEY=VALUE per line and preserves line numbers for actionable validation feedback.
+const parseEnv = (raw: string, caseInsensitiveNames: boolean): ParsedNamedValues => {
   const env: Record<string, string> = {}
-  for (const line of raw.split('\n')) {
+  const invalidLines: number[] = []
+  const duplicateLines: ParsedNamedValues['duplicateLines'] = []
+  const environmentNames = new Set<string>()
+  for (const [index, line] of raw.split('\n').entries()) {
     const trimmed = line.trim()
     if (!trimmed) continue
     const eq = trimmed.indexOf('=')
-    if (eq <= 0) continue
-    env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim()
+    if (eq <= 0) {
+      invalidLines.push(index + 1)
+      continue
+    }
+    const name = trimmed.slice(0, eq).trim()
+    const normalizedName = caseInsensitiveNames ? name.toLowerCase() : name
+    if (environmentNames.has(normalizedName)) duplicateLines.push({ line: index + 1, name })
+    else environmentNames.add(normalizedName)
+    env[name] = trimmed.slice(eq + 1).trim()
   }
-  return env
+  return { values: env, invalidLines, duplicateLines }
 }
 
-// Parses one "Name: Value" per line into a headers record; blank/invalid lines are ignored.
-const parseHeaders = (raw: string): Record<string, string> => {
+// Parses one "Name: Value" per line and preserves validation errors instead of dropping input.
+const parseHeaders = (raw: string): ParsedNamedValues => {
   const headers: Record<string, string> = {}
-  for (const line of raw.split('\n')) {
+  const invalidLines: number[] = []
+  const duplicateLines: ParsedNamedValues['duplicateLines'] = []
+  const headerNames = new Map<string, string>()
+  for (const [index, line] of raw.split('\n').entries()) {
     const trimmed = line.trim()
     if (!trimmed) continue
     const colon = trimmed.indexOf(':')
-    if (colon <= 0) continue
-    headers[trimmed.slice(0, colon).trim()] = trimmed.slice(colon + 1).trim()
+    if (colon <= 0) {
+      invalidLines.push(index + 1)
+      continue
+    }
+    const name = trimmed.slice(0, colon).trim()
+    const normalizedName = name.toLowerCase()
+    const previousName = headerNames.get(normalizedName)
+    if (previousName) duplicateLines.push({ line: index + 1, name })
+    else headerNames.set(normalizedName, name)
+    headers[previousName ?? name] = trimmed.slice(colon + 1).trim()
   }
-  return headers
+  return { values: headers, invalidLines, duplicateLines }
 }
 
 // A required-field marker next to a label. Purely visual; the real guard is the disabled Add button.
@@ -214,6 +242,11 @@ export function ConnectorAddForm({
   const [envText, setEnvText] = useState(
     (initialTemplate?.requiredSecrets?.environment ?? []).map((key) => `${key}=`).join('\n')
   )
+  const [environmentUpdateMode, setEnvironmentUpdateMode] = useState<EnvironmentUpdateMode>(
+    isEdit && (editServer?.hasEnv || Boolean(editServer?.environmentNames?.length))
+      ? 'keep'
+      : 'replace'
+  )
   // Remote fields.
   const [url, setUrl] = useState(editServer?.url ?? initialTemplate?.url ?? '')
   const [remoteTransport, setRemoteTransport] = useState<RemoteTransport>(
@@ -291,12 +324,22 @@ export function ConnectorAddForm({
     advancedOpen || Boolean(displayName.trim() && nameError) || Boolean(idError)
 
   const parsedArgs = parseArgs(argsText, initialTemplate !== undefined)
-  const parsedEnv = parseEnv(envText)
+  const parsedEnvironment = parseEnv(envText, window.api?.platform === 'win32')
+  const parsedEnv = parsedEnvironment.values
+  const environmentErrors =
+    environmentUpdateMode === 'replace' ? parsedEnvironment.invalidLines : []
+  const environmentDuplicateErrors =
+    environmentUpdateMode === 'replace' ? parsedEnvironment.duplicateLines : []
   const parsedHeaders = parseHeaders(headersText)
   const commandPreview = [command.trim(), ...parsedArgs].filter((part) => part.length > 0).join(' ')
   const requiredEnvironment = initialTemplate?.requiredSecrets?.environment ?? []
   const requiredHeaders = initialTemplate?.requiredSecrets?.headers ?? []
   const requiresOAuthClientSecret = initialTemplate?.requiredSecrets?.oauthClientSecret === true
+  const authorizationServerError =
+    usePreRegisteredOAuthClient &&
+    Boolean(clientId.trim() || clientSecret.trim()) &&
+    !authorizationServerUrl.trim()
+  const clientIdError = Boolean(clientSecret.trim() && !clientId.trim())
   const copyDefaultCallbackUri = async (): Promise<void> => {
     if (!navigator.clipboard?.writeText) return
     try {
@@ -317,12 +360,20 @@ export function ConnectorAddForm({
     (requiredHeaders.length === 0 ||
       (mode === 'remote' &&
         remoteAuth === 'headers' &&
-        requiredHeaders.every((header) => (parsedHeaders[header] ?? '').trim().length > 0))) &&
+        requiredHeaders.every(
+          (header) => (parsedHeaders.values[header] ?? '').trim().length > 0
+        ))) &&
     (!requiresOAuthClientSecret ||
       (mode === 'remote' &&
         remoteAuth === 'oauth' &&
         encryptionAvailable &&
         clientSecret.trim().length > 0))
+
+  const hasUnsavedStaticCredentials =
+    (mode === 'local' &&
+      environmentUpdateMode === 'replace' &&
+      Object.keys(parsedEnv).length > 0) ||
+    (mode === 'remote' && remoteAuth === 'headers' && Object.keys(parsedHeaders.values).length > 0)
 
   const requiredFilled =
     displayName.trim().length > 0 &&
@@ -330,7 +381,13 @@ export function ConnectorAddForm({
     !idError &&
     (mode === 'local' ? command.trim().length > 0 : url.trim().length > 0) &&
     oauthRegistrationValid &&
-    requiredSecretValuesFilled
+    requiredSecretValuesFilled &&
+    (mode !== 'local' ||
+      (environmentErrors.length === 0 && environmentDuplicateErrors.length === 0)) &&
+    (mode !== 'remote' ||
+      remoteAuth !== 'headers' ||
+      (parsedHeaders.invalidLines.length === 0 && parsedHeaders.duplicateLines.length === 0)) &&
+    (!hasUnsavedStaticCredentials || encryptionAvailable)
   const canSubmit = requiredFilled && trusted && !submitting && !editTargetMissing
 
   const switchMode = (next: ConnectorMode): void => {
@@ -344,13 +401,12 @@ export function ConnectorAddForm({
     setError(null)
     try {
       const env = parsedEnv
-      const headers = parsedHeaders
+      const headers = parsedHeaders.values
       const oauthScopes = oauthScopesText
         .split(/[\s,]+/)
         .map((scope) => scope.trim())
         .filter(Boolean)
       // Omitted env/headers keep the stored (secret) values on edit; on add they are simply unset.
-      const hasEnv = envText.trim().length > 0
       const hasHeaders = headersText.trim().length > 0
       const transport: CustomServerTransport = mode === 'local' ? 'stdio' : remoteTransport
       const oauth =
@@ -391,7 +447,11 @@ export function ConnectorAddForm({
         const request: UpdateCustomServerRequest = {
           id: stableEditServerId,
           ...shared,
-          ...(mode === 'local' && hasEnv ? { env } : {}),
+          ...(mode === 'local' && environmentUpdateMode === 'replace'
+            ? { env }
+            : mode === 'local' && environmentUpdateMode === 'clear'
+              ? { env: {} }
+              : {}),
           ...(mode === 'remote' && remoteAuth !== 'headers'
             ? { headers: {} }
             : hasHeaders
@@ -489,6 +549,7 @@ export function ConnectorAddForm({
           <Input
             id="connector-name"
             aria-label={t('Display name')}
+            aria-required="true"
             value={displayName}
             placeholder={t('e.g. Memory server')}
             onChange={(event) => setDisplayName(event.target.value)}
@@ -502,7 +563,7 @@ export function ConnectorAddForm({
               <RequiredMark />
             </label>
             <Select value={commandChoice} onValueChange={setCommandChoice}>
-              <SelectTrigger aria-label={t('Command')}>
+              <SelectTrigger id="connector-command" aria-label={t('Command')} aria-required="true">
                 <span>
                   {t(
                     COMMAND_OPTIONS.find((o) => o.value === commandChoice)?.labelKey ??
@@ -521,6 +582,7 @@ export function ConnectorAddForm({
             {commandChoice === 'other' ? (
               <Input
                 aria-label={t('Custom command')}
+                aria-required="true"
                 value={customCommand}
                 placeholder="/absolute/path/to/executable"
                 className="font-mono"
@@ -537,6 +599,7 @@ export function ConnectorAddForm({
             <Input
               id="connector-url"
               aria-label={t('Server URL')}
+              aria-required="true"
               value={url}
               placeholder="https://example.com/mcp"
               className="font-mono"
@@ -572,6 +635,7 @@ export function ConnectorAddForm({
                 <Input
                   id="connector-name-id"
                   aria-label={t('Connector name')}
+                  aria-required={!isEdit || undefined}
                   value={currentName}
                   disabled={isEdit}
                   aria-invalid={nameError ? true : undefined}
@@ -679,16 +743,44 @@ export function ConnectorAddForm({
                       {t('Environment variables')}{' '}
                       <span className="font-normal text-muted-foreground">{t('(optional)')}</span>
                     </label>
-                    <Textarea
-                      id="connector-env"
-                      aria-label={t('Environment variables')}
-                      value={envText}
-                      rows={3}
-                      placeholder={'KEY=value\nANOTHER_KEY=value'}
-                      className="resize-y font-mono text-[13px]"
-                      onChange={(event) => setEnvText(event.target.value)}
-                    />
-                    <p className={helperClassName}>
+                    {isEdit && editServer?.hasEnv ? (
+                      <Select
+                        value={environmentUpdateMode}
+                        onValueChange={(value) =>
+                          setEnvironmentUpdateMode(value as EnvironmentUpdateMode)
+                        }
+                      >
+                        <SelectTrigger aria-label={t('Environment variable action')}>
+                          <span>
+                            {environmentUpdateMode === 'keep'
+                              ? t('Keep saved variables')
+                              : environmentUpdateMode === 'replace'
+                                ? t('Replace saved variables')
+                                : t('Clear saved variables')}
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="keep">{t('Keep saved variables')}</SelectItem>
+                          <SelectItem value="replace">{t('Replace saved variables')}</SelectItem>
+                          <SelectItem value="clear">{t('Clear saved variables')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : null}
+                    {!isEdit || environmentUpdateMode === 'replace' ? (
+                      <Textarea
+                        id="connector-env"
+                        aria-label={t('Environment variables')}
+                        aria-required={requiredEnvironment.length > 0 || undefined}
+                        aria-invalid={environmentErrors.length > 0 || undefined}
+                        aria-describedby="connector-env-help"
+                        value={envText}
+                        rows={3}
+                        placeholder={'KEY=value\nANOTHER_KEY=value'}
+                        className="resize-y font-mono text-[13px]"
+                        onChange={(event) => setEnvText(event.target.value)}
+                      />
+                    ) : null}
+                    <p id="connector-env-help" className={helperClassName}>
                       {t('One KEY=VALUE per line.')}
                       {initialTemplate?.requiredSecrets?.environment?.length
                         ? ' ' +
@@ -696,8 +788,30 @@ export function ConnectorAddForm({
                             names: initialTemplate.requiredSecrets.environment.join(', ')
                           })
                         : ''}
-                      {isEdit ? ' ' + t('Leave blank to keep the current values.') : ''}
+                      {editServer?.environmentNames?.length
+                        ? ' ' +
+                          t('Saved names: {{names}}.', {
+                            names: editServer.environmentNames.join(', ')
+                          })
+                        : ''}
                     </p>
+                    {environmentErrors.map((line) => (
+                      <p key={line} className="text-xs text-status-failure">
+                        {t('Line {{line}}: use KEY=VALUE.', { line })}
+                      </p>
+                    ))}
+                    {environmentDuplicateErrors.map(({ line, name }) => (
+                      <p key={`${line}-${name}`} className="text-xs text-status-failure">
+                        {t('Line {{line}}: {{name}} is duplicated.', { line, name })}
+                      </p>
+                    ))}
+                    {!encryptionAvailable && Object.keys(parsedEnv).length > 0 ? (
+                      <p className="text-xs leading-5 text-destructive">
+                        {t(
+                          'Secure credential storage is unavailable. Unlock the system keychain and retry.'
+                        )}
+                      </p>
+                    ) : null}
                   </div>
                 </>
               ) : (
@@ -800,15 +914,22 @@ export function ConnectorAddForm({
                           <Input
                             id="connector-oauth-server"
                             aria-label={t('Authorization server URL')}
+                            aria-required={usePreRegisteredOAuthClient || undefined}
+                            aria-invalid={authorizationServerError || undefined}
+                            aria-describedby={
+                              authorizationServerError ? 'connector-oauth-server-error' : undefined
+                            }
                             value={authorizationServerUrl}
                             placeholder={t('Auto-discover from MCP server')}
                             className="font-mono"
                             onChange={(event) => setAuthorizationServerUrl(event.target.value)}
                           />
-                          {usePreRegisteredOAuthClient &&
-                          (clientId.trim() || clientSecret.trim()) &&
-                          !authorizationServerUrl.trim() ? (
-                            <p className="text-xs leading-5 text-destructive">
+                          {authorizationServerError ? (
+                            <p
+                              id="connector-oauth-server-error"
+                              className="text-xs leading-5 text-destructive"
+                              role="alert"
+                            >
                               {t(
                                 'Authorization server URL is required for a pre-registered client.'
                               )}
@@ -859,6 +980,11 @@ export function ConnectorAddForm({
                             <Input
                               id="connector-oauth-client-id"
                               aria-label={t('Client ID')}
+                              aria-required="true"
+                              aria-invalid={clientIdError || undefined}
+                              aria-describedby={
+                                clientIdError ? 'connector-oauth-client-id-error' : undefined
+                              }
                               value={clientId}
                               placeholder={t('Pre-registered client ID')}
                               className="font-mono"
@@ -872,8 +998,12 @@ export function ConnectorAddForm({
                                 }
                               }}
                             />
-                            {clientSecret.trim() && !clientId.trim() ? (
-                              <p className="text-xs leading-5 text-destructive">
+                            {clientIdError ? (
+                              <p
+                                id="connector-oauth-client-id-error"
+                                className="text-xs leading-5 text-destructive"
+                                role="alert"
+                              >
                                 {t('Client ID is required when a client secret is configured.')}
                               </p>
                             ) : null}
@@ -955,6 +1085,7 @@ export function ConnectorAddForm({
                             <Input
                               id="connector-oauth-client-secret"
                               aria-label={t('Client secret')}
+                              aria-required={requiresOAuthClientSecret || undefined}
                               type="password"
                               value={clientSecret}
                               placeholder={
@@ -1026,13 +1157,20 @@ export function ConnectorAddForm({
                       <Textarea
                         id="connector-headers"
                         aria-label={t('Headers')}
+                        aria-required={requiredHeaders.length > 0 || undefined}
+                        aria-invalid={
+                          parsedHeaders.invalidLines.length > 0 ||
+                          parsedHeaders.duplicateLines.length > 0 ||
+                          undefined
+                        }
+                        aria-describedby="connector-headers-help"
                         value={headersText}
                         rows={3}
                         placeholder={'Authorization: Bearer <token>\nX-Api-Key: <key>'}
                         className="resize-y font-mono text-[13px]"
                         onChange={(event) => setHeadersText(event.target.value)}
                       />
-                      <p className={helperClassName}>
+                      <p id="connector-headers-help" className={helperClassName}>
                         <Trans
                           i18nKey="One <code>Name: Value</code> per line (not JSON)."
                           components={{ code: <span className="font-mono" /> }}
@@ -1045,6 +1183,23 @@ export function ConnectorAddForm({
                           : ''}
                         {isEdit ? ' ' + t('Leave blank to keep the current values.') : ''}
                       </p>
+                      {parsedHeaders.invalidLines.map((line) => (
+                        <p key={line} className="text-xs text-status-failure">
+                          {t('Line {{line}}: use Name: Value.', { line })}
+                        </p>
+                      ))}
+                      {parsedHeaders.duplicateLines.map(({ line, name }) => (
+                        <p key={`${line}-${name}`} className="text-xs text-status-failure">
+                          {t('Line {{line}}: {{name}} is duplicated.', { line, name })}
+                        </p>
+                      ))}
+                      {!encryptionAvailable && Object.keys(parsedHeaders.values).length > 0 ? (
+                        <p className="text-xs leading-5 text-destructive">
+                          {t(
+                            'Secure credential storage is unavailable. Unlock the system keychain and retry.'
+                          )}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                 </>
@@ -1063,6 +1218,7 @@ export function ConnectorAddForm({
             <input
               type="checkbox"
               aria-label={t('I trust this connector')}
+              aria-required="true"
               checked={trusted}
               className="mt-0.5 size-4 shrink-0"
               onChange={(event) => setTrusted(event.target.checked)}
@@ -1080,7 +1236,7 @@ export function ConnectorAddForm({
         ) : null}
 
         <div className="flex items-center justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel}>
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
             {tCommon('Cancel')}
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>

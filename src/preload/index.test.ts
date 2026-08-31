@@ -57,12 +57,17 @@ type PreloadApi = {
   sessions: {
     loadAll: () => unknown
     loadOne: (request: unknown) => unknown
+    filterPdfContextCandidates: (request: unknown) => Promise<unknown>
+    linkPdfContext: (request: unknown) => Promise<unknown>
+    unlinkPdfContext: (request: unknown) => Promise<unknown>
     saveSession: (session: unknown, options?: unknown) => unknown
     editDetails: (request: unknown) => unknown
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
-    onFlushAborted: (listener: () => void) => unknown
+    onFlushAborted: (
+      listener: (event?: { reason: 'conflict' | 'renderer-failed' }) => void
+    ) => unknown
     onFlushRequest: (listener: (request: { requestId: string }) => void) => unknown
     sendFlushResponse: (response: { requestId: string }) => void
   }
@@ -192,9 +197,11 @@ beforeAll(async () => {
   // Take the contextBridge branch of the preload's expose logic (production path with context isolation).
   Object.defineProperty(process, 'contextIsolated', { value: true, configurable: true })
   invokeMock.mockImplementation(async (channel: string) =>
-    validatedApplicationCommandChannels.has(channel) || channel === 'sessions:save-session'
-      ? { ok: true, result: undefined }
-      : undefined
+    channel === 'sessions:link-pdf-context' || channel === 'sessions:unlink-pdf-context'
+      ? { ok: true, result: { version: 1, revision: 0 } }
+      : validatedApplicationCommandChannels.has(channel) || channel === 'sessions:save-session'
+        ? { ok: true, result: undefined }
+        : undefined
   )
 
   await import('./index')
@@ -306,6 +313,7 @@ describe('preload bridge — public surface inventory', () => {
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',
+      'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
       'compute.onApprovalRequest',
@@ -318,6 +326,7 @@ describe('preload bridge — public surface inventory', () => {
       'compute.resetPassword',
       'compute.respondApproval',
       'compute.revealInFolder',
+      'compute.scratchClear',
       'compute.scratchSet',
       'compute.sshConfigAliases',
       'databaseStartup.getState',
@@ -344,13 +353,23 @@ describe('preload bridge — public surface inventory', () => {
       'locale.initialize',
       'locale.onChanged',
       'locale.setPreference',
-      'logs.getPath',
+      'logs.getStatus',
       'logs.openFile',
       'logs.revealInFolder',
       'managedFileVersions.cancelDiff',
       'managedFileVersions.diffText',
       'managedFileVersions.inspect',
       'managedFileVersions.saveTextEdit',
+      'memory.clearAll',
+      'memory.createCategory',
+      'memory.createEntry',
+      'memory.deleteCategory',
+      'memory.deleteEntry',
+      'memory.onChanged',
+      'memory.setEnabled',
+      'memory.snapshot',
+      'memory.updateCategory',
+      'memory.updateEntry',
       'network.checkConnectivity',
       'network.getInfo',
       'notebook.appendCodeCell',
@@ -373,6 +392,7 @@ describe('preload bridge — public surface inventory', () => {
       'notebookEnv.onProgress',
       'notebookEnv.provision',
       'notebookEnv.repair',
+      'notifications.getDesktopAvailability',
       'notifications.getSnapshot',
       'notifications.markAllRead',
       'notifications.markRead',
@@ -381,6 +401,7 @@ describe('preload bridge — public surface inventory', () => {
       'notifications.onOpenSession',
       'notifications.onViewProbe',
       'notifications.peekPendingOpenSession',
+      'notifications.sendTest',
       'notifications.syncViewState',
       'notifications.takePendingOpenSession',
       'officePreview.attachFrame',
@@ -392,6 +413,7 @@ describe('preload bridge — public surface inventory', () => {
       'permissions.list',
       'permissions.onChanged',
       'permissions.restore',
+      'permissions.restoreDefaults',
       'permissions.revoke',
       'preview.delete',
       'preview.load',
@@ -419,6 +441,7 @@ describe('preload bridge — public surface inventory', () => {
       'remoteAccess.disable',
       'remoteAccess.getSnapshot',
       'remoteAccess.onChanged',
+      'remoteAccess.probe',
       'remoteAccess.reject',
       'remoteAccess.revokeBrowser',
       'remoteAccess.setMode',
@@ -448,6 +471,8 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.deleteSession',
       'sessions.editDetails',
       'sessions.exportConversation',
+      'sessions.filterPdfContextCandidates',
+      'sessions.linkPdfContext',
       'sessions.list',
       'sessions.loadAll',
       'sessions.loadOne',
@@ -457,9 +482,11 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.onFlushAborted',
       'sessions.onFlushRequest',
       'sessions.onUpdated',
+      'sessions.openRecoveryFolder',
       'sessions.saveManifest',
       'sessions.saveSession',
       'sessions.sendFlushResponse',
+      'sessions.unlinkPdfContext',
       'sessions.updateArchive',
       'settings.addCustomServer',
       'settings.authenticateCustomServer',
@@ -477,6 +504,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.detectCodeBuddy',
       'settings.detectCodex',
       'settings.detectOpencode',
+      'settings.disconnectCustomServer',
       'settings.exportCustomServerTemplate',
       'settings.exportSkill',
       'settings.getConnectorDetail',
@@ -511,6 +539,8 @@ describe('preload bridge — public surface inventory', () => {
       'settings.onChanged',
       'settings.onConnectorApprovalRequest',
       'settings.onConnectorApprovalSettled',
+      'settings.onConnectorCredentialRequest',
+      'settings.onConnectorCredentialSettled',
       'settings.onConnectorRuntimeChanged',
       'settings.onInstallLog',
       'settings.onSkillCatalogChanged',
@@ -525,8 +555,10 @@ describe('preload bridge — public surface inventory', () => {
       'settings.removeGitHubToken',
       'settings.replayConnectorApproval',
       'settings.replayPendingConnectorApprovals',
+      'settings.replayPendingConnectorCredentialRequests',
       'settings.replayPendingSkillImportApprovals',
       'settings.respondConnectorApproval',
+      'settings.respondConnectorCredentialRequest',
       'settings.respondSkillImportApproval',
       'settings.retryCustomServer',
       'settings.saveGitHubToken',
@@ -544,11 +576,13 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setNcbiCredentials',
       'settings.setNetworkProxy',
       'settings.setNotificationsEnabled',
+      'settings.setOpenAlexCredential',
       'settings.setPackageMirror',
       'settings.setProjectFilesFilter',
       'settings.setReasoningEffort',
       'settings.setReviewerModel',
       'settings.setSessionDetailsModel',
+      'settings.setShowNotificationContent',
       'settings.setSkillEnabled',
       'settings.setSkillsEnabled',
       'settings.setSubagentModel',
@@ -561,6 +595,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.updateCustomServer',
       'settings.updateSkill',
       'settings.upsertProvider',
+      'settings.validateOpenAlexCredential',
       'settings.validateProvider',
       'settings.waitXaiOAuthLogin',
       'sideChat.cancel',
@@ -603,6 +638,7 @@ describe('preload bridge — public surface inventory', () => {
       'specialist.setEnabled',
       'specialist.setSessionSpecialist',
       'specialist.update',
+      'storage.ackDataRootHandoffFlush',
       'storage.cancelMigrate',
       'storage.commitAndRelaunch',
       'storage.detectActive',
@@ -753,6 +789,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'lifecycle',
       'locale',
       'local-fs',
+      'memory',
       'logs',
       'managed-file-versions',
       'network',
@@ -778,7 +815,11 @@ describe('preload bridge — core renderer contract catalog', () => {
 
   it('routes every request method through its cataloged Electron channel', async () => {
     const requestContracts = coreContracts.filter(
-      ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
+      ({ dispatchPolicy, publicPath }) =>
+        dispatchPolicy.electron === 'electron-ipc-request' &&
+        publicPath !== 'sessions.filterPdfContextCandidates' &&
+        publicPath !== 'sessions.linkPdfContext' &&
+        publicPath !== 'sessions.unlinkPdfContext'
     )
     const localFile = { name: 'catalog.csv' } as File
 
@@ -794,6 +835,65 @@ describe('preload bridge — core renderer contract catalog', () => {
         contract.channel,
         ...invokeMock.mock.calls[0].slice(1)
       )
+    }
+  })
+
+  it('projects Memory requests and events without a handwritten preload bridge', async () => {
+    const request = { enabled: false }
+    await getApiCallable('memory.setEnabled')(request)
+
+    expect(invokeMock).toHaveBeenCalledWith('memory:set-enabled', request)
+
+    const listener = vi.fn()
+    const unsubscribe = getApiCallable('memory.onChanged')(listener) as () => void
+    const wrappedListener = onMock.mock.calls.at(-1)?.[1]
+    const event = { revision: 42 }
+
+    wrappedListener?.({ sender: 'electron' }, event)
+    unsubscribe()
+
+    expect(onMock).toHaveBeenCalledWith('memory:changed', wrappedListener)
+    expect(listener).toHaveBeenCalledWith(event)
+    expect(removeListenerMock).toHaveBeenCalledWith('memory:changed', wrappedListener)
+  })
+
+  it('unwraps the runtime-validated PDF context Session commands', async () => {
+    const cases = [
+      {
+        call: () =>
+          api.sessions.filterPdfContextCandidates({
+            projectId: 'project-1',
+            sources: []
+          }),
+        channel: 'sessions:filter-pdf-context-candidates'
+      },
+      {
+        call: () =>
+          api.sessions.linkPdfContext({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            expectedRevision: 0,
+            sourceKind: 'artifact-version',
+            sourceVersionId: 'version-1'
+          }),
+        channel: 'sessions:link-pdf-context'
+      },
+      {
+        call: () =>
+          api.sessions.unlinkPdfContext({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            expectedRevision: 1,
+            bindingId: 'binding-1'
+          }),
+        channel: 'sessions:unlink-pdf-context'
+      }
+    ]
+
+    for (const testCase of cases) {
+      invokeMock.mockResolvedValueOnce({ ok: true, result: { version: 1, revision: 2 } })
+      await expect(testCase.call()).resolves.toEqual({ version: 1, revision: 2 })
+      expect(invokeMock).toHaveBeenLastCalledWith(testCase.channel, expect.any(Object))
     }
   })
 
@@ -1459,9 +1559,9 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
     api.sessions.onFlushAborted(abortedListener)
     expect(onMock).toHaveBeenCalledWith('sessions:flush-aborted', expect.any(Function))
     const wrappedAbortedListener = onMock.mock.calls.at(-1)?.[1] as
-      ((_event: unknown) => void) | undefined
-    wrappedAbortedListener?.({})
-    expect(abortedListener).toHaveBeenCalledOnce()
+      ((_event: unknown, payload: { reason: 'conflict' }) => void) | undefined
+    wrappedAbortedListener?.({}, { reason: 'conflict' })
+    expect(abortedListener).toHaveBeenCalledWith({ reason: 'conflict' })
 
     api.sessions.onFlushRequest(listener)
     expect(onMock).toHaveBeenCalledWith('sessions:flush-request', expect.any(Function))

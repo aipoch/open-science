@@ -135,10 +135,12 @@ describe('ComputeJob repository (SQLite integration)', () => {
     const updated = await repo.update('test-job-1', {
       status: 'running',
       remoteHandle: JSON.stringify({ pid: 1234, workdir: '~/.openscience/jobs/test-job-1' }),
+      remoteWorkdir: '/scratch/.openscience/jobs/test-job-1',
       startedAt: new Date()
     })
     expect(updated.status).toBe('running')
     expect(updated.started_at).toBeGreaterThan(0)
+    expect(updated.remote_workdir).toBe('/scratch/.openscience/jobs/test-job-1')
 
     // update to terminal.
     await repo.update('test-job-1', {
@@ -710,6 +712,81 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
     // Empty array is a no-op.
     await expect(repo.markNotificationsConsumed('s1', [])).resolves.toBeUndefined()
+  })
+
+  it('persists and validates automatic-analysis transitions for a notified Job batch', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-analysis-state-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+
+    for (const id of ['job-success', 'job-failed']) {
+      await repo.create({
+        id,
+        providerId: 'ssh:test',
+        shape: 'direct_ssh',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        intent: id,
+        command: 'echo ok',
+        commandHash: id
+      })
+      await repo.update(id, { notifiedAt: new Date('2026-01-01') })
+    }
+
+    expect(await repo.get('job-success')).toMatchObject({
+      analysis_state: undefined,
+      analysis_message_id: undefined
+    })
+    await repo.transitionAnalysis({
+      sessionId: 'session-1',
+      jobIds: ['job-success'],
+      messageId: 'analysis-success',
+      state: 'dispatched'
+    })
+    await repo.transitionAnalysis({
+      sessionId: 'session-1',
+      jobIds: ['job-success'],
+      messageId: 'analysis-success',
+      state: 'succeeded'
+    })
+    expect(await repo.get('job-success')).toMatchObject({
+      analysis_state: 'succeeded',
+      analysis_message_id: 'analysis-success',
+      analysis_updated_at: expect.any(Number),
+      notification_consumed_at: expect.any(Number)
+    })
+
+    await repo.transitionAnalysis({
+      sessionId: 'session-1',
+      jobIds: ['job-failed'],
+      messageId: 'analysis-failed',
+      state: 'dispatched'
+    })
+    expect((await repo.findPendingNotifications()).map(({ job_id }) => job_id)).toEqual([
+      'job-failed'
+    ])
+    await repo.transitionAnalysis({
+      sessionId: 'session-1',
+      jobIds: ['job-failed'],
+      messageId: 'analysis-failed',
+      state: 'failed'
+    })
+    expect(await repo.get('job-failed')).toMatchObject({
+      analysis_state: 'failed',
+      analysis_message_id: 'analysis-failed',
+      notification_consumed_at: undefined
+    })
+    await expect(repo.findPendingNotifications()).resolves.toEqual([])
+    await expect(
+      repo.transitionAnalysis({
+        sessionId: 'session-1',
+        jobIds: ['job-failed'],
+        messageId: 'different-message',
+        state: 'succeeded'
+      })
+    ).rejects.toThrow(/does not match its durable dispatch/)
   })
 
   it('rejects a mixed-session, missing, or unnotified consumption batch atomically', async () => {

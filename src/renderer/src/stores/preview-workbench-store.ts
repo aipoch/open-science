@@ -5,6 +5,8 @@ import type { ProjectFileOriginSession } from '../../../shared/project-files'
 import type { FindingLocator } from '../../../shared/reviewer'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import { getUploadedAttachmentPath } from '../../../shared/uploads'
+import type { PdfReadingPosition } from '../../../shared/session-persistence'
+
 import { resolvePlanFileProjection } from '../pages/workspace/session-plan/plan-file-projection'
 import {
   dialogPreviewGuardScope,
@@ -85,6 +87,20 @@ export type PreviewSourceItem = PreviewItemBase & {
 
 export type PreviewItem = PreviewFileItem | PreviewToolItem | PreviewSourceItem
 
+export type PendingPdfContextSelection =
+  | { kind: 'staged-upload'; attachmentId: string; previewItemId: string }
+  | {
+      kind: 'version'
+      sourceKind: 'artifact-version' | 'upload-version'
+      sourceVersionId: string
+      previewItemId: string
+    }
+
+export const pendingPdfContextBindingId = (selection: PendingPdfContextSelection): string =>
+  selection.kind === 'staged-upload'
+    ? `staged:${selection.attachmentId}`
+    : `version:${selection.sourceKind}:${selection.sourceVersionId}`
+
 type StoredPreviewItem = PreviewItem & {
   createdAt: number
   updatedAt: number
@@ -109,6 +125,16 @@ export type RestoredPreviewSlice = {
 type PreviewWorkbenchStoreData = PreviewSlice & {
   activeProjectId: string | undefined
   byProject: Record<string, PreviewSlice>
+  // A not-yet-created Session has no durable runtime context. Keep only the staged Upload identity
+  // here until first-send finalization turns it into an immutable Session PDF binding.
+  pendingPdfContextByProject: Record<string, PendingPdfContextSelection>
+  // Upload ids currently attached to the active new-conversation draft, mirrored from the composer
+  // controller. A staged-upload pending selection can only finalize through one of these, so
+  // link affordances for any other staged upload (e.g. a preview tab whose attachment was removed
+  // from the draft) must refuse instead of creating a selection nothing can honor.
+  draftStagedUploadIds: string[]
+  // Ephemeral viewport state. Only captureSend copies the active value into a durable Message.
+  pdfReadingPositionByBindingId: Record<string, PdfReadingPosition>
   // Tool tab currently shown as a large modal instead of inline panel content (files tab only).
   expandedToolItemId: string | null
   // A one-off file preview stays outside the tab list so Files and Global Search can open the same
@@ -123,6 +149,14 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
     skipGuard?: boolean
   ) => boolean
   reconcileFinalizedUploads: (uploads: UploadedAttachment[]) => void
+  setPendingPdfContext: (
+    projectId: string,
+    selection: PendingPdfContextSelection | undefined
+  ) => void
+  clearPendingPdfContext: (projectId: string, selection: PendingPdfContextSelection) => void
+  setDraftStagedUploadIds: (ids: string[]) => void
+  setPdfReadingPosition: (bindingId: string, position: PdfReadingPosition) => void
+  clearPdfReadingPosition: (bindingId: string) => void
   upsertItem: (item: PreviewItem, skipGuard?: boolean) => boolean
   upsertAndActivateItem: (item: PreviewItem) => void
   activateItem: (itemId: string) => void
@@ -146,6 +180,9 @@ export const createInitialPreviewWorkbenchState = (): PreviewWorkbenchStoreData 
   openRequestVersion: 0,
   activeProjectId: undefined,
   byProject: {},
+  pendingPdfContextByProject: {},
+  draftStagedUploadIds: [],
+  pdfReadingPositionByBindingId: {},
   expandedToolItemId: null,
   fileDialogItem: undefined
 })
@@ -486,6 +523,61 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       if (items === state.items && byProject === state.byProject) return state
 
       return { items, byProject }
+    })
+  },
+
+  setPendingPdfContext: (projectId, selection) => {
+    set((state) => {
+      const current = state.pendingPdfContextByProject[projectId]
+      if (JSON.stringify(current) === JSON.stringify(selection)) return state
+      const pendingPdfContextByProject = { ...state.pendingPdfContextByProject }
+      if (selection) pendingPdfContextByProject[projectId] = selection
+      else delete pendingPdfContextByProject[projectId]
+      return { pendingPdfContextByProject }
+    })
+  },
+
+  clearPendingPdfContext: (projectId, selection) => {
+    set((state) => {
+      const current = state.pendingPdfContextByProject[projectId]
+      if (JSON.stringify(current) !== JSON.stringify(selection)) return state
+      const pendingPdfContextByProject = { ...state.pendingPdfContextByProject }
+      delete pendingPdfContextByProject[projectId]
+      return { pendingPdfContextByProject }
+    })
+  },
+
+  setDraftStagedUploadIds: (ids) => {
+    set((state) => {
+      const current = state.draftStagedUploadIds
+      if (current.length === ids.length && current.every((id, index) => id === ids[index])) {
+        return state
+      }
+      return { draftStagedUploadIds: ids }
+    })
+  },
+
+  setPdfReadingPosition: (bindingId, position) => {
+    set((state) => {
+      const current = state.pdfReadingPositionByBindingId[bindingId]
+      if (current?.pageNumber === position.pageNumber && current.pageCount === position.pageCount) {
+        return state
+      }
+      return {
+        pdfReadingPositionByBindingId: {
+          ...state.pdfReadingPositionByBindingId,
+          [bindingId]: position
+        }
+      }
+    })
+  },
+
+  clearPdfReadingPosition: (bindingId) => {
+    set((state) => {
+      if (!state.pdfReadingPositionByBindingId[bindingId]) return state
+      const pdfReadingPositionByBindingId = { ...state.pdfReadingPositionByBindingId }
+      delete pdfReadingPositionByBindingId[bindingId]
+      return { pdfReadingPositionByBindingId }
     })
   },
 

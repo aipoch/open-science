@@ -10,6 +10,7 @@ import {
   type RuntimeTargetReceipt
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import {
   defaultDiscoveryDeps,
   discoverInterpreters,
@@ -25,6 +26,8 @@ import type {
   NotebookSessionResolvedInterpreter,
   NotebookSessionRuntimeBinding
 } from './session-aggregate'
+
+const log = createLogger('notebook:runtime-binding')
 
 type RuntimeBindingSession = Pick<
   NotebookSessionAggregate,
@@ -353,7 +356,10 @@ export class NotebookRuntimeBindingOwner {
         session.lane
       )
     } catch (error) {
-      console.error('[notebook] Failed to persist runtime bindings', error)
+      log.error('failed to persist runtime bindings', {
+        sessionId: session.sessionId,
+        ...diagnosticErrorFields(error)
+      })
     }
   }
 

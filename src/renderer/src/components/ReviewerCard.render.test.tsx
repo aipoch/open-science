@@ -936,10 +936,18 @@ describe('ReviewerCard — rubric module assertion', () => {
     expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toMatch(/8\./)
   })
 
-  it('rubric contains warn criteria including attempted-but-uncertain', async () => {
+  it('rubric keeps ordinary non-confirmation in Coverage instead of warn findings', async () => {
     const { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } = await import('../../../main/reviewer/rubric')
     expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain('warn')
-    expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain('confirm or refute')
+    expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain(
+      'Coverage limitation alone is not substantive verification'
+    )
+  })
+
+  it('rubric contains the targeted-source unverifiable-after-attempt warn criterion', async () => {
+    const { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } = await import('../../../main/reviewer/rubric')
+    expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain('warn')
+    expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain('unverifiable after the attempt')
   })
 
   it('rubric contains verification discipline including "only report when you have evidence"', async () => {
@@ -947,10 +955,14 @@ describe('ReviewerCard — rubric module assertion', () => {
     expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain('contradicts')
   })
 
-  it('rubric contains output contract (submit_findings once)', async () => {
+  it('rubric contains the once-accepted submit_findings contract', async () => {
     const { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } = await import('../../../main/reviewer/rubric')
     expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain('submit_findings')
-    expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain('ONCE')
+    expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain('one accepted')
+    expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toContain(
+      'validation error is not an accepted submission'
+    )
+    expect(REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND).toMatch(/one accepted submit_findings submission/i)
   })
 
   it('rubric scopes Phase-1 reference-checking to in-session sources only', async () => {

@@ -10,6 +10,12 @@ type TestHandler = (event: TestEvent, ...args: unknown[]) => unknown
 
 const handlers = new Map<string, TestHandler>()
 const listeners = new Map<string, TestHandler>()
+const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: () => log
+}))
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -41,6 +47,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
   beforeEach(() => {
     handlers.clear()
     listeners.clear()
+    log.error.mockClear()
   })
 
   it('derives ownership from the sender for open, attach, state, and close', async () => {
@@ -123,7 +130,6 @@ describe('registerOfficePreviewIpcHandlers', () => {
     supervisor.reportState.mockImplementation(() => {
       throw new Error('state failure')
     })
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     registerOfficePreviewIpcHandlers(supervisor as never)
     const event = { sender: { id: 7, once: vi.fn() } }
 
@@ -133,8 +139,9 @@ describe('registerOfficePreviewIpcHandlers', () => {
         phase: 'ready'
       })
     ).not.toThrow()
-    expect(error).toHaveBeenCalled()
-    error.mockRestore()
+    expect(log.error).toHaveBeenCalledWith('failed to report runtime state', {
+      errorCategory: 'error'
+    })
   })
 
   it('returns cancellation when a development remount supersedes an open', async () => {

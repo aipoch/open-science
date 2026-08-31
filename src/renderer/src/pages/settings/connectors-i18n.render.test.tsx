@@ -55,6 +55,12 @@ const editServer: CustomServerView = {
   args: ['-y', '@modelcontextprotocol/server-memory']
 }
 
+const envEditServer: CustomServerView = {
+  ...editServer,
+  hasEnv: true,
+  environmentNames: ['API_TOKEN']
+}
+
 const remoteEditServer: CustomServerView = {
   id: 'srv-2',
   name: 'remote-server',
@@ -146,28 +152,27 @@ describe('ConnectorAddForm copy', () => {
     expect(container.textContent).toContain('儲存變更')
   })
 
-  // The env hint is assembled at the call site from up to three independently-translated sentences,
-  // only the first of which is always present. Each has to stand alone in the catalog: a translation
-  // that reaches for the neighbouring clause's grammar reads as a fragment whenever that clause is
-  // absent, which is the add-mode case below.
-  it('composes the credential hint from clauses that each stand alone', () => {
+  // Add mode accepts values immediately. Edit mode defaults to the explicit keep action and exposes
+  // saved names without rendering their values, so translations must cover both public states.
+  it('translates the environment add hint and explicit edit action', () => {
     render()
     openAdvancedSettings()
     expect(container.textContent).toContain('One KEY=VALUE per line.')
-    expect(container.textContent).not.toContain('Leave blank')
+    expect(container.textContent).not.toContain('Keep saved variables')
 
-    render({ editServer })
-    expect(container.textContent).toContain(
-      'One KEY=VALUE per line. Leave blank to keep the current values.'
-    )
+    render({ editServer: envEditServer })
+    expect(container.textContent).toContain('Keep saved variables')
+    expect(container.textContent).toContain('Saved names: API_TOKEN.')
 
     switchTo('zh-Hans')
     expect(container.textContent).toContain('每行一条 KEY=VALUE。')
-    expect(container.textContent).toContain('留空则保留当前值。')
+    expect(container.textContent).toContain('保留已保存的变量')
+    expect(container.textContent).toContain('已保存的名称：API_TOKEN。')
 
     switchTo('zh-Hant')
     expect(container.textContent).toContain('每行一條 KEY=VALUE。')
-    expect(container.textContent).toContain('留空則保留目前值。')
+    expect(container.textContent).toContain('保留已儲存的變數')
+    expect(container.textContent).toContain('已儲存的名稱：API_TOKEN。')
   })
 
   // The field is behind the Static-headers auth mode, which initializes from hasHeaders — hence the

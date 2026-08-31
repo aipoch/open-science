@@ -87,7 +87,8 @@ const makeService = (
   captureModelCatalog: () => Promise<{
     providers: readonly ProviderView[]
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
-  }> = async () => ({ providers: [provider('provider-a', ['model-a'])] })
+  }> = async () => ({ providers: [provider('provider-a', ['model-a'])] }),
+  recordUsage?: ConstructorParameters<typeof HostModelService>[0]['recordUsage']
 ): {
   service: HostModelService
   runner: RunnerHarness
@@ -107,7 +108,8 @@ const makeService = (
       captureTarget,
       captureSessionModel,
       captureModelCatalog,
-      runner
+      runner,
+      recordUsage
     }),
     runner,
     captureTarget
@@ -115,6 +117,89 @@ const makeService = (
 }
 
 describe('HostModelService', () => {
+  it('records each provider-reported host.llm inference against the trusted Session', async () => {
+    const recordUsage = vi.fn(async () => undefined)
+    const { service } = makeService(
+      async () =>
+        inferenceResult('answer', {
+          usage: { inputTokens: 11, cacheTokens: 2, outputTokens: 3, turnCount: 1 }
+        }),
+      target,
+      undefined,
+      undefined,
+      recordUsage
+    )
+
+    await expect(
+      service.call({ request: 'question' }, undefined, {
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+    ).resolves.toMatchObject({ text: 'answer' })
+    expect(recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        source: 'host-llm',
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: 'model-a',
+        usage: expect.objectContaining({ inputTokens: 11, outputTokens: 3 })
+      })
+    )
+  })
+
+  it('records provider-reported usage when host.llm is cancelled', async () => {
+    const recordUsage = vi.fn(async () => undefined)
+    const usage = { inputTokens: 7, cacheTokens: 1, outputTokens: 2, turnCount: 1 }
+    const { service } = makeService(
+      async () => {
+        throw new RestrictedInferenceError('cancelled', 'private detail', usage)
+      },
+      target,
+      undefined,
+      undefined,
+      recordUsage
+    )
+
+    await expect(
+      service.call({ request: 'question' }, undefined, {
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+    ).rejects.toThrow('host.llm call was cancelled.')
+    expect(recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'host-llm',
+        frameworkId: 'claude-code',
+        model: 'model-a',
+        usage
+      })
+    )
+  })
+
+  it('records provider usage attached to an ordinary inference error', async () => {
+    const recordUsage = vi.fn(async () => undefined)
+    const usage = { inputTokens: 7, cacheTokens: 1, outputTokens: 2, turnCount: 1 }
+    const { service } = makeService(
+      async () => {
+        throw Object.assign(new Error('provider failed'), { usage })
+      },
+      target,
+      undefined,
+      undefined,
+      recordUsage
+    )
+
+    await expect(
+      service.call({ request: 'question' }, undefined, {
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+    ).rejects.toThrow('host.llm inference failed.')
+    expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({ source: 'host-llm', usage }))
+  })
+
   it('returns the exact model projected by the calling Session backend', async () => {
     const { service } = makeService(async () => inferenceResult('unused'))
     await expect(service.currentModel('session-a')).resolves.toBe('claude-session-model')

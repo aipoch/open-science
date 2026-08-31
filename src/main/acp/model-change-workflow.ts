@@ -205,6 +205,7 @@ class AcpModelChangeWorkflow {
     const backend = this.options.backendGeneration.current
     return (
       backend.backendId === target.backendId &&
+      backend.providerId === target.providerId &&
       backend.context.model === target.model &&
       backend.session.model === target.sessionModel &&
       backend.context.supportsImageInput === target.supportsImageInput &&

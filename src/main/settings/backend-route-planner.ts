@@ -13,6 +13,7 @@ import {
   type ModelReasoningEffort,
   type ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
+import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
 import {
   REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
   REQUEST_SKILL_IMPORT_TOOL_NAME,
@@ -264,6 +265,7 @@ class BackendRoutePlanner {
         : input.target.providerId
     return Object.freeze({
       frameworkId: input.frameworkId,
+      providerId: input.target.providerId,
       backendId: `${input.frameworkId}:${backendProviderId}`,
       route,
       model,
@@ -321,7 +323,11 @@ class BackendRoutePlanner {
                 id: claudeTargetId(candidate.providerId, model),
                 baseUrl,
                 ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                model
+                model,
+                ...(candidate.provider.vendorId &&
+                usesVendorAnthropicApiKeyHeader(candidate.provider.vendorId)
+                  ? { useApiKeyHeader: true }
+                  : {})
               })
             ]
       })

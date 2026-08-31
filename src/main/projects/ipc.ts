@@ -9,6 +9,7 @@ import type {
 import type {
   CreateProjectRequest,
   Project,
+  ProjectDeletionOutcome,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../shared/projects'
@@ -24,7 +25,7 @@ type ProjectHandlers = {
   create: (request: CreateProjectRequest) => Promise<Project>
   update: (request: UpdateProjectRequest) => Promise<Project>
   updateArchive: (request: UpdateProjectArchiveRequest) => Promise<Project>
-  delete: (id: string) => Promise<void>
+  delete: (id: string) => Promise<ProjectDeletionOutcome>
 }
 
 // Production repositories backed by the SQLite database under the (dev-aware) storage root. The client is
@@ -88,7 +89,7 @@ const createProjectHandlers = (
   },
   delete: async (id) => {
     await deletionCoordinator.waitForProjectOperations([id])
-    await deletionCoordinator.deleteProject(id)
+    return deletionCoordinator.deleteProject(id)
   }
 })
 

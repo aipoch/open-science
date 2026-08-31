@@ -72,7 +72,7 @@ class ArtifactCompatibilityOwner {
               messageId,
               filename: entry.name,
               filePath: join(messageDir, entry.name),
-              mimeType: metadata.mimeType
+              metadata
             })
           )
         }
@@ -93,7 +93,7 @@ class ArtifactCompatibilityOwner {
               runId,
               filename: entry.name,
               filePath: join(runDir, entry.name),
-              mimeType: metadata.mimeType
+              metadata
             })
           )
         }

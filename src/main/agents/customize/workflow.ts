@@ -12,7 +12,7 @@
 //  - privileged mutations (delete and switch): explain the impending action, then
 //    invoke the SDK — the standard permission card is the single authorization point.
 
-import type { AgentDetailReadModel, ConnectorReadModel } from '../agents-service'
+import type { SpecialistDetailReadModel, ConnectorReadModel } from '../agents-service'
 
 // ---------------------------------------------------------------------------
 // Scope clarification (design.md §5: never silently grant Full)
@@ -61,7 +61,7 @@ export type ReviewedTargetState = {
 }
 
 export const buildReviewedTarget = (
-  profile: AgentDetailReadModel,
+  profile: SpecialistDetailReadModel,
   connectorCatalog: ConnectorReadModel[] = []
 ): ReviewedTargetState => {
   const connectorNameById = new Map(connectorCatalog.map(({ id, name }) => [id, name]))

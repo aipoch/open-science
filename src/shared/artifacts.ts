@@ -1,4 +1,5 @@
 import type { ProjectIdScope } from './project-scope'
+import type { PdfReadingPosition } from './session-persistence'
 
 // Renderer-safe description of one generated file without embedding file contents.
 export type ArtifactFile = ProjectIdScope & {
@@ -44,6 +45,12 @@ export type ArtifactReference = {
   // Trusted content identity resolved for one Agent turn. Persisted references may omit it because
   // the immutable Version id remains the authority and Notebook validates the checksum from DB.
   checksum?: string
+  // App-owned send-time snapshot for a linked PDF. Ordinary @ references omit it.
+  pdfReadingPosition?: PdfReadingPosition
+  // App-owned identity for one document in a linked multi-PDF reading context.
+  pdfContextDocumentId?: string
+  pdfContextDocumentCount?: number
+  pdfContextActive?: boolean
 }
 
 // Reserved reference shape for future user-linked folders. Persist only a granted root id and a

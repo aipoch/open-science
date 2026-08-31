@@ -13,6 +13,7 @@ import {
   ArrowUpRight,
   Bot,
   Brain,
+  BookOpenText,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -48,6 +49,7 @@ import {
   isHumanUserMessage,
   isReviewerCorrectionAttribution
 } from '../../../../shared/session-persistence'
+import { resolvePdfPreparationScope } from '../../../../shared/pdf-preparation-scope'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { ArtifactPreview } from './artifact-preview'
@@ -81,6 +83,7 @@ import { SessionMessageMarkdown } from './SessionMessageMarkdown'
 import { AnnotationDraftCards, AnnotationMessageCards } from './annotations/AnnotationCards'
 import type { AnnotationPort } from './annotations/annotation-port'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
+import { requestPdfReadingReveal } from './pdf-reading-reveal'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import {
   validateAnnotations,
@@ -115,6 +118,7 @@ type WorkspaceAssistantTurnCompletionProps = {
 }
 type WorkspaceMessageItemProps = {
   message: ChatMessage
+  projectId?: string
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewArtifactModal?: (artifact: MessageArtifact) => void
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
@@ -1076,6 +1080,46 @@ const MessageUploadAttachmentList = ({
   )
 }
 
+const MessagePdfReadingContext = ({
+  message,
+  projectId
+}: {
+  message: ChatMessage
+  projectId?: string
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const context = message.pdfContext
+  const position = context?.readingPosition
+  const binding =
+    context?.bindings.find((candidate) => candidate.bindingId === context.activeBindingId) ??
+    context?.bindings[0]
+  if (
+    !projectId ||
+    !position ||
+    !binding ||
+    resolvePdfPreparationScope(message.content, position) !== 'current-page'
+  ) {
+    return null
+  }
+
+  const label = `${t('Reading')} · ${t('Page {{page}}', { page: position.pageNumber })}`
+  return (
+    <div className="mb-1.5 flex">
+      <button
+        type="button"
+        data-slot="message-pdf-reading-context"
+        className="inline-flex items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-[13px] leading-5 text-text-200 transition-colors hover:bg-bg-000 hover:text-text-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60"
+        aria-label={label}
+        title={binding.name}
+        onClick={() => requestPdfReadingReveal(projectId, binding, position.pageNumber)}
+      >
+        <BookOpenText className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+        <span>{label}</span>
+      </button>
+    </div>
+  )
+}
+
 // Renders a user message's structured mention segments as inline styled pills.
 const MessagePartsContent = ({
   parts,
@@ -1201,6 +1245,7 @@ const MessagePartsContent = ({
 // Renders one chat message with user bubbles and full-width assistant markdown surfaces.
 const WorkspaceMessageItemImpl = ({
   message,
+  projectId,
   onPreviewArtifact,
   onPreviewArtifactModal = onPreviewArtifact,
   onPreviewUploadAttachment,
@@ -1592,7 +1637,11 @@ const WorkspaceMessageItemImpl = ({
                   </TooltipProvider>
                 ) : null}
                 <div data-slot="user-message-bubble" className={userMessageBubbleClassName}>
-                  <AnnotationMessageCards annotations={message.annotations ?? []} />
+                  <MessagePdfReadingContext message={message} projectId={projectId} />
+                  <AnnotationMessageCards
+                    annotations={message.annotations ?? []}
+                    onReveal={requestAnnotationReveal}
+                  />
                   <MessageUploadAttachmentList
                     attachments={uploads}
                     onPreviewUploadAttachment={onPreviewUploadAttachment}
@@ -1817,6 +1866,7 @@ const areWorkspaceMessageItemPropsEqual = (
   next: WorkspaceMessageItemProps
 ): boolean =>
   previous.message === next.message &&
+  previous.projectId === next.projectId &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
   previous.onPreviewArtifactModal === next.onPreviewArtifactModal &&
   previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&

@@ -321,8 +321,10 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
   }
   const contactEmail = asString(value.contactEmail)
   const ncbiApiKeyRef = asString(value.ncbiApiKeyRef)
+  const openAlexApiKeyRef = asString(value.openAlexApiKeyRef)
   if (contactEmail) connectors.contactEmail = contactEmail
   if (ncbiApiKeyRef) connectors.ncbiApiKeyRef = ncbiApiKeyRef
+  if (openAlexApiKeyRef) connectors.openAlexApiKeyRef = openAlexApiKeyRef
   const blockedToolIds = asStringArray(value.blockedToolIds)
   if (blockedToolIds.length) connectors.blockedToolIds = blockedToolIds
   const askToolIds = asStringArray(value.askToolIds)

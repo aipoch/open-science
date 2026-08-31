@@ -29,6 +29,7 @@ describe('SettingsPreferencesModule', () => {
     await expect(preferences.getSnapshot()).resolves.toEqual({
       reasoningEffort: 'default',
       notificationsEnabled: true,
+      showNotificationContent: false,
       conversationSkillImportEnabled: true,
       appIconVariant: 'light',
       defaultPermissionProfile: 'ask'
@@ -41,6 +42,7 @@ describe('SettingsPreferencesModule', () => {
 
     await preferences.setReasoningEffort('high')
     await preferences.setNotificationsEnabled(false)
+    await preferences.setShowNotificationContent(true)
     await preferences.setConversationSkillImportEnabled(false)
     await preferences.setClosePreference('quit')
     await preferences.setAppIconVariant('dark')
@@ -56,6 +58,7 @@ describe('SettingsPreferencesModule', () => {
       dataRoot,
       reasoningEffort: 'high',
       notificationsEnabled: false,
+      showNotificationContent: true,
       conversationSkillImportEnabled: false,
       closePreference: 'quit',
       appIconVariant: 'dark',
@@ -71,6 +74,7 @@ describe('SettingsPreferencesModule', () => {
       dataRoot,
       reasoningEffort: 'high',
       notificationsEnabled: false,
+      showNotificationContent: true,
       conversationSkillImportEnabled: false,
       appIconVariant: 'dark',
       defaultPermissionProfile: 'auto'

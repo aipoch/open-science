@@ -92,7 +92,8 @@ const queuedItemHasPayload = (item: MessageQueueItem): boolean =>
   item.attachmentCount > 0 ||
   (item.snapshot.annotations?.length ?? 0) > 0 ||
   item.forcedSkillIds.length > 0 ||
-  docToArtifactRefs(item.snapshot.doc).length > 0
+  docToArtifactRefs(item.snapshot.doc).length > 0 ||
+  Boolean(item.snapshot.pdfContext)
 
 const isQueueLiveTurn = (session: ChatSession | undefined): boolean =>
   session?.status === 'running' ||

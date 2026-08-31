@@ -25,7 +25,7 @@ import {
 import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import type { AgentFrameworkId } from '../agent-framework'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
-import { tryDecryptKey } from './crypto'
+import { hardenKeyMask, tryDecryptKey } from './crypto'
 import type { ResolvedProvider } from './provider-env'
 import type { StoredProvider } from './types'
 
@@ -101,7 +101,7 @@ class ProviderRuntimeProjectionOwner {
       vendorId: provider.vendorId,
       region: provider.region,
       models: this.availableModels(provider),
-      maskedKey: provider.keyMask,
+      maskedKey: hardenKeyMask(provider.keyMask),
       accountEmail: provider.accountEmail,
       hasKey,
       needsKey,

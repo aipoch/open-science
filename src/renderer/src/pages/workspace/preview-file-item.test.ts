@@ -7,6 +7,7 @@ import {
   createPreviewFileItem,
   createPreviewFileItemFromArtifact,
   createPreviewFileItemFromMention,
+  createPreviewFileItemFromPdfContext,
   createPreviewFileItemFromUpload,
   createPreviewFileItemForArtifactVersion,
   resolveArtifactVersionDescriptor
@@ -230,6 +231,63 @@ describe('preview file item helpers', () => {
       path: 'upload-version:project-1/session-1/upload-1/upload-version-2'
     })
     expect(item).not.toHaveProperty('selectedVersionId')
+  })
+
+  it('reopens the exact Artifact Version captured by a PDF context binding', () => {
+    expect(
+      createPreviewFileItemFromPdfContext(
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-lineage-1',
+          sourceVersionId: 'artifact-version-2',
+          sourceSessionId: 'source-session',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 4096,
+          checksum: 'checksum-2',
+          linkedAt: 1
+        },
+        'project-1'
+      )
+    ).toMatchObject({
+      id: 'artifact-lineage-1',
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      artifactId: 'artifact-lineage-1',
+      selectedVersionId: 'artifact-version-2',
+      path: 'artifact-version:project-1/source-session/artifact-lineage-1/artifact-version-2',
+      format: 'pdf'
+    })
+  })
+
+  it('reopens the exact Upload Version captured by a PDF context binding', () => {
+    expect(
+      createPreviewFileItemFromPdfContext(
+        {
+          version: 1,
+          bindingId: 'binding-1',
+          sourceKind: 'upload-version',
+          sourceFileId: 'upload-1',
+          sourceVersionId: 'upload-version-2',
+          sourceSessionId: 'source-session',
+          name: 'paper.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 4096,
+          checksum: 'checksum-2',
+          linkedAt: 1
+        },
+        'project-1'
+      )
+    ).toMatchObject({
+      id: 'upload:upload-1',
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      source: 'upload',
+      path: 'upload-version:project-1/source-session/upload-version-2',
+      format: 'pdf'
+    })
   })
 
   it('uses upload mime type when the original upload name has no previewable extension', () => {

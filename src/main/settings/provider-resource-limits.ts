@@ -1,23 +1,16 @@
 import type { ProviderDraft } from '../../shared/settings'
+import { SETTINGS_RESOURCE_LIMITS, assertCharacterLimit } from './settings-resource-limits'
 
 const PROVIDER_RESOURCE_LIMITS = Object.freeze({
   providers: 64,
   nameCharacters: 128,
   baseUrlCharacters: 2_048,
   modelIdCharacters: 512,
-  apiKeyBytes: 16 * 1024,
+  apiKeyBytes: SETTINGS_RESOURCE_LIMITS.credentialBytes,
   fetchedModels: 2_000,
   modelListResponseBytes: 2 * 1024 * 1024,
   validationResponseBytes: 1024 * 1024
 })
-
-const characterCount = (value: string): number => Array.from(value).length
-
-const assertCharacterLimit = (value: string | undefined, limit: number, label: string): void => {
-  if (value !== undefined && characterCount(value) > limit) {
-    throw new Error(`${label} must not exceed ${limit} characters.`)
-  }
-}
 
 const assertProviderDraftLimits = (draft: ProviderDraft): void => {
   assertCharacterLimit(draft.name, PROVIDER_RESOURCE_LIMITS.nameCharacters, 'Provider name')

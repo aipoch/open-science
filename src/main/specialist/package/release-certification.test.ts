@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialist-package'
 import { UserSkillSpecialistPackageAdapter } from '../../skills/specialist-package-adapter'
 import { SpecialistRepository } from '../repository'
-import { ProfileService } from '../service'
+import { SpecialistService } from '../service'
 import {
   buildContributionTemplateZip,
   buildDeterministicSpecialistZip
@@ -102,7 +102,7 @@ describe('Specialist contribution release certification', () => {
       })
     }
 
-    await expect(new ProfileService(repository).list()).resolves.toEqual(
+    await expect(new SpecialistService(repository).list()).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: 'template-no-skills', ownedSkillIds: [] }),
         expect.objectContaining({
@@ -156,7 +156,7 @@ describe('Specialist contribution release certification', () => {
       status: 'installed'
     })
 
-    const profiles = new ProfileService(repository)
+    const profiles = new SpecialistService(repository)
     const imported = await profiles.getById('overwrite-roundtrip')
     await profiles.update({
       id: imported.id,
@@ -240,7 +240,7 @@ describe('Specialist contribution release certification', () => {
       targetPackages.install({ candidateToken: targetPreview.candidateToken })
     ).resolves.toMatchObject({ status: 'installed' })
 
-    const restored = await new ProfileService(targetRepository).getById(replaced.id)
+    const restored = await new SpecialistService(targetRepository).getById(replaced.id)
     expect(restored).toMatchObject({
       id: replaced.id,
       packageVersion: replaced.packageVersion,

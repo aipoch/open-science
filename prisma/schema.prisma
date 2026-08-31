@@ -34,6 +34,7 @@ model Project {
   previewState     ProjectPreviewState?
   visionEvidence   VisionEvidence[]
   sessions         Session[]
+  memoryEntries    MemoryEntry[]
 }
 
 // Monotonic allocator for the app-wide human-facing Session number. The row is never deleted when
@@ -99,6 +100,9 @@ model PendingSessionReconciliation {
 model SessionTurnUsage {
   sessionId         String
   messageId         String
+  frameworkId       String?
+  providerId        String?
+  model             String?
   completedAtMs     BigInt
   inputTokens       BigInt
   cacheTokens       BigInt
@@ -124,6 +128,7 @@ model SessionModelCallUsage {
   callIndex          Int
   sourceInvocationId String?
   frameworkId        String?
+  providerId         String?
   backendId          String?
   model              String?
   inputTokens        BigInt
@@ -137,6 +142,28 @@ model SessionModelCallUsage {
 
   @@id([sessionId, callId])
   @@unique([sessionId, messageId, callIndex])
+}
+
+// One provider-reported logical turn outside the durable Agent message graph. These facts have no
+// Session foreign key because a projection rebuild temporarily deletes and recreates live Session
+// rows; direct auxiliary consumption must survive that rebuild.
+model SessionAuxiliaryTurnUsage {
+  sessionId         String
+  eventId           String
+  source            String
+  frameworkId       String
+  providerId        String?
+  model             String?
+  completedAtMs     BigInt
+  inputTokens       BigInt
+  cacheTokens       BigInt
+  cachedReadTokens  BigInt?
+  cachedWriteTokens BigInt?
+  outputTokens      BigInt
+  modelCallCount    Int?
+
+  @@id([sessionId, eventId])
+  @@index([completedAtMs])
 }
 
 // One user-authored root-frame run, excluding hidden control and delegated caller messages.
@@ -662,6 +689,10 @@ model ComputeJob {
   notifiedAt             DateTime?
   // notificationConsumedAt: set by wait_for_notification when the notification is consumed.
   notificationConsumedAt DateTime?
+  // Durable automatic-analysis delivery state. NULL preserves historical pending/consumed rows.
+  analysisState           String?
+  analysisMessageId       String?
+  analysisUpdatedAt       DateTime?
   createdAt              DateTime  @default(now())
   submittedAt            DateTime?
   startedAt              DateTime?
@@ -764,4 +795,47 @@ model TagAssignment {
 
   @@id([tagId, resourceType, resourceId])
   @@index([resourceType, resourceId])
+}
+
+// Memory categories are profile-global, while entries may additionally belong to one Project.
+// Agent provenance stays main-process only; renderer views omit sourceSessionId and sourceAgentId.
+model MemorySettings {
+  id        String   @id
+  enabled   Boolean  @default(false)
+  revision  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MemoryCategory {
+  id         String        @id @default(cuid())
+  systemKey  String?       @unique
+  name       String?
+  nameKey    String?       @unique
+  guidance   String        @default("")
+  autoRecall Boolean       @default(false)
+  revision   Int           @default(1)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  entries    MemoryEntry[]
+}
+
+model MemoryEntry {
+  id              String          @id @default(cuid())
+  categoryId      String?
+  projectId       String?
+  content         String
+  contentKey      String
+  origin          String
+  sourceSessionId String?
+  sourceAgentId   String?
+  revision        Int             @default(1)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  category        MemoryCategory? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  project         Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, contentKey])
+  @@index([categoryId, updatedAt])
+  @@index([projectId, updatedAt])
 }

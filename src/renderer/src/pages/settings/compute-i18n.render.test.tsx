@@ -3,12 +3,16 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeApprovalRequest, ComputeHost } from '../../../../shared/compute'
+import type { ComputeHost } from '../../../../shared/compute'
 import { ComputeApprovalDialog } from './ComputeApprovalDialog'
 import { ComputeHostDetail } from './ComputeHostDetail'
 import { ComputePanel } from './ComputePanel'
 import { i18next } from '@/i18n'
-import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
+import {
+  createInitialComputeState,
+  useComputeStore,
+  type ComputeApproval
+} from '@/stores/compute-store'
 
 let container: HTMLDivElement
 let root: Root
@@ -32,14 +36,16 @@ const host = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   ...overrides
 })
 
-const approvalRequest: ComputeApprovalRequest = {
+const approvalRequest: ComputeApproval = {
   id: 'approval-1',
-  provider_id: 'ssh:cluster',
-  provider_name: 'Research cluster',
+  operation: 'call_command',
+  providerId: 'ssh:cluster',
+  providerName: 'Research cluster',
   shape: 'direct_ssh',
   intent: 'Inspect the remote environment',
-  command_preview: 'python ...',
-  command_full: 'python --version && pip list'
+  commandPreview: 'python ...',
+  commandFull: 'python --version && pip list',
+  willPersistUnencrypted: false
 }
 
 // Stub window.api.compute.detailsGet so ComputeHostDetail does not hit real IPC. Only the api

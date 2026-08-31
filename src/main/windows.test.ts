@@ -1706,12 +1706,12 @@ describe('createMainWindow close handling', () => {
     await vi.waitFor(() => expect(currentWindow!.hideCalls).toBe(1))
   })
 
-  it('confirm -> quit calls requestQuit', async () => {
+  it('keeps interruption confirmation pending when the titlebar action resolves to quit', async () => {
     const requestQuit = vi.fn()
     const resolveCloseAction = vi.fn(async () => 'quit' as const)
     createMainWindow({ classifyClose: () => 'confirm', resolveCloseAction, requestQuit })
     currentWindow!.handlers.get('close')![0]({ preventDefault: vi.fn(), defaultPrevented: false })
-    await vi.waitFor(() => expect(requestQuit).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(requestQuit).toHaveBeenCalledWith(false))
   })
 
   it('does not stack confirmations while one is in flight', () => {

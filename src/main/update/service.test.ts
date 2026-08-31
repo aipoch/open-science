@@ -10,16 +10,31 @@ import type { UpdateManifest } from '../../shared/update'
 import type { Logger } from '../logger'
 import { UpdateService } from './service'
 
+const VALID_SHA256 = 'a'.repeat(64)
 const manifest: UpdateManifest = {
   version: '0.3.0',
   releaseDate: '',
   notes: 'release notes',
   localizedNotes: { 'zh-Hans': '发行说明' },
-  downloads: { 'mac-arm64': { url: 'https://cdn/x-mac-arm64.dmg', size: 5, sha256: 'h' } }
+  downloads: {
+    'mac-arm64': { url: 'https://cdn/x-mac-arm64.dmg', size: 5, sha256: VALID_SHA256 }
+  }
 }
 
 const jsonResponse = (body: unknown): Response =>
-  ({ ok: true, status: 200, json: () => Promise.resolve(body) }) as unknown as Response
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' }
+  })
+
+const responseAt = (url: string, body: BodyInit | null, init: ResponseInit = {}): Response => {
+  const response = new Response(body, init)
+  Object.defineProperty(response, 'url', { value: url })
+  return response
+}
+
+const installerResponse = (body: BodyInit | null, init: ResponseInit = {}): Response =>
+  responseAt('https://statics.aipoch.com/releases/0.3.0/installer.dmg', body, init)
 
 const createLogSpy = (): Logger => ({
   debug: vi.fn(),
@@ -220,7 +235,7 @@ describe('UpdateService.download', () => {
     const fetchImpl = ((input: unknown) =>
       String(input).endsWith('version.json')
         ? Promise.resolve(jsonResponse(manifestForCheck))
-        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+        : Promise.resolve(installerResponse(body))) as unknown as typeof fetch
     const service = new UpdateService({
       fetchImpl,
       platform: 'darwin',
@@ -237,6 +252,41 @@ describe('UpdateService.download', () => {
     expect(status.state).toBe('ready')
     expect(status.localPath).toBe(target)
     expect(existsSync(target)).toBe(true)
+  })
+
+  it('does not download an installer again after the lifecycle is ready', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-ready-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    let installerFetches = 0
+    const fetchImpl = ((input: unknown) => {
+      if (String(input).endsWith('version.json')) {
+        return Promise.resolve(jsonResponse(manifestForCheck))
+      }
+      installerFetches += 1
+      return Promise.resolve(installerResponse(body))
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const ready = await service.download()
+    const repeated = await service.download()
+
+    expect(ready.state).toBe('ready')
+    expect(repeated).toBe(ready)
+    expect(installerFetches).toBe(1)
   })
 
   it('waits for an in-flight check before starting a download', async () => {
@@ -258,7 +308,7 @@ describe('UpdateService.download', () => {
         return jsonResponse(manifestForCheck)
       }
       installerFetches += 1
-      return new Response(body, { status: 200 })
+      return installerResponse(body)
     }) as unknown as typeof fetch
     const service = new UpdateService({
       fetchImpl,
@@ -291,7 +341,7 @@ describe('UpdateService.download', () => {
     const fetchImpl = ((input: unknown) =>
       String(input).endsWith('version.json')
         ? Promise.resolve(jsonResponse(manifestForCheck))
-        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+        : Promise.resolve(installerResponse(body))) as unknown as typeof fetch
     const promptSavePath = vi.fn().mockResolvedValue(join(dir, 'wrong-path.dmg'))
     const defaultDownloadPath = vi.fn(() => target)
     const removeFile = vi.fn((path: string) => rm(path, { force: true }))
@@ -356,7 +406,7 @@ describe('UpdateService.download', () => {
       }
       markInstallerStarted?.()
       await installerGate
-      return new Response(body, { status: 200 })
+      return installerResponse(body)
     }) as unknown as typeof fetch
     const service = new UpdateService({
       fetchImpl,
@@ -399,7 +449,7 @@ describe('UpdateService.download', () => {
           ? Promise.reject(checkFailure)
           : Promise.resolve(jsonResponse(manifestForCheck))
       }
-      return Promise.resolve(new Response(body, { status: 200 }))
+      return Promise.resolve(installerResponse(body))
     }) as unknown as typeof fetch
     const service = new UpdateService({
       fetchImpl,
@@ -446,7 +496,7 @@ describe('UpdateService.download', () => {
     const fetchImpl = ((input: unknown) =>
       String(input).endsWith('version.json')
         ? Promise.resolve(jsonResponse(manifestForCheck))
-        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+        : Promise.resolve(installerResponse(body))) as unknown as typeof fetch
     const log = createLogSpy()
     const service = new UpdateService({
       fetchImpl,
@@ -494,7 +544,7 @@ describe('UpdateService.download', () => {
     const fetchImpl = ((input: unknown) =>
       String(input).endsWith('version.json')
         ? Promise.resolve(jsonResponse(manifestForCheck))
-        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+        : Promise.resolve(installerResponse(body))) as unknown as typeof fetch
     const removeFile = vi.fn((path: string) => rm(path, { force: true }))
     const service = new UpdateService({
       fetchImpl,
@@ -531,7 +581,7 @@ describe('UpdateService.download', () => {
     const fetchImpl = ((input: unknown) =>
       String(input).endsWith('version.json')
         ? Promise.resolve(jsonResponse(manifestForCheck))
-        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+        : Promise.resolve(installerResponse(body))) as unknown as typeof fetch
     const removeFile = vi.fn(() => Promise.resolve())
     const service = new UpdateService({
       fetchImpl,
@@ -555,13 +605,13 @@ describe('UpdateService.download', () => {
   it('does not start the fetch and errors when the first .part cleanup fails', async () => {
     dir = await mkdtemp(join(tmpdir(), 'svc-'))
     const target = join(dir, 'installer.dmg')
-    const manifestForCheck = downloadManifest(11, 'irrelevant')
+    const manifestForCheck = downloadManifest(11, VALID_SHA256)
     let installerFetches = 0
     const fetchImpl = ((input: unknown) => {
       if (String(input).endsWith('version.json'))
         return Promise.resolve(jsonResponse(manifestForCheck))
       installerFetches += 1
-      return Promise.resolve(new Response(Buffer.from('installer-bytes'), { status: 200 }))
+      return Promise.resolve(installerResponse(Buffer.from('installer-bytes')))
     }) as unknown as typeof fetch
     const removeFile = vi.fn(() => Promise.reject(new Error('EACCES: cannot delete .part')))
     const service = new UpdateService({
@@ -595,7 +645,7 @@ describe('UpdateService.download', () => {
     const fetchImpl = ((input: unknown) =>
       String(input).endsWith('version.json')
         ? Promise.resolve(jsonResponse(manifestForCheck))
-        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+        : Promise.resolve(installerResponse(body))) as unknown as typeof fetch
     // Fail the first cleanup, succeed on the retry.
     const removeFile = vi
       .fn()
@@ -620,6 +670,7 @@ describe('UpdateService.download', () => {
     // The path was NOT marked fresh after the failure, so the retry cleans both artifacts and succeeds.
     expect(removeFile).toHaveBeenCalledTimes(3)
     expect(retry.state).toBe('ready')
+    expect(retry.error).toBeUndefined()
   })
 
   it('resumes via a Range request on a same-session retry after a cancel', async () => {
@@ -649,12 +700,12 @@ describe('UpdateService.download', () => {
           }
         })
         return Promise.resolve(
-          new Response(stream, { status: 200, headers: { etag: '"installer-v1"' } })
+          installerResponse(stream, { status: 200, headers: { etag: '"installer-v1"' } })
         )
       }
       // Retry: serve the remaining bytes as a 206 partial-content response.
       return Promise.resolve(
-        new Response(body.subarray(2), {
+        installerResponse(body.subarray(2), {
           status: 206,
           headers: {
             etag: '"installer-v1"',
@@ -706,7 +757,7 @@ describe('UpdateService.download', () => {
     const fetchMock = vi.fn((input: unknown) =>
       String(input).endsWith('version.json')
         ? Promise.resolve(jsonResponse(manifestForCheck))
-        : Promise.resolve(new Response(body, { status: 200 }))
+        : Promise.resolve(installerResponse(body))
     )
     const service = new UpdateService({
       fetchImpl: fetchMock as unknown as typeof fetch,
@@ -727,7 +778,7 @@ describe('UpdateService.download', () => {
   })
 
   it('records a failed installer download without the shell error message', async () => {
-    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    const manifestForCheck = downloadManifest(100, VALID_SHA256)
     const fetchImpl = (() =>
       Promise.resolve(jsonResponse(manifestForCheck))) as unknown as typeof fetch
     const log = createLogSpy()
@@ -762,7 +813,7 @@ describe('UpdateService.download', () => {
   })
 
   it('records manifest URL validation failure without the invalid URL', async () => {
-    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    const manifestForCheck = downloadManifest(100, VALID_SHA256)
     const log = createLogSpy()
     const service = new UpdateService({
       fetchImpl: (() => Promise.resolve(jsonResponse(manifestForCheck))) as unknown as typeof fetch,
@@ -798,7 +849,7 @@ describe('UpdateService.download', () => {
   it('cancel aborts an in-flight download, resets to available, and leaves no partial file', async () => {
     dir = await mkdtemp(join(tmpdir(), 'svc-'))
     const target = join(dir, 'installer.dmg')
-    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    const manifestForCheck = downloadManifest(100, VALID_SHA256)
     let onInstallerFetch: (() => void) | undefined
     const fetched = new Promise<void>((resolve) => (onInstallerFetch = resolve))
     // The installer body hangs (one chunk, no end) and errors on abort, mimicking a real fetch.
@@ -815,7 +866,7 @@ describe('UpdateService.download', () => {
         }
       })
       onInstallerFetch?.()
-      return Promise.resolve(new Response(body, { status: 200 }))
+      return Promise.resolve(installerResponse(body))
     }) as unknown as typeof fetch
     const log = createLogSpy()
     const service = new UpdateService({
@@ -854,7 +905,7 @@ describe('UpdateService.download', () => {
   it('ignores a second download() while one is already in flight', async () => {
     dir = await mkdtemp(join(tmpdir(), 'svc-'))
     const target = join(dir, 'installer.dmg')
-    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    const manifestForCheck = downloadManifest(100, VALID_SHA256)
     let installerFetches = 0
     let onInstallerFetch: (() => void) | undefined
     const fetched = new Promise<void>((resolve) => (onInstallerFetch = resolve))
@@ -872,7 +923,7 @@ describe('UpdateService.download', () => {
         }
       })
       onInstallerFetch?.()
-      return Promise.resolve(new Response(body, { status: 200 }))
+      return Promise.resolve(installerResponse(body))
     }) as unknown as typeof fetch
     const service = new UpdateService({
       fetchImpl,
@@ -927,9 +978,9 @@ describe('UpdateService.download', () => {
           }
         })
         onFirstFetch?.()
-        return Promise.resolve(new Response(hanging, { status: 200 }))
+        return Promise.resolve(installerResponse(hanging))
       }
-      return Promise.resolve(new Response(body, { status: 200 }))
+      return Promise.resolve(installerResponse(body))
     }) as unknown as typeof fetch
     const service = new UpdateService({
       fetchImpl,
@@ -972,7 +1023,7 @@ describe('UpdateService.download', () => {
     // start a hidden download after the dialog closed.
     dir = await mkdtemp(join(tmpdir(), 'svc-'))
     const target = join(dir, 'installer.dmg')
-    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    const manifestForCheck = downloadManifest(100, VALID_SHA256)
     let installerFetches = 0
     let onFirstFetch: (() => void) | undefined
     let errorFirstStream: (() => void) | undefined
@@ -990,7 +1041,7 @@ describe('UpdateService.download', () => {
         }
       })
       onFirstFetch?.()
-      return Promise.resolve(new Response(hanging, { status: 200 }))
+      return Promise.resolve(installerResponse(hanging))
     }) as unknown as typeof fetch
     const service = new UpdateService({
       fetchImpl,
@@ -1033,7 +1084,7 @@ describe('UpdateService.download', () => {
     const fetchImpl = ((input: unknown) =>
       String(input).endsWith('version.json')
         ? Promise.resolve(jsonResponse(manifestForCheck))
-        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+        : Promise.resolve(installerResponse(body))) as unknown as typeof fetch
     let saveCall = 0
     const service = new UpdateService({
       fetchImpl,
@@ -1056,6 +1107,7 @@ describe('UpdateService.download', () => {
     const retry = await service.download()
     expect(retry.state).toBe('ready')
     expect(retry.localPath).toBe(target)
+    expect(retry.error).toBeUndefined()
     expect(existsSync(target)).toBe(true)
   })
 
@@ -1065,7 +1117,11 @@ describe('UpdateService.download', () => {
       releaseDate: '',
       notes: '',
       downloads: {
-        'mac-arm64': { url: 'https://evil.example/x-mac-arm64.dmg', size: 5, sha256: 'h' }
+        'mac-arm64': {
+          url: 'https://evil.example/x-mac-arm64.dmg',
+          size: 5,
+          sha256: VALID_SHA256
+        }
       }
     }
     const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(offHostManifest)))
@@ -1089,6 +1145,75 @@ describe('UpdateService.download', () => {
     expect(status.error).toBe('Untrusted download host')
     expect(fetchMock).not.toHaveBeenCalled()
     expect(promptSavePath).not.toHaveBeenCalled()
+  })
+
+  it('rejects an HTTP download URL even when its host matches the HTTPS manifest', async () => {
+    const downgradedManifest: UpdateManifest = {
+      version: '0.3.0',
+      releaseDate: '',
+      notes: '',
+      downloads: {
+        'mac-arm64': {
+          url: 'http://cdn.trusted.example/x-mac-arm64.dmg',
+          size: 5,
+          sha256: 'a'.repeat(64)
+        }
+      }
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(downgradedManifest))
+      .mockResolvedValue(installerResponse(null, { status: 404 }))
+    const promptSavePath = vi.fn(() => Promise.resolve('/tmp/should-not-be-used'))
+    const service = new UpdateService({
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://cdn.trusted.example/manifest.json',
+      broadcast: vi.fn(),
+      promptSavePath
+    })
+
+    await service.check()
+    fetchMock.mockClear()
+    const status = await service.download()
+
+    expect(status.state).toBe('error')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(promptSavePath).not.toHaveBeenCalled()
+  })
+
+  it('rejects a followed redirect whose final response leaves the trusted origin', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-origin-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    const fetchImpl = ((input: unknown) =>
+      String(input).endsWith('version.json')
+        ? Promise.resolve(jsonResponse(manifestForCheck))
+        : Promise.resolve(
+            responseAt('https://redirect-target.example/installer.dmg', body, { status: 200 })
+          )) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    await service.check()
+    const status = await service.download()
+
+    expect(status.state).toBe('error')
+    expect(existsSync(target)).toBe(false)
+    expect(existsSync(`${target}.part`)).toBe(false)
   })
 })
 
@@ -1124,7 +1249,7 @@ describe('UpdateService.apply', () => {
     const fetchImpl = ((input: unknown) =>
       String(input).endsWith('version.json')
         ? Promise.resolve(jsonResponse(manifestForCheck))
-        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+        : Promise.resolve(installerResponse(body))) as unknown as typeof fetch
     const service = new UpdateService({
       fetchImpl,
       platform: 'darwin',
@@ -1177,6 +1302,29 @@ describe('UpdateService.apply', () => {
       ])
     )
     expect(JSON.stringify(records)).not.toContain('private-installer.dmg')
+  })
+
+  it('keeps a ready installer actionable when the operating system cannot open it', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'open-failure-'))
+    const target = join(dir, 'installer.dmg')
+    const openPath = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce('No application is associated with this file')
+      .mockResolvedValueOnce('')
+    const service = await downloadedService(target, { openPath })
+
+    const failed = await service.apply()
+
+    expect(failed).toMatchObject({
+      state: 'ready',
+      localPath: target,
+      error: expect.stringContaining('No application is associated with this file')
+    })
+
+    const retried = await service.apply()
+    expect(openPath).toHaveBeenCalledTimes(2)
+    expect(retried).toMatchObject({ state: 'ready', localPath: target })
+    expect(retried.error).toBeUndefined()
   })
 
   it('returns to available when the downloaded file is missing (e.g. the user deleted it)', async () => {

@@ -23,8 +23,11 @@ const mocks = vi.hoisted(() => {
       isSettingsOpen: false,
       isSettingsLoaded: true,
       pendingApprovals: [] as unknown[],
+      pendingCredentialRequests: [] as unknown[],
       enqueueApproval: vi.fn(),
       dismissApproval: vi.fn(),
+      enqueueCredentialRequest: vi.fn(),
+      dismissCredentialRequest: vi.fn(),
       load: vi.fn().mockResolvedValue(true),
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
       openSettings: vi.fn(),
@@ -37,11 +40,13 @@ const mocks = vi.hoisted(() => {
       pendingApprovals: [] as unknown[],
       jobsList: vi.fn().mockResolvedValue([]),
       jobsPendingNotification: vi.fn().mockResolvedValue([]),
-      jobsMarkConsumed: vi.fn().mockResolvedValue(undefined)
+      jobsMarkConsumed: vi.fn().mockResolvedValue(undefined),
+      jobsTransitionAnalysis: vi.fn().mockResolvedValue([])
     },
-    runtimeSendMessage: vi
-      .fn()
-      .mockResolvedValue({ sessionId: 'session-1', messageId: 'analysis-message' }),
+    runtimeSendMessage: vi.fn(async (input: { sessionId?: string; messageId?: string }) => ({
+      sessionId: input.sessionId ?? 'session-1',
+      messageId: input.messageId ?? 'analysis-message'
+    })),
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string } & Record<string, unknown>>,
     appendRoutedUserMessage: vi.fn(),
@@ -86,7 +91,7 @@ const mocks = vi.hoisted(() => {
         | { kind: 'repairable'; reason: 'session-scan' | 'startup-reconciliation' }
         | {
             kind: 'damaged-authority'
-            affectedFileCount: number
+            affectedFiles: Array<{ projectId: string; fileName: string }>
           }
         | {
             kind: 'unsupported-version'
@@ -125,6 +130,7 @@ const mocks = vi.hoisted(() => {
       update: undefined as { active?: boolean } | undefined,
       computeApproval: undefined as { active?: boolean } | undefined,
       connectorApproval: undefined as { active?: boolean } | undefined,
+      credentialRequest: undefined as { active?: boolean } | undefined,
       skillImportApproval: undefined as { active?: boolean } | undefined,
       workspace: undefined as { isPreviewPresentationActive?: boolean } | undefined
     }
@@ -300,6 +306,12 @@ vi.mock('@/pages/settings/ConnectorApprovalDialog', () => ({
     return <div data-testid="approval-dialog" />
   }
 }))
+vi.mock('@/pages/settings/ConnectorCredentialDialog', () => ({
+  ConnectorCredentialDialog: (props: { active?: boolean }): React.JSX.Element => {
+    mocks.presentationProps.credentialRequest = props
+    return <div data-testid="credential-dialog" />
+  }
+}))
 vi.mock('@/pages/settings/SkillImportApprovalDialog', () => ({
   SkillImportApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.skillImportApproval = props
@@ -395,6 +407,8 @@ describe('App startup routing', () => {
     mocks.settings.closeSettings.mockClear()
     mocks.settings.enqueueApproval.mockClear()
     mocks.settings.dismissApproval.mockClear()
+    mocks.settings.enqueueCredentialRequest.mockClear()
+    mocks.settings.dismissCredentialRequest.mockClear()
     mocks.skillImport.enqueue.mockClear()
     mocks.skillImport.dismiss.mockClear()
     mocks.compute.enqueueApproval.mockClear()
@@ -402,6 +416,7 @@ describe('App startup routing', () => {
     mocks.compute.jobsList.mockClear()
     mocks.compute.jobsPendingNotification.mockClear()
     mocks.compute.jobsMarkConsumed.mockClear()
+    mocks.compute.jobsTransitionAnalysis.mockClear()
     mocks.runtimeSendMessage.mockClear()
     mocks.navigation.view = 'home'
     mocks.startupView = 'app'
@@ -421,6 +436,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
     mocks.settings.pendingApprovals = []
+    mocks.settings.pendingCredentialRequests = []
     mocks.compute.pendingApprovals = []
     mocks.skillImport.pending = []
     mocks.preview.fileDialogItem = undefined
@@ -454,11 +470,17 @@ describe('App startup routing', () => {
         onConnectorApprovalRequest: vi.fn(() => vi.fn()),
         onConnectorApprovalSettled: vi.fn(() => vi.fn()),
         replayPendingConnectorApprovals: vi.fn().mockResolvedValue(undefined),
+        onConnectorCredentialRequest: vi.fn(() => vi.fn()),
+        onConnectorCredentialSettled: vi.fn(() => vi.fn()),
+        replayPendingConnectorCredentialRequests: vi.fn().mockResolvedValue(undefined),
         onSkillImportApprovalRequest: vi.fn(() => vi.fn()),
         onSkillImportApprovalSettled: vi.fn(() => vi.fn()),
         replayPendingSkillImportApprovals: vi.fn().mockResolvedValue(undefined)
       },
       notifications: mocks.notifications,
+      sessions: {
+        openRecoveryFolder: vi.fn().mockResolvedValue(undefined)
+      },
       compute: {
         onApprovalRequest: vi.fn(() => vi.fn()),
         onApprovalSettled: vi.fn(() => vi.fn()),
@@ -467,6 +489,7 @@ describe('App startup routing', () => {
         jobsList: mocks.compute.jobsList,
         jobsPendingNotification: mocks.compute.jobsPendingNotification,
         jobsMarkConsumed: mocks.compute.jobsMarkConsumed,
+        jobsTransitionAnalysis: mocks.compute.jobsTransitionAnalysis,
         enabledHostsSet: vi.fn(() => Promise.resolve())
       },
       permissions: { onChanged: vi.fn(() => vi.fn()) },
@@ -711,7 +734,7 @@ describe('App startup routing', () => {
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true
     mocks.settings.pendingApprovals = [{ id: 'connector', sessionId: 'connector-session' }]
-    mocks.compute.pendingApprovals = [{ id: 'compute', session_id: 'compute-session' }]
+    mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'compute-session' }]
     mocks.skillImport.pending = [{ id: 'skill', sessionId: 'skill-session' }]
     await render()
 
@@ -742,11 +765,29 @@ describe('App startup routing', () => {
     expect(mocks.presentationProps.skillImportApproval?.active).toBe(false)
   })
 
+  it('keeps Session credential recovery in the workspace and reserves the dialog for sessionless calls', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.settings.pendingCredentialRequests = [
+      { id: 'credential', connectorId: 'openalex', sessionId: 'session-1' }
+    ]
+    await render()
+
+    expect(mocks.presentationProps.credentialRequest?.active).toBe(false)
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(true)
+
+    mocks.settings.pendingCredentialRequests = [{ id: 'credential', connectorId: 'openalex' }]
+    await act(async () => root.render(<App />))
+
+    expect(mocks.presentationProps.credentialRequest?.active).toBe(true)
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
+  })
+
   it('does not let Side Chat-owned approvals block workspace visibility or global search', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
     mocks.sideChatParentSessionIds.add('side-chat-session')
-    mocks.compute.pendingApprovals = [{ id: 'compute', session_id: 'side-chat-session' }]
+    mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'side-chat-session' }]
     await render()
 
     expect(mocks.presentationProps.computeApproval?.active).toBe(false)
@@ -766,7 +807,7 @@ describe('App startup routing', () => {
 
   it('consumes the close shortcut while a decision-required approval is active', async () => {
     mocks.settings.isLoaded = true
-    mocks.compute.pendingApprovals = [{ id: 'compute', session_id: 'compute-session' }]
+    mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'compute-session' }]
     await render()
 
     expect(mocks.closeActiveModal.handler?.()).toBe('handled')
@@ -1355,7 +1396,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
     mocks.sessionPersistence.catalogRecovery = {
       kind: 'damaged-authority',
-      affectedFileCount: 1
+      affectedFiles: [{ projectId: 'project-1', fileName: 'session-1.json' }]
     }
     mocks.sessionPersistence.loadWarning =
       '1 saved conversation file was damaged and moved aside. The remaining conversations were loaded.'
@@ -1580,6 +1621,91 @@ describe('App startup routing', () => {
 
     expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(3)
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-3', 'notification')
+  })
+
+  it('explains when a desktop-notification target is no longer available', async () => {
+    mocks.settings.isLoaded = true
+    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-gone', token: 4 })
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-gone', token: 4 })
+
+    await render()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(4)
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('This session was deleted or is unavailable.')
+  })
+
+  it('explains a quit canceled by a Session persistence conflict and offers retry', async () => {
+    let notifyFlushAborted: (event: { reason: 'conflict' }) => void = () => undefined
+    ;(
+      window.api as unknown as {
+        sessions: {
+          onFlushAborted: (listener: typeof notifyFlushAborted) => () => void
+          onFlushRequest: (listener: (request: { requestId: string }) => void) => () => void
+          sendFlushResponse: (response: { requestId: string; status: string }) => void
+        }
+      }
+    ).sessions = {
+      onFlushAborted: (listener) => {
+        notifyFlushAborted = listener
+        return () => undefined
+      },
+      onFlushRequest: () => () => undefined,
+      sendFlushResponse: vi.fn()
+    }
+    mocks.settings.isLoaded = true
+
+    await render()
+    act(() => notifyFlushAborted({ reason: 'conflict' }))
+
+    expect(container.textContent).toContain('Quit was canceled')
+    expect(container.textContent).toContain(
+      'A conversation changed elsewhere and could not be saved safely.'
+    )
+
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-retry"]'
+    )
+    act(() => retry?.click())
+    expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
+    expect(container.textContent).not.toContain('Quit was canceled')
+  })
+
+  it('keeps quit recovery controls interactive while Settings covers the base presentation', async () => {
+    let notifyFlushAborted: (event: { reason: 'renderer-failed' }) => void = () => undefined
+    ;(
+      window.api as unknown as {
+        sessions: {
+          onFlushAborted: (listener: typeof notifyFlushAborted) => () => void
+          onFlushRequest: (listener: (request: { requestId: string }) => void) => () => void
+          sendFlushResponse: (response: { requestId: string; status: string }) => void
+        }
+      }
+    ).sessions = {
+      onFlushAborted: (listener) => {
+        notifyFlushAborted = listener
+        return () => undefined
+      },
+      onFlushRequest: () => () => undefined,
+      sendFlushResponse: vi.fn()
+    }
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+    mocks.sessionPersistence.loadError = 'selected conversation unavailable'
+
+    await render()
+    act(() => notifyFlushAborted({ reason: 'renderer-failed' }))
+
+    const alert = Array.from(
+      container.querySelectorAll('[data-testid="session-persistence-alert"]')
+    ).find((candidate) => candidate.textContent?.includes('Quit was canceled'))
+    expect(alert?.textContent).toContain('Quit was canceled')
+    expect(alert?.closest('[inert]')).toBeNull()
+    expect(alert?.closest('[aria-hidden="true"]')).toBeNull()
+    expect(alert?.classList.contains('z-toast')).toBe(true)
   })
 
   it('does not let a later notification peek override navigation while an earlier peek is pending', async () => {

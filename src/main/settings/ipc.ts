@@ -28,6 +28,7 @@ import {
   type SetAgentFrameworkRequest,
   type AddCustomServerRequest,
   type AuthenticateCustomServerRequest,
+  type DisconnectCustomServerRequest,
   type ConnectorTemplateSelectionResult,
   type ExportCustomServerTemplateRequest,
   type ExportCustomServerTemplateResult,
@@ -38,12 +39,15 @@ import {
   type SetConnectorAutoAllowRequest,
   type SetConnectorEnabledRequest,
   type SetNcbiCredentialsRequest,
+  type SetOpenAlexCredentialRequest,
+  type ValidateOpenAlexCredentialRequest,
   type SetPackageMirrorRequest,
   type SetNetworkProxyRequest,
   type SetClosePreferenceRequest,
   type SetDefaultPermissionProfileRequest,
   type SetConversationSkillImportEnabledRequest,
   type SetNotificationsEnabledRequest,
+  type SetShowNotificationContentRequest,
   type SetProjectFilesFilterRequest,
   type SetReasoningEffortRequest,
   type SetReviewerModelRequest,
@@ -71,6 +75,7 @@ import {
   readConversationSkillImportEnabled,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
+  readShowNotificationContent,
   readProjectFilesFilter,
   readReasoningEffort,
   readReviewerModel,
@@ -215,6 +220,14 @@ const registerSettingsIpcHandlers = ({
     }
   )
   ipcMainHandle(
+    'settings:set-show-notification-content',
+    async (_event, request: SetShowNotificationContentRequest) => {
+      const enabled = readShowNotificationContent(request)
+      log.info('set show notification content requested', { enabled })
+      return service.setShowNotificationContent(enabled)
+    }
+  )
+  ipcMainHandle(
     'settings:set-conversation-skill-import-enabled',
     async (_event, request: SetConversationSkillImportEnabledRequest) => {
       const enabled = readConversationSkillImportEnabled(request)
@@ -350,10 +363,8 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMainHandle('settings:list-connectors', () => service.listConnectors())
-  ipcMainHandle(
-    'settings:retry-custom-server',
-    (_event, request: AuthenticateCustomServerRequest) =>
-      workflows.connectors.retryCustomServer(request)
+  ipcMainHandle('settings:retry-custom-server', (_event, request: DisconnectCustomServerRequest) =>
+    workflows.connectors.retryCustomServer(request)
   )
   ipcMainHandle('settings:preview-custom-server-template-export', (_event, id: string) =>
     service.previewCustomServerTemplateExport(id)
@@ -427,6 +438,16 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
     workflows.connectors.setNcbiCredentials(request)
   )
+  ipcMainHandle(
+    'settings:set-openalex-credential',
+    (_event, request: SetOpenAlexCredentialRequest) =>
+      workflows.connectors.setOpenAlexCredential(request)
+  )
+  ipcMainHandle(
+    'settings:validate-openalex-credential',
+    (_event, request: ValidateOpenAlexCredentialRequest) =>
+      workflows.connectors.validateOpenAlexCredential(request)
+  )
   ipcMainHandle('settings:add-custom-server', (_event, request: AddCustomServerRequest) =>
     workflows.connectors.addCustomServer(request)
   )
@@ -450,6 +471,11 @@ const registerSettingsIpcHandlers = ({
     'settings:cancel-custom-server-authentication',
     (_event, request: AuthenticateCustomServerRequest) =>
       workflows.connectors.cancelCustomServerAuthentication(request)
+  )
+  ipcMainHandle(
+    'settings:disconnect-custom-server',
+    (_event, request: AuthenticateCustomServerRequest) =>
+      workflows.connectors.disconnectCustomServer(request)
   )
   // Compute file browser bookmarks: keyed by provider_id in settings.computeBookmarks.
   ipcMainHandle('compute:bookmarks:get', (_event, providerId: string) =>

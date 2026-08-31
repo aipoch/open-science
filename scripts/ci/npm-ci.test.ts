@@ -16,29 +16,25 @@ describe('npm ci Electron mirror policy', () => {
   it('forces GitHub Electron artifact URLs on GitHub Actions', () => {
     const env = npmCiEnv({
       GITHUB_ACTIONS: 'true',
-      npm_config_electron_mirror: 'https://npmmirror.com/mirrors/electron/',
       PATH: '/usr/bin'
     })
 
     expect(shouldForceGitHubElectronMirrors({ GITHUB_ACTIONS: 'true' })).toBe(true)
-    expect(env.npm_config_electron_mirror).toBe(GITHUB_ELECTRON_MIRROR)
-    expect(env.npm_config_electron_builder_binaries_mirror).toBe(
-      GITHUB_ELECTRON_BUILDER_BINARIES_MIRROR
-    )
     expect(env.ELECTRON_MIRROR).toBe(GITHUB_ELECTRON_MIRROR)
     expect(env.ELECTRON_BUILDER_BINARIES_MIRROR).toBe(GITHUB_ELECTRON_BUILDER_BINARIES_MIRROR)
+    expect(env).not.toHaveProperty('npm_config_electron_mirror')
+    expect(env).not.toHaveProperty('npm_config_electron_builder_binaries_mirror')
     expect(env.PATH).toBe('/usr/bin')
   })
 
-  it('leaves local installs on the repository npmmirror pin', () => {
+  it('preserves caller-provided local mirror environment', () => {
     const env = npmCiEnv({
-      npm_config_electron_mirror: 'https://npmmirror.com/mirrors/electron/',
+      ELECTRON_MIRROR: 'https://npmmirror.com/mirrors/electron/',
       PATH: '/usr/bin'
     })
 
     expect(shouldForceGitHubElectronMirrors({})).toBe(false)
-    expect(env.npm_config_electron_mirror).toBe('https://npmmirror.com/mirrors/electron/')
-    expect(env.ELECTRON_MIRROR).toBeUndefined()
+    expect(env.ELECTRON_MIRROR).toBe('https://npmmirror.com/mirrors/electron/')
   })
 
   it('runs npm ci with the resolved environment and platform command', () => {
@@ -58,9 +54,7 @@ describe('npm ci Electron mirror policy', () => {
       'npm',
       ['ci', '--no-audit'],
       expect.objectContaining({
-        env: expect.objectContaining({
-          npm_config_electron_mirror: GITHUB_ELECTRON_MIRROR
-        }),
+        env: expect.objectContaining({ ELECTRON_MIRROR: GITHUB_ELECTRON_MIRROR }),
         shell: false,
         stdio: 'inherit'
       })

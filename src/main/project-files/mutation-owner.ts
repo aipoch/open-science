@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ProjectFileSource } from '../../shared/project-files'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import { createLogger } from '../logger'
 import {
   buildProjectCollisionFilters,
   describeError,
@@ -18,6 +19,8 @@ import {
   type ProjectFilesClient,
   type ProjectFilesClientProvider
 } from './mutation-projection'
+
+const log = createLogger('project-files')
 
 // Valid persisted revisions are non-negative. A collision loser stores this sentinel so it cannot
 // take the revision fast path and can claim the canonical row after its current owner is deleted.
@@ -123,7 +126,7 @@ class ProjectFilesMutationOwner {
           // a legacy duplicate reference, but it must not steal ownership or make migration unretryable.
           if (activeOtherSessionRow) {
             hasActiveCollision = true
-            console.warn('Skipping duplicate file reference owned by another active session', {
+            log.warn('skipping duplicate file reference owned by another active session', {
               projectId: file.projectId,
               sessionId: file.sessionId,
               canonicalSessionId: activeOtherSessionRow.sessionId,
@@ -326,16 +329,37 @@ class ProjectFilesMutationOwner {
   }
 
   async reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void> {
+    await this.reconcileSessions(sessions)
+  }
+
+  async reconcileProjectSessions(
+    projectId: string,
+    sessions: PersistedChatSession[]
+  ): Promise<void> {
+    if (sessions.some((session) => session.projectId !== projectId)) {
+      throw new Error('Cannot reconcile Project files with a Session owned by another Project.')
+    }
+    await this.reconcileSessions(sessions, projectId)
+  }
+
+  private async reconcileSessions(
+    sessions: PersistedChatSession[],
+    projectId?: string
+  ): Promise<void> {
     try {
       const client = await this.getClient()
       const activeKeys = new Set(
         sessions.map((session) => sessionKey(session.projectId, session.id))
       )
       const indexedSessions = await client.managedFileSessionSync.findMany({
+        ...(projectId ? { where: { projectId } } : {}),
         select: { projectId: true, sessionId: true, deletedAt: true }
       })
       const retainedOrigins = await client.fileOriginSession.findMany({
-        where: { state: { in: ['deleting', 'deleted'] } },
+        where: {
+          ...(projectId ? { projectId } : {}),
+          state: { in: ['deleting', 'deleted'] }
+        },
         select: { projectId: true, sessionId: true }
       })
       const retainedKeys = new Set(
@@ -373,9 +397,11 @@ class ProjectFilesMutationOwner {
         await this.rebuildRetainedOriginProjection(client, origin.projectId, origin.sessionId)
       }
       for (const key of this.incompleteSessions.keys()) {
-        if (!activeKeys.has(key)) this.incompleteSessions.delete(key)
+        if ((!projectId || key.startsWith(`${projectId}:`)) && !activeKeys.has(key)) {
+          this.incompleteSessions.delete(key)
+        }
       }
-      this.isReconciliationIncomplete = false
+      if (!projectId) this.isReconciliationIncomplete = false
     } catch (error) {
       this.isReconciliationIncomplete = true
       throw error

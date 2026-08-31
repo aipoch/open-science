@@ -11,6 +11,27 @@ const MISSING_CODES = new Set(['ENOENT', 'ENOTDIR'])
 // Minimal logger shape so callers can inject one (and tests can assert) without importing electron.
 type PresenceLogger = Pick<ReturnType<typeof createLogger>, 'warn'>
 
+// Returns true when at least one path is proven to exist and false only when every path is proven
+// absent. Any permission/I/O/encoding error remains inconclusive and rejects so safety-sensitive
+// callers can fail closed instead of treating an unreadable directory as empty.
+export const hasAnyExistingPath = async (
+  paths: readonly string[],
+  deps: { statFn?: (p: string) => Promise<unknown> } = {}
+): Promise<boolean> => {
+  const statFn = deps.statFn ?? stat
+  for (const path of paths) {
+    try {
+      await statFn(path)
+      return true
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code && MISSING_CODES.has(code)) continue
+      throw err
+    }
+  }
+  return false
+}
+
 // Decides whether a configured data root should be reported as MISSING (which drives the destructive
 // "Data folder not found -> continue with an empty folder" prompt). This exists because a bare
 // existsSync/statSync-in-try-catch collapses EVERY failure into "false", so a non-ENOENT stat error

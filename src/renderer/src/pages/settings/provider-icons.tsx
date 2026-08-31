@@ -4,6 +4,7 @@ import { CirclePlus, Sparkles } from 'lucide-react'
 import ClaudeColor from '@lobehub/icons/es/Claude/components/Color'
 import Codex from '@lobehub/icons/es/Codex/components/Mono'
 import OpenCode from '@lobehub/icons/es/OpenCode/components/Mono'
+import TencentCloudColor from '@lobehub/icons/es/TencentCloud/components/Color'
 
 import { cn } from '@/lib/utils'
 import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
@@ -48,7 +49,8 @@ export const AgentFrameworkIcon = ({
 
 // Official vendor brand marks, bundled as assets. Providers from the same vendor share one mark:
 // Bailian and Bailian for Plan, Kimi and Kimi For Coding, Zhipu and GLM Coding Plan, and StepFun and
-// Step Plan. Any vendor without an entry falls back to a neutral glyph rather than a made-up logo.
+// Step Plan. Tencent providers use the bundled icon component below. Any vendor without an entry
+// falls back to a neutral glyph rather than a made-up logo.
 // Custom uses a plus-in-circle.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
@@ -112,6 +114,20 @@ export const ProviderKindIcon = ({
       <OpenCode
         size={20}
         className={cn('size-5 shrink-0 text-foreground', className)}
+        aria-hidden="true"
+      />
+    )
+  }
+
+  if (
+    kindKey === 'official:tencent' ||
+    kindKey === 'official:tencentcodingplan' ||
+    kindKey === 'official:tencenttokenplan'
+  ) {
+    return (
+      <TencentCloudColor
+        size={20}
+        className={cn('size-5 shrink-0', className)}
         aria-hidden="true"
       />
     )

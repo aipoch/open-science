@@ -4,16 +4,16 @@ import { executeAgentsMutation, type AgentsMutationCatalog } from './agents-muta
 import type { ConnectorReadModel, SkillCatalogReadModel } from './agents-service'
 import type {
   CreateSpecialistInput,
-  SpecialistProfileView,
+  SpecialistView,
   UpdateSpecialistInput
 } from '../../shared/specialist'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistService } from '../specialist/service'
 
 // ---------------------------------------------------------------------------
 // Stubs
 // ---------------------------------------------------------------------------
 
-const baseProfile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+const baseProfile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'sp-1',
   name: 'Bio',
   displayName: 'Bio',
@@ -27,23 +27,23 @@ const baseProfile = (overrides: Partial<SpecialistProfileView> = {}): Specialist
   ...overrides
 })
 
-// A ProfileService fake that records every mutation call and returns a read-back view built from the
+// A SpecialistService fake that records every mutation call and returns a read-back view built from the
 // stored config so we can assert real read-back (not echoed input).
-const makeProfileService = (
-  initial: SpecialistProfileView[]
-): ProfileService & {
+const makeSpecialistService = (
+  initial: SpecialistView[]
+): SpecialistService & {
   calls: { method: string; args: unknown[] }[]
-  setStored: (next: SpecialistProfileView[]) => void
+  setStored: (next: SpecialistView[]) => void
 } => {
-  let stored: SpecialistProfileView[] = initial
+  let stored: SpecialistView[] = initial
   const calls: { method: string; args: unknown[] }[] = []
-  const bump = (view: SpecialistProfileView): SpecialistProfileView => ({
+  const bump = (view: SpecialistView): SpecialistView => ({
     ...view,
     revision: view.revision + 1
   })
   const svc = {
     calls,
-    setStored(next: SpecialistProfileView[]) {
+    setStored(next: SpecialistView[]) {
       stored = next
     },
     async list() {
@@ -61,7 +61,7 @@ const makeProfileService = (
     },
     async create(input: CreateSpecialistInput) {
       calls.push({ method: 'create', args: [input] })
-      const view: SpecialistProfileView = {
+      const view: SpecialistView = {
         id: 'sp-new',
         name: input.name,
         displayName: input.displayName ?? input.name,
@@ -90,7 +90,7 @@ const makeProfileService = (
       calls.push({ method: 'update', args: [input] })
       const idx = stored.findIndex((p) => p.id === input.id)
       if (idx < 0) throw new Error(`Specialist ${input.id} not found after update.`)
-      const merged: SpecialistProfileView = { ...stored[idx] }
+      const merged: SpecialistView = { ...stored[idx] }
       if (input.displayName !== undefined) merged.displayName = input.displayName
       if (input.description !== undefined) merged.description = input.description
       if (input.systemPrompt !== undefined) merged.systemPrompt = input.systemPrompt
@@ -220,7 +220,7 @@ const makeProfileService = (
       stored = stored.map((p, i) => (i === idx ? next : p))
       return next
     }
-  } as unknown as ProfileService & typeof svc
+  } as unknown as SpecialistService & typeof svc
   return svc
 }
 
@@ -267,62 +267,62 @@ const makeCatalog = (
 
 describe('executeAgentsMutation — payload validation (rejects before reaching the repo)', () => {
   it('rejects an unknown create field', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog([], [])
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio', bogus_field: 'x' } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
 
   it('rejects a malformed name type on create', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog([], [])
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 42 } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
 
   it('rejects a non-finite revision on update', async () => {
-    const svc = makeProfileService([baseProfile()])
+    const svc = makeSpecialistService([baseProfile()])
     const { catalog } = makeCatalog([], [])
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio', patch: { revision: Number.NaN } } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
   })
 
   it('rejects a non-array skill_names on create', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog([], [])
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio', skill_names: 'demo' } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
 
   it('rejects unknown update fields', async () => {
-    const svc = makeProfileService([baseProfile()])
+    const svc = makeSpecialistService([baseProfile()])
     const { catalog } = makeCatalog([], [])
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio', patch: { revision: 1, oops: true } } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
   })
 
   it('rejects connector tool-method / include-exclude patterns as out of scope', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(skills(), connectors())
     // Connector tool scope is a later milestone; the agreed object does not name these fields, so
     // they are rejected as unknown before reaching the repository.
@@ -332,13 +332,13 @@ describe('executeAgentsMutation — payload validation (rejects before reaching 
           op: 'create',
           params: { name: 'Bio', connector_tools: [{ connectorId: 'c', includedMethods: ['x'] }] }
         },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio2', include_tools_pattern: 'c.*' } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
@@ -346,12 +346,12 @@ describe('executeAgentsMutation — payload validation (rejects before reaching 
 
 describe('executeAgentsMutation — create', () => {
   it('create with neither capability array produces Full access', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(skills(), connectors())
     const result = (await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', description: 'd', system_prompt: 'p' } },
-      { profileService: svc, catalog }
-    )) as SpecialistProfileView
+      { specialistService: svc, catalog }
+    )) as SpecialistView
     expect(svc.calls[0].method).toBe('create')
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
     expect(passed.capabilityMode).toBe('full')
@@ -359,12 +359,12 @@ describe('executeAgentsMutation — create', () => {
   })
 
   it('create with skill_names produces Selected and stores connector collection empty', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(skills({ id: 'sk1', name: 'Skill One' }), connectors())
     const result = (await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', skill_names: ['sk1'] } },
-      { profileService: svc, catalog }
-    )) as SpecialistProfileView
+      { specialistService: svc, catalog }
+    )) as SpecialistView
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
     expect(passed.capabilityMode).toBe('selected')
     expect(passed.selectedCapabilities?.skillIds).toEqual(['sk1'])
@@ -373,11 +373,11 @@ describe('executeAgentsMutation — create', () => {
   })
 
   it('create with connector_names produces Selected and stores skill collection empty', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(skills(), connectors({ id: 'c1', displayName: 'Conn' }))
     await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', connector_names: ['c1'] } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
     expect(passed.capabilityMode).toBe('selected')
@@ -386,7 +386,7 @@ describe('executeAgentsMutation — create', () => {
   })
 
   it('create accepts the full agreed object and returns a real read-back (not echoed input)', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(
       skills({ id: 'sk1', name: 'Skill One' }),
       connectors({ id: 'c1', displayName: 'Conn' })
@@ -406,8 +406,8 @@ describe('executeAgentsMutation — create', () => {
           connector_names: ['c1']
         }
       },
-      { profileService: svc, catalog }
-    )) as SpecialistProfileView
+      { specialistService: svc, catalog }
+    )) as SpecialistView
     // read-back is a real view: it carries id + revision + enabled always true (create default),
     // and capability resolved against the stable IDs, not the echoed public name.
     expect(result.id).toBe('sp-new')
@@ -418,40 +418,40 @@ describe('executeAgentsMutation — create', () => {
   })
 
   it('create rejects a missing name', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog([], [])
     await expect(
-      executeAgentsMutation({ op: 'create', params: {} }, { profileService: svc, catalog })
+      executeAgentsMutation({ op: 'create', params: {} }, { specialistService: svc, catalog })
     ).rejects.toThrow(/host\.agents\.create:/)
   })
 
   it('create resolves a skill public name to its stable id and persists only the id', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(skills({ id: 'stable-1', name: 'Skill One' }), connectors())
     await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', skill_names: ['Skill One'] } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
     expect(passed.selectedCapabilities?.skillIds).toEqual(['stable-1'])
   })
 
   it('create resolves a connector immutable name to its stable id', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(
       skills(),
       connectors({ id: 'stable-c', name: 'my-connector', displayName: 'My Connector' })
     )
     await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', connector_names: ['my-connector'] } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
     expect(passed.selectedCapabilities?.connectorIds).toEqual(['stable-c'])
   })
 
   it('create rejects an ambiguous skill name and instructs to use the stable id', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(
       skills({ id: 'a', name: 'Dup' }, { id: 'b', name: 'Dup' }),
       connectors()
@@ -459,21 +459,21 @@ describe('executeAgentsMutation — create', () => {
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio', skill_names: ['Dup'] } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/stable id/)
   })
 
   it('create allows a Main-disabled installed skill to be assigned', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(
       skills({ id: 'sk1', name: 'Disabled', mainEnabled: false }),
       connectors()
     )
     const result = (await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', skill_names: ['sk1'] } },
-      { profileService: svc, catalog }
-    )) as SpecialistProfileView
+      { specialistService: svc, catalog }
+    )) as SpecialistView
     expect(svc.calls[0].method).toBe('create')
     expect(result.capabilityMode).toBe('selected')
   })
@@ -481,7 +481,7 @@ describe('executeAgentsMutation — create', () => {
 
 describe('executeAgentsMutation — update', () => {
   it('update supports description, system instructions, icon, color, enabled, mode, skills, connectors', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1 })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1 })])
     const { catalog } = makeCatalog(
       skills({ id: 'sk1', name: 'Skill One' }),
       connectors({ id: 'c1', displayName: 'Conn' })
@@ -503,8 +503,8 @@ describe('executeAgentsMutation — update', () => {
           }
         }
       },
-      { profileService: svc, catalog }
-    )) as SpecialistProfileView
+      { specialistService: svc, catalog }
+    )) as SpecialistView
     expect(svc.calls[0].method).toBe('update')
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
     expect(passed.description).toBe('new desc')
@@ -523,7 +523,7 @@ describe('executeAgentsMutation — update', () => {
   })
 
   it('update({ unrestricted: true }) switches to Full without destroying the stored Selected config', async () => {
-    const svc = makeProfileService([
+    const svc = makeSpecialistService([
       baseProfile({
         revision: 1,
         selectedCapabilities: { skillIds: ['sk1'], connectorIds: ['c1'], connectorTools: [] }
@@ -532,7 +532,7 @@ describe('executeAgentsMutation — update', () => {
     const { catalog } = makeCatalog(skills(), connectors())
     await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, unrestricted: true } } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
     expect(passed.capabilityMode).toBe('full')
@@ -541,7 +541,7 @@ describe('executeAgentsMutation — update', () => {
   })
 
   it('update providing skill_names exactly replaces the collection and switches to Selected', async () => {
-    const svc = makeProfileService([
+    const svc = makeSpecialistService([
       baseProfile({
         revision: 1,
         capabilityMode: 'full',
@@ -557,7 +557,7 @@ describe('executeAgentsMutation — update', () => {
         op: 'update',
         params: { name: 'Bio', patch: { revision: 1, skill_names: ['new1', 'new2'] } }
       },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
     expect(passed.capabilityMode).toBe('selected')
@@ -567,7 +567,7 @@ describe('executeAgentsMutation — update', () => {
   })
 
   it('update preserving omitted collections: skill_names omitted keeps existing skills', async () => {
-    const svc = makeProfileService([
+    const svc = makeSpecialistService([
       baseProfile({
         revision: 1,
         capabilityMode: 'selected',
@@ -577,7 +577,7 @@ describe('executeAgentsMutation — update', () => {
     const { catalog } = makeCatalog(skills(), connectors({ id: 'c1', displayName: 'C' }))
     await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, connector_names: ['c1'] } } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
     expect(passed.selectedCapabilities?.connectorIds).toEqual(['c1'])
@@ -586,12 +586,12 @@ describe('executeAgentsMutation — update', () => {
   })
 
   it('update requires a matching revision; a stale revision fails without merge/retry', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 5 })])
+    const svc = makeSpecialistService([baseProfile({ revision: 5 })])
     const { catalog } = makeCatalog(skills(), connectors())
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'x' } } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
     expect(svc.calls).toHaveLength(0)
@@ -599,29 +599,29 @@ describe('executeAgentsMutation — update', () => {
 
   it('a non-name update does not request a permission card (no approval gateway call)', async () => {
     const decide = vi.fn(async () => ({ status: 'approved' as const }))
-    const svc = makeProfileService([baseProfile({ revision: 1 })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1 })])
     const { catalog } = makeCatalog(skills(), connectors())
     await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'x' } } },
-      { profileService: svc, catalog, approvalGateway: { decide } }
+      { specialistService: svc, catalog, approvalGateway: { decide } }
     )
     expect(decide).not.toHaveBeenCalled()
   })
 
   it('update reads changes from the nested patch', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1 })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1 })])
     const { catalog } = makeCatalog(skills(), connectors())
     const result = (await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'nested desc' } } },
-      { profileService: svc, catalog }
-    )) as SpecialistProfileView
+      { specialistService: svc, catalog }
+    )) as SpecialistView
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
     expect(passed.description).toBe('nested desc')
     expect(result.revision).toBe(2)
   })
 
   it('update changes displayName without changing the immutable name', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1 })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1 })])
     const { catalog } = makeCatalog(skills(), connectors())
     const decide = vi.fn()
     const result = (await executeAgentsMutation(
@@ -629,19 +629,19 @@ describe('executeAgentsMutation — update', () => {
         op: 'update',
         params: { name: 'Bio', patch: { revision: 1, display_name: 'New label' } }
       },
-      { profileService: svc, catalog, approvalGateway: { decide } }
-    )) as SpecialistProfileView
+      { specialistService: svc, catalog, approvalGateway: { decide } }
+    )) as SpecialistView
     expect(result).toMatchObject({ name: 'Bio', displayName: 'New label' })
     expect(decide).not.toHaveBeenCalled()
   })
 
   it('update requires a nested patch object', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1 })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1 })])
     const { catalog } = makeCatalog(skills(), connectors())
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio' } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
     expect(svc.calls).toHaveLength(0)
@@ -650,31 +650,31 @@ describe('executeAgentsMutation — update', () => {
 
 describe('executeAgentsMutation — attach/detach mutate current mode without switching it', () => {
   it('Selected attach_skill adds an inclusion; detach removes it', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
     const { catalog } = makeCatalog(skills({ id: 'sk1', name: 'S' }), connectors())
     await executeAgentsMutation(
       { op: 'attach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 1 } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     expect(svc.calls[0]).toEqual({ method: 'attachSkill', args: ['sp-1', 'sk1', 1, 'selected'] })
     await executeAgentsMutation(
       { op: 'detach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 2 } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     expect(svc.calls[1]).toEqual({ method: 'detachSkill', args: ['sp-1', 'sk1', 2, 'selected'] })
   })
 
   it('Full attach_skill removes an exclusion; detach adds one', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'full' })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'full' })])
     const { catalog } = makeCatalog(skills({ id: 'sk1', name: 'S' }), connectors())
     await executeAgentsMutation(
       { op: 'attach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 1 } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     expect(svc.calls[0]).toEqual({ method: 'attachSkill', args: ['sp-1', 'sk1', 1, 'full'] })
     await executeAgentsMutation(
       { op: 'detach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 2 } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     expect(svc.calls[1]).toEqual({ method: 'detachSkill', args: ['sp-1', 'sk1', 2, 'full'] })
   })
@@ -685,14 +685,14 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
   // literal display name reaches detachSkill instead of the resolved stable id. The existing tests
   // above used a ref that equals the stable id, so they passed even with the bug.
   it('detach_skill resolves a public name to the stable catalog id (not the literal ref)', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
     const { catalog } = makeCatalog(
       skills({ id: 'sk-stable', name: 'Skill One', displayName: 'Skill One' }),
       connectors()
     )
     await executeAgentsMutation(
       { op: 'detach_skill', params: { name: 'Bio', skill_ref: 'Skill One', revision: 1 } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     expect(svc.calls[0]).toEqual({
       method: 'detachSkill',
@@ -701,20 +701,20 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
   })
 
   it('attach_connector / detach_connector follow the same mode rules', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
     const { catalog } = makeCatalog(skills(), connectors({ id: 'c1', displayName: 'C' }))
     await executeAgentsMutation(
       { op: 'attach_connector', params: { name: 'Bio', connector_ref: 'c1', revision: 1 } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     expect(svc.calls[0]).toEqual({
       method: 'attachConnector',
       args: ['sp-1', 'c1', 1, 'selected']
     })
-    const svc2 = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'full' })])
+    const svc2 = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'full' })])
     await executeAgentsMutation(
       { op: 'detach_connector', params: { name: 'Bio', connector_ref: 'c1', revision: 1 } },
-      { profileService: svc2, catalog }
+      { specialistService: svc2, catalog }
     )
     expect(svc2.calls[0]).toEqual({
       method: 'detachConnector',
@@ -723,23 +723,23 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
   })
 
   it('attach/detach rejects a missing revision', async () => {
-    const svc = makeProfileService([baseProfile()])
+    const svc = makeSpecialistService([baseProfile()])
     const { catalog } = makeCatalog(skills({ id: 'sk1', name: 'S' }), connectors())
     await expect(
       executeAgentsMutation(
         { op: 'attach_skill', params: { name: 'Bio', skill_ref: 'sk1' } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.attach_skill:/)
   })
 
   it('attach/detach rejects unknown params', async () => {
-    const svc = makeProfileService([baseProfile()])
+    const svc = makeSpecialistService([baseProfile()])
     const { catalog } = makeCatalog(skills({ id: 'sk1', name: 'S' }), connectors())
     await expect(
       executeAgentsMutation(
         { op: 'detach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 1, extra: 1 } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.detach_skill:/)
   })
@@ -747,7 +747,7 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
 
 describe('executeAgentsMutation — Connector availability gate', () => {
   it('cannot newly attach an unavailable custom connector', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
     const { catalog } = makeCatalog(
       skills(),
       connectors({ id: 'dead', source: 'custom', availability: 'unavailable' })
@@ -755,14 +755,14 @@ describe('executeAgentsMutation — Connector availability gate', () => {
     await expect(
       executeAgentsMutation(
         { op: 'attach_connector', params: { name: 'Bio', connector_ref: 'dead', revision: 1 } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.attach_connector:/)
     expect(svc.calls).toHaveLength(0)
   })
 
   it('cannot newly attach an unauthenticated custom connector', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
     const { catalog } = makeCatalog(
       skills(),
       connectors({ id: 'unauth', source: 'custom', availability: 'unauthenticated' })
@@ -770,13 +770,13 @@ describe('executeAgentsMutation — Connector availability gate', () => {
     await expect(
       executeAgentsMutation(
         { op: 'attach_connector', params: { name: 'Bio', connector_ref: 'unauth', revision: 1 } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.attach_connector:/)
   })
 
   it('create with an unavailable custom connector in connector_names is rejected', async () => {
-    const svc = makeProfileService([])
+    const svc = makeSpecialistService([])
     const { catalog } = makeCatalog(
       skills(),
       connectors({ id: 'dead', source: 'custom', availability: 'unavailable' })
@@ -784,20 +784,20 @@ describe('executeAgentsMutation — Connector availability gate', () => {
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio', connector_names: ['dead'] } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
 
   it('an available custom connector can be attached', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
     const { catalog } = makeCatalog(
       skills(),
       connectors({ id: 'ok', source: 'custom', availability: 'available' })
     )
     await executeAgentsMutation(
       { op: 'attach_connector', params: { name: 'Bio', connector_ref: 'ok', revision: 1 } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     expect(svc.calls[0]).toEqual({ method: 'attachConnector', args: ['sp-1', 'ok', 1, 'selected'] })
   })
@@ -805,7 +805,7 @@ describe('executeAgentsMutation — Connector availability gate', () => {
   it('detach passes through a stale reference no longer in the catalog (still removable)', async () => {
     // An existing stale reference that has since been removed from the catalog must still be
     // detachable. detach falls back to the literal stable id when nothing matches.
-    const svc = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
+    const svc = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
     const { catalog } = makeCatalog(
       skills(),
       // 'stale-connector' is NOT in the catalog.
@@ -816,7 +816,7 @@ describe('executeAgentsMutation — Connector availability gate', () => {
         op: 'detach_connector',
         params: { name: 'Bio', connector_ref: 'stale-connector', revision: 1 }
       },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     expect(svc.calls[0]).toEqual({
       method: 'detachConnector',
@@ -826,27 +826,27 @@ describe('executeAgentsMutation — Connector availability gate', () => {
 })
 
 describe('executeAgentsMutation — no direct repo writes, no duplicated rules', () => {
-  it('all mutations delegate to ProfileService (never write the repository directly)', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
+  it('all mutations delegate to SpecialistService (never write the repository directly)', async () => {
+    const svc = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'selected' })])
     const { catalog } = makeCatalog(
       skills({ id: 'sk1', name: 'S' }),
       connectors({ id: 'c1', displayName: 'C' })
     )
     await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'd' } } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     await executeAgentsMutation(
       { op: 'attach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 2 } },
-      { profileService: svc, catalog }
+      { specialistService: svc, catalog }
     )
     expect(svc.calls.map((c) => c.method)).toEqual(['update', 'attachSkill'])
   })
 })
 
 describe('executeAgentsMutation — errors are sanitized', () => {
-  it('ProfileService internal secret never reaches the sandbox', async () => {
-    const svc = makeProfileService([])
+  it('SpecialistService internal secret never reaches the sandbox', async () => {
+    const svc = makeSpecialistService([])
     svc.create = vi.fn(async () => {
       throw new Error('internal secret: apikey=ABCDEF')
     })
@@ -854,18 +854,18 @@ describe('executeAgentsMutation — errors are sanitized', () => {
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio' } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow('host.agents.create: Internal operation failed.')
   })
 
   it('a repo revision-conflict surfaces as a sanitized host.agents.update: error', async () => {
-    const svc = makeProfileService([baseProfile({ revision: 5 })])
+    const svc = makeSpecialistService([baseProfile({ revision: 5 })])
     const { catalog } = makeCatalog(skills(), connectors())
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'x' } } },
-        { profileService: svc, catalog }
+        { specialistService: svc, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
   })

@@ -101,6 +101,7 @@ type ArtifactHandlerDependencies = {
     ArtifactProvenanceRepository,
     | 'finalizeRun'
     | 'activateFinalizedRun'
+    | 'listRunVersions'
     | 'getLineage'
     | 'getVersionProvenance'
     | 'getVersionCore'
@@ -309,7 +310,10 @@ const finalizeRunArtifacts = async (
   repository: ArtifactRepository,
   runRegistry: ArtifactRunRegistry,
   request: FinalizeRunArtifactsRequest,
-  provenance?: Pick<ArtifactProvenanceRepository, 'finalizeRun' | 'activateFinalizedRun'>,
+  provenance?: Pick<
+    ArtifactProvenanceRepository,
+    'finalizeRun' | 'activateFinalizedRun' | 'listRunVersions'
+  >,
   logger: Pick<Logger, 'error'> = log
 ): Promise<ArtifactFile[]> => {
   const claim = runRegistry.resolve(request.claimId)
@@ -322,11 +326,17 @@ const finalizeRunArtifacts = async (
       )
     }
 
-    return repository.listMessageFiles({
-      projectId: claim.projectId,
-      sessionId: claim.sessionId,
-      messageId: request.messageId
-    })
+    return provenance
+      ? provenance.listRunVersions({
+          projectId: claim.projectId,
+          appSessionId: claim.sessionId,
+          artifactRunId: claim.runId
+        })
+      : repository.listMessageFiles({
+          projectId: claim.projectId,
+          sessionId: claim.sessionId,
+          messageId: request.messageId
+        })
   }
 
   let durableFinalizationCompleted = false
@@ -451,6 +461,7 @@ const registerArtifactIpcHandlers = (
     ArtifactProvenanceRepository,
     | 'finalizeRun'
     | 'activateFinalizedRun'
+    | 'listRunVersions'
     | 'getLineage'
     | 'getVersionProvenance'
     | 'getVersionCore'

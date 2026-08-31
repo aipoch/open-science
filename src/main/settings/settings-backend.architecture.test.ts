@@ -375,6 +375,7 @@ describe('Settings backend ownership architecture', () => {
       'setNcbiCredentials',
       'setNetworkProxy',
       'setNotificationsEnabled',
+      'setOpenAlexCredential',
       'setOpencodeInfo',
       'setPackageMirror',
       'setProjectFilesFilter',
@@ -383,6 +384,7 @@ describe('Settings backend ownership architecture', () => {
       'setRuntimeEnablement',
       'setRuntimeSelection',
       'setSessionDetailsModel',
+      'setShowNotificationContent',
       'setSkillEnabled',
       'setSkillsEnabled',
       'setSubagentModel',
@@ -393,6 +395,8 @@ describe('Settings backend ownership architecture', () => {
       'updateClaudeIsolatedValidationIfKeyMatches',
       'updateClaudeSharedValidationIfUnchanged',
       'updateCustomServer',
+      'updateCustomServerOAuthState',
+      'updateProviderModelCatalogIfTargetMatches',
       'upsertClaudeIsolatedProvider',
       'upsertProvider'
     ])
@@ -468,17 +472,17 @@ describe('Settings backend ownership architecture', () => {
         addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel authenticateCustomServer buildCustomServerTemplateExport
         buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
-        detectOpencode dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
+        detectOpencode disconnectCustomServer dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotificationsEnabled getPackageMirror
-        getPreflight getRuntimeEnablement getRuntimeSelection getSettingsView getSkillDetail
+        getPreflight getRuntimeEnablement getRuntimeSelection getSettingsView getShowNotificationContent getSkillDetail
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         importSkillZipBatch installClaude installCodeBuddy installCodex installOpencode isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
         loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
-        markPathsNormalized previewAgentHomeSkill previewCustomServerTemplateExport
+        markPathsNormalized migrateAgentHomeSkillIdentities previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
-        provisionedConnectorSkillNames publishHostSkill refreshProviderModels removeCustomServer removeGitHubToken
+        provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog removeCustomServer removeGitHubToken
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
         resolveAdmittedSubagentBackend resolveAgentBackend resolveExplicitAgentBackend resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
         scanRepoSkills setActiveProvider setAgentFramework setAppIconVariant setClosePreference
@@ -486,9 +490,9 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
-        setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSessionDetailsModel setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
+        setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodeBuddy uninstallCodex
-        uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider waitXaiOAuthLogin withHostSkillRead
+        uninstallOpencode updateCustomServer updateSkill upsertProvider validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
         .split(/\s+/)
@@ -636,7 +640,10 @@ describe('Settings backend ownership architecture', () => {
       'currentModelCall',
       'listModelsCall',
       'viewImageCall',
-      'requestUserInput'
+      'requestUserInput',
+      'memoryListCategories',
+      'memorySearch',
+      'memoryRemember'
     ])
     expect(
       stringSetValues(settingsPaths.notebookLocalRpcServer, 'SKILL_IMPORT_RPC_METHODS')
@@ -685,6 +692,7 @@ describe('Settings backend ownership architecture', () => {
       'reasoningEffort',
       'reviewerModel',
       'sessionDetailsModel',
+      'showNotificationContent',
       'subagentModel',
       'version',
       'visionModel'
@@ -744,8 +752,9 @@ describe('Settings backend ownership architecture', () => {
       /registerIpcHandlers\(\{\s+mainEntryPath,\s+settingsStore,\s+translate,/u
     )
     expect(mainIpc).toContain('settingsStore ?? resolveStorageRoot()')
+    expect(mainIpc).toContain('await settingsService.migrateAgentHomeSkillIdentities()')
     expect(mainIpc).toContain(
-      'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      applyNetworkProxy:'
+      'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
     )
     expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
   })

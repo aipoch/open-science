@@ -3,10 +3,10 @@ import { readFile } from 'node:fs/promises'
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { UploadedAttachment } from '../../shared/uploads'
-import type { FileReference } from '../../shared/artifacts'
+import type { ArtifactReference, FileReference } from '../../shared/artifacts'
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import type { ResolvedAgentBackend } from '../agent-framework'
+import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework'
 import { createLogger, errorLogFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
@@ -58,6 +58,13 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
     sessionId: string,
     paths: string[]
   ) => Promise<() => void>
+  memory?: {
+    recallForPrompt(
+      requestText: string,
+      context: { projectId: string }
+    ): Promise<string | undefined>
+  }
+  isMemoryEnabledForSession?: (sessionId: string) => boolean
   notebook?: Readonly<{
     peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
     registerTurnInputs?: (input: NotebookTurnInputs) => Promise<void>
@@ -114,6 +121,35 @@ const notebookHandoffPrompt = (context: NotebookHandoffContext): string =>
     JSON.stringify(context),
     '</open_science_notebook_continuity>'
   ].join('\n')
+
+const isPdfUpload = (upload: UploadedAttachment): boolean =>
+  upload.mimeType?.split(';', 1)[0]?.trim().toLowerCase() === 'application/pdf' ||
+  upload.name.toLowerCase().endsWith('.pdf')
+
+const filterUnlinkedPdfHistory = (
+  historyUploads: UploadedAttachment[],
+  references: FileReference[]
+): UploadedAttachment[] => {
+  if (
+    !references.some(
+      (reference) => 'pdfContextDocumentId' in reference && reference.pdfContextDocumentId
+    )
+  ) {
+    return historyUploads
+  }
+  const uploadReferences = references.filter(
+    (reference): reference is ArtifactReference => reference.source === 'upload'
+  )
+
+  return historyUploads.filter((upload) => {
+    if (!isPdfUpload(upload)) return true
+
+    return uploadReferences.some((reference) =>
+      upload.versionId ? reference.versionId === upload.versionId : reference.id === upload.id
+    )
+  })
+}
+
 class AcpPromptPreparationOwner {
   constructor(private readonly options: AcpPromptPreparationOwnerOptions) {}
 
@@ -169,6 +205,17 @@ class AcpPromptPreparationOwner {
       const requestText = this.options.presentation.continuationText(input.request)
       const computeExecutionTargetReminder =
         this.options.presentation.computeExecutionTargetReminder(input.selectedComputeHostIds ?? [])
+      const observeSelectorUsage = ({
+        usage,
+        sourceInvocationId
+      }: SkillSelectorUsageObservation): void => {
+        const contextUsedTokens = usage.inputTokens + (usage.cachedReadTokens ?? 0)
+        preDispatchModelCalls.push({
+          ...usage,
+          ...(sourceInvocationId ? { sourceInvocationId } : {}),
+          ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {})
+        })
+      }
       const skillPreparation = await input.turnSkill.prepareProvider({
         frameworkId: input.backend.framework.id,
         selectionText: [input.request.text, computeExecutionTargetReminder]
@@ -178,9 +225,10 @@ class AcpPromptPreparationOwner {
         codex: {
           home: input.backend.adapter.codexHome,
           bridgeSkillsAvailable: input.bridgeSkillsAvailable,
-          selectSkills: async (text, catalog, signal) =>
-            (await this.options.selectBridgeSkills(text, catalog, signal)) ?? [],
-          signal: input.signal
+          selectSkills: async (text, catalog, signal, observeUsage) =>
+            (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ?? [],
+          signal: input.signal,
+          observeUsage: observeSelectorUsage
         },
         ...(input.backend.framework.id === 'codebuddy'
           ? {
@@ -191,14 +239,7 @@ class AcpPromptPreparationOwner {
                   (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ??
                   [],
                 signal: input.signal,
-                observeUsage: ({ usage, sourceInvocationId }) => {
-                  const contextUsedTokens = usage.inputTokens + (usage.cachedReadTokens ?? 0)
-                  preDispatchModelCalls.push({
-                    ...usage,
-                    ...(sourceInvocationId ? { sourceInvocationId } : {}),
-                    ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {})
-                  })
-                }
+                observeUsage: observeSelectorUsage
               }
             }
           : {})
@@ -232,11 +273,27 @@ class AcpPromptPreparationOwner {
         input.request.contextReset || input.request.historyPreamble
           ? this.options.notebook?.peekHandoffContext?.(input.request.sessionId)
           : undefined
+      const memoryEnabled = this.options.isMemoryEnabledForSession
+        ? this.options.isMemoryEnabledForSession(input.request.sessionId)
+        : input.request.memoryEnabled !== false
+      const recalledMemory = !memoryEnabled
+        ? undefined
+        : await this.options.memory
+            ?.recallForPrompt(input.request.text, { projectId: input.projectId })
+            .catch((error: unknown) => {
+              log.warn('memory auto-recall failed; continuing without recalled records', {
+                sessionId: input.request.sessionId,
+                ...errorLogFields(error)
+              })
+              return undefined
+            })
+      if (await cancelled()) return cancelPrepared()
       const promptText = [
         input.protectedContext,
         input.request.historyPreamble,
         notebookHandoff ? notebookHandoffPrompt(notebookHandoff) : undefined,
         promptPrefix,
+        recalledMemory,
         buildSessionReferencePrompt(input.request.referencedSessions),
         skillPreparation.text
       ]
@@ -244,15 +301,26 @@ class AcpPromptPreparationOwner {
         .join('\n\n')
 
       const skillImportAttachmentPaths = new Set<string>()
+      const references = input.request.referencedArtifacts ?? []
+      const requestedHistoryUploads = input.request.historyAttachments ?? []
+      const historyUploads = filterUnlinkedPdfHistory(requestedHistoryUploads, references)
+      if (historyUploads.length < requestedHistoryUploads.length) {
+        log.info('Unlinked PDF history replay attachments filtered', {
+          sessionId: input.request.sessionId,
+          historyPdfCount: requestedHistoryUploads.filter(isPdfUpload).length,
+          filteredCount: requestedHistoryUploads.length - historyUploads.length
+        })
+      }
       const prepared = await this.options.promptContent.prepare({
         appSessionId: input.request.sessionId,
         projectId: input.projectId,
         connectionGeneration: input.connectionGeneration,
         text: promptText,
         historyImages: input.request.historyImages ?? [],
-        historyUploads: input.request.historyAttachments ?? [],
+        currentImages: input.request.currentImages ?? [],
+        historyUploads,
         currentUploads: input.request.attachments ?? [],
-        references: input.request.referencedArtifacts ?? [],
+        references,
         codexSkillInputs,
         skillImportEnabled: input.skillImportEnabled,
         imageCompatibilityRelay:

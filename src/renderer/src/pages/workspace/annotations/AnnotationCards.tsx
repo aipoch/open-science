@@ -28,6 +28,9 @@ const sessionItemSourceLabel = (itemType: SessionTextAnnotationItemType, t: TFun
 
 const annotationSourceLabel = (annotation: Annotation, t: TFunction): string => {
   if (annotation.kind === 'image-point') return annotation.source.name
+  if (annotation.kind === 'pdf') {
+    return `${annotation.source.name} · ${t('Page {{page}}', { page: annotation.selector.pageNumber })}`
+  }
   if (annotation.source.kind === 'agent-message') {
     return `${t('Agent Message')} · ${annotation.source.messageId ?? annotation.source.sessionId}`
   }
@@ -57,6 +60,25 @@ const sentAnnotationViews = (
         note: annotation.note
       }
     }
+    if (annotation.kind === 'pdf') {
+      if (annotation.selector.kind === 'text') {
+        return {
+          id: annotation.id,
+          kind: 'pdf-text',
+          content: annotation.selector.exact,
+          source: annotationSourceLabel(annotation, t),
+          note: annotation.note
+        }
+      }
+      return {
+        id: annotation.id,
+        kind: 'pdf-region',
+        content: annotation.selector.text ?? t('Selected area'),
+        source: annotationSourceLabel(annotation, t),
+        note: annotation.note,
+        image: annotation.selector.image
+      }
+    }
     return {
       id: annotation.id,
       kind: 'text',
@@ -67,11 +89,15 @@ const sentAnnotationViews = (
   })
 }
 
-const annotationChipLabel = (annotation: Annotation): string =>
+const annotationChipLabel = (annotation: Annotation, t: TFunction): string =>
   annotation.note ??
   (annotation.kind === 'text'
     ? annotation.quote
-    : (annotation.source.name ?? annotation.source.path))
+    : annotation.kind === 'pdf'
+      ? annotation.selector.kind === 'text'
+        ? annotation.selector.exact
+        : (annotation.selector.text ?? t('Selected area'))
+      : (annotation.source.name ?? annotation.source.path))
 
 const AnnotationDraftCards = ({
   annotations,
@@ -117,7 +143,7 @@ const AnnotationDraftCards = ({
             annotation.kind === 'text' && annotation.source.kind === 'agent-message'
               ? t('Agent Message')
               : annotationSourceLabel(annotation, t)
-          const hoverLabel = `${annotation.note ?? (annotation.kind === 'text' ? annotation.quote : '')} - ${hoverSourceLabel}`
+          const hoverLabel = `${annotationChipLabel(annotation, t)} - ${hoverSourceLabel}`
           const editing = editingId === annotation.id
           return (
             <Popover
@@ -155,7 +181,7 @@ const AnnotationDraftCards = ({
                           className="size-3.5 shrink-0 text-muted-foreground"
                           aria-hidden="true"
                         />
-                      ) : annotation.source.kind === 'project-file' ? (
+                      ) : annotation.kind === 'pdf' || annotation.source.kind === 'project-file' ? (
                         <FileText
                           className="size-3.5 shrink-0 text-muted-foreground"
                           aria-hidden="true"
@@ -166,7 +192,7 @@ const AnnotationDraftCards = ({
                           aria-hidden="true"
                         />
                       )}
-                      <span className="truncate">{annotationChipLabel(annotation)}</span>
+                      <span className="truncate">{annotationChipLabel(annotation, t)}</span>
                     </button>
                     <div className="flex shrink-0 items-center pr-0.5">
                       <Tooltip
@@ -276,12 +302,27 @@ const AnnotationDraftCards = ({
 }
 
 const AnnotationMessageCards = ({
-  annotations
+  annotations,
+  onReveal
 }: {
   annotations: readonly Annotation[]
+  onReveal?: (annotation: Annotation) => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  return <SentAnnotationCards cards={sentAnnotationViews(annotations, t)} placement="message" />
+  return (
+    <SentAnnotationCards
+      cards={sentAnnotationViews(annotations, t)}
+      placement="message"
+      onActivate={
+        onReveal
+          ? (id) => {
+              const annotation = annotations.find((candidate) => candidate.id === id)
+              if (annotation) onReveal(annotation)
+            }
+          : undefined
+      }
+    />
+  )
 }
 
 export { AnnotationDraftCards, AnnotationMessageCards }

@@ -15,6 +15,7 @@ import {
   shellSingleQuote
 } from './remote-path-security'
 import type { ResolvedSshTarget } from './ssh-runner'
+import { BoundedChildTermination } from './bounded-child-termination'
 
 // Preserve the established public exports while keeping the security policy in one module.
 export { GLOB_CHARS, SHELL_UNSAFE_CHARS, shellSingleQuote }
@@ -169,17 +170,46 @@ export class SystemScpRunner implements ScpRunner {
     return new Promise((resolve, reject) => {
       const stderrChunks: Buffer[] = []
       let timedOut = false
+      let aborted = false
+      let abortReason: unknown
+      let settled = false
 
       const child = execFile(scpBinary, args, {
         timeout: 0,
         encoding: 'buffer',
-        ...(options.env ? { env: options.env } : {}),
-        ...(options.signal ? { signal: options.signal } : {})
+        ...(options.env ? { env: options.env } : {})
       })
+
+      const finish = (code: number | null, error?: Error): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        termination.stop()
+        options.signal?.removeEventListener('abort', onAbort)
+        if (aborted) {
+          reject(abortReason)
+          return
+        }
+        resolve({
+          exitCode: error ? null : code,
+          stderr: error ? error.message : Buffer.concat(stderrChunks).toString('utf8'),
+          timedOut
+        })
+      }
+
+      const termination = new BoundedChildTermination(child, () => finish(null))
+
+      const onAbort = (): void => {
+        if (settled || aborted) return
+        aborted = true
+        abortReason =
+          options.signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError')
+        termination.request()
+      }
 
       const timer = setTimeout(() => {
         timedOut = true
-        child.kill('SIGTERM')
+        termination.request()
       }, timeoutMs)
 
       child.stderr?.on('data', (chunk: Buffer) => {
@@ -189,20 +219,16 @@ export class SystemScpRunner implements ScpRunner {
         }
       })
 
-      child.on('close', (code) => {
-        clearTimeout(timer)
-        const stderr = Buffer.concat(stderrChunks).toString('utf8')
-        resolve({ exitCode: code, stderr, timedOut })
+      child.once('exit', () => termination.observeExit())
+      child.once('close', (code) => finish(code))
+
+      child.once('error', (err) => {
+        if (timedOut || aborted) return
+        finish(null, err)
       })
 
-      child.on('error', (err) => {
-        clearTimeout(timer)
-        if (err.name === 'AbortError') {
-          reject(err)
-          return
-        }
-        resolve({ exitCode: null, stderr: err.message, timedOut })
-      })
+      options.signal?.addEventListener('abort', onAbort, { once: true })
+      if (options.signal?.aborted) onAbort()
     })
   }
 
@@ -229,17 +255,26 @@ export class SystemScpRunner implements ScpRunner {
       let settled = false
       let exitCode: number | null = null
       let outputError: string | undefined
+      let aborted = false
+      let abortReason: unknown
 
       const child = spawn(target.sshBinary, [...target.extraArgs, target.host, remoteCommand], {
         stdio: ['ignore', 'pipe', 'pipe'],
-        ...(options.env ? { env: options.env } : {}),
-        ...(options.signal ? { signal: options.signal } : {})
+        ...(options.env ? { env: options.env } : {})
       })
       const output = createWriteStream(localPath, { flags: 'w' })
 
-      const finish = (): void => {
-        if (settled || !processClosed || !outputClosed) return
+      const finish = (force = false): void => {
+        if (settled || (!force && (!processClosed || !outputClosed))) return
         settled = true
+        clearTimeout(timer)
+        termination.stop()
+        options.signal?.removeEventListener('abort', onAbort)
+        if (force && !output.destroyed) output.destroy()
+        if (aborted) {
+          reject(abortReason)
+          return
+        }
         resolve({
           exitCode,
           stderr: outputError ?? Buffer.concat(stderrChunks).toString('utf8'),
@@ -253,9 +288,19 @@ export class SystemScpRunner implements ScpRunner {
         if (!output.destroyed && !output.writableEnded) output.end()
       }
 
+      const termination = new BoundedChildTermination(child, () => finish(true))
+
+      const onAbort = (): void => {
+        if (settled || aborted) return
+        aborted = true
+        abortReason =
+          options.signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError')
+        termination.request()
+      }
+
       const timer = setTimeout(() => {
         timedOut = true
-        child.kill('SIGTERM')
+        termination.request()
       }, timeoutMs)
 
       child.stdout?.on('data', (chunk: Buffer) => {
@@ -271,7 +316,7 @@ export class SystemScpRunner implements ScpRunner {
         }
         if (chunk.length > remaining) {
           exceeded = true
-          child.kill('SIGTERM')
+          termination.request()
         }
       })
 
@@ -285,7 +330,7 @@ export class SystemScpRunner implements ScpRunner {
       output.on('error', (error) => {
         outputError = error.message
         outputClosed = true
-        child.kill('SIGTERM')
+        termination.request()
         finish()
       })
       output.on('close', () => {
@@ -293,27 +338,24 @@ export class SystemScpRunner implements ScpRunner {
         finish()
       })
 
-      child.on('close', (code) => {
-        clearTimeout(timer)
+      child.once('exit', () => termination.observeExit())
+      child.once('close', (code) => {
         exitCode = code
         processClosed = true
         closeOutput()
         finish()
       })
 
-      child.on('error', (error) => {
-        clearTimeout(timer)
-        if (error.name === 'AbortError') {
-          settled = true
-          output.destroy()
-          reject(error)
-          return
-        }
+      child.once('error', (error) => {
+        if (timedOut || exceeded || outputError !== undefined || aborted) return
         outputError = error.message
         processClosed = true
         closeOutput()
         finish()
       })
+
+      options.signal?.addEventListener('abort', onAbort, { once: true })
+      if (options.signal?.aborted) onAbort()
     })
   }
 }

@@ -2,22 +2,67 @@ import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { access, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
 import { createUploadVersionReference, type UploadedAttachment } from '../../shared/uploads'
 import { estimateHistoryTokens } from '../../shared/history-preamble'
-import { MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
+import { extractPdfText, MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import {
   createManagedFileReferenceResolver,
   FileReferenceResolver
 } from './file-reference-resolver'
-import { AcpPromptContentOwner } from './prompt-content-owner'
+import { AcpPromptContentOwner, resolvePdfPreparationScope } from './prompt-content-owner'
 import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
 
+const { loggerInfo } = vi.hoisted(() => ({ loggerInfo: vi.fn() }))
+
+vi.mock('../logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger')>()
+  return {
+    ...actual,
+    createLogger: () => ({
+      debug: vi.fn(),
+      info: loggerInfo,
+      warn: vi.fn(),
+      error: vi.fn()
+    })
+  }
+})
+
+vi.mock('../uploads/attachment-media', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../uploads/attachment-media')>()
+  return { ...actual, extractPdfText: vi.fn(actual.extractPdfText) }
+})
+
 const roots: string[] = []
+
+describe('PDF preparation routing', () => {
+  it.each([
+    ['总结一下整篇论文的核心贡献。', 'full-document'],
+    ['解读文献', 'full-document'],
+    ['梳理这篇论文的核心贡献和实验。', 'full-document'],
+    ['分析这项研究的方法、结果和局限。', 'full-document'],
+    ['提炼整篇文章的研究问题、方法与结论。', 'full-document'],
+    ['Give me an overview of this paper.', 'full-document'],
+    ["Walk me through the paper's methods, results, and limitations.", 'full-document'],
+    ["Analyze this paper's contributions and experiments.", 'full-document'],
+    ['解释这里为什么使用 BM25。', 'current-page'],
+    ['What am I looking at?', 'current-page'],
+    ['这个方法有哪些局限？', 'auto'],
+    ['How does the evaluator work?', 'auto'],
+    ['Compare the evaluator with a reranker.', 'auto']
+  ] as const)('routes %s to %s', (text, expected) => {
+    expect(resolvePdfPreparationScope(text, { pageNumber: 4, pageCount: 12 })).toBe(expected)
+  })
+
+  it('does not select current-page routing without a captured reading position', () => {
+    expect(resolvePdfPreparationScope('解释这里。', undefined)).toBe('auto')
+  })
+})
 
 const createRoot = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'acp-prompt-content-owner-'))
@@ -61,6 +106,164 @@ afterEach(async () => {
 })
 
 describe('AcpPromptContentOwner', () => {
+  it('injects the send-time PDF page snapshot instead of a document-prefix preview', async () => {
+    const root = await createRoot()
+    const sourcePath = join(root, 'paper.pdf')
+    await writeFile(sourcePath, '%PDF-1.4 fake')
+    vi.mocked(extractPdfText).mockResolvedValueOnce({
+      text: '--- Page 2 ---\nVisible page\n--- Page 3 ---\nQuoted marker remains on page 2',
+      pageCount: 3,
+      truncated: false
+    })
+    const resolver = createManagedFileReferenceResolver({})
+    vi.spyOn(resolver, 'resolve').mockResolvedValue({
+      absolutePath: sourcePath,
+      uri: pathToFileURL(sourcePath).href,
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      size: 14,
+      allowSkillImportReference: false
+    })
+    const owner = new AcpPromptContentOwner({ fileReferenceResolver: resolver })
+
+    const prepared = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      text: '我在看第几页？',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [],
+      references: [
+        {
+          id: 'artifact-1',
+          name: 'paper.pdf',
+          source: 'artifact',
+          path: 'artifact-version:project-1/source-session/artifact-1/version-1',
+          versionId: 'version-1',
+          mimeType: 'application/pdf',
+          pdfReadingPosition: { pageNumber: 2, pageCount: 3 }
+        }
+      ],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+
+    const pdf = contentBlocks(prepared.content).find((block) => block.type === 'resource')
+    expect(extractPdfText).toHaveBeenCalledWith(sourcePath, 2)
+    expect(pdf).toMatchObject({
+      type: 'resource',
+      resource: {
+        text: expect.stringContaining('"pageNumber":2,"pageCount":3,"capturedAtSend":true')
+      }
+    })
+    if (pdf?.type === 'resource' && 'text' in pdf.resource) {
+      expect(pdf.resource.text).toContain('--- Page 2 ---\nVisible page')
+      expect(pdf.resource.text).toContain('--- Page 3 ---\nQuoted marker remains on page 2')
+    }
+  })
+
+  it('uses document context for a document-wide question despite a visible PDF page', async () => {
+    const root = await createRoot()
+    const sourcePath = join(root, 'paper.pdf')
+    await writeFile(sourcePath, '%PDF-1.4 fake')
+    const extractedDocument = {
+      text: '--- Page 1 ---\nFirst page\n\n--- Page 2 ---\nSecond page\n\n--- Page 3 ---\nLast page',
+      pageCount: 3,
+      truncated: false
+    }
+    vi.mocked(extractPdfText).mockResolvedValue(extractedDocument)
+    const resolver = createManagedFileReferenceResolver({})
+    vi.spyOn(resolver, 'resolve').mockResolvedValue({
+      absolutePath: sourcePath,
+      uri: pathToFileURL(sourcePath).href,
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      size: 14,
+      allowSkillImportReference: false
+    })
+    const owner = new AcpPromptContentOwner({ fileReferenceResolver: resolver })
+    loggerInfo.mockClear()
+    const extractionCallStart = vi.mocked(extractPdfText).mock.calls.length
+    const prepare = (text: string): ReturnType<AcpPromptContentOwner['prepare']> =>
+      owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text,
+        historyImages: [],
+        historyUploads: [],
+        currentUploads: [],
+        references: [
+          {
+            id: 'artifact-1',
+            name: 'paper.pdf',
+            source: 'artifact',
+            path: 'artifact-version:project-1/source-session/artifact-1/version-1',
+            versionId: 'version-1',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1',
+            pdfContextDocumentCount: 2,
+            pdfContextActive: true,
+            pdfReadingPosition: { pageNumber: 2, pageCount: 3 }
+          }
+        ],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+
+    try {
+      const prepared = await prepare('总结一下整篇论文的核心贡献。')
+      await prepare('这个方法有哪些局限？')
+      const overall = await prepare("Analyze this paper's overall results and contributions.")
+
+      expect(vi.mocked(extractPdfText).mock.calls.slice(extractionCallStart)).toEqual([])
+      const pdf = contentBlocks(prepared.content).find(
+        (block) => block.type === 'text' && block.text.includes('route":"literature-mcp')
+      )
+      expect(pdf).toMatchObject({
+        type: 'text',
+        text: expect.stringContaining('route":"literature-mcp')
+      })
+      expect(pdf).toMatchObject({
+        type: 'text',
+        text: expect.stringContaining('`read_document`')
+      })
+      expect(
+        contentBlocks(overall.content).find(
+          (block) => block.type === 'text' && block.text.includes('route":"literature-mcp')
+        )
+      ).toMatchObject({
+        type: 'text',
+        text: expect.stringContaining('"target":"active-document"')
+      })
+      expect(loggerInfo.mock.calls.map(([, fields]) => fields)).toEqual([
+        expect.objectContaining({
+          retrievalMode: 'literature-tool',
+          scope: 'full-document',
+          routingReason: 'intent-full-document',
+          fullDocumentInjected: false,
+          bm25Status: 'not-requested'
+        }),
+        expect.objectContaining({
+          retrievalMode: 'literature-tool',
+          scope: 'auto',
+          routingReason: 'intent-auto',
+          fullDocumentInjected: false,
+          bm25Status: 'pending-read-document-query'
+        }),
+        expect.objectContaining({
+          retrievalMode: 'literature-tool',
+          scope: 'full-document',
+          routingReason: 'intent-full-document',
+          fullDocumentInjected: false,
+          bm25Status: 'not-requested'
+        })
+      ])
+      expect(JSON.stringify(loggerInfo.mock.calls)).not.toContain('paper.pdf')
+    } finally {
+      loggerInfo.mockClear()
+    }
+  })
+
   it('keeps resource links on a private verified snapshot until prepared content closes', async () => {
     const root = await createRoot()
     const replacedPath = join(root, 'replaced.txt')
@@ -968,6 +1171,120 @@ describe('AcpPromptContentOwner', () => {
       })
     ).rejects.toBe(copyError)
     expect(headLease.close).toHaveBeenCalledOnce()
+  })
+
+  it('keeps current images out of the replay image count', async () => {
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: createManagedFileReferenceResolver({})
+    })
+    const historyData = Buffer.from('history-image').toString('base64')
+    const currentData = Buffer.from('current-image').toString('base64')
+
+    const result = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      text: 'compare these images',
+      historyImages: [
+        {
+          mimeType: 'image/png',
+          data: historyData,
+          byteLength: Buffer.byteLength('history-image')
+        }
+      ],
+      currentImages: [
+        {
+          mimeType: 'image/png',
+          data: currentData,
+          byteLength: Buffer.byteLength('current-image')
+        }
+      ],
+      historyUploads: [],
+      currentUploads: [],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+
+    expect(result.historyImageCount).toBe(1)
+    expect(contentBlocks(result.content)).toMatchObject([
+      { type: 'text', text: 'compare these images' },
+      { type: 'image', data: historyData },
+      { type: 'image', data: currentData }
+    ])
+  })
+
+  it('rejects invalid current images at the main prompt boundary', async () => {
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: createManagedFileReferenceResolver({})
+    })
+
+    await expect(
+      owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text: 'inspect this region',
+        historyImages: [],
+        currentImages: [{ mimeType: 'image/png', data: 'not base64', byteLength: 10 }],
+        historyUploads: [],
+        currentUploads: [],
+        references: [],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+    ).rejects.toThrow(/invalid current image/i)
+  })
+
+  it('rejects current images above the shared per-message count', async () => {
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: createManagedFileReferenceResolver({})
+    })
+    const data = Buffer.from('image').toString('base64')
+
+    await expect(
+      owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text: 'inspect these regions',
+        historyImages: [],
+        currentImages: Array.from({ length: 5 }, () => ({
+          mimeType: 'image/png' as const,
+          data,
+          byteLength: 5
+        })),
+        historyUploads: [],
+        currentUploads: [],
+        references: [],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+    ).rejects.toThrow(/at most 4 current images/i)
+  })
+
+  it('rejects individually valid current images above the shared aggregate byte budget', async () => {
+    const owner = new AcpPromptContentOwner({
+      fileReferenceResolver: createManagedFileReferenceResolver({})
+    })
+    const maximumImageData = Buffer.alloc(MAX_ACP_MESSAGE_IMAGE_BYTES, 1).toString('base64')
+    const oneByteImageData = Buffer.from([1]).toString('base64')
+
+    await expect(
+      owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text: 'inspect these regions',
+        historyImages: [],
+        currentImages: [maximumImageData, maximumImageData, oneByteImageData].map((data) => ({
+          mimeType: 'image/png' as const,
+          data,
+          byteLength: 0
+        })),
+        historyUploads: [],
+        currentUploads: [],
+        references: [],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+    ).rejects.toThrow(/per-message budget/i)
   })
 
   it('shares one text budget across current files and keeps both ends of prose previews', async () => {

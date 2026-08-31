@@ -686,7 +686,7 @@ const createDurableDelegatedWork = (
     }
     const { requests, resolvedAgents, contracts } = await admissionPolicy.admit(
       requestOrRequests,
-      caller.parentSpecialistProfileId
+      caller.parentSpecialistId
     )
     const executionModelAdmission = await options.resolveExecutionModel(caller)
     const executionModel = executionModelAdmission.snapshot

@@ -2,7 +2,7 @@
 // sendPrompt per session, batching same-session done jobs, queuing when a turn is in flight,
 // and marking notificationConsumedAt only on success. Pure renderer logic per design §11.
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { JobSummary } from '../../../../shared/compute'
 import {
@@ -39,14 +39,25 @@ const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
 
 const createDeps = (overrides: Partial<JobAnalysisTriggerDeps> = {}): JobAnalysisTriggerDeps => ({
   isSessionInFlight: vi.fn().mockReturnValue(false),
-  sendPrompt: vi.fn().mockResolvedValue({ sessionId: 'sess-1', messageId: 'msg-1' }),
-  markConsumed: vi.fn().mockResolvedValue(undefined),
+  sendPrompt: vi.fn(async (sessionId, _text, messageId) => ({ sessionId, messageId })),
+  createMessageId: vi.fn().mockReturnValue('msg-1'),
+  transitionAnalysis: vi.fn().mockResolvedValue(undefined),
+  getJobsForSession: vi.fn().mockResolvedValue([]),
+  getTurnState: vi.fn().mockReturnValue('missing'),
   onTurnEnd: vi.fn(),
   log: vi.fn(),
   ...overrides
 })
 
-const flushMicrotasks = (): Promise<void> => Promise.resolve()
+const flushMicrotasks = async (): Promise<void> => {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 // ── buildAnalysisPrompt ───────────────────────────────────────────────────────
 
@@ -97,7 +108,7 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     expect(text).toContain('job-1')
   })
 
-  it('calls markConsumed after sendPrompt resolves and turn ends', async () => {
+  it('records success after sendPrompt resolves and turn ends', async () => {
     const deps = createDeps()
     const trigger = createJobAnalysisTrigger(deps)
 
@@ -109,18 +120,118 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     expect(deps.onTurnEnd).toHaveBeenCalledTimes(1)
     const [sessionId, callback] = (deps.onTurnEnd as ReturnType<typeof vi.fn>).mock.calls[0] as [
       string,
-      () => void
+      (outcome: 'succeeded' | 'failed' | 'cancelled') => void
     ]
     expect(sessionId).toBe('sess-1')
 
     // Simulate turn completion by invoking the callback
-    await callback()
+    callback('succeeded')
+    await flushMicrotasks()
 
-    // Now markConsumed should be called
-    expect(deps.markConsumed).toHaveBeenCalledWith('sess-1', ['job-1'])
+    expect(deps.transitionAnalysis).toHaveBeenLastCalledWith({
+      sessionId: 'sess-1',
+      jobIds: ['job-1'],
+      messageId: 'msg-1',
+      state: 'succeeded'
+    })
   })
 
-  it('does not call markConsumed when sendPrompt returns undefined (failed)', async () => {
+  it('retries a failed terminal transition with the same Message ID', async () => {
+    vi.useFakeTimers()
+    let terminalAttempts = 0
+    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
+    const transitionAnalysis = vi.fn<JobAnalysisTriggerDeps['transitionAnalysis']>((request) => {
+      if (request.state === 'succeeded' && terminalAttempts++ === 0) {
+        return Promise.reject(new Error('database temporarily unavailable'))
+      }
+      return Promise.resolve()
+    })
+    const deps = createDeps({
+      transitionAnalysis,
+      getJobsForSession: vi
+        .fn()
+        .mockResolvedValue([
+          makeJob({ analysis_state: 'dispatched', analysis_message_id: 'msg-1' })
+        ]),
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallback = callback
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    turnEndCallback?.('succeeded')
+    await flushMicrotasks()
+
+    expect(
+      transitionAnalysis.mock.calls.filter(([request]) => request.state === 'succeeded')
+    ).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await flushMicrotasks()
+
+    const terminalCalls = transitionAnalysis.mock.calls.filter(
+      ([request]) => request.state === 'succeeded'
+    )
+    expect(terminalCalls).toEqual([
+      [
+        {
+          sessionId: 'sess-1',
+          jobIds: ['job-1'],
+          messageId: 'msg-1',
+          state: 'succeeded'
+        }
+      ],
+      [
+        {
+          sessionId: 'sess-1',
+          jobIds: ['job-1'],
+          messageId: 'msg-1',
+          state: 'succeeded'
+        }
+      ]
+    ])
+  })
+
+  it('stops retrying a failed terminal transition after the job is deleted', async () => {
+    vi.useFakeTimers()
+    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
+    const transitionAnalysis = vi.fn<JobAnalysisTriggerDeps['transitionAnalysis']>((request) =>
+      request.state === 'succeeded'
+        ? Promise.reject(new Error('analysis transition conflict'))
+        : Promise.resolve()
+    )
+    const deps = createDeps({
+      transitionAnalysis,
+      getJobsForSession: vi.fn().mockResolvedValue([]),
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallback = callback
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    await flushMicrotasks()
+    turnEndCallback?.('succeeded')
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    expect(deps.getJobsForSession).toHaveBeenCalledWith('sess-1')
+    expect(
+      transitionAnalysis.mock.calls.filter(([request]) => request.state === 'succeeded')
+    ).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    await flushMicrotasks()
+
+    expect(
+      transitionAnalysis.mock.calls.filter(([request]) => request.state === 'succeeded')
+    ).toHaveLength(1)
+  })
+
+  it('records failure when sendPrompt returns undefined', async () => {
     const deps = createDeps({
       sendPrompt: vi.fn().mockResolvedValue(undefined)
     })
@@ -130,10 +241,12 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     await flushMicrotasks()
     await flushMicrotasks()
 
-    expect(deps.markConsumed).not.toHaveBeenCalled()
+    expect(deps.transitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ messageId: 'msg-1', state: 'failed' })
+    )
   })
 
-  it('does not call markConsumed when sendPrompt rejects', async () => {
+  it('records failure when sendPrompt rejects', async () => {
     const deps = createDeps({
       sendPrompt: vi.fn().mockRejectedValue(new Error('already running'))
     })
@@ -143,7 +256,9 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     await flushMicrotasks()
     await flushMicrotasks()
 
-    expect(deps.markConsumed).not.toHaveBeenCalled()
+    expect(deps.transitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ messageId: 'msg-1', state: 'failed' })
+    )
   })
 })
 
@@ -169,8 +284,112 @@ describe('createJobAnalysisTrigger — idempotency', () => {
     await flushMicrotasks()
     await flushMicrotasks()
 
-    // sendPrompt called once, markConsumed called once
+    // sendPrompt called once for the durable dispatch.
     expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a failed durable claim with the same Message ID', async () => {
+    vi.useFakeTimers()
+    const transitionAnalysis = vi
+      .fn<JobAnalysisTriggerDeps['transitionAnalysis']>()
+      .mockRejectedValueOnce(new Error('database temporarily unavailable'))
+      .mockResolvedValue(undefined)
+    const deps = createDeps({
+      transitionAnalysis,
+      getJobsForSession: vi.fn().mockResolvedValue([makeJob()])
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await flushMicrotasks()
+
+    expect(transitionAnalysis).toHaveBeenNthCalledWith(1, {
+      sessionId: 'sess-1',
+      jobIds: ['job-1'],
+      messageId: 'msg-1',
+      state: 'dispatched'
+    })
+    expect(transitionAnalysis).toHaveBeenNthCalledWith(2, {
+      sessionId: 'sess-1',
+      jobIds: ['job-1'],
+      messageId: 'msg-1',
+      state: 'dispatched'
+    })
+    expect(deps.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('stops retrying a failed durable claim after the job is deleted', async () => {
+    vi.useFakeTimers()
+    const transitionAnalysis = vi
+      .fn<JobAnalysisTriggerDeps['transitionAnalysis']>()
+      .mockRejectedValue(new Error('analysis transition conflict'))
+    const deps = createDeps({
+      transitionAnalysis,
+      getJobsForSession: vi.fn().mockResolvedValue([])
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    expect(deps.getJobsForSession).toHaveBeenCalledWith('sess-1')
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    await flushMicrotasks()
+
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('adopts a competing renderer claim after its broadcast arrives before the local conflict', async () => {
+    vi.useFakeTimers()
+    let rejectClaim: ((error: Error) => void) | undefined
+    const transitionAnalysis = vi.fn<JobAnalysisTriggerDeps['transitionAnalysis']>(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectClaim = reject
+        })
+    )
+    const winner = makeJob({
+      analysis_state: 'dispatched',
+      analysis_message_id: 'winner-message'
+    })
+    const deps = createDeps({
+      createMessageId: vi.fn().mockReturnValue('loser-message'),
+      transitionAnalysis,
+      getJobsForSession: vi.fn().mockResolvedValue([winner])
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+
+    trigger.onJobDone(winner)
+    await flushMicrotasks()
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+
+    rejectClaim?.(new Error('analysis transition conflict'))
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    expect(deps.getJobsForSession).toHaveBeenCalledWith('sess-1')
+    expect(deps.sendPrompt).toHaveBeenCalledWith(
+      'sess-1',
+      expect.stringContaining('job-1'),
+      'winner-message'
+    )
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
   })
 })
 
@@ -209,8 +428,164 @@ describe('createJobAnalysisTrigger — batching', () => {
 })
 
 describe('createJobAnalysisTrigger — queuing', () => {
+  it('serializes a later batch that reuses the pending key after claim starts', async () => {
+    let resolveFirstClaim: (() => void) | undefined
+    const turnEndCallbacks: Array<(outcome: 'succeeded' | 'failed' | 'cancelled') => void> = []
+    const transitionAnalysis = vi.fn<JobAnalysisTriggerDeps['transitionAnalysis']>((request) => {
+      if (request.state === 'dispatched' && request.jobIds.includes('job-1')) {
+        return new Promise<void>((resolve) => {
+          resolveFirstClaim = resolve
+        })
+      }
+      return Promise.resolve()
+    })
+    const deps = createDeps({
+      createMessageId: vi
+        .fn<JobAnalysisTriggerDeps['createMessageId']>()
+        .mockReturnValueOnce('msg-1')
+        .mockReturnValueOnce('msg-2'),
+      transitionAnalysis,
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallbacks.push(callback)
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob({ job_id: 'job-1' }))
+    await flushMicrotasks()
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+
+    trigger.onJobDone(makeJob({ job_id: 'job-2' }))
+    await flushMicrotasks()
+
+    expect(transitionAnalysis).toHaveBeenCalledOnce()
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+
+    resolveFirstClaim?.()
+    await flushMicrotasks()
+    expect(deps.sendPrompt).toHaveBeenCalledWith(
+      'sess-1',
+      expect.stringContaining('job-1'),
+      'msg-1'
+    )
+
+    turnEndCallbacks[0]?.('succeeded')
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).toHaveBeenLastCalledWith(
+      'sess-1',
+      expect.stringContaining('job-2'),
+      'msg-2'
+    )
+  })
+
+  it('serializes recovered and pending analysis batches for the same session', async () => {
+    const turnEndCallbacks: Array<(outcome: 'succeeded' | 'failed' | 'cancelled') => void> = []
+    const deps = createDeps({
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallbacks.push(callback)
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(
+      makeJob({
+        job_id: 'job-recovered',
+        analysis_state: 'dispatched',
+        analysis_message_id: 'message-recovered'
+      })
+    )
+    trigger.onJobDone(makeJob({ job_id: 'job-pending' }))
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
+    expect(deps.sendPrompt).toHaveBeenCalledWith(
+      'sess-1',
+      expect.stringContaining('job-recovered'),
+      'message-recovered'
+    )
+
+    turnEndCallbacks[0]?.('succeeded')
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).toHaveBeenCalledTimes(2)
+    expect(deps.sendPrompt).toHaveBeenLastCalledWith(
+      'sess-1',
+      expect.stringContaining('job-pending'),
+      'msg-1'
+    )
+  })
+
+  it('waits when a session starts a turn while a pending batch is being claimed', async () => {
+    let sessionInFlight = false
+    let resolveClaim: (() => void) | undefined
+    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
+    const deps = createDeps({
+      isSessionInFlight: vi.fn(() => sessionInFlight),
+      transitionAnalysis: vi.fn((request) =>
+        request.state === 'dispatched'
+          ? new Promise<void>((resolve) => {
+              resolveClaim = resolve
+            })
+          : Promise.resolve()
+      ),
+      onTurnEnd: vi.fn((_sessionId, callback) => {
+        turnEndCallback = callback
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    expect(deps.transitionAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'dispatched' })
+    )
+
+    sessionInFlight = true
+    resolveClaim?.()
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    expect(deps.onTurnEnd).toHaveBeenCalledWith('sess-1', expect.any(Function))
+
+    sessionInFlight = false
+    turnEndCallback?.('succeeded')
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('stops after disposal while a durable claim is pending', async () => {
+    let resolveClaim: (() => void) | undefined
+    const deps = createDeps({
+      transitionAnalysis: vi.fn((request) =>
+        request.state === 'dispatched'
+          ? new Promise<void>((resolve) => {
+              resolveClaim = resolve
+            })
+          : Promise.resolve()
+      )
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob())
+    await flushMicrotasks()
+    expect(deps.transitionAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'dispatched' })
+    )
+
+    trigger.dispose()
+    resolveClaim?.()
+    await flushMicrotasks()
+
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    expect(deps.onTurnEnd).not.toHaveBeenCalled()
+    expect(deps.transitionAnalysis).toHaveBeenCalledOnce()
+  })
+
   it('queues when session is in flight and sends after notifyTurnEnd', async () => {
-    let turnEndCallback: (() => void) | undefined
+    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
     const deps = createDeps({
       isSessionInFlight: vi.fn().mockReturnValue(true),
       onTurnEnd: vi.fn((_sessionId, cb) => {
@@ -228,14 +603,14 @@ describe('createJobAnalysisTrigger — queuing', () => {
 
     // Turn ends
     ;(deps.isSessionInFlight as ReturnType<typeof vi.fn>).mockReturnValue(false)
-    turnEndCallback?.()
+    turnEndCallback?.('succeeded')
     await flushMicrotasks()
 
     expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
   })
 
   it('does not re-queue when a second done broadcast arrives for a queued job', async () => {
-    let turnEndCallback: (() => void) | undefined
+    let turnEndCallback: ((outcome: 'succeeded' | 'failed' | 'cancelled') => void) | undefined
     const deps = createDeps({
       isSessionInFlight: vi.fn().mockReturnValue(true),
       onTurnEnd: vi.fn((_sessionId, cb) => {
@@ -249,11 +624,11 @@ describe('createJobAnalysisTrigger — queuing', () => {
     await flushMicrotasks()
 
     ;(deps.isSessionInFlight as ReturnType<typeof vi.fn>).mockReturnValue(false)
-    turnEndCallback?.()
+    turnEndCallback?.('succeeded')
     await flushMicrotasks()
 
     expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
-    expect(deps.onTurnEnd).toHaveBeenCalledTimes(1)
+    expect(deps.onTurnEnd).toHaveBeenCalledTimes(2)
   })
 
   it('logs queued and in-flight job ids for observability', async () => {

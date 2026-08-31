@@ -3,6 +3,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { platform } from 'node:os'
 
 import type { ComputePasswordCapability } from '../../shared/compute'
+import { isSecureStorageAvailable, type SecureStorageCipher } from '../secure-storage'
 import { ComputeConnectionError } from './connection-broker'
 
 const MAX_PASSWORD_BYTES = 16 * 1024
@@ -13,26 +14,8 @@ type StoredComputeCredential = Readonly<{ ciphertext: Buffer; revision?: number 
 interface ComputeCredentialReader {
   getCredential(computeHostId: string): Promise<StoredComputeCredential | null>
 }
-export interface SecureStorageCipher {
-  isEncryptionAvailable(): boolean
-  getSelectedStorageBackend?(): string
-  encryptString(value: string): Buffer
-  decryptString(value: Buffer): string
-}
 export type ComputeCredentialCipher = SecureStorageCipher
 export type ProtectedJsonContainer = 'object' | 'array'
-
-export const isSecureStorageAvailable = (
-  cipher: SecureStorageCipher = safeStorage,
-  currentPlatform: NodeJS.Platform = platform()
-): boolean => {
-  try {
-    if (!cipher.isEncryptionAvailable()) return false
-    return !(currentPlatform === 'linux' && cipher.getSelectedStorageBackend?.() === 'basic_text')
-  } catch {
-    return false
-  }
-}
 
 export class OptionalSecureStorageStringProtection {
   private failed = false
@@ -268,5 +251,10 @@ class CredentialVault {
   }
 }
 
-export { CredentialVault, MAX_PASSWORD_BYTES, validateComputePassword }
-export type { ComputeCredentialReader, CredentialPasswordLease, StoredComputeCredential }
+export { CredentialVault, MAX_PASSWORD_BYTES, isSecureStorageAvailable, validateComputePassword }
+export type {
+  ComputeCredentialReader,
+  CredentialPasswordLease,
+  SecureStorageCipher,
+  StoredComputeCredential
+}

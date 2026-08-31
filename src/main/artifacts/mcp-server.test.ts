@@ -3,6 +3,15 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const { log } = vi.hoisted(() => ({
+  log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+}))
+
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: () => log
+}))
+
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
 import { ArtifactRepository } from './repository'
 import {
@@ -51,8 +60,6 @@ describe('artifact MCP server', () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
     const environment = await createEnvironment(root)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-
     const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
       filename: 'plot.svg',
       mimeType: 'image/svg+xml',
@@ -72,8 +79,8 @@ describe('artifact MCP server', () => {
       join(root, 'artifacts', 'default-project', 'session-1', '.pending', 'run-1', 'plot.svg')
     )
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
-    expect(warn).toHaveBeenCalledWith(
-      '[artifacts:mcp] writing a legacy pending file without durable Provenance',
+    expect(log.warn).toHaveBeenCalledWith(
+      'writing a legacy pending file without durable Provenance',
       {
         artifactRunId: 'run-1',
         missingContext: [

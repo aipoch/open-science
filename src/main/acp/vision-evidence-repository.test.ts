@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -103,6 +104,62 @@ describe('VisionEvidenceRepository', () => {
     await client.uploadVersion.delete({ where: { id: 'upload-version-1' } })
 
     await expect(client.visionEvidence.count()).resolves.toBe(0)
+  })
+
+  it('does not persist uploaded evidence under a different Project or Session owner', async () => {
+    await client.project.create({ data: { id: 'project-2', name: 'Other project' } })
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-2', sessionId: 'session-2' }
+    })
+
+    await repository.save({
+      identityKey: IDENTITY,
+      projectId: 'project-2',
+      sessionId: 'session-2',
+      source: { kind: 'upload-version', uploadVersionId: 'upload-version-1' },
+      imageChecksum: HASH_A,
+      mimeType: 'image/png',
+      extractorFingerprint: HASH_A,
+      evidenceSchemaVersion: 2,
+      evidenceJson: '{"summary":"chart"}'
+    })
+
+    await expect(client.visionEvidence.count()).resolves.toBe(0)
+  })
+
+  it('does not return historical uploaded evidence with a mismatched owner', async () => {
+    await client.project.create({ data: { id: 'project-2', name: 'Other project' } })
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-2', sessionId: 'session-2' }
+    })
+    await client.visionEvidence.create({
+      data: {
+        id: IDENTITY,
+        projectId: 'project-2',
+        sessionId: 'session-2',
+        sourceKind: 'upload-version',
+        uploadVersionId: 'upload-version-1',
+        imageChecksum: HASH_A,
+        mimeType: 'image/png',
+        extractorFingerprint: HASH_A,
+        evidenceSchemaVersion: 2,
+        evidenceJson: '{"summary":"chart"}',
+        evidenceChecksum: HASH_B
+      }
+    })
+    await client.visionEvidence.update({
+      where: { id: IDENTITY },
+      data: { evidenceChecksum: createHash('sha256').update('{"summary":"chart"}').digest('hex') }
+    })
+
+    await expect(
+      repository.find({
+        identityKey: IDENTITY,
+        imageChecksum: HASH_A,
+        extractorFingerprint: HASH_A,
+        evidenceSchemaVersion: 2
+      })
+    ).resolves.toBeUndefined()
   })
 
   it('cleans message-image evidence by Session id', async () => {

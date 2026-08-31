@@ -123,7 +123,9 @@ export class RemoteAccessService {
       isAllowedRemoteHost: (hostname) => context.service?.isAllowedRemoteHost(hostname) === true,
       isEnabled: () => context.service?.runtimeEnabled === true,
       authorizationGeneration: () => context.service?.authorizationGeneration ?? 0,
-      onChanged: () => context.service?.notifyChanged()
+      onChanged: () => context.service?.notifyChanged(),
+      onAuthorizationExpired: (principalId) =>
+        context.service?.webController?.closeExternalConnections(principalId)
     }
     let configurationError: Error | undefined
     let loadFailure: unknown
@@ -204,6 +206,18 @@ export class RemoteAccessService {
 
   detect(): Promise<RemoteAccessSnapshot> {
     return this.serialize(() => this.detectSerialized())
+  }
+
+  probe(): Promise<RemoteAccessSnapshot> {
+    return this.serialize(async () => {
+      if (this.shutdownStarted || this.configurationError) return this.snapshot(true)
+      try {
+        this.remoteIt = await this.deps.detectRemoteIt(this.preferredServiceId())
+      } catch (error) {
+        this.remoteIt = { ...this.remoteIt, error: toErrorMessage(error) }
+      }
+      return this.snapshot(true)
+    })
   }
 
   private async detectSerialized(): Promise<RemoteAccessSnapshot> {
@@ -407,7 +421,6 @@ export class RemoteAccessService {
     return this.serialize(async () => {
       this.assertConfigurationAvailable()
       const revocation = this.pairing.revoke(browserId)
-      this.authorizationGeneration += 1
       this.webController?.closeExternalConnections(browserId)
       await revocation
       return this.snapshot(canManage, canManagePairing)
@@ -425,8 +438,12 @@ export class RemoteAccessService {
     this.error = undefined
     this.notifyChanged()
     this.shutdownPromise = this.serialize(async () => {
-      await invalidation
-      this.webController = undefined
+      try {
+        await invalidation
+      } finally {
+        this.pairing.dispose()
+        this.webController = undefined
+      }
     })
     return this.shutdownPromise
   }

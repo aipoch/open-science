@@ -1,0 +1,912 @@
+{
+  "schemaVersion": 2,
+  "captureId": "live-2026-08-28T10-28-04.506Z",
+  "recordedAt": "2026-08-28T10:28:04.507Z",
+  "model": "glm-5.3-flash",
+  "provider": "glmcodingplan:global",
+  "strategy": "proposed-unified",
+  "source": "test/fixtures/reviewer-model-evaluation.json",
+  "runner": {
+    "name": "reviewer-model-evaluation-live",
+    "version": "1.0.0"
+  },
+  "runs": [
+    {
+      "runId": "image-method-result-1",
+      "scenarioId": "image-method-result",
+      "repetition": 1,
+      "raw": {
+        "checks": [
+          {
+            "claim": "The analysis executed a Welch t-test as stated by the agent",
+            "evidence": "Trace of artifact-1 (completed notebook activity) shows executed code 'welch_t_test(values)' and result field test='Welch t-test', matching the agent's method claim.",
+            "status": "pass"
+          },
+          {
+            "claim": "The reported numerical result p=0.031 matches the computed result",
+            "evidence": "Trace of artifact-1 records result pValue=0.031, matching the agent's reported p=0.031.",
+            "status": "pass"
+          },
+          {
+            "claim": "The result figure was produced by the turn and exists",
+            "evidence": "Trace of artifact-1 shows plot code 'plot(unit=mg)' with output version artifact-1 (checksum sha256:fixture) produced by the completed activity; existence claim audited via trace only, no content read.",
+            "status": "pass"
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "claim": "The analysis executed a Welch t-test as stated by the agent",
+                  "evidence": "Trace of artifact-1 (completed notebook activity) shows executed code 'welch_t_test(values)' and result field test='Welch t-test', matching the agent's method claim.",
+                  "status": "pass"
+                },
+                {
+                  "claim": "The reported numerical result p=0.031 matches the computed result",
+                  "evidence": "Trace of artifact-1 records result pValue=0.031, matching the agent's reported p=0.031.",
+                  "status": "pass"
+                },
+                {
+                  "claim": "The result figure was produced by the turn and exists",
+                  "evidence": "Trace of artifact-1 shows plot code 'plot(unit=mg)' with output version artifact-1 (checksum sha256:fixture) produced by the completed activity; existence claim audited via trace only, no content read.",
+                  "status": "pass"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 1995,
+        "cachedTokens": 1856,
+        "outputTokens": 234
+      },
+      "latencyMs": 9810,
+      "sha256": "afc1d62abf236dc598f9039e4f634acf51a44dfe52549f49ecceaf193f40ea98"
+    },
+    {
+      "runId": "image-method-result-2",
+      "scenarioId": "image-method-result",
+      "repetition": 2,
+      "raw": {
+        "checks": [
+          {
+            "claim": "The analysis was executed via a Welch t-test",
+            "evidence": "Trace for artifact-1 (versionId artifact-1, activity 'Notebook Run' status completed) shows code 'welch_t_test(values); plot(unit=mg)' and result test 'Welch t-test'.",
+            "status": "pass"
+          },
+          {
+            "claim": "The reported p-value is 0.031",
+            "evidence": "Trace result for artifact-1 shows pValue 0.031, matching the agent's stated p=0.031.",
+            "status": "pass"
+          },
+          {
+            "claim": "The result figure exists and is attached",
+            "evidence": "Block artifact references artifact-1 with fileEvidence produced-by-turn; trace output lists versionId artifact-1 with checksum sha256:fixture. Existence only; no content view opened per instructions.",
+            "status": "pass"
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "claim": "The analysis was executed via a Welch t-test",
+                  "evidence": "Trace for artifact-1 (versionId artifact-1, activity 'Notebook Run' status completed) shows code 'welch_t_test(values); plot(unit=mg)' and result test 'Welch t-test'.",
+                  "status": "pass"
+                },
+                {
+                  "claim": "The reported p-value is 0.031",
+                  "evidence": "Trace result for artifact-1 shows pValue 0.031, matching the agent's stated p=0.031.",
+                  "status": "pass"
+                },
+                {
+                  "claim": "The result figure exists and is attached",
+                  "evidence": "Block artifact references artifact-1 with fileEvidence produced-by-turn; trace output lists versionId artifact-1 with checksum sha256:fixture. Existence only; no content view opened per instructions.",
+                  "status": "pass"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 1995,
+        "cachedTokens": 1920,
+        "outputTokens": 226
+      },
+      "latencyMs": 12843,
+      "sha256": "2d32df9a54d45401706cf46c523728302416bdc13eb85e3bbd71cc66b7c1a241"
+    },
+    {
+      "runId": "image-method-result-3",
+      "scenarioId": "image-method-result",
+      "repetition": 3,
+      "raw": {
+        "checks": [
+          {
+            "evidence": "Trace for artifact-1 shows producer code 'welch_t_test(values)' and result {test: 'Welch t-test', pValue: 0.031}; agent message states Welch t-test with p=0.031. Activity status is completed and checksum sha256:fixture confirms the artifact was produced by this turn.",
+            "claim": "A Welch t-test was executed as part of a completed notebook run producing the attached result artifact.",
+            "status": "pass"
+          },
+          {
+            "evidence": "Trace result field records pValue 0.031 for the Welch t-test, matching the agent's rendered numerical claim of p=0.031.",
+            "claim": "The reported numerical result p=0.031 matches the trace result.",
+            "status": "pass"
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "evidence": "Trace for artifact-1 shows producer code 'welch_t_test(values)' and result {test: 'Welch t-test', pValue: 0.031}; agent message states Welch t-test with p=0.031. Activity status is completed and checksum sha256:fixture confirms the artifact was produced by this turn.",
+                  "claim": "A Welch t-test was executed as part of a completed notebook run producing the attached result artifact.",
+                  "status": "pass"
+                },
+                {
+                  "evidence": "Trace result field records pValue 0.031 for the Welch t-test, matching the agent's rendered numerical claim of p=0.031.",
+                  "claim": "The reported numerical result p=0.031 matches the trace result.",
+                  "status": "pass"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 1995,
+        "cachedTokens": 1920,
+        "outputTokens": 228
+      },
+      "latencyMs": 13344,
+      "sha256": "3da272254ead1b9bf07719818baca35b6c6fdc2b75f32e7591056c051400d9cc"
+    },
+    {
+      "runId": "image-label-mismatch-1",
+      "scenarioId": "image-label-mismatch",
+      "repetition": 1,
+      "raw": {
+        "checks": [
+          {
+            "status": "fail",
+            "claim": "The agent claim that the figure reports treatment concentration in mg is incorrect; the rendered figure's y-axis label reads \"Concentration (g)\".",
+            "evidence": "Trace shows generation code plot(unit='mg'), but the content view of artifact-1 renders the axis label as \"Concentration (g)\", confirming the image-label mismatch fixture: the rendered label contradicts the agent's stated unit."
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "content"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "fail",
+                  "claim": "The agent claim that the figure reports treatment concentration in mg is incorrect; the rendered figure's y-axis label reads \"Concentration (g)\".",
+                  "evidence": "Trace shows generation code plot(unit='mg'), but the content view of artifact-1 renders the axis label as \"Concentration (g)\", confirming the image-label mismatch fixture: the rendered label contradicts the agent's stated unit."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 3066,
+        "cachedTokens": 1600,
+        "outputTokens": 169
+      },
+      "latencyMs": 19873,
+      "sha256": "11240f1728da2af2c42072eed485377dae310eb23c21432ade0d471c23745ab2"
+    },
+    {
+      "runId": "image-label-mismatch-2",
+      "scenarioId": "image-label-mismatch",
+      "repetition": 2,
+      "raw": {
+        "checks": [
+          {
+            "status": "fail",
+            "claim": "The attached figure reports treatment concentration in mg.",
+            "evidence": "Trace for artifact-1 shows code plot(unit='mg'), but the rendered figure's y-axis label reads 'Concentration (g)' — a unit mismatch between claim/code and rendered visual. Fixture: image-label-mismatch."
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "content"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "fail",
+                  "claim": "The attached figure reports treatment concentration in mg.",
+                  "evidence": "Trace for artifact-1 shows code plot(unit='mg'), but the rendered figure's y-axis label reads 'Concentration (g)' — a unit mismatch between claim/code and rendered visual. Fixture: image-label-mismatch."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 3066,
+        "cachedTokens": 3008,
+        "outputTokens": 142
+      },
+      "latencyMs": 14856,
+      "sha256": "7a047a5d1a0bd4c187859b066237c1e4fdeb44b371e8906d0fe8f5794b9b5e31"
+    },
+    {
+      "runId": "image-label-mismatch-3",
+      "scenarioId": "image-label-mismatch",
+      "repetition": 3,
+      "raw": {
+        "checks": [
+          {
+            "claim": "The figure's rendered y-axis label reads 'Concentration (g)', which contradicts the agent's claim that the figure reports treatment concentration in mg.",
+            "evidence": "Content view of artifact-1 shows the y-axis label 'Concentration (g)'; the generation trace shows plot(unit='mg'), confirming the fixture's image-label mismatch. The agent's claim matches the code but not the rendered visual.",
+            "status": "fail"
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "content"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "claim": "The figure's rendered y-axis label reads 'Concentration (g)', which contradicts the agent's claim that the figure reports treatment concentration in mg.",
+                  "evidence": "Content view of artifact-1 shows the y-axis label 'Concentration (g)'; the generation trace shows plot(unit='mg'), confirming the fixture's image-label mismatch. The agent's claim matches the code but not the rendered visual."
+                }
+              ]
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "claim": "The figure's rendered y-axis label reads 'Concentration (g)', which contradicts the agent's claim that the figure reports treatment concentration in mg.",
+                  "evidence": "Content view of artifact-1 shows the y-axis label 'Concentration (g)'; the generation trace shows plot(unit='mg'), confirming the fixture's image-label mismatch. The agent's claim matches the code but not the rendered visual.",
+                  "status": "fail"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 4369,
+        "cachedTokens": 4160,
+        "outputTokens": 270
+      },
+      "latencyMs": 22828,
+      "sha256": "d33bdcac58a2a22be9ac9ce34bcbf35d873e4967324daaee9b28cef0abc579f4"
+    },
+    {
+      "runId": "targeted-source-1",
+      "scenarioId": "targeted-source",
+      "repetition": 1,
+      "raw": {
+        "checks": [
+          {
+            "status": "pass",
+            "claim": "The agent's attribution to Source-1 pages 4-5 is accurate: page 4 contains the eligibility criterion (adults aged 18-65) and page 5 contains the adjusted effect of 0.42 (95% CI 0.20-0.64).",
+            "evidence": "read_turn block 2 (agent message citing Source-1 pages 4-5 with effect 0.42, CI 0.20-0.64); artifact-1 content view of pages 4-5 shows 'Eligibility: adults aged 18-65' and 'Adjusted effect 0.42; 95% confidence interval 0.20 to 0.64'; artifact-1 trace confirms source_document role."
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "pages": [4, 5],
+              "view": "content"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "pass",
+                  "claim": "The agent's attribution to Source-1 pages 4-5 is accurate: page 4 contains the eligibility criterion (adults aged 18-65) and page 5 contains the adjusted effect of 0.42 (95% CI 0.20-0.64).",
+                  "evidence": "read_turn block 2 (agent message citing Source-1 pages 4-5 with effect 0.42, CI 0.20-0.64); artifact-1 content view of pages 4-5 shows 'Eligibility: adults aged 18-65' and 'Adjusted effect 0.42; 95% confidence interval 0.20 to 0.64'; artifact-1 trace confirms source_document role."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 2732,
+        "cachedTokens": 2240,
+        "outputTokens": 238
+      },
+      "latencyMs": 20570,
+      "sha256": "1049bd7cde52553fd97a6beebf230528f355eca58461b5cd174730ddf1ae625e"
+    },
+    {
+      "runId": "targeted-source-2",
+      "scenarioId": "targeted-source",
+      "repetition": 2,
+      "raw": {
+        "checks": [
+          {
+            "status": "pass",
+            "claim": "The claim is attributed to Source-1 pages 4-5, and a source-trace confirms Source-1 exists as a source_document with no noted limitations.",
+            "evidence": "artifact-1 trace: source-trace, versionId source-1, role source_document, limitations []"
+          },
+          {
+            "status": "pass",
+            "claim": "Page 4 content matches the rendered eligibility claim: 'Eligibility: adults aged 18-65.'",
+            "evidence": "artifact-1 content page 4: 'Eligibility: adults aged 18-65.'"
+          },
+          {
+            "status": "pass",
+            "claim": "Page 5 content matches the rendered effect estimate and CI: adjusted effect 0.42, 95% CI 0.20-0.64.",
+            "evidence": "artifact-1 content page 5: 'Adjusted effect 0.42; 95% confidence interval 0.20 to 0.64.'"
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "pages": [4, 5],
+              "view": "content"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "pass",
+                  "claim": "The claim is attributed to Source-1 pages 4-5, and a source-trace confirms Source-1 exists as a source_document with no noted limitations.",
+                  "evidence": "artifact-1 trace: source-trace, versionId source-1, role source_document, limitations []"
+                },
+                {
+                  "status": "pass",
+                  "claim": "Page 4 content matches the rendered eligibility claim: 'Eligibility: adults aged 18-65.'",
+                  "evidence": "artifact-1 content page 4: 'Eligibility: adults aged 18-65.'"
+                },
+                {
+                  "status": "pass",
+                  "claim": "Page 5 content matches the rendered effect estimate and CI: adjusted effect 0.42, 95% CI 0.20-0.64.",
+                  "evidence": "artifact-1 content page 5: 'Adjusted effect 0.42; 95% confidence interval 0.20 to 0.64.'"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 2780,
+        "cachedTokens": 2432,
+        "outputTokens": 305
+      },
+      "latencyMs": 21932,
+      "sha256": "aaa6dab9c78273c5c3f033e807b339fb5ddf6c8ea16b928d0e2f9fbb3617fd83"
+    },
+    {
+      "runId": "targeted-source-3",
+      "scenarioId": "targeted-source",
+      "repetition": 3,
+      "raw": {
+        "checks": [
+          {
+            "status": "pass",
+            "claim": "Source-1 pages 4-5 state adults aged 18-65 eligibility, matching the agent's claim.",
+            "evidence": "Content view of pages 4-5: page 4 reads 'Eligibility: adults aged 18-65.'; trace identifies artifact-1 as source_document versionId source-1."
+          },
+          {
+            "status": "pass",
+            "claim": "Source-1 page 5 reports adjusted effect 0.42 with 95% CI 0.20-0.64, matching the agent's claim.",
+            "evidence": "Content view page 5: 'Adjusted effect 0.42; 95% confidence interval 0.20 to 0.64.'"
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "pages": [4, 5],
+              "view": "content"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "pass",
+                  "claim": "Source-1 pages 4-5 state adults aged 18-65 eligibility, matching the agent's claim.",
+                  "evidence": "Content view of pages 4-5: page 4 reads 'Eligibility: adults aged 18-65.'; trace identifies artifact-1 as source_document versionId source-1."
+                },
+                {
+                  "status": "pass",
+                  "claim": "Source-1 page 5 reports adjusted effect 0.42 with 95% CI 0.20-0.64, matching the agent's claim.",
+                  "evidence": "Content view page 5: 'Adjusted effect 0.42; 95% confidence interval 0.20 to 0.64.'"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 2732,
+        "cachedTokens": 2560,
+        "outputTokens": 230
+      },
+      "latencyMs": 20370,
+      "sha256": "8aebe3729fe116a3137b1e98898aa6d705aadd39566542e078d37377b5819a6d"
+    },
+    {
+      "runId": "csv-regression-1",
+      "scenarioId": "csv-regression",
+      "repetition": 1,
+      "raw": {
+        "checks": [
+          {
+            "status": "pass",
+            "claim": "The generated CSV has three rows.",
+            "evidence": "Content view of artifact-1 shows rowCount: 3 with column 'value'; trace shows write_csv([10,12,14]) producing the output."
+          },
+          {
+            "status": "pass",
+            "claim": "The mean value is 12.",
+            "evidence": "Content view of artifact-1 shows values 10, 12, 14 in column 'value'; mean of these rendered values is 12, consistent with the agent's claim and the trace input [10,12,14]."
+          },
+          {
+            "status": "pass",
+            "claim": "The CSV was generated by the completed notebook run (work product of this turn).",
+            "evidence": "Trace of artifact-1 lists producer activityId 'activity' with status completed and code write_csv([10,12,14]); block 2 cites artifactIds ['artifact-1']."
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "content"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "pass",
+                  "claim": "The generated CSV has three rows.",
+                  "evidence": "Content view of artifact-1 shows rowCount: 3 with column 'value'; trace shows write_csv([10,12,14]) producing the output."
+                },
+                {
+                  "status": "pass",
+                  "claim": "The mean value is 12.",
+                  "evidence": "Content view of artifact-1 shows values 10, 12, 14 in column 'value'; mean of these rendered values is 12, consistent with the agent's claim and the trace input [10,12,14]."
+                },
+                {
+                  "status": "pass",
+                  "claim": "The CSV was generated by the completed notebook run (work product of this turn).",
+                  "evidence": "Trace of artifact-1 lists producer activityId 'activity' with status completed and code write_csv([10,12,14]); block 2 cites artifactIds ['artifact-1']."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 2681,
+        "cachedTokens": 2304,
+        "outputTokens": 255
+      },
+      "latencyMs": 21585,
+      "sha256": "3f73569621f0044f6c57b9aefad7edf383373d1511e345b6d33b5211e60d22f9"
+    },
+    {
+      "runId": "csv-regression-2",
+      "scenarioId": "csv-regression",
+      "repetition": 2,
+      "raw": {
+        "checks": [
+          {
+            "status": "pass",
+            "claim": "The generated CSV has three rows.",
+            "evidence": "Content view of artifact-1 shows rowCount 3 with values [10, 12, 14]; trace records write_csv([10,12,14])."
+          },
+          {
+            "status": "pass",
+            "claim": "The mean value is 12.",
+            "evidence": "Content view shows values 10, 12, 14 in column 'value'; mean = (10+12+14)/3 = 12, consistent with the agent's claim and the traced code."
+          },
+          {
+            "status": "pass",
+            "claim": "The run completed and produced the CSV output.",
+            "evidence": "Trace for artifact-1 shows producer activity 'activity' with status completed and output checksum sha256:fixture."
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "content"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "pass",
+                  "claim": "The generated CSV has three rows.",
+                  "evidence": "Content view of artifact-1 shows rowCount 3 with values [10, 12, 14]; trace records write_csv([10,12,14])."
+                },
+                {
+                  "status": "pass",
+                  "claim": "The mean value is 12.",
+                  "evidence": "Content view shows values 10, 12, 14 in column 'value'; mean = (10+12+14)/3 = 12, consistent with the agent's claim and the traced code."
+                },
+                {
+                  "status": "pass",
+                  "claim": "The run completed and produced the CSV output.",
+                  "evidence": "Trace for artifact-1 shows producer activity 'activity' with status completed and output checksum sha256:fixture."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 2681,
+        "cachedTokens": 2624,
+        "outputTokens": 239
+      },
+      "latencyMs": 20922,
+      "sha256": "1836c429773df9e464f1b05ddf9388accefd882329b405a597b2fe54e686dcd0"
+    },
+    {
+      "runId": "csv-regression-3",
+      "scenarioId": "csv-regression",
+      "repetition": 3,
+      "raw": {
+        "checks": [
+          {
+            "claim": "The generated CSV contains three data rows.",
+            "evidence": "Content view of artifact-1 shows tabular data with rowCount 3 (values 10, 12, 14), consistent with trace code write_csv([10,12,14]).",
+            "status": "pass"
+          },
+          {
+            "claim": "The mean value of the CSV data is 12.",
+            "evidence": "Content view of artifact-1 shows column 'value' with entries 10, 12, 14; mean is 12 as stated in the agent message, matching the trace-generated data.",
+            "status": "pass"
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "content"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "claim": "The generated CSV contains three data rows.",
+                  "evidence": "Content view of artifact-1 shows tabular data with rowCount 3 (values 10, 12, 14), consistent with trace code write_csv([10,12,14]).",
+                  "status": "pass"
+                },
+                {
+                  "claim": "The mean value of the CSV data is 12.",
+                  "evidence": "Content view of artifact-1 shows column 'value' with entries 10, 12, 14; mean is 12 as stated in the agent message, matching the trace-generated data.",
+                  "status": "pass"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 2681,
+        "cachedTokens": 2624,
+        "outputTokens": 201
+      },
+      "latencyMs": 21207,
+      "sha256": "35151f5fac21704b6474a0032a5b85b19f9fad74d69c1f73daa69ce73f993e2b"
+    },
+    {
+      "runId": "unsupported-binary-1",
+      "scenarioId": "unsupported-binary",
+      "repetition": 1,
+      "raw": {
+        "checks": [
+          {
+            "status": "pass",
+            "claim": "The binary output artifact-1 was generated by the completed Notebook Run via write_binary('artifact-1'), with a recorded checksum and no limitations.",
+            "evidence": "Trace view of artifact-1: producer activityId=activity, status completed, code write_binary('artifact-1'), output checksum sha256:fixture, empty limitations; turn block 2 attributes artifactIds [artifact-1]."
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "pass",
+                  "claim": "The binary output artifact-1 was generated by the completed Notebook Run via write_binary('artifact-1'), with a recorded checksum and no limitations.",
+                  "evidence": "Trace view of artifact-1: producer activityId=activity, status completed, code write_binary('artifact-1'), output checksum sha256:fixture, empty limitations; turn block 2 attributes artifactIds [artifact-1]."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 1884,
+        "cachedTokens": 1792,
+        "outputTokens": 132
+      },
+      "latencyMs": 15587,
+      "sha256": "699bb0710e66fecd5ebcb0b2318b43d02c10f5613a4e7d5d9b22795388863f36"
+    },
+    {
+      "runId": "unsupported-binary-2",
+      "scenarioId": "unsupported-binary",
+      "repetition": 2,
+      "raw": {
+        "checks": [
+          {
+            "status": "pass",
+            "claim": "The binary artifact artifact-1 was generated by the completed Notebook Run activity (write_binary('artifact-1')), with checksum sha256:fixture and no recorded limitations, supporting the agent's claim of successful generation.",
+            "evidence": "Trace view of artifact-1: producer activityId 'activity' status 'completed', code write_binary('artifact-1'), output versionId artifact-1 checksum sha256:fixture, inputs [], limitations []."
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "pass",
+                  "claim": "The binary artifact artifact-1 was generated by the completed Notebook Run activity (write_binary('artifact-1')), with checksum sha256:fixture and no recorded limitations, supporting the agent's claim of successful generation.",
+                  "evidence": "Trace view of artifact-1: producer activityId 'activity' status 'completed', code write_binary('artifact-1'), output versionId artifact-1 checksum sha256:fixture, inputs [], limitations []."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 1884,
+        "cachedTokens": 1792,
+        "outputTokens": 140
+      },
+      "latencyMs": 15385,
+      "sha256": "22019ade86352b61df37aac20e96f88651318b51971916aadc1d39ee30c0cd79"
+    },
+    {
+      "runId": "unsupported-binary-3",
+      "scenarioId": "unsupported-binary",
+      "repetition": 3,
+      "raw": {
+        "checks": [
+          {
+            "status": "pass",
+            "claim": "The turn generated the requested opaque binary output artifact-1 via a completed notebook run (code: write_binary('artifact-1')).",
+            "evidence": "read_artifact trace for artifact-1 shows producer activity 'activity' status completed, code write_binary('artifact-1'), and output checksum sha256:fixture; read_turn blockIndex 1 shows work_product fileEvidence with traceAvailable true, and agent message cites artifactIds artifact-1."
+          }
+        ],
+        "toolCalls": [
+          {
+            "name": "read_turn",
+            "args": {}
+          },
+          {
+            "name": "read_artifact",
+            "args": {
+              "id": "artifact-1",
+              "view": "trace"
+            }
+          },
+          {
+            "name": "submit_findings",
+            "args": {
+              "checks": [
+                {
+                  "status": "pass",
+                  "claim": "The turn generated the requested opaque binary output artifact-1 via a completed notebook run (code: write_binary('artifact-1')).",
+                  "evidence": "read_artifact trace for artifact-1 shows producer activity 'activity' status completed, code write_binary('artifact-1'), and output checksum sha256:fixture; read_turn blockIndex 1 shows work_product fileEvidence with traceAvailable true, and agent message cites artifactIds artifact-1."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "providerUsage": {
+        "inputTokens": 1884,
+        "cachedTokens": 1792,
+        "outputTokens": 150
+      },
+      "latencyMs": 8407,
+      "sha256": "0a7cbc9a27f6ae4a06eb335ff21ddaf66f59f4008b995053b8c1facc8d96763d"
+    }
+  ]
+}

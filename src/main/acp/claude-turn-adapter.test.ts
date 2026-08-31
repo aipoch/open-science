@@ -182,6 +182,95 @@ describe('Claude Code turn adapter', () => {
     })
   })
 
+  it('publishes exact calls from repeated provider messages that omit the parent tool id', async () => {
+    const probe = await claudeCodeTurnAdapter.begin({
+      providerSessionId: 'provider-session-1',
+      cwd: '/workspace'
+    })
+
+    for (let index = 1; index <= 7; index += 1) {
+      const observation = {
+        sessionId: 'provider-session-1',
+        message: {
+          type: 'assistant',
+          message: {
+            id: `provider-call-${index}`,
+            usage: {
+              input_tokens: index,
+              cache_read_input_tokens: index,
+              cache_creation_input_tokens: 0,
+              output_tokens: index
+            }
+          }
+        }
+      }
+      probe.observe?.(observation)
+      probe.observe?.(observation)
+    }
+    probe.observe?.({
+      sessionId: 'provider-session-1',
+      message: { type: 'result', num_turns: 7, origin: { kind: 'human' } }
+    })
+
+    const result = await probe.finalize({
+      response: {
+        stopReason: 'end_turn',
+        usage: {
+          inputTokens: 28,
+          cachedReadTokens: 28,
+          cachedWriteTokens: 0,
+          outputTokens: 28
+        }
+      } as PromptResponse
+    })
+
+    expect(result.modelTurnCount).toBe(7)
+    expect(result.modelCalls).toHaveLength(7)
+    expect(result.modelCalls?.map((call) => call.sourceInvocationId)).toEqual(
+      Array.from({ length: 7 }, (_, index) => `provider-call-${index + 1}`)
+    )
+  })
+
+  it('rejects conflicting usage replayed under the same provider call id', async () => {
+    const probe = await claudeCodeTurnAdapter.begin({
+      providerSessionId: 'provider-session-1',
+      cwd: '/workspace'
+    })
+    const observeAssistant = (inputTokens: number): void =>
+      probe.observe?.({
+        sessionId: 'provider-session-1',
+        message: {
+          type: 'assistant',
+          message: {
+            id: 'provider-call-1',
+            usage: {
+              input_tokens: inputTokens,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+              output_tokens: 1
+            }
+          }
+        }
+      })
+
+    observeAssistant(1)
+    observeAssistant(2)
+    probe.observe?.({
+      sessionId: 'provider-session-1',
+      message: { type: 'result', num_turns: 1, origin: { kind: 'human' } }
+    })
+
+    const result = await probe.finalize({
+      response: {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 }
+      } as PromptResponse
+    })
+
+    expect(result.modelTurnCount).toBe(1)
+    expect(result.modelCalls).toBeUndefined()
+  })
+
   it('sums user-driven results while excluding every autonomous Claude origin', async () => {
     const probe = await claudeCodeTurnAdapter.begin({
       providerSessionId: 'provider-session-1',

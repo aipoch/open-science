@@ -330,6 +330,10 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (isReasoningEffort(reasoningEffort)) settings.reasoningEffort = reasoningEffort
   const notificationsEnabled = asBoolean(value.notificationsEnabled)
   if (notificationsEnabled !== undefined) settings.notificationsEnabled = notificationsEnabled
+  const showNotificationContent = asBoolean(value.showNotificationContent)
+  if (showNotificationContent !== undefined) {
+    settings.showNotificationContent = showNotificationContent
+  }
   const conversationSkillImportEnabled = asBoolean(value.conversationSkillImportEnabled)
   if (conversationSkillImportEnabled !== undefined) {
     settings.conversationSkillImportEnabled = conversationSkillImportEnabled

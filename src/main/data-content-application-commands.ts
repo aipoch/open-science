@@ -60,13 +60,17 @@ type InvocationArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
 
 const invocationCommandFor =
   <Owner>() =>
-  <const Name extends string, Method extends keyof Owner>(name: Name, method: Method) => {
+  <const Name extends string, Method extends keyof Owner>(
+    name: Name,
+    method: Method,
+    contract?: ApplicationCommandContract<InvocationArgs<Owner, Method>, OwnerResult<Owner, Method>>
+  ) => {
     void method
     return defineApplicationCommand<
       Name,
       InvocationArgs<Owner, Method>,
       OwnerResult<Owner, Method>
-    >(name)
+    >(name, contract)
   }
 
 type PreviewApplicationCommandOwner = Readonly<{
@@ -78,6 +82,15 @@ type PreviewApplicationCommandOwner = Readonly<{
 }>
 
 type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSession'> & {
+  filterPdfContextCandidates(
+    request: SessionPersistence.FilterSessionPdfContextCandidatesRequest
+  ): Promise<SessionPersistence.FilterSessionPdfContextCandidatesResult>
+  linkPdfContext(
+    request: SessionPersistence.LinkSessionPdfContextRequest
+  ): Promise<SessionPersistence.SessionRuntimeContext>
+  unlinkPdfContext(
+    request: SessionPersistence.UnlinkSessionPdfContextRequest
+  ): Promise<SessionPersistence.SessionRuntimeContext>
   editDetails(
     request: SessionPersistence.EditSessionDetailsRequest
   ): Promise<SessionPersistence.PersistedChatSession>
@@ -237,7 +250,7 @@ const dataContentApplicationCommands = Object.freeze({
   projectDelete: defineApplicationCommand<
     'projects:delete',
     readonly [request: Projects.DeleteProjectRequest],
-    void
+    Projects.ProjectDeletionOutcome
   >('projects:delete', Projects.projectApplicationCommandContracts.delete),
   projectGet: projectCommand(
     'projects:get',
@@ -269,11 +282,26 @@ const dataContentApplicationCommands = Object.freeze({
     'exportConversationFromInvokingWindow'
   ),
   sessionList: sessionCommand('sessions:list', 'list'),
+  sessionFilterPdfContextCandidates: sessionCommand(
+    'sessions:filter-pdf-context-candidates',
+    'filterPdfContextCandidates',
+    SessionPersistence.sessionApplicationCommandContracts.filterPdfContextCandidates
+  ),
+  sessionLinkPdfContext: sessionCommand(
+    'sessions:link-pdf-context',
+    'linkPdfContext',
+    SessionPersistence.sessionApplicationCommandContracts.linkPdfContext
+  ),
   sessionLoadAll: sessionCommand('sessions:load-all', 'loadAll'),
   sessionLoadOne: sessionCommand('sessions:load-one', 'loadOne'),
   sessionLoadUsage: sessionCommand('sessions:load-usage', 'loadUsage'),
   sessionSaveManifest: sessionCommand('sessions:save-manifest', 'saveManifest'),
   sessionUpdateArchive: sessionCommand('sessions:update-archive', 'updateArchive'),
+  sessionUnlinkPdfContext: sessionCommand(
+    'sessions:unlink-pdf-context',
+    'unlinkPdfContext',
+    SessionPersistence.sessionApplicationCommandContracts.unlinkPdfContext
+  ),
   sessionSave: defineApplicationCommand<
     'sessions:save-session',
     readonly [
@@ -292,7 +320,11 @@ const dataContentApplicationCommands = Object.freeze({
   uploadBeginTransfer: uploadCommand('uploads:begin-transfer', 'beginTransfer'),
   uploadClaimLocalFile: uploadCommand('uploads:claim-local-file', 'claimLocalFile'),
   uploadDelete: uploadCommand('uploads:delete', 'deleteUpload'),
-  uploadFinalizeSession: uploadCommand('uploads:finalize-session', 'finalizeSession'),
+  uploadFinalizeSession: uploadCommand(
+    'uploads:finalize-session',
+    'finalizeSession',
+    Uploads.uploadApplicationCommandContracts.finalizeSession
+  ),
   uploadFinishTransfer: uploadCommand('uploads:finish-transfer', 'finishTransfer'),
   uploadReadPreview: uploadCommand('uploads:read-preview', 'readPreview'),
   uploadStageLocalFile: electronCommand('uploads:stage-local-file', 'stageLocalFileWithProgress'),
@@ -348,12 +380,15 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
+    dataContentApplicationCommands.sessionFilterPdfContextCandidates,
+    dataContentApplicationCommands.sessionLinkPdfContext,
     dataContentApplicationCommands.sessionList,
     dataContentApplicationCommands.sessionLoadAll,
     dataContentApplicationCommands.sessionLoadOne,
     dataContentApplicationCommands.sessionLoadUsage,
     dataContentApplicationCommands.sessionSaveManifest,
     dataContentApplicationCommands.sessionUpdateArchive,
+    dataContentApplicationCommands.sessionUnlinkPdfContext,
     dataContentApplicationCommands.sessionSave,
     dataContentApplicationCommands.sessionSetDelegationPolicy
   ] as const),
@@ -500,12 +535,7 @@ const registerDataContentApplicationCommands = (
         publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectCreated, project)
         return project
       },
-      'projects:delete': async ({ args }) => {
-        await dependencies.projects.delete(args[0].id)
-        publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectDeleted, {
-          projectId: args[0].id
-        })
-      },
+      'projects:delete': ({ args }) => dependencies.projects.delete(args[0].id),
       'projects:get': ({ args }) => dependencies.projects.get(args[0]),
       'projects:list': () => dependencies.projects.list(),
       'projects:update-archive': async ({ args }) => {
@@ -549,9 +579,27 @@ const registerDataContentApplicationCommands = (
         )
         return dependencies.electron.exportConversationFromInvokingWindow(invocation)
       },
+      'sessions:filter-pdf-context-candidates': ({ args }) =>
+        dependencies.withDataRootWrite(() =>
+          dependencies.sessions.filterPdfContextCandidates(args[0])
+        ),
       'sessions:load-all': () =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadAll()),
       'sessions:list': () => dependencies.withDataRootWrite(() => dependencies.sessions.list()),
+      'sessions:link-pdf-context': (invocation) =>
+        dependencies.withDataRootWrite(async () => {
+          try {
+            return await dependencies.sessions.linkPdfContext(invocation.args[0])
+          } catch (error) {
+            if (SessionPersistence.isSessionRevisionConflictError(error)) {
+              throw new ApplicationCommandError(
+                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                error instanceof Error ? error.message : 'Session revision conflict.'
+              )
+            }
+            throw error
+          }
+        }),
       'sessions:load-one': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadOne(args[0])),
       'sessions:load-usage': () =>
@@ -569,6 +617,20 @@ const registerDataContentApplicationCommands = (
           return session
         })
       },
+      'sessions:unlink-pdf-context': (invocation) =>
+        dependencies.withDataRootWrite(async () => {
+          try {
+            return await dependencies.sessions.unlinkPdfContext(invocation.args[0])
+          } catch (error) {
+            if (SessionPersistence.isSessionRevisionConflictError(error)) {
+              throw new ApplicationCommandError(
+                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                error instanceof Error ? error.message : 'Session revision conflict.'
+              )
+            }
+            throw error
+          }
+        }),
       'sessions:save-session': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
         return dependencies.withDataRootWrite(async () => {

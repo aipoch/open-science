@@ -1,5 +1,6 @@
 import {
   chmod,
+  link,
   lstat,
   mkdtemp,
   mkdir,
@@ -8,14 +9,50 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { copyAndVerify, deleteSources, type MigrationProgress } from './data-migration'
+const diskSpace = vi.hoisted(() => ({
+  availableBytes: undefined as number | undefined,
+  hardLinksSupported: true,
+  statErrorPath: undefined as string | undefined
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  const statfs = vi.fn(async (path: Parameters<typeof actual.statfs>[0]) => {
+    if (diskSpace.availableBytes !== undefined) {
+      return { bavail: diskSpace.availableBytes, bsize: 1 } as Awaited<
+        ReturnType<typeof actual.statfs>
+      >
+    }
+    return actual.statfs(path)
+  }) as unknown as typeof actual.statfs
+
+  const link = vi.fn(async (...args: Parameters<typeof actual.link>) => {
+    if (!diskSpace.hardLinksSupported) {
+      throw Object.assign(new Error('hard links are not supported'), { code: 'EOPNOTSUPP' })
+    }
+    return actual.link(...args)
+  }) as typeof actual.link
+
+  const stat = vi.fn(async (...args: Parameters<typeof actual.stat>) => {
+    if (String(args[0]) === diskSpace.statErrorPath) {
+      throw Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    }
+    return actual.stat(...args)
+  }) as typeof actual.stat
+
+  return { ...actual, link, stat, statfs }
+})
+
+import type { MigrationProgress } from '../../shared/storage'
+import { copyAndVerify, deleteSources, validateMigrationSourceLinks } from './data-migration'
 
 let from: string
 let to: string
@@ -26,6 +63,9 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  diskSpace.availableBytes = undefined
+  diskSpace.hardLinksSupported = true
+  diskSpace.statErrorPath = undefined
   await rm(from, { recursive: true, force: true })
   await rm(to, { recursive: true, force: true })
 })
@@ -47,8 +87,56 @@ const exists = async (path: string): Promise<boolean> => {
   }
 }
 
+describe('validateMigrationSourceLinks', () => {
+  it('rejects an absolute target text inside the source even when an intermediate link escapes', async () => {
+    const artifacts = join(from, 'artifacts')
+    const outside = join(to, 'outside')
+    await mkdir(artifacts, { recursive: true })
+    await mkdir(outside, { recursive: true })
+    await symlink(
+      outside,
+      join(artifacts, 'alias'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await symlink(
+      join(artifacts, 'alias'),
+      join(artifacts, 'absolute-link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(validateMigrationSourceLinks(from, ['artifacts'])).resolves.toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.stringMatching(/absolute symbolic link.*current data folder/i)
+      })
+    )
+  })
+
+  it('rejects a missing absolute target whose existing parent resolves inside the source', async () => {
+    const artifacts = join(from, 'artifacts')
+    const internalParent = join(from, 'internal-parent')
+    const outsideAlias = join(to, 'source-alias')
+    await mkdir(artifacts, { recursive: true })
+    await mkdir(internalParent)
+    await mkdir(to, { recursive: true })
+    await symlink(internalParent, outsideAlias, process.platform === 'win32' ? 'junction' : 'dir')
+    await symlink(
+      join(outsideAlias, 'missing-target'),
+      join(artifacts, 'absolute-link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(validateMigrationSourceLinks(from, ['artifacts'])).resolves.toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.stringMatching(/absolute symbolic link.*current data folder/i)
+      })
+    )
+  })
+})
+
 describe('copyAndVerify', () => {
-  it('copies dirs on the same volume, verifies them, and leaves sources intact', async () => {
+  it('copies dirs, verifies them, and leaves sources intact', async () => {
     await seedFixture()
     const progress: MigrationProgress[] = []
     const result = await copyAndVerify({
@@ -92,6 +180,158 @@ describe('copyAndVerify', () => {
     expect(result).toEqual({ ok: true })
     expect(await readFile(join(to, 'open-science.db'), 'utf8')).toBe('sqlite bytes')
     expect(await readFile(join(from, 'open-science.db'), 'utf8')).toBe('sqlite bytes')
+  })
+
+  it('preserves file and directory access and modification times', async () => {
+    const sourceDir = join(from, 'artifacts')
+    const sourceFile = join(sourceDir, 'observations.csv')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(sourceFile, 'time,value\n1,42\n')
+    const fileAtime = new Date('2001-02-03T04:05:06.000Z')
+    const fileMtime = new Date('2002-03-04T05:06:07.000Z')
+    const dirAtime = new Date('2003-04-05T06:07:08.000Z')
+    const dirMtime = new Date('2004-05-06T07:08:09.000Z')
+    await utimes(sourceFile, fileAtime, fileMtime)
+    await utimes(sourceDir, dirAtime, dirMtime)
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts'],
+      signal: new AbortController().signal,
+      onProgress: () => {}
+    })
+
+    expect(result).toEqual({ ok: true })
+    const copiedFile = await stat(join(to, 'artifacts', 'observations.csv'))
+    const copiedDir = await stat(join(to, 'artifacts'))
+    expect(Math.trunc(copiedFile.atimeMs / 1000)).toBe(Math.trunc(fileAtime.getTime() / 1000))
+    expect(Math.trunc(copiedFile.mtimeMs / 1000)).toBe(Math.trunc(fileMtime.getTime() / 1000))
+    expect(Math.trunc(copiedDir.atimeMs / 1000)).toBe(Math.trunc(dirAtime.getTime() / 1000))
+    expect(Math.trunc(copiedDir.mtimeMs / 1000)).toBe(Math.trunc(dirMtime.getTime() / 1000))
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'preserves source directory modes after populating nested content',
+    async () => {
+      const sourceDir = join(from, 'artifacts')
+      const nestedDir = join(sourceDir, 'private')
+      await mkdir(nestedDir, { recursive: true })
+      await writeFile(join(nestedDir, 'results.txt'), 'classified')
+      await chmod(nestedDir, 0o700)
+      await chmod(sourceDir, 0o750)
+
+      const result = await copyAndVerify({
+        from,
+        to,
+        dirs: ['artifacts'],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+
+      expect(result).toEqual({ ok: true })
+      expect((await stat(join(to, 'artifacts'))).mode & 0o777).toBe(0o750)
+      expect((await stat(join(to, 'artifacts', 'private'))).mode & 0o777).toBe(0o700)
+    }
+  )
+
+  it('preserves hard-link relationships instead of duplicating linked file data', async () => {
+    const sourceDir = join(from, 'artifacts')
+    const sourceOriginal = join(sourceDir, 'dataset.bin')
+    const sourceAlias = join(sourceDir, 'dataset-alias.bin')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(sourceOriginal, 'shared-data')
+    await link(sourceOriginal, sourceAlias)
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts'],
+      signal: new AbortController().signal,
+      onProgress: () => {}
+    })
+
+    expect(result).toEqual({ ok: true })
+    await writeFile(join(to, 'artifacts', 'dataset.bin'), 'updated')
+    expect(await readFile(join(to, 'artifacts', 'dataset-alias.bin'), 'utf8')).toBe('updated')
+    expect(await readFile(sourceAlias, 'utf8')).toBe('shared-data')
+  })
+
+  it('falls back to independent copies when the destination does not support hard links', async () => {
+    const sourceDir = join(from, 'artifacts')
+    const sourceOriginal = join(sourceDir, 'dataset.bin')
+    const sourceAlias = join(sourceDir, 'dataset-alias.bin')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(sourceOriginal, 'shared-data')
+    await link(sourceOriginal, sourceAlias)
+    diskSpace.hardLinksSupported = false
+    const progress: MigrationProgress[] = []
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts'],
+      signal: new AbortController().signal,
+      onProgress: (entry) => progress.push(entry)
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(progress.find((entry) => entry.phase === 'scan')?.totalBytes).toBe(
+      2 * Buffer.byteLength('shared-data')
+    )
+    await writeFile(join(to, 'artifacts', 'dataset.bin'), 'updated')
+    expect(await readFile(join(to, 'artifacts', 'dataset-alias.bin'), 'utf8')).toBe('shared-data')
+  })
+
+  it('accounts for fallback hard-link copies in the destination capacity preflight', async () => {
+    const sourceDir = join(from, 'artifacts')
+    const sourceOriginal = join(sourceDir, 'dataset.bin')
+    const sourceAlias = join(sourceDir, 'dataset-alias.bin')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(sourceOriginal, 'shared-data')
+    await link(sourceOriginal, sourceAlias)
+    diskSpace.hardLinksSupported = false
+    diskSpace.availableBytes = Buffer.byteLength('shared-data') + 1
+    const progress: MigrationProgress[] = []
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts'],
+      signal: new AbortController().signal,
+      onProgress: (entry) => progress.push(entry)
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/space/i)
+    expect(progress).toEqual([
+      {
+        phase: 'scan',
+        copiedBytes: 0,
+        totalBytes: 2 * Buffer.byteLength('shared-data')
+      }
+    ])
+    expect(await exists(join(to, 'artifacts'))).toBe(false)
+  })
+
+  it('rejects insufficient destination capacity after scanning and before copying', async () => {
+    await seedFixture()
+    diskSpace.availableBytes = 1
+    const progress: MigrationProgress[] = []
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts', 'uploads'],
+      signal: new AbortController().signal,
+      onProgress: (entry) => progress.push(entry)
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/space/i)
+    expect(progress.map((entry) => entry.phase)).toEqual(['scan'])
+    expect(await exists(join(to, 'artifacts'))).toBe(false)
+    expect(await exists(join(to, 'uploads'))).toBe(false)
   })
 
   it('rejects a same-size destination corruption during content verification', async () => {
@@ -145,29 +385,6 @@ describe('copyAndVerify', () => {
     }
   )
 
-  it('forces the byte-copy branch (simulated cross-device) and produces the same result', async () => {
-    await seedFixture()
-    const progress: MigrationProgress[] = []
-    const result = await copyAndVerify({
-      from,
-      to,
-      dirs: ['artifacts', 'uploads'],
-      signal: new AbortController().signal,
-      onProgress: (p) => progress.push(p),
-      forceCopy: true
-    })
-
-    expect(result).toEqual({ ok: true })
-    expect(await readFile(join(to, 'artifacts', 'a.txt'), 'utf8')).toBe('hello artifacts')
-    expect(await readFile(join(to, 'uploads', 'b.txt'), 'utf8')).toBe('hello uploads')
-    expect(progress.some((p) => p.phase === 'copy')).toBe(true)
-
-    const deleteResult = await deleteSources(from, ['artifacts', 'uploads'])
-    expect(deleteResult.failed).toEqual([])
-    expect(await exists(join(from, 'artifacts'))).toBe(false)
-    expect(await exists(join(from, 'uploads'))).toBe(false)
-  })
-
   it('cancels mid-copy, leaves sources intact, and cleans partial dest', async () => {
     await seedFixture()
     // Add more files so there's something to cancel between.
@@ -179,7 +396,6 @@ describe('copyAndVerify', () => {
       to,
       dirs: ['artifacts', 'uploads'],
       signal: controller.signal,
-      forceCopy: true,
       onProgress: () => {
         if (!seenFirstProgress) {
           seenFirstProgress = true
@@ -210,8 +426,7 @@ describe('copyAndVerify', () => {
       to,
       dirs: ['artifacts', 'uploads'],
       signal: new AbortController().signal,
-      onProgress: () => {},
-      forceCopy: true
+      onProgress: () => {}
     })
 
     expect(result.ok).toBe(false)
@@ -233,6 +448,22 @@ describe('copyAndVerify', () => {
     expect(result).toEqual({ ok: true })
     expect(await exists(join(to, 'runtime'))).toBe(false)
     expect(await readFile(join(to, 'artifacts', 'a.txt'), 'utf8')).toBe('hello artifacts')
+  })
+
+  it('treats a missing source root as an empty migration', async () => {
+    await rm(from, { recursive: true })
+
+    const result = await copyAndVerify({
+      from,
+      to,
+      dirs: ['artifacts', 'uploads'],
+      signal: new AbortController().signal,
+      onProgress: () => {}
+    })
+
+    expect(result).toEqual({ ok: true })
+    expect(await exists(join(to, 'artifacts'))).toBe(false)
+    expect(await exists(join(to, 'uploads'))).toBe(false)
   })
 
   // Symlink creation needs privilege on Windows, so skip there.
@@ -373,6 +604,19 @@ describe('deleteSources', () => {
     expect(await exists(join(from, 'artifacts'))).toBe(false)
     expect(await exists(join(from, 'uploads'))).toBe(false)
     expect(progress.every((p) => p.phase === 'delete')).toBe(true)
+  })
+
+  it('reports a source probe error instead of treating the directory as absent', async () => {
+    await seedFixture()
+    const uploadsDir = join(from, 'uploads')
+    diskSpace.statErrorPath = uploadsDir
+
+    const result = await deleteSources(from, ['artifacts', 'uploads'])
+
+    expect(result.deleted).toEqual(['artifacts'])
+    expect(result.failed).toEqual([{ dir: 'uploads', error: 'permission denied' }])
+    diskSpace.statErrorPath = undefined
+    await expect(readFile(join(uploadsDir, 'b.txt'), 'utf8')).resolves.toBe('hello uploads')
   })
 
   it('records a per-dir failure in `failed` without throwing, and still deletes the rest', async () => {

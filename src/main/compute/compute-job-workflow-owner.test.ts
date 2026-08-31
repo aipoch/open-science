@@ -428,7 +428,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     const { repo: jobRepo } = makeJobRepo()
     const { repo } = makeRepo()
 
-    const requestWithContext = vi.fn(() => Promise.resolve('conversation' as const))
+    const requestWithContext = vi.fn(() => Promise.resolve('session' as const))
     const broker = {
       request: vi.fn(),
       requestWithContext,
@@ -442,13 +442,18 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
       'ssh:biowulf',
       'test',
       'echo hi',
-      {},
+      { resourceRequest: '{"cpus":4}', timeoutSeconds: 120 },
       { sessionId: 's1', projectId: 'p1' },
       signal
     )
 
     expect(requestWithContext).toHaveBeenCalledWith(
-      expect.anything(),
+      expect.objectContaining({
+        operation: 'submit_job',
+        resources: '{"cpus":4}',
+        timeout_seconds: 120,
+        remote_workdir: expect.stringContaining('/.openscience/jobs/')
+      }),
       expect.objectContaining({ operation: 'submit_job' }),
       signal
     )

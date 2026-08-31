@@ -87,11 +87,6 @@ const provider = (overrides: Partial<ProviderView>): ProviderView => ({
   ...overrides
 })
 
-// Official OpenAI models are documented as Responses-only. Tests that pick those catalog ids must
-// run under Codex, the framework that actually speaks Responses. The store's initial Claude Code
-// state only speaks Anthropic, so the picker would otherwise hide the trigger as
-// "No compatible model". OpenCode is not used here: its adapter only drives Anthropic and Chat
-// Completions, even if a fixture claimed otherwise.
 const codexFramework: {
   agentFrameworkId: 'codex'
   agentFrameworks: AgentFrameworkView[]
@@ -304,30 +299,6 @@ describe('ComposerModelPicker', () => {
     expect(trigger?.textContent).toContain('No compatible model')
   })
 
-  it('treats official OpenAI Responses models as incompatible with Claude Code', () => {
-    // Official OpenAI catalog entries resolve to Responses regardless of the mock provider's omitted
-    // apiEndpoints. Claude Code remains Anthropic-only, so the picker must warn instead of treating
-    // those models as selectable.
-    useSettingsStore.setState({
-      agentFrameworkId: 'claude-code',
-      providers: [
-        provider({
-          id: 'off',
-          type: 'official',
-          vendorId: 'openai',
-          name: 'OpenAI',
-          models: ['gpt-5.2', 'gpt-5.5']
-        })
-      ],
-      activeProviderId: 'off',
-      activeModel: 'gpt-5.2'
-    })
-    render()
-
-    expect(container.querySelector('[aria-label="Select model"]')).toBeNull()
-    expect(container.querySelector('[aria-label="No compatible model"]')).not.toBeNull()
-  })
-
   it('treats a Chat provider as bridge-compatible under Codex without a per-model probe', async () => {
     // Bridge support is static: a custom provider (no vendorId) is always supported, so its models are
     // selectable under Codex — there is no runtime streaming-function-tool probe gating them.
@@ -358,6 +329,59 @@ describe('ComposerModelPicker', () => {
     await openSubmenu(modelRow!)
     expect(document.body.textContent).toContain('ds2')
     expect(document.body.textContent).not.toContain('not supported over the Codex')
+  })
+
+  it('explains a model-specific endpoint mismatch on hover or focus', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ],
+      providers: [
+        provider({
+          id: 'mixed',
+          type: 'official',
+          vendorId: 'opencode',
+          name: 'Mixed catalog',
+          apiEndpoints: ['openai'],
+          models: ['kimi-k2.7-code', 'gpt-5.6-sol']
+        })
+      ],
+      activeProviderId: 'mixed',
+      activeModel: 'kimi-k2.7-code'
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    await openMenu(trigger!)
+    const modelRow = modelRowTrigger()
+    expect(modelRow).toBeDefined()
+    await openSubmenu(modelRow!)
+
+    const unavailableItem = menuItems().find((item) =>
+      item.getAttribute('aria-label')?.includes('gpt-5.6-sol')
+    )
+    const reason = unavailableItem?.getAttribute('aria-label')
+    expect(reason).toContain('/v1/responses')
+    expect(reason).toContain('OpenCode')
+    expect(reason).toContain('/v1/chat/completions')
+    expect(reason).not.toContain('Codex Chat Completions bridge')
+    expect(unavailableItem?.getAttribute('aria-disabled')).toBe('true')
+
+    await act(async () => unavailableItem?.focus())
+    await flush()
+
+    expect(document.body.querySelector('[data-slot="tooltip-content"]')?.textContent).toContain(
+      reason
+    )
+    act(() => unavailableItem?.click())
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('exposes each incompatible provider reason as a focusable, non-actionable menu item', async () => {

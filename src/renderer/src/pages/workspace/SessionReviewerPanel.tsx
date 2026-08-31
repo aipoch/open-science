@@ -13,7 +13,7 @@
 //
 // The activeFindingId prop scrolls/highlights the check the user navigated from.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { CheckCircle, AlertTriangle, XCircle, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
@@ -146,6 +146,7 @@ const LogEntryIcon = ({ kind }: { kind: 'thought' | 'message' }): React.JSX.Elem
 const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Element => {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
+  const detailsId = useId()
   const rowClassName = 'flex items-start gap-1.5 py-0.5 text-[11px] leading-[1.45]'
 
   if (entry.kind === 'thought') {
@@ -187,15 +188,19 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
     <div className="py-0.5">
       <button
         type="button"
-        className="flex w-full items-center gap-1.5 text-left text-[11px] leading-[1.45] text-text-400 hover:text-text-300 transition-colors"
+        className="flex w-full items-center gap-1.5 text-left text-[11px] leading-[1.45] text-text-400 transition-colors duration-150 hover:text-text-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
+        aria-controls={hasDetails ? detailsId : undefined}
         data-testid="tool-log-row-toggle"
         disabled={!hasDetails}
       >
         <span className="w-3.5 shrink-0 text-center">
           <ChevronRight
-            className={cn('h-3 w-3 transition-transform duration-150', expanded ? 'rotate-90' : '')}
+            className={cn(
+              'h-3 w-3 transition-transform duration-150 motion-reduce:transition-none',
+              expanded ? 'rotate-90' : ''
+            )}
             aria-hidden
           />
         </span>
@@ -209,7 +214,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
       </button>
 
       {expanded && hasDetails && (
-        <div className="ml-5 mt-1 space-y-1" data-testid="tool-log-row-details">
+        <div id={detailsId} className="ml-5 mt-1 space-y-1" data-testid="tool-log-row-details">
           {entry.rawInput ? (
             <div>
               <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-400">
@@ -246,11 +251,59 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
   )
 }
 
+type MutedDisclosureProps = {
+  label: (expanded: boolean) => ReactNode
+  toggleTestId: string
+  bodyTestId: string
+  bodyClassName: string
+  bodyAs?: 'div' | 'dl'
+  children: ReactNode
+}
+
+const MutedDisclosure = ({
+  label,
+  toggleTestId,
+  bodyTestId,
+  bodyClassName,
+  bodyAs = 'div',
+  children
+}: MutedDisclosureProps): React.JSX.Element => {
+  const [expanded, setExpanded] = useState(false)
+  const bodyId = useId()
+  const Body = bodyAs
+
+  return (
+    <>
+      <button
+        type="button"
+        className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        data-testid={toggleTestId}
+      >
+        <ChevronRight
+          className={cn(
+            'h-3 w-3 transition-transform duration-150 motion-reduce:transition-none',
+            expanded ? 'rotate-90' : ''
+          )}
+          aria-hidden
+        />
+        {label(expanded)}
+      </button>
+      {expanded && (
+        <Body id={bodyId} className={bodyClassName} data-testid={bodyTestId}>
+          {children}
+        </Body>
+      )}
+    </>
+  )
+}
+
 // The "Reviewer log" section: collapsed by default, visually de-emphasized with muted left-rule.
 // Reuses WorkspaceMessageItem/activity-style patterns adapted to ReviewerLogEntry (props-driven).
 const ReviewerLogSection = ({ log }: { log: ReviewerLogEntry[] }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
   const wasTruncated = log.some((entry) =>
     entry.kind === 'tool'
       ? Boolean(entry.rawInputTruncated || entry.rawOutputTruncated || entry.reviewLogTruncated)
@@ -265,36 +318,21 @@ const ReviewerLogSection = ({ log }: { log: ReviewerLogEntry[] }): React.JSX.Ele
       <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-300">
         {t('Reviewer log')}
       </h3>
-      <button
-        type="button"
-        className="flex items-center gap-1.5 text-[11px] font-medium text-text-400 hover:text-text-300 transition-colors"
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-        data-testid="reviewer-log-toggle"
+      <MutedDisclosure
+        label={(expanded) => (expanded ? t('Collapse Reviewer log') : t('Expand Reviewer log'))}
+        toggleTestId="reviewer-log-toggle"
+        bodyTestId="reviewer-log-body"
+        bodyClassName="mt-2 border-l-2 border-border-200 pl-2.5 opacity-75 space-y-0.5"
       >
-        <ChevronRight
-          className={cn('h-3 w-3 transition-transform duration-150', expanded ? 'rotate-90' : '')}
-          aria-hidden
-        />
-        {expanded ? t('Collapse Reviewer log') : t('Expand Reviewer log')}
-      </button>
-
-      {expanded && (
-        // De-emphasized container: indented, left-rule, reduced opacity per prototype.
-        <div
-          className="mt-2 border-l-2 border-border-200 pl-2.5 opacity-75 space-y-0.5"
-          data-testid="reviewer-log-body"
-        >
-          {wasTruncated && (
-            <p className="pb-1 text-[10px] text-text-400" data-testid="reviewer-log-truncated">
-              {t('Reviewer log content was truncated to fit the size limit.')}
-            </p>
-          )}
-          {log.map((entry, i) => (
-            <ReviewerLogRow key={i} entry={entry} />
-          ))}
-        </div>
-      )}
+        {wasTruncated && (
+          <p className="pb-1 text-[10px] text-text-400" data-testid="reviewer-log-truncated">
+            {t('Reviewer log content was truncated to fit the size limit.')}
+          </p>
+        )}
+        {log.map((entry, i) => (
+          <ReviewerLogRow key={i} entry={entry} />
+        ))}
+      </MutedDisclosure>
     </section>
   )
 }

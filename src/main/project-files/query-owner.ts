@@ -275,6 +275,7 @@ class ProjectFilesQueryOwner {
   async readHostArtifactCatalog(request: {
     projectId: string
     versionId?: string
+    finalizedArtifactsOnly?: boolean
   }): Promise<HostArtifactCatalogItem[]> {
     requireIdentifier(request.projectId, 'projectId')
     const client = await this.getClient()

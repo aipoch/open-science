@@ -51,7 +51,7 @@ describe('SettingsService provider facade', () => {
     expect(stored).toContain('enc:')
     expect(snapshot.providers[0]).toMatchObject({
       id: 'legacy-provider',
-      maskedKey: 'le•••••ey',
+      maskedKey: '••••••••',
       hasKey: true,
       needsKey: false
     })

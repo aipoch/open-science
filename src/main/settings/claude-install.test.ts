@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
@@ -12,6 +12,17 @@ import {
   runInstall,
   runInstallWithFallback
 } from './claude-install'
+
+const { terminateProcessTree } = vi.hoisted(() => ({
+  terminateProcessTree: vi.fn(async () => ({ reaped: true }))
+}))
+
+vi.mock('../process-tree', () => ({ terminateProcessTree }))
+
+beforeEach(() => {
+  terminateProcessTree.mockReset()
+  terminateProcessTree.mockResolvedValue({ reaped: true })
+})
 
 // Minimal fake child process exposing the stdout/stderr/exit surface runInstall consumes.
 class FakeChild extends EventEmitter {
@@ -270,6 +281,45 @@ describe('claude-install: run', () => {
 
     expect(result).toMatchObject({ ok: false })
     expect(result.error).toContain('ENOENT')
+  })
+
+  it('settles after bounded tree cleanup when a timed-out child never exits', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    terminateProcessTree.mockImplementation(() => new Promise(() => undefined))
+
+    try {
+      const pending = runInstall({
+        source: 'npm',
+        installId: 'install-timeout',
+        onEvent: () => undefined,
+        timeoutMs: 100,
+        spawnImpl: () => child as never,
+        npmPrefixWritable: () => Promise.resolve(true)
+      })
+
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(terminateProcessTree).toHaveBeenCalledWith(child)
+      let settled = false
+      void pending.then(() => {
+        settled = true
+      })
+      child.emit('exit', null)
+      await Promise.resolve()
+      expect(settled).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(8_000)
+      await expect(pending).resolves.toMatchObject({
+        installId: 'install-timeout',
+        ok: false,
+        timedOut: true
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('marks an official-script failure region-blocked when it pipes HTML', async () => {

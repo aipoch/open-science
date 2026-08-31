@@ -19,6 +19,15 @@ vi.mock('./ipc-handler-registry', () => ({
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 
 const validatedChannels = [
+  'memory:clear-all',
+  'memory:create-category',
+  'memory:create-entry',
+  'memory:delete-category',
+  'memory:delete-entry',
+  'memory:set-enabled',
+  'memory:snapshot',
+  'memory:update-category',
+  'memory:update-entry',
   'projects:create',
   'projects:delete',
   'projects:get',
@@ -26,12 +35,16 @@ const validatedChannels = [
   'projects:update',
   'projects:update-archive',
   'sessions:delete-session',
+  'sessions:filter-pdf-context-candidates',
+  'sessions:link-pdf-context',
+  'sessions:unlink-pdf-context',
   'tags:create',
   'tags:delete',
   'tags:reorder',
   'tags:set-assignment',
   'tags:snapshot',
-  'tags:update'
+  'tags:update',
+  'uploads:finalize-session'
 ] as const
 
 const eventWithLease = (): IpcMainInvokeEvent => {

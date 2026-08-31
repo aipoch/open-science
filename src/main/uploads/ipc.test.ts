@@ -81,17 +81,10 @@ const createIpcEvent = (
 const registerUploadIpcHandlers = (
   repository: UploadRepository,
   options: {
-    withSessionMutation?: <Result>(
-      projectId: string,
-      sessionId: string,
-      mutation: () => Promise<Result>
-    ) => Promise<Result>
     onStandaloneUploadSaved?: (projectId: string, sessionId: string) => void
   } = {}
 ): void => {
-  const owner = createUploadCommandOwner(repository, {
-    withSessionMutation: options.withSessionMutation
-  })
+  const owner = createUploadCommandOwner(repository)
   registerUploadOwnerIpcHandlers(owner, {
     onStandaloneUploadSaved: options.onStandaloneUploadSaved
   })
@@ -222,35 +215,10 @@ describe('default upload repository', () => {
     await finish(caller.event, { transferId: 'shared-ipc-transfer' })
   })
 
-  it('finalizes Upload Versions inside the shared Session mutation boundary', async () => {
-    const repository = {
-      finalizePendingSessionUploads: vi.fn(async () => ['finalized'])
-    } as unknown as UploadRepository
-    const order: string[] = []
-    const mutationScopes: Array<{ projectId: string; sessionId: string }> = []
-    const withSessionMutation = async <Result>(
-      projectId: string,
-      sessionId: string,
-      mutation: () => Promise<Result>
-    ): Promise<Result> => {
-      mutationScopes.push({ projectId, sessionId })
-      order.push('lock')
-      const result = await mutation()
-      order.push('unlock')
-      return result
-    }
-    registerUploadIpcHandlers(repository, { withSessionMutation })
-    const finalize = ipcHandlers.get('uploads:finalize-session')!
+  it('leaves finalize Session ownership to the runtime-validated command adapter', () => {
+    registerUploadIpcHandlers({} as UploadRepository)
 
-    await expect(
-      finalize(createIpcEvent().event, {
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        attachments: []
-      })
-    ).resolves.toEqual(['finalized'])
-    expect(mutationScopes).toEqual([{ projectId: 'project-1', sessionId: 'session-1' }])
-    expect(order).toEqual(['lock', 'unlock'])
+    expect(ipcHandlers.has('uploads:finalize-session')).toBe(false)
   })
 
   it('waits for begin before aborting and releases the transfer during migration', async () => {
@@ -463,12 +431,24 @@ describe('default upload repository', () => {
     const sender = createIpcEvent()
 
     await begin(sender.event, { transferId: 'transfer-4', name: 'data.csv', size: 10 })
-    sender.emit('did-start-navigation', {}, 'http://localhost/', false, false)
+    sender.emit(
+      'did-start-navigation',
+      { isMainFrame: false, isSameDocument: false },
+      'http://localhost/',
+      false,
+      false
+    )
     expect(repository.abortTransfer).not.toHaveBeenCalled()
 
     beginMigration()
     const drainPromise = waitForDataRootWriters()
-    sender.emit('did-start-navigation', {}, 'http://localhost/', false, true)
+    sender.emit(
+      'did-start-navigation',
+      { isMainFrame: true, isSameDocument: false },
+      'http://localhost/',
+      false,
+      true
+    )
     await drainPromise
     expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'transfer-4' })
   })
@@ -547,10 +527,22 @@ describe('default upload repository', () => {
       })
     )
     await Promise.resolve()
-    sender.emit('did-start-navigation', {}, 'http://localhost/', false, false)
+    sender.emit(
+      'did-start-navigation',
+      { isMainFrame: false, isSameDocument: false },
+      'http://localhost/',
+      false,
+      false
+    )
     expect(repository.abortTransfer).not.toHaveBeenCalled()
 
-    sender.emit('did-start-navigation', {}, 'http://localhost/', false, true)
+    sender.emit(
+      'did-start-navigation',
+      { isMainFrame: true, isSameDocument: false },
+      'http://localhost/',
+      false,
+      true
+    )
     finishStage?.(attachment)
 
     await expect(stagePromise).rejects.toThrow(/renderer is no longer available/i)

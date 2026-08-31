@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "helpers": [
+    {
+      "id": "figure-style",
+      "language": "python",
+      "interfaceRevision": 1,
+      "implementation": "kernel.py",
+      "exports": [
+        "apply_figure_style",
+        "set_frame",
+        "panel_letter",
+        "focal_palette",
+        "bar_with_points",
+        "strip_with_median",
+        "goodness_arrow",
+        "two_tier_label",
+        "end_of_line_labels",
+        "panel_crops"
+      ],
+      "dependencies": []
+    }
+  ]
+}

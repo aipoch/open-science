@@ -30,6 +30,7 @@ type PreferencesCommands = Pick<
   | 'setSubagentModel'
   | 'setVisionModel'
   | 'setNotificationsEnabled'
+  | 'setShowNotificationContent'
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
   | 'setAppIconVariant'
@@ -56,6 +57,7 @@ type TestStore = SettingsPreferencesActions & {
   visionModel?: VisionModelConfiguration
   visionModelPending?: boolean
   notificationsEnabled: boolean
+  showNotificationContent: boolean
   conversationSkillImportEnabled: boolean
   closePreference: CloseActionPreference | undefined
   appIconVariant: AppIconVariant
@@ -119,6 +121,7 @@ const createCommands = (persisted: Partial<SettingsSnapshot>): CommandMocks => {
     setSubagentModel: vi.fn(({ configuration }) => save('subagentModel', configuration)),
     setVisionModel: vi.fn(({ configuration }) => save('visionModel', configuration)),
     setNotificationsEnabled: vi.fn(({ enabled }) => save('notificationsEnabled', enabled)),
+    setShowNotificationContent: vi.fn(({ enabled }) => save('showNotificationContent', enabled)),
     setConversationSkillImportEnabled: vi.fn(({ enabled }) =>
       save('conversationSkillImportEnabled', enabled)
     ),
@@ -150,6 +153,7 @@ const createHarness = (): {
       subagentModel: next.subagentModel,
       visionModel: next.visionModel,
       notificationsEnabled: next.notificationsEnabled,
+      showNotificationContent: next.showNotificationContent ?? false,
       conversationSkillImportEnabled: next.conversationSkillImportEnabled,
       closePreference: next.closePreference,
       appIconVariant: next.appIconVariant,
@@ -164,6 +168,7 @@ const createHarness = (): {
     subagentModelPending: false,
     visionModelPending: false,
     notificationsEnabled: true,
+    showNotificationContent: false,
     conversationSkillImportEnabled: true,
     closePreference: undefined,
     appIconVariant: 'light',
@@ -198,6 +203,7 @@ describe('settings preferences slice', () => {
   it('forwards preference writes and reconciles each returned snapshot', async () => {
     await store.getState().setReasoningEffort('high')
     await store.getState().setNotificationsEnabled(false)
+    await store.getState().setShowNotificationContent(true)
     await store.getState().setConversationSkillImportEnabled(false)
     await store.getState().setClosePreference('minimize')
     await store.getState().setAppIconVariant('dark')
@@ -206,6 +212,7 @@ describe('settings preferences slice', () => {
 
     expect(commands.setReasoningEffort).toHaveBeenCalledWith({ effort: 'high' })
     expect(commands.setNotificationsEnabled).toHaveBeenCalledWith({ enabled: false })
+    expect(commands.setShowNotificationContent).toHaveBeenCalledWith({ enabled: true })
     expect(commands.setConversationSkillImportEnabled).toHaveBeenCalledWith({ enabled: false })
     expect(commands.setClosePreference).toHaveBeenCalledWith({ preference: 'minimize' })
     expect(commands.setAppIconVariant).toHaveBeenCalledWith({ variant: 'dark' })
@@ -218,7 +225,7 @@ describe('settings preferences slice', () => {
     })
     expect(commands.setDefaultPermissionProfile).toHaveBeenCalledWith({ profile: 'auto' })
 
-    expect(reconcileSnapshot).toHaveBeenCalledTimes(7)
+    expect(reconcileSnapshot).toHaveBeenCalledTimes(8)
   })
 
   it('applies immediately, then rolls back and exposes the unchanged failure copy', async () => {

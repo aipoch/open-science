@@ -86,6 +86,7 @@ const createAcpTaskAgentPort = (
       cwd: request.cwd,
       projectId: request.projectId,
       permissionProfile: request.permissionProfile,
+      memoryEnabled: request.memoryEnabled !== false,
       previousFrameworkId: request.previousFrameworkId,
       previousBackendId: request.previousBackendId,
       providerSessionId: request.providerSessionId,

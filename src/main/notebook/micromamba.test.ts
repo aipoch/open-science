@@ -286,11 +286,11 @@ describe('micromambaSpawnEnv', () => {
         PUBLIC: 'C:\\Users\\Public'
       },
       canonicalize: (path) => win32.normalize(path),
-      prepare: (path) => (path.startsWith('C:\\osp') ? undefined : win32.normalize(path)),
+      prepare: (path) => win32.normalize(path),
       verifyOwnership: () => true
     })
 
-    expect(env.CONDA_PKGS_DIRS).toMatch(/^C:\\Users\\Public\\osp[0-9a-f]{10}$/)
+    expect(env.CONDA_PKGS_DIRS).toMatch(/^C:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
   })
 
   it('cleans inherited conda/mamba values before injecting the Windows app cache and CA vars', () => {

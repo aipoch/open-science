@@ -83,6 +83,7 @@ const fileIndex: SessionFileIndex = {
   restoreSession: async () => undefined,
   softDeleteProject: async () => 'delete-project',
   reconcileActiveSessions: async () => undefined,
+  reconcileProjectSessions: async () => undefined,
   markReconciliationIncomplete: () => undefined
 }
 

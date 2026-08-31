@@ -5,6 +5,11 @@ import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { ComputeApprovalRequest } from '../../shared/compute'
 import type { ConversationSkillImportApprovalRequest } from '../../shared/settings'
 import {
+  englishNativeTranslator,
+  translateNativeMessage,
+  type NativeTranslator
+} from '../locale/main-process-messages'
+import {
   describeConnectorApprovalNotification,
   describePermissionNotification,
   describeTaskNotification,
@@ -70,6 +75,7 @@ describe('describePermissionNotification', () => {
       describePermissionNotification(permissionRequest('Run command'), 'Plot the curve')
     ).toEqual({
       title: 'Approval needed',
+      genericBody: 'A task needs your approval. Open the app to review it.',
       body: '"Plot the curve" needs your approval: Run command',
       attention: true
     })
@@ -78,6 +84,7 @@ describe('describePermissionNotification', () => {
   it('falls back to a generic body when no prompt was tracked', () => {
     expect(describePermissionNotification(permissionRequest('Edit results.csv'))).toEqual({
       title: 'Approval needed',
+      genericBody: 'A task needs your approval. Open the app to review it.',
       body: 'The agent needs your approval: Edit results.csv',
       attention: true
     })
@@ -103,6 +110,7 @@ describe('describeConnectorApprovalNotification', () => {
       )
     ).toEqual({
       title: 'Approval needed',
+      genericBody: 'A task needs your approval. Open the app to review it.',
       body: '"Plot the curve" needs your approval: pubchem search compound',
       attention: true
     })
@@ -111,6 +119,7 @@ describe('describeConnectorApprovalNotification', () => {
   it('falls back to a generic body without a tracked prompt', () => {
     expect(describeConnectorApprovalNotification({ connector: 'zinc', method: 'search' })).toEqual({
       title: 'Approval needed',
+      genericBody: 'A task needs your approval. Open the app to review it.',
       body: 'The agent needs your approval: zinc search',
       attention: true
     })
@@ -121,6 +130,7 @@ describe('describeTaskNotification', () => {
   it('names the task from the prompt snippet when a turn completes', () => {
     expect(describeTaskNotification(stopEvent('end_turn'), 'Plot the curve')).toEqual({
       title: 'Task completed',
+      genericBody: 'A task completed. Open the app to view it.',
       body: 'The agent finished responding to "Plot the curve".'
     })
   })
@@ -128,6 +138,7 @@ describe('describeTaskNotification', () => {
   it('falls back to a generic body when no prompt was tracked', () => {
     expect(describeTaskNotification(stopEvent('end_turn'))).toEqual({
       title: 'Task completed',
+      genericBody: 'A task completed. Open the app to view it.',
       body: 'The agent finished responding.'
     })
   })
@@ -139,6 +150,7 @@ describe('describeTaskNotification', () => {
   it('explains a max_tokens stop in plain language', () => {
     expect(describeTaskNotification(stopEvent('max_tokens'), 'Plot the curve')).toEqual({
       title: 'Task needs attention',
+      genericBody: 'A task needs attention. Open the app for details.',
       body: '"Plot the curve" stopped early — the answer hit the model\'s length limit.'
     })
   })
@@ -146,6 +158,7 @@ describe('describeTaskNotification', () => {
   it('explains a max_turn_requests stop as waiting for the user', () => {
     expect(describeTaskNotification(stopEvent('max_turn_requests'), 'Plot the curve')).toEqual({
       title: 'Task needs attention',
+      genericBody: 'A task needs attention. Open the app for details.',
       body: '"Plot the curve" paused — send a message to keep it going.'
     })
   })
@@ -153,6 +166,7 @@ describe('describeTaskNotification', () => {
   it('explains a refusal without jargon', () => {
     expect(describeTaskNotification(stopEvent('refusal'), 'Plot the curve')).toEqual({
       title: 'Task needs attention',
+      genericBody: 'A task needs attention. Open the app for details.',
       body: '"Plot the curve" was declined by the agent.'
     })
     expect(describeTaskNotification(stopEvent('refusal'))?.body).toBe(
@@ -163,6 +177,7 @@ describe('describeTaskNotification', () => {
   it('does not misreport an unknown stop reason as success', () => {
     expect(describeTaskNotification(stopEvent('budget_exceeded'), 'Plot the curve')).toEqual({
       title: 'Task needs attention',
+      genericBody: 'A task needs attention. Open the app for details.',
       body: '"Plot the curve" finished without a clean completion status (budget exceeded).'
     })
     expect(describeTaskNotification(stopEvent('budget_exceeded'))?.body).toBe(
@@ -184,6 +199,7 @@ describe('describeTaskNotification', () => {
 
     expect(describeTaskNotification(event, 'Plot the curve')).toEqual({
       title: 'Task needs attention',
+      genericBody: 'A task needs attention. Open the app for details.',
       body: '"Plot the curve" finished without a clean completion status.'
     })
   })
@@ -214,7 +230,9 @@ describe('describeTaskNotification', () => {
   it('includes the error text when a turn fails', () => {
     expect(describeTaskNotification(errorEvent('Rate limit reached'), 'Plot the curve')).toEqual({
       title: 'Task failed',
-      body: '"Plot the curve" failed: Rate limit reached'
+      body: '"Plot the curve" failed: Rate limit reached',
+      genericBody: 'A task failed. Open the app for details.',
+      alwaysGeneric: true
     })
   })
 
@@ -259,6 +277,7 @@ describe('describeTaskNotification', () => {
 // Drives the service with injected gates so each filtering rule is pinned independently.
 const createService = (overrides: {
   isEnabled?: () => Promise<boolean>
+  showContent?: () => Promise<boolean>
   isAppFocused?: () => boolean
   show?: (request: TaskNotificationRequest) => void
   onDeliveryError?: (error: unknown) => void
@@ -268,6 +287,7 @@ const createService = (overrides: {
   inbox?: TaskNotificationServiceDeps['inbox']
   onInboxError?: (error: unknown) => void
   hasNonTerminalComputeJobs?: (sessionId: string) => Promise<boolean>
+  translate?: NativeTranslator
 }): {
   service: TaskNotificationService
   shown: TaskNotificationRequest[]
@@ -281,16 +301,19 @@ const createService = (overrides: {
   const attentionRequests: number[] = []
   const attentionErrors: unknown[] = []
   const inboxErrors: unknown[] = []
-  const service = new TaskNotificationService({
+  const deps: TaskNotificationServiceDeps = {
     isEnabled: overrides.isEnabled ?? (() => Promise.resolve(true)),
+    showContent: overrides.showContent ?? (() => Promise.resolve(true)),
     isAppFocused: overrides.isAppFocused ?? (() => false),
     show: overrides.show ?? ((request) => shown.push(request)),
     onDeliveryError: overrides.onDeliveryError ?? ((error) => deliveryErrors.push(error)),
     onAttentionError: overrides.onAttentionError ?? ((error) => attentionErrors.push(error)),
     inbox: overrides.inbox,
     onInboxError: overrides.onInboxError ?? ((error) => inboxErrors.push(error)),
-    hasNonTerminalComputeJobs: overrides.hasNonTerminalComputeJobs
-  })
+    hasNonTerminalComputeJobs: overrides.hasNonTerminalComputeJobs,
+    translate: overrides.translate ?? englishNativeTranslator
+  }
+  const service = new TaskNotificationService(deps)
   service.setAttentionHandlers({
     request: overrides.requestAttention ?? (() => attentionRequests.push(1)),
     clear: overrides.clearAttention ?? (() => undefined)
@@ -306,6 +329,91 @@ const createService = (overrides: {
 }
 
 describe('TaskNotificationService', () => {
+  it('localizes system delivery while keeping the inbox title as a stable English key', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const { service, shown } = createService({
+      inbox,
+      translate: (key, options) => translateNativeMessage('zh-Hans', key, options)
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: '绘制曲线' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(shown[0]).toMatchObject({
+      title: '任务已完成',
+      body: '智能体已完成对"绘制曲线"的回复。'
+    })
+    expect(inbox.record).toHaveBeenCalledWith(expect.objectContaining({ title: 'Task completed' }))
+  })
+
+  it('keeps prompt text and provider errors out of native notifications by default', async () => {
+    const shown: TaskNotificationRequest[] = []
+    const service = new TaskNotificationService({
+      isEnabled: async () => true,
+      isAppFocused: () => false,
+      translate: (key) => key,
+      show: (request) => shown.push(request)
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Secret research prompt' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+    service.trackPrompt({ sessionId: 'session-1', text: 'Another secret prompt' })
+    await service.handleRuntimeEvent(errorEvent('Provider leaked request details'))
+
+    expect(shown.map(({ title, body }) => ({ title, body }))).toEqual([
+      { title: 'Task completed', body: 'A task completed. Open the app to view it.' },
+      { title: 'Task failed', body: 'A task failed. Open the app for details.' }
+    ])
+  })
+
+  it('localizes privacy-safe native bodies independently of localized titles', async () => {
+    const { service, shown } = createService({
+      showContent: async () => false,
+      translate: (key, options) => translateNativeMessage('zh-Hans', key, options)
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: '敏感提示词' })
+    await service.handleRuntimeEvent({ ...stopEvent('end_turn'), id: 'event-2' })
+
+    service.trackPrompt({ sessionId: 'session-1', text: '另一个敏感提示词' })
+    await service.handlePermissionRequest(permissionRequest('运行命令'))
+    await service.handleRuntimeEvent(elicitationEvent('pending'))
+    await service.handlePlanApproval({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: 'plan-version-1',
+      summary: '敏感计划'
+    })
+    await service.handleRuntimeEvent(stopEvent('max_tokens'))
+
+    expect(shown.map(({ title, body }) => ({ title, body }))).toEqual([
+      { title: '任务已完成', body: '任务已完成。打开应用即可查看。' },
+      { title: '需要批准', body: '任务需要您的批准。打开应用进行查看。' },
+      { title: '需要回复', body: '任务需要您的回复。打开应用以继续。' },
+      { title: '计划需要批准', body: '计划已准备好等待批准。打开应用进行查看。' },
+      { title: '任务需要注意', body: '任务需要注意。打开应用查看详细信息。' }
+    ])
+  })
+
+  it('keeps localized provider failures generic even when detailed content is enabled', async () => {
+    const { service, shown } = createService({
+      showContent: async () => true,
+      translate: (key, options) => translateNativeMessage('zh-Hans', key, options)
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: '敏感提示词' })
+    await service.handleRuntimeEvent(errorEvent('敏感 provider 错误'))
+
+    expect(shown[0]).toMatchObject({
+      title: '任务失败',
+      body: '任务失败。打开应用查看详细信息。'
+    })
+  })
+
   it('notifies on completion using the tracked prompt as the task name', async () => {
     const { service, shown, attentionRequests } = createService({})
 
@@ -378,6 +486,7 @@ describe('TaskNotificationService', () => {
     const service = new TaskNotificationService({
       isEnabled: async () => false,
       isAppFocused: () => true,
+      translate: englishNativeTranslator,
       show,
       inbox
     })
@@ -623,7 +732,7 @@ describe('TaskNotificationService', () => {
     await service.handleRuntimeEvent(errorEvent('process killed'))
 
     expect(shown).toHaveLength(1)
-    expect(shown[0]?.body).toBe('"Plot the curve" failed: process killed')
+    expect(shown[0]?.body).toBe('A task failed. Open the app for details.')
   })
 
   it('swallows delivery errors and reports them instead of rejecting', async () => {
@@ -813,9 +922,7 @@ describe('TaskNotificationService', () => {
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     const handling = service.handleRuntimeEvent(stopEvent('end_turn'))
-    await Promise.resolve()
-
-    expect(shown).toHaveLength(1)
+    await vi.waitFor(() => expect(shown).toHaveLength(1))
 
     finishInbox?.()
     await handling
@@ -903,10 +1010,13 @@ describe('TaskNotificationService', () => {
     const { service, shown, attentionRequests } = createService({})
     const request: ComputeApprovalRequest = {
       id: 'compute-1',
+      operation: 'call_command',
       provider_id: 'ssh:cluster',
       provider_name: 'Research Cluster',
       shape: 'scheduler_cluster',
-      intent: 'Run molecular dynamics'
+      intent: 'Run molecular dynamics',
+      command_preview: 'run-md',
+      command_full: 'run-md'
     }
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Simulate the protein' })
@@ -1005,6 +1115,75 @@ describe('TaskNotificationService', () => {
     expect(shown[0]?.body).toBe('"Plot the curve" needs your approval: pubchem search compound')
     shown[0]?.onClick()
     expect(onActivate).toHaveBeenCalledWith('session-1')
+  })
+
+  it('records a Session credential request as a navigable response wait', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const { service, shown } = createService({ inbox })
+    const onActivate = vi.fn()
+
+    service.setActivationHandler(onActivate)
+    service.trackPrompt({ sessionId: 'session-1', text: 'Search OpenAlex' })
+    await service.handleConnectorCredentialRequest({
+      id: 'credential-1',
+      credentialId: 'openalex',
+      connector: 'literature',
+      method: 'openalex_search_works',
+      sessionId: 'session-1'
+    })
+
+    expect(inbox.record).toHaveBeenCalledWith({
+      dedupeKey: 'input:connector-credential:credential-1',
+      kind: 'task.needs-attention',
+      source: 'connector',
+      attentionReason: 'waiting-for-user',
+      sessionId: 'session-1',
+      originId: 'credential-1',
+      title: 'Response needed',
+      summary: 'The agent is waiting for your response.',
+      actionState: 'pending'
+    })
+    expect(shown[0]).toMatchObject({
+      title: 'Response needed',
+      body: '"Search OpenAlex" needs your response.'
+    })
+    shown[0]?.onClick()
+    expect(onActivate).toHaveBeenCalledWith('session-1')
+  })
+
+  it('settles credential waits without creating an entry for the sessionless dialog', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const { service, shown } = createService({ inbox })
+
+    await service.handleConnectorCredentialRequest({
+      id: 'credential-sessionless',
+      credentialId: 'openalex',
+      connector: 'literature',
+      method: 'openalex_search_works'
+    })
+    await service.settleConnectorCredentialRequest('credential-1', true)
+    await service.settleConnectorCredentialRequest('credential-2', false)
+
+    expect(inbox.record).not.toHaveBeenCalled()
+    expect(shown).toHaveLength(0)
+    expect(inbox.settleAction).toHaveBeenNthCalledWith(
+      1,
+      'input:connector-credential:credential-1',
+      'resolved'
+    )
+    expect(inbox.settleAction).toHaveBeenNthCalledWith(
+      2,
+      'input:connector-credential:credential-2',
+      'cancelled'
+    )
   })
 
   it('does not notify for connector approvals while the app is focused', async () => {

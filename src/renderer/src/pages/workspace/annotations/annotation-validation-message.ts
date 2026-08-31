@@ -15,6 +15,10 @@ export const annotationValidationMessage = (
       return t('The annotation note is too long.')
     case 'payload-too-large':
       return t('The annotations are too large to send together.')
+    case 'visual-model-required':
+      return t(
+        "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
+      )
     default:
       return t('This annotation could not be added.')
   }

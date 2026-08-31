@@ -357,13 +357,21 @@ class ActiveTransferOwner {
     }
   }
 
-  // Transfers cannot survive a main-process restart. Clear crash-orphaned partial files before the
-  // first transfer in this owner instance; concurrent first calls share the cleanup promise.
+  // Upload drafts are intentionally process-local. Startup recovery first promotes every indexed
+  // staging Version, then calls this owner to remove bytes that have no surviving runtime owner.
+  async reconcileCrashOrphanedTransfers(): Promise<void> {
+    await this.ensureStagingDirectory()
+  }
+
+  // Transfers and unfinalized drafts cannot survive a main-process restart. Clear crash-orphaned
+  // bytes before the first transfer in this owner instance; concurrent first calls share the promise.
   private ensureStagingDirectory(): Promise<void> {
     if (!this.stagingReady) {
       const stagingDir = getSessionUploadDir(this.storageRoot, STAGING_UPLOAD_SESSION_ID)
+      const pendingDir = getSessionUploadDir(this.storageRoot, PENDING_UPLOAD_SESSION_ID)
       this.stagingReady = (async () => {
         await rm(stagingDir, { recursive: true, force: true })
+        await rm(pendingDir, { recursive: true, force: true })
         await mkdir(stagingDir, { recursive: true })
       })().catch((error) => {
         this.stagingReady = undefined

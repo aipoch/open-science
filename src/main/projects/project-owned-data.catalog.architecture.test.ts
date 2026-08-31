@@ -210,6 +210,7 @@ describe('Project-owned data catalog architecture', () => {
 
   it('locks the curated SQL, filesystem, and runtime ownership inventory', () => {
     expect(PROJECT_OWNED_DATA_CATALOG.map((entry) => entry.id)).toEqual([
+      'project-memory',
       'permission-grants',
       'project-preview-state',
       'vision-evidence',
@@ -221,6 +222,7 @@ describe('Project-owned data catalog architecture', () => {
       'artifact-provenance',
       'compute-jobs',
       'compute-job-remote-workdirs',
+      'compute-session-cache',
       'project-session-json',
       'artifact-bytes',
       'upload-bytes',
@@ -230,7 +232,8 @@ describe('Project-owned data catalog architecture', () => {
       'side-chat-runtime-state',
       'notebook-kernel-runtime-state',
       'compute-runtime-state',
-      'notebook-project-workspace'
+      'notebook-project-workspace',
+      'notebook-file-evidence'
     ])
     expect(
       [
@@ -243,6 +246,7 @@ describe('Project-owned data catalog architecture', () => {
     ).toEqual([
       'compute-job-project-delete',
       'delegated-runtime-quiescence',
+      'notebook-file-evidence-tail',
       'notification-session-invalidation',
       'project-deletion-intent-protocol',
       'project-file-projection-delete',
@@ -376,6 +380,10 @@ describe('Project-owned data catalog architecture', () => {
         'this.sessions.completeProjectSessionDeletion',
         'this.projects.deleteDeletionIntent'
       ]
+    )
+    expectCall(
+      objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
+      'notebookService.deleteProjectFileEvidence'
     )
   })
 
@@ -538,6 +546,25 @@ describe('Project-owned data catalog architecture', () => {
         'deleteOwnerRows'
       ),
       'this.repository.deleteByOwner'
+    )
+  })
+
+  it('proves Session cache follows the Compute Project deletion path', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'compute-session-cache')
+    ).toMatchObject({
+      medium: 'filesystem',
+      resources: ['compute/session-cache/<projectId>/<sessionId>/'],
+      policy: {
+        kind: 'coordinator-cleanup',
+        effect: 'hard-delete',
+        path: 'compute-job-project-delete',
+        operation: 'SessionCacheOwner.removeProject'
+      }
+    })
+    expectCallsInOrder(
+      functionScope('src/main/compute/session-cache-owner.ts', 'withSessionCacheDeletion'),
+      ['jobs.commitProjectJobDeletion', 'cache.removeProject']
     )
   })
 

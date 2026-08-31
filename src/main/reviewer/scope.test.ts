@@ -165,6 +165,28 @@ describe('resolveTurnScope', () => {
     expect(scope.blocks.some((block) => block.sourceId === 'act1')).toBe(false)
   })
 
+  it('keeps routed user intervention messages inside their originating turn', () => {
+    const session = buildSession()
+    session.messages.splice(
+      1,
+      0,
+      message('u1-intervention', 'user', 1001, {
+        content: 'Stop the export; keep only the summary.',
+        responseToMessageId: 'u1'
+      })
+    )
+    session.activities = [activity('act1', 1001.5, 5, { rawOutput: { stopped: true } })]
+
+    const scope = resolveTurnScope(session, 'a1')
+
+    expect(scope.blocks.map((block) => block.sourceId)).toEqual([
+      'u1',
+      'u1-intervention',
+      'act1',
+      'a1'
+    ])
+  })
+
   it('resolves the active Branch from the conversation graph instead of the flat projection', () => {
     const scope = resolveTurnScope(buildBranchedSession(), 'a2-edited')
 
@@ -247,6 +269,25 @@ describe('resolveTurnScope', () => {
     expect(editedAgentHash).not.toBe(baseAgentHash)
     // Untouched blocks keep their hash.
     expect(editedUserHash).toBe(baseUserHash)
+  })
+
+  it('changes the prompt block hash when cancellation evidence changes', () => {
+    const base = buildSession()
+    const baseScope = resolveTurnScope(base, 'a1')
+    const cancelled = buildSession()
+    cancelled.messages[0].contextWindowSamples = [
+      {
+        id: 'cancel-1',
+        timestamp: 1001,
+        termination: { kind: 'stop', stopReason: 'cancelled' },
+        contextWindow: { used: 10, size: 100 },
+        source: 'provider-response'
+      }
+    ]
+
+    const cancelledScope = resolveTurnScope(cancelled, 'a1')
+
+    expect(cancelledScope.blocks[0]?.contentHash).not.toBe(baseScope.blocks[0]?.contentHash)
   })
 
   it('folds an artifact content digest into the block hash so external edits invalidate it', () => {

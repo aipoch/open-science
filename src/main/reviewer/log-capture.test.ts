@@ -26,6 +26,110 @@ type FakeUpdate = {
 }
 
 describe('driveReviewerToStop — log capture via onUpdate', () => {
+  it('records media access distinctly without persisting MCP image base64', async () => {
+    const base64 = Buffer.alloc(128, 7).toString('base64')
+    const updates: FakeUpdate[] = [
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-media',
+          toolName: 'mcp__open_science_reviewer__read_artifact',
+          rawInput: { id: 'plot-version', view: 'content' }
+        }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-media',
+          rawOutput: JSON.stringify({
+            content: [
+              { type: 'text', text: '{"kind":"media","mimeType":"image/png"}' },
+              { type: 'image', data: base64, mimeType: 'image/png' }
+            ]
+          }),
+          status: 'completed'
+        }
+      },
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let index = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[index++]! }
+    const log: ReviewerLogEntry[] = []
+
+    await driveReviewerToStop(
+      session,
+      { timeoutMs: 1000, maxUpdates: 100 },
+      { onUpdate: (entry) => log.push(entry) }
+    )
+
+    expect(log).toHaveLength(1)
+    expect(log[0]).toMatchObject({ kind: 'tool', evidenceKind: 'media', status: 'ok' })
+    expect(log[0]?.kind === 'tool' ? log[0].rawOutput : '').toContain(
+      '[omitted: MCP image content]'
+    )
+    expect(JSON.stringify(log)).not.toContain(base64)
+  })
+
+  it('redacts media through the bounded sanitizer for cyclic and deeply nested output', async () => {
+    const base64 = Buffer.alloc(256, 9).toString('base64')
+    const rawOutput: Record<string, unknown> = {
+      content: [{ type: 'image', data: base64, mimeType: 'image/png' }]
+    }
+    rawOutput.cycle = rawOutput
+    let deep: Record<string, unknown> = rawOutput
+    for (let index = 0; index < 30; index++) {
+      const next: Record<string, unknown> = {}
+      deep.next = next
+      deep = next
+    }
+    const updates: FakeUpdate[] = [
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-cyclic-media',
+          toolName: 'mcp__open_science_reviewer__read_artifact'
+        }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-cyclic-media',
+          rawOutput,
+          status: 'completed'
+        }
+      },
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let index = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[index++]! }
+    const log: ReviewerLogEntry[] = []
+
+    await driveReviewerToStop(
+      session,
+      {
+        timeoutMs: 1000,
+        maxUpdates: 100,
+        logLimits: {
+          maxTextEntryBytes: 512,
+          maxToolInputBytes: 512,
+          maxToolOutputBytes: 512,
+          maxLogBytes: 2_048
+        }
+      },
+      { onUpdate: (entry) => log.push(entry) }
+    )
+
+    expect(log[0]).toMatchObject({ kind: 'tool', evidenceKind: 'media', status: 'ok' })
+    expect(JSON.stringify(log)).not.toContain(base64)
+    expect(log[0]?.kind === 'tool' ? log[0].rawOutput : '').toContain(
+      '[omitted: MCP image content]'
+    )
+  })
+
   it('collects agent_thought_chunk updates into thought entries', async () => {
     const updates: FakeUpdate[] = [
       {
@@ -856,7 +960,64 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
         status: 'ok',
         exitCode: 0
       },
-      { kind: 'message', text: 'Review complete.' }
+      { kind: 'message', text: 'Review complete.' },
+      {
+        kind: 'tool',
+        toolName: 'review_coverage',
+        rawOutput: JSON.stringify({
+          turnRead: true,
+          artifactReads: [
+            {
+              versionId: 'source-v1',
+              role: 'source_document',
+              traceRead: true,
+              contentRead: true,
+              mediaRead: false,
+              requestedTargets: [{ pages: [4] }],
+              actualTargets: [{ pages: [4] }],
+              partial: false,
+              limitations: []
+            },
+            {
+              versionId: 'source-unavailable',
+              role: 'source_document',
+              traceRead: false,
+              contentRead: true,
+              mediaRead: false,
+              requestedTargets: [{ pages: [1] }],
+              actualTargets: [],
+              partial: true,
+              limitations: [
+                {
+                  kind: 'content-missing',
+                  subjectId: 'source-unavailable',
+                  detail: 'Source content missing from immutable storage'
+                }
+              ]
+            },
+            {
+              versionId: 'source-sheet',
+              role: 'source_document',
+              traceRead: false,
+              contentRead: true,
+              mediaRead: false,
+              requestedTargets: [
+                { sheet: 'Results', rowStart: 100, rowEnd: 120, columns: ['D', 'E'] }
+              ],
+              actualTargets: [],
+              partial: true,
+              limitations: [
+                {
+                  kind: 'budget-exhausted',
+                  subjectId: 'source-sheet',
+                  detail: 'Reviewer session budget exhausted'
+                }
+              ]
+            }
+          ]
+        }),
+        status: 'ok'
+      }
     ]
 
     await repository.createReview({
@@ -873,7 +1034,7 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
     const reviews = await repository.getReviewsForSession('session-1')
     expect(reviews).toHaveLength(1)
     const reloaded = reviews[0]!
-    expect(reloaded.reviewerLog).toHaveLength(3)
+    expect(reloaded.reviewerLog).toHaveLength(4)
     expect(reloaded.reviewerLog[0]).toEqual({
       kind: 'thought',
       text: 'Let me read the turn first.'
@@ -890,6 +1051,31 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
       exitCode: 0
     })
     expect(reloaded.reviewerLog[2]).toEqual({ kind: 'message', text: 'Review complete.' })
+    expect(
+      JSON.parse(
+        reloaded.reviewerLog[3]?.kind === 'tool' ? reloaded.reviewerLog[3].rawOutput! : '{}'
+      )
+    ).toMatchObject({
+      artifactReads: expect.arrayContaining([
+        expect.objectContaining({
+          versionId: 'source-v1',
+          role: 'source_document',
+          mediaRead: false
+        }),
+        expect.objectContaining({
+          versionId: 'source-unavailable',
+          requestedTargets: [{ pages: [1] }],
+          actualTargets: [],
+          limitations: [expect.objectContaining({ kind: 'content-missing' })]
+        }),
+        expect.objectContaining({
+          versionId: 'source-sheet',
+          requestedTargets: [{ sheet: 'Results', rowStart: 100, rowEnd: 120, columns: ['D', 'E'] }],
+          actualTargets: [],
+          limitations: [expect.objectContaining({ kind: 'budget-exhausted' })]
+        })
+      ])
+    })
 
     await client.$disconnect()
   })

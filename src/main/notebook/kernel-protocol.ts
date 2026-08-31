@@ -192,12 +192,14 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
 export function framePythonRequest(
   reqId: string,
   code: string,
-  controlInvocationId?: string
+  controlInvocationId?: string,
+  protectedDirs?: readonly string[]
 ): string {
   return `${JSON.stringify({
     req_id: reqId,
     code,
-    ...(controlInvocationId ? { control_invocation_id: controlInvocationId } : {})
+    ...(controlInvocationId ? { control_invocation_id: controlInvocationId } : {}),
+    ...(protectedDirs?.length ? { protected_dirs: protectedDirs } : {})
   })}\n`
 }
 

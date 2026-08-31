@@ -66,6 +66,16 @@ const flush = async (): Promise<void> => {
   })
 }
 
+const deferGrant = (): ((roots: GrantedLocalRoot[]) => void) => {
+  let resolveGrant!: (roots: GrantedLocalRoot[]) => void
+  grantRoot.mockReturnValue(
+    new Promise<GrantedLocalRoot[]>((resolve) => {
+      resolveGrant = resolve
+    })
+  )
+  return resolveGrant
+}
+
 beforeEach(() => {
   useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
   listDir = vi.fn(async (path: string): Promise<LocalDirListing> => ({
@@ -545,6 +555,137 @@ describe('GrantFolderAccessDialog', () => {
     // The failure clears on navigation.
     await click(document.body.querySelector('[data-testid="grant-access-crumb-home"]'))
     expect(document.body.textContent).not.toContain('Directory could not be accessed.')
+  })
+
+  it('submits one grant and disables actions when Grant is clicked twice before it settles', async () => {
+    const resolveGrant = deferGrant()
+    renderDialog()
+    await flush()
+
+    await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
+    const grantButton = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="grant-access-grant"]'
+    )
+    const cancelButton = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="grant-access-cancel"]'
+    )
+    await act(async () => {
+      grantButton?.click()
+      grantButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(grantRoot).toHaveBeenCalledTimes(1)
+    expect(grantButton?.disabled).toBe(true)
+    expect(cancelButton?.disabled).toBe(true)
+
+    await act(async () => {
+      resolveGrant([grantedRoot])
+      await Promise.resolve()
+    })
+  })
+
+  it('ignores a grant response from a closed instance after the dialog reopens', async () => {
+    const resolveGrant = deferGrant()
+    const onGranted = vi.fn()
+    const onOpenChange = vi.fn()
+    act(() => {
+      root.render(
+        <GrantFolderAccessDialog open onOpenChange={onOpenChange} onGranted={onGranted} />
+      )
+    })
+    await flush()
+
+    await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
+    await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+
+    act(() => {
+      root.render(
+        <GrantFolderAccessDialog open={false} onOpenChange={onOpenChange} onGranted={onGranted} />
+      )
+    })
+    act(() => {
+      root.render(
+        <GrantFolderAccessDialog open onOpenChange={onOpenChange} onGranted={onGranted} />
+      )
+    })
+    await flush()
+    onOpenChange.mockClear()
+
+    await act(async () => {
+      resolveGrant([grantedRoot])
+      await Promise.resolve()
+    })
+
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(onGranted).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Grant folder access')
+  })
+
+  it('keeps the selected folder and access fixed while a grant is pending', async () => {
+    const resolveGrant = deferGrant()
+    const onOpenChange = vi.fn()
+    act(() => {
+      root.render(<GrantFolderAccessDialog open onOpenChange={onOpenChange} />)
+    })
+    await flush()
+
+    await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
+    await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    listDir.mockClear()
+
+    await click(document.body.querySelector('[data-testid="grant-access-crumb-home"]'))
+    await click(document.body.querySelector('[role="radio"][aria-checked="false"]'))
+    await click(document.body.querySelector('[data-testid="grant-access-close"]'))
+
+    expect(listDir).not.toHaveBeenCalled()
+    expect(
+      document.body.querySelector('[data-testid="grant-access-crumb-current"]')?.textContent
+    ).toBe('Projects')
+    expect(
+      Array.from(document.body.querySelectorAll('[role="radio"]')).map((radio) =>
+        radio.getAttribute('aria-checked')
+      )
+    ).toEqual(['true', 'false'])
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveGrant([grantedRoot])
+      await Promise.resolve()
+    })
+  })
+
+  it('does not dismiss the dialog from outside interaction or Escape while granting', async () => {
+    const resolveGrant = deferGrant()
+    const onOpenChange = vi.fn()
+    act(() => {
+      root.render(<GrantFolderAccessDialog open onOpenChange={onOpenChange} />)
+    })
+    await flush()
+
+    await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
+    await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+
+    const outside = document.createElement('div')
+    document.body.appendChild(outside)
+    await act(async () => {
+      outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      outside.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+      await Promise.resolve()
+    })
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    outside.remove()
+    await act(async () => {
+      resolveGrant([grantedRoot])
+      await Promise.resolve()
+    })
   })
 
   it('grants the current folder, closes, and reports the new root', async () => {

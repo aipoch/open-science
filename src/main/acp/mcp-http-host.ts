@@ -7,6 +7,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createArtifactMcpServer, type ArtifactMcpEnvironment } from '../artifacts/mcp-server'
 import { ArtifactRepository } from '../artifacts/repository'
 import { createNotebookMcpServer, type NotebookMcpEnvironment } from '../notebook/mcp-server'
+import { createLiteratureMcpServer, type LiteratureMcpHandler } from '../literature/mcp-server'
 import {
   callGitHubSkillImportRpc,
   callSkillImportRpc,
@@ -36,7 +37,14 @@ type HostConnection = {
 }
 
 // The MCP server kinds this host serves; each maps to a factory + a per-session environment.
-const SERVER_KINDS = ['artifact', 'notebook', 'skill-import', 'plan', 'host-message'] as const
+const SERVER_KINDS = [
+  'artifact',
+  'notebook',
+  'skill-import',
+  'plan',
+  'host-message',
+  'literature'
+] as const
 type ServerKind = (typeof SERVER_KINDS)[number]
 
 const isServerKind = (value: string): value is ServerKind =>
@@ -49,6 +57,7 @@ type SessionEntry = {
   skillImport?: SkillImportMcpEnvironment
   plan?: PlanMcpEnvironment
   hostMessage?: HostMessageMcpHandler
+  literature?: LiteratureMcpHandler
 }
 
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
@@ -153,6 +162,12 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
+  registerLiterature(routingId: string, handler: LiteratureMcpHandler): void {
+    const entry = this.sessions.get(routingId) ?? {}
+    entry.literature = handler
+    this.sessions.set(routingId, entry)
+  }
+
   // Drops a routing id's registered environments once its session is gone.
   unregister(routingId: string): void {
     this.sessions.delete(routingId)
@@ -201,6 +216,10 @@ class AgentMcpHttpHost {
 
     if (kind === 'host-message') {
       return entry.hostMessage ? createHostMessageMcpServer(entry.hostMessage) : undefined
+    }
+
+    if (kind === 'literature') {
+      return entry.literature ? createLiteratureMcpServer(entry.literature) : undefined
     }
 
     const skillImportEnvironment = entry.skillImport

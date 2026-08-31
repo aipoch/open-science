@@ -393,14 +393,15 @@ const createUploadCommandOwner = (
       withDataRootWrite(() => repository.deleteUpload(request)),
     finalizeSession: ({ args: [request] }) =>
       withDataRootWrite(() => {
+        const projectId = request.projectId?.trim() || DEFAULT_UPLOAD_PROJECT_ID
         const finalize = (): Promise<UploadedAttachment[]> =>
           repository.finalizePendingSessionUploads(
             request.sessionId,
             request.attachments,
-            request.projectId
+            projectId
           )
-        return options.withSessionMutation && request.projectId
-          ? options.withSessionMutation(request.projectId, request.sessionId, finalize)
+        return options.withSessionMutation
+          ? options.withSessionMutation(projectId, request.sessionId, finalize)
           : finalize()
       }),
     readPreview: async ({ args: [request] }) => {

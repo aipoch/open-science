@@ -1884,7 +1884,14 @@ const InstalledSpecialistsPanel = ({
                       <DropdownMenu>
                         <TooltipProvider delayDuration={200}>
                           <Tooltip>
-                            <TooltipTrigger asChild>
+                            <TooltipTrigger
+                              asChild
+                              onFocus={(event) => {
+                                if (!event.currentTarget.matches(':focus-visible')) {
+                                  event.preventDefault()
+                                }
+                              }}
+                            >
                               <DropdownMenuTrigger asChild>
                                 <Button
                                   variant="ghost"

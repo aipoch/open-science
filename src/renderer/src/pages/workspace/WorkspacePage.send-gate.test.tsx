@@ -38,7 +38,8 @@ const runtime = vi.hoisted(() => ({
   ensureSessionReady: vi.fn().mockResolvedValue(undefined),
   cancelRun: vi.fn(),
   deleteRuntimeSession: vi.fn(),
-  respondToPermission: vi.fn()
+  respondToPermission: vi.fn(),
+  setMemoryEnabled: vi.fn()
 }))
 
 vi.mock('@/components/ui/resizable', () => ({
@@ -63,7 +64,8 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     ensureSessionReady: runtime.ensureSessionReady,
     cancelRun: runtime.cancelRun,
     deleteRuntimeSession: runtime.deleteRuntimeSession,
-    respondToPermission: runtime.respondToPermission
+    respondToPermission: runtime.respondToPermission,
+    setMemoryEnabled: runtime.setMemoryEnabled
   })
 }))
 
@@ -107,6 +109,21 @@ const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => {
     ...overrides
   }
 }
+
+const createReviewableSession = (): ChatSession =>
+  createSession({
+    messages: [
+      {
+        id: 'agent-1',
+        role: 'agent',
+        content: 'Analysis complete.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+  })
 
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
 
@@ -186,6 +203,7 @@ describe('WorkspacePage send gate while compacting', () => {
       },
       uploads: { deleteUpload: vi.fn() },
       reviewer: {
+        run: vi.fn(() => Promise.resolve({ started: true })),
         onUpdated: vi.fn(() => vi.fn()),
         onSuppressNextAutoReview: vi.fn(() => vi.fn()),
         onFixLoopStart: vi.fn(() => vi.fn()),
@@ -255,6 +273,9 @@ describe('WorkspacePage send gate while compacting', () => {
       await renderPage()
 
       expect(conversationProps.agentControls.canChange).toBe(false)
+      expect(conversationProps.agentControls.canChangeAutoReview).toBe(false)
+      expect(conversationProps.agentControls.canChangeMemory).toBe(false)
+      expect(conversationProps.agentControls.canChangeSpecialist).toBe(false)
       expect(conversationProps.permissions.canChangePermissionProfile).toBe(true)
     }
   )
@@ -671,7 +692,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.conversation.availability.revise).toBe(false)
   })
 
-  it('blocks follow-on Session actions until a pending history replay is sent', async () => {
+  it('keeps replay-independent Session actions available until history replay is sent', async () => {
     useSessionStore.setState({
       sessions: [
         createSession({
@@ -706,7 +727,7 @@ describe('WorkspacePage send gate while compacting', () => {
     })
 
     expect(conversationProps.conversation.availability.submit).toBe(true)
-    expect(conversationProps.conversation.availability.branch).toBe(false)
+    expect(conversationProps.conversation.availability.branch).toBe(true)
     expect(conversationProps.workflows.review.disabled).toBe(true)
     expect(conversationProps.workflows.saveAsSkill.disabled).toBe(true)
     expect(conversationProps.contextWindow.canCompact).toBe(false)
@@ -714,6 +735,9 @@ describe('WorkspacePage send gate while compacting', () => {
       'Send a message to reconnect this session before compacting.'
     )
     expect(conversationProps.agentControls.canChange).toBe(false)
+    expect(conversationProps.agentControls.canChangeAutoReview).toBe(true)
+    expect(conversationProps.agentControls.canChangeMemory).toBe(true)
+    expect(conversationProps.agentControls.canChangeSpecialist).toBe(true)
     expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
     expect(conversationProps.view.sideChatDisabledReason).toBe(
       'Resolve the current Session operation first.'
@@ -771,5 +795,86 @@ describe('WorkspacePage send gate while compacting', () => {
     })
 
     expect(conversationProps.view.actionError).toBe('Continuation failed')
+  })
+
+  it('surfaces a failed Memory reconfiguration for the active conversation', async () => {
+    runtime.setMemoryEnabled.mockRejectedValueOnce(new Error('Memory update failed'))
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.agentControls.toggleMemory?.(false)
+      await Promise.resolve()
+    })
+
+    expect(runtime.setMemoryEnabled).toHaveBeenCalledWith('sess-a', false)
+    expect(conversationProps.view.actionError).toBe('Memory update failed')
+  })
+
+  it('locks a manual review request before the running event arrives', async () => {
+    let resolveReview!: (result: { started: boolean }) => void
+    const pendingReview = new Promise<{ started: boolean }>((resolve) => {
+      resolveReview = resolve
+    })
+    vi.mocked(window.api.reviewer.run).mockReturnValueOnce(pendingReview)
+    useSessionStore.setState({
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    act(() => {
+      conversationProps.workflows.review.request()
+      conversationProps.workflows.review.request()
+    })
+
+    expect(window.api.reviewer.run).toHaveBeenCalledTimes(1)
+    expect(conversationProps.workflows.review.disabled).toBe(true)
+    expect(conversationProps.workflows.review.running).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
+    expect(useSessionStore.getState().sessions[0]?.branchSwitchBlocked).toBe(true)
+
+    await act(async () => {
+      resolveReview({ started: true })
+      await pendingReview
+    })
+  })
+
+  it('surfaces a manual review that did not start and leaves it retriable', async () => {
+    vi.mocked(window.api.reviewer.run).mockResolvedValueOnce({
+      started: false,
+      reason: 'load-failed'
+    })
+    useSessionStore.setState({
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.workflows.review.request()
+      await Promise.resolve()
+    })
+
+    expect(conversationProps.view.actionError).toBe('Review could not start. Try again.')
+    expect(conversationProps.workflows.review.disabled).toBe(false)
+    expect(conversationProps.workflows.review.running).toBe(false)
+  })
+
+  it('surfaces a rejected manual review request and leaves it retriable', async () => {
+    vi.mocked(window.api.reviewer.run).mockRejectedValueOnce(new Error('review IPC unavailable'))
+    useSessionStore.setState({
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.workflows.review.request()
+      await Promise.resolve()
+    })
+
+    expect(conversationProps.view.actionError).toBe('Review could not start. Try again.')
+    expect(conversationProps.workflows.review.disabled).toBe(false)
+    expect(conversationProps.workflows.review.running).toBe(false)
   })
 })

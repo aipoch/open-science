@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { realpathSync } from 'node:fs'
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 
@@ -1157,9 +1157,11 @@ const seatbeltString = (value: string): string => JSON.stringify(value)
 
 // macOS Seatbelt is the hard filesystem layer beneath the semantic policy above. It applies to the
 // whole child process tree, so dynamically constructed paths and nested R/Python/subprocess writers
-// cannot modify the app-owned runtime. The trusted main-process package manager is spawned outside
-// this wrapper and remains the only writer. Other platforms still use the main-process policy; their
-// native process-sandbox adapters can be added at this same seam without changing callers.
+// cannot modify managed runtime state. The sole writable exception is the marker-owned workload-cache
+// subtree, which contains disposable third-party cache data rather than environments or app metadata.
+// The trusted main-process package manager is spawned outside this wrapper and remains the only managed
+// runtime writer. Other platforms still use the main-process policy; their native process-sandbox
+// adapters can be added at this same seam without changing callers.
 export const protectManagedRuntimeWrites = (
   invocation: RuntimeProcessInvocation,
   runtimeRoot: string,
@@ -1180,7 +1182,10 @@ export const protectManagedRuntimeWrites = (
     '(allow default)',
     ...protectedRoots.flatMap((root) => [
       `(deny file-write* (literal ${seatbeltString(root)}))`,
-      `(deny file-write* (subpath ${seatbeltString(root)}))`
+      `(deny file-write* (require-all`,
+      `  (subpath ${seatbeltString(root)})`,
+      `  (require-not (literal ${seatbeltString(join(root, 'cache', 'notebook'))}))`,
+      `  (require-not (subpath ${seatbeltString(join(root, 'cache', 'notebook'))}))))`
     ])
   ].join('\n')
 

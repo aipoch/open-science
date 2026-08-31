@@ -125,6 +125,24 @@ const noInputRequest: AcpPermissionRequest = {
   options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
 }
 
+const literaturePermissionRequest: AcpPermissionRequest = {
+  requestId: 'literature-1',
+  sessionId: 'session-1',
+  toolCallId: 'tool-literature',
+  title: 'mcp__open-science-literature__read_document',
+  providerToolName: 'mcp__open-science-literature__read_document',
+  isMcp: true,
+  mcpIdentity: 'open-science-literature/read_document',
+  rawInput: {
+    documentId: '336232f9-9914-4ef9-8590-b726a85253bd',
+    query: 'main contributions method architecture evaluation results'
+  },
+  options: [
+    { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+    { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
+  ]
+}
+
 const renderControls = (): string =>
   renderToStaticMarkup(
     <PermissionApprovalControls requests={[permissionRequest]} onRespond={() => undefined} />
@@ -257,6 +275,22 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Artifact save</span>')
     expect(html).toContain('Save as artifact?')
     expect(html).not.toContain('Command execution</span>')
+  })
+
+  it('shows a semantic Literature approval card without raw tool commands or document ids', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[literaturePermissionRequest]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Search linked PDFs?')
+    expect(html).toContain('main contributions method architecture evaluation results')
+    expect(html).toContain('data-testid="literature-tool-card"')
+    expect(html).not.toContain('mcp__open-science-literature__read_document')
+    expect(html).not.toContain('336232f9-9914-4ef9-8590-b726a85253bd')
+    expect(html).not.toContain('permission-code-toggle')
   })
 
   it('keeps an otherwise-opaque MCP request distinguishable without its protocol identity', () => {

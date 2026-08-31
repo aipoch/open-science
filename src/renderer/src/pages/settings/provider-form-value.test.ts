@@ -176,6 +176,9 @@ describe('provider-kind helpers', () => {
 
     expect(apiKeys).toContain('official:deepseek')
     expect(apiKeys).toContain('official:openai')
+    expect(apiKeys).toContain('official:tencent')
+    expect(apiKeys).toContain('official:tencentcodingplan')
+    expect(apiKeys).toContain('official:tencenttokenplan')
     // The two subscription sign-ins each get their own group, parallel to one another, rather than
     // the Claude one hiding under Official API.
     expect(groupKeys('codex')).toEqual(['codex-subscription'])
@@ -204,6 +207,36 @@ describe('provider-kind helpers', () => {
       name: 'MiniMax',
       vendorId: 'minimax',
       region: 'global',
+      model: '',
+      contextWindow: '',
+      maxInputTokens: '',
+      maxOutputTokens: ''
+    })
+    expect(providerKindPatch('official:tencent')).toEqual({
+      type: 'official',
+      name: 'Tencent TokenHub',
+      vendorId: 'tencent',
+      region: 'international',
+      model: '',
+      contextWindow: '',
+      maxInputTokens: '',
+      maxOutputTokens: ''
+    })
+    expect(providerKindPatch('official:tencentcodingplan')).toEqual({
+      type: 'official',
+      name: 'Tencent Coding Plan',
+      vendorId: 'tencentcodingplan',
+      region: undefined,
+      model: '',
+      contextWindow: '',
+      maxInputTokens: '',
+      maxOutputTokens: ''
+    })
+    expect(providerKindPatch('official:tencenttokenplan')).toEqual({
+      type: 'official',
+      name: 'Tencent Token Plan',
+      vendorId: 'tencenttokenplan',
+      region: undefined,
       model: '',
       contextWindow: '',
       maxInputTokens: '',

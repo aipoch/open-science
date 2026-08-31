@@ -164,6 +164,9 @@ const createSessionDelegatedWorkRecords = (
           attemptId,
           runtimeSegmentId,
           frameworkId: attempt?.executionModel?.frameworkId ?? options.frameworkId,
+          ...(attempt?.executionModel?.providerId
+            ? { providerId: attempt.executionModel.providerId }
+            : {}),
           ...(attempt?.executionModel
             ? {
                 backendId: attempt.executionModel.backendId,
@@ -359,9 +362,13 @@ const createSessionDelegatedWorkRecords = (
       promptMessageId,
       runtimeSegmentId
     ) {
-      const pending = (await load()).runtimeContext?.delegatedWork?.messageCommands?.find(
+      const snapshot = await load()
+      const pending = snapshot.runtimeContext?.delegatedWork?.messageCommands?.find(
         ({ messageId }) => messageId === pendingMessageId
       )
+      const attempt = snapshot.runtimeContext?.delegatedWork?.records
+        .find((record) => record.agentFrameId === frameId)
+        ?.attempts.find((candidate) => candidate.id === attemptId)
       await mutate((expectedRevision) =>
         options.commands.startPendingMessageTurn(key, {
           expectedRevision,
@@ -371,6 +378,9 @@ const createSessionDelegatedWorkRecords = (
           promptMessageId,
           runtimeSegmentId,
           frameworkId: options.frameworkId,
+          ...(attempt?.executionModel?.providerId
+            ? { providerId: attempt.executionModel.providerId }
+            : {}),
           startedAt: pending?.queuedAt ?? Date.now()
         })
       )

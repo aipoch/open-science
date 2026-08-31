@@ -11,6 +11,7 @@ export type PersistedRuntimeSegment = {
   agentFrameId: string
   // Historical evidence may outlive the runtime's current framework registry.
   frameworkId: string
+  providerId?: string
   backendId?: string
   agentName?: string
   model?: string
@@ -83,6 +84,7 @@ export type ConversationGraphSeed = {
   sessionId: string
   messages: PersistedChatMessage[]
   frameworkId?: AgentFrameworkId
+  providerId?: string
   backendId?: string
   model?: string
   createdAt: number
@@ -138,6 +140,7 @@ export const createLinearConversationGraph = (
         id: runtimeSegmentId,
         agentFrameId: rootFrameId,
         frameworkId: seed.frameworkId ?? 'claude-code',
+        providerId: seed.providerId,
         backendId: seed.backendId,
         model: seed.model,
         startedAt: seed.createdAt
@@ -992,6 +995,7 @@ export const ensureConversationRuntimeSegment = (
   input: {
     id: string
     frameworkId: AgentFrameworkId
+    providerId?: string
     backendId?: string
     model?: string
     startedAt: number
@@ -1006,6 +1010,7 @@ export const ensureConversationRuntimeSegment = (
     !input.forceNew &&
     current &&
     current.frameworkId === input.frameworkId &&
+    current.providerId === input.providerId &&
     current.backendId === input.backendId &&
     current.model === input.model
   ) {
@@ -1016,6 +1021,7 @@ export const ensureConversationRuntimeSegment = (
     id: input.id,
     agentFrameId: frame.id,
     frameworkId: input.frameworkId,
+    providerId: input.providerId,
     backendId: input.backendId,
     model: input.model,
     startedAt: input.startedAt

@@ -150,6 +150,24 @@ afterEach(() => {
 })
 
 describe('SpecialistsPanel', () => {
+  it('does not reopen an action tooltip when a menu returns focus to its trigger', async () => {
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const actions = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Actions for RNA Reviewer"]'
+    )
+    expect(actions).not.toBeNull()
+
+    fireEvent.focus(actions!)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    })
+
+    expect(document.body.querySelector('[role="tooltip"]')).toBeNull()
+  })
+
   it('renders safely when the web surface omits the specialist API', async () => {
     const specialistApi = window.api.specialist
     delete (window.api as { specialist?: Window['api']['specialist'] }).specialist

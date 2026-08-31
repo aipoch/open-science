@@ -1,6 +1,8 @@
 import { safeStorage } from 'electron'
 
-// Wraps Electron safeStorage for provider credential material. Plaintext values exist only transiently in main
+import { isSecureStorageAvailable } from '../secure-storage'
+
+// Wraps Electron safeStorage for Settings credential material. Plaintext values exist only transiently in main
 // memory (during validation and env assembly); at rest they are OS-encrypted ciphertext, and the
 // renderer only ever sees the masked hint produced by maskKey().
 
@@ -10,8 +12,8 @@ const KEY_REF_PREFIX = 'enc:'
 // Legacy reduced-protection refs remain readable for migration, but new writes never create them.
 const PLAIN_REF_PREFIX = 'plain:'
 
-// Reports whether the OS keychain backing safeStorage is usable on this machine.
-const isEncryptionAvailable = (): boolean => safeStorage.isEncryptionAvailable()
+// Reports whether safeStorage is backed by an OS credential vault on this machine.
+const isEncryptionAvailable = (): boolean => isSecureStorageAvailable()
 
 // Turns plaintext into an OS-protected keyRef. Saving secrets fails closed when safeStorage is absent.
 const encryptKey = (plaintext: string): string => {
@@ -28,6 +30,12 @@ const encryptKey = (plaintext: string): string => {
 
 // Decrypts a stored keyRef. `plain:` is accepted only for backwards-compatible migration.
 const decryptKey = (keyRef: string): string => {
+  if (!isEncryptionAvailable()) {
+    throw new Error(
+      'Secure credential storage is unavailable. Unlock the system keychain and retry.'
+    )
+  }
+
   if (keyRef.startsWith(PLAIN_REF_PREFIX)) {
     return Buffer.from(keyRef.slice(PLAIN_REF_PREFIX.length), 'base64').toString('utf8')
   }
@@ -52,15 +60,43 @@ const tryDecryptKey = (keyRef: string | undefined): string | undefined => {
   }
 }
 
-// Builds a non-secret display hint like "sk-a…wxyz". Short keys are collapsed to bullets so the
-// full value can never be reconstructed from the mask.
+const FIXED_MASK_PREFIX = '••••'
+
+// Reveals only a four-character suffix and never the original length for short credentials.
 const maskKey = (plaintext: string): string => {
   const trimmed = plaintext.trim()
+  const characters = Array.from(trimmed)
 
-  if (trimmed.length === 0) return ''
-  if (trimmed.length <= 8) return '•'.repeat(trimmed.length)
+  if (characters.length === 0) return ''
+  if (characters.length <= 8) return '•'.repeat(8)
 
-  return `${trimmed.slice(0, 4)}…${trimmed.slice(-4)}`
+  return `${FIXED_MASK_PREFIX}${characters.slice(-4).join('')}`
 }
 
-export { KEY_REF_PREFIX, decryptKey, encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey }
+// Old settings may contain prefix-revealing masks. Harden them at the projection boundary without
+// rewriting settings just because they were viewed.
+const hardenKeyMask = (mask: string | undefined): string | undefined => {
+  if (mask === undefined || mask === '') return mask
+  if (/^•+$/u.test(mask)) return '•'.repeat(8)
+
+  const ellipsis = mask.lastIndexOf('…')
+  if (ellipsis >= 0)
+    return `${FIXED_MASK_PREFIX}${Array.from(mask.slice(ellipsis + 1))
+      .slice(-4)
+      .join('')}`
+  if (mask.startsWith(FIXED_MASK_PREFIX)) {
+    return `${FIXED_MASK_PREFIX}${Array.from(mask.slice(FIXED_MASK_PREFIX.length)).slice(-4).join('')}`
+  }
+
+  return '•'.repeat(8)
+}
+
+export {
+  KEY_REF_PREFIX,
+  decryptKey,
+  encryptKey,
+  hardenKeyMask,
+  isEncryptionAvailable,
+  maskKey,
+  tryDecryptKey
+}

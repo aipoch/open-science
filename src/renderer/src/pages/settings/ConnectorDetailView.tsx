@@ -19,6 +19,7 @@ import { specialistsUsingConnector } from './specialist-resource-scope'
 type ConnectorDetailViewProps = {
   id: string
   onManagePermissions?: () => void
+  onManageCredentials?: () => void
 }
 
 // One label/value row in the Details section.
@@ -40,7 +41,8 @@ const DetailRow = ({
 // breadcrumb and back control live in the settings header, not here.
 const ConnectorDetailView = ({
   id,
-  onManagePermissions
+  onManagePermissions,
+  onManageCredentials
 }: ConnectorDetailViewProps): React.JSX.Element => {
   const { t, i18n } = useTranslation()
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
@@ -166,6 +168,18 @@ const ConnectorDetailView = ({
         <p className="mt-2 text-sm text-muted-foreground [text-wrap:pretty]">
           {detail.description}
         </p>
+      ) : null}
+
+      {id === 'literature' && onManageCredentials ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-3"
+          onClick={onManageCredentials}
+        >
+          {t('Manage credentials')}
+        </Button>
       ) : null}
 
       {operationError ? (

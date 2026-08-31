@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import { SPECIALIST_IPC } from '../../shared/specialist'
 import { SPECIALIST_MARKETPLACE_IPC } from '../../shared/specialist-marketplace'
 import { SessionBindingService } from './session-binding'
 import { registerSpecialistIpcHandlers } from './ipc'
-import type { ProfileService } from './service'
+import type { SpecialistService } from './service'
 import { SessionSpecialistReconfiguration } from './session-reconfiguration'
 
 const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
@@ -30,16 +30,16 @@ const profile = {
   fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
   selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
   revision: 1
-} as SpecialistProfileView
+} as SpecialistView
 
-const createProfileService = (): ProfileService =>
+const createSpecialistService = (): SpecialistService =>
   ({
     getById: vi.fn().mockResolvedValue(profile),
     resolveRunnableById: vi.fn().mockResolvedValue(profile),
     listForSettings: vi.fn().mockResolvedValue([]),
     listForSettingsSnapshot: vi.fn().mockResolvedValue({ items: [], integrity: { status: 'ok' } }),
     subscribe: vi.fn()
-  }) as unknown as ProfileService
+  }) as unknown as SpecialistService
 
 const createReconfigurationStub = (): Pick<SessionSpecialistReconfiguration, 'requestSwitch'> => ({
   requestSwitch: vi.fn().mockResolvedValue({ status: 'applied', contextReset: false })
@@ -48,7 +48,7 @@ const createReconfigurationStub = (): Pick<SessionSpecialistReconfiguration, 're
 describe('specialist session IPC', () => {
   it('adds exact Marketplace provenance to the Settings catalog without persisting it', async () => {
     handlers.clear()
-    const importedProfile: SpecialistProfileView = {
+    const importedProfile: SpecialistView = {
       ...profile,
       origin: 'imported',
       importBaseline: {
@@ -58,7 +58,7 @@ describe('specialist session IPC', () => {
       }
     }
     const service = {
-      ...createProfileService(),
+      ...createSpecialistService(),
       listForSettingsSnapshot: vi.fn().mockResolvedValue({
         items: [
           { kind: 'custom' as const, ...importedProfile },
@@ -66,7 +66,7 @@ describe('specialist session IPC', () => {
         ],
         integrity: { status: 'ok' as const }
       })
-    } as unknown as ProfileService
+    } as unknown as SpecialistService
     const marketplace = {
       list: vi.fn(),
       installedSpecialistProvenance: vi
@@ -127,9 +127,9 @@ describe('specialist session IPC', () => {
       integrity: { status: 'ok' as const }
     }
     const service = {
-      ...createProfileService(),
+      ...createSpecialistService(),
       listForSettingsSnapshot: vi.fn().mockResolvedValue(snapshot)
-    } as unknown as ProfileService
+    } as unknown as SpecialistService
     const marketplace = {
       list: vi.fn(),
       installedSpecialistProvenance: vi.fn().mockRejectedValue(new Error('invalid provenance')),
@@ -182,8 +182,8 @@ describe('specialist session IPC', () => {
       install: vi.fn().mockResolvedValue({ status: 'failed', code: 'candidate-invalid' })
     }
     registerSpecialistIpcHandlers(
-      createProfileService(),
-      new SessionBindingService(createProfileService()),
+      createSpecialistService(),
+      new SessionBindingService(createSpecialistService()),
       createReconfigurationStub(),
       undefined,
       undefined,
@@ -245,8 +245,8 @@ describe('specialist session IPC', () => {
       dispose: vi.fn()
     }
     registerSpecialistIpcHandlers(
-      createProfileService(),
-      new SessionBindingService(createProfileService()),
+      createSpecialistService(),
+      new SessionBindingService(createSpecialistService()),
       createReconfigurationStub(),
       undefined,
       undefined,
@@ -304,8 +304,8 @@ describe('specialist session IPC', () => {
       dispose: vi.fn()
     }
     registerSpecialistIpcHandlers(
-      createProfileService(),
-      new SessionBindingService(createProfileService()),
+      createSpecialistService(),
+      new SessionBindingService(createSpecialistService()),
       createReconfigurationStub(),
       undefined,
       undefined,
@@ -349,12 +349,12 @@ describe('specialist session IPC', () => {
   it('broadcasts only an invalidation signal without profile prompts or resource paths', () => {
     let notify: (() => void) | undefined
     const service = {
-      ...createProfileService(),
+      ...createSpecialistService(),
       subscribe: vi.fn((listener: () => void) => {
         notify = listener
         return vi.fn()
       })
-    } as unknown as ProfileService
+    } as unknown as SpecialistService
 
     registerSpecialistIpcHandlers(
       service,
@@ -372,9 +372,9 @@ describe('specialist session IPC', () => {
   it('skips runtime invalidation only for appearance-only updates', async () => {
     handlers.clear()
     const service = {
-      ...createProfileService(),
+      ...createSpecialistService(),
       update: vi.fn().mockResolvedValue(profile)
-    } as unknown as ProfileService
+    } as unknown as SpecialistService
     const onProfilesChanged = vi.fn()
 
     registerSpecialistIpcHandlers(
@@ -407,10 +407,10 @@ describe('specialist session IPC', () => {
 
   it('routes a session specialist switch through the reconfiguration owner', async () => {
     handlers.clear()
-    const binding = new SessionBindingService(createProfileService())
+    const binding = new SessionBindingService(createSpecialistService())
     const reconfiguration = createReconfigurationStub()
 
-    registerSpecialistIpcHandlers(createProfileService(), binding, reconfiguration)
+    registerSpecialistIpcHandlers(createSpecialistService(), binding, reconfiguration)
 
     const handler = handlers.get(SPECIALIST_IPC.SET_SESSION_SPECIALIST)
     expect(handler).toBeDefined()
@@ -424,7 +424,7 @@ describe('specialist session IPC', () => {
 
   it('does not leave durable, Main-memory, and runtime Specialist bindings silently divergent', async () => {
     handlers.clear()
-    const service = createProfileService()
+    const service = createSpecialistService()
     const binding = new SessionBindingService(service)
     binding.setBinding('session-1', 'specialist-old')
     let durableBinding: {
@@ -480,11 +480,11 @@ describe('specialist session IPC', () => {
 
   it('returns only the renderer-safe template save result from main', async () => {
     handlers.clear()
-    const binding = new SessionBindingService(createProfileService())
+    const binding = new SessionBindingService(createSpecialistService())
     const exportContributionTemplate = vi.fn().mockResolvedValue({ saved: true })
 
     registerSpecialistIpcHandlers(
-      createProfileService(),
+      createSpecialistService(),
       binding,
       createReconfigurationStub(),
       undefined,
@@ -500,7 +500,7 @@ describe('specialist session IPC', () => {
 
   it('keeps archive bytes in main and validates install requests before the package service', async () => {
     handlers.clear()
-    const binding = new SessionBindingService(createProfileService())
+    const binding = new SessionBindingService(createSpecialistService())
     const preview = vi.fn().mockResolvedValue({
       candidateToken: 'candidate-1',
       summary: { id: 'safe-id' },
@@ -512,7 +512,7 @@ describe('specialist session IPC', () => {
     const once = vi.fn()
 
     registerSpecialistIpcHandlers(
-      createProfileService(),
+      createSpecialistService(),
       binding,
       createReconfigurationStub(),
       undefined,
@@ -582,8 +582,8 @@ describe('specialist session IPC', () => {
       .mockResolvedValue({ saved: true, filePath: '/downloads/report.json' })
 
     registerSpecialistIpcHandlers(
-      createProfileService(),
-      new SessionBindingService(createProfileService()),
+      createSpecialistService(),
+      new SessionBindingService(createSpecialistService()),
       createReconfigurationStub(),
       undefined,
       undefined,
@@ -660,8 +660,8 @@ describe('specialist session IPC', () => {
       deleteSpecialist
     }
     registerSpecialistIpcHandlers(
-      createProfileService(),
-      new SessionBindingService(createProfileService()),
+      createSpecialistService(),
+      new SessionBindingService(createSpecialistService()),
       createReconfigurationStub(),
       onProfilesChanged,
       undefined,

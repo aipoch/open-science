@@ -1579,6 +1579,51 @@ describe('artifact repository', () => {
     expect(files.map((file) => file.sessionId).sort()).toEqual(['session-1', 'session-2'])
   })
 
+  it('projects finalized artifact Version metadata in the project scan', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const content = 'finalized version bytes'
+    const checksum = sha256(content)
+    const pending = await repository.writePendingFile({
+      projectId: 'default-project',
+      sessionId: 'session-versioned',
+      runId: 'run-finalized',
+      filename: 'result.txt',
+      mimeType: 'text/plain',
+      source: createInlineSource(content)
+    })
+    await repository.ensurePendingVersionRouting({
+      projectId: 'default-project',
+      sessionId: 'session-versioned',
+      runId: 'run-finalized',
+      filename: 'result.txt',
+      sourcePath: pending.path,
+      routing: {
+        artifactId: 'artifact-finalized',
+        versionId: 'version-finalized',
+        versionNumber: 3,
+        artifactRunId: 'run-finalized',
+        checksum,
+        mimeType: 'text/plain'
+      }
+    })
+    await repository.finalizeRunArtifacts({
+      projectId: 'default-project',
+      sessionId: 'session-versioned',
+      runId: 'run-finalized',
+      messageId: 'message-finalized'
+    })
+
+    const [artifact] = await repository.listProjectArtifacts('default-project')
+
+    expect(artifact).toMatchObject({
+      artifactId: 'artifact-finalized',
+      versionId: 'version-finalized',
+      versionNumber: 3,
+      checksum
+    })
+  })
+
   it('surfaces ownerless pending files (crash before attach) as orphaned artifacts', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
@@ -1598,6 +1643,45 @@ describe('artifact repository', () => {
     expect(files.map((file) => file.name)).toEqual(['draft.txt'])
     expect(files[0].runId).toBe('run-orphan')
     expect(files[0].path).toContain('.pending')
+  })
+
+  it('projects orphaned pending artifact Version metadata in the project scan', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const content = 'orphaned version bytes'
+    const checksum = sha256(content)
+    const pending = await repository.writePendingFile({
+      projectId: 'default-project',
+      sessionId: 'session-versioned',
+      runId: 'run-orphaned',
+      filename: 'draft.txt',
+      mimeType: 'text/plain',
+      source: createInlineSource(content)
+    })
+    await repository.ensurePendingVersionRouting({
+      projectId: 'default-project',
+      sessionId: 'session-versioned',
+      runId: 'run-orphaned',
+      filename: 'draft.txt',
+      sourcePath: pending.path,
+      routing: {
+        artifactId: 'artifact-orphaned',
+        versionId: 'version-orphaned',
+        versionNumber: 2,
+        artifactRunId: 'run-orphaned',
+        checksum,
+        mimeType: 'text/plain'
+      }
+    })
+
+    const [artifact] = await repository.listProjectArtifacts('default-project')
+
+    expect(artifact).toMatchObject({
+      artifactId: 'artifact-orphaned',
+      versionId: 'version-orphaned',
+      versionNumber: 2,
+      checksum
+    })
   })
 
   it('does not list the current-run handoff file as an artifact', async () => {

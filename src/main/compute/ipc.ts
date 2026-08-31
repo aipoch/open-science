@@ -15,6 +15,7 @@ import type {
   ComputeJob,
   ComputeJobsListFilter,
   ComputeJobsPendingNotificationFilter,
+  ComputeJobAnalysisTransition,
   JobSummary,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
@@ -45,6 +46,7 @@ import { dispatchJob } from './job-dispatcher'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { deleteComputeHost, type DeleteComputeHostOptions } from './compute-host-deletion-owner'
 import { getJobHarvestDir } from './harvest-engine'
+import { SessionCacheOwner } from './session-cache-owner'
 import { workspaceRelativePath } from './workspace-path'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import {
@@ -128,6 +130,9 @@ export const toJobSummary = async (
     // Phase 3b notification inbox timestamps (issue 06).
     notified_at: job.notified_at,
     notification_consumed_at: job.notification_consumed_at,
+    analysis_state: job.analysis_state,
+    analysis_message_id: job.analysis_message_id,
+    analysis_updated_at: job.analysis_updated_at,
     // Phase 3b compute_done payload fields (spec §11.3).
     featured_files: featuredFiles,
     featured_file_count: featuredFiles.length,
@@ -168,6 +173,8 @@ type ComputeHandlers = {
   ) => Promise<void>
   // Scratch root: set path and mark pinned.
   scratchSet: (providerId: string, path: string) => Promise<void>
+  // Scratch root: clear the override so probes may auto-detect it again.
+  scratchClear: (providerId: string) => Promise<void>
   // Enforced concurrent job limit: set 1..500.
   concurrencySet: (providerId: string, limit: number) => Promise<void>
   // Session-level concurrency control (Phase 3c, issue 04).
@@ -185,8 +192,7 @@ type ComputeHandlers = {
   computeService: ComputeService
   connectionBroker: ComputeConnectionBroker
   concurrencyManager?: ConcurrencyManager
-  // Responds to a pending approval request from the renderer. Decision now includes
-  // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
+  // Responds to a pending approval request from the renderer with a canonical app-owned scope.
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
   approvalReplay: (id: string) => ComputeApprovalRequest | null
   approvalReplayPending: () => void
@@ -204,6 +210,7 @@ type ComputeHandlers = {
   jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   // Marks the given job ids as notification-consumed. Idempotent (issue 05).
   jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
+  jobsTransitionAnalysis: (request: ComputeJobAnalysisTransition) => Promise<JobSummary[]>
 }
 
 const createComputeHandlers = (
@@ -222,7 +229,8 @@ const createComputeHandlers = (
   >,
   permissionGrantRegistry?: PermissionGrantRegistry,
   hostLifecycle?: ComputeHostLifecycle,
-  authenticationDependencies?: ComputeAuthenticationDependencies
+  authenticationDependencies?: ComputeAuthenticationDependencies,
+  sessionCacheOwner?: SessionCacheOwner
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -338,10 +346,19 @@ const createComputeHandlers = (
       jobRepository,
       artifactResolver,
       storageRoot,
+      sessionCacheOwner,
       concurrencyManager,
       connectionBroker,
       credentialVault
     })
+  const listHostNames = async (): Promise<Map<string, string>> => {
+    try {
+      const hosts = await repository.list()
+      return new Map(hosts.map((host) => [host.providerId, host.displayName]))
+    } catch {
+      return new Map()
+    }
+  }
 
   const createHostWithLifecycle = <Request extends { sshAlias: string }>(
     request: Request,
@@ -427,6 +444,7 @@ const createComputeHandlers = (
     detailsSave: (providerId, text, oldText, author) =>
       service.replaceDetails(providerId, { text, oldText, author }),
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
+    scratchClear: (providerId) => service.clearScratchRoot(providerId),
     concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
     setSessionConcurrencyLimit: (sessionId, limit) =>
       service.setSessionConcurrencyLimit(sessionId, limit),
@@ -454,8 +472,7 @@ const createComputeHandlers = (
       broker.finishSessionDeletion(sessionId, retained),
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
-      const hosts = await repository.list()
-      const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
+      const hostNameMap = await listHostNames()
       const jobs =
         'nonTerminal' in filter
           ? await jobRepository.findNonTerminal()
@@ -468,8 +485,7 @@ const createComputeHandlers = (
     },
     jobsPendingNotification: async (filter) => {
       if (!jobRepository || !storageRoot) return []
-      const hosts = await repository.list()
-      const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
+      const hostNameMap = await listHostNames()
       const jobs =
         typeof filter === 'string'
           ? await jobRepository.findPendingNotifications(filter)
@@ -483,6 +499,26 @@ const createComputeHandlers = (
     jobsMarkConsumed: async (sessionId, jobIds) => {
       if (!jobRepository) return
       await jobRepository.markNotificationsConsumed(sessionId, jobIds)
+    },
+    jobsTransitionAnalysis: async (request) => {
+      if (!jobRepository || !storageRoot) {
+        throw new Error('Compute analysis persistence is unavailable.')
+      }
+      const jobs = await jobRepository.transitionAnalysis(request)
+      for (const job of jobs) {
+        try {
+          onJobUpdated?.(job)
+        } catch (error) {
+          // The transition is already durable; a broadcast failure must not report it as rejected.
+          log.warn('compute analysis transition broadcast failed', errorLogFields(error))
+        }
+      }
+      const hostNameMap = await listHostNames()
+      return Promise.all(
+        jobs.map((job) =>
+          toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
+        )
+      )
     }
   }
 }
@@ -530,6 +566,7 @@ type ComputeIpcModule = {
   jobRepository: ComputeJobRepository
   hostRepository: ComputeHostRepository
   enabledComputeHostsRegistry: EnabledComputeHostsRegistry
+  sessionCacheOwner: SessionCacheOwner
 }
 
 // Constructs the shared Compute module without installing an Electron transport. Keeping this seam
@@ -554,6 +591,7 @@ const createComputeIpcModule = (
 ): ComputeIpcModule => {
   const storageRoot = resolveStorageRoot()
   const dataRoot = resolveDataRoot()
+  const sessionCacheOwner = new SessionCacheOwner(dataRoot)
   void repository
     .cleanupOrphanCredentials?.()
     .catch((error) => log.warn('orphan Compute Credential cleanup failed', errorLogFields(error)))
@@ -574,7 +612,9 @@ const createComputeIpcModule = (
     dataRoot,
     taskNotifications,
     permissionGrantRegistry,
-    hostLifecycle
+    hostLifecycle,
+    undefined,
+    sessionCacheOwner
   )
   const jobDeletionOwner = createComputeJobDeletionOwner({
     jobRepository,
@@ -590,7 +630,8 @@ const createComputeIpcModule = (
     jobDeletionOwner,
     jobRepository,
     hostRepository: repository,
-    enabledComputeHostsRegistry
+    enabledComputeHostsRegistry,
+    sessionCacheOwner
   }
 }
 

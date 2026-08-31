@@ -668,7 +668,7 @@ describe('Session persistence coordinator architecture', () => {
         'setSessionEnabledComputeHosts',
         'updateArchive'
       ],
-      runSessionThenGlobal: ['deleteSession'],
+      runSessionThenGlobalIfNeeded: ['deleteSession'],
       runSessionIdentity: ['sessionProjectId']
     }
     const expectedSchedulerRoute = new Map(
@@ -860,6 +860,7 @@ describe('Session persistence coordinator architecture', () => {
         'removeProject',
         'removeSession',
         'replaceMetadata',
+        'replaceProjectMetadata',
         'saveSession',
         'saveSessionSpecialistBinding',
         'sessionProjectId',
@@ -880,6 +881,7 @@ describe('Session persistence coordinator architecture', () => {
         'getProjectSessionDeletionState',
         'listLegacyProjectSessionTombstones',
         'markCommittedProjectSessionsPrepared',
+        'reconcileProjectSessionDeletion',
         'reconcileSessionDeletion',
         'updateArchive'
       ].sort()
@@ -931,7 +933,12 @@ describe('Session persistence coordinator architecture', () => {
         'deletionOwner.deleteProjectSessions',
         'deletionOwner.getProjectSessionDeletionState'
       ],
-      deleteSession: ['deletionOwner.deleteSession', 'deletionOwner.reconcileSessionDeletion'],
+      deleteSession: [
+        'deletionOwner.deleteSession',
+        'deletionOwner.reconcileProjectSessionDeletion',
+        'deletionOwner.reconcileSessionDeletion',
+        'stateOwner.metadataSnapshot'
+      ],
       getProjectSessionDeletionState: ['deletionOwner.getProjectSessionDeletionState'],
       listLegacyProjectSessionTombstones: ['deletionOwner.listLegacyProjectSessionTombstones'],
       loadPersistedSideChats: ['sideChatOwner.loadCatalog'],

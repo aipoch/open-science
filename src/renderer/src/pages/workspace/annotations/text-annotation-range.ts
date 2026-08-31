@@ -1,3 +1,5 @@
+import type { PdfTextSelector } from '../../../../../shared/annotations'
+
 const collectSurfaceTextNodes = (surface: HTMLElement): Text[] => {
   const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT)
   const nodes: Text[] = []
@@ -128,7 +130,96 @@ const retargetTextAnnotationRange = (
   return rangeForTextOccurrence(surface, quote, occurrence)
 }
 
+const PDF_TEXT_CONTEXT_LENGTH = 64
+
+type ClippedPdfSelectionRect = Readonly<{
+  left: number
+  top: number
+  right: number
+  bottom: number
+}>
+
+const mergePdfSelectionRects = (
+  rects: readonly DOMRect[],
+  page: DOMRect
+): readonly ClippedPdfSelectionRect[] => {
+  const clipped = rects
+    .flatMap((rect): ClippedPdfSelectionRect[] => {
+      const left = Math.max(page.left, rect.left)
+      const top = Math.max(page.top, rect.top)
+      const right = Math.min(page.right || page.left + page.width, rect.right)
+      const bottom = Math.min(page.bottom || page.top + page.height, rect.bottom)
+      return right - left > 0.5 && bottom - top > 0.5 ? [{ left, top, right, bottom }] : []
+    })
+    .sort((left, right) => left.top - right.top || left.left - right.left)
+
+  const merged: ClippedPdfSelectionRect[] = []
+  for (const rect of clipped) {
+    const previous = merged.at(-1)
+    if (previous) {
+      const overlap = Math.min(previous.bottom, rect.bottom) - Math.max(previous.top, rect.top)
+      const minHeight = Math.min(previous.bottom - previous.top, rect.bottom - rect.top)
+      const gap = rect.left - previous.right
+      if (overlap >= minHeight * 0.6 && gap <= Math.max(minHeight, 2)) {
+        merged[merged.length - 1] = {
+          left: Math.min(previous.left, rect.left),
+          top: Math.min(previous.top, rect.top),
+          right: Math.max(previous.right, rect.right),
+          bottom: Math.max(previous.bottom, rect.bottom)
+        }
+        continue
+      }
+    }
+    merged.push(rect)
+  }
+  return merged
+}
+
+const pdfTextSelectorForRange = (
+  surface: HTMLElement,
+  range: Range,
+  pageNumber: number,
+  extractorVersion: string,
+  pageSurface: HTMLElement = surface
+): PdfTextSelector | undefined => {
+  const nodes = collectSurfaceTextNodes(surface)
+  const text = concatenatedText(nodes)
+  const start = rangeStartInSurfaceText(nodes, range)
+  const exact = range.toString()
+  const page = pageSurface.getBoundingClientRect()
+  if (
+    start === undefined ||
+    !exact ||
+    text.slice(start, start + exact.length) !== exact ||
+    page.width <= 0 ||
+    page.height <= 0
+  ) {
+    return undefined
+  }
+  const quads = mergePdfSelectionRects(Array.from(range.getClientRects()), page).map((rect) => ({
+    x: (rect.left - page.left) / page.width,
+    y: (rect.top - page.top) / page.height,
+    width: (rect.right - rect.left) / page.width,
+    height: (rect.bottom - rect.top) / page.height
+  }))
+  if (quads.length === 0) return undefined
+  const end = start + exact.length
+  const prefix = text.slice(Math.max(0, start - PDF_TEXT_CONTEXT_LENGTH), start)
+  const suffix = text.slice(end, end + PDF_TEXT_CONTEXT_LENGTH)
+  return {
+    kind: 'text',
+    pageNumber,
+    exact,
+    ...(prefix ? { prefix } : {}),
+    ...(suffix ? { suffix } : {}),
+    position: { start, end },
+    quads,
+    extractorVersion
+  }
+}
+
 export {
+  pdfTextSelectorForRange,
   quoteOccurrenceForRange,
   rangeForTextOccurrence,
   reconcileTextAnnotationRanges,

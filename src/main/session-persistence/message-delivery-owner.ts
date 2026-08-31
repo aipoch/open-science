@@ -71,6 +71,7 @@ export class SessionMessageDeliveryPersistenceOwner {
       id: input.runtimeSegmentId,
       agentFrameId: input.frameId,
       frameworkId: input.frameworkId,
+      ...(input.providerId ? { providerId: input.providerId } : {}),
       startedAt: input.startedAt
     })
     graph.messages.push({

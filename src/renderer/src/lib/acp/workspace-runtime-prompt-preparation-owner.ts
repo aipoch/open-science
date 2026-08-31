@@ -55,6 +55,7 @@ type PrepareExistingWorkspacePromptRequest = {
   replay: {
     descriptor?: HistoryReplayDescriptor
     cutMessageId?: string
+    excludeMessageId?: string
     force?: boolean
     includeResumeFallback?: boolean
   }
@@ -285,7 +286,8 @@ const prepareExistingWorkspacePrompt = async (
           sessionId,
           resetCwd,
           request.projectId,
-          currentSession?.permissionProfile ?? request.permissionProfile
+          currentSession?.permissionProfile ?? request.permissionProfile,
+          currentSession?.memoryEnabled !== false
         )
         useSessionStore.getState().markResumed(
           sessionId,
@@ -330,9 +332,11 @@ const prepareExistingWorkspacePrompt = async (
               ...request.selectedRuntime.agentConfiguration
             }
           : undefined
-      const resumeResult = target
-        ? await runtime.resumeSession(...resumeArguments, target)
-        : await runtime.resumeSession(...resumeArguments)
+      const resumeResult = await runtime.resumeSession(
+        ...resumeArguments,
+        target,
+        currentSession?.memoryEnabled !== false
+      )
       contextResetFromResume = Boolean(resumeResult?.contextReset)
       useSessionStore.getState().markResumed(
         sessionId,
@@ -351,7 +355,8 @@ const prepareExistingWorkspacePrompt = async (
           sessionId,
           resumeCwd,
           request.projectId,
-          currentSession?.permissionProfile ?? request.permissionProfile
+          currentSession?.permissionProfile ?? request.permissionProfile,
+          currentSession?.memoryEnabled !== false
         )
         useSessionStore.getState().markResumed(
           sessionId,
@@ -384,12 +389,11 @@ const prepareExistingWorkspacePrompt = async (
   // id without a local projection still uses appendUserMessage's existing generic creation seam.
   if ((currentSession || request.requireExistingSession) && !preparedSession) return undefined
 
-  const historyCutIndex = request.replay.cutMessageId
-    ? (preparedSession?.messages.findIndex(
-        (message) => message.id === request.replay.cutMessageId
-      ) ?? -1)
+  const replayCutMessageId = request.replay.cutMessageId ?? request.replay.excludeMessageId
+  const historyCutIndex = replayCutMessageId
+    ? (preparedSession?.messages.findIndex((message) => message.id === replayCutMessageId) ?? -1)
     : -1
-  if (request.replay.cutMessageId && historyCutIndex < 0) return undefined
+  if (replayCutMessageId && historyCutIndex < 0) return undefined
 
   const pendingHistoryReplay = preparedSession?.pendingHistoryReplay
   const resumeReplayCutMessageId =

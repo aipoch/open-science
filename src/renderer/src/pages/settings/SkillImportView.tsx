@@ -23,11 +23,11 @@ import { Input } from '@/components/ui/input'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
-import { GitHubTokenControl } from './GitHubTokenControl'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 type SkillImportViewProps = {
   onImported: () => void
+  onOpenCredentials?: () => void
 }
 
 type BusyOperation =
@@ -35,7 +35,10 @@ type BusyOperation =
 
 // Full-page GitHub import. Keywords discover repositories; direct references and chosen search
 // results reuse the commit-pinned scan and batch-import flow.
-const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Element => {
+const SkillImportView = ({
+  onImported,
+  onOpenCredentials
+}: SkillImportViewProps): React.JSX.Element => {
   const { t } = useTranslation()
   const skills = useSettingsStore((state) => state.skills)
   const importSkill = useSettingsStore((state) => state.importSkill)
@@ -196,7 +199,9 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
             )}
           </p>
         </div>
-        <GitHubTokenControl />
+        <Button type="button" variant="outline" onClick={onOpenCredentials}>
+          {t('Manage GitHub credential')}
+        </Button>
       </div>
 
       <div className="mt-4">

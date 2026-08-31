@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { delimiter } from 'node:path'
+import type { Writable } from 'node:stream'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -10,14 +11,28 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { z } from 'zod'
 import { McpClientManager, McpToolCallError, buildTransport } from './mcp-client-manager'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
-import { OAuthCallbackServer, type PersistentOAuthClientProvider } from './oauth-client'
+import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
 import { EXTRA_PATH_DIRS } from '../settings/shell-path'
 
-const { netFetch } = vi.hoisted(() => ({ netFetch: vi.fn() }))
+const { netFetch, stderrWarn } = vi.hoisted(() => ({
+  netFetch: vi.fn(),
+  stderrWarn: vi.fn()
+}))
 
 vi.mock('electron', () => ({ net: { fetch: netFetch } }))
+vi.mock('../logger', () => ({
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: stderrWarn,
+    error: vi.fn()
+  })
+}))
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  stderrWarn.mockClear()
+})
 
 // Builds an in-memory MCP server with one echo tool and one always-erroring tool, and an
 // injectable createClient that links a fresh Client to it via InMemoryTransport — no process
@@ -272,6 +287,8 @@ describe('McpClientManager', () => {
       await manager.authenticate({
         id: 'oauth-1',
         name: 'OAuth server',
+        configurationFingerprint: 'security-fingerprint',
+        oauthClientSecretRef: 'enc:client-secret',
         transport: 'streamable_http',
         url: 'https://mcp.example.test',
         oauth: { redirectUri: 'http://127.0.0.1:8080/callback' }
@@ -284,7 +301,9 @@ describe('McpClientManager', () => {
         'oauth-1',
         expect.objectContaining({
           tokens: { access_token: 'access-1', token_type: 'Bearer' }
-        })
+        }),
+        'security-fingerprint',
+        'enc:client-secret'
       )
     } finally {
       await manager.closeAll()
@@ -574,6 +593,18 @@ describe('McpClientManager', () => {
 })
 
 describe('buildTransport', () => {
+  it('rejects a non-loopback HTTP transport before creating a client', () => {
+    expect(() =>
+      buildTransport({
+        id: 'srv-http-cleartext',
+        name: 'http-cleartext',
+        transport: 'streamable_http',
+        url: 'http://example.com/mcp',
+        headers: { Authorization: 'Bearer secret' }
+      })
+    ).toThrow(/HTTPS|loopback/)
+  })
+
   const stdioTransportEnvironment = (env?: Record<string, string>): Record<string, string> => {
     const transport = buildTransport({
       id: 'srv-stdio',
@@ -604,6 +635,122 @@ describe('buildTransport', () => {
 
     expect(pathDirs).toEqual(expect.arrayContaining(EXTRA_PATH_DIRS))
     expect(childEnv?.CUSTOM_API_KEY).toBe('configured-secret')
+  })
+
+  it('pipes, redacts, and bounds custom stdio stderr before logging it', () => {
+    const configuredSecret = 'configured-secret-value'
+    const transport = buildTransport({
+      id: 'srv-stdio',
+      name: 'stdio-server',
+      transport: 'stdio',
+      command: 'npx',
+      env: { CUSTOM_API_KEY: configuredSecret }
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    expect(stderr).not.toBeNull()
+    stderr?.write(
+      `configured=${configuredSecret} Authorization: Bearer generic-secret-value\n${'x'.repeat(8_192)}\n`
+    )
+    for (let index = 0; index < 80; index += 1) stderr?.write(`${'y'.repeat(1_024)}\n`)
+
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain(configuredSecret)
+    expect(serialized).not.toContain('generic-secret-value')
+    expect(stderrWarn.mock.calls.length).toBeLessThan(80)
+    expect(stderrWarn.mock.calls).toContainEqual([
+      'custom MCP server stderr truncated',
+      expect.objectContaining({ serverId: 'srv-stdio' })
+    ])
+    expect(
+      stderrWarn.mock.calls
+        .filter(([message]) => message === 'custom MCP server stderr')
+        .every(([, fields]) => String((fields as { line?: unknown }).line ?? '').length <= 4_096)
+    ).toBe(true)
+  })
+
+  it('redacts configured multiline values before logging stdio stderr lines', () => {
+    const configuredSecret = 'alpha-private-material\nomega-private-material'
+    const transport = buildTransport({
+      id: 'srv-stdio',
+      name: 'stdio-server',
+      transport: 'stdio',
+      command: 'npx',
+      env: { PRIVATE_MATERIAL: configuredSecret }
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    stderr?.write('alpha-private-material\n')
+    stderr?.write('omega-private-material\n')
+
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain('alpha-private-material')
+    expect(serialized).not.toContain('omega-private-material')
+  })
+
+  it('does not release a multiline secret prefix when later stderr interrupts the value', () => {
+    const transport = buildTransport({
+      id: 'srv-stdio',
+      name: 'stdio-server',
+      transport: 'stdio',
+      command: 'npx',
+      env: { PRIVATE_MATERIAL: 'alpha-private-material\nomega-private-material' }
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    stderr?.write('alpha-private-material\n')
+    stderr?.write('unrelated diagnostic\n')
+
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain('alpha-private-material')
+    expect(serialized).toContain('unrelated diagnostic')
+  })
+
+  it('redacts newline-escaped representations of configured multiline values', () => {
+    const transport = buildTransport({
+      id: 'srv-stdio',
+      name: 'stdio-server',
+      transport: 'stdio',
+      command: 'npx',
+      env: { PRIVATE_MATERIAL: 'alpha-private-material\nomega-private-material' }
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    stderr?.write('alpha-private-material\\nomega-private-material\n')
+
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain('alpha-private-material')
+    expect(serialized).not.toContain('omega-private-material')
+  })
+
+  it('bounds stderr redaction work for configured secrets sharing a long prefix', () => {
+    const sharedPrefix = 'a'.repeat(4_096)
+    const env = Object.fromEntries(
+      Array.from({ length: 64 }, (_, index) => [
+        `SECRET_${index}`,
+        `${sharedPrefix}${index.toString().padStart(2, '0')}`
+      ])
+    )
+    const transport = buildTransport({
+      id: 'srv-stdio-prefix-stress',
+      name: 'stdio-prefix-stress',
+      transport: 'stdio',
+      command: 'npx',
+      env
+    }) as StdioClientTransport
+    const stderr = transport.stderr as Writable | null
+
+    const startedAt = performance.now()
+    stderr?.write(`${sharedPrefix.repeat(4)}\n`)
+    const elapsedMs = performance.now() - startedAt
+
+    expect(elapsedMs).toBeLessThan(500)
+    const serialized = JSON.stringify(stderrWarn.mock.calls)
+    expect(serialized).not.toContain(sharedPrefix)
+    expect(stderrWarn.mock.calls).toContainEqual([
+      'custom MCP server stderr redaction budget exceeded',
+      expect.objectContaining({ serverId: 'srv-stdio-prefix-stress' })
+    ])
   })
 
   it('keeps an explicitly configured stdio PATH ahead of the augmented directories', () => {
@@ -662,6 +809,137 @@ describe('buildTransport', () => {
       expect.objectContaining({ method: 'POST' })
     )
     expect(directFetch).not.toHaveBeenCalled()
+    await transport.close()
+  })
+
+  it('allows OAuth discovery on a different secure origin from the MCP server', async () => {
+    netFetch.mockReset()
+    const authorizationServerHeaders: Headers[] = []
+    netFetch.mockImplementation(async (input, init) => {
+      const url = new URL(String(input))
+      if (url.origin === 'https://mcp.example.test' && url.pathname === '/mcp') {
+        return new Response(null, { status: 401 })
+      }
+      if (
+        url.origin === 'https://mcp.example.test' &&
+        url.pathname.startsWith('/.well-known/oauth-protected-resource')
+      ) {
+        return new Response(null, { status: 404 })
+      }
+      if (
+        url.origin === 'https://auth.example.test' &&
+        url.pathname === '/.well-known/oauth-authorization-server'
+      ) {
+        authorizationServerHeaders.push(new Headers(init?.headers))
+        return Response.json({
+          issuer: 'https://auth.example.test',
+          authorization_endpoint: 'https://auth.example.test/authorize',
+          token_endpoint: 'https://auth.example.test/token',
+          response_types_supported: ['code'],
+          code_challenge_methods_supported: ['S256']
+        })
+      }
+      throw new Error(`unexpected request to ${url}`)
+    })
+    const openExternal = vi.fn(async () => undefined)
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'srv-cross-origin-oauth',
+      redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+      config: {
+        authorizationServerUrl: 'https://auth.example.test',
+        clientId: 'registered-client'
+      },
+      openExternal
+    })
+    const transport = buildTransport(
+      {
+        id: 'srv-cross-origin-oauth',
+        name: 'cross-origin-oauth-server',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/mcp',
+        headers: { 'X-API-Key': 'mcp-static-secret' },
+        oauth: {
+          authorizationServerUrl: 'https://auth.example.test',
+          clientId: 'registered-client'
+        }
+      },
+      provider
+    )
+
+    await transport.start()
+    await expect(
+      transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    ).rejects.toBeInstanceOf(UnauthorizedError)
+
+    expect(openExternal).toHaveBeenCalledWith(
+      expect.stringMatching(/^https:\/\/auth\.example\.test\/authorize\?/)
+    )
+    expect(authorizationServerHeaders).toHaveLength(1)
+    expect(authorizationServerHeaders[0]?.get('X-API-Key')).toBeNull()
+    await transport.close()
+  })
+
+  it('does not forward static headers across an insecure transport redirect', async () => {
+    netFetch.mockReset()
+    const redirectedHeaders: Headers[] = []
+    netFetch.mockImplementation(async (input, init) => {
+      const url = new URL(String(input))
+      if (url.hostname === 'redirect.example.test') {
+        redirectedHeaders.push(new Headers(init?.headers))
+        return new Response(null, { status: 202 })
+      }
+      const location = 'http://redirect.example.test/mcp'
+      if (init?.redirect === 'manual') {
+        return new Response(null, { status: 302, headers: { location } })
+      }
+      return netFetch(new URL(location), init)
+    })
+    const transport = buildTransport({
+      id: 'srv-http-redirect',
+      name: 'http-redirect-server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      headers: { 'X-API-Key': 'secret' }
+    })
+
+    await transport.start()
+    await transport
+      .send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+      .catch(() => undefined)
+
+    expect(redirectedHeaders).toEqual([])
+    await transport.close()
+  })
+
+  it('keeps static headers on a secure same-origin transport redirect', async () => {
+    netFetch.mockReset()
+    netFetch
+      .mockResolvedValueOnce(
+        new Response(null, { status: 307, headers: { location: '/redirected-mcp' } })
+      )
+      .mockResolvedValue(new Response(null, { status: 202 }))
+    const transport = buildTransport({
+      id: 'srv-http-same-origin-redirect',
+      name: 'http-same-origin-redirect-server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      headers: { 'X-API-Key': 'secret' }
+    })
+
+    await transport.start()
+    await transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+
+    expect(netFetch).toHaveBeenNthCalledWith(
+      2,
+      new URL('https://mcp.example.test/redirected-mcp'),
+      expect.objectContaining({
+        headers: expect.any(Headers),
+        method: 'POST',
+        redirect: 'manual'
+      })
+    )
+    const redirectedInit = netFetch.mock.calls[1]?.[1]
+    expect(new Headers(redirectedInit?.headers).get('X-API-Key')).toBe('secret')
     await transport.close()
   })
 

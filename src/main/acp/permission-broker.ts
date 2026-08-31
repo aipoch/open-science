@@ -70,6 +70,8 @@ type PermissionWaitHooks = Readonly<{
   settleLive: (candidate: DurablePermissionWaitCandidate) => Promise<void>
 }>
 
+type SessionCancellationToken = { cancelled: boolean }
+
 class ConversationPermissionGrantStore {
   private readonly categoriesBySession = new Map<string, Set<string>>()
 
@@ -729,7 +731,7 @@ class AcpPermissionBroker {
   private readonly durableRequestQueues = new Map<string, string[]>()
   private readonly activeDurableRequestBySession = new Map<string, string>()
   private cancellationGeneration = 0
-  private readonly sessionCancellationGenerations = new Map<string, number>()
+  private readonly sessionCancellationTokens = new Map<string, Set<SessionCancellationToken>>()
   private readonly livePermissionProfiles = new Map<
     string,
     {
@@ -909,8 +911,6 @@ class AcpPermissionBroker {
     policyContext?: PermissionPolicyContext
   ): Promise<RequestPermissionResponse> {
     const cancellationGeneration = this.cancellationGeneration
-    const sessionCancellationGeneration =
-      this.sessionCancellationGenerations.get(params.sessionId) ?? 0
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
     const isMcp = isMcpPermission(params, mcpServerNames)
@@ -1036,6 +1036,7 @@ class AcpPermissionBroker {
     }
 
     if (this.permissionGrantRegistry && capability) {
+      const sessionCancellationToken = this.trackSessionCancellation(params.sessionId)
       return this.permissionGrantRegistry
         .resolve(capability, {
           projectId: policyContext?.projectId,
@@ -1044,8 +1045,7 @@ class AcpPermissionBroker {
         .then((match) => {
           if (
             cancellationGeneration !== this.cancellationGeneration ||
-            sessionCancellationGeneration !==
-              (this.sessionCancellationGenerations.get(params.sessionId) ?? 0)
+            sessionCancellationToken.cancelled
           ) {
             return { outcome: { outcome: 'cancelled' as const } }
           }
@@ -1065,6 +1065,9 @@ class AcpPermissionBroker {
             providerAllowOnceOptionId: providerAllowOnceOption?.optionId,
             durableCandidate
           })
+        })
+        .finally(() => {
+          this.releaseSessionCancellation(params.sessionId, sessionCancellationToken)
         })
     }
 
@@ -1478,6 +1481,7 @@ class AcpPermissionBroker {
   // Cancels every pending request while preserving conversation grants across Agent reconnects.
   cancelAllPending(): void {
     this.cancellationGeneration += 1
+    this.sessionCancellationTokens.clear()
     this.livePermissionProfiles.clear()
     this.restoredAllowOnceBySession.clear()
     const pendingRequests = Array.from(this.pendingRequests.keys())
@@ -1489,10 +1493,9 @@ class AcpPermissionBroker {
 
   // Cancels pending requests for one session while leaving other sessions intact.
   cancelForSession(sessionId: string): void {
-    this.sessionCancellationGenerations.set(
-      sessionId,
-      (this.sessionCancellationGenerations.get(sessionId) ?? 0) + 1
-    )
+    const cancellationTokens = this.sessionCancellationTokens.get(sessionId)
+    this.sessionCancellationTokens.delete(sessionId)
+    for (const token of cancellationTokens ?? []) token.cancelled = true
     this.restoredAllowOnceBySession.delete(sessionId)
     const pendingRequests = Array.from(this.pendingRequests.values())
 
@@ -1501,6 +1504,20 @@ class AcpPermissionBroker {
         void this.respond({ requestId: request.requestId, cancelled: true }).catch(() => undefined)
       }
     }
+  }
+
+  private trackSessionCancellation(sessionId: string): SessionCancellationToken {
+    const token = { cancelled: false }
+    const tokens = this.sessionCancellationTokens.get(sessionId) ?? new Set()
+    tokens.add(token)
+    this.sessionCancellationTokens.set(sessionId, tokens)
+    return token
+  }
+
+  private releaseSessionCancellation(sessionId: string, token: SessionCancellationToken): void {
+    const tokens = this.sessionCancellationTokens.get(sessionId)
+    tokens?.delete(token)
+    if (tokens?.size === 0) this.sessionCancellationTokens.delete(sessionId)
   }
 
   // Ends one Agent session: cancel its outstanding prompts and discard its non-persistent grants.

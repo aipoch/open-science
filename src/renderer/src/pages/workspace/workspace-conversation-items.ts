@@ -17,6 +17,10 @@ import {
   type InlineParentMessageProjection
 } from './subagent-release-projection'
 import { isNotebookExecutionActivity, type ToolExecutionPhase } from './tool-execution-phase'
+import {
+  getNotebookMemoryToolDisplayName,
+  NOTEBOOK_MEMORY_TOOL_SUFFIXES
+} from './notebook-tool-names'
 
 type ConversationMessageItem = {
   id: string
@@ -103,9 +107,17 @@ const getNotebookToolSuffix = (toolName: string | undefined): string | undefined
 // Maps a notebook MCP tool to a clean human label so rows read as notebook actions, not raw
 // mcp__…__* names. Returns undefined for non-notebook tools.
 const formatNotebookToolName = (toolName: string): string | undefined => {
+  const memoryToolName = getNotebookMemoryToolDisplayName(toolName)
+
+  if (memoryToolName) return memoryToolName
+
   const suffix = getNotebookToolSuffix(toolName)
 
   if (!suffix) return undefined
+  // A Memory suffix that failed the strict matcher above is an unknown provider identity, not a
+  // generic Notebook action. Preserve its raw label rather than hiding it behind "Notebook".
+  if (NOTEBOOK_MEMORY_TOOL_SUFFIXES.some((memorySuffix) => memorySuffix === suffix.toLowerCase()))
+    return undefined
 
   switch (suffix) {
     case 'notebook_execute':

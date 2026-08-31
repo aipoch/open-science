@@ -4,7 +4,7 @@ type AuthenticatedDelegateCaller = Readonly<{
   session: SessionKey
   frameId: string
   role: 'main' | 'delegate' | 'reviewer'
-  parentSpecialistProfileId?: string
+  parentSpecialistId?: string
   originMessageId: string
   toolInvocationId: string
   attemptId?: string

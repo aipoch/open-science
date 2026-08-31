@@ -2,6 +2,7 @@ import {
   DEFAULT_APP_ICON_VARIANT,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
+  DEFAULT_SHOW_NOTIFICATION_CONTENT,
   DEFAULT_REASONING_EFFORT,
   type AppIconVariant,
   type ProjectFilesFilterPreference,
@@ -36,6 +37,7 @@ const toSettingsPreferencesSnapshot = (settings: StoredSettings): SettingsPrefer
   ...(settings.dataRoot === undefined ? {} : { dataRoot: settings.dataRoot }),
   reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
   notificationsEnabled: settings.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+  showNotificationContent: settings.showNotificationContent ?? DEFAULT_SHOW_NOTIFICATION_CONTENT,
   conversationSkillImportEnabled:
     settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   ...(settings.closePreference === undefined ? {} : { closePreference: settings.closePreference }),
@@ -88,6 +90,10 @@ class SettingsPreferencesModule implements SettingsPreferences {
 
   async setNotificationsEnabled(enabled: boolean): Promise<SettingsPreferencesSnapshot> {
     return toSettingsPreferencesSnapshot(await this.repository.setNotificationsEnabled(enabled))
+  }
+
+  async setShowNotificationContent(enabled: boolean): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.setShowNotificationContent(enabled))
   }
 
   async setConversationSkillImportEnabled(enabled: boolean): Promise<SettingsPreferencesSnapshot> {

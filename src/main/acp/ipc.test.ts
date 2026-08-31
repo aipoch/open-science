@@ -153,8 +153,8 @@ type AcpTestOptions = Parameters<typeof createAcpRuntime>[0]
 const passThroughSessionAdmission = {
   withSessionAvailableById: <Result>(
     _sessionId: string,
-    operation: () => Promise<Result>
-  ): Promise<Result> => operation()
+    operation: (projectId: string) => Promise<Result>
+  ): Promise<Result> => operation('project-1')
 }
 
 // Minimal options — createRuntime just forwards them into the mocked AcpRuntime constructor.
@@ -168,12 +168,15 @@ const registerWithFakes = (overrides?: {
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
   beforeSessionDelete?: (sessionId: string) => Promise<void>
-  profileService?: { resolveRunnableById: (id: string) => Promise<unknown> }
+  specialistService?: { resolveRunnableById: (id: string) => Promise<unknown> }
   specialistSkillCatalog?: Array<{ id: string; frameworkName: string; displayName: string }>
   provisionedConnectorSkillNames?: string[]
   customMcpServers?: Array<{ id: string; name: string }>
+  memory?: AcpTestOptions['memory']
+  delegatedNotebookConnection?: AcpTestOptions['delegatedNotebookConnection']
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
   interruptedTurnSessions?: Parameters<typeof createAcpHandlerWorkflows>[4]
+  resolveMemoryEnabled?: Parameters<typeof installAcpIpcHandlers>[4]
 }): AcpTestOptions => {
   const taskNotifications =
     overrides?.taskNotifications ??
@@ -209,7 +212,9 @@ const registerWithFakes = (overrides?: {
     onAllSessionsCancellationRequested: overrides?.onAllSessionsCancellationRequested,
     beforeSessionDelete: overrides?.beforeSessionDelete,
     initializationBarrier: overrides?.initializationBarrier,
-    profileService: overrides?.profileService as never
+    specialistService: overrides?.specialistService as never,
+    memory: overrides?.memory,
+    delegatedNotebookConnection: overrides?.delegatedNotebookConnection
   }
 
   const runtime = createAcpRuntime(options)
@@ -224,7 +229,8 @@ const registerWithFakes = (overrides?: {
       overrides?.interruptedTurnSessions
     ),
     undefined,
-    overrides?.archiveAvailability ?? passThroughSessionAdmission
+    overrides?.archiveAvailability ?? passThroughSessionAdmission,
+    overrides?.resolveMemoryEnabled
   )
   return options as AcpTestOptions
 }
@@ -291,7 +297,7 @@ it('rejects ACP response mutations before runtime work when Session admission is
   const sessionAdmission = {
     withSessionAvailableById: async <Result>(
       sessionId: string,
-      operation: () => Promise<Result>
+      operation: (projectId: string) => Promise<Result>
     ): Promise<Result> => {
       void operation
       admitted.push(sessionId)
@@ -387,10 +393,10 @@ it('rejects forged and unknown ACP response authority before Session admission',
   const admitted: string[] = []
   const withSessionAvailableById = <Result>(
     sessionId: string,
-    operation: () => Promise<Result>
+    operation: (projectId: string) => Promise<Result>
   ): Promise<Result> => {
     admitted.push(sessionId)
-    return operation()
+    return operation('project-1')
   }
   const responseRuntime = {
     getSnapshot: vi.fn(() => ({
@@ -546,8 +552,8 @@ describe('ACP module transport seam', () => {
         },
         withSessionAvailableById: async <Result>(
           _sessionId: string,
-          operation: () => Promise<Result>
-        ): Promise<Result> => operation()
+          operation: (projectId: string) => Promise<Result>
+        ): Promise<Result> => operation('project-1')
       },
       interruptedTurnSessions: { loadSession: vi.fn(async () => session) }
     })
@@ -638,16 +644,31 @@ describe('ACP module transport seam', () => {
   })
 })
 
+describe('ACP runtime composition — memory eligibility', () => {
+  it('passes recall to the primary runtime and withholds it from delegated runtimes', () => {
+    const memory = { recallForPrompt: vi.fn().mockResolvedValue(undefined) }
+
+    registerWithFakes({ memory })
+    expect(AcpRuntimeMock.mock.calls.at(-1)?.[0]).toMatchObject({ memory })
+
+    registerWithFakes({
+      memory,
+      delegatedNotebookConnection: {} as AcpTestOptions['delegatedNotebookConnection']
+    })
+    expect(AcpRuntimeMock.mock.calls.at(-1)?.[0]).not.toHaveProperty('memory')
+  })
+})
+
 describe('ACP runtime composition — Specialist identity resolver', () => {
-  it('passes a ProfileService-backed resolver into each runtime', async () => {
+  it('passes a SpecialistService-backed resolver into each runtime', async () => {
     const profile = {
       name: 'RNA-seq Reviewer',
       systemPrompt: 'Review RNA-seq quality.',
       enabled: true
     }
-    const profileService = { resolveRunnableById: vi.fn().mockResolvedValue(profile) }
+    const specialistService = { resolveRunnableById: vi.fn().mockResolvedValue(profile) }
 
-    registerWithFakes({ profileService })
+    registerWithFakes({ specialistService })
 
     const options = AcpRuntimeMock.mock.calls.at(-1)?.[0] as {
       resolveSpecialistIdentity?: (id: string, framework: string) => Promise<unknown>
@@ -659,11 +680,11 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       append: expect.stringContaining('RNA-seq Reviewer'),
       prefix: ''
     })
-    expect(profileService.resolveRunnableById).toHaveBeenCalledWith('uuid-1')
+    expect(specialistService.resolveRunnableById).toHaveBeenCalledWith('uuid-1')
   })
 
-  it('wires the production ProfileService and live catalog into the Specialist Skill resolver', async () => {
-    const profileService = {
+  it('wires the production SpecialistService and live catalog into the Specialist Skill resolver', async () => {
+    const specialistService = {
       resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
@@ -672,7 +693,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       })
     }
     registerWithFakes({
-      profileService,
+      specialistService,
       specialistSkillCatalog: [
         { id: 'main-disabled', frameworkName: 'Main Disabled', displayName: 'Main Disabled' }
       ]
@@ -689,7 +710,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
   })
 
   it('merges only the specialist-allowed connector skills into the whitelist (selected mode)', async () => {
-    const profileService = {
+    const specialistService = {
       resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
@@ -702,7 +723,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       })
     }
     registerWithFakes({
-      profileService,
+      specialistService,
       specialistSkillCatalog: [{ id: 'skill-a', frameworkName: 'Skill A', displayName: 'Skill A' }],
       provisionedConnectorSkillNames: ['mcp-chemistry', 'mcp-literature']
     })
@@ -717,7 +738,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
   })
 
   it('projects a custom Connector UUID to its public runtime skill name', async () => {
-    const profileService = {
+    const specialistService = {
       resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
@@ -730,7 +751,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       })
     }
     registerWithFakes({
-      profileService,
+      specialistService,
       provisionedConnectorSkillNames: ['mcp-public-route'],
       customMcpServers: [{ id: 'custom-server-uuid', name: 'public-route' }]
     })
@@ -745,7 +766,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
   })
 
   it('excludes full-access blocked connectors from the whitelist (full mode)', async () => {
-    const profileService = {
+    const specialistService = {
       resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'full',
@@ -758,7 +779,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       })
     }
     registerWithFakes({
-      profileService,
+      specialistService,
       specialistSkillCatalog: [],
       provisionedConnectorSkillNames: ['mcp-chemistry', 'mcp-literature']
     })
@@ -1088,6 +1109,19 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
 })
 
 describe('installAcpIpcHandlers — reset-session-context bridge', () => {
+  const persistedProjectId = 'persisted-project'
+  const ownerResolvingArchiveAvailability = {
+    withSessionAvailable: async <Result>(
+      _projectId: string,
+      _sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result> => operation(),
+    withSessionAvailableById: async <Result>(
+      _sessionId: string,
+      operation: (projectId: string) => Promise<Result>
+    ): Promise<Result> => operation(persistedProjectId)
+  }
+
   it('registers the acp:reset-session-context channel', () => {
     registerWithFakes()
     expect(handlers.has('acp:reset-session-context')).toBe(true)
@@ -1100,10 +1134,73 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     const result = await handlers.get('acp:reset-session-context')?.({}, request)
 
     expect(resetSessionContext).toHaveBeenCalledTimes(1)
-    expect(resetSessionContext).toHaveBeenCalledWith(request)
+    expect(resetSessionContext).toHaveBeenCalledWith({ ...request, projectId: 'project-1' })
     // The distinct resume channel must not be driven by the reset call.
     expect(resumeSession).not.toHaveBeenCalled()
     expect(result).toEqual({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+  })
+
+  it('injects the persisted Project owner when the request omits projectId', async () => {
+    registerWithFakes({ archiveAvailability: ownerResolvingArchiveAvailability })
+    const request: AcpResumeSessionRequest = { sessionId: 's-1', cwd: '/workspace' }
+
+    await handlers.get('acp:reset-session-context')?.({}, request)
+
+    expect(resetSessionContext).toHaveBeenCalledWith({
+      ...request,
+      projectId: persistedProjectId
+    })
+  })
+
+  it('rejects a request whose projectId disagrees with the persisted owner', async () => {
+    registerWithFakes({ archiveAvailability: ownerResolvingArchiveAvailability })
+
+    await expect(
+      handlers.get('acp:reset-session-context')?.(
+        {},
+        { sessionId: 's-1', cwd: '/workspace', projectId: 'forged-project' }
+      )
+    ).rejects.toThrow('Session does not belong to the requested Project.')
+
+    expect(resetSessionContext).not.toHaveBeenCalled()
+  })
+
+  it('uses the durable Memory preference for renderer resume and reset requests', async () => {
+    const resolveMemoryEnabled = vi.fn(async () => false)
+    registerWithFakes({ resolveMemoryEnabled })
+    const request: AcpResumeSessionRequest = {
+      sessionId: 's-1',
+      cwd: '/workspace',
+      projectId: 'project-1',
+      memoryEnabled: true
+    }
+
+    await handlers.get('acp:resume-session')?.({}, request)
+    await handlers.get('acp:reset-session-context')?.({}, request)
+
+    expect(resumeSession).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
+    expect(resetSessionContext).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
+    expect(resolveMemoryEnabled).toHaveBeenCalledTimes(2)
+    expect(resolveMemoryEnabled).toHaveBeenNthCalledWith(1, { sessionId: request.sessionId })
+    expect(resolveMemoryEnabled).toHaveBeenNthCalledWith(2, { sessionId: request.sessionId })
+  })
+
+  it('fails closed when the durable Memory preference is missing', async () => {
+    const resolveMemoryEnabled = vi.fn(async () => undefined)
+    registerWithFakes({ resolveMemoryEnabled })
+    const request: AcpResumeSessionRequest = {
+      sessionId: 's-1',
+      cwd: '/workspace',
+      projectId: 'project-1',
+      memoryEnabled: true
+    }
+
+    await handlers.get('acp:resume-session')?.({}, request)
+    await handlers.get('acp:reset-session-context')?.({}, request)
+
+    expect(resumeSession).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
+    expect(resetSessionContext).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
+    expect(resolveMemoryEnabled).toHaveBeenCalledTimes(2)
   })
 
   it('rejects reset before runtime mutation when Session admission is closed', async () => {
@@ -1140,8 +1237,8 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     const archiveAvailability = {
       withSessionAvailableById: <Result>(
         _sessionId: string,
-        operation: () => Promise<Result>
-      ): Promise<Result> => enqueueArchive(operation)
+        operation: (projectId: string) => Promise<Result>
+      ): Promise<Result> => enqueueArchive(() => operation('project-1'))
     }
     const withSessionAvailableById = vi.spyOn(archiveAvailability, 'withSessionAvailableById')
     const steerFollowUp = vi.fn(() =>
@@ -1181,9 +1278,17 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
         }
       },
       withSessionAvailableById: async <Result>(
-        _sessionId: string,
-        operation: () => Promise<Result>
-      ): Promise<Result> => operation()
+        sessionId: string,
+        operation: (projectId: string) => Promise<Result>
+      ): Promise<Result> => {
+        admitted('project-1', sessionId, operation)
+        admissionActive = true
+        try {
+          return await operation('project-1')
+        } finally {
+          admissionActive = false
+        }
+      }
     }
     registerWithFakes({ archiveAvailability })
     const request: AcpResumeSessionRequest = {
@@ -1511,7 +1616,9 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
       sessionId: 'session-1',
       text: 'Plot the curve',
       continuation: undefined,
-      suppressUserMessage: undefined
+      suppressUserMessage: undefined,
+      turnIntent: undefined,
+      memoryEnabled: true
     })
     expect(sendPrompt).toHaveBeenCalledWith(
       expect.objectContaining({

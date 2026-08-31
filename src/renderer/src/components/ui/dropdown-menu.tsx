@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
+import { Check } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -85,6 +86,30 @@ function DropdownMenuItem({
   )
 }
 
+function DropdownMenuCheckboxItem({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.CheckboxItem>): React.JSX.Element {
+  return (
+    <DropdownMenuPrimitive.CheckboxItem
+      data-slot="dropdown-menu-checkbox-item"
+      className={cn(
+        'relative flex min-h-8 cursor-pointer items-center rounded-lg px-2 py-1.5 pr-8 text-sm outline-none transition-colors duration-150 select-none motion-reduce:transition-none hover:bg-muted data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-muted data-[highlighted]:text-foreground',
+        className
+      )}
+      {...props}
+    >
+      {children}
+      <span className="pointer-events-none absolute right-2 flex size-4 items-center justify-center">
+        <DropdownMenuPrimitive.ItemIndicator>
+          <Check className="size-4" aria-hidden="true" />
+        </DropdownMenuPrimitive.ItemIndicator>
+      </span>
+    </DropdownMenuPrimitive.CheckboxItem>
+  )
+}
+
 function DropdownMenuLabel({
   className,
   ...props
@@ -113,6 +138,7 @@ function DropdownMenuSeparator({
 
 export {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,

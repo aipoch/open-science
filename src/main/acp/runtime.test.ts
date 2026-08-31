@@ -16,6 +16,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime.test-utils'
+import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
@@ -225,7 +226,11 @@ const startFakeAgent = (
     rejectModeChange?: boolean
     newSessionError?: unknown
     onNewSession?: (context: { sessionId: string; index: number }) => Promise<void> | void
-    onResumeRequest?: (context: { sessionId: string; index: number }) => Promise<void> | void
+    onResumeRequest?: (context: {
+      sessionId: string
+      index: number
+      signal: AbortSignal
+    }) => Promise<void> | void
     onResume?: (sessionId: string) => Promise<void> | void
     onSetMode?: (context: { sessionId: string; modeId: string }) => Promise<void> | void
     onClose?: (sessionId: string) => Promise<void> | void
@@ -336,7 +341,11 @@ const startFakeAgent = (
     .onRequest(acp.methods.agent.session.resume, async (ctx) => {
       const index = resumeIndex
       resumeIndex += 1
-      await options.onResumeRequest?.({ sessionId: ctx.params.sessionId, index })
+      await options.onResumeRequest?.({
+        sessionId: ctx.params.sessionId,
+        index,
+        signal: ctx.signal
+      })
 
       if (options.resumeNotFound) {
         throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
@@ -999,11 +1008,11 @@ const contextUsageMap = (
 
 const promptContentLifecycle = (
   runtime: AcpRuntime
-): { resetSession: (sessionId: string) => void } =>
+): Pick<AcpPromptContentOwner, 'prepare' | 'resetSession'> =>
   (
     runtime as unknown as {
       contextCompactionWorkflow: {
-        options: { promptContent: { resetSession: (sessionId: string) => void } }
+        options: { promptContent: Pick<AcpPromptContentOwner, 'prepare' | 'resetSession'> }
       }
     }
   ).contextCompactionWorkflow.options.promptContent
@@ -1777,7 +1786,7 @@ describe('ACP runtime provider prompt acceptance', () => {
       await runtime.sendPrompt({
         sessionId: session.sessionId,
         text: 'Research this.',
-        historyImages: [
+        currentImages: [
           {
             mimeType: 'image/png',
             data: imageData,
@@ -5452,6 +5461,168 @@ describe('ACP runtime session management', () => {
         { sessionId: 'remote-session-2', text: 'reply for remote-session-2' }
       ])
     )
+  })
+
+  it('mounts Literature before a linked-PDF prompt when the earlier link could not reach a live runtime session', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const registerLiterature = vi.fn()
+    const mcpHttpHost = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerLiterature,
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn(async () => undefined)
+    } as unknown as AgentMcpHttpHost
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      mcpHttpHost,
+      literature: {
+        isEnabled: vi.fn(async () => false),
+        readDocument: vi.fn()
+      }
+    })
+    vi.spyOn(promptContentLifecycle(runtime), 'prepare').mockResolvedValue({
+      content: [{ type: 'text', text: 'linked PDF route' }],
+      historyImageCount: 0,
+      close: vi.fn(async () => undefined)
+    })
+
+    await runtime.enableLiteratureContext('remote-session-1')
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: '全文总结一下',
+      referencedArtifacts: [
+        {
+          id: 'pdf-1',
+          name: 'paper.pdf',
+          source: 'upload',
+          path: 'upload-version:project-1/source-session/version-1',
+          versionId: 'version-1',
+          mimeType: 'application/pdf',
+          pdfReadingPosition: { pageNumber: 5, pageCount: 14 }
+        }
+      ]
+    })
+
+    expect(fakeAgent.resumedSessions).toHaveLength(1)
+    expect(fakeAgent.resumedSessions[0].mcpServers).toEqual([
+      expect.objectContaining({ type: 'http', name: 'open-science-literature' })
+    ])
+    expect(registerLiterature).toHaveBeenCalledOnce()
+    expect(fakeAgent.prompts).toHaveLength(1)
+  })
+
+  it('provisions Literature on the first provider Session without requiring a Codex rollout', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1', 'remote-session-2'], {
+      resumeInternalErrorDetails: 'no rollout found for thread id remote-session-1'
+    })
+    const registerLiterature = vi.fn()
+    const mcpHttpHost = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerLiterature,
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn(async () => undefined)
+    } as unknown as AgentMcpHttpHost
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      mcpHttpHost,
+      literature: {
+        isEnabled: vi.fn(async () => false),
+        readDocument: vi.fn()
+      }
+    })
+    vi.spyOn(promptContentLifecycle(runtime), 'prepare').mockResolvedValue({
+      content: [{ type: 'text', text: 'linked PDF route' }],
+      historyImageCount: 0,
+      close: vi.fn(async () => undefined)
+    })
+
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      projectId: 'project-1',
+      literatureContext: true
+    })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: '全文总结一下',
+      referencedArtifacts: [
+        {
+          id: 'pdf-1',
+          name: 'paper.pdf',
+          source: 'upload',
+          path: 'upload-version:project-1/source-session/version-1',
+          versionId: 'version-1',
+          mimeType: 'application/pdf',
+          pdfReadingPosition: { pageNumber: 5, pageCount: 14 }
+        }
+      ]
+    })
+
+    expect(fakeAgent.newSessions).toHaveLength(1)
+    expect(fakeAgent.newSessions[0].mcpServers).toEqual([
+      expect.objectContaining({ type: 'http', name: 'open-science-literature' })
+    ])
+    expect(fakeAgent.resumedSessions).toEqual([])
+    expect(registerLiterature).toHaveBeenCalledTimes(2)
+    expect(fakeAgent.prompts).toEqual([{ sessionId: 'remote-session-1', text: 'linked PDF route' }])
+  })
+
+  it('reconfigures an idle provider Session without Literature after the final PDF is unlinked', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const mcpHttpHost = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerLiterature: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn(async () => undefined)
+    } as unknown as AgentMcpHttpHost
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      mcpHttpHost,
+      literature: {
+        isEnabled: vi.fn(async () => false),
+        readDocument: vi.fn()
+      }
+    })
+    const reconfigure = vi.spyOn(
+      (
+        runtime as unknown as {
+          providerSessionResumer: {
+            reconfigure: (request: { memoryEnabled?: boolean }) => Promise<unknown>
+          }
+        }
+      ).providerSessionResumer,
+      'reconfigure'
+    )
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      projectId: 'project-1',
+      memoryEnabled: false
+    })
+
+    await runtime.enableLiteratureContext(session.sessionId)
+    await runtime.disableLiteratureContext(session.sessionId)
+
+    expect(fakeAgent.resumedSessions).toHaveLength(2)
+    expect(fakeAgent.resumedSessions[0].mcpServers).toEqual([
+      expect.objectContaining({ type: 'http', name: 'open-science-literature' })
+    ])
+    expect(fakeAgent.resumedSessions[1].mcpServers).toEqual([])
+    expect(reconfigure.mock.calls.map(([request]) => request.memoryEnabled)).toEqual([false, false])
   })
 
   it('adds the hidden Plan mode context only to the requested turn and preserves user Messages', async () => {
@@ -9967,7 +10138,7 @@ describe('ACP runtime session management', () => {
     const servers = fakeAgent.newSessions[0].mcpServers as Array<{ name?: string }>
     expect(servers.map((server) => server.name)).toEqual(['open-science-notebook'])
     expect(fakeAgent.prompts[0].text).toContain(
-      'Notebook tool instructions (only applies when using open-science-notebook tools)'
+      '<open_science_notebook_instructions>\nGuidance only applies when using open-science-notebook tools.'
     )
     expect(fakeAgent.prompts[0].text).toContain('`ask_user_question`')
     expect(fakeAgent.prompts[0].text).toContain('app-owned `ask_user_question`')
@@ -13257,6 +13428,7 @@ describe('ACP runtime session management', () => {
     })
     const { session } = built
     expect(built.role).toBe('reviewer')
+    expect(built.cwd).toMatch(/open-science-reviewer-/)
     expect(session.sessionId).toBe('reviewer-session-1')
     expect(reviewerOwnerProbe(runtime).contextFor('reviewer-session-1')).toEqual({
       frameworkId: 'claude-code',
@@ -16644,6 +16816,48 @@ describe('ACP runtime session management', () => {
     await expect(resume).rejects.toThrow(/timed out/i)
     // The half-open connection is torn down so a retry reconnects cleanly.
     expect(process.killed).toBe(true)
+  })
+
+  it('keeps other Sessions on a shared connection alive when one resume times out', async () => {
+    const process = new FakeAgentProcess()
+    const resumeReceived = createDeferred()
+    const resumeCancelled = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['active-session'], {
+      onResumeRequest: ({ signal }) => {
+        resumeReceived.resolve(undefined)
+        signal.addEventListener('abort', () => resumeCancelled.resolve(undefined), { once: true })
+        return new Promise<never>(() => {})
+      }
+    })
+
+    let fireResumeTimeout: (() => void) | undefined
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      resumeTimeoutMs: 1000,
+      setTimer: (fn) => {
+        fireResumeTimeout = fn
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: () => {}
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const resume = runtime.resumeSession({ sessionId: 'stuck-session', cwd: '/workspace' })
+    await resumeReceived.promise
+    fireResumeTimeout?.()
+
+    await expect(resume).rejects.toThrow(/timed out/i)
+    await resumeCancelled.promise
+    await expect(
+      runtime.sendPrompt({ sessionId: 'active-session', text: 'keep working' })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+    expect(fakeAgent.prompts).toContainEqual({
+      sessionId: 'active-session',
+      text: 'keep working'
+    })
+    expect(process.killed).toBe(false)
   })
 
   it.each(['session-update', 'claude-sdk-message'] as const)(
@@ -20438,11 +20652,13 @@ describe('ACP runtime session management', () => {
         fakeAgent.newSessions[0].mcpServers[0],
         'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'
       ),
-      projectId: 'default-project'
+      projectId: 'default-project',
+      memoryTools: true
     })
     expect(getRpcConnection).toHaveBeenNthCalledWith(2, {
       sessionId: 'remote-session-2',
-      projectId: 'default-project'
+      projectId: 'default-project',
+      memoryTools: true
     })
     expect(fakeAgent.resumedSessions[0].mcpServers).toHaveLength(1)
     expect(
@@ -20453,7 +20669,7 @@ describe('ACP runtime session management', () => {
         type: 'preset',
         preset: 'claude_code',
         append: expect.stringContaining(
-          'Notebook tool instructions (only applies when using open-science-notebook tools)'
+          '<open_science_notebook_instructions>\nGuidance only applies when using open-science-notebook tools.'
         )
       }
     })
@@ -22711,7 +22927,8 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(selectSkills).toHaveBeenCalledWith(
       '用 PubMed 搜索肿瘤免疫文章',
       catalog,
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Function)
     )
     expect(receivedPrompt).toEqual([
       {
@@ -26063,7 +26280,8 @@ describe('Specialist Skill scoping', () => {
     expect(selectSkills).toHaveBeenCalledWith(
       'use the new connector',
       [newConnector],
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Function)
     )
     expect(receivedPrompt).toEqual([
       {

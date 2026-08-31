@@ -4148,15 +4148,11 @@ describe('ProjectFilesView — Remote section in source dropdown', () => {
     expect(listDir.mock.calls.length).toBe(callsAfterLanding + 1)
   })
 
-  it('disables unreachable hosts in the Remote section', async () => {
+  it('opens the Remote browser for an unprobed host', async () => {
     useComputeStore.setState({
       ...createInitialComputeState(),
       isLoaded: true,
-      hosts: [
-        createHost({
-          probeResult: { ok: false, probedAt: '2024-01-01', exitCode: 1, errorTail: 'timeout' }
-        })
-      ]
+      hosts: [createHost()]
     })
 
     await renderFilesView()
@@ -4169,7 +4165,19 @@ describe('ProjectFilesView — Remote section in source dropdown', () => {
       filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(document.body.textContent).toContain('Host unreachable')
+    const remoteHost = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((element) => element.textContent?.includes('biowulf'))
+    expect(remoteHost?.hasAttribute('data-disabled')).toBe(false)
+    expect(remoteHost?.textContent).toContain('Not probed')
+
+    await act(async () => {
+      remoteHost?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(document.querySelector('[aria-label="Remote file browser"]')).not.toBeNull()
+    expect(window.api.compute.listDir).toHaveBeenCalledWith('ssh:biowulf', '~')
   })
 
   it('shows Add SSH host link that calls openSettingsToCompute', async () => {

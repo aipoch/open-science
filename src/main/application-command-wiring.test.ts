@@ -170,6 +170,16 @@ describe('production application command wiring', () => {
     expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(3)
   })
 
+  it('injects the bounded isolated page preview resolver into production reviews', () => {
+    const source = compact(ipcSource)
+    expect(source).toContain('pagedContentResolver: createReviewerPagedContentResolver({')
+    expect(source).toContain("partition: 'reviewer-paged-preview'")
+    expect(source).toContain('contextIsolation: true, nodeIntegration: false, sandbox: true')
+    expect(source).toContain("setWindowOpenHandler(() => ({ action: 'deny' }))")
+    expect(source).toContain('previewResources.acquireResolvedFile(')
+    expect(source).toContain('renderPdfPages: renderPdfPagePreviews')
+  })
+
   it('installs every notification inbox request on the Electron adapter', () => {
     expect(notificationAdapterBlock).toContain(
       'registerNotificationInboxIpcAdapter(notificationInbox)'

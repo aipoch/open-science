@@ -18,7 +18,6 @@ import {
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
 import {
-  ClientLeaseRegistry,
   createTaskCallerContext,
   createWebCallerContext,
   type CallerContext
@@ -48,7 +47,9 @@ import type {
   TaskPlanResponseRequest,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
+import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
+import { PublicTaskEventStream } from './public-task-event-stream'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
@@ -66,6 +67,10 @@ const MAX_TASK_IDEMPOTENCY_BYTES = 64 * 1024 * 1024
 const MIN_TASK_IDEMPOTENCY_ENTRY_BYTES = 16 * 1024
 const MAX_IDEMPOTENCY_KEY_LENGTH = 255
 const MAX_CACHED_TASK_ERROR_MESSAGE_LENGTH = 4_096
+const MAX_WEB_CLIENTS_PER_PRINCIPAL = 64
+const MAX_WEB_CLIENT_NONCE_LENGTH = 64
+const DEFAULT_HTTP_CLIENT_IDLE_TTL_MS = 5 * 60_000
+const WEB_CLIENT_NONCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const gzipAsync = promisify(gzip)
 const log = createLogger('web-service')
 const STATIC_RESPONSE_SECURITY_HEADERS = {
@@ -91,6 +96,7 @@ const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
@@ -99,7 +105,7 @@ const MIME_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2'
 }
 
-const COMPRESSIBLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.svg'])
+const COMPRESSIBLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.mjs', '.json', '.svg'])
 
 type WebServerOptions = {
   host: string
@@ -110,6 +116,10 @@ type WebServerOptions = {
   applicationEvents: ApplicationEventSource
   eventHeartbeatIntervalMs?: number
   requestBodyBudgets?: RequestBodyBudgets
+  webClientRetention?: Readonly<{
+    maxClientsPerPrincipal?: number
+    httpIdleTtlMs?: number
+  }>
   externalAccess?: ExternalWebAccess
   tasks?: Pick<
     HeadlessTaskApi,
@@ -127,7 +137,7 @@ type WebServerOptions = {
     | 'releaseArtifact'
     | 'runWithCallerContext'
   > &
-    Partial<Pick<HeadlessTaskApi, 'getSessionPlan' | 'respondSessionPlan'>>
+    Partial<Pick<HeadlessTaskApi, 'getSessionPlan' | 'respondSessionPlan' | 'resolveActiveRun'>>
   onShutdownRequest?: () => void
   bootstrap: {
     appName: string
@@ -224,6 +234,148 @@ class RequestBodyBudgetRegistry {
   }
 }
 
+class WebClientCapacityExceededError extends Error {
+  readonly name = 'WebClientCapacityExceededError'
+
+  constructor() {
+    super('Too many active Web clients for this authenticated principal.')
+  }
+}
+
+class InvalidWebClientNonceError extends Error {
+  readonly name = 'InvalidWebClientNonceError'
+
+  constructor() {
+    super('Web client identifier must be one ASCII token of at most 64 characters.')
+  }
+}
+
+type RetainedWebClient = {
+  clientId: string
+  httpRequests: number
+  sockets: number
+  idleTimer?: ReturnType<typeof setTimeout>
+}
+
+type WebClientLease = Readonly<{ release: (disconnected?: boolean) => void }>
+
+class WebClientLeaseRegistry {
+  private readonly clientsByPrincipal = new Map<string, Map<string, RetainedWebClient>>()
+  private disposed = false
+
+  constructor(
+    private readonly releaseClient: (clientId: string) => void,
+    private readonly maxClientsPerPrincipal = MAX_WEB_CLIENTS_PER_PRINCIPAL,
+    private readonly httpIdleTtlMs = DEFAULT_HTTP_CLIENT_IDLE_TTL_MS
+  ) {
+    if (!Number.isSafeInteger(maxClientsPerPrincipal) || maxClientsPerPrincipal <= 0) {
+      throw new TypeError('maxClientsPerPrincipal must be a positive safe integer.')
+    }
+    if (!Number.isSafeInteger(httpIdleTtlMs) || httpIdleTtlMs <= 0) {
+      throw new TypeError('httpIdleTtlMs must be a positive safe integer.')
+    }
+  }
+
+  acquireHttp(principalId: string, clientNonce: string, clientId: string): WebClientLease {
+    return this.acquire(principalId, clientNonce, clientId, 'httpRequests')
+  }
+
+  acquireSocket(principalId: string, clientNonce: string, clientId: string): WebClientLease {
+    return this.acquire(principalId, clientNonce, clientId, 'sockets')
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    const principalClients = [...this.clientsByPrincipal.values()]
+    const clients = principalClients.flatMap((clients) => [...clients.values()])
+    for (const clients of principalClients) clients.clear()
+    this.clientsByPrincipal.clear()
+    const failures: unknown[] = []
+    for (const client of clients) {
+      if (client.idleTimer) clearTimeout(client.idleTimer)
+      try {
+        this.releaseClient(client.clientId)
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'Web client cleanup failed.')
+  }
+
+  private acquire(
+    principalId: string,
+    clientNonce: string,
+    clientId: string,
+    kind: 'httpRequests' | 'sockets'
+  ): WebClientLease {
+    if (this.disposed) throw new Error('Web client lease registry is disposed.')
+    const clients = this.clientsByPrincipal.get(principalId) ?? new Map<string, RetainedWebClient>()
+    let client = clients.get(clientNonce)
+    if (!client) {
+      if (clients.size >= this.maxClientsPerPrincipal) {
+        const idle = [...clients].find(
+          ([, candidate]) => candidate.httpRequests === 0 && candidate.sockets === 0
+        )
+        if (!idle) throw new WebClientCapacityExceededError()
+        clients.delete(idle[0])
+        if (idle[1].idleTimer) clearTimeout(idle[1].idleTimer)
+        this.releaseClient(idle[1].clientId)
+      }
+      client = { clientId, httpRequests: 0, sockets: 0 }
+    } else if (client.clientId !== clientId) {
+      throw new Error('Web client identity changed within one principal scope.')
+    }
+    if (client.idleTimer) {
+      clearTimeout(client.idleTimer)
+      delete client.idleTimer
+    }
+    clients.delete(clientNonce)
+    clients.set(clientNonce, client)
+    this.clientsByPrincipal.set(principalId, clients)
+    client[kind] += 1
+    let released = false
+
+    return Object.freeze({
+      release: (disconnected = false) => {
+        if (released) return
+        released = true
+        if (clients.get(clientNonce) !== client) return
+        client[kind] -= 1
+        if (
+          (kind === 'sockets' || disconnected) &&
+          client.sockets === 0 &&
+          client.httpRequests === 0
+        ) {
+          clients.delete(clientNonce)
+          if (clients.size === 0) this.clientsByPrincipal.delete(principalId)
+          if (client.idleTimer) clearTimeout(client.idleTimer)
+          this.releaseClient(client.clientId)
+          return
+        }
+        clients.delete(clientNonce)
+        clients.set(clientNonce, client)
+        if (client.httpRequests === 0 && client.sockets === 0) {
+          client.idleTimer = setTimeout(() => {
+            if (
+              clients.get(clientNonce) !== client ||
+              client.httpRequests !== 0 ||
+              client.sockets !== 0
+            ) {
+              return
+            }
+            clients.delete(clientNonce)
+            if (clients.size === 0) this.clientsByPrincipal.delete(principalId)
+            delete client.idleTimer
+            this.releaseClient(client.clientId)
+          }, this.httpIdleTtlMs)
+          client.idleTimer.unref()
+        }
+      }
+    })
+  }
+}
+
 // Keep the remote payload allowlisted: the full bootstrap also carries host-local diagnostics.
 const remoteWebBootstrap = ({
   appName,
@@ -264,13 +416,15 @@ const sendWebSocketMessage = (socket: WebSocket, message: string): boolean => {
 
 export type ExternalWebAccessAuthorization = {
   kind: 'authorized' | 'authorized-pairing-manager'
+  principalId: string
   isCurrent: () => boolean
 }
 
 export type ExternalWebAccessDecision = ExternalWebAccessAuthorization | 'handled' | 'denied'
 
 export type ExternalWebSocketAccess = {
-  sessionId?: string
+  principalId: string
+  isCurrent: () => boolean
 }
 
 // Optional authentication boundary for a loopback reverse proxy. The normal localhost token path
@@ -316,6 +470,15 @@ const json = (response: ServerResponse, status: number, value: unknown): void =>
   response.end(content)
 }
 
+const hasValidUrlPathEncoding = (pathname: string): boolean => {
+  try {
+    decodeURI(pathname)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const webRpcError = (
   response: ServerResponse,
   status: number,
@@ -343,12 +506,31 @@ const closeRequestAfterResponse = (request: IncomingMessage, response: ServerRes
   else response.once('finish', () => request.destroy())
 }
 
+const parseClientNonce = (values: readonly string[]): string => {
+  if (values.length === 0) return 'web'
+  const value = values[0]
+  if (
+    values.length !== 1 ||
+    value.length > MAX_WEB_CLIENT_NONCE_LENGTH ||
+    !WEB_CLIENT_NONCE_PATTERN.test(value)
+  ) {
+    throw new InvalidWebClientNonceError()
+  }
+  return value
+}
+
+const requestClientNonce = (request: IncomingMessage): string =>
+  parseClientNonce(request.headersDistinct['x-open-science-client'] ?? [])
+
+const authorizedClientId = (principalId: string, clientNonce: string): string =>
+  `${principalId}:${clientNonce}`
+
 const readJsonBody = async (
   request: IncomingMessage,
   response: ServerResponse,
-  registry: RequestBodyBudgetRegistry
+  registry: RequestBodyBudgetRegistry,
+  clientId: string
 ): Promise<unknown> => {
-  const clientId = String(request.headers['x-open-science-client'] ?? 'web')
   const declared = declaredContentLength(request)
   let lease: RequestBodyBudgetLease
   try {
@@ -549,7 +731,13 @@ const runIdempotentTask = <Result>(
 ): Promise<Result> => {
   const key = idempotencyKey(request)
   if (key === undefined) return operation()
-  const scope = JSON.stringify([callerContext.location, request.method, url.pathname, key])
+  const scope = JSON.stringify([
+    callerContext.location,
+    callerContext.clientId,
+    request.method,
+    url.pathname,
+    key
+  ])
   const serializedBody = JSON.stringify(body)
   const fingerprint = createHash('sha256').update(serializedBody).digest('hex')
   // Project responses may retain request-derived strings; reserve twice the UTF-8 body plus fixed
@@ -700,6 +888,7 @@ const handleTaskApiRequest = async (
   url: URL,
   tasks: NonNullable<WebServerOptions['tasks']>,
   callerContext: CallerContext,
+  requestBodyClientId: string,
   requestBodyBudgetRegistry: RequestBodyBudgetRegistry,
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization
@@ -715,7 +904,8 @@ const handleTaskApiRequest = async (
         const body = (await readJsonBody(
           request,
           response,
-          requestBodyBudgetRegistry
+          requestBodyBudgetRegistry,
+          requestBodyClientId
         )) as CreateTaskProjectRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 201, {
@@ -735,7 +925,8 @@ const handleTaskApiRequest = async (
         const body = (await readJsonBody(
           request,
           response,
-          requestBodyBudgetRegistry
+          requestBodyBudgetRegistry,
+          requestBodyClientId
         )) as UpdateTaskProjectRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, {
@@ -754,7 +945,8 @@ const handleTaskApiRequest = async (
         const body = (await readJsonBody(
           request,
           response,
-          requestBodyBudgetRegistry
+          requestBodyBudgetRegistry,
+          requestBodyClientId
         )) as StartTaskRunRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 202, {
@@ -778,7 +970,7 @@ const handleTaskApiRequest = async (
       }
       const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)
       if (cancelRunMatch && request.method === 'POST') {
-        await readJsonBody(request, response, requestBodyBudgetRegistry)
+        await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, {
           data: await tasks.cancelRun(decodeURIComponent(cancelRunMatch[1]))
@@ -798,7 +990,7 @@ const handleTaskApiRequest = async (
       )
       if (sessionPlanResponseMatch && request.method === 'POST' && tasks.respondSessionPlan) {
         const body = parseTaskPlanResponseRequest(
-          await readJsonBody(request, response, requestBodyBudgetRegistry)
+          await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
         )
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, {
@@ -899,12 +1091,13 @@ const serveStatic = async (
 
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
   const sockets = new Set<WebSocket>()
-  const externalSockets = new Map<WebSocket, string | undefined>()
-  const publicEventSockets = new Set<WebSocket>()
+  const externalSockets = new Map<WebSocket, ExternalWebSocketAccess>()
+  const publicEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
   const internalEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
   const livenessSockets = new Set<WebSocket>()
   const awaitingPong = new WeakSet<WebSocket>()
   const internalEventStream = new InternalWebEventStream()
+  const publicTaskEventStream = new PublicTaskEventStream()
   const commandClient = createApplicationCommandClient()
   const taskIdempotencyRegistry = new TaskIdempotencyRegistry()
   const requestBodyBudgetRegistry = new RequestBodyBudgetRegistry(
@@ -914,10 +1107,29 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       serverInFlightBytes: MAX_SERVER_IN_FLIGHT_RPC_BODY_BYTES
     }
   )
-  const clientLeases = new ClientLeaseRegistry((clientId) => {
-    commandClient.releaseClient('web', clientId)
-  })
+  const webClientLeases = new WebClientLeaseRegistry(
+    (clientId) => {
+      commandClient.releaseClient('web', clientId)
+    },
+    options.webClientRetention?.maxClientsPerPrincipal,
+    options.webClientRetention?.httpIdleTtlMs
+  )
   const wsServer = new WebSocketServer({ noServer: true })
+
+  const isWebSocketAuthorizationCurrent = (socket: WebSocket): boolean => {
+    const authorization = externalSockets.get(socket)
+    if (!authorization) return true
+    try {
+      if (authorization.isCurrent()) return true
+    } catch {
+      // A failed runtime authorization check is stale by default.
+    }
+    socket.close(1008, 'Remote access expired')
+    return false
+  }
+
+  const sendCurrentWebSocketMessage = (socket: WebSocket, message: string): boolean =>
+    isWebSocketAuthorizationCurrent(socket) && sendWebSocketMessage(socket, message)
 
   const handleRequest = async (
     request: IncomingMessage,
@@ -936,9 +1148,30 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           externalAuthorization = decision
         }
       }
-      if (!authorized) {
+      if (!authorized || (externalAuthorization && !externalAuthorization.isCurrent())) {
         response.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
         response.end('Unauthorized')
+        return
+      }
+      let clientNonce: string
+      try {
+        clientNonce = requestClientNonce(request)
+      } catch (error) {
+        if (error instanceof InvalidWebClientNonceError) {
+          json(response, 400, { error: error.message })
+          return
+        }
+        throw error
+      }
+      const clientId = externalAuthorization
+        ? authorizedClientId(externalAuthorization.principalId, clientNonce)
+        : clientNonce
+      const clientPrincipalId = externalAuthorization
+        ? `remote:${externalAuthorization.principalId}`
+        : 'local'
+      const requestBodyClientId = externalAuthorization?.principalId ?? clientId
+      if (!hasValidUrlPathEncoding(url.pathname)) {
+        json(response, 400, { error: 'Malformed URL encoding.' })
         return
       }
       if (auth.ok && auth.queryToken && request.method === 'GET' && url.pathname === '/') {
@@ -1000,11 +1233,13 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           createTaskCallerContext({
             ...(externalAuthorization
               ? {
+                  clientId,
                   location: 'remote' as const,
                   isAuthorizationCurrent: externalAuthorization.isCurrent
                 }
               : {})
           }),
+          requestBodyClientId,
           requestBodyBudgetRegistry,
           taskIdempotencyRegistry,
           externalAuthorization
@@ -1027,7 +1262,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         }
         let body: unknown
         try {
-          body = await readJsonBody(request, response, requestBodyBudgetRegistry)
+          body = await readJsonBody(
+            request,
+            response,
+            requestBodyBudgetRegistry,
+            requestBodyClientId
+          )
         } catch (error) {
           if (error instanceof RequestBodyBudgetExceededError) {
             webRpcError(
@@ -1079,7 +1319,6 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           )
           return
         }
-        const clientId = String(request.headers['x-open-science-client'] ?? 'web')
         const callerContext = createWebCallerContext(clientId, {
           ...(externalAuthorization
             ? {
@@ -1092,6 +1331,19 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
               }
             : {})
         })
+        let clientLease: WebClientLease
+        try {
+          clientLease = webClientLeases.acquireHttp(clientPrincipalId, clientNonce, clientId)
+        } catch (error) {
+          if (error instanceof WebClientCapacityExceededError) {
+            webRpcError(response, 429, 'handler_error', error.message)
+            return
+          }
+          throw error
+        }
+        const releaseDisconnectedClient = (): void => clientLease.release(true)
+        request.once('aborted', releaseDisconnectedClient)
+        response.once('close', releaseDisconnectedClient)
         try {
           assertExternalAuthorizationCurrent(externalAuthorization)
           const dispatcher = auth.ok
@@ -1121,6 +1373,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           }
           const publicError = publicApplicationCommandError(error)
           webRpcError(response, 500, publicError.code, publicError.message)
+        } finally {
+          request.off('aborted', releaseDisconnectedClient)
+          response.off('close', releaseDisconnectedClient)
+          clientLease.release()
         }
         return
       }
@@ -1161,16 +1417,24 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             ? await options.externalAccess.authorizeWebSocket(request, url)
             : undefined
         if (
-          (!auth.ok && !externalAuthorization) ||
+          (!auth.ok && (!externalAuthorization || !externalAuthorization.isCurrent())) ||
           !['/events', '/api/v1/events'].includes(url.pathname)
         ) {
           socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
           socket.destroy()
           return
         }
+        try {
+          parseClientNonce(url.searchParams.getAll('client'))
+        } catch (error) {
+          if (!(error instanceof InvalidWebClientNonceError)) throw error
+          socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n')
+          socket.destroy()
+          return
+        }
         wsServer.handleUpgrade(request, socket, head, (webSocket) => {
           if (externalAuthorization) {
-            externalSockets.set(webSocket, externalAuthorization.sessionId)
+            externalSockets.set(webSocket, externalAuthorization)
           }
           wsServer.emit('connection', webSocket, request)
         })
@@ -1183,8 +1447,30 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   wsServer.on('connection', (socket, request) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
-    const clientId = url.searchParams.get('client') ?? 'web'
-    const lease = clientLeases.acquire(clientId)
+    const clientNonce = parseClientNonce(url.searchParams.getAll('client'))
+    const externalAuthorization = externalSockets.get(socket)
+    if (externalAuthorization && !externalAuthorization.isCurrent()) {
+      externalSockets.delete(socket)
+      socket.close(1008, 'Remote access expired')
+      return
+    }
+    const clientId =
+      externalAuthorization === undefined
+        ? clientNonce
+        : authorizedClientId(externalAuthorization.principalId, clientNonce)
+    const clientPrincipalId =
+      externalAuthorization === undefined ? 'local' : `remote:${externalAuthorization.principalId}`
+    let lease: WebClientLease
+    try {
+      lease = webClientLeases.acquireSocket(clientPrincipalId, clientNonce, clientId)
+    } catch (error) {
+      if (error instanceof WebClientCapacityExceededError) {
+        externalSockets.delete(socket)
+        socket.close(1013, 'Too many active Web clients')
+        return
+      }
+      throw error
+    }
     socket.on('close', () => {
       sockets.delete(socket)
       externalSockets.delete(socket)
@@ -1196,7 +1482,27 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     socket.on('pong', () => awaitingPong.delete(socket))
     if (url.searchParams.get('liveness') === '1') livenessSockets.add(socket)
     if (url.pathname === '/api/v1/events') {
-      publicEventSockets.add(socket)
+      const requestedProtocol = url.searchParams.get('eventProtocol')
+      if (requestedProtocol === null) {
+        publicEventSockets.set(socket, 'legacy')
+      } else if (requestedProtocol !== String(TASK_EVENT_STREAM_PROTOCOL_VERSION)) {
+        socket.close(1002, 'Unsupported event stream protocol')
+        return
+      } else {
+        publicEventSockets.set(socket, 'replay')
+        const streamId = url.searchParams.get('stream')
+        const afterValue = url.searchParams.get('after')
+        const messages =
+          streamId === null && afterValue === null
+            ? [publicTaskEventStream.ready()]
+            : publicTaskEventStream.resume({
+                streamId: streamId ?? '',
+                after: afterValue === null ? Number.NaN : Number(afterValue)
+              })
+        for (const message of messages) {
+          if (!sendCurrentWebSocketMessage(socket, message)) break
+        }
+      }
     } else {
       const requestedProtocol = url.searchParams.get('eventProtocol')
       // A page loaded before this server upgrade has no cursor query. Keep it live-only until its
@@ -1212,7 +1518,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         const afterValue = url.searchParams.get('after')
         const after = afterValue === null ? Number.NaN : Number(afterValue)
         for (const message of internalEventStream.resume({ streamId, after })) {
-          if (!sendWebSocketMessage(socket, message)) break
+          if (!sendCurrentWebSocketMessage(socket, message)) break
         }
       }
     }
@@ -1221,9 +1527,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
     const internalProjection = projectWebRendererEvent(event)
-    const publicMessages = projectPublicTaskEvents(event).map((projection) =>
-      JSON.stringify(projection)
-    )
+    const publicMessages = projectPublicTaskEvents(event, (sessionId, promptMessageId) =>
+      options.tasks?.resolveActiveRun?.(sessionId, promptMessageId)
+    ).map((projection) => publicTaskEventStream.publish(projection))
     const legacyInternalMessage = internalProjection
       ? JSON.stringify(internalProjection)
       : undefined
@@ -1233,19 +1539,19 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     for (const socket of sockets) {
       if (publicEventSockets.has(socket)) {
         for (const publicMessage of publicMessages) {
-          if (!sendWebSocketMessage(socket, publicMessage)) break
+          if (!sendCurrentWebSocketMessage(socket, publicMessage)) break
         }
       } else if (internalEventSockets.get(socket) === 'replay') {
-        if (replayInternalMessage) sendWebSocketMessage(socket, replayInternalMessage)
+        if (replayInternalMessage) sendCurrentWebSocketMessage(socket, replayInternalMessage)
       } else if (legacyInternalMessage) {
-        sendWebSocketMessage(socket, legacyInternalMessage)
+        sendCurrentWebSocketMessage(socket, legacyInternalMessage)
       }
     }
   })
   const removeTaskProgressSink = options.tasks?.subscribeProgress((event) => {
-    const message = JSON.stringify(projectPublicTaskProgressEvent(event))
-    for (const socket of publicEventSockets) {
-      sendWebSocketMessage(socket, message)
+    const message = publicTaskEventStream.publish(projectPublicTaskProgressEvent(event))
+    for (const socket of publicEventSockets.keys()) {
+      sendCurrentWebSocketMessage(socket, message)
     }
   })
 
@@ -1262,7 +1568,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     removeBroadcastSink()
     removeTaskProgressSink?.()
     try {
-      clientLeases.dispose()
+      webClientLeases.dispose()
     } finally {
       commandClient.dispose()
     }
@@ -1279,22 +1585,25 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     const internalHeartbeat = internalEventStream.heartbeat()
     for (const socket of livenessSockets) {
       if (socket.readyState !== WebSocket.OPEN) continue
+      if (!isWebSocketAuthorizationCurrent(socket)) continue
       if (awaitingPong.has(socket)) {
         socket.terminate()
         continue
       }
       awaitingPong.add(socket)
       socket.ping()
-      if (publicEventSockets.has(socket)) sendWebSocketMessage(socket, publicHeartbeat)
-      else if (internalEventSockets.has(socket)) sendWebSocketMessage(socket, internalHeartbeat)
+      if (publicEventSockets.has(socket)) sendCurrentWebSocketMessage(socket, publicHeartbeat)
+      else if (internalEventSockets.has(socket)) {
+        sendCurrentWebSocketMessage(socket, internalHeartbeat)
+      }
     }
   }, options.eventHeartbeatIntervalMs ?? DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS)
 
   return {
     port,
-    closeExternalConnections: (sessionId) => {
-      for (const [socket, externalSessionId] of externalSockets) {
-        if (sessionId === undefined || externalSessionId === sessionId) {
+    closeExternalConnections: (principalId) => {
+      for (const [socket, authorization] of externalSockets) {
+        if (principalId === undefined || authorization.principalId === principalId) {
           socket.close(1008, 'Remote access revoked')
         }
       }
@@ -1310,7 +1619,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       const closePromise = new Promise<void>((resolveClose) => server.close(() => resolveClose()))
       let cleanupError: unknown
       try {
-        clientLeases.dispose()
+        webClientLeases.dispose()
       } catch (error) {
         cleanupError = error
       } finally {

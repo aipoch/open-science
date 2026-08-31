@@ -1,4 +1,4 @@
-import { type Dirent, existsSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { type Dirent, existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 
@@ -41,6 +41,12 @@ import {
   type MicromambaCache
 } from './micromamba-cache'
 import {
+  retainMicromambaWorkingCache,
+  type MicromambaWorkingCacheRetainer,
+  type WorkingCacheArchivePublication
+} from './windows-micromamba-working-cache'
+import { archiveAuthorizationsFromExplicitLock } from './micromamba-archive-store'
+import {
   maintainPackageCacheBestEffort,
   packageCacheCleanArgv
 } from './micromamba-cache-maintenance'
@@ -51,6 +57,7 @@ import {
   installFromLockArgv,
   micromambaSpawnEnv
 } from './micromamba'
+import { prepareNotebookWorkloadCache } from './notebook-workload-cache-paths'
 import {
   createProductionMicromambaRunner,
   type MicromambaRunner,
@@ -59,6 +66,7 @@ import {
 import { defaultOperationChildLiveness, readProcessStartToken } from './operation-recovery'
 import {
   isChildUnconfirmedError,
+  captureMicromamba,
   micromambaDiagnosticText,
   runMicromamba,
   verifyExecutable
@@ -185,6 +193,11 @@ export type ProvisionerDeps = {
     onChild: (pid: number) => void,
     signal?: AbortSignal
   ) => Promise<void>
+  // Owns the operation-scoped Windows package cache. Production retains one lease around every
+  // journaled prefix write; tests can inject a recorder or omit it entirely.
+  retainWorkingCache?: MicromambaWorkingCacheRetainer
+  // Captures the new environment's explicit lock before a named environment is exposed to a kernel.
+  captureExplicitLock?: (prefix: string) => Promise<string>
   // Verifies `<bin> --version`; rejects otherwise.
   verify: (bin: string, prefix: string) => Promise<void>
   // Clock injection for the ready-marker timestamp.
@@ -561,22 +574,30 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       onBeforeSpawn: () => void,
       onChild: (pid: number) => void,
       onCacheMaintenanceSettled: () => Promise<void>
-    ) => Promise<void>
+    ) => Promise<void | readonly WorkingCacheArchivePublication[]>
   ): Promise<void> {
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.deps.root))
     const operationId = randomUUID()
+    const archiveCacheTransaction = this.deps.retainWorkingCache !== undefined
     // Fail CLOSED: if we can't record the write-intent, we can't crash-safely perform the write (a
     // crash would leave nothing for recovery to block), so refuse rather than doing an un-recoverable
     // prefix write. (complete() below stays best-effort — a stale record is harmless; the next startup
     // reconciles it.)
-    await journal.begin({
-      operationId,
-      kind,
-      runtimeId,
-      phase,
-      startedAt: Date.now(),
-      targetPath: prefix
-    })
+    const releaseWorkingCache = await this.deps.retainWorkingCache?.(this.deps.root, operationId)
+    try {
+      await journal.begin({
+        operationId,
+        kind,
+        runtimeId,
+        phase,
+        startedAt: Date.now(),
+        targetPath: prefix,
+        archivePublicationPending: archiveCacheTransaction ? true : undefined
+      })
+    } catch (error) {
+      await releaseWorkingCache?.({ completedOperationId: operationId }).catch(() => false)
+      throw error
+    }
     // Re-arm the spawn intent immediately before EACH spawn (fail-closed: throwing aborts the spawn).
     // Writing it per-spawn — not once per op — means a second spawn (create retry) whose PID isn't
     // recorded yet leaves a fresh "spawning" sidecar (block), not a stale earlier PID (reconcile).
@@ -613,9 +634,34 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       removeOperationChildSync(this.deps.root, operationId)
     }
     let retainForRecovery = false
+    let archivePublications: readonly WorkingCacheArchivePublication[] = []
+    let publicationIntentPersisted = false
+    let mutationReturned = false
     try {
-      await run(onBeforeSpawn, onChild, onCacheMaintenanceSettled)
+      const completedPublications = await run(onBeforeSpawn, onChild, onCacheMaintenanceSettled)
+      mutationReturned = true
+      archivePublications = (completedPublications ?? []).filter(
+        (publication) => publication.authorizations.length > 0
+      )
+      // Atomically transition from "mutation may commit" to its exact post-mutation publication state.
+      // Even an empty authorization set must clear the durable pre-mutation ambiguity before cleanup.
+      await journal.update(operationId, {
+        childPid: undefined,
+        childStartedAt: undefined,
+        childStartToken: undefined,
+        archivePublicationPending: undefined,
+        archivePublications: archivePublications.length > 0 ? archivePublications : undefined
+      })
+      publicationIntentPersisted = true
     } catch (error) {
+      if (!mutationReturned && !isChildUnconfirmedError(error)) {
+        try {
+          await journal.update(operationId, { archivePublicationPending: undefined })
+          publicationIntentPersisted = true
+        } catch {
+          // Keep the durable ambiguity marker, target block, and working cache below.
+        }
+      }
       // A teardown whose child tree could NOT be confirmed stopped: a worker may still be writing the
       // prefix, so KEEP the sidecar + journal record (recovery blocks) instead of clearing them.
       if (isChildUnconfirmedError(error)) {
@@ -640,8 +686,19 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       }
       throw error
     } finally {
+      if (!publicationIntentPersisted) {
+        retainForRecovery = true
+        this.deps.blockPrefix?.(prefix)
+      }
       if (!retainForRecovery) {
         removeOperationChildSync(this.deps.root, operationId)
+      }
+      const cacheFinalized = await releaseWorkingCache?.({
+        archivePublications,
+        completedOperationId: operationId,
+        retainForRecovery
+      })
+      if (!retainForRecovery && (archivePublications.length === 0 || cacheFinalized)) {
         await journal.complete(operationId).catch(() => undefined)
       }
     }
@@ -1107,27 +1164,44 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
               name,
               prefix,
               'restore',
-              (onBeforeSpawn, onChild) =>
-                this.runWithMaxPathRecovery(
+              async (onBeforeSpawn, onChild) => {
+                const cache = this.cache
+                const lockPath = join(dir, file)
+                // Windows extracts from the short operation cache, while relocation intentionally
+                // persists only verified archives under runtime/pkgs. Re-seed the working cache from
+                // this env's explicit lock before invoking the offline create.
+                await validateAndSeedPackIntoCache(pkgsCache(this.deps.root), lockPath, cache)
+                await this.runWithMaxPathRecovery(
                   () =>
-                    withSharedCacheLocks(this.cacheLockKeys(this.cache), () => {
+                    withSharedCacheLocks(this.cacheLockKeys(cache), () => {
                       // Reaching here means the prefix is broken (verify failed) or a partial (e.g.
                       // conda-meta with no interpreter, which would wedge `create -p` forever) — clear it
                       // so the offline recreate starts clean. No abort signal: restore has no per-language
                       // cancel path, and this.abort may belong to a concurrent default provision.
                       rmSync(prefix, { recursive: true, force: true })
                       return this.deps.runArgv(
-                        createFromLockArgv(this.deps.mm, this.deps.root, prefix, join(dir, file)),
+                        createFromLockArgv(this.deps.mm, this.deps.root, prefix, lockPath),
                         undefined,
                         onChild,
                         onBeforeSpawn,
-                        this.cache,
+                        cache,
                         DEFAULT_MAX_CACHE_RELATIVE_PATH
                       )
                     }),
                   undefined,
-                  this.cache
+                  cache
                 )
+                return this.deps.retainWorkingCache
+                  ? [
+                      {
+                        workingRoot: cache.path,
+                        authorizations: archiveAuthorizationsFromExplicitLock(
+                          readFileSync(lockPath, 'utf8')
+                        )
+                      }
+                    ]
+                  : []
+              }
             )
             const bin = existsSync(pythonBin(prefix)) ? pythonBin(prefix) : rBin(prefix)
             await this.deps.verify(bin, prefix)
@@ -1199,7 +1273,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           onChild,
           onCacheMaintenanceSettled
         )
-        return this.runWithMaxPathRecovery(() =>
+        await this.runWithMaxPathRecovery(() =>
           withSharedCacheLocks(this.cacheLockKeys(this.cache), async () => {
             // Clear a half-built prefix from an interrupted prior create (incl. conda-meta-but-no-
             // interpreter) so micromamba doesn't abort on it.
@@ -1218,6 +1292,16 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             )
           })
         )
+        await this.deps.verify(bin, prefix)
+        const explicitLock = await this.deps.captureExplicitLock?.(prefix)
+        return explicitLock
+          ? [
+              {
+                workingRoot: this.cache.path,
+                authorizations: archiveAuthorizationsFromExplicitLock(explicitLock)
+              }
+            ]
+          : []
       }
     )
     await this.deps.verify(bin, prefix)
@@ -1340,7 +1424,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
         }
         await this.seedBundleCache(bundle, selected.cache)
         await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
-        return this.runWithMaxPathRecovery(
+        await this.runWithMaxPathRecovery(
           () =>
             withSharedCacheLocks(this.cacheLockKeys(selected.cache), () =>
               this.deps.runArgv(
@@ -1355,6 +1439,16 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           undefined,
           selected.cache
         )
+        return this.deps.retainWorkingCache
+          ? [
+              {
+                workingRoot: selected.cache.path,
+                authorizations: archiveAuthorizationsFromExplicitLock(
+                  readFileSync(bundle.lockPath, 'utf8')
+                )
+              }
+            ]
+          : []
       }
     )
     await this.deps.verify(bin, prefix)
@@ -1439,6 +1533,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       prefix,
       `create-${spec.language}`,
       async (onBeforeSpawn, onChild, onCacheMaintenanceSettled) => {
+        let completedLockPath = bundle.lockPath
+        let completedCache = selected.cache
         // Fetch completes before cleanup so its child can reuse this materialize journal. Tarballs stay
         // intact for future offline relocation; only unused extracted package directories are reclaimed.
         await this.maintainCacheBeforeMutation(
@@ -1543,7 +1639,19 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           const retrySelected = this.cacheForBundle(spec, reseeded)
           await this.seedBundleCache(reseeded, retrySelected.cache)
           await runCreate(reseeded.lockPath, retrySelected.cache, retrySelected.budget)
+          completedLockPath = reseeded.lockPath
+          completedCache = retrySelected.cache
         }
+        return this.deps.retainWorkingCache
+          ? [
+              {
+                workingRoot: completedCache.path,
+                authorizations: archiveAuthorizationsFromExplicitLock(
+                  readFileSync(completedLockPath, 'utf8')
+                )
+              }
+            ]
+          : []
       }
     )
 
@@ -1690,7 +1798,11 @@ export type ProductionProvisionerDeps = {
   maintainCache?: ProvisionerDeps['maintainCache']
   // Narrow subprocess seam for the default maintenance adapter's argv/environment contract test.
   runCacheMaintenance?: typeof runMicromamba
+  // Narrow subprocess seam for the default provisioning adapter's argv/environment contract test.
+  runMicromamba?: typeof runMicromamba
   verify?: ProvisionerDeps['verify']
+  retainWorkingCache?: ProvisionerDeps['retainWorkingCache']
+  captureExplicitLock?: ProvisionerDeps['captureExplicitLock']
 }
 
 // Wires the real micromamba binary, CDN fetch, subprocess runner and interpreter verification into a
@@ -1755,21 +1867,25 @@ export const createProductionProvisioner = (
           maxCacheRelativePath
         )
       }
-      return runMicromamba(
+      const workloadCacheEnv = prepareNotebookWorkloadCache(opts.root)
+      return (deps.runMicromamba ?? runMicromamba)(
         selectedArgv,
-        micromambaSpawnEnv(
-          opts.root,
-          opts.caBundle,
-          {
-            selectCache: () =>
-              runCache ??
-              selectMicromambaCache(
-                opts.root,
-                maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
-              )
-          },
-          maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
-        ),
+        {
+          ...micromambaSpawnEnv(
+            opts.root,
+            opts.caBundle,
+            {
+              selectCache: () =>
+                runCache ??
+                selectMicromambaCache(
+                  opts.root,
+                  maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
+                )
+            },
+            maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
+          ),
+          ...workloadCacheEnv
+        },
         signal,
         onChild,
         onBeforeSpawn
@@ -1779,12 +1895,14 @@ export const createProductionProvisioner = (
       deps.maintainCache ??
       (async (runCache, onBeforeSpawn, onChild, signal) => {
         const selected = await runner.resolve()
+        const workloadCacheEnv = prepareNotebookWorkloadCache(opts.root)
         await (deps.runCacheMaintenance ?? runMicromamba)(
           packageCacheCleanArgv(selected),
           {
             ...micromambaSpawnEnv(opts.root, opts.caBundle, {
               selectCache: () => runCache
             }),
+            ...workloadCacheEnv,
             MAMBA_ROOT_PREFIX: opts.root,
             CONDA_PKGS_DIRS: runCache.path
           },
@@ -1793,6 +1911,22 @@ export const createProductionProvisioner = (
           onBeforeSpawn
         )
       }),
+    retainWorkingCache:
+      deps.retainWorkingCache ??
+      (deps.runArgv || process.platform !== 'win32'
+        ? undefined
+        : (root, operationId) => retainMicromambaWorkingCache(root, {}, operationId)),
+    captureExplicitLock:
+      deps.captureExplicitLock ??
+      (deps.runArgv
+        ? undefined
+        : async (prefix) => {
+            const selected = await runner.resolve()
+            return captureMicromamba(
+              [selected, '--no-rc', 'list', '--prefix', prefix, '--explicit', '--md5'],
+              caEnv
+            )
+          }),
     verify: deps.verify ?? ((bin, prefix) => verifyExecutable(bin, { prefix, env: caEnv })),
     isPrefixBlocked: opts.isPrefixBlocked,
     clearPrefixBlock: opts.clearPrefixBlock,

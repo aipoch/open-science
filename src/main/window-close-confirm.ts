@@ -59,20 +59,21 @@ export type ClosePreferenceAccess = {
 const DEFAULT_ACK_TIMEOUT_MS = 500
 const DEFAULT_HANG_GRACE_MS = 10_000
 
-// Coordinates a close/quit confirmation. Main computes `sessions`, so the quit variant with an empty
-// list resolves without any IPC; otherwise the renderer renders the modal and replies the choice,
-// with a native/proceed fallback if it can't.
+// Coordinates a close/quit confirmation. Main computes `sessions` plus Reviewer activity, so the quit
+// variant resolves without IPC only when both are idle; otherwise the renderer renders the modal and
+// replies with the choice, with a native/proceed fallback if it can't.
 export const createCloseConfirm = (
   deps: CloseConfirmDeps
 ): ((
   variant: CloseConfirmVariant,
-  sessions: ActiveSessionInfo[]
+  sessions: ActiveSessionInfo[],
+  reviewerActive?: boolean
 ) => Promise<CloseConfirmChoice>) => {
   const ackTimeoutMs = deps.ackTimeoutMs ?? DEFAULT_ACK_TIMEOUT_MS
   const hangGraceMs = deps.hangGraceMs ?? DEFAULT_HANG_GRACE_MS
 
-  return async (variant, sessions) => {
-    if (variant === 'quit' && sessions.length === 0) return 'quit'
+  return async (variant, sessions, reviewerActive = false) => {
+    if (variant === 'quit' && sessions.length === 0 && !reviewerActive) return 'quit'
     const hasDelegatedWork = hasDelegatedActiveSession(sessions)
     const enforceDelegatedBlock = (choice: CloseConfirmChoice): CloseConfirmChoice =>
       hasDelegatedWork && choice === 'quit' ? (variant === 'quit' ? 'cancel' : 'minimize') : choice
@@ -169,7 +170,7 @@ export const createCloseConfirm = (
         if (!acked) startFallback()
       }, ackTimeoutMs)
 
-      deps.send({ requestId, variant, sessions })
+      deps.send({ requestId, variant, sessions, reviewerActive })
     })
   }
 }
@@ -240,7 +241,11 @@ export const createElectronCloseConfirm = (
   getWindow: () => BrowserWindow | undefined,
   preferences: ClosePreferenceAccess,
   translate: NativeTranslator = englishNativeTranslator
-): ((variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => Promise<CloseConfirmChoice>) =>
+): ((
+  variant: CloseConfirmVariant,
+  sessions: ActiveSessionInfo[],
+  reviewerActive?: boolean
+) => Promise<CloseConfirmChoice>) =>
   createCloseConfirm({
     // Reveal the window before asking: a tray/Ctrl+Q quit can arrive while the window is hidden
     // (minimized to tray), and a modal sent to a hidden window would never be seen — leaving the

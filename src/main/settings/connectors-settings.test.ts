@@ -13,6 +13,7 @@ describe('sanitizeConnectors', () => {
         autoAllowIds: ['chemistry'],
         contactEmail: 'a@b.org',
         ncbiApiKeyRef: 'ref1',
+        openAlexApiKeyRef: 'ref2',
         blockedToolIds: ['chemistry/pubchem_get_properties'],
         disabledConnectorIds: ['zinc', 'zinc', 'rna']
       })
@@ -21,6 +22,7 @@ describe('sanitizeConnectors', () => {
       autoAllowIds: ['chemistry'],
       contactEmail: 'a@b.org',
       ncbiApiKeyRef: 'ref1',
+      openAlexApiKeyRef: 'ref2',
       blockedToolIds: ['chemistry/pubchem_get_properties'],
       disabledConnectorIds: ['zinc', 'rna']
     })
@@ -82,6 +84,15 @@ describe('SettingsRepository connector mutators', () => {
       c = await readConnectors(repo)
       expect(c?.contactEmail).toBeUndefined()
       expect(c?.ncbiApiKeyRef).toBeUndefined()
+    })
+  })
+
+  it('sets and clears an OpenAlex credential reference', async () => {
+    await withRepo(async (repo) => {
+      await repo.setOpenAlexCredential('cipher-ref')
+      expect((await readConnectors(repo))?.openAlexApiKeyRef).toBe('cipher-ref')
+      await repo.setOpenAlexCredential(undefined)
+      expect((await readConnectors(repo))?.openAlexApiKeyRef).toBeUndefined()
     })
   })
 

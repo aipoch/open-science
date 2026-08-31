@@ -1,6 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { basename, dirname, join, posix, resolve, win32 } from 'node:path'
 
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
@@ -36,16 +45,36 @@ export type MicromambaCacheDeps = {
     ownership: CacheOwnership
   ) => string | MicromambaCachePreparation | undefined
   verifyOwnership?: (path: string, userIdentity: string) => boolean
+  exists?: (path: string) => boolean
 }
 
 type CacheMarker = { schema?: number; canonicalRoot?: string; userIdentity?: string }
+
+type TempParentMarker = { schema?: number; kind?: string; userIdentity?: string }
+
+const WINDOWS_TEMP_PARENT = 'OpenScienceTmp'
+const TEMP_PARENT_MARKER_FILE = '.open-science-temp.json'
+const TEMP_PARENT_MARKER_KIND = 'micromamba-working-cache-parent'
 
 export type MicromambaCacheCleanupDeps = Pick<
   MicromambaCacheDeps,
   'platform' | 'env' | 'canonicalize' | 'verifyOwnership'
 > & {
   inspect?: (path: string) => { directory: boolean; symbolicLink: boolean; marker: CacheMarker }
+  inspectParent?: (path: string) => {
+    directory: boolean
+    symbolicLink: boolean
+    physical: string
+    marker?: TempParentMarker
+  }
   remove?: (path: string) => void
+  preserveParent?: boolean
+}
+
+type CachePathCandidate = {
+  path: string
+  profileBoundary?: string
+  managedParent?: boolean
 }
 
 const windowsKey = (path: string): string => win32.normalize(path).toLowerCase()
@@ -91,8 +120,7 @@ export const windowsCacheAclHardeningScript = (path: string): string => {
     '[System.Security.AccessControl.InheritanceFlags]::ObjectInherit; ' +
     '$propagation=[System.Security.AccessControl.PropagationFlags]::None; ' +
     '$allow=[System.Security.AccessControl.AccessControlType]::Allow; ' +
-    '$acl=[System.Security.AccessControl.DirectorySecurity]::new(); ' +
-    '$acl.SetOwner($current); ' +
+    '$acl=[System.IO.Directory]::GetAccessControl($path); ' +
     '$acl.SetAccessRuleProtection($true,$false); ' +
     '@($current,$system,$administrators) | ForEach-Object { ' +
     '$rule=[System.Security.AccessControl.FileSystemAccessRule]::new(' +
@@ -123,11 +151,6 @@ export const hardenWindowsCacheAclWithIcacls = (path: string): void => {
   const currentSid = currentWindowsUserSid()
   execFileSync(
     resolveWindowsSystemExecutable('icacls.exe'),
-    [path, '/setowner', `*${currentSid}`],
-    { encoding: 'utf8', windowsHide: true }
-  )
-  execFileSync(
-    resolveWindowsSystemExecutable('icacls.exe'),
     [
       path,
       '/inheritance:r',
@@ -148,9 +171,10 @@ export const hardenWindowsCacheAcl = (path: string): boolean => {
       ['-NoProfile', '-NonInteractive', '-Command', windowsCacheAclHardeningScript(path)],
       { encoding: 'utf8', windowsHide: true }
     )
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code !== 'EPERM' && code !== 'EACCES') throw error
+  } catch {
+    // Windows PowerShell reports .NET ACL failures as a normal non-zero process exit (not always
+    // EPERM/EACCES, and the localized stderr is not stable). icacls is the independent system fallback;
+    // if it also fails its error propagates and cache preparation remains fail-closed.
     hardenWindowsCacheAclWithIcacls(path)
   }
   return true
@@ -179,10 +203,17 @@ export const WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES = [
   'TakeOwnership'
 ] as const
 
+export const WINDOWS_CACHE_TRUSTED_OWNER_SIDS = [
+  'S-1-5-18', // LocalSystem
+  'S-1-5-32-544' // Builtin Administrators
+] as const
+
 const dangerousWindowsCacheRight = new RegExp(WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES.join('|'), 'i')
 
 export const isTrustedWindowsCacheAcl = (acl: WindowsCacheAcl): boolean => {
-  if (!acl.OwnerSid || acl.OwnerSid !== acl.CurrentSid) return false
+  if (!acl.OwnerSid || !acl.CurrentSid) return false
+  const trustedOwnerSids = new Set([acl.CurrentSid, ...WINDOWS_CACHE_TRUSTED_OWNER_SIDS])
+  if (!trustedOwnerSids.has(acl.OwnerSid)) return false
   const trustedWriteSids = new Set([
     acl.CurrentSid,
     'S-1-5-18', // LocalSystem
@@ -249,13 +280,30 @@ const defaultPrepare = (
   verifyOwnership: (path: string, userIdentity: string) => boolean
 ): MicromambaCachePreparation => {
   let created = false
+  let parentCreated = false
+  let parentMarkerWritten = false
   let verifiedByHardening = false
+  const parent = win32.dirname(path)
   const reject = (rejection: string): MicromambaCachePreparation => {
     if (created) {
       try {
         rmSync(path, { recursive: true, force: true })
       } catch {
         // Preserve the original rejection; cleanup is best-effort for a directory this call created.
+      }
+    }
+    if (parentCreated) {
+      try {
+        if (parentMarkerWritten) {
+          removeEmptyManagedParent(parent, ownership.userIdentity, verifyOwnership)
+        } else {
+          // The marker was never published, so this call can only remove the still-empty directory it
+          // created. A concurrent child makes this non-recursive removal fail safely.
+          rmdirSync(parent)
+        }
+      } catch {
+        // Preserve the original rejection. Never recurse through the shared parent: another app
+        // process may already have created a sibling cache after this call created the directory.
       }
     }
     return { rejection }
@@ -266,6 +314,65 @@ const defaultPrepare = (
     return code ? `${code}: ${error.message}` : error.message
   }
   try {
+    const expectedParent: Required<TempParentMarker> = {
+      schema: 1,
+      kind: TEMP_PARENT_MARKER_KIND,
+      userIdentity: ownership.userIdentity
+    }
+    let parentState
+    try {
+      parentState = lstatSync(parent)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        return reject(`temporary parent could not be inspected (${errorDetail(error)})`)
+      }
+    }
+    if (parentState) {
+      if (!parentState.isDirectory() || parentState.isSymbolicLink()) {
+        return reject('temporary parent exists but is not a trusted directory')
+      }
+      let parentMarker: TempParentMarker
+      try {
+        parentMarker = JSON.parse(
+          readFileSync(win32.join(parent, TEMP_PARENT_MARKER_FILE), 'utf8')
+        ) as TempParentMarker
+      } catch (error) {
+        return reject(
+          `temporary parent ownership marker is missing or unreadable (${errorDetail(error)})`
+        )
+      }
+      if (
+        parentMarker.schema !== expectedParent.schema ||
+        parentMarker.kind !== expectedParent.kind ||
+        parentMarker.userIdentity !== expectedParent.userIdentity
+      ) {
+        return reject('temporary parent ownership marker does not match the current Windows user')
+      }
+      if (windowsKey(realpathSync.native(parent)) !== windowsKey(parent)) {
+        return reject('temporary parent resolves to an unexpected physical location')
+      }
+      if (!verifyOwnership(parent, ownership.userIdentity)) {
+        return reject('temporary parent ownership or permissions are not trusted')
+      }
+    } else {
+      mkdirSync(parent, { mode: 0o700 })
+      parentCreated = true
+      try {
+        hardenOwnership(parent)
+      } catch (error) {
+        return reject(`temporary parent ACL could not be hardened (${errorDetail(error)})`)
+      }
+      writeFileSync(
+        win32.join(parent, TEMP_PARENT_MARKER_FILE),
+        `${JSON.stringify(expectedParent)}\n`,
+        { encoding: 'utf8', mode: 0o600, flag: 'wx' }
+      )
+      parentMarkerWritten = true
+      if (!verifyOwnership(parent, ownership.userIdentity)) {
+        return reject('temporary parent ownership or permissions are not trusted')
+      }
+    }
+
     try {
       const stat = lstatSync(path)
       if (!stat.isDirectory()) return reject('path exists but is not a directory')
@@ -358,7 +465,13 @@ const cacheIdentity = (
   root: string,
   env: NodeJS.ProcessEnv,
   canonicalize: (path: string) => string
-): { canonicalRoot: string; userIdentity: string; leaf: string; compactLeaf: string } => {
+): {
+  canonicalRoot: string
+  userIdentity: string
+  leaf: string
+  legacyLeaf: string
+  legacyCompactLeaf: string
+} => {
   const userIdentity = [env.USERDOMAIN, env.USERNAME].filter(Boolean).join('\\')
   if (!userIdentity) {
     throw new Error('Cannot determine the Windows user identity for the managed runtime cache.')
@@ -370,32 +483,95 @@ const cacheIdentity = (
   return {
     canonicalRoot,
     userIdentity,
-    leaf: `osp${digest.toString('hex').slice(0, 10)}`,
-    compactLeaf: `os${compactCacheHash(digest)}`
+    leaf: `m-${compactCacheHash(digest)}`,
+    legacyLeaf: `osp${digest.toString('hex').slice(0, 10)}`,
+    legacyCompactLeaf: `os${compactCacheHash(digest)}`
   }
 }
 
 const candidatePaths = (
   canonicalRoot: string,
   leaf: string,
-  compactLeaf: string,
   env: NodeJS.ProcessEnv,
   canonicalize: (path: string) => string
-): Array<{ path: string; profileBoundary?: string }> => {
-  const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
-  const publicRoot = env.PUBLIC ? win32.normalize(canonicalize(env.PUBLIC)) : undefined
+): CachePathCandidate[] => {
   const runtimeVolume = win32.parse(canonicalRoot).root
+  const seenTemporaryRoots = new Set([windowsKey(runtimeVolume)])
+  const perUserTemps = [env.TEMP, env.TMP]
+    .filter((path): path is string => Boolean(path))
+    .map((path) => win32.normalize(canonicalize(path)))
+    .filter((path) => {
+      const key = windowsKey(path)
+      if (seenTemporaryRoots.has(key)) return false
+      seenTemporaryRoots.add(key)
+      return true
+    })
+  const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
+  const primary = {
+    path: win32.join(runtimeVolume, WINDOWS_TEMP_PARENT, leaf),
+    managedParent: true
+  }
   return [
-    { path: win32.join(runtimeVolume, leaf) },
+    primary,
+    ...perUserTemps.map((perUserTemp) => ({
+      path: win32.join(perUserTemp, WINDOWS_TEMP_PARENT, leaf),
+      profileBoundary: perUserTemp,
+      managedParent: true
+    })),
     ...(profile
       ? [
-          { path: win32.join(profile, leaf), profileBoundary: profile },
-          { path: win32.join(profile, compactLeaf), profileBoundary: profile }
+          {
+            path: win32.join(profile, 'os-tmp', leaf),
+            profileBoundary: profile,
+            managedParent: true
+          }
         ]
-      : []),
-    ...(publicRoot ? [{ path: win32.join(publicRoot, leaf) }] : [])
+      : [])
   ]
 }
+
+// Released versions used these external layouts. They are never selected again, but migration and
+// eligible cleanup must still remove them after applying the same marker and ACL checks as the new
+// working cache; otherwise large disposable package caches remain orphaned indefinitely.
+const legacyCleanupCandidatePaths = (
+  canonicalRoot: string,
+  legacyLeaf: string,
+  legacyCompactLeaf: string,
+  env: NodeJS.ProcessEnv,
+  canonicalize: (path: string) => string
+): CachePathCandidate[] => {
+  const runtimeVolume = win32.parse(canonicalRoot).root
+  const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
+  const publicRoot = env.PUBLIC ? win32.normalize(canonicalize(env.PUBLIC)) : undefined
+  return [
+    { path: win32.join(runtimeVolume, legacyLeaf) },
+    ...(profile
+      ? [
+          { path: win32.join(profile, legacyLeaf), profileBoundary: profile },
+          { path: win32.join(profile, legacyCompactLeaf), profileBoundary: profile }
+        ]
+      : []),
+    ...(publicRoot ? [{ path: win32.join(publicRoot, legacyLeaf) }] : [])
+  ]
+}
+
+export const micromambaWorkingCachePaths = (
+  root: string,
+  deps: Pick<MicromambaCacheDeps, 'platform' | 'env' | 'canonicalize'> = {}
+): string[] => {
+  if ((deps.platform ?? process.platform) !== 'win32') return [posix.join(root, 'pkgs')]
+  const env = deps.env ?? process.env
+  const canonicalize = deps.canonicalize ?? canonicalizeExisting
+  const identity = cacheIdentity(root, env, canonicalize)
+  return candidatePaths(identity.canonicalRoot, identity.leaf, env, canonicalize).map(
+    (candidate) => candidate.path
+  )
+}
+
+export const micromambaWorkingCachePath = (
+  root: string,
+  deps: Pick<MicromambaCacheDeps, 'platform' | 'env' | 'canonicalize'> = {}
+): string => micromambaWorkingCachePaths(root, deps)[0]
 
 export const selectMicromambaCache = (
   root: string,
@@ -413,14 +589,14 @@ export const selectMicromambaCache = (
 
   const env = deps.env ?? process.env
   const canonicalize = deps.canonicalize ?? canonicalizeExisting
-  const { canonicalRoot, userIdentity, leaf, compactLeaf } = cacheIdentity(root, env, canonicalize)
+  const { canonicalRoot, userIdentity, leaf } = cacheIdentity(root, env, canonicalize)
   const hardenOwnership = deps.hardenOwnership ?? hardenWindowsCacheAcl
   const verifyOwnership = deps.verifyOwnership ?? defaultVerifyOwnership
   const prepare =
     deps.prepare ??
     ((path: string, ownership: CacheOwnership) =>
       defaultPrepare(path, ownership, hardenOwnership, verifyOwnership))
-  const candidates = candidatePaths(canonicalRoot, leaf, compactLeaf, env, canonicalize)
+  const candidates = candidatePaths(canonicalRoot, leaf, env, canonicalize)
   const rejections: string[] = []
 
   for (const candidate of candidates) {
@@ -475,21 +651,196 @@ export const selectMicromambaCache = (
   )
 }
 
-// Removes only the app-owned cache for a previous runtime root. This is used after a successful data
-// root migration because the physical cache intentionally lives outside the data tree. Marker and
-// ownership checks are repeated here so a stale or tampered path is left untouched.
-export const removeMicromambaCacheForRoot = (
+// Recovery reads an exact working-cache path from the operation journal. Revalidate that persisted
+// path without creating it before any recursive scan: a damaged journal must not turn archive
+// publication into an arbitrary-directory traversal, and a cache parent may have been replaced by a
+// reparse point while the app was stopped. The marker-bound OpenScienceTmp form remains valid even if
+// TEMP changed between runs; the fixed profile fallback must remain inside the current profile.
+export const isTrustedMicromambaWorkingCacheForRoot = (
   root: string,
+  path: string,
   deps: MicromambaCacheCleanupDeps = {}
+): boolean => {
+  const platform = deps.platform ?? process.platform
+  const canonicalize = deps.canonicalize ?? canonicalizeExisting
+  if (platform !== 'win32') {
+    try {
+      const expected = posix.join(root, 'pkgs')
+      const state = lstatSync(path)
+      return (
+        state.isDirectory() &&
+        !state.isSymbolicLink() &&
+        canonicalize(path) === canonicalize(expected)
+      )
+    } catch {
+      return false
+    }
+  }
+
+  const env = deps.env ?? process.env
+  let identity: ReturnType<typeof cacheIdentity>
+  try {
+    identity = cacheIdentity(root, env, canonicalize)
+  } catch {
+    return false
+  }
+  const normalized = win32.normalize(path)
+  if (!win32.isAbsolute(normalized) || !isAsciiPath(normalized)) return false
+  if (windowsKey(win32.basename(normalized)) !== windowsKey(identity.leaf)) return false
+
+  const parent = win32.dirname(normalized)
+  const parentLeaf = win32.basename(parent).toLowerCase()
+  if (parentLeaf !== WINDOWS_TEMP_PARENT.toLowerCase() && parentLeaf !== 'os-tmp') return false
+  const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
+  if (parentLeaf === 'os-tmp' && (!profile || !isInside(profile, parent))) return false
+
+  const verifyOwnership = deps.verifyOwnership ?? defaultVerifyOwnership
+  const inspectParent =
+    deps.inspectParent ??
+    ((candidate: string) => {
+      const stat = lstatSync(candidate)
+      return {
+        directory: stat.isDirectory(),
+        symbolicLink: stat.isSymbolicLink(),
+        physical: realpathSync.native(candidate),
+        marker: JSON.parse(
+          readFileSync(win32.join(candidate, TEMP_PARENT_MARKER_FILE), 'utf8')
+        ) as TempParentMarker
+      }
+    })
+  const inspect =
+    deps.inspect ??
+    ((candidate: string): { directory: boolean; symbolicLink: boolean; marker: CacheMarker } => {
+      const stat = lstatSync(candidate)
+      return {
+        directory: stat.isDirectory(),
+        symbolicLink: stat.isSymbolicLink(),
+        marker: JSON.parse(
+          readFileSync(win32.join(candidate, '.open-science-cache.json'), 'utf8')
+        ) as CacheMarker
+      }
+    })
+
+  try {
+    const parentState = inspectParent(parent)
+    if (
+      !parentState.directory ||
+      parentState.symbolicLink ||
+      windowsKey(parentState.physical) !== windowsKey(parent) ||
+      parentState.marker?.schema !== 1 ||
+      parentState.marker.kind !== TEMP_PARENT_MARKER_KIND ||
+      parentState.marker.userIdentity !== identity.userIdentity ||
+      !verifyOwnership(parentState.physical, identity.userIdentity)
+    ) {
+      return false
+    }
+    const state = inspect(normalized)
+    return (
+      state.directory &&
+      !state.symbolicLink &&
+      windowsKey(canonicalize(normalized)) === windowsKey(normalized) &&
+      state.marker.schema === 1 &&
+      state.marker.canonicalRoot === windowsKey(identity.canonicalRoot) &&
+      state.marker.userIdentity === identity.userIdentity &&
+      verifyOwnership(normalized, identity.userIdentity)
+    )
+  } catch {
+    return false
+  }
+}
+
+type EmptyManagedParentRemovalDeps = {
+  readMarker?: (path: string) => string
+  list?: (path: string) => string[]
+  removeMarker?: (path: string) => void
+  removeParent?: (path: string) => void
+  restoreMarker?: (path: string, raw: string) => void
+}
+
+export const removeEmptyManagedParent = (
+  parent: string,
+  userIdentity: string,
+  verifyOwnership: (path: string, userIdentity: string) => boolean,
+  deps: EmptyManagedParentRemovalDeps = {}
 ): void => {
-  if ((deps.platform ?? process.platform) !== 'win32') return
+  const markerPath = win32.join(parent, TEMP_PARENT_MARKER_FILE)
+  const raw = (deps.readMarker ?? ((path: string) => readFileSync(path, 'utf8')))(markerPath)
+  const marker = JSON.parse(raw) as TempParentMarker
+  if (
+    marker.schema !== 1 ||
+    marker.kind !== TEMP_PARENT_MARKER_KIND ||
+    marker.userIdentity !== userIdentity ||
+    !verifyOwnership(parent, userIdentity) ||
+    !(deps.list ?? readdirSync)(parent).every((entry) => entry === TEMP_PARENT_MARKER_FILE)
+  ) {
+    return
+  }
+
+  // Remove the marker first, then use a non-recursive directory removal. If another app process adds a
+  // child after the emptiness check, rmdir fails instead of recursively deleting that active cache. Put
+  // the marker back best-effort so the surviving parent remains recognizable on the next startup.
+  ;(deps.removeMarker ?? ((path: string) => rmSync(path)))(markerPath)
+  try {
+    ;(deps.removeParent ?? rmdirSync)(parent)
+  } catch (error) {
+    try {
+      ;(
+        deps.restoreMarker ??
+        ((path: string, contents: string) =>
+          writeFileSync(path, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' }))
+      )(markerPath, raw)
+    } catch {
+      // Preserve the non-destructive outcome; a concurrent owner may already have restored the marker.
+    }
+    throw error
+  }
+}
+
+export const removeTrustedMicromambaWorkingCacheForRoot = (
+  root: string,
+  path: string,
+  deps: MicromambaCacheCleanupDeps = {}
+): boolean => {
+  if ((deps.platform ?? process.platform) !== 'win32') return false
+  if (!isTrustedMicromambaWorkingCacheForRoot(root, path, deps)) return false
   const env = deps.env ?? process.env
   const canonicalize = deps.canonicalize ?? canonicalizeExisting
   let identity: ReturnType<typeof cacheIdentity>
   try {
     identity = cacheIdentity(root, env, canonicalize)
   } catch {
-    return
+    return false
+  }
+  const parent = win32.dirname(win32.normalize(path))
+  const verifyOwnership = deps.verifyOwnership ?? defaultVerifyOwnership
+  try {
+    ;(deps.remove ?? ((candidate: string) => rmSync(candidate, { recursive: true, force: true })))(
+      path
+    )
+    if (!deps.remove && !deps.preserveParent) {
+      removeEmptyManagedParent(parent, identity.userIdentity, verifyOwnership)
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Removes only the app-owned cache for a previous runtime root. This is used after a successful data
+// root migration because the physical cache intentionally lives outside the data tree. Marker and
+// ownership checks are repeated here so a stale or tampered path is left untouched.
+export const removeMicromambaCacheForRoot = (
+  root: string,
+  deps: MicromambaCacheCleanupDeps = {}
+): boolean => {
+  if ((deps.platform ?? process.platform) !== 'win32') return true
+  const env = deps.env ?? process.env
+  const canonicalize = deps.canonicalize ?? canonicalizeExisting
+  let identity: ReturnType<typeof cacheIdentity>
+  try {
+    identity = cacheIdentity(root, env, canonicalize)
+  } catch {
+    return false
   }
   const verifyOwnership = deps.verifyOwnership ?? defaultVerifyOwnership
   const inspect =
@@ -504,16 +855,57 @@ export const removeMicromambaCacheForRoot = (
         ) as CacheMarker
       }
     })
+  const inspectParent =
+    deps.inspectParent ??
+    ((path: string) => {
+      const stat = lstatSync(path)
+      let marker: TempParentMarker | undefined
+      try {
+        marker = JSON.parse(
+          readFileSync(win32.join(path, TEMP_PARENT_MARKER_FILE), 'utf8')
+        ) as TempParentMarker
+      } catch {
+        // Released legacy layouts did not own their parent, while managed parents are rejected below.
+      }
+      return {
+        directory: stat.isDirectory(),
+        symbolicLink: stat.isSymbolicLink(),
+        physical: realpathSync.native(path),
+        marker
+      }
+    })
   const remove =
     deps.remove ?? ((path: string): void => rmSync(path, { recursive: true, force: true }))
-  for (const candidate of candidatePaths(
-    identity.canonicalRoot,
-    identity.leaf,
-    identity.compactLeaf,
-    env,
-    canonicalize
-  )) {
+  const cleanupCandidates = [
+    ...candidatePaths(identity.canonicalRoot, identity.leaf, env, canonicalize),
+    ...legacyCleanupCandidatePaths(
+      identity.canonicalRoot,
+      identity.legacyLeaf,
+      identity.legacyCompactLeaf,
+      env,
+      canonicalize
+    )
+  ]
+  let completed = true
+  for (const candidate of cleanupCandidates) {
     try {
+      const parent = win32.dirname(candidate.path)
+      const parentState = inspectParent(parent)
+      if (
+        !parentState.directory ||
+        parentState.symbolicLink ||
+        windowsKey(parentState.physical) !== windowsKey(parent) ||
+        (candidate.profileBoundary && !isInside(candidate.profileBoundary, parentState.physical))
+      )
+        continue
+      if (
+        candidate.managedParent &&
+        (parentState.marker?.schema !== 1 ||
+          parentState.marker.kind !== TEMP_PARENT_MARKER_KIND ||
+          parentState.marker.userIdentity !== identity.userIdentity ||
+          !verifyOwnership(parentState.physical, identity.userIdentity))
+      )
+        continue
       const state = inspect(candidate.path)
       if (!state.directory || state.symbolicLink) continue
       const marker = state.marker
@@ -525,8 +917,14 @@ export const removeMicromambaCacheForRoot = (
       )
         continue
       remove(candidate.path)
-    } catch {
-      // Cleanup is best-effort; migration success must not be turned into a failure by stale cache I/O.
+      if (!deps.remove && !deps.preserveParent) {
+        removeEmptyManagedParent(parent, identity.userIdentity, verifyOwnership)
+      }
+    } catch (error) {
+      // A missing candidate or marker means there is nothing app-owned to remove. Preserve every other
+      // failure so operation journals can retain the exact cleanup evidence for a later retry.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') completed = false
     }
   }
+  return completed
 }

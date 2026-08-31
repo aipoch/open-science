@@ -137,7 +137,7 @@ describe('HomePage persistence recovery', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
-    deleteProject = vi.fn().mockResolvedValue(undefined)
+    deleteProject = vi.fn().mockResolvedValue({ status: 'deleted' })
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [project],
@@ -351,11 +351,53 @@ describe('HomePage persistence recovery', () => {
     expect(useProjectStore.getState().projects).toContainEqual(project)
     warn.mockRestore()
 
-    deleteProject.mockResolvedValueOnce(undefined)
+    deleteProject.mockResolvedValueOnce({ status: 'deleted' })
     await act(async () => confirm?.click())
 
     expect(deleteProject).toHaveBeenCalledTimes(2)
     expect(confirm?.dataset.hasProject).toBe('false')
     expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('removes committed Project state and explains pending background cleanup', async () => {
+    deleteProject.mockImplementationOnce(async () => {
+      useProjectStore.setState({
+        pendingDeletionCleanupProjectIds: new Set([project.id])
+      } as never)
+      return { status: 'cleanup-pending' }
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      projectId: project.id,
+      cwd: '/workspace/project-1',
+      content: 'Saved conversation'
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const deleteAction = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Delete'
+    )
+    await act(async () => deleteAction?.click())
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="confirm-project-delete"]')?.click()
+    )
+
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      'Project deleted. Cleanup will continue in the background.'
+    )
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="confirm-project-delete"]')?.dataset
+        .hasProject
+    ).toBe('false')
+
+    await act(async () => useProjectStore.getState().removeProject(project.id))
+
+    expect(container.querySelector('[role="status"]')).toBeNull()
   })
 })

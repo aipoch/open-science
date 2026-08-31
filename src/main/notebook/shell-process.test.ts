@@ -117,18 +117,25 @@ describe('notebook shell process behavior', () => {
     })
 
     it('keeps Windows shell runtime variables while excluding host secrets', () => {
-      const env = buildShellEnv('/notebook/handoff', 'win32', {
-        PATH: 'C:\\Windows\\System32',
-        ProgramFiles: 'C:\\Program Files',
-        SystemRoot: 'C:\\Windows',
-        WINDIR: 'C:\\Windows',
-        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
-        PATHEXT: '.COM;.EXE;.BAT;.CMD',
-        USERPROFILE: 'C:\\Users\\Ada',
-        PSModulePath: 'C:\\host\\third-party-modules',
-        OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
-        OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
-      })
+      const runtimeRoot = 'D:\\OpenScience\\runtime'
+      const env = buildShellEnv(
+        '/notebook/handoff',
+        'win32',
+        {
+          PATH: 'C:\\Windows\\System32',
+          ProgramFiles: 'C:\\Program Files',
+          SystemRoot: 'C:\\Windows',
+          WINDIR: 'C:\\Windows',
+          ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+          PATHEXT: '.COM;.EXE;.BAT;.CMD',
+          USERPROFILE: 'C:\\Users\\Ada',
+          PSModulePath: 'C:\\host\\third-party-modules',
+          OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
+          OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
+        },
+        runtimeRoot
+      )
+      const cacheRoot = join(runtimeRoot, 'cache', 'notebook')
 
       expect(env).toMatchObject({
         PATH: 'C:\\Windows\\System32',
@@ -141,7 +148,11 @@ describe('notebook shell process behavior', () => {
           'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
         OPEN_SCIENCE_PSMODULEPATH:
           'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
-        OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff'
+        OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff',
+        OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
+        PIP_CACHE_DIR: join(cacheRoot, 'pip'),
+        HF_HUB_CACHE: join(cacheRoot, 'huggingface', 'hub'),
+        TORCH_HOME: join(cacheRoot, 'torch')
       })
       expect(env.ProgramFiles).toBeUndefined()
       expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()

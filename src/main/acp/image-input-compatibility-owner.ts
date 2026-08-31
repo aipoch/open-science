@@ -1,5 +1,5 @@
 import type { ContentBlock } from '@agentclientprotocol/sdk'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
@@ -16,9 +16,11 @@ import {
   VISION_MODEL_NOT_CONFIGURED_MESSAGE
 } from '../../shared/run-error-classification'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
-import type {
-  RestrictedInferenceResult,
-  RestrictedInferenceRunInput
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
+import {
+  extractRestrictedInferenceUsage,
+  type RestrictedInferenceResult,
+  type RestrictedInferenceRunInput
 } from './restricted-inference-runner'
 import type { VisionEvidencePersistence, VisionEvidenceSource } from './vision-evidence-repository'
 import { isRecord } from './value-guards'
@@ -79,6 +81,7 @@ type ImageInputCompatibilityOwnerOptions = Readonly<{
     'run'
   >
   evidenceRepository?: VisionEvidencePersistence
+  recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
 }>
 
 type PrepareImageInputCompatibilityInput = Readonly<{
@@ -551,7 +554,7 @@ class ImageInputCompatibilityOwner {
       }
     }
 
-    const evidence = await this.run(image, target, context.signal)
+    const evidence = await this.run(image, target, context)
     if (
       identityKey &&
       context.projectId &&
@@ -591,19 +594,65 @@ class ImageInputCompatibilityOwner {
   private async run(
     image: AcpMessageImage,
     target: ExplicitAgentBackendTarget,
-    signal?: AbortSignal
+    context: Readonly<{ projectId?: string; sessionId?: string; signal?: AbortSignal }>
   ): Promise<ImageEvidence> {
-    const result = await this.options.runner.run({
-      prompt: 'Extract complete canonical image evidence.',
-      images: [image],
-      target,
-      systemPrompt: VISION_SYSTEM_PROMPT,
-      agentName: 'open-science-vision-evidence',
-      description: 'Extract bounded evidence from one attached image without tools.',
-      signal,
-      outputLimitBytes: MAX_EVIDENCE_OUTPUT_BYTES
-    })
-    return parseEvidence(result.text)
+    const eventId = randomUUID()
+    try {
+      const result = await this.options.runner.run({
+        prompt: 'Extract complete canonical image evidence.',
+        images: [image],
+        target,
+        systemPrompt: VISION_SYSTEM_PROMPT,
+        agentName: 'open-science-vision-evidence',
+        description: 'Extract bounded evidence from one attached image without tools.',
+        signal: context.signal,
+        outputLimitBytes: MAX_EVIDENCE_OUTPUT_BYTES
+      })
+      await this.recordUsage(
+        context,
+        eventId,
+        result.frameworkId,
+        target.providerId,
+        result.model,
+        result.usage
+      )
+      return parseEvidence(result.text)
+    } catch (error) {
+      const usage = extractRestrictedInferenceUsage(error)
+      await this.recordUsage(
+        context,
+        eventId,
+        target.frameworkId,
+        target.providerId,
+        target.model.kind === 'required' ? target.model.id : undefined,
+        usage
+      )
+      throw error
+    }
+  }
+
+  private async recordUsage(
+    context: Readonly<{ projectId?: string; sessionId?: string }>,
+    eventId: string,
+    frameworkId: SessionAuxiliaryTurnUsageRecord['frameworkId'],
+    providerId: string,
+    model: string | undefined,
+    usage: RestrictedInferenceResult['usage']
+  ): Promise<void> {
+    if (!context.projectId || !context.sessionId || !usage || !this.options.recordUsage) return
+    await this.options
+      .recordUsage({
+        projectId: context.projectId,
+        sessionId: context.sessionId,
+        eventId,
+        source: 'vision',
+        frameworkId,
+        providerId,
+        model,
+        completedAtMs: Date.now(),
+        usage
+      })
+      .catch(() => undefined)
   }
 }
 

@@ -2,6 +2,7 @@ import {
   projectSessionActionability,
   type ChatMessage,
   type ChatSession,
+  type SessionActionabilityFacts,
   type ToolActivity
 } from '@/stores/session-store'
 
@@ -64,9 +65,13 @@ const getAgentThinkingStartedAt = (session: ChatSession | undefined): number | u
 // The transient row belongs to the active request, not persisted history. User waits and live tools
 // own their distinct phases. Visible Agent output is still partial until the run terminates, so it
 // must not hide the only liveness signal during a silent gap before the next tool or text update.
-const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPhase => {
+const getAgentLoadingPhase = (
+  session: ChatSession | undefined,
+  facts: Pick<SessionActionabilityFacts, 'credentialPending'> = {}
+): AgentLoadingPhase => {
   if (!session) return 'hidden'
-  const actionability = projectSessionActionability(session)
+  const actionability = projectSessionActionability(session, facts)
+  if (actionability.blockingInteraction === 'credential') return 'waiting-for-response'
   if (actionability.waitReason === 'waiting-for-user') return 'waiting-for-response'
   if (
     actionability.waitReason === 'waiting-permission' ||

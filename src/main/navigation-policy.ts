@@ -118,8 +118,8 @@ const createFrameNavigationGuard = (
 // gates on the protocol allowlist alone, deliberately NOT on the initiating referrer: app links use
 // rel="noreferrer" and the packaged app runs on a file:// origin (which Chromium strips from
 // cross-origin referrers), so the referrer is reliably empty for legitimate main-frame links.
-// Source-preview popups reach this handler, but are denied in-app and only allowlisted protocols are
-// handed to the OS. In-frame navigations remain confined by the source-preview frame registry.
+// Untrusted Source Preview frames lack the sandbox capability to request popups. In-frame
+// navigations remain confined by the source-preview frame registry.
 const isAllowedExternalNavigation = (url: string): boolean => isAllowedExternalUrl(url)
 
 export { createFrameNavigationGuard, isAllowedExternalNavigation, isAllowedExternalUrl }

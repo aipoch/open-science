@@ -15,6 +15,7 @@ import type { ProviderAccountsModule } from './provider-accounts'
 import type { SettingsRepository } from './repository'
 
 type InheritedSubagentModel = Readonly<{
+  providerId?: string
   backendId?: string
   modelRoute?: ResolvedSubagentModelSnapshot['modelRoute']
   model?: string
@@ -73,9 +74,11 @@ class SubagentModelOwner {
     const configuration = settings.subagentModel ?? { mode: 'inherit' as const }
     if (configuration.mode === 'inherit') {
       const prefix = `${frameworkId}:`
-      const providerId = inherited.backendId?.startsWith(prefix)
-        ? inherited.backendId.slice(prefix.length)
-        : undefined
+      const providerId =
+        inherited.providerId ??
+        (inherited.backendId?.startsWith(prefix)
+          ? inherited.backendId.slice(prefix.length)
+          : undefined)
       if (!providerId || !inherited.backendId || !inherited.modelRoute || !inherited.model) {
         throw new Error('The originating Session has no complete Main Agent runtime model.')
       }

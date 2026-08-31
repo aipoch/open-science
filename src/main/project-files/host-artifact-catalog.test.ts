@@ -55,6 +55,7 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       managedVisibleAt?: Date | null
       agentFrameId?: string
       rootFrameId?: string
+      state?: 'pending' | 'finalized'
     } = {}
   ): Promise<void> => {
     const agentFrameId = options.agentFrameId ?? 'agent-frame'
@@ -90,7 +91,7 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       messageBranchId: 'branch',
       runtimeSegmentId: 'runtime',
       promptMessageId: 'prompt',
-      state: 'finalized',
+      state: options.state ?? 'finalized',
       managedVisibleAt:
         options.managedVisibleAt === undefined
           ? new Date(`2026-08-0${versionNumber}T00:00:01.000Z`)
@@ -658,6 +659,31 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     await expect(
       repository.readHostArtifactCatalog({ projectId: 'project-a', versionId: 'collision' })
     ).rejects.toThrow('ambiguous across generated Artifacts and Uploads')
+  })
+
+  it('excludes pending Artifact Versions from exact identity lookups', async () => {
+    await createArtifactVersion(
+      'project-a',
+      'session-a',
+      'pending-artifact',
+      'pending-version',
+      1,
+      { agentFrameId: 'child-frame', rootFrameId: 'root-frame', state: 'pending' }
+    )
+
+    await expect(
+      repository.readHostArtifactCatalog({
+        projectId: 'project-a',
+        versionId: 'pending-version'
+      })
+    ).resolves.toEqual([])
+    await expect(
+      repository.readHostArtifactCatalog({
+        projectId: 'project-a',
+        versionId: 'pending-version',
+        finalizedArtifactsOnly: true
+      })
+    ).resolves.toEqual([])
   })
 
   it('projects producer provenance from the latest generated Version only', async () => {

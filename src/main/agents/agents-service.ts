@@ -1,6 +1,6 @@
 // host.agents adapter: the control-plane SDK's server-side read surface.
 //
-// This module is the ONLY place that turns internal Profile/catalog records into the public
+// This module is the ONLY place that turns internal Specialist/catalog records into the public
 // `host.agents.*` read models. It is deliberately decoupled from the concrete SettingsService and
 // ConnectorService via the AgentsServiceDeps interface, so the RPC server can wire the real
 // services in production while tests pass lightweight stubs.
@@ -10,17 +10,18 @@
 //  - Public data is projected explicitly — never return internal repository objects.
 //  - Errors are sanitized and prefixed `host.agents.<method>:` so they never leak system
 //    instructions, connector args, credentials, headers, environment values, or tokens.
-//  - The ProfileService and catalog services remain authoritative; nothing is copied here.
+//  - The SpecialistService and catalog services remain authoritative; nothing is copied here.
 
 import { CONNECTOR_CATALOG, type ConnectorMeta } from '../connectors/catalog'
 import {
+  hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
   type CustomMcpFailureAvailability
 } from '../connectors/custom-mcp-bootstrap'
 import { getConnectorTools } from '../connectors/registry'
-import type { ProfileService } from '../specialist/service'
+import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
-import type { SpecialistProfileView } from '../../shared/specialist'
+import type { SpecialistView } from '../../shared/specialist'
 import type { StoredConnectors } from '../settings/types'
 import {
   isAgentsOpName,
@@ -62,7 +63,7 @@ export type AgentsCatalogSource = {
 }
 
 export type AgentsServiceDeps = {
-  profileService: ProfileService
+  specialistService: SpecialistService
   catalog: AgentsCatalogSource
   // Runtime failures are projected separately from durable Settings. Keeping this as a narrow,
   // optional resolver lets host.agents share the authoritative custom MCP status without owning
@@ -86,7 +87,7 @@ export type AgentsServiceDeps = {
   persistSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => Promise<void>
   // Invalidates the runtime catalog (Settings/picker/runtime capability resolution) after a successful
   // privileged mutation (delete). Ordinary mutations already invalidate via the
-  // existing ProfileService/catalog-change broadcast path; the privileged delete runs through a
+  // existing SpecialistService/catalog-change broadcast path; the privileged delete runs through a
   // dedicated module that calls this only on success.
   invalidateCatalog?: () => Promise<void> | void
   deleteSpecialist?: (request: SpecialistDeleteRequest) => Promise<SpecialistDeleteResult>
@@ -98,8 +99,8 @@ export type AgentsServiceDeps = {
 
 // Listing Specialists is a discovery operation, so its collection shape is limited to the five
 // fields needed to identify and present a Specialist. Callers that need editable configuration must
-// explicitly request one profile via get().
-export type AgentSummaryReadModel = {
+// explicitly request one Specialist via get().
+export type SpecialistSummaryReadModel = {
   id: string
   name: string
   displayName: string
@@ -109,13 +110,13 @@ export type AgentSummaryReadModel = {
 
 // Single-Agent details and mutation read-backs retain the prompt so callers can inspect, edit, and
 // verify a complete Specialist configuration.
-export type AgentDetailReadModel = AgentSummaryReadModel & {
+export type SpecialistDetailReadModel = SpecialistSummaryReadModel & {
   systemPrompt: string
   iconKey?: string
   colorKey?: string
   capabilityMode: 'full' | 'selected'
-  fullAccess: SpecialistProfileView['fullAccess']
-  selectedCapabilities: SpecialistProfileView['selectedCapabilities']
+  fullAccess: SpecialistView['fullAccess']
+  selectedCapabilities: SpecialistView['selectedCapabilities']
   revision: number
 }
 
@@ -140,8 +141,9 @@ export type ConnectorReadModel = {
   description: string
   mainEnabled: boolean
   // Authentication/availability state, projected without secret detail. Custom connectors report
-  // 'unavailable'/'unauthenticated' from their stored shape; bundled connectors are 'available'.
-  availability: 'available' | 'unavailable' | 'unauthenticated'
+  // 'unavailable'/'unauthenticated'/'credential_unavailable' from their stored shape; bundled
+  // connectors are 'available'.
+  availability: 'available' | 'unavailable' | 'unauthenticated' | 'credential_unavailable'
   source: 'bundled' | 'custom'
   tools: ConnectorToolReadModel[]
 }
@@ -166,7 +168,7 @@ class AgentsCallError extends AgentsSafeError {
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined
 
-const projectAgentSummary = (profile: SpecialistProfileView): AgentSummaryReadModel => ({
+const projectAgentSummary = (profile: SpecialistView): SpecialistSummaryReadModel => ({
   id: profile.id,
   name: profile.name,
   displayName: profile.displayName ?? profile.name,
@@ -174,7 +176,7 @@ const projectAgentSummary = (profile: SpecialistProfileView): AgentSummaryReadMo
   enabled: profile.enabled
 })
 
-const projectAgentDetail = (profile: SpecialistProfileView): AgentDetailReadModel => ({
+const projectAgentDetail = (profile: SpecialistView): SpecialistDetailReadModel => ({
   ...projectAgentSummary(profile),
   systemPrompt: profile.systemPrompt,
   iconKey: profile.iconKey,
@@ -226,7 +228,7 @@ export class AgentsService {
       if (opName === 'list_skills') return await this.listSkills(params)
       if (opName === 'list_connectors') return await this.listConnectors(params)
       // Ordinary mutations (issue 03): create, update of mutable fields, and whole-Skill/whole-Connector
-      // attach/detach. Routed to the standalone mutation module, which delegates to ProfileService,
+      // attach/detach. Routed to the standalone mutation module, which delegates to SpecialistService,
       // resolves name/id references, gates unavailable connectors, and returns a real read-back.
       if (
         opName === 'create' ||
@@ -240,7 +242,7 @@ export class AgentsService {
           await executeAgentsMutation(
             { op: opName, params } as Parameters<typeof executeAgentsMutation>[0],
             {
-              profileService: this.deps.profileService,
+              specialistService: this.deps.specialistService,
               catalog: this.mutationCatalog(),
               approvalGateway: this.deps.approvalGateway
             }
@@ -257,7 +259,7 @@ export class AgentsService {
       }
       // host.agents.delete(name, { revision }) — privileged (issue 04). Routes through the injected
       // approval gateway, re-resolves name -> ID, verifies the reviewed revision, deletes via
-      // ProfileService, verifies absence, invalidates the catalog, and returns the read-back. Bound
+      // SpecialistService, verifies absence, invalidates the catalog, and returns the read-back. Bound
       // conversations are NOT silently switched to Main Agent (design.md §10).
       if (opName === 'delete') return await this.runDelete(params, context)
       // The dispatcher covers every operation the contract names. An unrecognized op was already
@@ -302,7 +304,7 @@ export class AgentsService {
       )
     }
     const operation = new SwitchOperation({
-      profileService: this.deps.profileService,
+      specialistService: this.deps.specialistService,
       sessionBinding,
       approvalGateway,
       switchNotifier,
@@ -319,7 +321,7 @@ export class AgentsService {
   }
 
   // host.agents.delete(name, { revision }) — privileged (issue 04). Approves via the injected gateway,
-  // re-resolves name -> ID, verifies the reviewed revision, deletes via ProfileService, verifies
+  // re-resolves name -> ID, verifies the reviewed revision, deletes via SpecialistService, verifies
   // absence, invalidates the catalog, and returns `{ status: "deleted", name }`. Session ID bindings
   // are NEVER cleared or rewritten — bound conversations resolve unavailable later (design.md §10).
   // The trusted calling session is threaded from server context (mirroring runSwitch) so the
@@ -345,7 +347,7 @@ export class AgentsService {
       throw agentsPublicError('revision must be a positive integer.')
     }
     return applyDelete({
-      profileService: this.deps.profileService,
+      specialistService: this.deps.specialistService,
       decide: (request) => approvalGateway.decide(request),
       currentName,
       reviewedRevision: revision,
@@ -355,18 +357,18 @@ export class AgentsService {
     })
   }
 
-  // Returns custom Specialist Profiles only — never synthesizes the Settings-only Reviewer row.
-  async list(): Promise<AgentSummaryReadModel[]> {
-    const profiles = await this.deps.profileService.list()
+  // Returns custom Specialists only — never synthesizes the Settings-only Reviewer row.
+  async list(): Promise<SpecialistSummaryReadModel[]> {
+    const profiles = await this.deps.specialistService.list()
     return profiles.map(projectAgentSummary)
   }
 
-  // Resolves the exact public Specialist name to the current Profile and returns a renderer-safe
+  // Resolves the exact public Specialist name to the current configuration and returns a renderer-safe
   // read model including stable id and revision.
-  async get(params: { name?: unknown }): Promise<AgentDetailReadModel> {
+  async get(params: { name?: unknown }): Promise<SpecialistDetailReadModel> {
     const name = asString(params.name)
     if (!name) throw agentsPublicError('name is required')
-    const profile = await this.deps.profileService.getByName(name)
+    const profile = await this.deps.specialistService.getByName(name)
     return projectAgentDetail(profile)
   }
 
@@ -440,6 +442,7 @@ export const projectConnectorsFromStored = (
       const unreachable =
         (server.transport === 'stdio' && !server.command) ||
         (server.transport !== 'stdio' && !server.url)
+      const credentialUnavailable = !hasUsableCustomMcpCredentials(server)
       const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
       return {
         // Local Specialist references use the UUID; name remains the immutable public route.
@@ -447,15 +450,17 @@ export const projectConnectorsFromStored = (
         name: server.name,
         displayName: server.displayName,
         description: server.description ?? '',
-        mainEnabled: server.enabled && !unauthenticated,
+        mainEnabled: server.enabled && !credentialUnavailable && !unauthenticated,
         // Custom MCP servers expose their tools dynamically; we do not enumerate them here (the
         // milestone decides whole-Connector inclusion only). An empty tools list keeps the shape
         // consistent without leaking transport/command details.
         availability: unreachable
           ? 'unavailable'
-          : unauthenticated
-            ? 'unauthenticated'
-            : (runtimeAvailability ?? 'available'),
+          : credentialUnavailable
+            ? 'credential_unavailable'
+            : unauthenticated
+              ? 'unauthenticated'
+              : (runtimeAvailability ?? 'available'),
         source: 'custom',
         tools: []
       }

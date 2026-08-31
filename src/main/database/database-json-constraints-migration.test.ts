@@ -156,10 +156,16 @@ describe('database JSON constraints migration', () => {
           '0014_review_query_indexes',
           '0015_session_model_call_usage',
           '0016_compute_job_sensitive_data_encryption',
-          '0017_managed_file_version_foundation'
+          '0017_agent_memory_project_scope',
+          '0018_session_auxiliary_turn_usage',
+          '0019_session_usage_attribution',
+          '0020_compute_job_analysis_state',
+          '0021_compute_job_analysis_constraints',
+          '0022_memory_global_content_unique',
+          '0023_managed_file_version_foundation'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0017_managed_file_version_foundation'
+        to: '0023_managed_file_version_foundation'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
         code: 'ENOENT'
@@ -183,6 +189,18 @@ describe('database JSON constraints migration', () => {
       ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        access(`${databasePath}.before-0017_agent_memory_project_scope.backup`)
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        access(`${databasePath}.before-0018_session_auxiliary_turn_usage.backup`)
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        access(`${databasePath}.before-0021_compute_job_analysis_constraints.backup`)
+      ).resolves.toBeUndefined()
+      await expect(
+        access(`${databasePath}.before-0022_memory_global_content_unique.backup`)
       ).resolves.toBeUndefined()
       await expect(
         access(`${databasePath}.before-0017_managed_file_version_foundation.backup`)

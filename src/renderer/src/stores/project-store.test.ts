@@ -107,16 +107,39 @@ describe('project store', () => {
     expect(useProjectStore.getState().projects[0]).toEqual(created)
   })
 
-  it('drops a deleted project from the cache', async () => {
+  it('returns cleanup-pending while dropping a committed Project deletion from the cache', async () => {
     useProjectStore.setState({
       projects: [createProject({ id: 'keep' }), createProject({ id: 'drop' })],
       isLoaded: true
     })
-    setProjectsApi({ delete: vi.fn().mockResolvedValue(undefined) })
+    setProjectsApi({ delete: vi.fn().mockResolvedValue({ status: 'cleanup-pending' }) })
 
-    await useProjectStore.getState().deleteProject('drop')
+    const outcome = await useProjectStore.getState().deleteProject('drop')
 
+    expect(outcome).toEqual({ status: 'cleanup-pending' })
     expect(useProjectStore.getState().projects.map((project) => project.id)).toEqual(['keep'])
+    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(true)
+
+    useProjectStore.getState().removeProject('drop')
+
+    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(false)
+  })
+
+  it('does not let a late pending command result supersede terminal lifecycle state', async () => {
+    const commandResult = createDeferred<{ status: 'cleanup-pending' }>()
+    useProjectStore.setState({
+      projects: [createProject({ id: 'drop' })],
+      isLoaded: true
+    })
+    setProjectsApi({ delete: vi.fn().mockReturnValue(commandResult.promise) })
+
+    const deletion = useProjectStore.getState().deleteProject('drop')
+    useProjectStore.getState().removeProject('drop', { status: 'deleted' })
+    commandResult.resolve({ status: 'cleanup-pending' })
+
+    await expect(deletion).resolves.toEqual({ status: 'cleanup-pending' })
+    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(false)
+    expect(useProjectStore.getState().projectDeletionRequests.size).toBe(0)
   })
 })
 

@@ -103,6 +103,7 @@ type SkillsPanelProps = {
   onOpenTag?: (tagId: string) => void
   onOpenSpecialist?: (usage: SpecialistUsage) => void
   canImportInstalledSkills?: boolean
+  onOpenGitHubCredential?: () => void
 }
 
 const SkillsPanel = ({
@@ -110,6 +111,7 @@ const SkillsPanel = ({
   onNavigate,
   onOpenTag,
   onOpenSpecialist,
+  onOpenGitHubCredential,
   canImportInstalledSkills = true
 }: SkillsPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -296,12 +298,18 @@ const SkillsPanel = ({
           className="px-5 pt-5"
           onOpenTag={onOpenTag}
         />
-        <SkillEditLoader skillId={view.id} onDone={() => onNavigate({ kind: 'list' })} />
+        <SkillEditLoader
+          key={view.id}
+          skillId={view.id}
+          onDone={() => onNavigate({ kind: 'list' })}
+        />
       </div>
     )
   }
   if (view.kind === 'import') {
-    return <SkillImportView onImported={() => undefined} />
+    return (
+      <SkillImportView onImported={() => undefined} onOpenCredentials={onOpenGitHubCredential} />
+    )
   }
   if (view.kind === 'import-agent-home') {
     return canImportInstalledSkills ? (

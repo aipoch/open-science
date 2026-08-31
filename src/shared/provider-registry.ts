@@ -31,6 +31,9 @@ export type OfficialVendorId =
   | 'xiaomimimo'
   | 'sensenova'
   | 'volcengine'
+  | 'tencent'
+  | 'tencentcodingplan'
+  | 'tencenttokenplan'
   | 'opencode-go'
   | 'opencode'
   | 'openrouter'
@@ -70,6 +73,9 @@ export type OfficialVendor = {
   // for legacy Anthropic-compatible vendor entries. A dual-endpoint vendor lists both, e.g.
   // ['anthropic', 'openai'].
   apiEndpoints?: readonly ChatApiEndpoint[]
+  // Whether Anthropic Messages authenticates with `x-api-key` instead of `Authorization: Bearer`.
+  // Absent keeps the existing bearer behavior used by the other compatible vendors.
+  anthropicApiKeyHeader?: boolean
   // Model ids offered in the composer once a key is stored. First entry is the default selection when
   // the vendor is first added.
   models: OfficialModel[]
@@ -617,6 +623,86 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'doubao-seed-2-0-mini-260215'
       ]
     }
+  },
+  {
+    id: 'tencent',
+    label: 'Tencent TokenHub',
+    reasoningEffort: 'unsupported',
+    // TokenHub exposes Anthropic Messages, OpenAI Chat Completions, and Responses from regional
+    // hosts. China and International are separate account sites with distinct consoles, API keys,
+    // and domains, so keep the site explicit rather than retrying credentials across editions. The
+    // broader TokenHub catalog also contains non-language models, so this provider stays curated.
+    apiEndpoints: ['anthropic', 'openai', 'responses'],
+    anthropicApiKeyHeader: true,
+    regions: [
+      {
+        id: 'international',
+        label: 'International (Singapore)',
+        baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
+        openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
+        apiKeyUrl: 'https://console.tencentcloud.com/tokenhub/apikey'
+      },
+      {
+        id: 'china',
+        label: 'China (Guangzhou)',
+        baseUrl: 'https://tokenhub.tencentmaas.com',
+        openaiBaseUrl: 'https://tokenhub.tencentmaas.com/v1',
+        apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/apikey'
+      }
+    ],
+    models: [
+      { id: 'hy4-preview', contextWindow: 1_000_000 },
+      { id: 'glm-5.3', contextWindow: 1_000_000 },
+      { id: 'glm-5.3-flash', contextWindow: 1_000_000 },
+      { id: 'kimi-k3', contextWindow: 1_048_576 },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
+      { id: 'minimax-m3', contextWindow: 1_000_000 }
+    ]
+    // The curated language models above are text-only in TokenHub's model matrix, so no
+    // `multimodal` rule.
+  },
+  {
+    id: 'tencentcodingplan',
+    label: 'Tencent Coding Plan',
+    reasoningEffort: 'unsupported',
+    // Mainland China's subscription plan exposes separate Anthropic Messages and OpenAI Chat
+    // Completions routes. Tencent documents ANTHROPIC_AUTH_TOKEN for the former, so it keeps the
+    // default Authorization: Bearer transport. Accepted aliases are intentionally omitted so the
+    // picker shows each model once; the first documented id is the canonical selection.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://api.lkeap.cloud.tencent.com/coding/anthropic',
+    openaiBaseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3',
+    apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/codingplan',
+    models: [
+      { id: 'deepseek-v4-flash-202605', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro-202606', contextWindow: 1_000_000 },
+      { id: 'minimax-m2.7', contextWindow: 204_800 },
+      { id: 'glm-5', contextWindow: 200_000 },
+      { id: 'glm-5.1', contextWindow: 200_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000 },
+      { id: 'hy3', contextWindow: 256_000 }
+    ]
+  },
+  {
+    id: 'tencenttokenplan',
+    label: 'Tencent Token Plan',
+    reasoningEffort: 'unsupported',
+    // The international subscription is a distinct product with its own key, endpoints, and model
+    // catalog. Its Claude Code guide also uses ANTHROPIC_AUTH_TOKEN (Authorization: Bearer). Keep it
+    // separate from both mainland Coding Plan and pay-as-you-go Tencent TokenHub.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic',
+    openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/v3',
+    apiKeyUrl: 'https://console.intl.cloud.tencent.com/tokenhub/tokenplan',
+    models: [
+      { id: 'glm-5.2', contextWindow: 1_000_000 },
+      { id: 'kimi-k2.6', contextWindow: 256_000 },
+      { id: 'deepseek-v4-pro-202606', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash-202605', contextWindow: 1_000_000 },
+      { id: 'minimax-m3', contextWindow: 1_000_000 }
+    ],
+    multimodal: { multimodalModels: ['kimi-k2.6'] }
   },
   {
     id: 'opencode-go',
@@ -1213,6 +1299,9 @@ export const resolveVendorApiEndpoints = (id: OfficialVendorId): ChatApiEndpoint
   const endpoints = VENDORS_BY_ID.get(id)?.apiEndpoints
   return endpoints && endpoints.length > 0 ? [...endpoints] : ['anthropic']
 }
+
+export const usesVendorAnthropicApiKeyHeader = (id: OfficialVendorId): boolean =>
+  VENDORS_BY_ID.get(id)?.anthropicApiKeyHeader === true
 
 // Models a vendor is statically known not to drive over the Codex Responses->Chat bridge (see
 // OfficialVendor.bridgeUnsupportedModels). Empty for every vendor whose whole catalog converts.

@@ -121,12 +121,16 @@ describe('llmCall RPC', () => {
       'trusted-project',
       'root-frame-trusted-session'
     )
-    server.setArtifactProvenanceContext('trusted-session', {
-      rootFrameId: 'root-frame-trusted-session',
-      agentFrameId: 'root-frame-trusted-session',
-      messageBranchId: 'branch-1',
-      runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'prompt-1'
+    server.setArtifactTurnBinding('trusted-session', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'trusted-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-trusted-session',
+        agentFrameId: 'root-frame-trusted-session',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
     })
     await server.registerNotebookTurnInputs({
       projectId: 'trusted-project',

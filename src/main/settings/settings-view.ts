@@ -67,6 +67,7 @@ export const buildSettingsSnapshot = (
       settings.sessionDetailsModel ?? DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
     visionModel: settings.visionModel,
     notificationsEnabled: preferences.notificationsEnabled,
+    showNotificationContent: preferences.showNotificationContent,
     conversationSkillImportEnabled: preferences.conversationSkillImportEnabled,
     closePreference: preferences.closePreference,
     appIconVariant: preferences.appIconVariant,

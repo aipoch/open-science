@@ -37,6 +37,7 @@ const target = (
   overrides: Partial<AgentModelChangeTarget> = {}
 ): AgentModelChangeTarget => ({
   frameworkId: 'claude-code',
+  providerId: 'provider-a',
   backendId: 'claude-code:provider',
   route: 'claude-anthropic',
   model,
@@ -77,6 +78,7 @@ const createHarness = (): WorkflowHarness => {
   let replayableImageHistory = true
   let backend: AcpBackendGenerationView = {
     framework: claudeCodeFramework,
+    providerId: 'provider-a',
     backendId: 'claude-code:provider',
     modelRoute: 'claude-anthropic',
     session: { model: 'model-a', modelRequired: false },
@@ -115,6 +117,7 @@ const createHarness = (): WorkflowHarness => {
   const updateModel = vi.fn((next: AgentModelChangeTarget) => {
     backend = {
       ...backend,
+      providerId: next.providerId,
       backendId: next.backendId,
       modelRoute: next.route,
       session: {
@@ -292,6 +295,16 @@ describe('ACP model-change workflow', () => {
 
     expect(harness.workflow.barrier).toBeUndefined()
     expect(harness.request).not.toHaveBeenCalled()
+  })
+
+  it('applies a provider-only change when the backend identity is shared', async () => {
+    const harness = createHarness()
+    const next = target('model-a', { providerId: 'provider-b' })
+
+    await expect(harness.workflow.apply(next)).resolves.toBe(true)
+
+    expect(harness.requestReconnect).not.toHaveBeenCalled()
+    expect(harness.updateModel).toHaveBeenCalledWith(next)
   })
 
   it('commits model and context facts only after every live Session is configured', async () => {

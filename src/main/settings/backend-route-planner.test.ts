@@ -298,7 +298,7 @@ describe('BackendRoutePlanner provider candidates', () => {
     })
     const targetB = makeTarget(providerB, {
       apiEndpoints: ['anthropic'],
-      provider: { apiEndpoints: ['anthropic'] }
+      provider: { apiEndpoints: ['anthropic'], vendorId: 'tencent' }
     })
     const providers: BackendRouteProviderPort = {
       resolveRuntimeTarget: vi.fn((provider) => {
@@ -333,7 +333,8 @@ describe('BackendRoutePlanner provider candidates', () => {
           id: JSON.stringify(['provider-b', 'model-b']),
           baseUrl: 'https://provider-b.example/anthropic',
           key: 'plain-provider-key',
-          model: 'model-b'
+          model: 'model-b',
+          useApiKeyHeader: true
         }
       ],
       initialTargetId: JSON.stringify(['provider-a', 'model-a'])
@@ -343,6 +344,53 @@ describe('BackendRoutePlanner provider candidates', () => {
       { kind: 'configured', requestedModel: stale.model },
       expect.objectContaining({ id: 'claude-code' })
     )
+  })
+
+  it.each([
+    [
+      'Tencent Coding Plan',
+      'tencentcodingplan' as const,
+      'https://api.lkeap.cloud.tencent.com/coding/anthropic'
+    ],
+    [
+      'Tencent Token Plan',
+      'tencenttokenplan' as const,
+      'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic'
+    ]
+  ])('keeps %s Claude bridge targets on bearer authentication', (_, vendorId, baseUrl) => {
+    const provider = makeStoredProvider({
+      type: 'official',
+      vendorId,
+      apiEndpoints: ['anthropic'],
+      baseUrl,
+      model: 'deepseek-v4-pro-202606'
+    })
+    const target = makeTarget(provider, {
+      apiEndpoints: ['anthropic'],
+      // Official providers project to the custom credential transport while retaining vendorId.
+      provider: { type: 'custom', vendorId, apiEndpoints: ['anthropic'] }
+    })
+
+    const plan = makePlanner().planBackend({
+      settings: { ...makeSettings(provider), agentFrameworkId: 'claude-code' },
+      frameworkId: 'claude-code',
+      target,
+      effortIntent: 'high',
+      conversationSkillImportEnabled: true
+    })
+
+    expect(plan.transport).toEqual({
+      kind: 'claude-anthropic',
+      targets: [
+        {
+          id: JSON.stringify([provider.id, provider.model]),
+          baseUrl,
+          key: 'plain-provider-key',
+          model: provider.model
+        }
+      ],
+      initialTargetId: JSON.stringify([provider.id, provider.model])
+    })
   })
 
   it('filters model catalogs by route and preserves deduplicated effort slots', () => {
@@ -769,6 +817,7 @@ describe('BackendRoutePlanner model-change projection', () => {
 
     expect(target).toEqual({
       frameworkId: 'codex',
+      providerId: 'provider-a',
       backendId: 'codex:provider-a',
       route: 'codex-bridge',
       model: 'model-a',

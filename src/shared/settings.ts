@@ -417,6 +417,9 @@ export type VisionModelConfiguration = Readonly<{
 // is unfocused, so the default surprises no one staring at the window.
 export const DEFAULT_NOTIFICATIONS_ENABLED = true
 
+// Native notification detail is opt-in because banners may appear on lock screens or shared displays.
+export const DEFAULT_SHOW_NOTIFICATION_CONTENT = false
+
 // Conversation-driven Skill package import is opt-out. When disabled, the runtime omits both the
 // app-owned import MCP server and its prompt/attachment guidance from subsequent conversations.
 export const DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED = true
@@ -515,6 +518,9 @@ export type SettingsSnapshot = {
   visionModel?: VisionModelConfiguration
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
+  // Whether native banners may include bounded task/request detail. Provider errors remain hidden.
+  // Older app/Web peers may omit this newly-added preference; consumers must default to false.
+  showNotificationContent?: boolean
   // Whether conversations may detect attached Skill packages and request an app-owned import flow.
   conversationSkillImportEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
@@ -567,6 +573,10 @@ export type SetVisionModelRequest = {
 }
 
 export type SetNotificationsEnabledRequest = {
+  enabled: boolean
+}
+
+export type SetShowNotificationContentRequest = {
   enabled: boolean
 }
 
@@ -1328,6 +1338,9 @@ export type ConnectorDetailView = ConnectorView & {
 // NCBI / research-service credential state surfaced to the renderer (never the plaintext key).
 export type NcbiCredentialsView = { contactEmail?: string; hasApiKey: boolean }
 
+// Renderer-safe OpenAlex state. The key itself never crosses the main-process boundary.
+export type OpenAlexCredentialView = { hasApiKey: boolean }
+
 // Transport for a user-added custom MCP server: stdio (local command) or a remote HTTP variant.
 export type CustomServerTransport = 'stdio' | 'streamable_http' | 'sse'
 
@@ -1343,15 +1356,16 @@ export type CustomServerView = {
   enabled: boolean
   // Physical availability is independent of Main's enabled toggle. An invalid persisted server may
   // remain visible to a Specialist but can never be selected or dispatched.
-  availability?: 'unavailable' | 'unauthenticated'
+  availability?: 'unavailable' | 'unauthenticated' | 'credential_unavailable'
   // Background discovery is transient and does not make the Connector unavailable by itself.
   checking?: boolean
-  // Display-only config summary (the command that runs, its args, or the remote URL). env/headers
-  // are intentionally omitted — they may hold secrets and stay write-only from the UI.
+  // Display-only config summary. Environment names are safe to show; values stay write-only.
   command?: string
   args?: string[]
   url?: string
   hasHeaders?: boolean
+  hasEnv?: boolean
+  environmentNames?: string[]
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
@@ -1371,12 +1385,18 @@ export type ConnectorsSnapshot = {
   // Local IDs reserved until interrupted custom Connector deletion cleanup completes.
   reservedCustomServerIds?: string[]
   ncbi: NcbiCredentialsView
+  // Optional only for compatibility with an older main process during local development.
+  openAlex?: OpenAlexCredentialView
 }
 
 export type SetConnectorEnabledRequest = { id: string; enabled: boolean }
 export type SetConnectorAutoAllowRequest = { id: string; autoAllow: boolean }
 export type SetToolPermissionRequest = { toolId: string; permission: ToolPermission }
 export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string }
+export type SetOpenAlexCredentialRequest = { apiKey: string }
+export type ValidateOpenAlexCredentialRequest = { apiKey: string }
+export type OpenAlexCredentialValidation =
+  { valid: true } | { valid: false; reason: 'invalid-format' | 'rejected' | 'unavailable' }
 
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
@@ -1403,6 +1423,7 @@ export type AddCustomServerRequest = {
 export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
 export type RemoveCustomServerRequest = { id: string }
 export type AuthenticateCustomServerRequest = { id: string }
+export type DisconnectCustomServerRequest = { id: string }
 
 export const CONNECTOR_TEMPLATE_MAX_BYTES = 256 * 1024
 
@@ -1502,8 +1523,17 @@ export type UpdateCustomServerRequest = {
 export type ConnectorApprovalRequest = {
   id: string
   connector: string // bundled connector id or custom server name
+  // Custom Connector identity/route metadata. Optional for bundled requests and compatibility with
+  // an older main process during development.
+  connectorId?: string
+  connectorName?: string
+  displayName?: string
+  transport?: CustomServerTransport
+  target?: string
   method: string
   argsPreview: string // truncated JSON preview of the call arguments
+  argsJson?: string // bounded serialized arguments, expandable in the approval dialog
+  argsJsonTruncated?: boolean
   // The session that triggered the connector call, so a desktop notification can surface and open
   // that conversation. Absent for call paths that don't carry one.
   sessionId?: string
@@ -1513,6 +1543,17 @@ export type ConnectorApprovalRequest = {
 export type ConnectorApprovalScope = 'once' | 'session' | 'project' | 'global'
 export type ApprovalDecision = ConnectorApprovalScope | 'deny'
 export type RespondApprovalRequest = { id: string; decision: ApprovalDecision }
+
+export type ConnectorCredentialRequestInfo = {
+  credentialId: 'openalex'
+  connector: string
+  method: string
+  sessionId?: string
+}
+
+// Public metadata for a parked Connector call. The credential value is never sent on this event.
+export type ConnectorCredentialRequest = ConnectorCredentialRequestInfo & { id: string }
+export type RespondConnectorCredentialRequest = { id: string; configured: boolean }
 
 // Minimal settings slice the remote-file-browser bookmark helpers depend on. Declared here in
 // src/shared (not src/main) so src/shared/remote-fs.ts stays within the shared layer — the full

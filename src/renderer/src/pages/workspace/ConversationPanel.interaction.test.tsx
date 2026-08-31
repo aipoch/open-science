@@ -5,6 +5,7 @@ import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConversationPanel } from './ConversationPanel'
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { subscribeAnnotationReveal } from './annotations/annotation-reveal'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
@@ -73,7 +74,12 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
   Tooltip: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
-  TooltipTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  TooltipTrigger: ({
+    children,
+    onFocus
+  }: PropsWithChildren<{
+    onFocus?: (event: React.FocusEvent<HTMLElement>) => void
+  }>): React.JSX.Element => (onFocus ? <span onFocus={onFocus}>{children}</span> : <>{children}</>),
   TooltipContent: ({ children }: PropsWithChildren): React.JSX.Element => (
     <span data-testid="tooltip-content">{children}</span>
   )
@@ -90,6 +96,8 @@ vi.mock('./ComposerModelPicker', () => ({
 vi.mock('./ComposerAgentControlsMenu', () => ({
   ComposerAgentControlsMenu: (props: {
     readOnly?: boolean
+    memoryReadOnly?: boolean
+    autoReviewReadOnly?: boolean
     permissionProfileReadOnly?: boolean
     grantActionsReadOnly?: boolean
     autoReviewDisabled?: boolean
@@ -100,10 +108,12 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
       type="button"
       data-testid="mock-agent-controls"
       data-read-only={String(props.readOnly === true)}
+      data-memory-read-only={String(props.memoryReadOnly)}
+      data-auto-review-read-only={String(props.autoReviewReadOnly)}
       data-permission-read-only={String(props.permissionProfileReadOnly === true)}
       data-grants-read-only={String(props.grantActionsReadOnly === true)}
       data-auto-review-disabled={String(props.autoReviewDisabled === true)}
-      data-specialist-read-only={String(props.specialistReadOnly === true)}
+      data-specialist-read-only={String(props.specialistReadOnly)}
       data-open-request={props.openRequest ?? 0}
     >
       Agent controls
@@ -147,9 +157,11 @@ vi.mock('@/components/RemoteJobBadge', () => ({
 
 vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: ({
+    credentialPending,
     isResumingSession,
     pendingElicitations = []
   }: {
+    credentialPending?: boolean
     isResumingSession?: boolean
     pendingElicitations?: unknown[]
   }): React.JSX.Element => (
@@ -158,6 +170,7 @@ vi.mock('./WorkspaceMessageScroller', () => ({
         <span data-testid="resume-progress-indicator">Resuming session</span>
       ) : null}
       <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
+      <span data-testid="scroller-credential-pending">{String(credentialPending ?? false)}</span>
     </>
   )
 }))
@@ -447,7 +460,13 @@ const createPanelDefaults = (): PanelProps => ({
       historyStatus: '',
       isHistoryBrowsing: false,
       isUploading: false,
-      caretRequest: undefined
+      caretRequest: undefined,
+      readingContext: {
+        bindings: [],
+        pendingBindingId: undefined,
+        isPending: false,
+        automaticAttachmentCount: 0
+      }
     },
     actions: {
       changeDoc: vi.fn(),
@@ -462,7 +481,11 @@ const createPanelDefaults = (): PanelProps => ({
       restorePastedText: vi.fn(),
       undo: vi.fn(() => false),
       redo: vi.fn(() => false),
-      setError: vi.fn()
+      setError: vi.fn(),
+      linkReadingContext: vi.fn().mockResolvedValue(undefined),
+      openReadingContext: vi.fn(),
+      unlinkReadingContext: vi.fn(),
+      dismissAutomaticReading: vi.fn()
     }
   },
   conversation: {
@@ -533,6 +556,7 @@ const createPanelDefaults = (): PanelProps => ({
   },
   permissions: {
     requests: [],
+    credentialRequests: [],
     permissionProfile: 'ask',
     permissionProfileState: undefined,
     permissionGrants: [],
@@ -548,6 +572,9 @@ const createPanelDefaults = (): PanelProps => ({
   },
   agentControls: {
     canChange: true,
+    canChangeAutoReview: true,
+    canChangeMemory: true,
+    canChangeSpecialist: true,
     autoReviewEnabled: true,
     enabledComputeHosts: [],
     selectedComputeHosts: [],
@@ -846,6 +873,170 @@ describe('ConversationPanel Specialist reconfigure recovery', () => {
 })
 
 describe('ConversationPanel composer intake', () => {
+  it('previews automatic Reading before send and keeps the PDF attached when dismissed', () => {
+    const dismissAutomaticReading = vi.fn()
+    renderPanel({
+      composer: {
+        view: {
+          attachments: [
+            {
+              id: 'upload-1',
+              sessionId: '.pending',
+              name: 'paper.pdf',
+              originalName: 'paper.pdf',
+              path: '/uploads/.pending/paper.pdf',
+              mimeType: 'application/pdf',
+              size: 42
+            }
+          ],
+          readingContext: { automaticAttachmentCount: 1 }
+        },
+        actions: { dismissAutomaticReading }
+      }
+    })
+
+    const suggestion = container.querySelector('[data-testid="automatic-reading-suggestion"]')
+    expect(suggestion?.textContent).toContain('Reading')
+    expect(suggestion?.textContent).toContain('1 PDF will be linked when sent')
+    expect(container.textContent).toContain('paper.pdf')
+
+    act(() =>
+      suggestion?.querySelector<HTMLButtonElement>('[aria-label="Keep as attachments"]')?.click()
+    )
+    expect(dismissAutomaticReading).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('paper.pdf')
+  })
+
+  it('shows linked PDF context as a single-line chip that opens its preview', () => {
+    const open = vi.fn()
+    const unlink = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Reading session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      composer: {
+        view: {
+          readingContext: {
+            bindings: [
+              {
+                version: 1,
+                bindingId: 'binding-1',
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-1',
+                sourceVersionId: 'version-1',
+                sourceSessionId: 'source-session',
+                name: 'paper.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 12,
+                checksum: 'checksum-1',
+                linkedAt: 1
+              },
+              {
+                version: 1,
+                bindingId: 'binding-2',
+                sourceKind: 'upload-version',
+                sourceFileId: 'upload-2',
+                sourceVersionId: 'version-2',
+                sourceSessionId: 'source-session',
+                name: 'second.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 13,
+                checksum: 'checksum-2',
+                linkedAt: 2
+              },
+              {
+                version: 1,
+                bindingId: 'binding-3',
+                sourceKind: 'upload-version',
+                sourceFileId: 'upload-3',
+                sourceVersionId: 'version-3',
+                sourceSessionId: 'source-session',
+                name: 'third.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 14,
+                checksum: 'checksum-3',
+                linkedAt: 3
+              }
+            ],
+            pendingBindingId: undefined,
+            isPending: false
+          }
+        },
+        actions: { openReadingContext: open, unlinkReadingContext: unlink }
+      }
+    })
+
+    const bar = container.querySelector('[data-testid="pdf-context-bar"]')
+    expect(bar?.className.split(/\s+/)).toContain('rounded-t-2xl')
+    expect(bar?.textContent).toContain('Reading')
+    expect(bar?.textContent).toContain('paper.pdf')
+    expect(bar?.textContent).toContain('second.pdf')
+    expect(bar?.textContent).toContain('third.pdf')
+    expect(bar?.querySelector('[aria-label="Choose PDFs for Reading"]')).not.toBeNull()
+    expect(bar?.querySelectorAll('[aria-label^="Open PDF context "]')).toHaveLength(3)
+    // The page-position line is gone: the disclosure moved to the chip's tooltip.
+    expect(bar?.textContent).not.toContain('Page')
+    expect(bar?.textContent).not.toContain('Open the PDF')
+    expect(bar?.textContent).toContain(
+      'Linked to this conversation. The Agent reads only the pages needed for your question.'
+    )
+    const openButton = bar?.querySelector<HTMLButtonElement>(
+      '[aria-label="Open PDF context paper.pdf"]'
+    )
+    act(() => openButton?.click())
+    expect(open).toHaveBeenCalledWith('binding-1')
+
+    const remove = bar?.querySelector<HTMLButtonElement>(
+      '[aria-label="Remove PDF context paper.pdf"]'
+    )
+    expect(remove?.disabled).toBe(false)
+    act(() => remove?.click())
+    expect(unlink).toHaveBeenCalledWith('binding-1')
+  })
+
+  it('disables PDF context removal while the command is pending', () => {
+    renderPanel({
+      composer: {
+        view: {
+          readingContext: {
+            bindings: [
+              {
+                version: 1,
+                bindingId: 'binding-1',
+                sourceKind: 'upload-version',
+                sourceFileId: 'upload-1',
+                sourceVersionId: 'version-1',
+                sourceSessionId: 'source-session',
+                name: 'paper.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 12,
+                checksum: 'checksum-1',
+                linkedAt: 1
+              }
+            ],
+            pendingBindingId: 'binding-1',
+            isPending: true
+          }
+        },
+        actions: { openReadingContext: vi.fn() }
+      }
+    })
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Remove PDF context paper.pdf"]')
+        ?.disabled
+    ).toBe(true)
+  })
+
   it('focuses the ordinary composer when the draft context changes', () => {
     renderPanel({
       view: {
@@ -864,6 +1055,26 @@ describe('ConversationPanel composer intake', () => {
       view: {
         composerFocusKey: 'session-b'
       }
+    })
+    expect(document.activeElement).toBe(getComposerEditor())
+  })
+
+  it('focuses the composer when a preview surface requests it', () => {
+    renderPanel({
+      view: {
+        composerFocusKey: 'session-a'
+      }
+    })
+    expect(document.activeElement).toBe(getComposerEditor())
+
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+    expect(document.activeElement).toBe(navigationButton)
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
     })
     expect(document.activeElement).toBe(getComposerEditor())
   })
@@ -1475,6 +1686,56 @@ describe('ConversationPanel composer intake', () => {
     ) as HTMLDivElement
     expect(nextPermissionComposer).not.toBe(permissionComposer)
     expect(nextPermissionComposer.style.height).toBe('')
+  })
+
+  it('puts Session credential recovery in the content-bounded Composer lane', () => {
+    const activeSession: ChatSession = {
+      id: 'session-credential',
+      projectId: 'project-a',
+      title: 'OpenAlex credential',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    renderPanel({
+      view: { activeSession },
+      permissions: {
+        ...createPanelDefaults().permissions,
+        credentialRequests: [
+          {
+            id: 'credential-1',
+            credentialId: 'openalex',
+            connector: 'literature',
+            method: 'openalex_search_works',
+            sessionId: activeSession.id
+          }
+        ]
+      },
+      elicitation: {
+        requests: [
+          {
+            requestId: 'elicitation-after-credential',
+            sessionId: activeSession.id,
+            toolCallId: 'tool-ask-after-credential',
+            message: 'Which scope should the agent use?',
+            fields: []
+          }
+        ]
+      }
+    })
+
+    expect(container.querySelector('[data-testid="credential-composer"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="credential-composer-scroll"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Resize credential panel"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="connector-credential-controls"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="scroller-credential-pending"]')?.textContent
+    ).toBe('true')
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expectComposerCoveredByBlockingOverlay()
   })
 
   it('serializes a pending question ahead of Plan approval in the shared blocking lane', () => {
@@ -2094,7 +2355,7 @@ describe('ConversationPanel composer intake', () => {
     ).toBe(false)
   })
 
-  it('keeps send and Plan first available while Branch stays disabled for a pending replay', () => {
+  it('keeps send, Plan first, and Branch available for a pending replay', () => {
     const session: ChatSession = {
       id: 'session-replay',
       projectId: 'project-a',
@@ -2113,7 +2374,7 @@ describe('ConversationPanel composer intake', () => {
       conversation: {
         availability: {
           submit: true,
-          branch: false
+          branch: true
         },
         actions: {
           submit: {
@@ -2134,7 +2395,24 @@ describe('ConversationPanel composer intake', () => {
     expect(
       (container.querySelector('[data-testid="menu-branch-in-new-session"]') as HTMLButtonElement)
         .disabled
-    ).toBe(true)
+    ).toBe(false)
+  })
+
+  it('threads replay-independent agent controls separately from provider controls', () => {
+    renderPanel({
+      agentControls: {
+        canChange: false,
+        canChangeAutoReview: true,
+        canChangeMemory: true,
+        canChangeSpecialist: true
+      }
+    })
+
+    const controls = container.querySelector('[data-testid="mock-agent-controls"]')
+    expect(controls?.getAttribute('data-read-only')).toBe('true')
+    expect(controls?.getAttribute('data-memory-read-only')).toBe('false')
+    expect(controls?.getAttribute('data-auto-review-read-only')).toBe('false')
+    expect(controls?.getAttribute('data-specialist-read-only')).toBe('false')
   })
 
   it('offers Side chat between Plan first and Branch for a text-only existing Session draft', () => {
@@ -2233,7 +2511,7 @@ describe('ConversationPanel composer intake', () => {
     expect(onStartSideChat).toHaveBeenCalledOnce()
   })
 
-  it('keeps Side chat available while the main Session is running', () => {
+  it('keeps Side chat available while running without reopening its tooltip', () => {
     const onStartSideChat = vi.fn()
     renderPanel({
       view: {
@@ -2272,6 +2550,9 @@ describe('ConversationPanel composer intake', () => {
     const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
     expect(trigger.disabled).toBe(false)
     expect(item.disabled).toBe(false)
+    const focusReturn = new FocusEvent('focusin', { bubbles: true, cancelable: true })
+    act(() => trigger.dispatchEvent(focusReturn))
+    expect(focusReturn.defaultPrevented).toBe(true)
     act(() => item.click())
     expect(onStartSideChat).toHaveBeenCalledOnce()
   })

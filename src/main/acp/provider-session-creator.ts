@@ -85,7 +85,9 @@ export class AcpProviderSessionCreator {
         bridgeMcpAliasesEnabled: startupBackend.adapter.bridgeMcpAliasesEnabled,
         policy: this.deps.capabilityPolicy,
         sessionCwd: cwd,
-        projectId
+        projectId,
+        memoryEnabled: request.memoryEnabled,
+        literatureEnabled: request.literatureContext === true
       })
       const setup = this.presentation.buildSessionSetup({
         framework: startupBackend.framework,
@@ -157,6 +159,7 @@ export class AcpProviderSessionCreator {
           frameworkId: backend.framework.id,
           backendId: backend.backendId,
           permissionProfile: structuredClone(configuration.permissionProfile),
+          memoryEnabled: request.memoryEnabled !== false,
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })

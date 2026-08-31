@@ -32,8 +32,9 @@ const candidates = selectedHosts.length > 0 ? selectedHosts : hosts
 ```
 
 Each list item is a compact summary with `provider_id`, `display_name`, `shape`, `status`, and `role`
-(`connected`, `probe_failed`, or `not_probed`). Knowledge documents and resource probe snapshots
-are deliberately excluded from discovery results.
+(`last_probe_ok`, `probe_failed`, or `not_probed`). `last_probe_ok` means the most recent persisted
+Probe succeeded; it does not assert live connectivity. Knowledge documents and resource probe
+snapshots are deliberately excluded from discovery results.
 
 ## API reference
 

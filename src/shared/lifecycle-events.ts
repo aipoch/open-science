@@ -1,4 +1,4 @@
-import type { Project } from './projects'
+import type { Project, ProjectDeletionOutcome } from './projects'
 import type { PersistedChatSession } from './session-persistence'
 
 type SessionUpsertEvent = {
@@ -15,7 +15,7 @@ const MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID = 'main:enabled-compute-hos
 const MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID = 'main:delegated-work'
 const MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID = 'main:session-details'
 
-type ProjectDeletedEvent = {
+type ProjectDeletedEvent = ProjectDeletionOutcome & {
   projectId: string
 }
 

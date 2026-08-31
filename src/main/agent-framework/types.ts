@@ -110,6 +110,7 @@ export type SkillSelectorUsageObservation = Readonly<{
 // current generation and applies the already-resolved session or bridge values.
 export type AgentModelChangeTarget = Readonly<{
   frameworkId: AgentFrameworkId
+  providerId?: string
   backendId: string
   route: AgentModelRoute
   model: string
@@ -298,6 +299,9 @@ export interface AgentFramework {
 // provider switch takes effect on reconnect.
 export type ResolvedAgentBackend = {
   framework: AgentFramework
+  // Stable app provider/account identity used for usage attribution. This remains separate from
+  // backendId because a framework may normalize provider selections onto one session store.
+  providerId?: string
   // Stable identity of the framework/provider storage boundary. Two providers can use the same
   // framework while keeping incompatible session stores (for example Codex shared vs isolated login).
   backendId?: string

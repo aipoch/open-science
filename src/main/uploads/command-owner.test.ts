@@ -8,7 +8,7 @@ import type { ApplicationInvocation } from '../application-command-router'
 import { createElectronCallerContext } from '../caller-context'
 import { ApplicationCallerLeaseRegistry } from '../caller-lifecycle'
 import type { DataContentApplicationCommandDependencies } from '../data-content-application-commands'
-import { createUploadVersionReference } from '../../shared/uploads'
+import { createUploadVersionReference, DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import {
   beginMigration,
   clearMigrationPending,
@@ -448,6 +448,37 @@ describe('upload command owner', () => {
 
     expect(mutationScopes).toEqual([{ projectId: 'project-1', sessionId: 'session-1' }])
     expect(order).toEqual(['lock', 'unlock'])
+  })
+
+  it('uses the default Project session mutation when finalization omits projectId', async () => {
+    const repository = {
+      finalizePendingSessionUploads: vi.fn(async () => [])
+    } as unknown as UploadRepository
+    const mutationScopes: Array<{ projectId: string; sessionId: string }> = []
+    const withSessionMutation = async <Result>(
+      projectId: string,
+      sessionId: string,
+      mutation: () => Promise<Result>
+    ): Promise<Result> => {
+      mutationScopes.push({ projectId, sessionId })
+      return mutation()
+    }
+    const owner = createUploadCommandOwner(repository, { withSessionMutation })
+    const leases = new ApplicationCallerLeaseRegistry()
+    const caller = createCaller(leases, 16)
+
+    await owner.finalizeSession(
+      invocationFor(caller, [{ sessionId: 'session-1', attachments: [] }] as const)
+    )
+
+    expect(mutationScopes).toEqual([
+      { projectId: DEFAULT_UPLOAD_PROJECT_ID, sessionId: 'session-1' }
+    ])
+    expect(repository.finalizePendingSessionUploads).toHaveBeenCalledWith(
+      'session-1',
+      [],
+      DEFAULT_UPLOAD_PROJECT_ID
+    )
   })
 
   it('exposes the exact staged data-command owner interface', () => {

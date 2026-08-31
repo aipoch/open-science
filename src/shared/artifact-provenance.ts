@@ -1,6 +1,8 @@
 import type { ArtifactFile, ArtifactSourceFileObservation, ArtifactWriteSource } from './artifacts'
 import type {
   NotebookInputAssociation,
+  NotebookHelperModuleEvidence,
+  NotebookHelperEvidenceStatus,
   NotebookKernelKind,
   NotebookInputFileSummary,
   NotebookRunEnvironmentCapture,
@@ -433,6 +435,7 @@ export type ProvenanceNotebookRun = {
   messageBranchId: string
   runtimeSegmentId: string
   promptMessageId: string
+  kernelEpochId?: string
   kernelKind: NotebookKernelKind
   environmentName?: string
   script: string
@@ -449,6 +452,16 @@ export type ProvenanceNotebookRun = {
   hasOmittedFiles?: true
   hasOmittedInputs?: true
   omittedOutputCount?: number
+  helperModuleKeys?: string[]
+}
+
+export type ArtifactHelperEvidenceStatus = NotebookHelperEvidenceStatus
+
+export type ArtifactNotebookHelperEvidence = Omit<
+  NotebookHelperModuleEvidence,
+  'source' | 'dependencies'
+> & {
+  sourceAvailable: boolean
 }
 
 export type ArtifactExecutionInputAvailability =
@@ -475,6 +488,8 @@ export type PersistedArtifactExecutionSnapshot = {
   createdAt: string
   inputFiles: NotebookRunInputFile[]
   runs: ProvenanceNotebookRun[]
+  helperModules?: NotebookHelperModuleEvidence[]
+  helperEvidenceStatus?: ArtifactHelperEvidenceStatus
   truncation?: {
     reason: 'payload-limit'
     omittedLeadingRunCount: number
@@ -485,8 +500,12 @@ export type PersistedArtifactExecutionSnapshot = {
 
 // Renderer-safe execution projection. Input storage keys are resolved in main and replaced with the
 // current immutable-byte availability before this value crosses IPC.
-export type ArtifactExecutionSnapshot = Omit<PersistedArtifactExecutionSnapshot, 'inputFiles'> & {
+export type ArtifactExecutionSnapshot = Omit<
+  PersistedArtifactExecutionSnapshot,
+  'inputFiles' | 'helperModules'
+> & {
   inputFiles: ProvenanceExecutionInputFile[]
+  helperModules?: ArtifactNotebookHelperEvidence[]
 }
 
 export type ArtifactVersionProvenance = {

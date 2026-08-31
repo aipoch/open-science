@@ -24,6 +24,7 @@ const snapshot: PermissionGrantSnapshot = {
 
 const createOwner = (): PermissionGrantProjection => ({
   list: vi.fn(async () => snapshot),
+  restoreDefaults: vi.fn(async () => ({ ...snapshot, restoredCount: 2 })),
   revoke: vi.fn(async () => ({ ...snapshot, receipt: undefined, conflicts: [] })),
   extendUndo: vi.fn(async () => ({ undoToken: 'undo-1', expiresAt: 10, revokedCount: 1 })),
   restore: vi.fn(async () => ({ ...snapshot, conflicts: [] }))
@@ -41,14 +42,14 @@ const invocation = <Args extends readonly unknown[]>(args: Args): ApplicationInv
 }
 
 describe('Permission Grant application commands', () => {
-  it('defines exactly the four registry-management commands', () => {
+  it('defines exactly the five registry-management commands', () => {
     const publicPermissionChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'permissions'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicPermissionChannels).toHaveLength(4)
+    expect(publicPermissionChannels).toHaveLength(5)
     expect(permissionGrantApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicPermissionChannels
     )
@@ -64,6 +65,9 @@ describe('Permission Grant application commands', () => {
     await expect(
       router.dispatcher.invoke(permissionGrantApplicationCommands.list, invocation([]))
     ).resolves.toBe(snapshot)
+    await expect(
+      router.dispatcher.invoke(permissionGrantApplicationCommands.restoreDefaults, invocation([]))
+    ).resolves.toMatchObject({ restoredCount: 2 })
     await router.dispatcher.invoke(permissionGrantApplicationCommands.revoke, invocation([revoke]))
     await router.dispatcher.invoke(
       permissionGrantApplicationCommands.extendUndo,
@@ -72,6 +76,7 @@ describe('Permission Grant application commands', () => {
     await router.dispatcher.invoke(permissionGrantApplicationCommands.restore, invocation([undo]))
 
     expect(owner.revoke).toHaveBeenCalledWith(revoke)
+    expect(owner.restoreDefaults).toHaveBeenCalledOnce()
     expect(owner.extendUndo).toHaveBeenCalledWith(undo)
     expect(owner.restore).toHaveBeenCalledWith(undo)
 

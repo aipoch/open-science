@@ -41,12 +41,21 @@ class UserSkillRepository {
   private readonly bundleImports: SkillBundleImportOwner
   private readonly agentHomeSkills: AgentHomeSkillOwner
 
-  constructor(storageRoot: string, mutationOwner?: SkillMutationOwner) {
+  constructor(
+    storageRoot: string,
+    mutationOwner?: SkillMutationOwner,
+    validatePromotion?: (list: () => Promise<BundledSkill[]>) => Promise<void>
+  ) {
     this.transactions = new SkillPackageTransactionOwner(storageRoot, mutationOwner)
     this.compatibilityIndex = new UserSkillCompatibilityIndex(storageRoot)
     this.store = new UserSkillStore(storageRoot, this.transactions, this.compatibilityIndex)
     this.bundleImports = new SkillBundleImportOwner(this.store, this.transactions)
     this.agentHomeSkills = new AgentHomeSkillOwner(this.store, this.transactions)
+    if (validatePromotion) {
+      this.transactions.setPromotedValidator(() =>
+        validatePromotion(() => this.store.listSkillsLocked())
+      )
+    }
   }
 
   // Lists every personal + imported skill, skipping any dir whose SKILL.md is missing/unreadable. The

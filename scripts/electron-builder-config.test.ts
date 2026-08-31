@@ -4,7 +4,10 @@ import { join } from 'node:path'
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
-import { WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES } from '../src/main/notebook/micromamba-cache'
+import {
+  WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES,
+  WINDOWS_CACHE_TRUSTED_OWNER_SIDS
+} from '../src/main/notebook/micromamba-cache'
 
 describe('electron-builder native image processing', () => {
   it('ships sharp and its platform binary outside the ASAR archive', () => {
@@ -45,9 +48,22 @@ describe('electron-builder Windows targets', () => {
     expect(cleanup).toContain('.open-science-cache.json')
     expect(cleanup).toContain('Get-CompactCacheLeaf')
     expect(cleanup).toContain('$compactLeaf = Get-CompactCacheLeaf $canonicalRoot $userIdentity')
+    expect(cleanup).toContain('Get-WorkingCacheLeaf')
+    expect(cleanup).toContain('$workingLeaf = Get-WorkingCacheLeaf $canonicalRoot $userIdentity')
+    expect(cleanup).toContain('foreach ($configuredTemp in @($env:TEMP, $env:TMP))')
+    expect(cleanup).toContain("(Join-Path $configuredTemp 'OpenScienceTmp')")
+    expect(cleanup).toContain("(Join-Path $env:USERPROFILE 'os-tmp')")
+    expect(cleanup).toContain('Test-TrustedManagedParent')
+    expect(cleanup).toContain('Test-NoReparsePointInPath')
+    expect(cleanup).toContain("'.open-science-temp.json'")
+    expect(cleanup).toContain('$env:TMP')
+    expect(cleanup).toContain('$trustedOwnerSids -notcontains $ownerSid')
+    expect(cleanup).toContain('elseif ($candidate.ManagedParent')
     expect(cleanup).toContain('(Join-Path $env:PUBLIC $leaf)')
     expect(cleanup).toContain('(Join-Path $env:USERPROFILE $compactLeaf)')
-    expect(cleanup).toContain('S-1-5-32-544')
+    for (const sid of WINDOWS_CACHE_TRUSTED_OWNER_SIDS) {
+      expect(cleanup).toContain("'" + sid + "'")
+    }
     expect(cleanup).toContain('$trustedWriteSids -notcontains $sid')
     for (const right of WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES) {
       expect(cleanup).toContain(`[System.Security.AccessControl.FileSystemRights]::${right}`)

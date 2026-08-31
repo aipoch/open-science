@@ -58,7 +58,11 @@ import {
   type InspectPackagesRequest,
   type InspectPackagesResult
 } from './package-operations'
-import { NotebookRunRepository, getRuntimeRoot } from './repository'
+import {
+  NotebookRunRepository,
+  getNotebookFileEvidenceLocation,
+  getRuntimeRoot
+} from './repository'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -78,6 +82,7 @@ import type {
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { managedNotebookWorkingCache } from './windows-micromamba-working-cache'
 import { NotebookRuntimeRepairOwner } from './runtime-repair'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookEnvironmentOperations, type DefaultEnvProvisioner } from './environment-operations'
@@ -92,7 +97,7 @@ import {
   type NotebookSessionRuntimeBinding
 } from './session-aggregate'
 import { NotebookSessionRegistry } from './session-registry'
-import { createLogger, errorLogFields, getLogFilePath } from '../logger'
+import { createLogger, errorLogFields } from '../logger'
 import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from './environment-state-tracker'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
@@ -107,6 +112,10 @@ import {
 import { NotebookSessionReadModel, type NotebookHandoffContext } from './session-read-model'
 import { notebookLaneKey } from './lane-identity'
 import {
+  completeWorkingFileEvidence,
+  deleteWorkingFileEvidenceProject
+} from './working-file-observer'
+import {
   NotebookSessionLifecycleOwner,
   type NotebookExecutorLifecycleCallbacks,
   type NotebookSessionLifecycleCallbacks
@@ -116,9 +125,9 @@ import {
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit
 } from './content-limits'
+import { NotebookHelperModuleHost, type NotebookHelperModuleCatalog } from './helper-module-host'
 
-// Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
-// to public hosts, so this default never silently forces a CN mirror).
+// The default stays outside CN mirror routing when no explicit locale is injected.
 const DEFAULT_LOCALE = 'en-US'
 
 const EMPTY_NOTEBOOK_RUNTIME_SETTINGS: Pick<NotebookRuntimeSettings, 'getSnapshot'> = {
@@ -225,6 +234,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
     | 'refreshAfterPackageMutation'
   >
   dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
+  helperModuleCatalog?: NotebookHelperModuleCatalog
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -280,7 +290,10 @@ const resolveLoopScript = (envOverride: string | undefined, fileName: string): s
   if (!resolved) {
     // Surface the miss instead of silently handing the executor a path that only fails once the loop
     // actually tries to spawn.
-    console.error(`[notebook] Could not resolve ${fileName}; tried:`, candidates)
+    createLogger('notebook:runtime').error('could not resolve loop script', {
+      fileName,
+      candidateCount: candidates.length
+    })
     return candidates[candidates.length - 1]
   }
 
@@ -321,6 +334,7 @@ class NotebookRuntimeService {
   private readonly exportReader: NotebookExportReader
   private readonly runTerminalization: NotebookRunTerminalizationOwner
   private readonly executionOwner: NotebookExecutionOwner
+  private readonly helperModules: NotebookHelperModuleHost
   private readonly dependencyAnalyzer: Pick<NotebookDependencyAnalyzer, 'project'>
   private readonly dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   private readonly packageOperations: NotebookPackageOperations
@@ -339,11 +353,8 @@ class NotebookRuntimeService {
   private readonly runtimeEnablementResolver:
     ((language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>) | undefined
   private readonly runtimeBindingOwner: NotebookRuntimeBindingOwner
-  // Owns startup-recovery promises, journal reconciliation, fail-closed block decisions, Reset
-  // allowlisting, and same-process live-unconfirmed tracking. The service retains its public recovery
-  // facade so Electron, Web, CLI, and IPC adapters keep the same contract.
   private readonly recoveryCoordinator: NotebookRecoveryCoordinator
-  private readonly runtimeLogger?: RuntimeDiagnosticLogger
+  private readonly runtimeLogger: RuntimeDiagnosticLogger
   private readonly environmentStateTracker: Pick<
     EnvironmentStateTracker,
     | 'prepareRun'
@@ -369,8 +380,13 @@ class NotebookRuntimeService {
       }
     })
     const runtimeRoot = getRuntimeRoot(options.dataRoot)
+    const workingCache = managedNotebookWorkingCache(options.platform, !options.installPackagesImpl)
     this.repairPolicy = new NotebookRuntimeRepairPolicy(runtimeRoot)
-    this.recoveryCoordinator = new NotebookRecoveryCoordinator(runtimeRoot, this.repairPolicy)
+    this.recoveryCoordinator = new NotebookRecoveryCoordinator(
+      runtimeRoot,
+      this.repairPolicy,
+      workingCache
+    )
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     const runtimeSettings = options.notebookRuntimeSettings ?? EMPTY_NOTEBOOK_RUNTIME_SETTINGS
     this.runtimeEnablementResolver = async (language) =>
@@ -393,8 +409,7 @@ class NotebookRuntimeService {
             ? this.runtimeBindingOwner.dependencyInterpreter(run.kernelKind, run.runtimeId)
             : Promise.resolve(undefined)
       })
-    this.runtimeLogger =
-      options.logger ?? (getLogFilePath() ? createLogger('notebook:runtime') : undefined)
+    this.runtimeLogger = options.logger ?? createLogger('notebook:runtime')
     this.environmentOperations = new NotebookEnvironmentOperations({
       recovery: this.recoveryCoordinator,
       bindings: this.runtimeBindingOwner,
@@ -439,8 +454,7 @@ class NotebookRuntimeService {
           kind,
           environment: env
         }
-        if (this.runtimeLogger) this.runtimeLogger.error(message, fields)
-        else console.error(`[notebook] ${message}`, fields)
+        this.runtimeLogger.error(message, fields)
       }
     })
     this.runtimeRepair = new NotebookRuntimeRepairOwner({
@@ -489,6 +503,7 @@ class NotebookRuntimeService {
       environmentStateTracker: this.environmentStateTracker,
       installPackages: options.installPackagesImpl ?? installPackagesDefault,
       micromambaRunner: options.micromambaRunner,
+      ...workingCache,
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args)
     })
     this.dataExecutionAdmission = new NotebookDataExecutionAdmissionOwner({
@@ -501,10 +516,34 @@ class NotebookRuntimeService {
     })
     this.runTerminalization = new NotebookRunTerminalizationOwner({
       repository: this.repository,
-      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession)
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession),
+      afterCommit: async (session, run) => {
+        const location = getNotebookFileEvidenceLocation(
+          options.dataRoot,
+          session.projectId,
+          session.sessionId,
+          session.lane
+        )
+        await completeWorkingFileEvidence(
+          {
+            storageRoot: options.dataRoot,
+            root: location.root,
+            storageKeyPrefix: location.storageKeyPrefix
+          },
+          run
+        ).catch((error) => {
+          this.runtimeLogger.error('Notebook file-evidence receipt settlement failed', {
+            ...errorLogFields(error),
+            runId: run.runId,
+            lane: notebookLaneKey(session.lane)
+          })
+        })
+      }
     })
+    this.helperModules = new NotebookHelperModuleHost(options.helperModuleCatalog)
     this.executionOwner = new NotebookExecutionOwner({
       configRoot: options.configRoot,
+      storageRoot: options.dataRoot,
       runTerminalization: this.runTerminalization,
       dataExecutionAdmission: this.dataExecutionAdmission,
       environmentStateTracker: this.environmentStateTracker,
@@ -522,6 +561,8 @@ class NotebookRuntimeService {
           completedRun: run,
           ...(interpreter ? { interpreter } : {})
         }),
+      helperModules: this.helperModules,
+      logger: this.runtimeLogger,
       platform: options.platform,
       shellProcess: options.shellProcess
     })
@@ -810,14 +851,16 @@ class NotebookRuntimeService {
   // Compatibility facade: Session lookup and public summary projection stay here; lifecycle is owned.
   async runCell(
     request: RunNotebookCellRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    helperModules?: readonly string[]
   ): Promise<NotebookRunSummary> {
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       const session = await this.sessionLifecycle.ensure(request)
       const { run, dependencyProjection } = await this.executionOwner.executeDataCell(
         session,
         request,
-        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+        helperModules
       )
       return this.sessionReadModel.toRunSummary(session, run, dependencyProjection)
     })
@@ -848,7 +891,8 @@ class NotebookRuntimeService {
         ...request,
         cellId: begin.cellId
       },
-      signal
+      signal,
+      request.helperModules
     )
   }
 
@@ -1059,6 +1103,10 @@ class NotebookRuntimeService {
 
   async shutdownProject(projectId: string): Promise<void> {
     return this.sessionLifecycle.shutdownProject(projectId)
+  }
+
+  async deleteProjectFileEvidence(projectId: string): Promise<void> {
+    await deleteWorkingFileEvidenceProject(this.options.dataRoot, projectId)
   }
 
   beginProjectDeletion(projectId: string): void {

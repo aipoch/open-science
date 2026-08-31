@@ -49,11 +49,13 @@ const makeRepo = (
   updateProbeResult: ReturnType<typeof vi.fn>
   updateDetails: ReturnType<typeof vi.fn>
   updateScratchPinned: ReturnType<typeof vi.fn>
+  clearScratchRoot: ReturnType<typeof vi.fn>
   updateConcurrencyLimit: ReturnType<typeof vi.fn>
 } => {
   const updateProbeResult = vi.fn(() => Promise.resolve())
   const updateDetails = vi.fn(() => Promise.resolve())
   const updateScratchPinned = vi.fn(() => Promise.resolve())
+  const clearScratchRoot = vi.fn(() => Promise.resolve())
   const updateConcurrencyLimit = vi.fn(() => Promise.resolve())
   const repo: ComputeHostRepository = {
     get: vi.fn(() => Promise.resolve(host)),
@@ -64,9 +66,17 @@ const makeRepo = (
     updateScratchRoot: vi.fn(() => Promise.resolve()),
     updateDetails,
     updateScratchPinned,
+    clearScratchRoot,
     updateConcurrencyLimit
   } as unknown as ComputeHostRepository
-  return { repo, updateProbeResult, updateDetails, updateScratchPinned, updateConcurrencyLimit }
+  return {
+    repo,
+    updateProbeResult,
+    updateDetails,
+    updateScratchPinned,
+    clearScratchRoot,
+    updateConcurrencyLimit
+  }
 }
 
 vi.mock('./ssh-runner', async (importOriginal) => {
@@ -85,7 +95,7 @@ const makeApprovalBroker = (decision: 'once' | 'deny'): ComputeApprovalBroker =>
   }) as unknown as ComputeApprovalBroker
 
 describe('ComputeService host profile facade', () => {
-  it('preserves all six host profile operations through the facade', async () => {
+  it('preserves all seven host profile operations through the facade', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
       stdout: 'os=Linux\ncpus=4\nmem_mib=8192\ngpus=\nsbatch=yes\nqsub=no\nbsub=no\nscratch=',
@@ -93,8 +103,14 @@ describe('ComputeService host profile facade', () => {
       truncated: false,
       timedOut: false
     })
-    const { repo, updateProbeResult, updateDetails, updateScratchPinned, updateConcurrencyLimit } =
-      makeRepo(sampleHost({ detailsDoc: 'current details' }))
+    const {
+      repo,
+      updateProbeResult,
+      updateDetails,
+      updateScratchPinned,
+      clearScratchRoot,
+      updateConcurrencyLimit
+    } = makeRepo(sampleHost({ detailsDoc: 'current details' }))
     const service = new ComputeService({ runner, repository: repo })
 
     await expect(service.probe('ssh:biowulf')).resolves.toMatchObject({
@@ -113,6 +129,7 @@ describe('ComputeService host profile facade', () => {
     })
     await service.appendDetails('ssh:biowulf', { text: 'appendix', author: 'agent' })
     await service.setScratchRoot('ssh:biowulf', '/portable/scratch')
+    await service.clearScratchRoot('ssh:biowulf')
     await service.setConcurrencyLimit('ssh:biowulf', 4)
 
     expect(updateProbeResult).toHaveBeenCalledWith(
@@ -128,6 +145,7 @@ describe('ComputeService host profile facade', () => {
       'agent'
     )
     expect(updateScratchPinned).toHaveBeenCalledWith('ssh:biowulf', '/portable/scratch')
+    expect(clearScratchRoot).toHaveBeenCalledWith('ssh:biowulf')
     expect(updateConcurrencyLimit).toHaveBeenCalledWith('ssh:biowulf', 4)
   })
 })

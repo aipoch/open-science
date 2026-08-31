@@ -14,6 +14,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import type { Annotation } from '../../../../shared/annotations'
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
@@ -333,9 +334,6 @@ describe('PreviewPanel', () => {
     expect(sourceHeaderClose?.className).toContain('hover:text-text-000')
     expect(sourceHeaderExternal?.nextElementSibling).toBe(sourceHeaderClose)
     expect(iframe?.getAttribute('src')).toBe('https://example.com/paper')
-    expect(iframe?.getAttribute('sandbox')).toBe(
-      'allow-same-origin allow-scripts allow-forms allow-popups'
-    )
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
     expect(iframe?.getAttribute('title')).toBe('Source preview: Genome study')
     expect(container.querySelector('[aria-label="Open source in browser"]')).not.toBeNull()
@@ -360,6 +358,19 @@ describe('PreviewPanel', () => {
 
     expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
     expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
+  })
+
+  it('does not grant remote source previews permission to open popup windows', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+
+    await renderPanel()
+
+    const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+    expect(iframe?.getAttribute('sandbox')?.split(/\s+/u)).toEqual([
+      'allow-same-origin',
+      'allow-scripts',
+      'allow-forms'
+    ])
   })
 
   it('closes a source preview from the header action', async () => {
@@ -1203,6 +1214,215 @@ describe('PreviewPanel', () => {
     expect(
       document.body.querySelector('[data-testid="preview-tab-context-menu"] [role="separator"]')
     ).toBeNull()
+  })
+
+  it('leads a linkable PDF tab menu with Read with agent and links through it', async () => {
+    const linkPdfContext = vi.fn().mockResolvedValue({ version: 1, revision: 2 })
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    window.api.sessions = {
+      linkPdfContext,
+      unlinkPdfContext: vi.fn()
+    } as unknown as Window['api']['sessions']
+    window.api.artifacts = {
+      getLineage: vi.fn().mockResolvedValue(undefined)
+    } as unknown as Window['api']['artifacts']
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          runtimeContext: { version: 1, revision: 1 },
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ],
+      selectedSessionId: 'session-1'
+    })
+    const focusListener = vi.fn()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createFileItem({
+        format: 'pdf',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        artifactId: 'artifact-1',
+        selectedVersionId: 'version-1',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+      })
+    )
+    await renderPanel()
+
+    await openTabContextMenu(0)
+    expect(menuCommands()[0]).toBe('toggle-pdf-context')
+    expect(
+      document.body.querySelector('[data-command="toggle-pdf-context"]')?.textContent
+    ).toContain('Read with agent')
+
+    await clickMenuCommand('toggle-pdf-context')
+
+    // The command activates the tab, links the PDF, and hands focus to the composer.
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
+    expect(linkPdfContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+      })
+    )
+    expect(focusListener).toHaveBeenCalled()
+    // The menu's focus return must not override the composer's focus request — even after
+    // Radix's scheduled close handling lands.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(document.activeElement).not.toBe(document.getElementById('preview-tab-item-1'))
+    window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+  })
+
+  it('routes the PDF tab command through the Composer Reading history port when provided', async () => {
+    const linkPdfContext = vi.fn()
+    const onLinkReadingContext = vi.fn().mockResolvedValue(undefined)
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    window.api.sessions = {
+      linkPdfContext,
+      unlinkPdfContext: vi.fn()
+    } as unknown as Window['api']['sessions']
+    window.api.artifacts = {
+      getLineage: vi.fn().mockResolvedValue(undefined)
+    } as unknown as Window['api']['artifacts']
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          runtimeContext: { version: 1, revision: 1 },
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ],
+      selectedSessionId: 'session-1'
+    })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createFileItem({
+        format: 'pdf',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        artifactId: 'artifact-1',
+        selectedVersionId: 'version-1',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+      })
+    )
+    await renderPanel({ onLinkReadingContext })
+
+    await openTabContextMenu(0)
+    await clickMenuCommand('toggle-pdf-context')
+
+    await vi.waitFor(() =>
+      expect(onLinkReadingContext).toHaveBeenCalledWith({
+        sourceKind: 'artifact-version',
+        sourceVersionId: 'version-1'
+      })
+    )
+    expect(linkPdfContext).not.toHaveBeenCalled()
+  })
+
+  it('returns focus to the tab after a menu command that does not target the composer', async () => {
+    await renderTwoFileTabs()
+
+    await openTabContextMenu(0)
+    await clickMenuCommand('download')
+    // Radix returns focus on close; let its scheduled focus restoration land.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(document.activeElement).toBe(document.getElementById('preview-tab-item-1'))
+  })
+
+  it('labels the PDF tab command Remove PDF from context when the tab is the current binding', async () => {
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    window.api.artifacts = {
+      getLineage: vi.fn().mockResolvedValue(undefined)
+    } as unknown as Window['api']['artifacts']
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            pdfContext: {
+              version: 1,
+              bindings: [
+                {
+                  version: 1,
+                  bindingId: 'binding-1',
+                  sourceKind: 'artifact-version',
+                  sourceFileId: 'artifact-1',
+                  sourceVersionId: 'version-1',
+                  sourceSessionId: 'session-1',
+                  name: 'paper.pdf',
+                  mimeType: 'application/pdf',
+                  sizeBytes: 12,
+                  checksum: 'checksum-1',
+                  linkedAt: 1
+                }
+              ]
+            }
+          },
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ],
+      selectedSessionId: 'session-1'
+    })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createFileItem({
+        format: 'pdf',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        artifactId: 'artifact-1',
+        selectedVersionId: 'version-1',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+      })
+    )
+    await renderPanel()
+
+    await openTabContextMenu(0)
+
+    const command = document.body.querySelector('[data-command="toggle-pdf-context"]')
+    expect(command?.textContent).toContain('Remove PDF from context')
+    // Unlink is reversible, so it never takes the danger styling.
+    expect(command?.className).not.toContain('danger')
+  })
+
+  it('omits the reading-context command for non-PDF and non-linkable tabs', async () => {
+    useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertItem(
+        createFileItem({ id: 'item-2', format: 'pdf', title: 'paper.pdf', name: 'paper.pdf' })
+      )
+    await renderPanel()
+
+    await openTabContextMenu(0)
+    expect(menuCommands()).not.toContain('toggle-pdf-context')
+
+    // A PDF without immutable Version identity is not linkable.
+    await openTabContextMenu(1)
+    expect(menuCommands()).not.toContain('toggle-pdf-context')
   })
 
   it('offers local-file actions and disables close-others for a single tab', async () => {

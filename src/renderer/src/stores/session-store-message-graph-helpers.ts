@@ -30,10 +30,14 @@ import { formatSessionDetailsTitle } from '../../../shared/session-details'
 
 export type AppendUserMessageInput = {
   sessionId: string
+  messageId?: string
+  // Reuses a matching persisted Message as the owner of a restarted application prompt.
+  rearmExisting?: boolean
   content: string
   attachments?: PersistedUploadedAttachment[]
   parts?: MessagePart[]
   annotations?: Annotation[]
+  pdfContext?: PersistedChatMessage['pdfContext']
   turnIntent?: PersistedChatMessage['turnIntent']
   cwd?: string
   projectId?: string
@@ -42,6 +46,7 @@ export type AppendUserMessageInput = {
   agentBackendId?: PersistedChatSession['agentBackendId']
   agentModel?: string
   agentConfiguration?: PersistedChatSession['agentConfiguration']
+  memoryEnabled?: boolean
   // Resolved send target stamped onto the user Message; drives config-change timeline markers.
   agentTarget?: PersistedChatMessage['agentTarget']
   isPending?: boolean
@@ -66,6 +71,7 @@ export type BranchInNewSessionInput = {
   agentBackendId?: PersistedChatSession['agentBackendId']
   agentModel?: string
   agentConfiguration?: PersistedChatSession['agentConfiguration']
+  memoryEnabled?: boolean
   agentTarget?: PersistedChatMessage['agentTarget']
   specialistId?: string | null
 }
@@ -155,6 +161,7 @@ export const projectSessionGraph = (
       sessionId: session.id,
       messages: session.messages.map(stripTransientMessageState),
       frameworkId: session.agentFrameworkId,
+      providerId: session.agentConfiguration?.providerId,
       backendId: session.agentBackendId,
       model: session.agentModel,
       createdAt: session.createdAt,
@@ -163,6 +170,7 @@ export const projectSessionGraph = (
   const withSegment = ensureConversationRuntimeSegment(initial, {
     id: runtimeSegmentId,
     frameworkId,
+    providerId: session.agentConfiguration?.providerId,
     backendId,
     model,
     startedAt: now,
@@ -334,6 +342,7 @@ export const buildMessage = (input: {
   uploads: PersistedUploadedAttachment[]
   parts?: MessagePart[]
   annotations?: Annotation[]
+  pdfContext?: PersistedChatMessage['pdfContext']
   turnIntent?: PersistedChatMessage['turnIntent']
   sortIndex: number
   now: number
@@ -349,6 +358,7 @@ export const buildMessage = (input: {
     uploads: persistedUploads.length > 0 ? persistedUploads : undefined,
     parts: input.parts && input.parts.length > 0 ? input.parts : undefined,
     annotations: input.annotations?.length ? input.annotations : undefined,
+    pdfContext: input.pdfContext,
     turnIntent: input.turnIntent,
     sortIndex: input.sortIndex,
     createdAt: input.now,
@@ -461,7 +471,6 @@ export const projectSessionBranchSnapshot = (
 
 export const canBranchInNewSession = (session: ChatSession): boolean =>
   !session.isPending &&
-  !session.pendingHistoryReplay &&
   !session.activeRun &&
   session.status !== 'running' &&
   session.status !== 'waiting-for-user' &&

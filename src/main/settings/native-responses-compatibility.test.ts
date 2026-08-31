@@ -880,6 +880,11 @@ describe('native Responses compatibility', () => {
         return new Response(
           JSON.stringify({
             id: 'resp-skills',
+            usage: {
+              input_tokens: 12,
+              input_tokens_details: { cached_tokens: 3 },
+              output_tokens: 4
+            },
             output: [
               {
                 type: 'function_call',
@@ -916,9 +921,20 @@ describe('native Responses compatibility', () => {
       }
     ]
 
-    await expect(proxy.selectSkills('查找肿瘤免疫相关的生物医学文献', catalog)).resolves.toEqual([
-      { name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }
-    ])
+    const observeUsage = vi.fn()
+    await expect(
+      proxy.selectSkills('查找肿瘤免疫相关的生物医学文献', catalog, undefined, observeUsage)
+    ).resolves.toEqual([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
+    expect(observeUsage).toHaveBeenCalledWith({
+      sourceInvocationId: 'resp-skills',
+      usage: {
+        inputTokens: 9,
+        cacheTokens: 3,
+        cachedReadTokens: 3,
+        cachedWriteTokens: 0,
+        outputTokens: 4
+      }
+    })
     expect(fetchImpl).toHaveBeenCalledOnce()
     const [url, init] = fetchImpl.mock.calls[0]
     expect(String(url)).toBe('https://api.minimaxi.com/v1/responses')

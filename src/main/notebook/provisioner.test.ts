@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -37,7 +38,7 @@ import { envsLockDir } from './runtime-relocation'
 import { serializeProvisioner } from './environment-operation-foundation'
 import { withExclusiveCacheLock, withSharedCacheLock } from './pkgs-cache-lock'
 import { validateAndSeedPack } from './pack-content'
-import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
+import { micromambaCacheLockKey } from './micromamba-cache'
 import {
   operationJournalPath,
   readOperationChild,
@@ -48,6 +49,18 @@ import {
 } from './operation-journal'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-prov-'))
+const RELOCATION_ARCHIVE = 'x-1.conda'
+const RELOCATION_ARCHIVE_CONTENT = 'relocation archive'
+const RELOCATION_ARCHIVE_MD5 = createHash('md5').update(RELOCATION_ARCHIVE_CONTENT).digest('hex')
+const writeRelocationLock = (root: string, name: string): void => {
+  mkdirSync(envsLockDir(root), { recursive: true })
+  mkdirSync(pkgsCache(root), { recursive: true })
+  writeFileSync(join(pkgsCache(root), RELOCATION_ARCHIVE), RELOCATION_ARCHIVE_CONTENT)
+  writeFileSync(
+    join(envsLockDir(root), `${name}.lock`),
+    `@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/noarch/${RELOCATION_ARCHIVE}#${RELOCATION_ARCHIVE_MD5}\n`
+  )
+}
 const logicalNameForPrefix = (prefix: string): string =>
   logicalEnvNameFromDirectory(basename(prefix))
 const expectedMarker = (name: string, preparedAt: string): Record<string, string | number> => ({
@@ -78,6 +91,10 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
       created.push(argv[1])
     },
     maintainCache: async () => undefined,
+    cache: {
+      path: pkgsCache(root),
+      lockKey: micromambaCacheLockKey(pkgsCache(root))
+    },
     verify: async (): Promise<void> => undefined,
     now: () => 't-now',
     ...overrides
@@ -1332,6 +1349,10 @@ const makeNamedEnvDeps = (
       writeFileSync(bin, 'x')
     },
     maintainCache: async () => undefined,
+    cache: {
+      path: pkgsCache(root),
+      lockKey: micromambaCacheLockKey(pkgsCache(root))
+    },
     verify: async () => undefined,
     ...overrides
   }
@@ -1339,6 +1360,98 @@ const makeNamedEnvDeps = (
 }
 
 describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
+  it('publishes and releases the Windows working cache after a successful create', async () => {
+    const root = makeRoot()
+    const release = vi.fn().mockResolvedValue(true)
+    const retainWorkingCache = vi.fn(() => release)
+    const digest = 'a'.repeat(32)
+    const { deps } = makeNamedEnvDeps(root, {
+      retainWorkingCache,
+      captureExplicitLock: async () =>
+        `@EXPLICIT\nhttps://conda.example/win-64/python-1.tar.bz2#${digest}\n`
+    })
+
+    await new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+
+    expect(retainWorkingCache).toHaveBeenCalledWith(root, expect.any(String))
+    expect(release).toHaveBeenCalledWith({
+      archivePublications: [
+        {
+          workingRoot: pkgsCache(root),
+          authorizations: [{ file: 'python-1.tar.bz2', algorithm: 'md5', digest }]
+        }
+      ],
+      completedOperationId: expect.any(String),
+      retainForRecovery: false
+    })
+  })
+
+  it('keeps durable publication evidence until the working archive is published', async () => {
+    const root = makeRoot()
+    let finishPublication!: (published: boolean) => void
+    const publication = new Promise<boolean>((resolve) => {
+      finishPublication = resolve
+    })
+    const digest = 'a'.repeat(32)
+    const { deps } = makeNamedEnvDeps(root, {
+      retainWorkingCache: vi.fn(() => vi.fn(() => publication)),
+      captureExplicitLock: async () =>
+        `@EXPLICIT\nhttps://conda.example/win-64/python-1.tar.bz2#${digest}\n`
+    })
+    const create = new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(root))
+
+    await vi.waitFor(async () => {
+      expect((await journal.pending())[0]).toMatchObject({
+        archivePublications: [
+          {
+            workingRoot: pkgsCache(root),
+            authorizations: [{ file: 'python-1.tar.bz2', algorithm: 'md5', digest }]
+          }
+        ]
+      })
+    })
+
+    finishPublication(true)
+    await create
+    expect(await journal.pending()).toEqual([])
+  })
+
+  it('retains and blocks when post-create archive authority cannot be persisted', async () => {
+    const root = makeRoot()
+    const updateFailure = new Error('journal publication update denied')
+    vi.spyOn(RuntimeOperationJournal.prototype, 'update').mockRejectedValueOnce(updateFailure)
+    const release = vi.fn().mockResolvedValue(false)
+    const blockPrefix = vi.fn()
+    const digest = 'a'.repeat(32)
+    const { deps } = makeNamedEnvDeps(root, {
+      retainWorkingCache: vi.fn(() => release),
+      blockPrefix,
+      maintainCache: undefined,
+      captureExplicitLock: async () =>
+        `@EXPLICIT\nhttps://conda.example/win-64/python-1.tar.bz2#${digest}\n`
+    })
+
+    await expect(
+      new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+    ).rejects.toBe(updateFailure)
+
+    expect(blockPrefix).toHaveBeenCalledWith(envPrefix(root, 'analysis'))
+    expect(release).toHaveBeenCalledWith({
+      archivePublications: [
+        {
+          workingRoot: pkgsCache(root),
+          authorizations: [{ file: 'python-1.tar.bz2', algorithm: 'md5', digest }]
+        }
+      ],
+      completedOperationId: expect.any(String),
+      retainForRecovery: true
+    })
+    const retained = await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()
+    expect(retained).toEqual([expect.objectContaining({ archivePublicationPending: true })])
+    expect(retained[0].archivePublications).toBeUndefined()
+  })
+
   it('maintains the cache before the online create', async () => {
     const root = makeRoot()
     const order: string[] = []
@@ -1361,7 +1474,9 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
   it('does not start a named create when the cleanup worker cannot be confirmed stopped', async () => {
     const root = makeRoot()
     const runArgv = vi.fn(async () => undefined)
+    const release = vi.fn().mockResolvedValue(false)
     const { deps } = makeNamedEnvDeps(root, {
+      retainWorkingCache: vi.fn(() => release),
       maintainCache: async () => {
         throw new Error(`${CHILD_UNCONFIRMED}: cleanup worker may still be running`)
       },
@@ -1372,6 +1487,11 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
       new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
     ).rejects.toThrow(CHILD_UNCONFIRMED)
     expect(runArgv).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledWith({
+      archivePublications: [],
+      completedOperationId: expect.any(String),
+      retainForRecovery: true
+    })
   })
 
   it('rejects flag-like package entries before starting micromamba', async () => {
@@ -1455,7 +1575,7 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
     // so the lock is taken a tick later), then request the cache EXCLUSIVE on the same root.
     const create = provisioner.createNamedEnvironment('my-analysis', 'python', ['numpy'])
     await held
-    const exclusive = withExclusiveCacheLock(selectMicromambaCache(root).lockKey, async () => {
+    const exclusive = withExclusiveCacheLock(deps.cache!.lockKey, async () => {
       order.push('repair')
     })
     await Promise.all([create, exclusive])
@@ -1546,7 +1666,7 @@ describe('DefaultRuntimeProvisioner.upgradeIfNeeded (shared pkgs cache lock)', (
     // Start the upgrade, wait until its install holds the shared lock, then request the cache EXCLUSIVE.
     const upgrade = new DefaultRuntimeProvisioner(deps).upgradeIfNeeded(() => {})
     await held
-    const exclusive = withExclusiveCacheLock(selectMicromambaCache(root).lockKey, async () => {
+    const exclusive = withExclusiveCacheLock(deps.cache!.lockKey, async () => {
       order.push('repair')
     })
     await Promise.all([upgrade, exclusive])
@@ -1638,12 +1758,7 @@ describe('DefaultRuntimeProvisioner journals every prefix write', () => {
 
   it('journals a relocation restore with the child pid, cleared on completion', async () => {
     const root = makeRoot()
-    const dir = envsLockDir(root)
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(
-      join(dir, `${DEFAULT_PY_ENV}.lock`),
-      '@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/noarch/x-1.conda#abc\n'
-    )
+    writeRelocationLock(root, DEFAULT_PY_ENV)
     const prefix = envPrefix(root, DEFAULT_PY_ENV)
     let during: RuntimeOperationRecord | undefined
     const deps = makeDeps(
@@ -1763,13 +1878,28 @@ describe('DefaultRuntimeProvisioner.removeEnvironment', () => {
 describe('DefaultRuntimeProvisioner.restoreRelocatedEnvs', () => {
   // Writes a relocation lock at <root>/envs.lock/<name>.lock with one package URL.
   const writeLock = (root: string, name: string): void => {
-    const dir = envsLockDir(root)
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(
-      join(dir, `${name}.lock`),
-      '@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/noarch/x-1.conda#abc\n'
-    )
+    writeRelocationLock(root, name)
   }
+
+  it('seeds the short operation cache from durable archives before an offline restore', async () => {
+    const root = makeRoot()
+    writeLock(root, DEFAULT_PY_ENV)
+    const shortCache = join(root, 'short-cache')
+    const deps = makeDeps(root, {
+      cache: { path: shortCache, lockKey: micromambaCacheLockKey(shortCache) },
+      runArgv: async (argv) => {
+        expect(existsSync(join(shortCache, RELOCATION_ARCHIVE))).toBe(true)
+        const prefix = argv[argv.findIndex((arg) => arg === '-p' || arg === '--prefix') + 1]
+        const bin = pythonBin(prefix)
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+      }
+    })
+
+    await new DefaultRuntimeProvisioner(deps).restoreRelocatedEnvs(() => {})
+
+    expect(existsSync(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))).toBe(true)
+  })
 
   it('clears a half-built (conda-meta, no interpreter) prefix before the offline recreate (3.2 parity)', async () => {
     // The create/materialize path removes a conda-meta-but-no-interpreter leftover; the restore path
@@ -1978,7 +2108,7 @@ describe('DefaultRuntimeProvisioner.restoreRelocatedEnvs', () => {
     // Kick off the restore, wait until its recreate holds the shared lock, then request the EXCLUSIVE.
     const restore = new DefaultRuntimeProvisioner(deps).restoreRelocatedEnvs(() => {})
     await held
-    const exclusive = withExclusiveCacheLock(selectMicromambaCache(root).lockKey, async () => {
+    const exclusive = withExclusiveCacheLock(deps.cache!.lockKey, async () => {
       order.push('repair')
     })
     await Promise.all([restore, exclusive])
@@ -2749,10 +2879,8 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
   it('restoreRelocatedEnvs skips a blocked prefix (leaves its lock) but restores the rest', async () => {
     const root = makeRoot()
     const dir = envsLockDir(root)
-    mkdirSync(dir, { recursive: true })
-    const lock = '@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/noarch/x-1.conda#abc\n'
-    writeFileSync(join(dir, `${DEFAULT_PY_ENV}.lock`), lock)
-    writeFileSync(join(dir, 'my-analysis.lock'), lock)
+    writeRelocationLock(root, DEFAULT_PY_ENV)
+    writeRelocationLock(root, 'my-analysis')
 
     const restored: string[] = []
     const deps = blocking(root, envPrefix(root, 'my-analysis'), {

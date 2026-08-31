@@ -19,6 +19,7 @@ import { runReview } from './orchestrator'
 import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { ReviewerAcpRuntime } from './acp-runtime'
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
@@ -34,6 +35,8 @@ import {
 import type { SessionAgentConfiguration } from '../../shared/settings'
 import type { ArtifactVersionContentResolver } from './host-sdk'
 import { toErrorMessage } from '../error-message'
+import type { ReviewerPagedContentResolver } from './host-sdk'
+import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 
 const log = createLogger('reviewer:ipc')
 
@@ -90,6 +93,23 @@ type ReviewerIpcOptions = {
   // Optional override for the data root (artifacts) (for testing).
   dataRoot?: string
   managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
+  artifactCatalog?: {
+    readHostArtifactCatalog(request: {
+      projectId: string
+      versionId: string
+      finalizedArtifactsOnly: true
+    }): Promise<
+      Array<{
+        source: 'artifact' | 'upload'
+        sourceFileId: string
+        sessionId: string
+        versionId: string
+      }>
+    >
+  }
+  artifactProvenanceRepository?: Pick<ArtifactProvenanceRepository, 'getReviewerVersionTrace'> &
+    Partial<Pick<ArtifactProvenanceRepository, 'resolveReviewerTurnFileEvidence'>>
+  pagedContentResolver?: ReviewerPagedContentResolver
   withSessionMutation?: <Result>(
     projectId: string,
     sessionId: string,
@@ -114,6 +134,7 @@ type ReviewerIpcOptions = {
     session: PersistedChatSession,
     configuration: SessionAgentConfiguration
   ) => Promise<PersistedChatSession>
+  recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
 }
 
 type ReviewerCommandOwner = Readonly<{
@@ -124,11 +145,31 @@ type ReviewerCommandOwner = Readonly<{
   abortFixLoop: (request: ReviewSessionRequest) => void
 }>
 
+type InFlightReviewStart = Readonly<{
+  promise: Promise<ReviewRunResult>
+  resolve: (result: ReviewRunResult) => void
+  reject: (error: unknown) => void
+}>
+
+const createInFlightReviewStart = (): InFlightReviewStart => {
+  let resolve!: (result: ReviewRunResult) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<ReviewRunResult>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  // The owning request also rethrows setup failures. Keep the shared outcome safe when no duplicate
+  // caller has joined it yet.
+  void promise.catch(() => undefined)
+  return { promise, resolve, reject }
+}
+
 // Owns reviewer arbitration and fix-loop cancellation independently from any command transport.
 // The triggerReview alias preserves the existing direct-call result returned by IPC registration.
 const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerCommandOwner => {
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
+  const artifactProvenanceRepository = options.artifactProvenanceRepository
   const reviewRepository = createDefaultReviewRepository(storageRoot, dataRoot)
   let recoveryGate: Promise<void> | undefined
   const ensureRecovery = (): Promise<void> => {
@@ -154,19 +195,41 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   const resolveArtifactVersion: ArtifactVersionContentResolver | undefined =
     options.managedFileVersions
       ? async (request) => {
+          const match = options.artifactCatalog
+            ? (
+                await options.artifactCatalog.readHostArtifactCatalog({
+                  projectId: request.projectId,
+                  versionId: request.versionId,
+                  finalizedArtifactsOnly: true
+                })
+              )[0]
+            : request.fileId && request.sessionId
+              ? {
+                  source: 'artifact' as const,
+                  sourceFileId: request.fileId,
+                  sessionId: request.sessionId,
+                  versionId: request.versionId
+                }
+              : undefined
+          if (!match) throw new Error(`Managed File Version not found: ${request.versionId}`)
           const lease = await options.managedFileVersions!.openVersion(
             {
-              source: 'artifact',
+              source: match.source,
               projectId: request.projectId,
-              fileId: request.fileId
+              fileId: match.sourceFileId
             },
             request.versionId
           )
-          if (lease.logicalFile.sessionId !== request.sessionId) {
+          if (
+            request.sessionId &&
+            match.source === 'artifact' &&
+            match.sessionId !== request.sessionId
+          ) {
             await lease.close()
             throw new Error('Artifact Version belongs to a different Session.')
           }
           return {
+            path: lease.path,
             filename: lease.version.filename,
             ...(lease.version.contentType ? { contentType: lease.version.contentType } : {}),
             checksum: lease.version.checksum,
@@ -189,8 +252,9 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
 
   // Guards against concurrent reviews of the same turn — e.g. a double-clicked "Re-run review" or two
   // stale cards fired at once. Project is part of the key because Session ids are not globally owned.
-  // The renderer also disables its button, but this is the authoritative guard.
-  const inFlightReviewKeys = new Set<string>()
+  // Duplicate callers share the authoritative start outcome so they cannot release their renderer gate
+  // before the owning run either broadcasts `running` or reports a pre-start failure.
+  const inFlightReviewStarts = new Map<string, InFlightReviewStart>()
 
   // Loads persisted reviews for a session at startup, flagging any whose
   // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
@@ -233,9 +297,9 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   }
 
   // Returns whether a review actually STARTED. The session is loaded up front (not in the background)
-  // so a load failure — or an already-in-flight run for this turn — is reported as started:false with
-  // NO Review row created. That lets a caller (e.g. the ReviewerCard "Re-run") release its pending
-  // state and leave the turn retriable, instead of us fabricating a non-retriable error review.
+  // so a load failure is reported as started:false with NO Review row created. That lets a caller
+  // (e.g. the ReviewerCard "Re-run") release its pending state and leave the turn retriable, instead
+  // of us fabricating a non-retriable error review.
   const triggerAdmittedReview = async (
     request: ReviewRunRequest,
     projectAdmission: ReviewerProjectAdmission
@@ -249,27 +313,32 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       mainSessionId,
       model: rendererModel
     } = request
+    // Reserve the turn SYNCHRONOUSLY (before any await) so a double-click / multiple stale cards can't
+    // both pass the guard before the key is set. A duplicate joins the owner's start verdict instead
+    // of reporting `already-in-flight`, which would release its renderer gate before `running` exists.
+    const inFlightKey = `${projectId}\0${sessionId}\0${turnMessageId}`
+    const existingStart = inFlightReviewStarts.get(inFlightKey)
+    if (existingStart) {
+      log.info('review joined: already in flight for this turn', { sessionId, turnMessageId })
+      return await existingStart.promise.then((result) => {
+        projectAdmission.release()
+        return result
+      })
+    }
+    const inFlightStart = createInFlightReviewStart()
+    inFlightReviewStarts.set(inFlightKey, inFlightStart)
     const finishBeforeBackground = (result: ReviewRunResult): ReviewRunResult => {
+      inFlightReviewStarts.delete(inFlightKey)
+      inFlightStart.resolve(result)
       projectAdmission.release()
       return result
     }
 
-    // Reserve the turn SYNCHRONOUSLY (before any await) so a double-click / multiple stale cards can't
-    // both pass the guard before the key is set. Released on the start-failure paths and, on success,
-    // in the background run's finally.
-    const inFlightKey = `${projectId}\0${sessionId}\0${turnMessageId}`
-    if (inFlightReviewKeys.has(inFlightKey)) {
-      log.info('review skipped: already in flight for this turn', { sessionId, turnMessageId })
-      // The turn IS being handled by the in-flight run — this is NOT a retry candidate. Retrying
-      // after the lock releases would launch a duplicate review (and possibly a second fix loop).
-      return finishBeforeBackground({ started: false, reason: 'already-in-flight' })
-    }
-    inFlightReviewKeys.add(inFlightKey)
-
     try {
       await ensureRecovery()
     } catch (error) {
-      inFlightReviewKeys.delete(inFlightKey)
+      inFlightReviewStarts.delete(inFlightKey)
+      inFlightStart.reject(error)
       throw error
     }
 
@@ -284,7 +353,6 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       try {
         const existing = await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
         if (existing.some((review) => review.turnMessageId === turnMessageId)) {
-          inFlightReviewKeys.delete(inFlightKey)
           log.info('auto review skipped: turn already has a review', { sessionId, turnMessageId })
           return finishBeforeBackground({ started: false, reason: 'already-reviewed' })
         }
@@ -293,7 +361,6 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         // proceeding could create a second review/fix-loop for a turn that already has one — exactly the
         // cross-entry duplicate this check exists to prevent. Release the lock and report a retryable
         // failure so the auto path re-runs the (now hopefully recovered) check instead of duplicating.
-        inFlightReviewKeys.delete(inFlightKey)
         log.warn('auto-review idempotency check failed; refusing to start (fail-closed)', {
           sessionId,
           turnMessageId,
@@ -317,7 +384,6 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     } catch (error) {
       // No Review row exists to update, so surface the failure only as started:false — the renderer
       // keeps the (stale) card and its Re-run affordance so the user can try again.
-      inFlightReviewKeys.delete(inFlightKey)
       log.error('review start failed: could not load session', {
         sessionId,
         turnMessageId,
@@ -333,7 +399,6 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     // the (stale) card the user was trying to re-run, and an earlier turn has no composer entry to
     // recover from — so the turn would be stuck. started:false keeps the existing card and its Re-run.
     if (!session) {
-      inFlightReviewKeys.delete(inFlightKey)
       log.warn('review start failed: session not found', { sessionId, turnMessageId })
       // The session may simply not be flushed to disk yet (async persistence queue) — a retry can
       // catch it once the write lands, so report the race-shaped reason rather than a hard failure.
@@ -354,7 +419,6 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         )
       }
     } catch (error) {
-      inFlightReviewKeys.delete(inFlightKey)
       log.error('review start failed: could not resolve Session agent target', {
         sessionId,
         turnMessageId,
@@ -376,7 +440,6 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
             release: async () => undefined
           }
     } catch (error) {
-      inFlightReviewKeys.delete(inFlightKey)
       log.error('review start failed: model admission failed', {
         sessionId,
         turnMessageId,
@@ -392,7 +455,6 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       // settles, so storage cutover cannot race that late sidecar write.
       releaseDataRootWriter = acquireDataRootWriter()
     } catch {
-      inFlightReviewKeys.delete(inFlightKey)
       await modelAdmission.release().catch((error: unknown) => {
         log.error('review start cleanup failed', {
           sessionId,
@@ -407,14 +469,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     // (runReview's onStarted). If runReview fails BEFORE that (scope resolution or the DB insert), it
     // settles without onStarted → started:false, so the caller (Re-run) stays retriable. The full
     // review (reviewer session + fix loop) continues in the background regardless.
-    return await new Promise<ReviewRunResult>((resolveStart) => {
-      let settled = false
-      const settle = (result: ReviewRunResult): void => {
-        if (settled) return
-        settled = true
-        resolveStart(result)
-      }
-
+    const startBackground = (): void => {
       const effectiveMainSessionId = mainSessionId ?? sessionId
       const effectiveMainSessionKey = `${projectId}\0${effectiveMainSessionId}`
       const activeControllers =
@@ -444,9 +499,24 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           : {}),
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
         artifactStorageRoot: dataRoot,
-        artifactVersionContentResolver: resolveArtifactVersion,
+        artifactVersionResolvers: {
+          ...(resolveArtifactVersion ? { content: resolveArtifactVersion } : {}),
+          ...(artifactProvenanceRepository
+            ? {
+                trace: (request: { projectId: string; versionId: string }) =>
+                  artifactProvenanceRepository.getReviewerVersionTrace(request)
+              }
+            : {}),
+          ...(options.pagedContentResolver ? { pagedContent: options.pagedContentResolver } : {})
+        },
+        ...(artifactProvenanceRepository?.resolveReviewerTurnFileEvidence
+          ? {
+              reviewerFileEvidenceResolver: (request) =>
+                artifactProvenanceRepository.resolveReviewerTurnFileEvidence!(request)
+            }
+          : {}),
         reviewerMcpEntryPath: options.mcpEntryPath,
-        onStarted: () => settle({ started: true }),
+        onStarted: () => inFlightStart.resolve({ started: true }),
         onReviewUpdate: (review: ReviewWithChecks) => {
           broadcastReviewUpdate({ review })
         },
@@ -473,7 +543,8 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           fixLoopAbortControllers.delete(effectiveMainSessionKey)
           broadcastFixLoopEnd(projectId, effectiveMainSessionId)
         },
-        fixLoopAbortSignal: projectAdmission.signal
+        fixLoopAbortSignal: projectAdmission.signal,
+        recordUsage: options.recordUsage
       })
         .catch((error: unknown) => {
           // runReview records expected failures as lifecycle='error' itself; an unexpected throw here
@@ -487,8 +558,8 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         .finally(async () => {
           // If the run ended without ever signalling onStarted, no review actually began — this is a
           // genuine pre-push failure (scope/insert), not a persistence race, so it is not auto-retried.
-          settle({ started: false, reason: 'run-failed' })
-          inFlightReviewKeys.delete(inFlightKey)
+          inFlightStart.resolve({ started: false, reason: 'run-failed' })
+          inFlightReviewStarts.delete(inFlightKey)
           activeControllers.delete(projectAdmission.abort)
           if (activeControllers.size === 0) {
             activeReviewAbortControllers.delete(effectiveMainSessionKey)
@@ -506,7 +577,11 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
             projectAdmission.release()
           }
         })
-    })
+    }
+
+    startBackground()
+
+    return await inFlightStart.promise
   }
 
   const triggerReview = (request: ReviewRunRequest): Promise<ReviewRunResult> => {

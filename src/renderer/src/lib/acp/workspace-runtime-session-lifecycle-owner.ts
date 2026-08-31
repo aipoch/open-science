@@ -1,8 +1,4 @@
-import type {
-  AcpCreateSessionResponse,
-  AcpRuntimeEvent,
-  AcpSessionAgentTarget
-} from '../../../../shared/acp'
+import type { AcpRuntimeEvent, AcpSessionAgentTarget } from '../../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
@@ -17,6 +13,10 @@ import {
   sendWorkspaceMessage,
   type SendWorkspaceMessageIntent
 } from './workspace-runtime-command-owner'
+import {
+  reconfigureWorkspaceMemory,
+  replaceWorkspaceProviderIdentity
+} from './workspace-runtime-session-memory-owner'
 
 type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 
@@ -70,28 +70,6 @@ const restoreRemovedTurnProjection = (sessionBeforeRemoval: ChatSession): void =
   }))
 }
 
-// A context reset replaces the provider session without changing the stable application session id.
-// Store the replacement identity immediately so cancellation or restart cannot revive the old owner.
-const replaceWorkspaceProviderIdentity = (
-  sessionId: string,
-  replacement: AcpCreateSessionResponse
-): void => {
-  useSessionStore.setState((state) => ({
-    sessions: state.sessions.map((session) =>
-      session.id === sessionId
-        ? {
-            ...session,
-            agentFrameworkId: replacement.frameworkId ?? session.agentFrameworkId,
-            agentBackendId: replacement.backendId ?? session.agentBackendId,
-            providerSessionId: replacement.providerSessionId,
-            providerContinuityToken: replacement.providerContinuityToken,
-            updatedAt: Date.now()
-          }
-        : session
-    )
-  }))
-}
-
 const ensureWorkspaceSessionReady = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
@@ -113,7 +91,8 @@ const ensureWorkspaceSessionReady = async (
     session.providerSessionId,
     session.providerContinuityToken,
     session.specialistBindingPending,
-    agentTarget
+    agentTarget,
+    session.memoryEnabled !== false
   )
   useSessionStore.getState().markResumed(
     session.id,
@@ -238,7 +217,8 @@ const resumeInterruptedWorkspaceSession = async (
       session.providerSessionId,
       session.providerContinuityToken,
       session.specialistBindingPending,
-      options?.agentTarget
+      options?.agentTarget,
+      session.memoryEnabled !== false
     )
     // Ownership transfer is complete in the coordinator, but accepted events from the previous
     // runtime generation can still be queued in the renderer. Drain them before starting the
@@ -401,7 +381,8 @@ const recoverContextOverflowWorkspaceSession = async (
         sessionId,
         resumeCwd,
         session.projectId,
-        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        session.memoryEnabled !== false
       )
       replaceWorkspaceProviderIdentity(sessionId, replacement)
       const remainingPromptInFlightSessionIds = runtime.state.promptInFlightSessionIds.filter(
@@ -455,10 +436,12 @@ const recoverContextOverflowWorkspaceSession = async (
   const retried = await sendWorkspaceMessage(retryRuntime, {
     sessionId,
     text: interruptedTurn.content,
+    annotations: interruptedTurn.annotations,
     attachments: (interruptedTurn.uploads ?? []).map((upload) =>
       toRuntimeUploadedAttachment(upload, session.projectId)
     ),
     parts: interruptedTurn.parts,
+    pdfContext: interruptedTurn.pdfContext,
     cwd: resumeCwd,
     projectId: session.projectId,
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
@@ -573,6 +556,7 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
     string,
     NonNullable<SendWorkspaceMessageIntent['planContinuation']>
   >()
+  const memoryReconfigurationTails = new Map<string, Promise<void>>()
   const admittedAgentTargetBySessionId = new Map<string, AcpSessionAgentTarget>()
   const pruneAdmittedAgentTargets = (): void => {
     const liveSessionIds = new Set(useSessionStore.getState().sessions.map((session) => session.id))
@@ -640,6 +624,32 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
       agentTarget?: AcpSessionAgentTarget
     ): Promise<void> {
       await ensureWorkspaceSessionReady(runtime, sessionId, agentTarget)
+    },
+    reconfigureMemory(
+      runtime: WorkspaceMessageRuntime,
+      sessionId: string,
+      enabled: boolean,
+      onPreparationStateChange?: (sessionId: string, inFlight: boolean) => void,
+      persistSession?: (sessionId: string) => Promise<void>
+    ): Promise<void> {
+      const run = (): Promise<void> =>
+        reconfigureWorkspaceMemory(
+          runtime,
+          sessionId,
+          enabled,
+          persistSession,
+          onPreparationStateChange
+        )
+      const previous = memoryReconfigurationTails.get(sessionId)
+      const operation = previous ? previous.catch(() => undefined).then(run) : run()
+      memoryReconfigurationTails.set(sessionId, operation)
+      const clear = (): void => {
+        if (memoryReconfigurationTails.get(sessionId) === operation) {
+          memoryReconfigurationTails.delete(sessionId)
+        }
+      }
+      void operation.then(clear, clear)
+      return operation
     },
     resume(
       runtime: WorkspaceMessageRuntime,

@@ -27,7 +27,7 @@ type PendingBroadScope = Readonly<{
   scope: BroadPermissionScope
 }>
 
-// A modal approval card for a pending compute call_command. The card cannot be dismissed without
+// A modal approval card for a pending compute operation. The card cannot be dismissed without
 // a decision — the call is held open in main until the user responds (or a 5-minute timeout fires).
 //
 // Four approval scopes; Broker persists Session/Project/Global and the compute adapter receives a
@@ -46,7 +46,7 @@ export function ComputeApprovalDialog({
   const { t } = useTranslation()
   const request = useComputeStore((state) =>
     state.pendingApprovals.find(
-      (candidate) => !candidate.session_id || !blockedSessionIds?.has(candidate.session_id)
+      (candidate) => !candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId)
     )
   )
   const respondApproval = useComputeStore((state) => state.respondApproval)
@@ -69,7 +69,7 @@ export function ComputeApprovalDialog({
   }
   const deny = (): void => submitResponse('deny')
   const approveOnce = (): void => submitResponse('once')
-  const approveSession = (): void => submitResponse('conversation')
+  const approveSession = (): void => submitResponse('session')
   const confirmBroadScope = (): void => {
     if (!pendingBroadScope) return
     const { requestId, scope } = pendingBroadScope
@@ -78,8 +78,33 @@ export function ComputeApprovalDialog({
     submitResponse(scope)
   }
 
-  const isLongCommand = dialogRequest.command_preview !== dialogRequest.command_full
+  const hasCommand = dialogRequest.operation !== 'download'
+  const isLongCommand = hasCommand && dialogRequest.commandPreview !== dialogRequest.commandFull
   const showFull = expandedRequestId === dialogRequest.id
+  const title =
+    dialogRequest.operation === 'download'
+      ? t('Allow remote file download?')
+      : dialogRequest.operation === 'submit_job'
+        ? t('Allow remote job submission?')
+        : t('Allow remote command?')
+  const description =
+    dialogRequest.operation === 'download'
+      ? t(
+          "The remote file will be copied into this Session's local cache. Approve only if you trust the source and path."
+        )
+      : dialogRequest.operation === 'submit_job'
+        ? t(
+            'This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.'
+          )
+        : t(
+            'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.'
+          )
+  const broadScopeSubject =
+    dialogRequest.operation === 'download'
+      ? t('remote file downloads from {{host}}', { host: dialogRequest.providerName })
+      : dialogRequest.operation === 'submit_job'
+        ? t('remote job submissions on {{host}}', { host: dialogRequest.providerName })
+        : t('remote commands on {{host}}', { host: dialogRequest.providerName })
 
   return (
     <Dialog.Root open={active && Boolean(request)}>
@@ -96,15 +121,11 @@ export function ComputeApprovalDialog({
           <div className={cn(dialogHeaderClassName, 'items-start justify-start')}>
             <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
             <div className="min-w-0">
-              <Dialog.Title className={dialogTitleClassName}>
-                {t('Allow remote command?')}
-              </Dialog.Title>
+              <Dialog.Title className={dialogTitleClassName}>{title}</Dialog.Title>
               <Dialog.Description
                 className={cn(dialogDescriptionClassName, 'text-xs [text-wrap:pretty]')}
               >
-                {t(
-                  'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.'
-                )}
+                {description}
               </Dialog.Description>
             </div>
           </div>
@@ -114,51 +135,89 @@ export function ComputeApprovalDialog({
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Host')}</span>
                 <span className="min-w-0 truncate font-medium text-foreground">
-                  {dialogRequest.provider_name}
+                  {dialogRequest.providerName}
                 </span>
               </div>
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Intent')}</span>
                 <span className="min-w-0 break-words text-foreground">{dialogRequest.intent}</span>
               </div>
-              <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">{t('Command')}</span>
-                <div className="min-w-0 flex-1">
-                  <span className="break-all font-mono text-muted-foreground">
-                    {showFull ? dialogRequest.command_full : dialogRequest.command_preview}
-                  </span>
-                  {isLongCommand && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpandedRequestId((id) =>
-                          id === dialogRequest.id ? null : dialogRequest.id
-                        )
-                      }
-                      className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
-                      aria-expanded={showFull}
-                    >
-                      {showFull ? (
-                        <>
-                          <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="size-3" aria-hidden="true" />{' '}
-                          {t('Show full command')}
-                        </>
-                      )}
-                    </button>
-                  )}
-                </div>
-              </div>
-              {dialogRequest.inputs_summary && (
+              {hasCommand ? (
                 <div className="flex gap-2">
-                  <span className="w-16 shrink-0 text-muted-foreground">{t('Inputs')}</span>
-                  <span className="min-w-0 break-words text-foreground">
-                    {dialogRequest.inputs_summary}
+                  <span className="w-20 shrink-0 text-muted-foreground">{t('Command')}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="break-all font-mono text-muted-foreground">
+                      {showFull ? dialogRequest.commandFull : dialogRequest.commandPreview}
+                    </span>
+                    {isLongCommand && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedRequestId((id) =>
+                            id === dialogRequest.id ? null : dialogRequest.id
+                          )
+                        }
+                        className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
+                        aria-expanded={showFull}
+                      >
+                        {showFull ? (
+                          <>
+                            <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="size-3" aria-hidden="true" />{' '}
+                            {t('Show full command')}
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <span className="w-20 shrink-0 text-muted-foreground">{t('Remote path')}</span>
+                  <span className="min-w-0 break-all font-mono text-muted-foreground">
+                    {dialogRequest.remotePath}
                   </span>
                 </div>
+              )}
+              {dialogRequest.operation === 'submit_job' && dialogRequest.inputsSummary && (
+                <div className="flex gap-2">
+                  <span className="w-20 shrink-0 text-muted-foreground">{t('Inputs')}</span>
+                  <span className="min-w-0 break-words text-foreground">
+                    {dialogRequest.inputsSummary}
+                  </span>
+                </div>
+              )}
+              {dialogRequest.operation === 'submit_job' && dialogRequest.resources && (
+                <div className="flex gap-2">
+                  <span className="w-20 shrink-0 text-muted-foreground">{t('Resources')}</span>
+                  <span className="min-w-0 break-all font-mono text-muted-foreground">
+                    {dialogRequest.resources}
+                  </span>
+                </div>
+              )}
+              {dialogRequest.operation === 'submit_job' && (
+                <>
+                  <div className="flex gap-2">
+                    <span className="w-20 shrink-0 text-muted-foreground">{t('Timeout')}</span>
+                    <span className="min-w-0 text-foreground">
+                      {t('{{count}} seconds', {
+                        count: dialogRequest.timeoutSeconds,
+                        defaultValue_one: '{{count}} second'
+                      })}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="w-20 shrink-0 text-muted-foreground">
+                      {t('Remote workdir')}
+                    </span>
+                    <span className="min-w-0 break-all font-mono text-muted-foreground">
+                      {dialogRequest.remoteWorkdir}
+                    </span>
+                  </div>
+                </>
               )}
             </div>
             {dialogRequest.willPersistUnencrypted ? (
@@ -220,10 +279,8 @@ export function ComputeApprovalDialog({
           active && pendingBroadScope && request?.id === pendingBroadScope.requestId
             ? {
                 scope: pendingBroadScope.scope,
-                subject: t('remote commands on {{host}}', {
-                  host: dialogRequest.provider_name
-                }),
-                codeExecution: true
+                subject: broadScopeSubject,
+                codeExecution: dialogRequest.operation !== 'download'
               }
             : undefined
         }

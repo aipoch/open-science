@@ -15,12 +15,12 @@ import {
   type KernelLoopResponse
 } from '../notebook/kernel-protocol'
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
-import { createProfileService } from '../specialist/service'
+import { createSpecialistService } from '../specialist/service'
 import type { StoredConnectors } from '../settings/types'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/agents/agents-repl.mutations.integration.test.ts
 // Exercises the real resources/notebook/repl_loop.js against a real NotebookLocalRpcServer wired
-// to a real AgentsService + ProfileService, covering the host.agents ordinary-mutation slice:
+// to a real AgentsService + SpecialistService, covering the host.agents ordinary-mutation slice:
 // create, representative exact update, representative attach/detach, stale revision, stable catalog
 // resolution, read-back, and the absence of additional permission requests on ordinary mutations.
 const gate = process.env.RUN_KERNEL ? describe : describe.skip
@@ -113,8 +113,8 @@ gate('host.agents repl mutation integration', () => {
   beforeAll(async () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-mut-profile-'))
     runtimeStorage = await mkdtemp(join(tmpdir(), 'os-agents-mut-runtime-'))
-    const profileService = createProfileService(profileStorage)
-    const agentsService = new AgentsService({ profileService, catalog: stubCatalog })
+    const specialistService = createSpecialistService(profileStorage)
+    const agentsService = new AgentsService({ specialistService, catalog: stubCatalog })
     const notebookService = new NotebookRuntimeService({
       configRoot: runtimeStorage,
       dataRoot: runtimeStorage,

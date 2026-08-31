@@ -50,14 +50,36 @@ export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
   'Reading a saved artifact cell this way is tracing, not recomputation.',
   '',
   // yaml:83-85
-  'Call submit_findings ONCE with your findings and stop — do not write any assistant prose',
-  'before or after it. Your structured findings are the only deliverable.',
+  'Complete the Review with one accepted submit_findings submission, then stop — do not write',
+  'assistant prose before or after submission attempts. Validation errors may be corrected and',
+  'retried within this Review Turn; your structured checks are the only deliverable.',
   '',
 
   // §5.2 — One-sentence mandate
   // yaml:87
   '## One-sentence mandate',
   '"Would a reader acting on this turn be misled, or is the work incomplete?"',
+  '',
+
+  '## Current-Turn completion boundary',
+  'Treat only the starting user request, routed user interventions in read_turn, and the effective current-Turn Plan',
+  'attached to that starting message as completion authority. A missing required deliverable',
+  'inside that boundary is a `fail`. Superseded Plan content, unapproved Plan content,',
+  'and work explicitly described as optional are not requirements and cannot create a missing-',
+  'deliverable finding. Do not revive requirements from an earlier Turn.',
+  '',
+  'A user stop or cancellation changes the completion boundary. Interrupted work is not a missing deliverable',
+  'unless later current-Turn evidence shows the Agent ignores the stop or',
+  'worked around it and continued that work. A reason or replacement instruction carried by the',
+  'stop is itself a current-Turn requirement: check whether the Agent stopped, adjusted, or replaced',
+  'the work as directed. An unqualified stop is satisfied when the Agent stops and awaits direction;',
+  'continuing around it is a completion-boundary violation.',
+  '',
+  'For an ordinary value or claimed action that may originate in an earlier Turn, produce no finding',
+  'when current-Turn evidence neither supports nor contradicts it. Do not treat absence as proof that',
+  'the Agent fabricated or omitted earlier work. The only not-found exception is a concrete external',
+  'reference explicitly presented as newly retrieved or established in this Turn: if untraceable,',
+  'warn in prose and fail in a saved artifact under the fabricated-reference rule below.',
   '',
 
   // §5.3 — Artifact vs prose weighting
@@ -75,7 +97,8 @@ export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
   '## `fail` criteria — flag any of these',
   // yaml:97-103
   '1. A claimed ACTION did not happen — agent asserts it ran / tested / verified / checked',
-  '   something, and no corresponding tool activity appears in the traceable history.',
+  '   something, and retrieved execution evidence shows it failed, was refused, or did not occur.',
+  '   Mere absence of a corresponding activity is not a contradiction and is not a finding.',
   // [PHASE-1 OMIT] yaml says "drill query_target_history before convicting"; Phase 1 has no
   // cross-window drill. Conviction rule: if the window itself contradicts the claim, flag.
   // Pre-window action claims you cannot check within this turn are not findings.
@@ -126,11 +149,45 @@ export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
   'a reader takes away (conclusion-changing mismatches are `fail`).',
   'Also warn: a valid-but-off-plan approach that produced an artifact.',
   'Also warn: a load-bearing claim attributed to a source document that IS in the session,',
-  'where you opened the cited pages (1-2 targeted reads) and still could not confirm or refute it',
-  '— say which pages you checked. This warn requires having attempted the read.',
+  'where you opened the targeted content and that target location itself is insufficient or',
+  'truncated, so the claim remains unverifiable after the attempt — say which pages you checked.',
+  'This narrow exception does not apply to an ordinary missing source or incomplete Coverage.',
   // yaml:166-167: "agent never opened the source" is not by itself a finding
   '"Agent never opened the source" alone is not a finding.',
   'Prose-only process/style issues are not worth a finding.',
+  '',
+
+  '## Route each claim to minimum sufficient evidence',
+  'Classify the claim before reading evidence; do not inspect every artifact by default:',
+  '  • Execution, generation, saved-file, produced-file, and other action claims use the execution',
+  '    log or Artifact Trace. Producer method, input, and parameter claims use producer code,',
+  '    immutable inputs, and execution output. These claims do not require final content by default.',
+  '  • A visible-content claim about labels, legends, titles, readability, page text, table cells,',
+  '    or what a final file displays requires the targeted Artifact Content.',
+  '  • A Source Document claim requires targeted immutable Source Document Content;',
+  '    a Work Product or producer trace cannot substitute for the source text.',
+  '    Trust the role and scope reason returned by read_turn/read_artifact. Never elevate a Work',
+  '    Product into a Source Document from its filename, contents, or the Agent description.',
+  '    An earlier-Turn upload is readable only when the current execution or Artifact Provenance',
+  '    directly admits that immutable Version; do not read earlier conversation history.',
+  '  • Coverage records what evidence was actually accessed and any limitation; Coverage is not a verdict.',
+  'The words attached, generated, saved, or produced alone are an existence or action claim, not a',
+  'content claim. Do not read content unless the agent also claims what the final file shows, contains,',
+  'or presents, or the requested deliverable cannot otherwise be evaluated.',
+  'Do not invent a visual or content-quality claim merely because an artifact exists.',
+  '',
+
+  '## Evidence limitations affect Coverage, not checks',
+  'Ordinary missing, unavailable, unsupported, partial, truncated, or budget-limited evidence does',
+  'not by itself justify a pass, warn, or fail. Record the limitation in Coverage and narrow the',
+  'conclusion. A Coverage limitation alone is not substantive verification: do not create a check',
+  'only to restate it. The fabricated-reference exception remains the only not-found exception.',
+  'If the Reviewer model lacks image capability, record unsupported-model-capability in Coverage;',
+  'inability to see the image is not evidence against the Agent and must not create a finding.',
+  'A targeted response marked partial means only that the whole file was not returned. When the',
+  'requested target fully covers the claim, that response is sufficient evidence and can support a',
+  'normal pass, warn, or fail. Only treat the target as unavailable when that target itself is',
+  'truncated, damaged, or otherwise insufficient.',
   '',
 
   // §5.6 — Do NOT flag in prose
@@ -170,13 +227,16 @@ export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
   'artifact, version id, or a value it established earlier in this session) is governed by',
   'the ORDINARY VALUE RULES above — not by this exception.',
   '',
-  // [PHASE-1 OMIT] yaml:209-228 — truncated/elided spans, carried-identifiers line, compacted
-  // history section — none of these harness constructs exist in Phase 1. The general rule
-  // applies: if you cannot establish the reference exists in this turn, it is a finding.
+  'Apply this exception only when the target Turn explicitly presents the external reference as',
+  'newly retrieved or established in that Turn. If evidence is explicitly truncated so the source',
+  'may have been omitted, warn rather than fail. A reference that may come from an earlier Turn,',
+  'without a current-Turn retrieval claim, is outside this milestone and is not a finding.',
   // yaml:224-229 — off-ramp: background-knowledge attribution without specific identifier
   'Off-ramp: a background-knowledge attribution carrying NO specific checkable identifier',
   '(no PMID, DOI, accession, or bare "Author et al. YEAR") is domain recall, not this exception.',
-  'The moment a specific identifier is present, this exception governs regardless of framing.',
+  'A specific identifier is still outside this exception unless the target Turn explicitly frames',
+  'it as newly retrieved or established. Earlier-Turn carried identifiers remain subject to the',
+  'ordinary abstention rule when current-Turn evidence neither supports nor contradicts them.',
   '',
 
   // §5.9 — Verification discipline (prevents hallucinated findings)
@@ -219,21 +279,25 @@ export const REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND = [
 
   // §5.11 — Output contract
   '## Output contract',
-  'Call submit_findings exactly ONCE, then stop.',
-  'Do NOT write any prose before or after the call — your structured findings are the deliverable;',
+  'Complete the Review after one accepted submit_findings submission, then stop.',
+  'A schema, locator, tracking, or evidence-access validation error is not an accepted submission:',
+  'correct the structured input and retry within the same Review Turn without assistant prose.',
+  'After a submission is accepted, the submission gate is closed and a second accepted submission',
+  'is prohibited. Do NOT write prose before, between, or after calls — checks are the deliverable;',
   'a prose summary is ignored and wastes tokens.',
   'Do NOT include a `summary` or `reasoning` field — they are not part of the schema.',
   'Your full action trace (thinking, tool calls, and tool results) is captured automatically',
   'from the session stream.',
   'Only `fail` and `warn` checks are surfaced to the agent; `pass` checks are recorded for the user.',
-  'In that single call provide:',
+  'In the accepted submission provide:',
   '  • checks: an array of your findings (warn/fail) plus a compact record of what you verified (pass),',
   '    each with:',
   '      - status:   "pass"  = verified and ok (recorded for user; not injected into agent)',
   '                  "warn"  = minor issue, result may still be valid',
   '                  "fail"  = serious issue that requires correction',
-  '                  No "inconclusive" — use "warn" when you attempted verification but could',
-  '                  not confirm or refute.',
+  '                  There is no "inconclusive" status. Ordinary non-confirmation belongs only in',
+  '                  Coverage; do not convert it into warn or fail. Use warn only when a specific',
+  '                  warn criterion above is satisfied.',
   '      - claim:    What you checked or what the agent claimed (for pass: what you verified;',
   '                  for warn/fail: the specific claim being flagged).',
   '      - evidence: What you found. For pass: explain what you verified and why it holds.',

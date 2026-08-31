@@ -7,6 +7,8 @@ import type { AgentFrameworkView, ProviderView } from '../../../../shared/settin
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { ActiveModelSelect } from './ActiveModelSelect'
 
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 // Radix Select calls pointer-capture and scroll APIs jsdom does not implement.
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -15,6 +17,19 @@ if (!Element.prototype.hasPointerCapture) {
 }
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = (): void => undefined
+}
+if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+    observe(): void {
+      /* no-op shim for Radix layout measurement in jsdom */
+    }
+    unobserve(): void {
+      /* no-op */
+    }
+    disconnect(): void {
+      /* no-op */
+    }
+  }
 }
 
 let container: HTMLDivElement
@@ -191,6 +206,48 @@ describe('ActiveModelSelect', () => {
     expect(document.body.textContent).not.toContain('not usable with this framework')
     const option = optionByText('ds-1')
     expect(option?.getAttribute('data-disabled')).toBeNull()
+  })
+
+  it('explains a model-specific endpoint mismatch on hover', async () => {
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: FRAMEWORKS,
+      providers: [
+        provider({
+          id: 'mixed',
+          type: 'official',
+          vendorId: 'opencode',
+          name: 'Mixed catalog',
+          apiEndpoints: ['openai'],
+          models: ['kimi-k2.7-code', 'gpt-5.6-sol']
+        })
+      ],
+      setActiveProvider
+    })
+    render()
+
+    openSelect()
+
+    expect(optionByText('kimi-k2.7-code')?.getAttribute('data-disabled')).toBeNull()
+    const unavailableOption = optionByText('gpt-5.6-sol')
+    expect(unavailableOption?.getAttribute('aria-disabled')).toBe('true')
+
+    const reason = unavailableOption?.getAttribute('aria-label')
+    expect(reason).toContain('gpt-5.6-sol')
+    expect(reason).toContain('/v1/responses')
+    expect(reason).toContain('OpenCode')
+    expect(reason).toContain('/v1/chat/completions')
+
+    await act(async () => {
+      unavailableOption?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    })
+
+    expect(document.body.querySelector('[data-slot="tooltip-content"]')?.textContent).toContain(
+      reason
+    )
+    expect(setActiveProvider).not.toHaveBeenCalled()
   })
 
   it('keeps every Chat provider model selectable under Codex (bridge support is static)', () => {

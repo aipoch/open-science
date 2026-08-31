@@ -2,6 +2,7 @@
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (40–41) · pre-emit critique: P5 H5 E5 S5 R5 V4
  */
+import { FocusScope } from '@radix-ui/react-focus-scope'
 import { Bell, CheckCheck, X } from 'lucide-react'
 import {
   type CSSProperties,
@@ -89,7 +90,10 @@ const clamp = (value: number, minimum: number, maximum: number): number =>
 
 const replayPendingApproval = async (item: NotificationInboxItem): Promise<boolean> => {
   if (item.actionState !== 'pending') return false
-  if (item.source === 'connector') {
+  if (
+    item.source === 'connector' &&
+    (item.attentionReason === undefined || item.attentionReason === 'waiting-permission')
+  ) {
     const request = await window.api.settings.replayConnectorApproval(item.originId)
     if (!request) return false
     useSettingsStore.getState().enqueueApproval(request)
@@ -131,6 +135,8 @@ const NotificationBellContent = ({
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const mobileWasOpenRef = useRef(false)
+  const previousIsMobileRef = useRef(isMobile)
   const [position, setPosition] = useState<CSSProperties>({
     left: VIEWPORT_MARGIN,
     top: VIEWPORT_MARGIN
@@ -205,18 +211,64 @@ const NotificationBellContent = ({
 
   useLayoutEffect(() => {
     if (!open) return
-    if (isMobile) panelRef.current?.focus()
-    else updatePanelPosition()
+    if (!isMobile) updatePanelPosition()
   }, [isMobile, open, updatePanelPosition])
+
+  useEffect(() => {
+    const becameMobile = isMobile && !previousIsMobileRef.current
+    previousIsMobileRef.current = isMobile
+    if (open && becameMobile) panelRef.current?.focus()
+  }, [isMobile, open])
 
   useEffect(() => {
     if (!open || !isMobile) return
     const previousOverflow = document.body.style.overflow
+    const appRoot = document.getElementById('root')
+    const previousAriaHidden = appRoot?.getAttribute('aria-hidden') ?? null
+    const previousInert = appRoot?.inert ?? false
     document.body.style.overflow = 'hidden'
+    if (appRoot) {
+      appRoot.inert = true
+      appRoot.setAttribute('aria-hidden', 'true')
+    }
     return () => {
       document.body.style.overflow = previousOverflow
+      if (!appRoot) return
+      appRoot.inert = previousInert
+      if (previousAriaHidden === null) appRoot.removeAttribute('aria-hidden')
+      else appRoot.setAttribute('aria-hidden', previousAriaHidden)
     }
   }, [isMobile, open])
+
+  const restoreMobileFocus = useCallback((): void => {
+    const activeElement = document.activeElement
+    if (
+      activeElement instanceof HTMLElement &&
+      activeElement !== document.body &&
+      document.contains(activeElement)
+    ) {
+      return
+    }
+
+    const trigger = triggerRef.current
+    const returnFocusTarget =
+      trigger?.isConnected && !trigger.closest('[inert], [aria-hidden="true"]')
+        ? trigger
+        : Array.from(
+            document.querySelectorAll<HTMLElement>('[data-notification-bell-trigger="true"]')
+          ).find(isVisibleNotificationBell)
+    returnFocusTarget?.focus()
+  }, [])
+
+  useEffect(() => {
+    if (open && isMobile) {
+      mobileWasOpenRef.current = true
+      return
+    }
+    if (open || !mobileWasOpenRef.current) return
+    mobileWasOpenRef.current = false
+    restoreMobileFocus()
+  }, [isMobile, open, restoreMobileFocus])
 
   useEffect(() => {
     const openFromLiveToast = (event: Event): void => {
@@ -329,7 +381,7 @@ const NotificationBellContent = ({
                   className="fixed inset-0 z-[80] bg-black/45 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200 active:bg-black/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:animate-none"
                 />
               ) : null}
-              <div
+              <FocusScope
                 ref={panelRef}
                 id={panelId}
                 role="dialog"
@@ -343,6 +395,15 @@ const NotificationBellContent = ({
                     ? 'inset-x-0 bottom-0 z-[90] flex h-[min(82dvh,760px)] w-full max-w-full flex-col rounded-t-2xl border-b-0 pb-[env(safe-area-inset-bottom)] shadow-dialog motion-safe:animate-in motion-safe:slide-in-from-bottom motion-safe:duration-200 motion-reduce:animate-none'
                     : 'z-modal rounded-xl shadow-menu'
                 )}
+                loop={isMobile}
+                trapped={isMobile}
+                onMountAutoFocus={(event) => {
+                  if (!isMobile) event.preventDefault()
+                }}
+                onUnmountAutoFocus={(event) => {
+                  event.preventDefault()
+                  if (mobileWasOpenRef.current) restoreMobileFocus()
+                }}
               >
                 <div
                   className={cn(
@@ -361,10 +422,7 @@ const NotificationBellContent = ({
                       <button
                         type="button"
                         aria-label={t('Close messages')}
-                        onClick={() => {
-                          setOpen(false)
-                          triggerRef.current?.focus()
-                        }}
+                        onClick={() => setOpen(false)}
                         className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000"
                       >
                         <X className="size-5" strokeWidth={2} aria-hidden="true" />
@@ -524,7 +582,7 @@ const NotificationBellContent = ({
                     ))
                   )}
                 </div>
-              </div>
+              </FocusScope>
             </>,
             document.body
           )

@@ -24,7 +24,7 @@ import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import {
   emptyFullAccessConfig,
   emptySelectedConfig,
-  type SpecialistProfileView
+  type SpecialistView
 } from '../../shared/specialist'
 
 class FakeAgentProcess extends EventEmitter {
@@ -50,7 +50,7 @@ const profile = (
   name: string,
   skills: string[],
   connectors: string[]
-): SpecialistProfileView => ({
+): SpecialistView => ({
   id,
   name,
   displayName: name,
@@ -122,7 +122,7 @@ describe('Codex approved handoff', () => {
       ['approved-skill'],
       ['molecule']
     )
-    const resolveSpecialist = (specialistId: string): SpecialistProfileView =>
+    const resolveSpecialist = (specialistId: string): SpecialistView =>
       specialistId === approvedSpecialist.id ? approvedSpecialist : oldSpecialist
     let approvedBinding = oldSpecialist.id
     const notebookPromptMessageIds: string[] = []
@@ -212,10 +212,12 @@ describe('Codex approved handoff', () => {
               notebookRpcServer.releaseSessionCapabilities(sessionId),
             registerSessionSpecialist: (sessionId, specialistId) =>
               notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
-            setArtifactProvenanceContext: (sessionId, context) => {
-              notebookRpcServer.setArtifactProvenanceContext(sessionId, context)
-              if (context) notebookPromptMessageIds.push(context.promptMessageId)
-            }
+            setArtifactTurnBinding: (sessionId, binding) => {
+              notebookRpcServer.setArtifactTurnBinding(sessionId, binding)
+              notebookPromptMessageIds.push(binding.provenanceContext.promptMessageId)
+            },
+            clearArtifactTurnBinding: (sessionId, ownerExecutionId) =>
+              notebookRpcServer.clearArtifactTurnBinding(sessionId, ownerExecutionId)
           },
           resolveSpecialistIdentity: async (specialistId) => {
             const selected = resolveSpecialist(specialistId)

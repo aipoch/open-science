@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
+import type { ArtifactReference } from '../../../../../shared/artifacts'
 
 import {
   appendArtifactMention,
@@ -12,6 +13,7 @@ import {
   docSessionCount,
   docToArtifactRefs,
   docToMessageParts,
+  docToPdfContextSources,
   docToSkillIds,
   docToText,
   domToDoc,
@@ -261,6 +263,47 @@ describe('docToArtifactRefs', () => {
         relativePath: 'data/study.csv',
         mimeType: 'text/csv'
       }
+    ])
+  })
+})
+
+describe('docToPdfContextSources', () => {
+  it('collects only immutable PDF mentions, de-duplicated and capped at three', () => {
+    const pdf = (
+      id: string,
+      source: 'artifact' | 'upload' = 'artifact'
+    ): ArtifactReference & { type: 'artifact' } => ({
+      type: 'artifact' as const,
+      id,
+      name: `${id}.pdf`,
+      path: `/${id}.pdf`,
+      source,
+      mimeType: 'application/pdf; charset=binary',
+      versionId: `version-${id}`
+    })
+    expect(
+      docToPdfContextSources({
+        nodes: [
+          pdf('one'),
+          pdf('two', 'upload'),
+          { ...pdf('one'), id: 'duplicate', path: '/duplicate.pdf' },
+          {
+            type: 'artifact',
+            id: 'notes',
+            name: 'notes.txt',
+            path: '/notes.txt',
+            source: 'upload',
+            mimeType: 'text/plain',
+            versionId: 'version-notes'
+          },
+          pdf('three'),
+          pdf('four')
+        ]
+      })
+    ).toEqual([
+      { sourceKind: 'artifact-version', sourceVersionId: 'version-one' },
+      { sourceKind: 'upload-version', sourceVersionId: 'version-two' },
+      { sourceKind: 'artifact-version', sourceVersionId: 'version-three' }
     ])
   })
 })

@@ -25,6 +25,7 @@ export const downloadInstaller = async (
   resilientDownload(download.url, targetPath, {
     expectedSha256: download.sha256,
     expectedSize: download.size > 0 ? download.size : undefined,
+    expectedOrigin: new URL(download.url).origin,
     signal: deps.signal,
     onProgress: deps.onProgress,
     deps: { fetchImpl: deps.fetchImpl ?? netFetchStandard }

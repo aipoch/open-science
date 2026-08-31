@@ -44,9 +44,9 @@ const HostCard = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const probed = host.probeResult
-  const status: 'connected' | 'failed' | 'none' = probed
+  const status: 'last_probe_ok' | 'failed' | 'none' = probed
     ? probed.ok
-      ? 'connected'
+      ? 'last_probe_ok'
       : 'failed'
     : 'none'
   const probedAgo = probedLabel(host)
@@ -59,7 +59,7 @@ const HostCard = ({
       <div
         className={cn(
           'flex size-9 shrink-0 items-center justify-center rounded-lg',
-          status === 'connected'
+          status === 'last_probe_ok'
             ? 'bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground'
             : status === 'failed'
               ? 'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground'
@@ -87,7 +87,6 @@ const HostCard = ({
       </button>
 
       <TooltipProvider delayDuration={200}>
-        {/* File browser: enabled when host has been probed and is reachable. */}
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex">
@@ -95,36 +94,22 @@ const HostCard = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                disabled={status !== 'connected'}
                 onClick={onBrowse}
-                aria-label={
-                  status === 'connected'
-                    ? t('Browse files on {{name}}', { name: host.displayName })
-                    : t('Host must be probed and reachable to browse files')
-                }
-                className={cn(
-                  'shrink-0',
-                  status === 'connected'
-                    ? 'text-muted-foreground hover:text-foreground'
-                    : 'text-muted-foreground/50'
-                )}
+                aria-label={t('Browse files on {{name}}', { name: host.displayName })}
+                className="shrink-0 text-muted-foreground hover:text-foreground"
               >
                 <Folder className="size-4" aria-hidden="true" />
               </Button>
             </span>
           </TooltipTrigger>
-          <TooltipContent>
-            {status === 'connected'
-              ? t('Browse files')
-              : t('Probe the host first to enable browsing')}
-          </TooltipContent>
+          <TooltipContent>{t('Browse files')}</TooltipContent>
         </Tooltip>
         <ComputeHostRemovalDialog host={host} onRemoved={onRemoved} />
       </TooltipProvider>
 
-      {status === 'connected' ? (
+      {status === 'last_probe_ok' ? (
         <Badge className="shrink-0 bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground">
-          {t('Connected')}
+          {t('Last probe succeeded')}
         </Badge>
       ) : status === 'failed' ? (
         <Badge className="shrink-0 bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground">

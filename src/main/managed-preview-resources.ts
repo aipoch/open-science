@@ -3,6 +3,7 @@ import type { BigIntStats } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 
+import { FileObservationMismatchError, type FileObservation } from './bounded-file-io'
 import type { OfficePreviewAdmissionError } from '../shared/office-preview'
 import type {
   AcquireManagedPreviewRequest,
@@ -95,6 +96,7 @@ type ResourceEntry = ManagedPreviewResource & {
     mtimeNs: bigint
     maxBytes: number
   }
+  strictObservation?: FileObservation & { maxBytes: number }
 }
 
 type PreviewProtocolFileHandle = RangeReader & { close: () => Promise<void> }
@@ -269,6 +271,57 @@ class ManagedPreviewResources {
     }
   }
 
+  // This main-process-only seam accepts a path already resolved and scope-checked by Reviewer.
+  async acquireResolvedFile(
+    ownerId: number,
+    request: {
+      path: string
+      mimeType?: string
+      verifiedObservation: FileObservation
+      verifiedChecksum: string
+    },
+    maxBytes: number
+  ): Promise<ManagedPreviewResource> {
+    const observedStat = await stat(request.path)
+    const expected = request.verifiedObservation
+    if (
+      observedStat.dev !== expected.device ||
+      observedStat.ino !== expected.inode ||
+      observedStat.size !== expected.sizeBytes ||
+      observedStat.mtimeMs !== expected.modifiedAtMs ||
+      observedStat.ctimeMs !== expected.changedAtMs
+    ) {
+      throw new FileObservationMismatchError(
+        `Verified Reviewer artifact changed before preview admission (${request.verifiedChecksum}).`
+      )
+    }
+    if (!observedStat.isFile()) throw new Error('Managed preview path is not a file.')
+    if (expected.sizeBytes > maxBytes) {
+      const error: OfficePreviewAdmissionError = Object.assign(
+        new Error('Managed preview file is too large.'),
+        { code: 'FILE_TOO_LARGE' as const, size: expected.sizeBytes, limit: maxBytes }
+      )
+      throw error
+    }
+
+    const id = this.createId()
+    const resource: ManagedPreviewResource = {
+      id,
+      url: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(basename(request.path))}`,
+      size: expected.sizeBytes,
+      mimeType: inferMimeType(request.path, request.mimeType),
+      version: expected.modifiedAtMs
+    }
+    this.releasedOwners.delete(id)
+    this.resources.set(id, {
+      ...resource,
+      ownerId,
+      filePath: request.path,
+      strictObservation: { ...expected, maxBytes }
+    })
+    return resource
+  }
+
   async readRange(
     ownerId: number,
     request: ReadManagedPreviewRangeRequest
@@ -353,7 +406,7 @@ class ManagedPreviewResources {
       }
     }
 
-    if (!resource.strictSnapshot) {
+    if (!resource.strictSnapshot && !resource.strictObservation) {
       return { filePath: resource.filePath, mimeType: resource.mimeType }
     }
 
@@ -361,14 +414,57 @@ class ManagedPreviewResources {
     // admitted inode while the protocol caps the response to the approved byte count.
     const fileHandle = await open(resource.filePath, 'r')
     try {
+      const observation = resource.strictObservation
+      if (observation) {
+        const fileStat = await fileHandle.stat()
+        if (
+          !fileStat.isFile() ||
+          fileStat.dev !== observation.device ||
+          fileStat.ino !== observation.inode ||
+          fileStat.size !== observation.sizeBytes ||
+          fileStat.size > observation.maxBytes ||
+          fileStat.mtimeMs !== observation.modifiedAtMs ||
+          fileStat.ctimeMs !== observation.changedAtMs
+        ) {
+          this.revokeResource(resourceId, resource.ownerId)
+          throw new FileObservationMismatchError(
+            'Verified Reviewer artifact changed after preview admission.'
+          )
+        }
+        const verifyUnchanged = async (): Promise<void> => {
+          const finalStat = await fileHandle.stat()
+          if (
+            !finalStat.isFile() ||
+            finalStat.dev !== observation.device ||
+            finalStat.ino !== observation.inode ||
+            finalStat.size !== observation.sizeBytes ||
+            finalStat.size > observation.maxBytes ||
+            finalStat.mtimeMs !== observation.modifiedAtMs ||
+            finalStat.ctimeMs !== observation.changedAtMs
+          ) {
+            this.revokeResource(resourceId, resource.ownerId)
+            throw new FileObservationMismatchError(
+              'Verified Reviewer artifact changed during protocol streaming.'
+            )
+          }
+        }
+        return {
+          fileHandle,
+          mimeType: resource.mimeType,
+          size: resource.size,
+          verifyUnchanged
+        }
+      }
+
+      const strictSnapshot = resource.strictSnapshot!
       const fileStat = await fileHandle.stat({ bigint: true })
       if (
         !fileStat.isFile() ||
         fileStat.size !== BigInt(resource.size) ||
-        fileStat.size > BigInt(resource.strictSnapshot.maxBytes) ||
-        fileStat.mtimeNs !== resource.strictSnapshot.mtimeNs ||
-        fileStat.dev !== resource.strictSnapshot.dev ||
-        fileStat.ino !== resource.strictSnapshot.ino
+        fileStat.size > BigInt(strictSnapshot.maxBytes) ||
+        fileStat.mtimeNs !== strictSnapshot.mtimeNs ||
+        fileStat.dev !== strictSnapshot.dev ||
+        fileStat.ino !== strictSnapshot.ino
       ) {
         this.revokeResource(resourceId, resource.ownerId)
         throw new Error('Managed preview file changed after capability creation.')
@@ -379,10 +475,10 @@ class ManagedPreviewResources {
         if (
           !finalStat.isFile() ||
           finalStat.size !== BigInt(resource.size) ||
-          finalStat.size > BigInt(resource.strictSnapshot!.maxBytes) ||
-          finalStat.mtimeNs !== resource.strictSnapshot!.mtimeNs ||
-          finalStat.dev !== resource.strictSnapshot!.dev ||
-          finalStat.ino !== resource.strictSnapshot!.ino
+          finalStat.size > BigInt(strictSnapshot.maxBytes) ||
+          finalStat.mtimeNs !== strictSnapshot.mtimeNs ||
+          finalStat.dev !== strictSnapshot.dev ||
+          finalStat.ino !== strictSnapshot.ino
         ) {
           this.revokeResource(resourceId, resource.ownerId)
           throw new Error('Managed preview file changed during protocol streaming.')

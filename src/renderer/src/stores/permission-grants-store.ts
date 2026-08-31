@@ -23,17 +23,21 @@ type PermissionUndo = {
   retry?: boolean
 }
 
+type PermissionDefaultsRestoreState = 'idle' | 'loading' | 'success' | 'error'
+
 type PermissionGrantsStore = PermissionGrantSnapshot & {
   status: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
   undo?: PermissionUndo
   undoQueue: PermissionUndo[]
   isRestoring: boolean
+  restoreDefaultsState: PermissionDefaultsRestoreState
   loadedAt: number | null
   load: (options?: { force?: boolean }) => Promise<void>
   revoke: (grants: PermissionGrantView[]) => Promise<void>
   extendUndo: (token: string) => Promise<number | undefined>
   restore: (token?: string) => Promise<void>
+  restoreDefaults: () => Promise<void>
   dismissUndo: (token?: string) => void
   listen: () => () => void
 }
@@ -99,10 +103,17 @@ const mutationState = (
   result: PermissionGrantMutationView
 ): Pick<
   PermissionGrantsStore,
-  'version' | 'incompleteStores' | 'grants' | 'counts' | 'status' | 'error'
+  | 'version'
+  | 'incompleteStores'
+  | 'missingDefaultGlobalGrantCount'
+  | 'grants'
+  | 'counts'
+  | 'status'
+  | 'error'
 > => ({
   version: result.version ?? 0,
   incompleteStores: result.incompleteStores ?? [],
+  missingDefaultGlobalGrantCount: result.missingDefaultGlobalGrantCount,
   grants: result.grants,
   counts: result.counts,
   status: 'ready',
@@ -112,6 +123,7 @@ const mutationState = (
 const snapshotFromState = (state: PermissionGrantSnapshot): PermissionGrantSnapshot => ({
   version: state.version,
   incompleteStores: state.incompleteStores,
+  missingDefaultGlobalGrantCount: state.missingDefaultGlobalGrantCount,
   grants: state.grants,
   counts: state.counts
 })
@@ -125,6 +137,7 @@ const withoutGrants = (
   return {
     version: snapshot.version,
     incompleteStores: snapshot.incompleteStores,
+    missingDefaultGlobalGrantCount: snapshot.missingDefaultGlobalGrantCount,
     grants,
     counts: {
       all: grants.length,
@@ -147,6 +160,7 @@ const withRestoredGrants = (
   return {
     version: snapshot.version,
     incompleteStores: snapshot.incompleteStores,
+    missingDefaultGlobalGrantCount: snapshot.missingDefaultGlobalGrantCount,
     grants,
     counts: {
       all: grants.length,
@@ -199,6 +213,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
   loadedAt: null,
   undoQueue: [],
   isRestoring: false,
+  restoreDefaultsState: 'idle',
 
   load: (options = {}) => {
     const state = get()
@@ -251,6 +266,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
     const previous: PermissionGrantSnapshot = {
       version: get().version,
       incompleteStores: get().incompleteStores,
+      missingDefaultGlobalGrantCount: get().missingDefaultGlobalGrantCount,
       grants: get().grants,
       counts: get().counts
     }
@@ -279,6 +295,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
         const authoritative = applyAuthoritativeSnapshot(state, {
           version: result.version ?? 0,
           incompleteStores: result.incompleteStores ?? [],
+          missingDefaultGlobalGrantCount: result.missingDefaultGlobalGrantCount,
           grants: result.grants,
           counts: result.counts
         })
@@ -315,6 +332,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
         const current: PermissionGrantSnapshot = {
           version: state.version,
           incompleteStores: state.incompleteStores,
+          missingDefaultGlobalGrantCount: state.missingDefaultGlobalGrantCount,
           grants: state.grants,
           counts: state.counts
         }
@@ -418,6 +436,34 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
     }
   },
 
+  restoreDefaults: async () => {
+    if (get().restoreDefaultsState === 'loading' || get().missingDefaultGlobalGrantCount === 0) {
+      return
+    }
+    set({ restoreDefaultsState: 'loading', error: undefined })
+    try {
+      const result = await window.api.permissions.restoreDefaults()
+      set((state) => ({
+        ...applyAuthoritativeSnapshot(state, {
+          version: result.version ?? 0,
+          incompleteStores: result.incompleteStores ?? [],
+          missingDefaultGlobalGrantCount: result.missingDefaultGlobalGrantCount,
+          grants: result.grants,
+          counts: result.counts
+        }),
+        status: 'ready',
+        error: undefined,
+        restoreDefaultsState: 'success'
+      }))
+    } catch (error) {
+      set({
+        status: 'error',
+        error: errorMessage(error),
+        restoreDefaultsState: 'error'
+      })
+    }
+  },
+
   dismissUndo: (token) =>
     set((state) => (token ? withoutUndoToken(state, token) : nextUndoState(state.undoQueue))),
 
@@ -426,4 +472,4 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
 }))
 
 export { usePermissionGrantsStore }
-export type { PermissionUndo }
+export type { PermissionDefaultsRestoreState, PermissionUndo }

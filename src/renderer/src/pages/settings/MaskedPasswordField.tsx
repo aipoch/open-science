@@ -67,6 +67,7 @@ const nextCodePointEnd = (value: string, index: number): number => {
 export function MaskedPasswordField({
   value,
   onChange,
+  onKeyDown,
   ...props
 }: MaskedPasswordFieldProps): React.JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -162,6 +163,8 @@ export function MaskedPasswordField({
       onCut={blockClipboardExport}
       onDrop={(event) => event.preventDefault()}
       onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+        onKeyDown?.(event)
+        if (event.defaultPrevented) return
         if (event.key !== 'Enter') return
         event.preventDefault()
         replaceSelection(event.currentTarget, '\n')

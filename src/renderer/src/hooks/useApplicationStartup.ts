@@ -8,7 +8,10 @@ import {
 } from '@/lib/session-persistence/session-persistence'
 import { resolveStartupView, type StartupView } from '@/pages/onboarding/startup-gate'
 import type { ProvisionUiState } from '@/pages/workspace/provisioning-view'
-import { useQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
+import {
+  useQuitPersistenceFlush,
+  type QuitPersistenceFlushProjection
+} from '@/hooks/useQuitPersistenceFlush'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -29,6 +32,7 @@ type ApplicationStartupProjection = Readonly<{
     retry: () => Promise<void>
   }>
   sessions: SessionPersistenceState
+  quitPersistence: QuitPersistenceFlushProjection
   environment: Readonly<{
     ui: ProvisionUiState
     retry: () => Promise<void>
@@ -46,7 +50,7 @@ type ApplicationStartupProjection = Readonly<{
 // presentation and event-binding modules need.
 const useApplicationStartup = (): ApplicationStartupProjection => {
   const sessions = useSessionPersistence()
-  useQuitPersistenceFlush()
+  const quitPersistence = useQuitPersistenceFlush()
   useDeepLinkNavigation({ isHydrated: sessions.isHydrated, isReady: sessions.isReady })
 
   const loadProjects = useProjectStore((state) => state.loadProjects)
@@ -133,6 +137,7 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
       retry: retrySettings
     },
     sessions,
+    quitPersistence,
     environment: { ui: environmentUi, retry: retryEnvironment },
     storageRecovery: {
       missingDataRoot,
