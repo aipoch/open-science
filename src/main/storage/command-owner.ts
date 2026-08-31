@@ -60,6 +60,7 @@ import type { RendererSessionPersistenceTarget } from '../session-persistence/re
 import type { SessionPersistenceFlushResponse } from '../../shared/session-persistence-flush'
 import { DataRootCleanupJournal } from './data-root-cleanup'
 import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
+import { STAGING_UPLOAD_SESSION_ID, UPLOADS_DIR } from '../uploads/storage-helpers'
 
 type LegacySessionSource = { projectId: string; sessionId: string }
 type NotebookSessionSource = { projectId: string; sessionId: string }
@@ -123,7 +124,7 @@ type StorageCommandOwnerDeps = {
 type StorageParentRequest = Readonly<{ parent: string }>
 type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
 
-const NON_UPLOAD_DATA_ROOT_DIRS = DATA_ROOT_DIRS.filter((dir) => dir !== 'uploads')
+const NON_UPLOAD_DATA_ROOT_DIRS = DATA_ROOT_DIRS.filter((dir) => dir !== UPLOADS_DIR)
 
 const readDirectoryIfPresent = async (path: string): Promise<Dirent[] | undefined> => {
   try {
@@ -138,7 +139,7 @@ const readDirectoryIfPresent = async (path: string): Promise<Dirent[] | undefine
 // It is infrastructure, not user data, so it must not pin a fresh install to the system drive. Any
 // additional entry (including an in-flight staged file or a symlink) still fails closed as data.
 const hasUploadDataBeyondStartupScaffold = async (dataRoot: string): Promise<boolean> => {
-  const uploads = await readDirectoryIfPresent(join(dataRoot, 'uploads'))
+  const uploads = await readDirectoryIfPresent(join(dataRoot, UPLOADS_DIR))
   if (!uploads || uploads.length === 0) return false
   if (
     uploads.length !== 1 ||
@@ -149,19 +150,19 @@ const hasUploadDataBeyondStartupScaffold = async (dataRoot: string): Promise<boo
   }
 
   const defaultProject = await readDirectoryIfPresent(
-    join(dataRoot, 'uploads', DEFAULT_UPLOAD_PROJECT_ID)
+    join(dataRoot, UPLOADS_DIR, DEFAULT_UPLOAD_PROJECT_ID)
   )
   if (!defaultProject || defaultProject.length === 0) return false
   if (
     defaultProject.length !== 1 ||
-    defaultProject[0].name !== '.staging' ||
+    defaultProject[0].name !== STAGING_UPLOAD_SESSION_ID ||
     !defaultProject[0].isDirectory()
   ) {
     return true
   }
 
   const staging = await readDirectoryIfPresent(
-    join(dataRoot, 'uploads', DEFAULT_UPLOAD_PROJECT_ID, '.staging')
+    join(dataRoot, UPLOADS_DIR, DEFAULT_UPLOAD_PROJECT_ID, STAGING_UPLOAD_SESSION_ID)
   )
   return Boolean(staging?.length)
 }

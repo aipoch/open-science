@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 import type { Logger } from '../logger'
+import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
+import { STAGING_UPLOAD_SESSION_ID, UPLOADS_DIR } from '../uploads/storage-helpers'
 
 // Capture ipcMain.handle registrations; stub dialog/BrowserWindow/app so handlers can be invoked
 // directly without a real Electron runtime. isPackaged: true means dataFolderName() === 'OpenScience'.
@@ -414,9 +416,16 @@ describe('storage IPC handlers', () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-upload-scaffold-home-'))
     electronHome.path = home
     try {
-      await mkdir(join(home, 'OpenScience', 'uploads', 'default-project', '.staging'), {
-        recursive: true
-      })
+      await mkdir(
+        join(
+          home,
+          'OpenScience',
+          UPLOADS_DIR,
+          DEFAULT_UPLOAD_PROJECT_ID,
+          STAGING_UPLOAD_SESSION_ID
+        ),
+        { recursive: true }
+      )
       initDataRoot(undefined)
       registerStorageIpcHandlers(fakeDeps())
 
@@ -434,7 +443,13 @@ describe('storage IPC handlers', () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-staged-upload-home-'))
     electronHome.path = home
     try {
-      const staging = join(home, 'OpenScience', 'uploads', 'default-project', '.staging')
+      const staging = join(
+        home,
+        'OpenScience',
+        UPLOADS_DIR,
+        DEFAULT_UPLOAD_PROJECT_ID,
+        STAGING_UPLOAD_SESSION_ID
+      )
       await mkdir(staging, { recursive: true })
       await writeFile(join(staging, 'transfer.part'), 'pending upload')
       initDataRoot(undefined)
