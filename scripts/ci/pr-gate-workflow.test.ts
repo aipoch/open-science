@@ -456,6 +456,22 @@ describe('PR Gate workflow', () => {
     expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(25)
   })
 
+  it('rebuilds the Windows sandbox host before the native lifecycle smoke', () => {
+    const steps = workflow.jobs.windows_core.steps ?? []
+    const rustTest = steps.find(({ name }) => name === 'Test Windows sandbox native source')
+    const build = steps.find(({ name }) => name === 'Build Windows sandbox native host')
+    const smoke = steps.find(
+      ({ name }) => name === 'Test Windows AppContainer ownership and removal lifecycle'
+    )
+
+    expect(rustTest?.run).toBe(
+      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml'
+    )
+    expect(build?.run).toBe('node packages/notebook-network-sandbox/vendor/windows/build.mjs x64')
+    expect(steps.indexOf(rustTest!)).toBeLessThan(steps.indexOf(build!))
+    expect(steps.indexOf(build!)).toBeLessThan(steps.indexOf(smoke!))
+  })
+
   it('runs Windows accessibility only for a legacy selected lane', () => {
     const compatibility = workflow.jobs.windows_e2e.steps?.find(
       ({ name }) => name === 'Run legacy Windows accessibility compatibility'
@@ -564,9 +580,28 @@ describe('PR Gate workflow', () => {
       run: 'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
     })
 
+    expect(workflow.jobs.linux_runtime).toMatchObject({
+      'runs-on': 'ubuntu-latest',
+      'timeout-minutes': 10
+    })
+    expect(workflow.jobs.linux_runtime.if).toContain("'linux_runtime'")
+    expect(workflow.jobs.linux_runtime.if).toContain("mode == 'full'")
+    const linuxDependencies = workflow.jobs.linux_runtime.steps?.find(
+      ({ name }) => name === 'Install Linux sandbox dependency'
+    )
+    expect(linuxDependencies?.run).toContain('apparmor-profiles')
+    expect(linuxDependencies?.run).toContain('bwrap-userns-restrict')
+    expect(linuxDependencies?.run).toContain('bwrap --unshare-all')
+    expect(linuxDependencies?.run).not.toContain('apparmor_restrict_unprivileged_userns=0')
+    expect(
+      workflow.jobs.linux_runtime.steps?.find(
+        ({ name }) => name === 'Test real Linux filesystem and network isolation'
+      )?.run
+    ).toContain('filesystem-enforcement.integration.test.ts')
+
     expect(workflow.jobs.windows_core).toMatchObject({
       'runs-on': 'windows-latest',
-      'timeout-minutes': 12
+      'timeout-minutes': 15
     })
     const runtime = workflow.jobs.windows_core.steps?.find(
       ({ name }) => name === 'Test Windows-specific behavior'

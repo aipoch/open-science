@@ -46,6 +46,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles, then revise/rerun. The notebook runtime does not classify files for you.',
+  'After OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED, call `request_network_access` with the exact hostname, runtime, reason, and failed bash command when applicable. Never call speculatively; retry only after an allowed result.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
   'For final files, call `write_artifact_file` from `open-science-artifacts` first with `source: { "kind": "localPath", "path": "plot.png" }`, the SAME relative filename you saved with, and `producerRunId` set to the exact `runId` returned by the execution. Inline only small text.',
   '</open_science_notebook_instructions>'
@@ -94,6 +95,13 @@ const replExecuteToolSchema = {
 const bashExecuteToolSchema = {
   command: z.string(),
   timeoutMs: z.number().int().positive().optional()
+}
+
+const requestNetworkAccessToolSchema = {
+  hostname: z.string().trim().min(1).max(253),
+  reason: z.string().trim().min(1).max(1_000),
+  runtime: z.enum(['python', 'r', 'repl', 'bash']).optional().describe('Blocked runtime.'),
+  command: z.string().min(1).optional().describe('Exact failed bash command.')
 }
 
 const managePackagesToolSchema = {
@@ -154,7 +162,7 @@ const requestUserInputToolSchema = {
 }
 
 // Install contract embedded as the manage_packages description so the agent always sees it (spec §8.2).
-// Soft constraint this phase; the hard guarantee is the phase-3 network-isolation sandbox.
+// The process boundary enforces the same approved-domain policy for every installer worker.
 const INSPECT_PACKAGES_DOC = [
   "Read installed/missing/version metadata from the session's bound app-managed Python/R runtime without importing or changing packages.",
   'Use for requested version checks, not as a mandatory preflight after a clear missing-package error. Use notebook_execute to test actual importability.',
@@ -377,7 +385,9 @@ const callNotebookRpc = async (
 // needs the transport that omits Undici's response-headers deadline; short methods retain the
 // ordinary transport.
 const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
-  method === 'execute' || method === 'executeControl' ? fetchLongLivedLocalRpc : fetchLocalRpc
+  method === 'execute' || method === 'executeControl' || method === 'requestNetworkAccess'
+    ? fetchLongLivedLocalRpc
+    : fetchLocalRpc
 
 // These character caps apply only to serialized MCP replies; full values stay in run.json and the
 // notebook preview.
@@ -1325,6 +1335,16 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     inputSchema: bashExecuteToolSchema,
     mapResult: compactNotebookExecutionResult,
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
+  },
+  {
+    name: 'request_network_access',
+    title: 'Request Notebook network access',
+    description:
+      'Call only after Notebook execution reports OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED. Provide the exact hostname, blocked runtime, reason, and exact command for bash. Retry the failed execution only when the result is allowed.',
+    method: 'requestNetworkAccess',
+    inputSchema: requestNetworkAccessToolSchema,
+    mapResult: (raw) => raw,
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
   },
   {
     name: 'notebook_state',

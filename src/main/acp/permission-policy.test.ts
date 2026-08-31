@@ -288,6 +288,35 @@ describe('permission policy', () => {
     ).toBeUndefined()
   })
 
+  it.each([
+    [
+      'claude-code',
+      'claude-code' as const,
+      'mcp__open-science-notebook__request_network_access',
+      false
+    ],
+    ['opencode', 'opencode' as const, 'open_science_notebook_request_network_access', false],
+    ['codex-response', 'codex' as const, 'mcp.open-science-notebook.request_network_access', true],
+    ['codex-bridge', 'codex' as const, 'mcp__open_science_notebook__request_network_access', true]
+  ])(
+    'auto-approves the trusted %s network request tool so its conversation decision is the only prompt',
+    (_route, frameworkId, providerToolName, requiresCorrelation) => {
+      const request = createPermissionRequest('other', undefined, { providerToolName })
+      expect(
+        resolveAutomaticPermission(
+          requiresCorrelation
+            ? withTrustedMcpToolIdentity(request, 'open-science-notebook/request_network_access')
+            : request,
+          {
+            profile: 'ask',
+            frameworkId,
+            mcpServerNames: ['open-science-notebook']
+          }
+        )
+      ).toBe('allow')
+    }
+  )
+
   it('does not auto-approve a stale CodeBuddy Skill loader request', () => {
     const loadSkill = createPermissionRequest('other')
     loadSkill.toolCall._meta = { 'codebuddy.ai/toolName': 'mcp__skills__load_skill' }

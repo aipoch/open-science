@@ -27,7 +27,7 @@ import type { AgentFrameworkId } from '../../shared/settings'
 import type { MessageAttribution } from '../../shared/session-persistence'
 import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
-import { ConversationPermissionGrantStore } from './permission-broker'
+import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
 import type { AgentModelChangeTarget } from '../agent-framework'
@@ -1280,8 +1280,13 @@ class AcpRuntimeCoordinator {
     sessionId: string
     title: string
     rawInput: unknown
+    signal?: AbortSignal
   }): Promise<boolean> {
     return this.runtimeForSession(input.sessionId).requestAppApproval(input)
+  }
+
+  async requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
+    return this.runtimeForSession(input.sessionId).requestAppPermission(input)
   }
 
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot> {

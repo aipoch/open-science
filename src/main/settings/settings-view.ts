@@ -5,6 +5,10 @@ import {
 } from '../../shared/settings'
 import { resolveNetworkProxySettings } from '../../shared/network-proxy'
 import {
+  DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+  normalizeNotebookNetworkSettings
+} from '../../shared/notebook-network'
+import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   listAgentFrameworks,
   type AgentFrameworkId
@@ -60,6 +64,9 @@ export const buildSettingsSnapshot = (
     onboardingCompletedAt: preferences.onboardingCompletedAt,
     packageMirror: settings.packageMirror,
     networkProxy: resolveNetworkProxySettings(settings.networkProxy),
+    notebookNetwork: settings.notebookNetwork
+      ? normalizeNotebookNetworkSettings(settings.notebookNetwork)
+      : DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
     reasoningEffort: preferences.reasoningEffort,
     subagentModel: settings.subagentModel ?? { mode: 'inherit' },
     reviewerModel: settings.reviewerModel ?? { mode: 'inherit' },

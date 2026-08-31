@@ -20,6 +20,10 @@ import {
   DEFAULT_NETWORK_PROXY_SETTINGS,
   type NetworkProxySettings
 } from '../../../shared/network-proxy'
+import {
+  DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+  type NotebookNetworkSettings
+} from '../../../shared/notebook-network'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -122,6 +126,7 @@ type SettingsStoreData = RuntimeSetupState &
     // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
     packageMirror?: PackageMirror
     networkProxy: NetworkProxySettings
+    notebookNetwork: NotebookNetworkSettings
     // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
     reasoningEffort: ReasoningEffort
     reviewerModel: ReviewerModelConfiguration
@@ -192,6 +197,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   encryptionAvailable: false,
   packageMirror: undefined,
   networkProxy: DEFAULT_NETWORK_PROXY_SETTINGS,
+  notebookNetwork: DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   reviewerModel: { mode: 'inherit' },
   reviewerModelPending: false,
@@ -220,6 +226,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   onboardingCompletedAt: snapshot.onboardingCompletedAt,
   packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
   networkProxy: snapshot.networkProxy ?? DEFAULT_NETWORK_PROXY_SETTINGS,
+  notebookNetwork: snapshot.notebookNetwork ?? DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   reasoningEffort: snapshot.reasoningEffort,
   reviewerModel: snapshot.reviewerModel ?? { mode: 'inherit' },
   sessionDetailsModel: snapshot.sessionDetailsModel ?? DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,

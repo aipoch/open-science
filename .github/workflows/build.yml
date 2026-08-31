@@ -210,6 +210,14 @@ jobs:
             "$compatibility_path" --version
           fi
 
+      - name: Test Windows sandbox native source
+        if: ${{ matrix.platform == 'win' }}
+        run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
+
+      - name: Build Windows sandbox native host
+        if: ${{ matrix.platform == 'win' }}
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+
       # electron-builder 26.15.3 creates its temporary keychain with a random password but invokes
       # `security set-key-partition-list -k` with the P12 password. macOS 26 Intel rejects that
       # mismatch with SecKeychainUnlock. Import the certificate ourselves with the correct password

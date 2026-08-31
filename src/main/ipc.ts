@@ -69,6 +69,7 @@ import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { createComputeIpcModule } from './compute/ipc'
+import { createComputeArtifactResolver } from './compute/compute-service'
 import { bindComputeApprovalSessionLifecycle } from './compute/approval-session-lifecycle'
 import type { ComputeJobOwnerLiveness } from './compute/job-deletion-owner'
 import { AgentComputeService } from './compute/agent-compute-service'
@@ -129,6 +130,8 @@ import {
 } from './notebook/application'
 import { serializeProvisioner } from './notebook/environment-operation-foundation'
 import { createNotebookEnvironmentLifecycle } from './notebook/environment-lifecycle-workflows'
+import { NotebookNetworkSandboxOwner } from './notebook/network-sandbox-owner'
+import { resolveNotebookTrustBundle } from './notebook/trust-bundle'
 import {
   createManagedPreviewOwnerRegistry,
   installManagedPreviewElectronAdapter
@@ -482,16 +485,104 @@ const createApplicationModules = async (
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)
   })
+  const settingsServiceRef: { current?: SettingsService } = {}
+  const grantedRootsRepositoryRef: { current?: GrantedLocalRootsRepository } = {}
+  const notebookNetworkSandbox = await modules.add(undefined, () => {
+    const capability = new NotebookNetworkSandboxOwner({
+      resourceRoot: app.isPackaged
+        ? join(process.resourcesPath, 'notebook-network-sandbox')
+        : join(app.getAppPath(), 'packages', 'notebook-network-sandbox', 'vendor'),
+      getSettings: async () => {
+        const service = settingsServiceRef.current
+        if (!service) throw new Error('Settings are not ready.')
+        return service.getNotebookNetwork()
+      },
+      getCaBundlePath: async () => {
+        const service = settingsServiceRef.current
+        if (!service) throw new Error('Settings are not ready.')
+        return (await service.getPackageMirror()).caBundle
+      },
+      getGrantedLocalRoots: async () => grantedRootsRepositoryRef.current?.list() ?? [],
+      persistAlwaysAllow: async (hostname) => {
+        const service = settingsServiceRef.current
+        if (!service) throw new Error('Settings are not ready.')
+        return service.allowNotebookNetworkDomain(hostname)
+      },
+      requestDecision: async ({ sessionId, hostname, port, runtime, reason, signal }) => {
+        const coordinator = runtimeRef.current
+        if (!coordinator || signal.aborted) return 'deny'
+        const selected = await coordinator
+          .requestAppPermission({
+            sessionId,
+            title: `Connect to ${hostname}?`,
+            rawInput: {
+              notebookNetworkApproval: {
+                hostname,
+                ...(port === undefined ? {} : { port }),
+                ...(runtime === undefined ? {} : { runtime }),
+                ...(reason === undefined ? {} : { reason })
+              }
+            },
+            options: [
+              { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+              {
+                optionId: 'always-allow',
+                name: 'Global',
+                kind: 'allow_always',
+                scope: 'global'
+              },
+              { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+            ],
+            signal
+          })
+          .catch(() => undefined)
+        return selected === 'always-allow'
+          ? 'alwaysAllow'
+          : selected === 'allow-once'
+            ? 'allowOnce'
+            : 'deny'
+      },
+      getParentProxy: async () => {
+        const environment = networkProxyRuntime.getChildProcessProxyEnvironment()
+        if (!environment) return undefined
+        const parentProxy = {
+          http: environment.HTTP_PROXY ?? environment.http_proxy ?? environment.ALL_PROXY,
+          https: environment.HTTPS_PROXY ?? environment.https_proxy ?? environment.ALL_PROXY,
+          noProxy: environment.NO_PROXY ?? environment.no_proxy
+        }
+        return parentProxy.http || parentProxy.https ? parentProxy : undefined
+      }
+    })
+    return {
+      capability,
+      rollback: () => capability.dispose(),
+      dispose: () => capability.dispose()
+    }
+  })
   const settingsService = await modules.add(undefined, () => ({
     capability: new SettingsService({
       repository: settingsRepository,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,
-      applyNetworkProxy: (settings) => networkProxyRuntime.apply(settings).then(() => undefined),
+      applyNetworkProxy: async (settings) => {
+        await networkProxyRuntime.apply(settings)
+        await notebookNetworkSandbox.updateParentProxy()
+      },
+      applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
+      validatePackageMirror: async (settings) => {
+        await resolveNotebookTrustBundle(settings.caBundle)
+      },
+      applyPackageMirror: async () => {
+        await notebookNetworkSandbox.updateTrustBundle()
+      },
+      getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
+      installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
+      removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
   }))
+  settingsServiceRef.current = settingsService
   const resolveSessionAgentTarget: SessionAgentTargetResolver = async (source) =>
     resolveValidatedSessionAgentTarget(source, await settingsService.getSettingsView())
   const resolveDefaultSessionAgentTarget = async (): Promise<AcpSessionAgentTarget> => {
@@ -674,6 +765,7 @@ const createApplicationModules = async (
     () => getProjectDbClient(resolveStorageRoot()),
     settingsService
   )
+  grantedRootsRepositoryRef.current = grantedRootsRepository
   const localFsService = new LocalFsService(grantedRootsRepository)
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
@@ -964,6 +1056,7 @@ const createApplicationModules = async (
         if (!owner) throw new Error('Side chat runtime cleanup is not initialized.')
         await owner.completeProjectDeletion(projectId)
         await notebookService.deleteProjectFileEvidence(projectId)
+        await notebookService.deleteProjectInputs(projectId)
       },
       completeProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
@@ -1208,6 +1301,7 @@ const createApplicationModules = async (
       appVersion: app.getVersion(),
       translate,
       helperModuleCatalog: settingsService.registeredHelperCatalog(),
+      processSandbox: notebookNetworkSandbox,
       events: applicationEvents,
       disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
       isBackendTeardownOwned: () => backendTeardownOwnedByCoordinator
@@ -1627,11 +1721,11 @@ const createApplicationModules = async (
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
   // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
-  // Adapt the artifact repository to the ArtifactResolver shape so job input staging can upload
-  // absolute artifact-store paths (validated to stay inside the store by resolveManagedFilePath).
-  const computeArtifactResolver = {
-    resolveArtifactPath: (path: string) => artifactRepository.resolveManagedFilePath({ path })
-  }
+  // Absolute Compute inputs may be legacy managed artifacts or exact immutable files staged for
+  // the submitting Notebook Session. Both resolvers enforce their own storage boundary.
+  const computeArtifactResolver = createComputeArtifactResolver(resolveDataRoot(), (path) =>
+    artifactRepository.resolveManagedFilePath({ path })
+  )
   const computeIpcModule = createComputeIpcModule(
     undefined,
     undefined,
@@ -2110,6 +2204,9 @@ const createApplicationModules = async (
   }
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
+      // The Notebook REPL runs in a process sandbox whose only TCP egress is the approval gateway.
+      // Keep its privileged Host SDK channel on an explicitly shared local socket instead.
+      transport: 'pipe',
       onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
       isHostSkillsAvailable: (sessionId) =>
         runtimeRef.current?.getSessionFramework(sessionId) !== 'codebuddy',
@@ -2162,10 +2259,7 @@ const createApplicationModules = async (
             () => artifactProvenanceRepository.replayVersion(request)
           )
       },
-      hostArtifacts: new HostArtifactsService(projectFilesRepository, {
-        artifact: artifactProvenanceRepository,
-        upload: uploadRepository
-      }),
+      hostArtifacts: new HostArtifactsService(projectFilesRepository, immutableInputAuthority),
       delegationInputCatalog: projectFilesRepository,
       hostLineage: new HostLineageService({
         catalog: projectFilesRepository,
@@ -2403,7 +2497,9 @@ const createApplicationModules = async (
         computeIpcModule.handlers.approvalBeginSessionDeletion(sessionId),
       beforeSessionDelete: async (sessionId) => {
         await sideChatOwnerRef.current?.invalidateParents([sessionId])
+        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
         await notebookService.shutdownSession(sessionId)
+        if (projectId) await notebookService.deleteSessionInputs(projectId, sessionId)
       },
       afterSessionDelete: (sessionId, retained) =>
         computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained),

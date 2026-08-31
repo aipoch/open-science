@@ -14,7 +14,7 @@ import {
   RuntimeOperationJournal
 } from './operation-journal'
 import type { NotebookPackageAdmission, NotebookPackageAdmittedTarget } from './package-admission'
-import type { InstallDeps, InstallResult } from './package-manager'
+import type { InstallDeps, InstallResult, InstallSpawn } from './package-manager'
 import type {
   MicromambaWorkingCacheRetainer,
   WorkingCacheArchivePublication
@@ -54,6 +54,7 @@ type NotebookPackageMutationOwnerOptions = {
     request: NotebookPackageAdmittedTarget['request'],
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
+  packageSpawn?: (target: NotebookPackageAdmittedTarget) => InstallSpawn
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   recheckRepair: (
     target: NotebookPackageAdmittedTarget
@@ -136,6 +137,7 @@ class NotebookPackageMutationOwner {
         try {
           try {
             installResult = await this.options.installPackages(request, {
+              ...(this.options.packageSpawn ? { spawn: this.options.packageSpawn(target) } : {}),
               micromambaRunner: this.options.micromambaRunner,
               storageRoot: this.options.storageRoot,
               condaChannel: mirror.condaChannel,

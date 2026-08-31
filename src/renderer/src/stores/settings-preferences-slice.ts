@@ -1,5 +1,6 @@
 import type { NetworkProxySettings } from '../../../shared/network-proxy'
 import type { PackageMirror } from '../../../shared/mirror'
+import type { NotebookNetworkSettings } from '../../../shared/notebook-network'
 import type {
   AppIconVariant,
   ProjectFilesFilterPreference,
@@ -7,6 +8,7 @@ import type {
   ReviewerModelConfiguration,
   SessionDetailsModelConfiguration,
   SettingsSnapshot,
+  SetNotebookNetworkRequest,
   SubagentModelConfiguration,
   VisionModelConfiguration
 } from '../../../shared/settings'
@@ -22,6 +24,7 @@ type SettingsPreferencesState = {
   onboardingCompletedAt?: number
   networkProxy?: NetworkProxySettings
   packageMirror?: PackageMirror
+  notebookNetwork: NotebookNetworkSettings
   reasoningEffort: ReasoningEffort
   reviewerModel?: ReviewerModelConfiguration
   reviewerModelPending?: boolean
@@ -68,6 +71,10 @@ export type SettingsPreferencesActions = {
   completeOnboarding: () => Promise<void>
   setPackageMirror: (mirror: PackageMirror) => Promise<void>
   setNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
+  setNotebookNetwork: (
+    settings: NotebookNetworkSettings,
+    baseAllowedDomains?: readonly string[]
+  ) => Promise<NotebookNetworkSettings>
 }
 
 type SettingsPreferencesCommands = Pick<
@@ -92,6 +99,7 @@ type SettingsPreferencesCommands = Pick<
       | 'setSubagentModel'
       | 'setVisionModel'
       | 'setNetworkProxy'
+      | 'setNotebookNetwork'
     >
   >
 
@@ -350,6 +358,18 @@ export const createSettingsPreferencesSlice = ({
       if (!setNetworkProxy) throw new Error('Network proxy settings are unavailable.')
       const saved = await setNetworkProxy(networkProxy)
       setState({ networkProxy: saved })
+    },
+
+    setNotebookNetwork: async (notebookNetwork, baseAllowedDomains) => {
+      const command = getCommands().setNotebookNetwork
+      if (!command) throw new Error('Notebook network settings are unavailable.')
+      const request: SetNotebookNetworkRequest = {
+        ...notebookNetwork,
+        ...(baseAllowedDomains === undefined ? {} : { baseAllowedDomains })
+      }
+      const saved = await command(request)
+      setState({ notebookNetwork: saved })
+      return saved
     }
   }
 }

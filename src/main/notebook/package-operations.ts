@@ -10,7 +10,8 @@ import type {
 import { boundedFailureDiagnostic } from './failure-diagnostic'
 import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
 import { NotebookPackageAdmissionOwner } from './package-admission'
-import type { InstallDeps, InstallRequest, InstallResult } from './package-manager'
+import type { NotebookPackageAdmittedTarget } from './package-admission'
+import type { InstallDeps, InstallRequest, InstallResult, InstallSpawn } from './package-manager'
 import type { MicromambaWorkingCacheRetainer } from './windows-micromamba-working-cache'
 import { NotebookPackageMutationOwner } from './package-mutation'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
@@ -89,6 +90,7 @@ type NotebookPackageOperationsOptions = {
     'inspectPackages' | 'markPackageMutationDirty' | 'refreshAfterPackageMutation'
   >
   installPackages: (request: InstallRequest, deps?: Partial<InstallDeps>) => Promise<InstallResult>
+  packageSpawn?: (target: NotebookPackageAdmittedTarget) => InstallSpawn
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   retainWorkingCache?: MicromambaWorkingCacheRetainer
   createEnvironmentCaptureTarget: (
@@ -138,6 +140,7 @@ class NotebookPackageOperations {
       environmentOperations: options.environmentOperations,
       environmentStateTracker: options.environmentStateTracker,
       installPackages: options.installPackages,
+      ...(options.packageSpawn ? { packageSpawn: options.packageSpawn } : {}),
       micromambaRunner: options.micromambaRunner,
       retainWorkingCache: options.retainWorkingCache,
       recheckRepair: (target) => this.admission.recheckRepair(target),

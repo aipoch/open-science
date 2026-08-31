@@ -307,6 +307,7 @@ describe('notebook MCP server config', () => {
       'notebook_execute',
       'repl_execute',
       'bash_execute',
+      'request_network_access',
       'notebook_state',
       'list_notebook_runtimes',
       'notebook_bind_runtime',
@@ -320,6 +321,19 @@ describe('notebook MCP server config', () => {
       'search_memories',
       'remember_memory'
     ])
+  })
+
+  it('ties network access requests to a real sandbox denial and an approved retry', () => {
+    const tool = NOTEBOOK_RPC_TOOLS.find((candidate) => candidate.name === 'request_network_access')
+
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call `request_network_access`')
+    expect(tool?.description).toContain(
+      'Call only after Notebook execution reports OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED'
+    )
+    expect(tool?.description).toContain(
+      'Retry the failed execution only when the result is allowed'
+    )
   })
 
   it('exposes bounded memory discovery, search, and append-only agent tools', () => {

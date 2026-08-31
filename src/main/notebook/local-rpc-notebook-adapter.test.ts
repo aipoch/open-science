@@ -59,6 +59,11 @@ const requestByMethod = {
   },
   executeControl: { ...request, code: 'return 1' },
   executeShell: { ...request, command: 'echo hi' },
+  requestNetworkAccess: {
+    ...request,
+    hostname: 'data.example.org',
+    reason: 'Download the requested public dataset.'
+  },
   state: request,
   restart: request,
   shutdown: request,
@@ -80,6 +85,7 @@ describe('notebook local RPC adapter', () => {
       'execute',
       'executeControl',
       'executeShell',
+      'requestNetworkAccess',
       'state',
       'restart',
       'shutdown',
@@ -90,7 +96,7 @@ describe('notebook local RPC adapter', () => {
       'bindRuntime',
       'switchRuntime'
     ])
-    expect(new Set(NOTEBOOK_LOCAL_RPC_METHODS).size).toBe(16)
+    expect(new Set(NOTEBOOK_LOCAL_RPC_METHODS).size).toBe(17)
 
     for (const method of [
       'listPackages',
@@ -207,6 +213,21 @@ describe('notebook local RPC adapter', () => {
       }
     }
   )
+
+  it('forwards request cancellation to a pending network access decision', async () => {
+    const capability = createCapability()
+    const methodRequest = requestByMethod.requestNetworkAccess
+    const handler = resolveNotebookLocalRpcHandler(
+      capability,
+      'requestNetworkAccess',
+      methodRequest
+    )
+    const cancellation = new AbortController()
+
+    await handler(methodRequest, cancellation.signal)
+
+    expect(capability.requestNetworkAccess).toHaveBeenCalledWith(methodRequest, cancellation.signal)
+  })
 
   it('validates common notebook routing fields before resolving a handler', () => {
     const capability = createCapability()

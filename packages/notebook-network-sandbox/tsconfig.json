@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "compilerOptions": {
+    "composite": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "runtime/src/**/*.ts"]
+}

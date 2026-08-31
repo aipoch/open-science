@@ -200,7 +200,12 @@ const isArtifactSaveTool = (
   )
 }
 
-const isAgentUserChoiceTool = (
+const APP_INTERACTION_TOOLS = new Set([
+  'open-science-notebook/ask_user_question',
+  'open-science-notebook/request_network_access'
+])
+
+const isAppInteractionTool = (
   params: RequestPermissionRequest,
   context: PermissionPolicyContext | undefined
 ): boolean => {
@@ -208,15 +213,14 @@ const isAgentUserChoiceTool = (
   if (!mcpServerNames) return false
   if (!mcpServerNames.map(canonicalAppMcpServerName).includes('open-science-notebook')) return false
 
-  if (trustedMcpToolIdentity(params) === 'open-science-notebook/ask_user_question') return true
+  if (APP_INTERACTION_TOOLS.has(trustedMcpToolIdentity(params) ?? '')) return true
   if (context.frameworkId === 'codex') return false
 
   const providerToolName = extractProviderToolName(params.toolCall)
   if (!providerToolName) return false
 
-  return (
-    resolveCanonicalMcpToolIdentity(providerToolName, mcpServerNames) ===
-    'open-science-notebook/ask_user_question'
+  return APP_INTERACTION_TOOLS.has(
+    resolveCanonicalMcpToolIdentity(providerToolName, mcpServerNames) ?? ''
   )
 }
 
@@ -239,7 +243,7 @@ const resolveAutomaticPermission = (
   // Asking the user is itself the authorization boundary: the call cannot execute code or mutate
   // external state, and it remains blocked until the renderer answers or cancels it. Do not insert a
   // redundant permission card before the actual choice card.
-  if (isAgentUserChoiceTool(params, context)) {
+  if (isAppInteractionTool(params, context)) {
     return resolveAllowOptionId(params)
   }
 

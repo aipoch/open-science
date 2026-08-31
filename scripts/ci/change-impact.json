@@ -12,6 +12,7 @@
     "cli_sdk",
     "i18n",
     "unit_macos",
+    "linux_runtime",
     "windows_runtime",
     "windows_path",
     "build",
@@ -22,7 +23,15 @@
     "e2e_accessibility_macos",
     "e2e_visual_macos"
   ],
-  "bundleOrder": ["policy", "static", "unit", "windows_core", "macos_e2e", "windows_e2e"],
+  "bundleOrder": [
+    "policy",
+    "static",
+    "unit",
+    "linux_runtime",
+    "windows_core",
+    "macos_e2e",
+    "windows_e2e"
+  ],
   "laneBundles": {
     "policy": "policy",
     "docs": "static",
@@ -34,6 +43,7 @@
     "cli_sdk": "static",
     "i18n": "static",
     "unit_macos": "unit",
+    "linux_runtime": "linux_runtime",
     "windows_runtime": "windows_core",
     "windows_path": "windows_core",
     "build": "macos_e2e",
@@ -82,6 +92,12 @@
       "capabilities": ["documentation"]
     },
     {
+      "id": "notebook_network_sandbox",
+      "role": "owner",
+      "paths": ["packages/notebook-network-sandbox/**"],
+      "capabilities": ["notebook_network_sandbox"]
+    },
+    {
       "id": "shared_contract",
       "role": "owner",
       "fallbackOwner": true,
@@ -126,6 +142,7 @@
         "src/main/compute/scp-runner.ts",
         "src/main/compute/ssh-runner.ts",
         "src/main/crash-diagnostics.ts",
+        "src/main/immutable-input-authority.ts",
         "src/main/index.ts",
         "src/main/lifecycle-shutdown.ts",
         "src/main/local-rpc-transport.ts",
@@ -139,8 +156,10 @@
         "src/main/notebook/micromamba-cache-recovery.ts",
         "src/main/notebook/micromamba-cache.ts",
         "src/main/notebook/micromamba.ts",
+        "src/main/notebook/network-sandbox-owner.ts",
         "src/main/notebook/package-listing.ts",
         "src/main/notebook/package-manager.ts",
+        "src/main/notebook/process-environment.ts",
         "src/main/notebook/provisioner-runtime.ts",
         "src/main/notebook/provisioner.ts",
         "src/main/notebook/python-command.ts",
@@ -182,6 +201,7 @@
         "src/preload/**/*acl*.ts",
         "src/preload/renderer-api.d.ts",
         "src/shared/local-fs.ts",
+        "src/shared/notebook-network.ts",
         "src/shared/settings.ts",
         "src/shared/update.ts"
       ],
@@ -253,6 +273,20 @@
     "main_runtime": {
       "consumers": ["renderer_runtime", "i18n_catalog"],
       "lanes": ["format", "lint", "typecheck_node", "interface_contracts", "unit_macos"]
+    },
+    "notebook_network_sandbox": {
+      "consumers": [],
+      "lanes": [
+        "format",
+        "lint",
+        "typecheck_node",
+        "interface_contracts",
+        "unit_macos",
+        "linux_runtime",
+        "windows_runtime",
+        "windows_path",
+        "build"
+      ]
     },
     "renderer_runtime": {
       "consumers": ["e2e_functional", "e2e_workspace"],

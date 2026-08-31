@@ -1,12 +1,21 @@
 name: Windows Full Test
 
 # Preserve complete real-Windows coverage after merge without adding its runtime to ordinary PRs or
-# blocking a stable release. Batch busy main periods into one latest-head run per hour so advisory
-# coverage does not compete with every PR Gate for hosted-runner capacity.
+# blocking a stable release. The native Notebook sandbox lifecycle runs once per batch, outside the
+# sharded suite, and remains available as a focused workflow dry-run.
 on:
   schedule:
     - cron: '47 * * * *'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Validation scope
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - notebook-sandbox
 
 permissions:
   actions: read
@@ -37,7 +46,7 @@ jobs:
             exit 0
           fi
 
-          last_successful_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/windows-full-test.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)"
+          last_successful_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/windows-full-test.yml/runs?branch=main&event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)"
           if [[ "$last_successful_sha" == "$GITHUB_SHA" ]]; then
             echo "should_test=false" >> "$GITHUB_OUTPUT"
             echo "Windows full coverage already passed for $GITHUB_SHA."
@@ -49,7 +58,7 @@ jobs:
   windows_full_test:
     name: Windows full test (${{ matrix.shard }}/3)
     needs: plan
-    if: needs.plan.outputs.should_test == 'true'
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}
     runs-on: windows-latest
     timeout-minutes: 25
     strategy:
@@ -64,6 +73,7 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
+
           cache: npm
 
       - name: Install dependencies
@@ -75,3 +85,47 @@ jobs:
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; the 25-minute
         # job timeout remains the backstop for a real hang.
         run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
+
+  notebook_sandbox:
+    name: Windows Notebook sandbox lifecycle
+    needs: plan
+    if: needs.plan.outputs.should_test == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      - name: Report Windows toolchain
+        shell: powershell
+        run: |
+          node --version
+          npm --version
+          rustc -Vv
+          cargo --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installationPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $installationVersion = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+          $toolsVersion = (Get-Content -LiteralPath (Join-Path $installationPath 'VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt') -Raw).Trim()
+          Write-Host "Visual Studio $installationVersion"
+          Write-Host "MSVC tools $toolsVersion"
+
+      - name: Test Windows sandbox native source
+        run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
+
+      - name: Build Windows sandbox native host
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+
+      - name: Test AppContainer ownership and removal lifecycle
+        shell: powershell
+        run: >-
+          packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1
+          -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
+          -Mode Full

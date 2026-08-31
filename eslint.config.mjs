@@ -29,7 +29,11 @@ export default defineConfig(
       // Local subagent scratch (ledgers, briefs, ad-hoc demo scripts) — never shipped.
       '**/.superpowers/**',
       // Keep official shadcn registry output unmodified; local adaptations live in wrappers.
-      'src/renderer/src/components/ui/message-scroller.tsx'
+      'src/renderer/src/components/ui/message-scroller.tsx',
+      // Keep the pinned low-level runtime and native helper sources auditable against their
+      // provenance. Open Science-owned adapter code under the package's src/ directory is linted.
+      'packages/notebook-network-sandbox/runtime/**',
+      'packages/notebook-network-sandbox/vendor/**'
     ]
   },
   tseslint.configs.recommended,

@@ -27,6 +27,7 @@ import {
   type NotebookLaneIdentity
 } from './lane-identity'
 import { isRecord } from './value-guards'
+import { ensureNotebookInputRoot } from './input-staging'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const NOTEBOOK_FILE_EVIDENCE_DIR = 'notebook-file-evidence'
@@ -538,7 +539,7 @@ class NotebookRunRepository {
       // Decode $DATA sentinels against the current data root before recomputing session roots,
       // so a relocated data root and the decoded working-file paths agree.
       const decoded = decodeRunDocumentDataPaths(read.value, this.storageRoot)
-
+      await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
       return normalizeDocument(this.storageRoot, request, decoded)
     }
 
@@ -1069,6 +1070,9 @@ class NotebookRunRepository {
     // python/r via disk; 'outputs' collects results kernels want to surface back out.
     await mkdir(join(directory, 'handoff'), { recursive: true })
     await mkdir(join(directory, 'outputs'), { recursive: true })
+    // The sandbox receives this stable sibling as read-only at process launch. Main may then stage
+    // exact, verified Versions into it without exposing the authoritative Upload/Artifact stores.
+    await ensureNotebookInputRoot(this.storageRoot, document.projectId, document.sessionId)
 
     // Encode only the serialized copy: `directory` above must stay derived from the absolute in-memory
     // `document.notebookSessionRoot`, never from the $DATA-sentinel-encoded copy, so run.json stores

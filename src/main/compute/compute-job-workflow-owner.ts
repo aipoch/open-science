@@ -10,6 +10,7 @@ import type {
   SubmitJobResult
 } from '../../shared/compute'
 import { ComputeHostUnavailableError } from '../../shared/compute'
+import { resolveNotebookStagedInputPath } from '../notebook/input-staging'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
@@ -48,8 +49,26 @@ export type ComputeJobReadScope = Readonly<{
 }>
 
 export interface ArtifactResolver {
-  resolveArtifactPath(path: string): Promise<string>
+  resolveArtifactPath(path: string, scope?: ComputeJobReadScope): Promise<string>
 }
+
+export const createComputeArtifactResolver = (
+  storageRoot: string,
+  resolveManagedArtifactPath: (path: string) => Promise<string>
+): ArtifactResolver => ({
+  resolveArtifactPath: async (path, scope) => {
+    if (scope) {
+      const staged = await resolveNotebookStagedInputPath(
+        storageRoot,
+        scope.projectId,
+        scope.sessionId,
+        path
+      )
+      if (staged) return staged
+    }
+    return resolveManagedArtifactPath(path)
+  }
+})
 
 const assertBareName = (name: string, label: string): void => {
   if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
@@ -71,7 +90,8 @@ const resolveWorkspacePath = (workspaceCwd: string, srcPath: string): string => 
 export const resolveInputs = async (
   rawInputs: RawInputSpec[],
   workspaceCwd: string | undefined,
-  artifactResolver: ArtifactResolver | undefined
+  artifactResolver: ArtifactResolver | undefined,
+  scope?: ComputeJobReadScope
 ): Promise<{ entries: StagedInputEntry[]; inputsSummary: string }> => {
   const entries: StagedInputEntry[] = []
   const summaryParts: string[] = []
@@ -108,7 +128,9 @@ export const resolveInputs = async (
       if (!artifactResolver) {
         throw new Error(`Cannot resolve artifact "${src}": ArtifactResolver is not available`)
       }
-      const localPath = await artifactResolver.resolveArtifactPath(src)
+      const localPath = scope
+        ? await artifactResolver.resolveArtifactPath(src, scope)
+        : await artifactResolver.resolveArtifactPath(src)
       entries.push({ kind: 'upload', localPath, dstFilename, label: src })
     } else {
       if (!workspaceCwd) {
@@ -233,7 +255,8 @@ export class ComputeJobWorkflowOwner {
       const resolved = await resolveInputs(
         options.inputs,
         options.workspaceCwd,
-        this.artifactResolver
+        this.artifactResolver,
+        { ...context, providerId }
       )
       stagedEntries = resolved.entries
       inputsSummary = resolved.inputsSummary

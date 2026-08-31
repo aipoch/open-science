@@ -27,6 +27,11 @@ describe('mirrorStatusText', () => {
       mirrorStatusText({ condaChannel: 'https://c', pypiIndex: 'https://p/simple' }, t)
     ).toContain('https://c')
   })
+  it('reports a trust-only configuration without inventing a package host', () => {
+    expect(mirrorStatusText({ caBundle: '/certs/complete.pem' }, t)).toBe(
+      'Custom CA bundle configured'
+    )
+  })
   it('translates the sentence but keeps the host values verbatim', () => {
     const zh = i18next.getFixedT('zh-Hans')
     expect(mirrorStatusText(undefined, zh)).toContain('未配置')

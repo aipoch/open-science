@@ -1,0 +1,2 @@
+# Default rustfmt config keeps editor format-on-save and CI aligned.
+edition = "2024"

@@ -125,11 +125,6 @@ describe('NotebookWorkloadCache', () => {
     expect(removeNotebookWorkloadCache(physicalRuntimeRoot)).toBe(true)
   })
 
-  it('refuses a blank runtime root instead of creating the current working directory', () => {
-    expect(() => prepareNotebookWorkloadCache('')).toThrow(/runtime root/i)
-    expect(() => prepareNotebookWorkloadCache('   ')).toThrow(/runtime root/i)
-  })
-
   it('refuses a pre-existing unmarked or mismatched directory', () => {
     const runtimeRoot = makeRuntime()
     const cacheRoot = notebookWorkloadCacheRoot(runtimeRoot)
@@ -156,5 +151,11 @@ describe('NotebookWorkloadCache', () => {
     expect(() => prepareNotebookWorkloadCache(runtimeRoot)).toThrow(/parent.*trusted directory/i)
     expect(removeNotebookWorkloadCache(runtimeRoot)).toBe(false)
     expect(readFileSync(join(linkedTarget, 'foreign.txt'), 'utf8')).toBe('keep')
+  })
+
+  it('rejects a blank or relative runtime root instead of creating a cache at cwd', () => {
+    expect(() => prepareNotebookWorkloadCache('')).toThrow(/absolute runtime root/i)
+    expect(() => prepareNotebookWorkloadCache('   ')).toThrow(/absolute runtime root/i)
+    expect(() => prepareNotebookWorkloadCache('runtime')).toThrow(/absolute runtime root/i)
   })
 })

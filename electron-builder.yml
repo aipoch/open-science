@@ -34,6 +34,10 @@ files:
   # Wildcard every platform variant (darwin-arm64/-x64, linux-*, win32-*) so the exclusion holds no
   # matter which OS the release job builds on — npm only installs the one matching the build host.
   - '!node_modules/@anthropic-ai/claude-agent-sdk-*{,/**/*}'
+  # The internal Notebook sandbox is bundled into the main process by electron-vite. Keep its
+  # vendored source/native trees out of app.asar; the executable resources are copied explicitly per
+  # platform below so path resolution and code signing remain deterministic.
+  - '!node_modules/@aipoch/notebook-network-sandbox{,/**/*}'
   # pdfjs-dist ships several redundant copies. The main process only loads `legacy/build` (text
   # extraction) and needs `cmaps`/`standard_fonts` for CJK/CID PDFs; the renderer bundles its own
   # copy via Vite. Drop the modern build, viewer, image decoders, TS types, and source maps
@@ -83,10 +87,10 @@ win:
   executableName: open-science
   icon: build/icon.ico
   artifactName: aipoch-${name}-${version}-win-${arch}.${ext}
-  # nsis = the installer; zip = a portable, no-install build. Offer both, mirroring mac (dmg + zip).
+  # AppContainer profiles and firewall rules require a product uninstaller, so Windows ships only
+  # through NSIS. A portable ZIP could be deleted without releasing those durable resources.
   target:
     - nsis
-    - zip
   extraResources:
     # Staged per-arch micromamba binary, copied to the resources root (Task 2's resolveMicromamba
     # looks for it there via process.resourcesPath).
@@ -98,12 +102,20 @@ win:
       to: micromamba-compat.exe
     - from: build/windows-runtime-cache-uninstall.ps1
       to: windows-runtime-cache-uninstall.ps1
+    - from: build/windows-notebook-sandbox-uninstall.ps1
+      to: windows-notebook-sandbox-uninstall.ps1
+    - from: packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe
+      to: notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe
 nsis:
   artifactName: aipoch-${name}-${version}-win-${arch}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
   oneClick: false
+  # AppContainer profiles are per-user. The custom install-mode hook forces CurrentUser, while
+  # these options keep electron-builder from offering or internally preparing an elevation path.
+  perMachine: false
+  allowElevation: false
   allowToChangeInstallationDirectory: true
   include: build/installer.nsh
 mac:
@@ -159,6 +171,17 @@ appImage:
   artifactName: aipoch-${name}-${version}-linux-${arch}.${ext}
 deb:
   artifactName: aipoch-${name}_${version}_${arch}.${ext}
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - bubblewrap
 npmRebuild: false
 # electron-updater feed. Win/Linux/macOS auto-update reads app-update.yml (generated from this block)
 # and fetches its feed from <url>. Win/Linux use the default `latest` channel (latest.yml /

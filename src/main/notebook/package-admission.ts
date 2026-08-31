@@ -47,7 +47,7 @@ type NotebookPackageAdmittedTarget = Readonly<{
   request: InstallRequest
   environmentName: string
   binding?: NotebookSessionRuntimeBinding
-  interpreter?: Pick<NotebookSessionResolvedInterpreter, 'command' | 'args'>
+  interpreter?: Pick<NotebookSessionResolvedInterpreter, 'command' | 'args' | 'condaPrefix'>
   environmentCaptureTarget: EnvironmentCaptureTarget
   repairRuntimeId: string
   repairMarkerKey: string

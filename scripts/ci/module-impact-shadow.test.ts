@@ -159,6 +159,43 @@ describe('module impact shadow', () => {
     )
   })
 
+  it('selects the Notebook network sandbox evidence and platform lanes', () => {
+    const report = reportFor([
+      { path: 'packages/notebook-network-sandbox/src/config.ts', status: 'modified' }
+    ])
+
+    expect(report.shadow).toMatchObject({
+      mode: 'selective',
+      modules: ['notebook_network_sandbox'],
+      fallbackCapabilities: ['notebook_network_sandbox'],
+      capabilityOverlays: []
+    })
+    expect(report.shadow.testFiles).toEqual([
+      'packages/notebook-network-sandbox/src/address-policy.test.ts',
+      'packages/notebook-network-sandbox/src/config.test.ts',
+      'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+      'packages/notebook-network-sandbox/src/filesystem-policy.test.ts',
+      'packages/notebook-network-sandbox/src/gateway.test.ts',
+      'packages/notebook-network-sandbox/src/index.test.ts',
+      'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
+      'packages/notebook-network-sandbox/src/private-network.test.ts',
+      'packages/notebook-network-sandbox/src/proxy-env.test.ts',
+      'packages/notebook-network-sandbox/src/resources.test.ts',
+      'packages/notebook-network-sandbox/src/runtime-config.test.ts',
+      'packages/notebook-network-sandbox/src/windows-appcontainer.test.ts'
+    ])
+    expect(report.comparison.requiredLanes).toEqual(
+      expect.arrayContaining([
+        'unit_macos',
+        'linux_runtime',
+        'windows_runtime',
+        'windows_path',
+        'build'
+      ])
+    )
+    expect(report.comparison.missingLanes).toEqual([])
+  })
+
   it('publishes the resolved module authority through the existing PR Gate outputs', () => {
     const base = '1'.repeat(40)
     const head = '2'.repeat(40)

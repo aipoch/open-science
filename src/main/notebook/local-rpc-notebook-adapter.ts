@@ -10,6 +10,7 @@ import {
   type FinishNotebookCodeCellRequest,
   type NotebookLanguage,
   type NotebookSessionRequest,
+  type RequestNotebookNetworkAccessRequest,
   type RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { ManageEnvironmentsRequest, ManageEnvironmentsResult } from '../../shared/notebook-env'
@@ -108,6 +109,12 @@ const notebookLocalRpcRequestSchemas = {
     command: z.string(),
     timeoutMs: positiveTimeoutSchema.optional()
   }),
+  requestNetworkAccess: notebookSessionRequestSchema.extend({
+    hostname: z.string().trim().min(1).max(253),
+    reason: z.string().trim().min(1).max(1_000),
+    runtime: z.enum(['python', 'r', 'repl', 'bash']).optional(),
+    command: z.string().min(1).optional()
+  }),
   state: notebookSessionRequestSchema,
   restart: notebookSessionRequestSchema,
   shutdown: notebookSessionRequestSchema,
@@ -187,6 +194,10 @@ type NotebookLocalRpcCapability = {
   execute(request: ExecuteNotebookCodeRequest, signal?: AbortSignal): Promise<unknown>
   executeControl(request: ExecuteNotebookControlRequest): Promise<unknown>
   executeShell(request: ExecuteShellRequest): Promise<unknown>
+  requestNetworkAccess(
+    request: RequestNotebookNetworkAccessRequest,
+    signal?: AbortSignal
+  ): Promise<unknown>
   state(request: NotebookSessionRequest): Promise<unknown>
   restart(request: NotebookSessionRequest): Promise<unknown>
   shutdown(request: NotebookSessionRequest): Promise<unknown>
@@ -206,6 +217,7 @@ const NOTEBOOK_LOCAL_RPC_METHODS = [
   'execute',
   'executeControl',
   'executeShell',
+  'requestNetworkAccess',
   'state',
   'restart',
   'shutdown',
@@ -289,6 +301,12 @@ const resolveNotebookLocalRpcHandler = (
     case 'executeShell':
       return (request) =>
         capability.executeShell(parseNotebookLocalRpcRequest('executeShell', request))
+    case 'requestNetworkAccess':
+      return (request, signal) =>
+        capability.requestNetworkAccess(
+          parseNotebookLocalRpcRequest('requestNetworkAccess', request),
+          signal
+        )
     case 'state':
       return (request) => capability.state(parseNotebookLocalRpcRequest('state', request))
     case 'restart':

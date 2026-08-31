@@ -127,8 +127,9 @@ page size is `artifacts.length`. `nextCursor` is absent on the last page.
 Result and Artifact fields use camelCase. `contentType`, `checksum`, `rootFrameId`, and
 `agentFrameId` are always present and may be `null`. Results contain metadata and immutable Version
 identity, never content; use
-`host.artifactPath(versionId)` to resolve a checksum-validated local absolute path for an exact
-generated Artifact Version or Upload Version, then use the existing file workflow. Version ID
+`host.artifactPath(versionId)` to resolve a checksum-validated, Session-scoped read-only local copy
+of an exact generated Artifact Version or Upload Version, then use the existing file workflow.
+Version ID
 collisions, missing Versions, cross-Project ownership, and checksum mismatches fail closed.
 
 The public result is a fresh frozen projection. It does not expose fuzzy scores, storage keys,

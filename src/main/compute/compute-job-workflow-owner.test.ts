@@ -1,11 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
-import { ComputeJobWorkflowOwner, resolveInputs } from './compute-job-workflow-owner'
+import {
+  ComputeJobWorkflowOwner,
+  createComputeArtifactResolver,
+  resolveInputs
+} from './compute-job-workflow-owner'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
@@ -763,6 +767,70 @@ describe('resolveInputs — artifact source', () => {
     expect(resolver.resolveArtifactPath).toHaveBeenCalledWith(
       '/storage/artifacts/sess/run/model.pkl'
     )
+  })
+
+  it('binds absolute input resolution to the submitting Project and Session', async () => {
+    const resolver = {
+      resolveArtifactPath: vi.fn(async () => '/storage/notebook-inputs/project/session/content')
+    }
+    const scope = { projectId: 'project-1', sessionId: 'session-1', providerId: 'ssh:cluster' }
+
+    await resolveInputs(
+      [{ src: '/storage/notebook-inputs/project/session/content', dst_filename: 'input.csv' }],
+      undefined,
+      resolver,
+      scope
+    )
+
+    expect(resolver.resolveArtifactPath).toHaveBeenCalledWith(
+      '/storage/notebook-inputs/project/session/content',
+      scope
+    )
+  })
+
+  it('hands a staged host.artifactPath file to Compute without exposing another Session', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'compute-notebook-input-'))
+    const stagedPath = join(
+      storageRoot,
+      'notebook-inputs',
+      'project-1',
+      'session-1',
+      'artifact-version',
+      'a'.repeat(64),
+      'content'
+    )
+    const legacyPath = join(storageRoot, 'artifacts', 'legacy.csv')
+    const managedResolver = vi.fn(async (path: string) => {
+      if (path === legacyPath) return path
+      throw new Error('Managed artifact path is outside the artifact store.')
+    })
+    try {
+      await mkdir(join(stagedPath, '..'), { recursive: true })
+      await mkdir(join(legacyPath, '..'), { recursive: true })
+      await Promise.all([writeFile(stagedPath, 'staged'), writeFile(legacyPath, 'legacy')])
+      const resolvedStagedPath = await realpath(stagedPath)
+      const resolver = createComputeArtifactResolver(storageRoot, managedResolver)
+      const scope = { projectId: 'project-1', sessionId: 'session-1', providerId: 'ssh:cluster' }
+
+      await expect(
+        resolveInputs([{ src: stagedPath, dst_filename: 'input.csv' }], undefined, resolver, scope)
+      ).resolves.toMatchObject({
+        entries: [{ kind: 'upload', localPath: resolvedStagedPath, dstFilename: 'input.csv' }]
+      })
+      await expect(
+        resolveInputs([{ src: stagedPath, dst_filename: 'input.csv' }], undefined, resolver, {
+          ...scope,
+          sessionId: 'session-2'
+        })
+      ).rejects.toThrow('outside the artifact store')
+      await expect(
+        resolveInputs([{ src: legacyPath, dst_filename: 'legacy.csv' }], undefined, resolver, scope)
+      ).resolves.toMatchObject({
+        entries: [{ kind: 'upload', localPath: legacyPath, dstFilename: 'legacy.csv' }]
+      })
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
   })
 
   it('throws when artifactResolver is missing for an absolute (artifact) src', async () => {

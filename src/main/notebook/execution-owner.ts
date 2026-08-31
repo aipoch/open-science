@@ -48,6 +48,7 @@ import {
 } from './dependency-analysis'
 import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
 import { getNotebookFileEvidenceLocation } from './repository'
+import { getNotebookInputRoot } from './input-staging'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
@@ -167,6 +168,10 @@ class NotebookExecutionOwner {
 
   constructor(private readonly options: NotebookExecutionOwnerOptions) {
     this.shellProcess = options.shellProcess ?? new NotebookShellProcessAdapter(options.platform)
+  }
+
+  private inputRoot(session: NotebookSessionAggregate): string {
+    return getNotebookInputRoot(this.options.storageRoot, session.projectId, session.sessionId)
   }
 
   private fileEvidenceLocation(session: NotebookSessionAggregate): {
@@ -319,6 +324,7 @@ class NotebookExecutionOwner {
               language: cell.language,
               environment,
               notebookSessionRoot: session.notebookSessionRoot,
+              inputRoot: this.inputRoot(session),
               dataRoot: session.dataRoot,
               ...this.fileEvidenceLocation(session),
               runtimeRoot: session.runtimeRoot,
@@ -329,6 +335,8 @@ class NotebookExecutionOwner {
               timeoutMs: request.timeoutMs,
               signal,
               resolvedInterpreter,
+              sessionId: session.sessionId,
+              projectId: session.projectId,
               inputRunLeaseId: request.inputRunLeaseId
             })
             .catch((error: unknown) => {
@@ -553,6 +561,7 @@ class NotebookExecutionOwner {
                   kind: 'repl',
                   cwd: session.cwd,
                   notebookSessionRoot: session.notebookSessionRoot,
+                  inputRoot: this.inputRoot(session),
                   dataRoot: session.dataRoot,
                   ...this.fileEvidenceLocation(session),
                   runtimeRoot: session.runtimeRoot,
@@ -657,6 +666,11 @@ class NotebookExecutionOwner {
                 cwd: session.cwd,
                 handoffDir: join(session.notebookSessionRoot, 'handoff'),
                 runtimeRoot: session.runtimeRoot,
+                notebookSessionRoot: session.notebookSessionRoot,
+                inputRoot: this.inputRoot(session),
+                protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+                sessionId: session.sessionId,
+                projectId: session.projectId,
                 timeoutMs: request.timeoutMs,
                 signal
               }))

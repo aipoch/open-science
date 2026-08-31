@@ -28,6 +28,7 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
       'notebook_execute',
       'repl_execute',
       'bash_execute',
+      'request_network_access',
       'notebook_state',
       'list_notebook_runtimes',
       'notebook_bind_runtime',

@@ -17,6 +17,10 @@ import {
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { PackageMirror } from '../../shared/mirror'
 import {
+  normalizeNotebookNetworkSettings,
+  type NotebookNetworkSettings
+} from '../../shared/notebook-network'
+import {
   networkProxyValidationMessage,
   normalizeNetworkProxySettings,
   type NetworkProxySettings
@@ -316,6 +320,11 @@ class SettingsRepository {
       delete next.networkProxy
       return next
     })
+  }
+
+  async setNotebookNetwork(value: NotebookNetworkSettings): Promise<StoredSettings> {
+    const notebookNetwork = normalizeNotebookNetworkSettings(value)
+    return this.mutate((settings) => ({ ...settings, notebookNetwork }))
   }
 
   async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {

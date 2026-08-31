@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, posix, win32 } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
 import { Transform, type TransformCallback } from 'node:stream'
 
@@ -20,8 +20,11 @@ import {
 } from './kernel-protocol'
 import { mapLoopOutputs, type MappedFigure } from './loop-output-mapper'
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
+import { buildNotebookKernelEnvironment, environmentPathRoots } from './process-environment'
+import type { NotebookProcessSandbox } from './process-sandbox'
 import {
   notebookWorkloadCacheEnv,
+  notebookWorkloadCacheRoot,
   prepareNotebookWorkloadCache
 } from './notebook-workload-cache-paths'
 import {
@@ -96,6 +99,21 @@ const DEFAULT_NAMESPACE_INSPECTION_TIMEOUT_MS = 5_000
 // Queued behind an interrupted R request before its queue is released. The sleep gives a SIGINT that
 // raced with the original response an interruptible, side-effect-free request to land in.
 const R_INTERRUPT_PROBE_CODE = 'base::Sys.sleep(0.05)'
+
+const presentPaths = (values: readonly string[]): string[] =>
+  values.filter((value) => value.length > 0)
+
+const kernelExecutableReadRoot = (
+  executable: string,
+  kind: KernelProcessKind,
+  platform: NodeJS.Platform
+): string => {
+  const platformPath = platform === 'win32' ? win32 : posix
+  if (kind === 'repl' && platform === 'darwin' && executable.includes('/Contents/MacOS/')) {
+    return platformPath.resolve(platformPath.dirname(executable), '../..')
+  }
+  return platformPath.dirname(executable)
+}
 
 // Real scheduler: unref'd so a pending idle timer alone never keeps the process alive.
 const defaultScheduleIdleTimer: ScheduleIdleTimer = (fn, ms) => {
@@ -188,6 +206,8 @@ export type NotebookKernelExecutorOptions = {
   onTerminated?: (kind: KernelProcessKind, env: string) => void
   // Injectable only to exercise the Windows conda activation contract on non-Windows test hosts.
   platform?: NodeJS.Platform
+  // Shared application-owned network sandbox. Omitted only by isolated executor tests.
+  processSandbox?: NotebookProcessSandbox
 }
 
 // One in-flight request awaiting a matching loop response line.
@@ -218,6 +238,9 @@ type ProcState = {
   child: ChildProcessWithoutNullStreams
   readline: Interface
   pending?: PendingRequest
+  beginSandboxExecution: () => () => void
+  stderrTail: string
+  annotateStderr: (stderr: string) => string
   // Captures why an involuntarily dropped proc became unusable before a request was registered, so
   // execute() can fail that pre-dispatch run instead of writing to a stale child and waiting forever.
   terminationError?: Error
@@ -398,6 +421,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private readonly cancellationGraceMs: number
   private readonly namespaceInspectionTimeoutMs: number
   private readonly platform: NodeJS.Platform
+  private readonly processSandbox?: NotebookProcessSandbox
 
   constructor(options: NotebookKernelExecutorOptions = {}) {
     this.pythonLoopPath = options.pythonLoopPath ?? defaultPythonLoopPath()
@@ -412,12 +436,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
     this.namespaceInspectionTimeoutMs =
       options.namespaceInspectionTimeoutMs ?? DEFAULT_NAMESPACE_INSPECTION_TIMEOUT_MS
     this.platform = options.platform ?? process.platform
+    this.processSandbox = options.processSandbox
   }
 
   // Sends one cell to the kind's loop and resolves with the mapped execution result.
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
     let workingFileObservation: WorkingFileObservation | undefined
     let kernelDispatched = false
+    let endSandboxExecution: (() => void) | undefined
     const helperModulesInitialized: string[] = []
     try {
       if (request.signal?.aborted) throw new NotebookExecutionCancelledError()
@@ -428,6 +454,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       const proc = await this.ensureProc(key, kind, env, request)
       if (proc.pending) throw new Error('Notebook execution is already running.')
+      endSandboxExecution = proc.beginSandboxExecution()
 
       const helperModules = request.helperModules ?? []
       for (const helper of helperModules) {
@@ -485,9 +512,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
       workingFileObservation = undefined
 
       const figureResult = await this.readFigures(response.figures)
+      const processStderr = proc.annotateStderr(proc.stderrTail)
+      proc.stderrTail = ''
       const mapped = mapLoopOutputs({
         stdout: response.stdout,
-        stderr: response.stderr,
+        stderr: [response.stderr, processStderr].filter(Boolean).join('\n'),
         error: response.error,
         errorLine: response.errorLine,
         result: response.result,
@@ -531,6 +560,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
             }
           : {})
       }
+    } finally {
+      endSandboxExecution?.()
     }
   }
 
@@ -676,7 +707,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     const pending = this.pendingTeardowns.get(key)
     if (pending) await pending
 
-    const child = await this.spawnLoop(kind, env, request)
+    const spawned = await this.spawnLoop(kind, env, request)
+    const child = spawned.child
     const boundedOutput = createBoundedKernelOutput((error) => {
       if (this.procs.get(key) !== proc) return
       proc.terminationError = error
@@ -692,14 +724,19 @@ class NotebookKernelExecutor implements NotebookExecutor {
       key,
       child,
       readline,
+      beginSandboxExecution: spawned.beginSandboxExecution,
+      stderrTail: '',
+      annotateStderr: spawned.annotateStderr,
       alive: true,
       interpreterIdentity: identity,
       protectedDirs: new Set(request.protectedDirs ?? [])
     }
 
     readline.on('line', (line) => this.handleLine(proc, line))
-    // Drain stderr unconditionally so a chatty/crashing loop can never block on a full OS pipe.
-    child.stderr.on('data', () => {})
+    // Keep a bounded tail for sandbox diagnostics while continuing to drain a chatty child pipe.
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+      proc.stderrTail = `${proc.stderrTail}${chunk}`.slice(-64 * 1024)
+    })
     // A late async pipe error (e.g. EPIPE if the loop died mid-write) must not surface as an
     // uncaught error on the main process; fail any pending run instead, or swallow it if none is
     // in flight. Same stale-proc guard as the exit handler below.
@@ -744,9 +781,16 @@ class NotebookKernelExecutor implements NotebookExecutor {
     kind: KernelProcessKind,
     env: string,
     request: NotebookExecutionRequest
-  ): Promise<ChildProcessWithoutNullStreams> {
+  ): Promise<{
+    child: ChildProcessWithoutNullStreams
+    beginSandboxExecution: () => () => void
+    annotateStderr: (stderr: string) => string
+  }> {
     const figuresDir = this.ensureFiguresDir()
-    const workloadCacheEnv = prepareNotebookWorkloadCache(request.runtimeRoot)
+    // Control-plane REPL may omit a runtime root; package cache belongs to a managed runtime directory.
+    const workloadCacheEnv = request.runtimeRoot
+      ? prepareNotebookWorkloadCache(request.runtimeRoot)
+      : {}
     // A missing session dir would surface as an opaque ENOENT; fall back to the OS default cwd so
     // spawn fails only for a genuinely missing interpreter.
     const spawnCwd = existsSync(request.cwd) ? request.cwd : undefined
@@ -755,38 +799,106 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
     let command: string
     let args: string[]
+    let loopPath: string
     if (kind === 'repl') {
       // Run the control-plane loop as plain Node via the app binary (ELECTRON_RUN_AS_NODE set in env).
       command = process.execPath
-      args = [this.replLoopPath]
+      loopPath = this.replLoopPath
+      args = [loopPath]
     } else {
       // Data kernel (python/r). The loop SCRIPT is chosen by kind; the INTERPRETER is either resolved
       // by the Runtime Registry (a managed env bin, or an external/overlay interpreter for BYO) or,
       // when unresolved, the env's own managed interpreter -- the backward-compatible default (no
       // system-PATH fallback; a missing managed interpreter still surfaces a clear ENOENT). This is
       // the seam that lets the user choose the kernel instead of hard-binding the app conda prefix.
-      const loopPath = kind === 'r' ? this.rLoopPath : this.pythonLoopPath
+      loopPath = kind === 'r' ? this.rLoopPath : this.pythonLoopPath
       const managedBin = kind === 'r' ? rScriptBin(prefix) : pythonBin(prefix)
       command = request.resolvedInterpreter?.command ?? managedBin
       args = [...(request.resolvedInterpreter?.args ?? []), loopPath]
     }
 
     // The semantic guard rejects known installers before dispatch. This native layer makes the
-    // managed runtime state read-only to the complete persistent-kernel process tree as well, covering
+    // app-owned runtime read-only to the complete persistent-kernel process tree as well, covering
     // dynamically constructed R/Python/REPL calls. Only the disposable workload-cache subtree remains
-    // writable; manage_packages runs in the main process outside this wrapper and remains the only
-    // package writer.
-    const invocation = protectManagedRuntimeWrites(
-      { executable: command, args },
-      request.runtimeRoot,
-      this.platform
+    // writable; manage_packages remains the only package writer and wraps each installer separately.
+    const nativeInvocation = { executable: command, args }
+    const invocation = this.processSandbox
+      ? nativeInvocation
+      : protectManagedRuntimeWrites(nativeInvocation, request.runtimeRoot, this.platform)
+    const sessionId = request.sessionId
+    const projectId = request.projectId
+    if (this.processSandbox && (!sessionId || !projectId)) {
+      throw new Error('Notebook network sandbox requires Session and Project context.')
+    }
+    const sandboxed = this.processSandbox
+      ? await this.processSandbox.wrap({
+          executable: invocation.executable,
+          args: invocation.args,
+          env: spawnEnv,
+          cwd: spawnCwd ?? process.cwd(),
+          commandText: [invocation.executable, ...invocation.args].join(' '),
+          sessionId: sessionId!,
+          projectId: projectId!,
+          runtime: kind,
+          ...(kind === 'repl' && request.mcpRpcSocketPath
+            ? { localRpcSocketPath: request.mcpRpcSocketPath }
+            : {}),
+          ...(kind === 'repl' && this.platform === 'linux' && request.mcpRpcToken
+            ? { inheritedFileDescriptorCount: 1 }
+            : {}),
+          filesystem: {
+            readOnlyRoots: presentPaths([
+              request.runtimeRoot,
+              request.inputRoot ?? '',
+              kernelExecutableReadRoot(invocation.executable, kind, this.platform),
+              loopPath,
+              ...environmentPathRoots(spawnEnv, this.platform)
+            ]),
+            readWriteRoots: presentPaths([
+              request.notebookSessionRoot,
+              request.cwd,
+              figuresDir,
+              ...(request.runtimeRoot ? [notebookWorkloadCacheRoot(request.runtimeRoot)] : [])
+            ]),
+            deniedReadRoots: request.protectedDirs ?? [],
+            deniedWriteRoots: request.protectedDirs ?? []
+          }
+        })
+      : undefined
+    const rpcTokenFileDescriptor =
+      kind === 'repl' && this.platform === 'linux' && request.mcpRpcToken ? 3 : undefined
+    const child = spawn(
+      sandboxed?.executable ?? invocation.executable,
+      sandboxed?.args ?? invocation.args,
+      {
+        cwd: spawnCwd,
+        env: sandboxed?.env ?? spawnEnv,
+        ...(rpcTokenFileDescriptor ? { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] } : {})
+      }
     )
-    const child = spawn(invocation.executable, invocation.args, { cwd: spawnCwd, env: spawnEnv })
+    if (rpcTokenFileDescriptor) {
+      const tokenPipe = child.stdio[rpcTokenFileDescriptor]
+      if (!tokenPipe || !('end' in tokenPipe)) {
+        child.kill()
+        sandboxed?.cleanup()
+        throw new Error('Notebook RPC credential pipe was not created.')
+      }
+      tokenPipe.on('error', () => undefined)
+      tokenPipe.end(request.mcpRpcToken)
+    }
+    if (sandboxed) {
+      child.once('exit', sandboxed.cleanup)
+      child.once('error', sandboxed.cleanup)
+    }
     await new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve)
       child.once('error', reject)
     })
-    return child
+    return {
+      child,
+      beginSandboxExecution: sandboxed?.beginExecution ?? (() => () => undefined),
+      annotateStderr: sandboxed?.annotateStderr ?? ((stderr) => stderr)
+    }
   }
 
   // Builds the spawn env shared by the loops, adding the figures dir, (for R) a PATH prefix, and (for
@@ -810,11 +922,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
             : undefined
           : envPrefix(request.runtimeRoot, resolveRequestEnv(kind, request))
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...buildNotebookKernelEnvironment(this.platform),
       ...workloadCacheEnv,
-      // Force a non-interactive matplotlib backend so plt.show() never opens a GUI window in this
-      // headless runtime; respect an explicitly configured backend if present.
-      MPLBACKEND: process.env.MPLBACKEND || 'Agg',
+      // Force a non-interactive backend. Inheriting MPLBACKEND can load an arbitrary module from the
+      // host environment and would bypass the environment-isolation policy below.
+      MPLBACKEND: 'Agg',
       OPEN_SCIENCE_NOTEBOOK_DIR: request.notebookSessionRoot,
       OPEN_SCIENCE_NOTEBOOK_DATA_DIR: request.dataRoot,
       OPEN_SCIENCE_RUNTIME_DIR: request.runtimeRoot,
@@ -840,7 +952,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
         ? { OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: request.mcpRpcSocketPath }
         : {}),
       ...(kind === 'repl' && request.mcpRpcToken
-        ? { OPEN_SCIENCE_MCP_RPC_TOKEN: request.mcpRpcToken }
+        ? this.platform === 'linux'
+          ? { OPEN_SCIENCE_MCP_RPC_TOKEN_FD: '3' }
+          : { OPEN_SCIENCE_MCP_RPC_TOKEN: request.mcpRpcToken }
         : {}),
       // Session/project identity reaches ONLY the repl kernel, alongside the RPC creds: host.compute
       // carries it on call_command payloads for grant-scope approval memory (This conversation / This
@@ -1203,5 +1317,5 @@ class NotebookKernelExecutor implements NotebookExecutor {
   }
 }
 
-export { NotebookKernelExecutor }
+export { NotebookKernelExecutor, kernelExecutableReadRoot }
 export type { KernelProcessKind }
