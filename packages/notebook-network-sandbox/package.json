@@ -10,6 +10,7 @@
     }
   },
   "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json --composite false",
     "build:windows-host": "node vendor/windows/build.mjs"
   },
   "license": "Apache-2.0"

@@ -13,6 +13,10 @@ export function resolveVitestMaxWorkers(
 
 export const VITEST_ARCHITECTURE_TEST_GLOBS = ['**/*.architecture.test.ts'] as const
 
+export const VITEST_DATABASE_TEST_GLOBS = [
+  'scripts/database-migration-ledger-smoke.test.ts'
+] as const
+
 export const VITEST_PROCESS_TEST_GLOBS = [
   '**/*.integration.test.ts',
   '**/*.certification.test.ts',
@@ -26,7 +30,7 @@ export const VITEST_PROCESS_TEST_GLOBS = [
   'resources/skills/literature-review/kernel.test.ts'
 ] as const
 
-const VITEST_EXCLUDE_PATTERNS = [
+const BASE_VITEST_EXCLUDE_PATTERNS = [
   ...configDefaults.exclude,
   'e2e/**',
   '**/.claude/**',
@@ -36,6 +40,20 @@ const VITEST_EXCLUDE_PATTERNS = [
   '**/.worktrees/**',
   '**/.worktree/**'
 ]
+const VITEST_PORTABLE_CI_EXCLUDE_PATTERNS = [
+  'src/renderer/src/i18n/resources.test.ts',
+  'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+  'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts'
+] as const
+
+function vitestExcludePatternsFor(env: NodeJS.ProcessEnv): string[] {
+  return [
+    ...BASE_VITEST_EXCLUDE_PATTERNS,
+    ...(env.VITEST_PORTABLE_CI === '1' ? VITEST_PORTABLE_CI_EXCLUDE_PATTERNS : [])
+  ]
+}
+
+const VITEST_EXCLUDE_PATTERNS = vitestExcludePatternsFor(process.env)
 const VITEST_COVERAGE_EXCLUDE_PATTERNS = [
   '**/*.test.{ts,tsx}',
   '**/*.d.ts',
@@ -165,6 +183,7 @@ export default defineConfig({
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
             ...VITEST_ARCHITECTURE_TEST_GLOBS,
+            ...VITEST_DATABASE_TEST_GLOBS,
             ...VITEST_PROCESS_TEST_GLOBS
           ]
         }
@@ -191,6 +210,18 @@ export default defineConfig({
           fileParallelism: false,
           maxWorkers: 1
         }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'database',
+          include: [...VITEST_DATABASE_TEST_GLOBS],
+          exclude: [...VITEST_EXCLUDE_PATTERNS],
+          isolate: true,
+          fileParallelism: false,
+          maxWorkers: 1,
+          sequence: { groupOrder: 2 }
+        }
       }
     ],
     coverage: {
@@ -215,5 +246,7 @@ export {
   FULL_COVERAGE_THRESHOLDS,
   fullSuiteShardAllowsEmptyProjects,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
-  VITEST_EXCLUDE_PATTERNS
+  VITEST_EXCLUDE_PATTERNS,
+  VITEST_PORTABLE_CI_EXCLUDE_PATTERNS,
+  vitestExcludePatternsFor
 }

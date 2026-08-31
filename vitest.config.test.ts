@@ -11,7 +11,10 @@ import vitestConfig, {
   resolveVitestMaxWorkers,
   VITEST_ARCHITECTURE_TEST_GLOBS,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
+  VITEST_DATABASE_TEST_GLOBS,
   VITEST_EXCLUDE_PATTERNS,
+  VITEST_PORTABLE_CI_EXCLUDE_PATTERNS,
+  vitestExcludePatternsFor,
   VITEST_PROCESS_TEST_GLOBS
 } from './vitest.config'
 
@@ -22,6 +25,15 @@ describe('Vitest discovery boundaries', () => {
       expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)
     }
   )
+
+  it('excludes duplicated platform checks only from portable CI shards', () => {
+    expect(vitestExcludePatternsFor({})).not.toEqual(
+      expect.arrayContaining([...VITEST_PORTABLE_CI_EXCLUDE_PATTERNS])
+    )
+    expect(vitestExcludePatternsFor({ VITEST_PORTABLE_CI: '1' })).toEqual(
+      expect.arrayContaining([...VITEST_PORTABLE_CI_EXCLUDE_PATTERNS])
+    )
+  })
 })
 
 it('excludes the Electron IPC composition root from coverage', () => {
@@ -141,6 +153,19 @@ it('serializes real kernels, TCP servers, and integration files so they cannot s
   expect(processProject.isolate).toBe(true)
   expect(processProject.fileParallelism).toBe(false)
   expect(processProject.maxWorkers).toBe(1)
+})
+
+it('runs the migration ledger smoke after other schema-using projects', () => {
+  expect(VITEST_DATABASE_TEST_GLOBS).toEqual(['scripts/database-migration-ledger-smoke.test.ts'])
+  const database = projectByName('database')
+  expect(database.include).toEqual([...VITEST_DATABASE_TEST_GLOBS])
+  expect(database.isolate).toBe(true)
+  expect(database.fileParallelism).toBe(false)
+  expect(database.maxWorkers).toBe(1)
+  expect(database.sequence?.groupOrder).toBe(2)
+  expect(projectByName('default').exclude).toEqual(
+    expect.arrayContaining([...VITEST_DATABASE_TEST_GLOBS])
+  )
 })
 
 it('does not treat a 50ms scheduler delay as ACP deadlock', () => {

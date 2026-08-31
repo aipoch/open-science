@@ -26,7 +26,7 @@ import {
   notebookLaneScope,
   type NotebookLaneIdentity
 } from './lane-identity'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 import { ensureNotebookInputRoot } from './input-staging'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/

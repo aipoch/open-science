@@ -15,7 +15,7 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import type { AcpSessionRegistry } from './session-registry'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 import { CodeBuddyOutputAdapter } from './codebuddy-output-adapter'
 
 const CODEX_COMPACTION_WARNING =

@@ -37,7 +37,7 @@ import {
   withTrustedNativeToolIdentity
 } from './permission-policy'
 import { extractProviderToolName, toAcpRuntimeEvent } from './runtime-events'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 const log = createLogger('acp')
 

@@ -27,6 +27,38 @@ const run = (
 const platformSupported = process.platform === 'darwin' || process.platform === 'linux'
 
 describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
+  it('keeps the standard null device writable', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'open-science-null-device-'))
+    const sandbox = new NotebookNetworkSandbox({
+      policy: { allowedDomains: [], deniedDomains: [] },
+      resources: { root: resolve(import.meta.dirname, '../vendor') }
+    })
+
+    try {
+      await sandbox.initialize()
+      const wrapped = await sandbox.wrap({
+        command: 'printf discarded > /dev/null',
+        cwd: workspace,
+        env: { PATH: '/usr/bin:/bin' },
+        filesystem: {
+          readOnlyRoots: ['/bin', '/usr/bin'],
+          readWriteRoots: [workspace],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        },
+        onNetworkAccessRequest: async () => false
+      })
+      const result = await run(wrapped, workspace)
+      const diagnostic = wrapped.annotateStderr(result.stderr)
+      wrapped.cleanup()
+
+      expect(result.code, diagnostic).toBe(0)
+    } finally {
+      await sandbox.dispose()
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('keeps the private root hidden while allowing declared workspace writes', async () => {
     const privateRoot = await mkdtemp(join(tmpdir(), 'open-science-private-'))
     const hostTempRoot = await mkdtemp(join(tmpdir(), 'open-science-host-temp-'))

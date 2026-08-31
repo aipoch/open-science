@@ -96,8 +96,8 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
             })
             let stdout = ''
             let stderr = ''
-            child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
-            child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
+            child.stdout!.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
+            child.stderr!.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
             child.on('error', reject)
             child.on('close', (code) => resolveRun({ code, stderr, stdout }))
             const descriptor = child.stdio[3]

@@ -2521,7 +2521,10 @@ describe('artifact provenance repository', () => {
       messageAncestry: ['prompt-parent', 'prompt-1'],
       notebookSessionId: 'session-1',
       sourceFileObservation: {
-        path: join(notebookDocument.notebookSessionRoot, 'data', 'ambiguous.png'),
+        // Keep the unverifiable hint outside the durable Notebook root on every platform. On macOS,
+        // /var resolves through /private/var; relying on that alias made this fixture accidentally
+        // exercise a different trust-boundary branch than Linux.
+        path: join(storageRoot, 'unverifiable-source', 'ambiguous.png'),
         sizeBytes: Buffer.byteLength('ambiguous plot bytes'),
         mtimeMs: 1.5
       },
