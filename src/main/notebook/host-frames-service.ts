@@ -9,7 +9,7 @@ import {
 import { sanitizeExportMarkdown } from '../../shared/conversation-export'
 import { fuzzyScore } from '../../shared/fuzzy-match'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 type HostFrameReadContext = Readonly<{ projectId: string; sessionId: string }>
 

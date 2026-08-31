@@ -6,7 +6,7 @@ import {
   sanitizeAcpMessageImage,
   type AcpRuntimeEvent
 } from '../../shared/acp'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).

@@ -100,7 +100,7 @@ import {
   type MemoryAgentContext
 } from '../../shared/memory'
 import type { MemoryService } from '../memory/service'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 const log = createLogger('notebook:local-rpc')
 const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
