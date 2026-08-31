@@ -3,7 +3,8 @@ import type {
   AcpPermissionResponse,
   AcpRuntimeState,
   AcpRuntimeEvent,
-  AcpStateSnapshot
+  AcpStateSnapshot,
+  AcpStateUpdate
 } from '../../../../shared/acp'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -19,7 +20,7 @@ import {
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 type AcpRuntimeApi = ReturnType<typeof useAcpRuntime>
-type OnStateListener = (snapshot: AcpStateSnapshot) => void
+type OnStateListener = (snapshot: AcpStateUpdate) => void
 type OnEventListener = (events: readonly AcpRuntimeEvent[]) => void
 
 // Minimal renderHook so we can exercise the real hook without pulling in @testing-library/react,
@@ -590,6 +591,40 @@ describe('useAcpRuntime state subscription', () => {
     expect(result.current.state.events).toEqual([])
   })
 
+  it('uses the initial snapshot as the event barrier after a newer state-only update', async () => {
+    const initial = createDeferred<AcpStateSnapshot>()
+    acpApi.getState.mockReturnValueOnce(initial.promise)
+    const { result } = await mountRuntime()
+    const delivered: AcpRuntimeEvent[] = []
+    result.current.subscribeRuntimeEvents?.((events) => delivered.push(...events))
+    const pendingEvent: AcpRuntimeEvent = {
+      id: 'runtime-1:event-before-initial-snapshot',
+      timestamp: 2,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      sessionId: 'session-1',
+      text: 'queued until the initial event window arrives'
+    }
+
+    act(() => {
+      capturedStateListener?.({
+        ...createSnapshot({ revision: 2, status: 'connected' }),
+        events: undefined
+      })
+      capturedEventListener?.([pendingEvent])
+    })
+    await act(async () => {
+      initial.resolve(createSnapshot({ revision: 1, status: 'idle', events: [] }))
+      await initial.promise
+    })
+
+    expect(delivered).toEqual([pendingEvent])
+    expect(result.current.currentRuntimeEvents()).toEqual([pendingEvent])
+    expect(result.current.state.status).toBe('connected')
+    expect(result.current.state.revision).toBe(2)
+  })
+
   it('subscribes on mount, applies pushed snapshots, and unsubscribes on unmount', async () => {
     const { result, unmount } = await mountRuntime()
 
@@ -618,6 +653,8 @@ describe('useAcpRuntime state subscription', () => {
     const initial = createDeferred<AcpStateSnapshot>()
     acpApi.getState.mockReturnValueOnce(initial.promise)
     const { result } = await mountRuntime()
+    const delivered: AcpRuntimeEvent[] = []
+    result.current.subscribeRuntimeEvents?.((events) => delivered.push(...events))
     const terminal = createSnapshot({
       revision: 2,
       events: [
@@ -656,6 +693,7 @@ describe('useAcpRuntime state subscription', () => {
     })
 
     expect(result.current.state).toEqual(terminal)
+    expect(delivered).toEqual(terminal.events)
   })
 
   it('reconciles a snapshot already accepted by another renderer ingress', async () => {

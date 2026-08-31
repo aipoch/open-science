@@ -139,6 +139,7 @@ const useAcpRuntime = (): {
   const actionGenerationRef = useRef(0)
   const pendingActionCountsRef = useRef(new Map<PendingSetter, number>())
   const [runtimeEventOwner] = useState(createRuntimeEventSubscriptionOwner)
+  const eventSnapshotInitializedRef = useRef(false)
   const onRuntimeEvent = (window.api.acp as Partial<Pick<typeof window.api.acp, 'onEvent'>>).onEvent
   const subscribeRuntimeEvents = onRuntimeEvent ? runtimeEventOwner.subscribe : undefined
 
@@ -154,6 +155,7 @@ const useAcpRuntime = (): {
     (update: AcpStateUpdate): void => {
       if (!acceptAcpRuntimeSnapshotRevision(update)) return
       if (update.events) {
+        eventSnapshotInitializedRef.current = true
         runtimeEventOwner.observeSnapshot(update.events, update as AcpStateSnapshot)
         setState(update as AcpStateSnapshot)
         return
@@ -168,6 +170,7 @@ const useAcpRuntime = (): {
   const applySnapshot = useCallback(
     (snapshot: AcpStateSnapshot): void => {
       if (!acceptAcpRuntimeSnapshotRevision(snapshot)) return
+      eventSnapshotInitializedRef.current = true
       runtimeEventOwner.observeSnapshot(snapshot.events, snapshot)
       setState(snapshot)
     },
@@ -176,8 +179,13 @@ const useAcpRuntime = (): {
 
   const applyInitialSnapshot = useCallback(
     (snapshot: AcpStateSnapshot): void => {
+      if (!eventSnapshotInitializedRef.current) {
+        // Event initialization is an independent barrier. A newer state-only broadcast may already
+        // own the state watermark, but the initial full snapshot must still release queued events.
+        eventSnapshotInitializedRef.current = true
+        runtimeEventOwner.observeInitialSnapshot(snapshot.events, snapshot)
+      }
       if (!acceptAcpRuntimeSnapshotRevision(snapshot)) return
-      runtimeEventOwner.observeInitialSnapshot(snapshot.events, snapshot)
       setState(snapshot)
     },
     [runtimeEventOwner]

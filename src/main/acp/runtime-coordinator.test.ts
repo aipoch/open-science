@@ -7,7 +7,7 @@ import type {
   AcpStateSnapshot,
   AcpStateUpdate
 } from '../../shared/acp'
-import { toAcpStateCommandResponse } from '../../shared/acp'
+import { MAX_ACP_RUNTIME_EVENTS, toAcpStateCommandResponse } from '../../shared/acp'
 import type { AcpSessionAgentTarget } from '../../shared/acp'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
@@ -69,6 +69,7 @@ const createFakeRuntime = (options: {
   quitBlockingSessions?: { projectId: string; sessionId: string }[]
   prompt?: (sessionId: string) => Promise<unknown>
   holdAfterPromptEnded?: () => Promise<void>
+  stateOnlyEventUpdates?: boolean
 }): {
   runtime: AcpRuntime
   connect: ReturnType<typeof vi.fn>
@@ -333,9 +334,18 @@ const createFakeRuntime = (options: {
     requestUserInput,
     disableLiteratureContext,
     emitEvent: (event) => {
-      snapshot = { ...snapshot, events: [...snapshot.events, event] }
+      snapshot = {
+        ...snapshot,
+        events: [...snapshot.events, event].slice(
+          options.stateOnlyEventUpdates ? -MAX_ACP_RUNTIME_EVENTS : 0
+        )
+      }
       options.callbacks.onEvent?.(event)
-      options.callbacks.onStateChanged?.(snapshot)
+      options.callbacks.onStateChanged?.(
+        options.stateOnlyEventUpdates
+          ? toAcpStateCommandResponse({ ...snapshot, revision: 0 }).result
+          : snapshot
+      )
     },
     emitPermission: (request) => {
       snapshot = { ...snapshot, pendingPermissions: [...snapshot.pendingPermissions, request] }
@@ -344,7 +354,11 @@ const createFakeRuntime = (options: {
     },
     emitState: (overrides) => {
       snapshot = { ...snapshot, ...overrides }
-      options.callbacks.onStateChanged?.(snapshot)
+      options.callbacks.onStateChanged?.(
+        options.stateOnlyEventUpdates
+          ? toAcpStateCommandResponse({ ...snapshot, revision: 0 }).result
+          : snapshot
+      )
     },
     setStateSilently: (overrides) => {
       snapshot = { ...snapshot, ...overrides }
@@ -776,6 +790,64 @@ describe('AcpRuntimeCoordinator', () => {
     expect(incrementalEvents).toHaveLength(1)
     expect.soft(JSON.stringify(stateChanges.at(-1))).not.toContain(retainedPayload)
     expect.soft(JSON.stringify(commandResponse)).not.toContain(retainedPayload)
+  })
+
+  it('forgets published event ids after the runtime event window evicts them', async () => {
+    const retirement = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const forwardedEvents: AcpRuntimeEvent[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'codex' : 'claude-code',
+          sessionIds: [`agent-session-${created.length + 1}`],
+          callbacks,
+          stateOnlyEventUpdates: true
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onEvent: (event) => forwardedEvents.push(event) }
+    )
+    const session = await coordinator.createSession()
+    const message = (id: string, timestamp: number): AcpRuntimeEvent => ({
+      id,
+      timestamp,
+      kind: 'message',
+      level: 'info',
+      sessionId: session.sessionId,
+      role: 'assistant',
+      text: id
+    })
+    const evictedEvent = message('evicted-message', 0)
+
+    created[0].emitEvent(evictedEvent)
+    for (let index = 1; index <= MAX_ACP_RUNTIME_EVENTS; index += 1) {
+      created[0].emitEvent(message(`retained-message-${index}`, index))
+    }
+    expect(forwardedEvents).toHaveLength(MAX_ACP_RUNTIME_EVENTS + 1)
+
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const switchRequest = coordinator.requestAgentFrameworkSwitch()
+    await coordinator.connect()
+    const resumeRequest = coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'codex'
+    })
+    await vi.waitFor(() => expect(created[1].resumeSession).toHaveBeenCalledOnce())
+    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+    await resumeRequest
+
+    created[0].emitEvent(evictedEvent)
+    expect(forwardedEvents).toHaveLength(MAX_ACP_RUNTIME_EVENTS + 1)
+
+    retirement.resolve()
+    await switchRequest
   })
 
   it('retains snapshot-only events after a new runtime generation adopts the session', async () => {

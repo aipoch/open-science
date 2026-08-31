@@ -1926,6 +1926,11 @@ class AcpRuntimeCoordinator {
     if (shouldPublish) {
       const remembered = publishedEventIds ?? new Set<string>()
       remembered.add(event.id)
+      while (remembered.size > MAX_ACP_RUNTIME_EVENTS) {
+        const oldest = remembered.values().next()
+        if (oldest.done) break
+        remembered.delete(oldest.value)
+      }
       if (!publishedEventIds) this.publishedRuntimeEventIds.set(runtime, remembered)
     }
 
