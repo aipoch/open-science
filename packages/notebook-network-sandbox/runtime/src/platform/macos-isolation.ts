@@ -67,7 +67,7 @@ const seatbeltProfile = (request: MacLaunchRequest): string => {
     // This exposes directory metadata only; file contents and directory listings remain denied.
     rules.push('(allow file-read-metadata (vnode-type DIRECTORY))')
   }
-  const outsideWritable = exceptRoots(layout.readWriteRoots)
+  const outsideWritable = exceptRoots([...layout.readWriteRoots, '/dev/null'])
   rules.push(outsideWritable ? `(deny file-write* ${outsideWritable})` : '(deny file-write*)')
   for (const root of new Set([...layout.deniedReadRoots, ...layout.deniedWriteRoots])) {
     rules.push(`(deny file-write* ${subtree(root)})`)

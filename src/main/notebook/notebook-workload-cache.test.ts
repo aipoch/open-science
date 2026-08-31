@@ -40,6 +40,7 @@ describe('NotebookWorkloadCache', () => {
 
     expect(env).toEqual({
       OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
+      MPLCONFIGDIR: join(cacheRoot, 'matplotlib'),
       PIP_CACHE_DIR: join(cacheRoot, 'pip'),
       UV_CACHE_DIR: join(cacheRoot, 'uv'),
       HF_HUB_CACHE: join(cacheRoot, 'huggingface', 'hub'),
