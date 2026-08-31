@@ -25,6 +25,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
 import { localizeConnectorError } from './connector-error-message'
 import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
+import { ConnectorNamedCredentialEditor } from './ConnectorNamedCredentialEditor'
+import { parseNamedCredentialText } from './connector-named-credential-parser'
 import { DeviceCredentialEditor } from './DeviceCredentialEditor'
 import { isCustomConnectorName, toCustomConnectorName } from '../../../../shared/custom-connector'
 import {
@@ -44,8 +46,6 @@ type RemoteAuth = 'none' | 'oauth' | 'headers'
 const fieldClassName = 'grid min-w-0 gap-1.5'
 const fieldLabelClassName = 'text-sm font-medium text-foreground'
 const helperClassName = 'text-xs leading-5 text-muted-foreground'
-const DEVICE_CREDENTIAL_ENV_PLACEHOLDER = 'API_TOKEN='
-const DEVICE_CREDENTIAL_HEADER_PLACEHOLDER = 'Authorization:\nX-Api-Key:'
 
 // Splits an arguments textarea on any whitespace/newlines into a positional arg list, dropping empties.
 const parseArgs = (raw: string, onePerLine = false): string[] =>
@@ -54,59 +54,8 @@ const parseArgs = (raw: string, onePerLine = false): string[] =>
     .map((token) => token.trim())
     .filter((token) => token.length > 0)
 
-type ParsedNamedValues = {
-  values: Record<string, string>
-  invalidLines: number[]
-  duplicateLines: Array<{ line: number; name: string }>
-}
 type StaticCredentialUpdateMode = 'keep' | 'replace' | 'clear'
-
-// Parses one KEY=VALUE per line and preserves line numbers for actionable validation feedback.
-const parseEnv = (raw: string, caseInsensitiveNames: boolean): ParsedNamedValues => {
-  const env: Record<string, string> = {}
-  const invalidLines: number[] = []
-  const duplicateLines: ParsedNamedValues['duplicateLines'] = []
-  const environmentNames = new Set<string>()
-  for (const [index, line] of raw.split('\n').entries()) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const eq = trimmed.indexOf('=')
-    if (eq <= 0) {
-      invalidLines.push(index + 1)
-      continue
-    }
-    const name = trimmed.slice(0, eq).trim()
-    const normalizedName = caseInsensitiveNames ? name.toLowerCase() : name
-    if (environmentNames.has(normalizedName)) duplicateLines.push({ line: index + 1, name })
-    else environmentNames.add(normalizedName)
-    env[name] = trimmed.slice(eq + 1).trim()
-  }
-  return { values: env, invalidLines, duplicateLines }
-}
-
-// Parses one "Name: Value" per line and preserves validation errors instead of dropping input.
-const parseHeaders = (raw: string): ParsedNamedValues => {
-  const headers: Record<string, string> = {}
-  const invalidLines: number[] = []
-  const duplicateLines: ParsedNamedValues['duplicateLines'] = []
-  const headerNames = new Map<string, string>()
-  for (const [index, line] of raw.split('\n').entries()) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const colon = trimmed.indexOf(':')
-    if (colon <= 0) {
-      invalidLines.push(index + 1)
-      continue
-    }
-    const name = trimmed.slice(0, colon).trim()
-    const normalizedName = name.toLowerCase()
-    const previousName = headerNames.get(normalizedName)
-    if (previousName) duplicateLines.push({ line: index + 1, name })
-    else headerNames.set(normalizedName, name)
-    headers[previousName ?? name] = trimmed.slice(colon + 1).trim()
-  }
-  return { values: headers, invalidLines, duplicateLines }
-}
+type StaticCredentialTarget = { kind: 'env' | 'header'; name: string }
 
 const canonicalUrl = (value: string | undefined): string | undefined => {
   if (!value?.trim()) return undefined
@@ -376,6 +325,8 @@ export function ConnectorAddForm({
   const [error, setError] = useState<string | null>(null)
   const [oauthSignInServer, setOAuthSignInServer] = useState<CustomServerView>()
   const [credentialBindings, setCredentialBindings] = useState<Record<string, string>>({})
+  const [pendingStaticCredentialTarget, setPendingStaticCredentialTarget] =
+    useState<StaticCredentialTarget>()
   const [oauthCredentialId, setOAuthCredentialId] = useState(editServer?.oauthCredentialId ?? '')
   const [localCredentialViewOpen, setLocalCredentialViewOpen] = useState(false)
   const creatingCredential = credentialViewOpen ?? localCredentialViewOpen
@@ -389,13 +340,17 @@ export function ConnectorAddForm({
     advancedOpen || Boolean(displayName.trim() && nameError) || Boolean(idError)
 
   const parsedArgs = parseArgs(argsText, initialTemplate !== undefined)
-  const parsedEnvironment = parseEnv(envText, window.api?.platform === 'win32')
+  const parsedEnvironment = parseNamedCredentialText(
+    envText,
+    'environment',
+    window.api?.platform === 'win32'
+  )
   const parsedEnv = parsedEnvironment.values
   const environmentErrors =
     environmentUpdateMode === 'replace' ? parsedEnvironment.invalidLines : []
   const environmentDuplicateErrors =
     environmentUpdateMode === 'replace' ? parsedEnvironment.duplicateLines : []
-  const parsedHeaders = parseHeaders(headersText)
+  const parsedHeaders = parseNamedCredentialText(headersText, 'header')
   const headerErrors = headerUpdateMode === 'replace' ? parsedHeaders.invalidLines : []
   const headerDuplicateErrors = headerUpdateMode === 'replace' ? parsedHeaders.duplicateLines : []
   const staticCredentials = deviceCredentials.filter((credential) => credential.kind !== 'oauth')
@@ -448,13 +403,18 @@ export function ConnectorAddForm({
     (mode !== 'local' ||
       requiredEnvironment.length === 0 ||
       environmentUpdateMode !== 'replace' ||
-      requiredEnvironment.every((key) => Boolean(credentialBindings[`env:${key}`]))) &&
+      requiredEnvironment.every(
+        (key) => key in parsedEnv && Boolean(credentialBindings[`env:${key}`])
+      )) &&
     (mode !== 'remote' ||
       requiredHeaders.length === 0 ||
       (remoteAuth === 'headers' &&
         (isEdit && headerUpdateMode !== 'replace'
           ? true
-          : requiredHeaders.every((header) => Boolean(credentialBindings[`header:${header}`]))))) &&
+          : requiredHeaders.every(
+              (header) =>
+                header in parsedHeaders.values && Boolean(credentialBindings[`header:${header}`])
+            )))) &&
     (mode !== 'remote' ||
       remoteAuth !== 'oauth' ||
       !requiresOAuthClientSecret ||
@@ -493,6 +453,52 @@ export function ConnectorAddForm({
   const switchMode = (next: ConnectorMode): void => {
     setMode(next)
     setError(null)
+  }
+
+  const credentialIdForName = (
+    kind: StaticCredentialTarget['kind'],
+    name: string
+  ): string | undefined => credentialBindings[`${kind}:${name}`]
+
+  const setCredentialBinding = (
+    kind: StaticCredentialTarget['kind'],
+    name: string,
+    credentialId: string
+  ): void => {
+    setCredentialBindings((bindings) => ({ ...bindings, [`${kind}:${name}`]: credentialId }))
+  }
+
+  const renameCredentialBinding = (
+    kind: StaticCredentialTarget['kind'],
+    previousName: string,
+    nextName: string
+  ): void => {
+    if (!previousName || previousName === nextName) return
+    setCredentialBindings((bindings) => {
+      const previousKey = `${kind}:${previousName}`
+      const credentialId = bindings[previousKey]
+      if (!credentialId) return bindings
+      const nextBindings = { ...bindings }
+      delete nextBindings[previousKey]
+      if (nextName) nextBindings[`${kind}:${nextName}`] = credentialId
+      return nextBindings
+    })
+  }
+
+  const removeCredentialBinding = (kind: StaticCredentialTarget['kind'], name: string): void => {
+    if (!name) return
+    setCredentialBindings((bindings) => {
+      const key = `${kind}:${name}`
+      if (!bindings[key]) return bindings
+      const nextBindings = { ...bindings }
+      delete nextBindings[key]
+      return nextBindings
+    })
+  }
+
+  const createStaticCredentialFor = (kind: StaticCredentialTarget['kind'], name: string): void => {
+    setPendingStaticCredentialTarget({ kind, name })
+    setCreatingCredential(true)
   }
 
   useEffect(() => {
@@ -679,10 +685,20 @@ export function ConnectorAddForm({
         onDone={(created) => {
           if (creatingOAuthCredential && created?.kind === 'oauth') {
             setOAuthCredentialId(created.id)
+          } else if (created && created.kind !== 'oauth' && pendingStaticCredentialTarget) {
+            setCredentialBinding(
+              pendingStaticCredentialTarget.kind,
+              pendingStaticCredentialTarget.name,
+              created.id
+            )
           }
+          setPendingStaticCredentialTarget(undefined)
           setCreatingCredential(false)
         }}
-        onCancel={() => setCreatingCredential(false)}
+        onCancel={() => {
+          setPendingStaticCredentialTarget(undefined)
+          setCreatingCredential(false)
+        }}
       />
     )
   }
@@ -946,17 +962,23 @@ export function ConnectorAddForm({
                       </Select>
                     ) : null}
                     {!isEdit || environmentUpdateMode === 'replace' ? (
-                      <Textarea
-                        id="connector-env"
-                        aria-label={t('Environment variables')}
-                        aria-required={requiredEnvironment.length > 0 || undefined}
-                        aria-invalid={environmentErrors.length > 0 || undefined}
-                        aria-describedby="connector-env-help"
-                        value={envText}
-                        rows={3}
-                        placeholder={DEVICE_CREDENTIAL_ENV_PLACEHOLDER}
-                        className="resize-y font-mono text-[13px]"
-                        onChange={(event) => setEnvText(event.target.value)}
+                      <ConnectorNamedCredentialEditor
+                        kind="environment"
+                        text={envText}
+                        onTextChange={setEnvText}
+                        credentials={staticCredentials}
+                        credentialIdForName={(name) => credentialIdForName('env', name)}
+                        onCredentialChange={(name, credentialId) =>
+                          setCredentialBinding('env', name, credentialId)
+                        }
+                        onNameChange={(previousName, nextName) =>
+                          renameCredentialBinding('env', previousName, nextName)
+                        }
+                        onRemoveName={(name) => removeCredentialBinding('env', name)}
+                        onCreateCredential={(name) => createStaticCredentialFor('env', name)}
+                        caseInsensitiveNames={window.api?.platform === 'win32'}
+                        required={requiredEnvironment.length > 0}
+                        describedBy="connector-env-help"
                       />
                     ) : null}
                     <p id="connector-env-help" className={helperClassName}>
@@ -974,66 +996,6 @@ export function ConnectorAddForm({
                           })
                         : ''}
                     </p>
-                    {environmentErrors.map((line) => (
-                      <p key={line} className="text-xs text-status-failure">
-                        {t('Line {{line}}: use KEY=.', { line })}
-                      </p>
-                    ))}
-                    {environmentDuplicateErrors.map(({ line, name }) => (
-                      <p key={`${line}-${name}`} className="text-xs text-status-failure">
-                        {t('Line {{line}}: {{name}} is duplicated.', { line, name })}
-                      </p>
-                    ))}
-                    {!isEdit || environmentUpdateMode === 'replace'
-                      ? Object.keys(parsedEnv).map((name) => (
-                          <div
-                            key={name}
-                            className="grid gap-1.5 rounded-lg border border-border p-3"
-                          >
-                            <span className="text-xs font-medium text-foreground">{name}</span>
-                            <Select
-                              value={credentialBindings[`env:${name}`] ?? ''}
-                              onValueChange={(credentialId) =>
-                                setCredentialBindings((bindings) => ({
-                                  ...bindings,
-                                  [`env:${name}`]: credentialId
-                                }))
-                              }
-                            >
-                              <SelectTrigger aria-label={t('Credential for {{name}}', { name })}>
-                                <SelectValue placeholder={t('Select credential')} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {staticCredentials.length > 0 ? (
-                                  staticCredentials.map((credential) => (
-                                    <SelectItem key={credential.id} value={credential.id}>
-                                      {credential.displayName} ·{' '}
-                                      {credential.kind === 'api_key'
-                                        ? t('API key')
-                                        : t('Access token')}
-                                    </SelectItem>
-                                  ))
-                                ) : (
-                                  <SelectItem value="__no_static_credentials__" disabled>
-                                    {t('No matching credentials')}
-                                  </SelectItem>
-                                )}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        ))
-                      : null}
-                    {!isEdit || environmentUpdateMode === 'replace' ? (
-                      <Button
-                        type="button"
-                        variant="link"
-                        size="sm"
-                        className="h-auto w-fit p-0 text-xs"
-                        onClick={() => setCreatingCredential(true)}
-                      >
-                        {t('New credential')}
-                      </Button>
-                    ) : null}
                   </div>
                 </>
               ) : (
@@ -1448,19 +1410,22 @@ export function ConnectorAddForm({
                         </Select>
                       ) : null}
                       {!isEdit || headerUpdateMode === 'replace' ? (
-                        <Textarea
-                          id="connector-headers"
-                          aria-label={t('Headers')}
-                          aria-required={requiredHeaders.length > 0 || undefined}
-                          aria-invalid={
-                            headerErrors.length > 0 || headerDuplicateErrors.length > 0 || undefined
+                        <ConnectorNamedCredentialEditor
+                          kind="header"
+                          text={headersText}
+                          onTextChange={setHeadersText}
+                          credentials={staticCredentials}
+                          credentialIdForName={(name) => credentialIdForName('header', name)}
+                          onCredentialChange={(name, credentialId) =>
+                            setCredentialBinding('header', name, credentialId)
                           }
-                          aria-describedby="connector-headers-help"
-                          value={headersText}
-                          rows={3}
-                          placeholder={DEVICE_CREDENTIAL_HEADER_PLACEHOLDER}
-                          className="resize-y font-mono text-[13px]"
-                          onChange={(event) => setHeadersText(event.target.value)}
+                          onNameChange={(previousName, nextName) =>
+                            renameCredentialBinding('header', previousName, nextName)
+                          }
+                          onRemoveName={(name) => removeCredentialBinding('header', name)}
+                          onCreateCredential={(name) => createStaticCredentialFor('header', name)}
+                          required={requiredHeaders.length > 0}
+                          describedBy="connector-headers-help"
                         />
                       ) : null}
                       <p id="connector-headers-help" className={helperClassName}>
@@ -1478,66 +1443,6 @@ export function ConnectorAddForm({
                             })
                           : ''}
                       </p>
-                      {headerErrors.map((line) => (
-                        <p key={line} className="text-xs text-status-failure">
-                          {t('Line {{line}}: use Name: Value.', { line })}
-                        </p>
-                      ))}
-                      {headerDuplicateErrors.map(({ line, name }) => (
-                        <p key={`${line}-${name}`} className="text-xs text-status-failure">
-                          {t('Line {{line}}: {{name}} is duplicated.', { line, name })}
-                        </p>
-                      ))}
-                      {!isEdit || headerUpdateMode === 'replace'
-                        ? Object.keys(parsedHeaders.values).map((name) => (
-                            <div
-                              key={name}
-                              className="grid gap-1.5 rounded-lg border border-border p-3"
-                            >
-                              <span className="text-xs font-medium text-foreground">{name}</span>
-                              <Select
-                                value={credentialBindings[`header:${name}`] ?? ''}
-                                onValueChange={(credentialId) =>
-                                  setCredentialBindings((bindings) => ({
-                                    ...bindings,
-                                    [`header:${name}`]: credentialId
-                                  }))
-                                }
-                              >
-                                <SelectTrigger aria-label={t('Credential for {{name}}', { name })}>
-                                  <SelectValue placeholder={t('Select credential')} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {staticCredentials.length > 0 ? (
-                                    staticCredentials.map((credential) => (
-                                      <SelectItem key={credential.id} value={credential.id}>
-                                        {credential.displayName} ·{' '}
-                                        {credential.kind === 'api_key'
-                                          ? t('API key')
-                                          : t('Access token')}
-                                      </SelectItem>
-                                    ))
-                                  ) : (
-                                    <SelectItem value="__no_static_credentials__" disabled>
-                                      {t('No matching credentials')}
-                                    </SelectItem>
-                                  )}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ))
-                        : null}
-                      {!isEdit || headerUpdateMode === 'replace' ? (
-                        <Button
-                          type="button"
-                          variant="link"
-                          size="sm"
-                          className="h-auto w-fit p-0 text-xs"
-                          onClick={() => setCreatingCredential(true)}
-                        >
-                          {t('New credential')}
-                        </Button>
-                      ) : null}
                     </div>
                   ) : null}
                 </>
