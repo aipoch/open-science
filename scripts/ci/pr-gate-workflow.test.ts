@@ -373,7 +373,6 @@ describe('PR Gate workflow', () => {
         '--coverage',
         '--coverage.reporter=text-summary',
         '--testTimeout=30000',
-        '--maxWorkers=2',
         '--shard=${{ matrix.shard }}/3',
         '--reporter=blob',
         '--outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
