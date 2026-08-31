@@ -120,6 +120,7 @@ export const startNetworkMonitor = (): void => {
 
   let silentRecheckQueued = false
   let forcedSilentRecheckQueued = false
+  let forcedSilentRecheckPending = false
   let silentProbeInFlight = false
   const silentlyRecheckIfStale = (force = false): void => {
     const { isOnline, connectivity } = useNetworkStore.getState()
@@ -134,13 +135,20 @@ export const startNetworkMonitor = (): void => {
       !(connectivity === 'reachable' && resultExpired)
     )
       return
-    if (silentProbeInFlight) return
+    if (silentProbeInFlight) {
+      forcedSilentRecheckPending ||= force
+      return
+    }
     silentProbeInFlight = true
     void useNetworkStore
       .getState()
       .probeConnectivity()
       .finally(() => {
         silentProbeInFlight = false
+        if (forcedSilentRecheckPending) {
+          forcedSilentRecheckPending = false
+          scheduleSilentRecheck(true)
+        }
       })
   }
   const scheduleSilentRecheck = (force = false): void => {
@@ -159,7 +167,10 @@ export const startNetworkMonitor = (): void => {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') scheduleSilentRecheck()
   })
-  window.api?.network?.onSystemResume?.(() => scheduleSilentRecheck(true))
+  window.api?.network?.onSystemResume?.(() => {
+    useNetworkStore.getState().recheckOnline()
+    scheduleSilentRecheck(true)
+  })
 
   if (navigator.onLine) {
     void useNetworkStore.getState().probeConnectivity()
