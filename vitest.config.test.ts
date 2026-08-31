@@ -12,6 +12,8 @@ import vitestConfig, {
   VITEST_ARCHITECTURE_TEST_GLOBS,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
   VITEST_EXCLUDE_PATTERNS,
+  VITEST_PORTABLE_CI_EXCLUDE_PATTERNS,
+  vitestExcludePatternsFor,
   VITEST_PROCESS_TEST_GLOBS
 } from './vitest.config'
 
@@ -22,6 +24,15 @@ describe('Vitest discovery boundaries', () => {
       expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)
     }
   )
+
+  it('excludes duplicated platform checks only from portable CI shards', () => {
+    expect(vitestExcludePatternsFor({})).not.toEqual(
+      expect.arrayContaining([...VITEST_PORTABLE_CI_EXCLUDE_PATTERNS])
+    )
+    expect(vitestExcludePatternsFor({ VITEST_PORTABLE_CI: '1' })).toEqual(
+      expect.arrayContaining([...VITEST_PORTABLE_CI_EXCLUDE_PATTERNS])
+    )
+  })
 })
 
 it('excludes the Electron IPC composition root from coverage', () => {

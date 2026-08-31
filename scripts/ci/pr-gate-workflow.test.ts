@@ -353,7 +353,7 @@ describe('PR Gate workflow', () => {
     expect(unit.if).toContain('always()')
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     expect(shards).toMatchObject({
-      env: { VITEST_DEFER_COVERAGE_THRESHOLDS: '1' },
+      env: { VITEST_DEFER_COVERAGE_THRESHOLDS: '1', VITEST_PORTABLE_CI: '1' },
       name: 'Full portable tests (Ubuntu, shard ${{ matrix.shard }}/4)',
       needs: 'preflight',
       'runs-on': 'ubuntu-latest',
@@ -373,9 +373,6 @@ describe('PR Gate workflow', () => {
         '--coverage',
         '--coverage.reporter=text-summary',
         '--testTimeout=30000',
-        '--exclude=src/renderer/src/i18n/resources.test.ts',
-        '--exclude=packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
-        '--exclude=packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
         '--shard=${{ matrix.shard }}/4',
         '--reporter=blob',
         '--outputFile=vitest-reports/blob-${{ matrix.shard }}.json'

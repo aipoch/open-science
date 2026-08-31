@@ -26,7 +26,7 @@ export const VITEST_PROCESS_TEST_GLOBS = [
   'resources/skills/literature-review/kernel.test.ts'
 ] as const
 
-const VITEST_EXCLUDE_PATTERNS = [
+const BASE_VITEST_EXCLUDE_PATTERNS = [
   ...configDefaults.exclude,
   'e2e/**',
   '**/.claude/**',
@@ -36,6 +36,20 @@ const VITEST_EXCLUDE_PATTERNS = [
   '**/.worktrees/**',
   '**/.worktree/**'
 ]
+const VITEST_PORTABLE_CI_EXCLUDE_PATTERNS = [
+  'src/renderer/src/i18n/resources.test.ts',
+  'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+  'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts'
+] as const
+
+function vitestExcludePatternsFor(env: NodeJS.ProcessEnv): string[] {
+  return [
+    ...BASE_VITEST_EXCLUDE_PATTERNS,
+    ...(env.VITEST_PORTABLE_CI === '1' ? VITEST_PORTABLE_CI_EXCLUDE_PATTERNS : [])
+  ]
+}
+
+const VITEST_EXCLUDE_PATTERNS = vitestExcludePatternsFor(process.env)
 const VITEST_COVERAGE_EXCLUDE_PATTERNS = [
   '**/*.test.{ts,tsx}',
   '**/*.d.ts',
@@ -215,5 +229,7 @@ export {
   FULL_COVERAGE_THRESHOLDS,
   fullSuiteShardAllowsEmptyProjects,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
-  VITEST_EXCLUDE_PATTERNS
+  VITEST_EXCLUDE_PATTERNS,
+  VITEST_PORTABLE_CI_EXCLUDE_PATTERNS,
+  vitestExcludePatternsFor
 }
