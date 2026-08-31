@@ -141,6 +141,7 @@ describe('notebook shell process behavior', () => {
 
       expect(env).toMatchObject({
         PATH: 'C:\\Windows\\System32',
+        ProgramFiles: 'C:\\Program Files',
         SystemRoot: 'C:\\Windows',
         WINDIR: 'C:\\Windows',
         ComSpec: 'C:\\Windows\\System32\\cmd.exe',
@@ -155,7 +156,6 @@ describe('notebook shell process behavior', () => {
         HF_HUB_CACHE: join(cacheRoot, 'huggingface', 'hub'),
         TORCH_HOME: join(cacheRoot, 'torch')
       })
-      expect(env.ProgramFiles).toBeUndefined()
       expect(env.USERPROFILE).toBeUndefined()
       expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
     })
