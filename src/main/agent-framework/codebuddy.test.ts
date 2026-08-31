@@ -32,15 +32,17 @@ describe('codebuddy framework', () => {
       },
       spawnProcess
     })
+    const storageRoot = '/app-data'
+    const configDir = join(storageRoot, 'codebuddy')
     const config = framework.prepareModelConfig(provider, {
-      storageRoot: '/app-data',
+      storageRoot,
       executablePath: '/usr/bin/codebuddy',
       systemPromptAppends: ['APP GUIDANCE'],
       reasoningEfforts: ['none', 'high']
     })
 
     expect(config.env).toMatchObject({
-      CODEBUDDY_CONFIG_DIR: join('/app-data', 'codebuddy'),
+      CODEBUDDY_CONFIG_DIR: configDir,
       CODEBUDDY_API_KEY: 'test-key',
       CODEBUDDY_BASE_URL: 'https://gateway.example.test/v1',
       CODEBUDDY_MODEL: 'test-model',
@@ -83,11 +85,11 @@ describe('codebuddy framework', () => {
       'Bash(git ls-remote:*)',
       'Bash(git submodule:*)',
       '--system-prompt-file',
-      '/app-data/codebuddy/system-prompt.md'
+      join(configDir, 'system-prompt.md')
     ])
     expect(config.configFiles).toEqual([
       {
-        path: '/app-data/codebuddy/models.json',
+        path: join(configDir, 'models.json'),
         mode: 0o600,
         content: `${JSON.stringify(
           {
@@ -112,7 +114,7 @@ describe('codebuddy framework', () => {
         )}\n`
       },
       {
-        path: '/app-data/codebuddy/settings.json',
+        path: join(configDir, 'settings.json'),
         mode: 0o600,
         content: `${JSON.stringify(
           {
@@ -132,7 +134,7 @@ describe('codebuddy framework', () => {
         )}\n`
       },
       {
-        path: '/app-data/codebuddy/system-prompt.md',
+        path: join(configDir, 'system-prompt.md'),
         mode: 0o600,
         content: 'APP GUIDANCE'
       }
