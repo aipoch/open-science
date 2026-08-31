@@ -3874,6 +3874,10 @@
     "Neither the official registry nor the China-friendly mirror is reachable.": "공식 레지스트리와 중국 환경용 미러에 모두 연결할 수 없습니다.",
     "Check the network, proxy, VPN, or firewall, then run the check again.": "네트워크, 프록시, VPN 또는 방화벽을 확인한 후 다시 검사하세요.",
     "official npm registry": "공식 npm 레지스트리",
-    "China-friendly npmmirror": "중국 환경용 npmmirror"
+    "China-friendly npmmirror": "중국 환경용 npmmirror",
+    "Auto (recommended)": "자동(권장)",
+    "HTTPS": "HTTPS",
+    "WebSocket": "WebSocket",
+    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "자동 모드는 사용 가능한 경우 WebSocket을 사용하고 HTTPS로 대체합니다. 호환성이 중요하면 HTTPS를, 지연 시간을 줄이려면 WebSocket을 사용하세요."
   }
 }

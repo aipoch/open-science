@@ -228,6 +228,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
       provider.type === 'codex-shared' || provider.type === 'codex-isolated'
         ? resolveCodexSubscriptionType(provider)
         : provider.type,
+    codexTransport: provider.codexTransport ?? 'auto',
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
     model: provider.model ?? '',
@@ -248,6 +249,7 @@ const toUpsertRequest = (
 ): UpsertProviderRequest => ({
   id,
   type: value.type,
+  codexTransport: value.codexTransport,
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,

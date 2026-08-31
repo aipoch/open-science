@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
-import type { ReasoningEffort } from '../../shared/settings'
+import type { CodexSubscriptionTransport, ReasoningEffort } from '../../shared/settings'
 import {
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_REASONING_EFFORT,
@@ -36,7 +36,7 @@ import {
   type ProviderRuntimeTarget,
   type RuntimeProviderModelSelection
 } from './provider-accounts'
-import { ensureCodexAuthHome } from './codex-auth'
+import { ensureCodexAuthHome, resolveEffectiveCodexSubscriptionTransport } from './codex-auth'
 import type { StoredSettings } from './types'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 import {
@@ -114,7 +114,7 @@ export type AgentBackendResolverOptions = ProviderTransportOwnerOptions & {
   userClaudeDir: string
   skillRuntimeMcpEntryPath: string
   readFrameworkOverride?: () => string | undefined
-  ensureCodexSubscriptionHome?: () => Promise<void>
+  ensureCodexSubscriptionHome?: (transport: CodexSubscriptionTransport) => Promise<void>
 }
 
 // Coordinates stable backend decisions while ProviderTransportOwner owns every live generation.
@@ -130,7 +130,9 @@ export class AgentBackendResolver {
   private readonly selection: BackendSelectionOwner
   private readonly planner: BackendRoutePlanner
   private readonly transports: ProviderTransportOwner
-  private readonly ensureCodexSubscriptionHome: () => Promise<void>
+  private readonly ensureCodexSubscriptionHome: (
+    transport: CodexSubscriptionTransport
+  ) => Promise<void>
 
   constructor(options: AgentBackendResolverOptions) {
     this.readSettings = options.readSettings
@@ -151,7 +153,7 @@ export class AgentBackendResolver {
     this.transports = new ProviderTransportOwner(options)
     this.ensureCodexSubscriptionHome =
       options.ensureCodexSubscriptionHome ??
-      (() => ensureCodexAuthHome('isolated', this.storageRoot))
+      ((transport) => ensureCodexAuthHome('isolated', this.storageRoot, transport))
   }
 
   async resolveActiveSpawnConfig(
@@ -395,7 +397,9 @@ export class AgentBackendResolver {
     }
 
     if (framework.id === 'codex' && isCodexSubscriptionProvider(target.provider.type)) {
-      await this.ensureCodexSubscriptionHome()
+      await this.ensureCodexSubscriptionHome(
+        resolveEffectiveCodexSubscriptionTransport(target.provider)
+      )
     }
     const backendProviderId = plan.backendProviderId
     if (framework.supportsSkills || framework.id === 'codebuddy') {

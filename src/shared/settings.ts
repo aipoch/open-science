@@ -37,6 +37,7 @@ export type ProviderType =
 // which setup choice produced it so editing an imported profile does not masquerade as an isolated
 // sign-in and accidentally discard its imported loopback route.
 export type CodexSubscriptionAuthMode = 'imported' | 'isolated'
+export type CodexSubscriptionTransport = 'auto' | 'https' | 'websocket'
 
 // Stored Codex subscriptions share one runtime type, while renderer surfaces still need the setup
 // choice. Legacy codex-shared views have no discriminator, so their type remains the fallback.
@@ -287,6 +288,7 @@ export type ProviderView = {
   id: string
   type: ProviderType
   codexAuthMode?: CodexSubscriptionAuthMode
+  codexTransport?: CodexSubscriptionTransport
   name: string
   // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
   // treat as ['anthropic'] (every legacy provider).
@@ -637,6 +639,7 @@ export type Preflight = {
 // typed a new one; leaving it undefined on edit keeps the previously stored key.
 export type ProviderDraft = {
   type: ProviderType
+  codexTransport?: CodexSubscriptionTransport
   name?: string
   baseUrl?: string
   model?: string

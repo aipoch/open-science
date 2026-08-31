@@ -524,7 +524,13 @@ describe('SettingsService: providers', () => {
 
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
-    ).resolves.toBe('cli_auth_credentials_store = "file"\n')
+    ).resolves.toContain('cli_auth_credentials_store = "file"')
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.not.toContain('open-science-chatgpt-')
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.not.toContain('model_provider = "subscription-route"')
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -562,7 +568,13 @@ describe('SettingsService: providers', () => {
 
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
-    ).resolves.toBe('cli_auth_credentials_store = "file"\n')
+    ).resolves.toContain('cli_auth_credentials_store = "file"')
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.not.toContain('open-science-chatgpt-')
+    await expect(
+      readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
+    ).resolves.not.toContain('model_provider = "subscription-route"')
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'auth.json'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })

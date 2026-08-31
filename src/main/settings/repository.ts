@@ -13,7 +13,8 @@ import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   isClaudeSubscriptionProvider,
-  isClaudeSubscriptionProviderId
+  isClaudeSubscriptionProviderId,
+  isCodexSubscriptionProvider
 } from '../../shared/settings'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { PackageMirror } from '../../shared/mirror'
@@ -83,8 +84,20 @@ class SettingsRepository {
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
       const providers = [...settings.providers]
-      if (index >= 0) providers[index] = provider
-      else providers.push(provider)
+      if (index >= 0) {
+        const existing = providers[index]
+        // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
+        // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
+        // changes still clear it because either side of this guard is no longer Auto.
+        providers[index] =
+          isCodexSubscriptionProvider(existing.type) &&
+          isCodexSubscriptionProvider(provider.type) &&
+          (existing.codexTransport ?? 'auto') === 'auto' &&
+          (provider.codexTransport ?? 'auto') === 'auto' &&
+          existing.codexAutoUseHttps === true
+            ? { ...provider, codexAutoUseHttps: true }
+            : provider
+      } else providers.push(provider)
       return {
         ...settings,
         providers,
@@ -174,6 +187,24 @@ class SettingsRepository {
       return { ...settings, providers }
     })
 
+    return applied
+  }
+
+  async rememberCodexAutoHttpsFallback(): Promise<boolean> {
+    let applied = false
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (provider) =>
+          isCodexSubscriptionProvider(provider.type) &&
+          (provider.codexTransport ?? 'auto') === 'auto' &&
+          provider.codexAutoUseHttps !== true
+      )
+      if (index < 0) return settings
+      const providers = [...settings.providers]
+      providers[index] = { ...providers[index], codexAutoUseHttps: true }
+      applied = true
+      return { ...settings, providers }
+    })
     return applied
   }
 

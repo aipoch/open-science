@@ -18,6 +18,7 @@ import {
   ensureCodexAuthHome,
   importCodexAuthentication,
   openCodexAuthSession,
+  resolveEffectiveCodexSubscriptionTransport,
   type CodexAuthControllerPort,
   type CodexAuthStatus
 } from './codex-auth'
@@ -81,6 +82,9 @@ class ProviderAuthLifecycleOwner {
       new CodexAuthController({
         openSession: async (mode) => {
           const settings = await this.repository.getSettings()
+          const provider = settings.providers.find((candidate) =>
+            isCodexSubscriptionProvider(candidate.type)
+          )
           return openCodexAuthSession({
             adapterPath: await options.resolveCodexExecutable(
               settings.codex?.resolvedPath,
@@ -89,6 +93,7 @@ class ProviderAuthLifecycleOwner {
             nativePath: settings.codex?.nativePath,
             mode,
             storageRoot: options.storageRoot,
+            transport: resolveEffectiveCodexSubscriptionTransport(provider ?? {}),
             proxyEnv: await options.resolveCodexProxyEnvironment()
           })
         }
@@ -174,7 +179,8 @@ class ProviderAuthLifecycleOwner {
     if (isCodexSubscriptionProvider(request.type)) {
       await ensureCodexAuthHome(
         request.type === 'codex-shared' ? 'shared' : 'isolated',
-        this.options.storageRoot
+        this.options.storageRoot,
+        request.codexTransport ?? existing?.codexTransport ?? 'auto'
       )
     }
   }
@@ -249,7 +255,11 @@ class ProviderAuthLifecycleOwner {
 
     await this.codexAuth.cancelLogin()
     try {
-      await ensureCodexAuthHome('isolated', this.options.storageRoot)
+      await ensureCodexAuthHome(
+        'isolated',
+        this.options.storageRoot,
+        provider.codexTransport ?? 'auto'
+      )
       await clearAppOwnedCodexAuthentication(codexSubscriptionStorageDir(this.options.storageRoot))
     } catch {
       return {

@@ -1676,6 +1676,9 @@ class AcpRuntimeCoordinator {
           }
           this.callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
         },
+        onCodexWebSocketFallback: () => {
+          this.callbacks.onCodexWebSocketFallback?.()
+        },
         onPromptEnded: (sessionId, turnToken) => {
           const remaining = (this.activePromptCounts.get(sessionId) ?? 1) - 1
           if (remaining > 0) this.activePromptCounts.set(sessionId, remaining)

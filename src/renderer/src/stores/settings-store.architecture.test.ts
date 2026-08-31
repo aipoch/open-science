@@ -314,6 +314,8 @@ const importBoundaryViolations = (path: string, source = readSource(path)): read
 const allowedFacadeVariableCounts = new Map<string, number>([
   ['createInitialSettingsState', 1],
   ['applySnapshot', 1],
+  ['canApplySnapshot', 1],
+  ['mergeSnapshot', 1],
   ['DEFAULT_FRAMEWORK_API_ENDPOINTS', 1],
   ['selectFrameworkApiEndpoints', 1],
   ['selectVisionRelayAvailable', 1],

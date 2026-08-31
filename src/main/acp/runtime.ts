@@ -34,7 +34,7 @@ import {
   type AcpStateSnapshot
 } from '../../shared/acp'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { type AgentFrameworkId } from '../../shared/settings'
+import { isCodexSubscriptionProviderId, type AgentFrameworkId } from '../../shared/settings'
 import {
   sanitizeSessionReferences,
   type MessageAttribution
@@ -166,6 +166,7 @@ export type AcpRuntimeCallbacks = {
   // Fires after the provider prompt yields its first update/terminal response. Reaching this point
   // proves startup did not reject before the provider accepted the request.
   onProviderPromptAccepted?: (sessionId: string, promptAttemptId?: string) => void
+  onCodexWebSocketFallback?: () => void
   onPromptEnded?: (sessionId: string, turnToken: string) => void
   onSkillImportAttachmentEligible?: (
     sessionId: string,
@@ -438,6 +439,7 @@ const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
 const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
 const AGENT_STDERR_REPORT_WINDOW_MS = 1000
 const MAX_RAW_AGENT_STDERR_SAMPLE_BYTES = 4096
+const CODEX_TRANSPORT_SIGNAL_SAMPLE_CHARACTERS = 512
 // Support-only opt-in. Raw agent stderr can contain research data, local paths, and tool output.
 const RAW_AGENT_STDERR_ENV = 'OPEN_SCIENCE_AGENT_STDERR'
 
@@ -450,12 +452,17 @@ const isNonActionableCodexStderr = (text: string): boolean => {
     ''
   )
   const withoutTransportFallback = withoutSkillBudgetNotice.replace(
-    /Warning:\s*Falling back from WebSockets to HTTPS transport\.\s*request timed out\s*/gi,
+    /Warning:\s*Falling\s*back\s*from\s*WebSockets\s*to\s*HTTPS\s*transport\.\s*request\s*timed\s*out\s*/gi,
     ''
   )
 
   return withoutTransportFallback.trim().length === 0
 }
+
+const hasCodexWebSocketFallback = (text: string): boolean =>
+  /Warning:\s*Falling\s*back\s*from\s*WebSockets\s*to\s*HTTPS\s*transport\.\s*request\s*timed\s*out\s*/i.test(
+    text
+  )
 
 const utf8PrefixWithinBytes = (value: string, maxBytes: number): string => {
   if (maxBytes <= 0) return ''
@@ -489,6 +496,8 @@ type AgentStderrWindow = {
   interactionSequence?: number
   sessionAttributionConsistent: boolean
   nonActionableCodexOnly: boolean
+  codexTransportSignalSample: string
+  codexWebSocketFallbackObserved: boolean
   eventEligible: boolean
   timer: ReturnType<typeof setTimeout>
 }
@@ -2677,6 +2686,7 @@ class AcpRuntime {
         existing.sessionAttributionConsistent = false
       }
       this.appendAgentStderrSample(existing, text)
+      this.observeCodexTransportSignal(existing, text)
       return
     }
 
@@ -2699,11 +2709,39 @@ class AcpRuntime {
       interactionSequence,
       sessionAttributionConsistent: true,
       nonActionableCodexOnly: context.framework === 'codex' && isNonActionableCodexStderr(text),
+      codexTransportSignalSample: '',
+      codexWebSocketFallbackObserved: false,
       eventEligible: disposition === 'current',
       timer
     }
     this.appendAgentStderrSample(window, text)
+    this.observeCodexTransportSignal(window, text)
     this.agentStderrWindows.set(context.process, window)
+  }
+
+  // Codex diagnostics can cross Node stderr chunk boundaries. Retain only a short ephemeral suffix
+  // for this exact operational signal; it is never logged or persisted as user-visible output.
+  private observeCodexTransportSignal(window: AgentStderrWindow, text: string): void {
+    if (window.framework !== 'codex' || window.codexWebSocketFallbackObserved) return
+    window.codexTransportSignalSample = `${window.codexTransportSignalSample}${text}`.slice(
+      -CODEX_TRANSPORT_SIGNAL_SAMPLE_CHARACTERS
+    )
+    if (!hasCodexWebSocketFallback(window.codexTransportSignalSample)) return
+    window.codexWebSocketFallbackObserved = true
+    window.nonActionableCodexOnly = isNonActionableCodexStderr(window.codexTransportSignalSample)
+    if (
+      !window.eventEligible ||
+      this.processEventDisposition(window.process, window.epoch) !== 'current' ||
+      this.backend.providerId === undefined ||
+      !isCodexSubscriptionProviderId(this.backend.providerId)
+    ) {
+      return
+    }
+    try {
+      this.options.callbacks?.onCodexWebSocketFallback?.()
+    } catch (error) {
+      safeLogError('Codex WebSocket fallback observation failed', errorLogFields(error))
+    }
   }
 
   private includeRawAgentStderr(): boolean {

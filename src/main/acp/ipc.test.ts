@@ -47,6 +47,7 @@ const {
   deleteSession,
   disconnect,
   resetSessionContext,
+  requestProviderReconnect,
   resumeSession,
   sendAppContinuation,
   sendPrompt,
@@ -62,6 +63,7 @@ const {
   const resetSessionContext = vi
     .fn()
     .mockResolvedValue({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+  const requestProviderReconnect = vi.fn().mockResolvedValue(undefined)
   const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
   const sendAppContinuation = vi.fn().mockResolvedValue(undefined)
   const sendPrompt = vi.fn().mockResolvedValue(undefined)
@@ -78,6 +80,7 @@ const {
         context: { window: 100_000, supportsImageInput: true }
       }),
       resetSessionContext,
+      requestProviderReconnect,
       resumeSession,
       sendAppContinuation: (request, promptAttemptId) => {
         const prompting = sendAppContinuation(request, promptAttemptId)
@@ -112,6 +115,7 @@ const {
     deleteSession,
     disconnect,
     resetSessionContext,
+    requestProviderReconnect,
     resumeSession,
     sendAppContinuation,
     sendPrompt,
@@ -124,6 +128,18 @@ const {
 const { errorLogSpy, infoLogSpy } = vi.hoisted(() => ({
   errorLogSpy: vi.fn(),
   infoLogSpy: vi.fn()
+}))
+
+const { fallbackBegin, fallbackEnd } = vi.hoisted(() => ({
+  fallbackBegin: vi.fn(),
+  fallbackEnd: vi.fn(() => false)
+}))
+
+vi.mock('../settings/codex-transport-fallback-log', () => ({
+  CodexTransportFallbackLogObserver: class {
+    begin = fallbackBegin
+    end = fallbackEnd
+  }
 }))
 vi.mock('../logger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../logger')>()
@@ -203,7 +219,8 @@ const registerWithFakes = (overrides?: {
         .mockResolvedValue(overrides?.provisionedConnectorSkillNames ?? []),
       getConnectors: vi.fn().mockResolvedValue({
         customMcpServers: overrides?.customMcpServers ?? []
-      })
+      }),
+      rememberCodexAutoHttpsFallback: vi.fn().mockResolvedValue(true)
     } as never,
     taskNotifications: taskNotifications as never,
     onSessionCancellationRequested: overrides?.onSessionCancellationRequested,
@@ -242,6 +259,7 @@ afterEach(() => {
   createSession.mockReset()
   createSession.mockImplementation(async (request) => ({ sessionId: 's-new', cwd: request.cwd }))
   resetSessionContext.mockClear()
+  requestProviderReconnect.mockClear()
   compactSession.mockClear()
   cancelPrompt.mockClear()
   deleteSession.mockClear()
@@ -253,6 +271,8 @@ afterEach(() => {
   sendPrompt.mockResolvedValue(undefined)
   errorLogSpy.mockClear()
   infoLogSpy.mockClear()
+  fallbackBegin.mockClear()
+  fallbackEnd.mockClear()
   AcpRuntimeMock.mockClear()
 })
 
@@ -655,6 +675,46 @@ describe('ACP runtime composition — memory eligibility', () => {
       delegatedNotebookConnection: {} as AcpTestOptions['delegatedNotebookConnection']
     })
     expect(AcpRuntimeMock.mock.calls.at(-1)?.[0]).not.toHaveProperty('memory')
+  })
+})
+
+describe('ACP runtime composition — Codex transport memory', () => {
+  it('persists HTTPS when the completed prompt log contains a native Codex fallback', async () => {
+    fallbackEnd.mockReturnValueOnce(true)
+    const options = registerWithFakes()
+    const callbacks = AcpRuntimeMock.mock.calls.at(-1)?.[0].callbacks
+    let finishRemembering: ((remembered: boolean) => void) | undefined
+    const remembering = new Promise<boolean>((resolve) => {
+      finishRemembering = resolve
+    })
+    vi.mocked(options.settingsService.rememberCodexAutoHttpsFallback).mockReturnValueOnce(
+      remembering
+    )
+
+    callbacks.onPromptStarted?.('session-1', 'turn-1')
+    callbacks.onPromptEnded?.('session-1', 'turn-1')
+
+    expect(fallbackBegin).toHaveBeenCalledOnce()
+    expect(options.settingsService.rememberCodexAutoHttpsFallback).toHaveBeenCalledOnce()
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
+
+    finishRemembering?.(true)
+    await vi.waitFor(() => expect(requestProviderReconnect).toHaveBeenCalledOnce())
+  })
+
+  it('does not reconnect when Auto fallback memory is no longer applicable', async () => {
+    fallbackEnd.mockReturnValueOnce(true)
+    const options = registerWithFakes()
+    vi.mocked(options.settingsService.rememberCodexAutoHttpsFallback).mockResolvedValueOnce(false)
+    const callbacks = AcpRuntimeMock.mock.calls.at(-1)?.[0].callbacks
+
+    callbacks.onPromptStarted?.('session-1', 'turn-1')
+    callbacks.onPromptEnded?.('session-1', 'turn-1')
+
+    await vi.waitFor(() =>
+      expect(options.settingsService.rememberCodexAutoHttpsFallback).toHaveBeenCalledOnce()
+    )
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
   })
 })
 

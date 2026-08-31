@@ -920,6 +920,10 @@ class SettingsService {
     return this.getSettingsView()
   }
 
+  async rememberCodexAutoHttpsFallback(): Promise<boolean> {
+    return this.repository.rememberCodexAutoHttpsFallback()
+  }
+
   async deleteProvider(id: string): Promise<SettingsSnapshot> {
     await this.providers.deleteProvider(id)
     return this.getSettingsView()

@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import type {
   ChatApiEndpoint,
   CodexSubscriptionAuthMode,
+  CodexSubscriptionTransport,
   ProviderType
 } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
@@ -20,6 +21,8 @@ export type ResolvedProvider = {
   // It is derived from the persisted provider/model identity and never contains a credential.
   agentProviderId?: string
   codexAuthMode?: CodexSubscriptionAuthMode
+  codexTransport?: CodexSubscriptionTransport
+  codexAutoUseHttps?: boolean
   // Retained for official providers even though they use the custom credential path at runtime.
   // Transport adapters need this stable identity because `none` has vendor-specific wire semantics.
   vendorId?: OfficialVendorId

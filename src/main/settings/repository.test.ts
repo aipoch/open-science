@@ -355,6 +355,75 @@ describe('settings repository', () => {
     })
   })
 
+  it('sanitizes the main-only Codex Auto HTTPS preference', () => {
+    const valid = sanitizeSettings({
+      providers: [
+        {
+          id: 'builtin-codex-subscription',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          codexAutoUseHttps: true
+        }
+      ]
+    })
+    expect(valid.providers[0].codexAutoUseHttps).toBe(true)
+
+    const invalid = sanitizeSettings({
+      providers: [
+        {
+          id: 'builtin-codex-subscription',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          codexAutoUseHttps: 'true'
+        }
+      ]
+    })
+    expect(invalid.providers[0].codexAutoUseHttps).toBeUndefined()
+  })
+
+  it('atomically remembers HTTPS only while the preference remains Auto', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexTransport: 'auto',
+      name: 'Codex subscription'
+    })
+
+    await expect(repository.rememberCodexAutoHttpsFallback()).resolves.toBe(true)
+    expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBe(true)
+    await expect(repository.rememberCodexAutoHttpsFallback()).resolves.toBe(false)
+
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({
+      ...stored,
+      codexTransport: 'https',
+      codexAutoUseHttps: undefined
+    })
+    await expect(repository.rememberCodexAutoHttpsFallback()).resolves.toBe(false)
+    expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBeUndefined()
+  })
+
+  it('preserves learned Auto HTTPS when a stale full-provider update lands afterward', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexTransport: 'auto',
+      name: 'Codex subscription'
+    })
+    const staleProvider = (await repository.getSettings()).providers[0]
+
+    await repository.rememberCodexAutoHttpsFallback()
+    await repository.upsertProvider({ ...staleProvider, lastValidatedAt: 123 })
+
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      codexTransport: 'auto',
+      codexAutoUseHttps: true,
+      lastValidatedAt: 123
+    })
+  })
+
   it('returns empty settings when nothing is stored yet', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

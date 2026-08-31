@@ -3876,6 +3876,10 @@
     "Neither the official registry nor the China-friendly mirror is reachable.": "官方软件源和适合中国大陆网络的镜像均无法访问。",
     "Check the network, proxy, VPN, or firewall, then run the check again.": "请检查网络、代理、VPN 或防火墙，然后重新运行检查。",
     "official npm registry": "npm 官方软件源",
-    "China-friendly npmmirror": "适合中国大陆网络的 npmmirror 镜像"
+    "China-friendly npmmirror": "适合中国大陆网络的 npmmirror 镜像",
+    "Auto (recommended)": "自动（推荐）",
+    "HTTPS": "HTTPS",
+    "WebSocket": "WebSocket",
+    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "自动模式会在可用时使用 WebSocket，并在不可用时回退到 HTTPS。使用 HTTPS 可提高兼容性，使用 WebSocket 可降低延迟。"
   }
 }

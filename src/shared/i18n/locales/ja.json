@@ -3876,6 +3876,10 @@
     "Neither the official registry nor the China-friendly mirror is reachable.": "公式レジストリにも、中国向けミラーにも接続できません。",
     "Check the network, proxy, VPN, or firewall, then run the check again.": "ネットワーク、プロキシ、VPN、またはファイアウォールを確認してから、もう一度チェックを実行してください。",
     "official npm registry": "公式 npm レジストリ",
-    "China-friendly npmmirror": "中国向け npmmirror"
+    "China-friendly npmmirror": "中国向け npmmirror",
+    "Auto (recommended)": "自動（推奨）",
+    "HTTPS": "HTTPS",
+    "WebSocket": "WebSocket",
+    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "自動では、利用可能な場合は WebSocket を使用し、HTTPS にフォールバックします。互換性を重視する場合は HTTPS、低遅延を重視する場合は WebSocket を使用してください。"
   }
 }

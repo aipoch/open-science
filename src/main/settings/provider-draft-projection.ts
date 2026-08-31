@@ -26,6 +26,7 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
   const tokenLimits = draft.type === 'custom' ? resolveCustomTokenLimits(draft) : undefined
   return {
     type: draft.type,
+    ...(draft.codexTransport === undefined ? {} : { codexTransport: draft.codexTransport }),
     baseUrl: draft.baseUrl,
     model: draft.model,
     ...(draft.type === 'custom'

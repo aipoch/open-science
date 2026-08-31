@@ -7,6 +7,7 @@ import { Readable, Writable } from 'node:stream'
 
 import * as acp from '@agentclientprotocol/sdk'
 
+import type { CodexSubscriptionTransport } from '../../shared/settings'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { terminateProcessTree } from '../process-tree'
 import { augmentedPathEnv } from './shell-path'
@@ -40,6 +41,7 @@ export type CodexAuthLaunch = {
   nativePath?: string
   mode: CodexAuthMode
   storageRoot: string
+  transport?: CodexSubscriptionTransport
   proxyEnv?: SystemProxyEnvironment
 }
 
@@ -276,6 +278,22 @@ const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex prov
 const IMPORTED_ROUTE_PROVIDER_END = '# Open Science: end imported Codex provider'
 const IMPORTED_ROUTE_PRESERVED_LINE = '# Open Science: preserved Codex config '
 const CODEX_FILE_CREDENTIAL_STORE = 'cli_auth_credentials_store = "file"'
+const TRANSPORT_ROUTE_SELECTION_BEGIN = '# Open Science: begin Codex transport route selection'
+const TRANSPORT_ROUTE_SELECTION_END = '# Open Science: end Codex transport route selection'
+const TRANSPORT_ROUTE_PROVIDER_BEGIN = '# Open Science: begin Codex transport provider'
+const TRANSPORT_ROUTE_PROVIDER_END = '# Open Science: end Codex transport provider'
+const CODEX_TRANSPORT_PROVIDER_IDS = [
+  'open-science-chatgpt-https',
+  'open-science-chatgpt-websocket'
+] as const
+
+export const resolveEffectiveCodexSubscriptionTransport = (provider: {
+  codexTransport?: CodexSubscriptionTransport
+  codexAutoUseHttps?: boolean
+}): CodexSubscriptionTransport => {
+  const preference = provider.codexTransport ?? 'auto'
+  return preference === 'auto' && provider.codexAutoUseHttps === true ? 'https' : preference
+}
 
 const isCodexCredentialStoreAssignment = (line: string): boolean =>
   /^\s*(?:cli_auth_credentials_store|"cli_auth_credentials_store"|'cli_auth_credentials_store')\s*=/.test(
@@ -298,7 +316,11 @@ const serializeCodexFileCredentialStore = (existingConfigToml: string): string =
 
   while (result.at(-1) === '') result.pop()
   const firstOwnedMarkerIndex = result.findIndex(
-    (line) => line === IMPORTED_ROUTE_SELECTION_BEGIN || line === IMPORTED_ROUTE_PROVIDER_BEGIN
+    (line) =>
+      line === IMPORTED_ROUTE_SELECTION_BEGIN ||
+      line === IMPORTED_ROUTE_PROVIDER_BEGIN ||
+      line === TRANSPORT_ROUTE_SELECTION_BEGIN ||
+      line === TRANSPORT_ROUTE_PROVIDER_BEGIN
   )
   const firstTableIndex = result.findIndex((line) => /^\s*\[/.test(line))
   const insertionCandidates = [firstOwnedMarkerIndex, firstTableIndex].filter((index) => index >= 0)
@@ -340,6 +362,100 @@ const restoreCompleteMarkedBlock = (lines: string[], begin: string, end: string)
 const hasCompleteMarkedBlock = (lines: string[], begin: string, end: string): boolean => {
   const beginIndex = lines.indexOf(begin)
   return beginIndex >= 0 && lines.slice(beginIndex + 1).includes(end)
+}
+
+const isOwnedTransportProviderId = (value: unknown): boolean =>
+  typeof value === 'string' &&
+  CODEX_TRANSPORT_PROVIDER_IDS.includes(value as (typeof CODEX_TRANSPORT_PROVIDER_IDS)[number])
+
+// Builds before the transport selector used an unmarked HTTPS provider. Its reserved app-owned id
+// makes that exact selection/table safe to migrate without touching user-authored provider routes.
+const removeLegacyCodexTransportRoute = (lines: string[]): string[] => {
+  const result: string[] = []
+  let inTopLevel = true
+  let inOwnedProviderTable = false
+
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) {
+      inTopLevel = false
+      inOwnedProviderTable = isOwnedTransportProviderId(parseModelProviderTableRootId(line))
+      if (inOwnedProviderTable) continue
+    } else if (inOwnedProviderTable) {
+      continue
+    }
+
+    const assignment = inTopLevel ? parseTomlScalarAssignment(line) : undefined
+    if (assignment?.key === 'model_provider' && isOwnedTransportProviderId(assignment.value)) {
+      continue
+    }
+    result.push(line)
+  }
+  return result
+}
+
+const removeCodexTransportRoute = (configToml: string): string =>
+  removeLegacyCodexTransportRoute(
+    restoreCompleteMarkedBlock(
+      restoreCompleteMarkedBlock(
+        configToml.split(/\r?\n/),
+        TRANSPORT_ROUTE_SELECTION_BEGIN,
+        TRANSPORT_ROUTE_SELECTION_END
+      ),
+      TRANSPORT_ROUTE_PROVIDER_BEGIN,
+      TRANSPORT_ROUTE_PROVIDER_END
+    )
+  ).join('\n')
+
+// Imported routes are explicit user configuration and may describe a loopback gateway. They always
+// take precedence over this ChatGPT transport preference.
+const serializeCodexSubscriptionTransport = (
+  existingConfigToml: string,
+  transport: CodexSubscriptionTransport
+): string => {
+  const withoutOwnedRoute = removeCodexTransportRoute(existingConfigToml)
+  if (transport === 'auto') return withoutOwnedRoute
+
+  const lines = withoutOwnedRoute.split(/\r?\n/)
+  if (
+    hasCompleteMarkedBlock(lines, IMPORTED_ROUTE_SELECTION_BEGIN, IMPORTED_ROUTE_SELECTION_END) ||
+    hasCompleteMarkedBlock(lines, IMPORTED_ROUTE_PROVIDER_BEGIN, IMPORTED_ROUTE_PROVIDER_END)
+  ) {
+    return withoutOwnedRoute
+  }
+
+  const firstTableIndex = lines.findIndex((line) => /^\s*\[/.test(line))
+  const topLevelEnd = firstTableIndex < 0 ? lines.length : firstTableIndex
+  if (
+    lines.slice(0, topLevelEnd).some((line) => parseTomlAssignmentKey(line) === 'model_provider')
+  ) {
+    return withoutOwnedRoute
+  }
+
+  while (lines.at(-1) === '') lines.pop()
+  const providerId = `open-science-chatgpt-${transport}`
+  const selectionIndex = lines.findIndex((line) => /^\s*\[/.test(line))
+  lines.splice(
+    selectionIndex < 0 ? lines.length : selectionIndex,
+    0,
+    TRANSPORT_ROUTE_SELECTION_BEGIN,
+    `model_provider = ${JSON.stringify(providerId)}`,
+    TRANSPORT_ROUTE_SELECTION_END,
+    ''
+  )
+  while (lines.at(-1) === '') lines.pop()
+  if (lines.length > 0) lines.push('')
+  lines.push(
+    TRANSPORT_ROUTE_PROVIDER_BEGIN,
+    `[model_providers.${JSON.stringify(providerId)}]`,
+    `name = ${JSON.stringify(transport === 'https' ? 'OpenAI HTTPS' : 'OpenAI WebSocket')}`,
+    'base_url = "https://chatgpt.com/backend-api/codex"',
+    'wire_api = "responses"',
+    'requires_openai_auth = true',
+    `supports_websockets = ${String(transport === 'websocket')}`,
+    TRANSPORT_ROUTE_PROVIDER_END,
+    ''
+  )
+  return lines.join('\n')
 }
 
 const removeImportedCodexProviderRoute = (configToml: string): string => {
@@ -455,6 +571,28 @@ const writePrivateFileAtomically = async (
   }
 }
 
+const ensureCodexAuthConfigHome = async (
+  codexHome: string,
+  transport: CodexSubscriptionTransport
+): Promise<void> => {
+  const configPath = join(codexHome, 'config.toml')
+  await mkdir(codexHome, { recursive: true })
+
+  let existingConfigToml = ''
+  try {
+    existingConfigToml = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  const nextConfigToml = serializeCodexFileCredentialStore(
+    serializeCodexSubscriptionTransport(existingConfigToml, transport)
+  )
+  if (nextConfigToml !== existingConfigToml) {
+    await writePrivateFileAtomically(configPath, nextConfigToml)
+  }
+}
+
 export const createCodexAuthEnvironment = (
   _mode: CodexAuthMode,
   storageRoot: string,
@@ -516,6 +654,7 @@ export const importCodexAuthentication = async (
   } else {
     await clearImportedCodexProviderRoute(destinationHome)
   }
+  await ensureCodexAuthConfigHome(destinationHome, 'auto')
 }
 
 export const clearImportedCodexProviderRoute = async (destinationHome: string): Promise<void> => {
@@ -775,23 +914,10 @@ export type CodexAuthControllerPort = Pick<
 // not permission to read the user's global Codex profile at runtime.
 export const ensureCodexAuthHome = async (
   _mode: CodexAuthMode,
-  storageRoot: string
+  storageRoot: string,
+  transport: CodexSubscriptionTransport = 'auto'
 ): Promise<void> => {
-  const codexHome = codexSubscriptionStorageDir(storageRoot)
-  const configPath = join(codexHome, 'config.toml')
-  await mkdir(codexHome, { recursive: true })
-
-  let existingConfigToml = ''
-  try {
-    existingConfigToml = await readFile(configPath, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
-
-  const nextConfigToml = serializeCodexFileCredentialStore(existingConfigToml)
-  if (nextConfigToml !== existingConfigToml) {
-    await writePrivateFileAtomically(configPath, nextConfigToml)
-  }
+  await ensureCodexAuthConfigHome(codexSubscriptionStorageDir(storageRoot), transport)
 }
 
 export const openCodexAuthSession = async ({
@@ -799,9 +925,10 @@ export const openCodexAuthSession = async ({
   nativePath,
   mode,
   storageRoot,
+  transport = 'auto',
   proxyEnv
 }: CodexAuthLaunch): Promise<CodexAuthSession> => {
-  await ensureCodexAuthHome(mode, storageRoot)
+  await ensureCodexAuthHome(mode, storageRoot, transport)
 
   const isJavaScript = /\.[cm]?js$/i.test(adapterPath)
   const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(adapterPath)

@@ -108,6 +108,44 @@ const RequiredMark = (): React.JSX.Element => (
   </span>
 )
 
+type AdvancedSettingsDisclosureProps = {
+  expanded: boolean
+  label: string
+  onToggle: () => void
+  children: React.ReactNode
+}
+
+const AdvancedSettingsDisclosure = ({
+  expanded,
+  label,
+  onToggle,
+  children
+}: AdvancedSettingsDisclosureProps): React.JSX.Element => (
+  <div>
+    <button
+      type="button"
+      aria-expanded={expanded}
+      aria-controls="provider-advanced-settings"
+      onClick={onToggle}
+      className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      <ChevronDown
+        className={`size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${
+          expanded ? '' : '-rotate-90'
+        }`}
+        aria-hidden="true"
+      />
+      {label}
+    </button>
+
+    {expanded ? (
+      <div id="provider-advanced-settings" className="mt-3 flex min-w-0 flex-col gap-4 pl-6">
+        {children}
+      </div>
+    ) : null}
+  </div>
+)
+
 const tokenPresetLabel = (value: number): string =>
   value >= 1_000_000 && value % 1_000_000 === 0
     ? `${value / 1_000_000}M`
@@ -214,6 +252,7 @@ const ProviderForm = ({
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
   const [advancedOpen, setAdvancedOpen] = useState(
     () =>
+      value.codexTransport !== 'auto' ||
       value.supportsImageInput ||
       value.reasoningEffortPreset !== 'unsupported' ||
       Boolean(value.maxInputTokens.trim()) ||
@@ -393,39 +432,81 @@ const ProviderForm = ({
           <code className="font-mono text-xs text-muted-foreground">{t('grok-4.6 · 500K')}</code>
         </div>
       ) : isCodexSubscription ? (
-        <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
-          <div className="space-y-1.5">
-            <span className={fieldLabelClassName}>{t('Codex authentication')}</span>
-            <Select
-              value={value.type}
-              disabled={disabled}
-              onValueChange={(type) =>
-                onChange({ type: type as 'codex-shared' | 'codex-isolated' })
-              }
-            >
-              <SelectTrigger aria-label={t('Codex authentication')} disabled={disabled}>
-                <span>
-                  {value.type === 'codex-shared'
-                    ? t('Import existing Codex sign-in')
-                    : t('Sign in with Open Science')}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="codex-shared">{t('Import existing Codex sign-in')}</SelectItem>
-                <SelectItem value="codex-isolated">{t('Sign in with Open Science')}</SelectItem>
-              </SelectContent>
-            </Select>
+        <>
+          <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+            <div className="space-y-1.5">
+              <span className={fieldLabelClassName}>{t('Codex authentication')}</span>
+              <Select
+                value={value.type}
+                disabled={disabled}
+                onValueChange={(type) =>
+                  onChange({ type: type as 'codex-shared' | 'codex-isolated' })
+                }
+              >
+                <SelectTrigger aria-label={t('Codex authentication')} disabled={disabled}>
+                  <span>
+                    {value.type === 'codex-shared'
+                      ? t('Import existing Codex sign-in')
+                      : t('Sign in with Open Science')}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="codex-shared">{t('Import existing Codex sign-in')}</SelectItem>
+                  <SelectItem value="codex-isolated">{t('Sign in with Open Science')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {value.type === 'codex-shared'
+                ? t(
+                    "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported."
+                  )
+                : t(
+                    'Stores a separate Codex login in Open Science app data without changing your Codex CLI profile.'
+                  )}
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {value.type === 'codex-shared'
-              ? t(
-                  "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported."
-                )
-              : t(
-                  'Stores a separate Codex login in Open Science app data without changing your Codex CLI profile.'
-                )}
-          </p>
-        </div>
+          <AdvancedSettingsDisclosure
+            expanded={advancedVisible}
+            label={t('Advanced settings')}
+            onToggle={() => setAdvancedOpen((open) => !open)}
+          >
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1">
+                <span className={fieldLabelClassName}>{t('Transport')}</span>
+                <FieldHelp
+                  content={t(
+                    'Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.'
+                  )}
+                />
+              </div>
+              <Select
+                value={value.codexTransport}
+                disabled={disabled}
+                onValueChange={(codexTransport) =>
+                  onChange({
+                    codexTransport: codexTransport as ProviderFormValue['codexTransport']
+                  })
+                }
+              >
+                <SelectTrigger aria-label={t('Transport')} disabled={disabled}>
+                  <span>
+                    {value.codexTransport === 'auto'
+                      ? t('Auto (recommended)')
+                      : value.codexTransport === 'https'
+                        ? t('HTTPS')
+                        : t('WebSocket')}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">{t('Auto (recommended)')}</SelectItem>
+                  <SelectItem value="https">{t('HTTPS')}</SelectItem>
+                  <SelectItem value="websocket">{t('WebSocket')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </AdvancedSettingsDisclosure>
+        </>
       ) : isClaudeSubscription ? (
         <>
           <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
@@ -603,214 +684,187 @@ const ProviderForm = ({
             t={t}
           />
 
-          <div>
-            <button
-              type="button"
-              aria-expanded={advancedVisible}
-              aria-controls="provider-advanced-settings"
-              onClick={() => setAdvancedOpen((open) => !open)}
-              className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              <ChevronDown
-                className={`size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${
-                  advancedVisible ? '' : '-rotate-90'
-                }`}
-                aria-hidden="true"
-              />
-              {t('Advanced settings')}
-            </button>
+          <AdvancedSettingsDisclosure
+            expanded={advancedVisible}
+            label={t('Advanced settings')}
+            onToggle={() => setAdvancedOpen((open) => !open)}
+          >
+            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+              <div className="flex items-start justify-between gap-3">
+                <label className="space-y-0.5" htmlFor="provider-image-input">
+                  <span className="block text-xs font-medium">{t('Image input')}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {t('The gateway and model accept image content.')}
+                  </span>
+                </label>
+                <Switch
+                  id="provider-image-input"
+                  aria-label={t('Supports image input')}
+                  checked={value.supportsImageInput}
+                  disabled={disabled}
+                  onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
+                />
+              </div>
 
-            {advancedVisible ? (
-              <div id="provider-advanced-settings" className="mt-3 flex flex-col gap-4">
-                <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <label className="space-y-0.5" htmlFor="provider-image-input">
-                      <span className="block text-xs font-medium">{t('Image input')}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {t('The gateway and model accept image content.')}
-                      </span>
-                    </label>
-                    <Switch
-                      id="provider-image-input"
-                      aria-label={t('Supports image input')}
-                      checked={value.supportsImageInput}
-                      disabled={disabled}
-                      onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
-                    />
-                  </div>
+              <div className="flex items-start justify-between gap-3">
+                <label className="space-y-0.5" htmlFor="provider-thinking-mode">
+                  <span className="block text-xs font-medium">{t('Thinking mode')}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {t('The gateway and model accept thinking or effort controls.')}
+                  </span>
+                </label>
+                <Switch
+                  id="provider-thinking-mode"
+                  aria-label={t('Supports thinking mode')}
+                  checked={value.reasoningEffortPreset !== 'unsupported'}
+                  disabled={disabled}
+                  onCheckedChange={(supported) =>
+                    onChange({
+                      reasoningEffortPreset: supported ? 'standard-5' : 'unsupported'
+                    })
+                  }
+                />
+              </div>
+            </div>
 
-                  <div className="flex items-start justify-between gap-3">
-                    <label className="space-y-0.5" htmlFor="provider-thinking-mode">
-                      <span className="block text-xs font-medium">{t('Thinking mode')}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {t('The gateway and model accept thinking or effort controls.')}
-                      </span>
-                    </label>
-                    <Switch
-                      id="provider-thinking-mode"
-                      aria-label={t('Supports thinking mode')}
-                      checked={value.reasoningEffortPreset !== 'unsupported'}
+            {value.reasoningEffortPreset !== 'unsupported' ? (
+              <div className="space-y-3 border-t border-border-200 pt-3">
+                <div
+                  className={cn('grid gap-3', value.apiEndpoint === 'openai' && 'sm:grid-cols-2')}
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1">
+                      <span className={fieldLabelClassName}>{t('Supported effort levels')}</span>
+                      <FieldHelp
+                        content={
+                          <>
+                            <span className="block">
+                              {t(
+                                'Open Science maps five relative strengths onto the exact levels accepted by this model.'
+                              )}
+                            </span>
+                            <span className="mt-1 block">
+                              {t(
+                                'Examples reflect common native model APIs. A gateway may use different mappings.'
+                              )}
+                            </span>
+                            {value.apiEndpoint === 'anthropic' ? (
+                              <span className="mt-1 block">
+                                {t(
+                                  "Messages API uses the framework's Anthropic-compatible thinking request automatically."
+                                )}
+                              </span>
+                            ) : value.apiEndpoint === 'responses' ? (
+                              <span className="mt-1 block">
+                                {t(
+                                  'Responses API uses its native reasoning request automatically.'
+                                )}
+                              </span>
+                            ) : null}
+                          </>
+                        }
+                      />
+                    </div>
+                    <Select
+                      value={value.reasoningEffortPreset}
                       disabled={disabled}
-                      onCheckedChange={(supported) =>
+                      onValueChange={(reasoningEffortPreset) =>
                         onChange({
-                          reasoningEffortPreset: supported ? 'standard-5' : 'unsupported'
+                          reasoningEffortPreset: reasoningEffortPreset as ReasoningEffortPresetId
                         })
                       }
-                    />
-                  </div>
-                </div>
-
-                {value.reasoningEffortPreset !== 'unsupported' ? (
-                  <div className="space-y-3 border-t border-border-200 pt-3">
-                    <div
-                      className={cn(
-                        'grid gap-3',
-                        value.apiEndpoint === 'openai' && 'sm:grid-cols-2'
-                      )}
                     >
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1">
-                          <span className={fieldLabelClassName}>
-                            {t('Supported effort levels')}
-                          </span>
-                          <FieldHelp
-                            content={
-                              <>
-                                <span className="block">
-                                  {t(
-                                    'Open Science maps five relative strengths onto the exact levels accepted by this model.'
-                                  )}
-                                </span>
-                                <span className="mt-1 block">
-                                  {t(
-                                    'Examples reflect common native model APIs. A gateway may use different mappings.'
-                                  )}
-                                </span>
-                                {value.apiEndpoint === 'anthropic' ? (
-                                  <span className="mt-1 block">
-                                    {t(
-                                      "Messages API uses the framework's Anthropic-compatible thinking request automatically."
-                                    )}
-                                  </span>
-                                ) : value.apiEndpoint === 'responses' ? (
-                                  <span className="mt-1 block">
-                                    {t(
-                                      'Responses API uses its native reasoning request automatically.'
-                                    )}
-                                  </span>
-                                ) : null}
-                              </>
-                            }
-                          />
-                        </div>
-                        <Select
-                          value={value.reasoningEffortPreset}
-                          disabled={disabled}
-                          onValueChange={(reasoningEffortPreset) =>
-                            onChange({
-                              reasoningEffortPreset:
-                                reasoningEffortPreset as ReasoningEffortPresetId
-                            })
+                      <SelectTrigger aria-label={t('Reasoning effort levels')} disabled={disabled}>
+                        <span>
+                          {
+                            CUSTOM_REASONING_EFFORT_PRESETS.find(
+                              (preset) => preset.id === value.reasoningEffortPreset
+                            )?.label
                           }
-                        >
-                          <SelectTrigger
-                            aria-label={t('Reasoning effort levels')}
-                            disabled={disabled}
-                          >
-                            <span>
-                              {
-                                CUSTOM_REASONING_EFFORT_PRESETS.find(
-                                  (preset) => preset.id === value.reasoningEffortPreset
-                                )?.label
-                              }
-                            </span>
-                          </SelectTrigger>
-                          <SelectContent>
-                            {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
-                              <SelectItem key={preset.id} value={preset.id}>
-                                {preset.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {value.apiEndpoint === 'openai' ? (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-1">
-                            <span className={fieldLabelClassName}>
-                              {t('Reasoning request format')}
-                            </span>
-                            <FieldHelp
-                              content={t(
-                                'The JSON fields sent to a Chat Completions gateway. Follow the gateway documentation; OpenAI-compatible services commonly use {{parameter}}.',
-                                { parameter: 'reasoning_effort' }
-                              )}
-                            />
-                          </div>
-                          <Select
-                            value={value.reasoningEffortTransport}
-                            disabled={disabled}
-                            onValueChange={(reasoningEffortTransport) =>
-                              onChange({
-                                reasoningEffortTransport:
-                                  reasoningEffortTransport as CustomReasoningEffortTransport
-                              })
-                            }
-                          >
-                            <SelectTrigger
-                              aria-label={t('Reasoning effort request format')}
-                              disabled={disabled}
-                            >
-                              <span>
-                                {
-                                  CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
-                                    (transport) => transport.id === value.reasoningEffortTransport
-                                  )?.label
-                                }
-                              </span>
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CUSTOM_REASONING_EFFORT_TRANSPORTS.map((transport) => (
-                                <SelectItem key={transport.id} value={transport.id}>
-                                  {transport.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      ) : null}
-                    </div>
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
+                          <SelectItem key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                ) : null}
 
-                <div className="grid gap-4 border-t border-border-200 pt-3 sm:grid-cols-2">
-                  <TokenLimitField
-                    id="provider-max-input-tokens"
-                    label={t('Maximum input tokens')}
-                    help={t('Optional provider-reported input cap.')}
-                    value={value.maxInputTokens}
-                    presets={CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS}
-                    disabled={disabled}
-                    error={errors.maxInputTokens}
-                    onValueChange={(maxInputTokens) => onChange({ maxInputTokens })}
-                    t={t}
-                  />
-                  <TokenLimitField
-                    id="provider-max-output-tokens"
-                    label={t('Maximum output tokens')}
-                    help={t('Optional provider-reported output cap.')}
-                    value={value.maxOutputTokens}
-                    presets={CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS}
-                    disabled={disabled}
-                    error={errors.maxOutputTokens}
-                    onValueChange={(maxOutputTokens) => onChange({ maxOutputTokens })}
-                    t={t}
-                  />
+                  {value.apiEndpoint === 'openai' ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1">
+                        <span className={fieldLabelClassName}>{t('Reasoning request format')}</span>
+                        <FieldHelp
+                          content={t(
+                            'The JSON fields sent to a Chat Completions gateway. Follow the gateway documentation; OpenAI-compatible services commonly use {{parameter}}.',
+                            { parameter: 'reasoning_effort' }
+                          )}
+                        />
+                      </div>
+                      <Select
+                        value={value.reasoningEffortTransport}
+                        disabled={disabled}
+                        onValueChange={(reasoningEffortTransport) =>
+                          onChange({
+                            reasoningEffortTransport:
+                              reasoningEffortTransport as CustomReasoningEffortTransport
+                          })
+                        }
+                      >
+                        <SelectTrigger
+                          aria-label={t('Reasoning effort request format')}
+                          disabled={disabled}
+                        >
+                          <span>
+                            {
+                              CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
+                                (transport) => transport.id === value.reasoningEffortTransport
+                              )?.label
+                            }
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CUSTOM_REASONING_EFFORT_TRANSPORTS.map((transport) => (
+                            <SelectItem key={transport.id} value={transport.id}>
+                              {transport.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
-          </div>
+
+            <div className="grid gap-4 border-t border-border-200 pt-3 sm:grid-cols-2">
+              <TokenLimitField
+                id="provider-max-input-tokens"
+                label={t('Maximum input tokens')}
+                help={t('Optional provider-reported input cap.')}
+                value={value.maxInputTokens}
+                presets={CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS}
+                disabled={disabled}
+                error={errors.maxInputTokens}
+                onValueChange={(maxInputTokens) => onChange({ maxInputTokens })}
+                t={t}
+              />
+              <TokenLimitField
+                id="provider-max-output-tokens"
+                label={t('Maximum output tokens')}
+                help={t('Optional provider-reported output cap.')}
+                value={value.maxOutputTokens}
+                presets={CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS}
+                disabled={disabled}
+                error={errors.maxOutputTokens}
+                onValueChange={(maxOutputTokens) => onChange({ maxOutputTokens })}
+                t={t}
+              />
+            </div>
+          </AdvancedSettingsDisclosure>
         </>
       ) : isOfficial ? (
         <>

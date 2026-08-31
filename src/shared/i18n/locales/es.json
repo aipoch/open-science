@@ -4186,6 +4186,10 @@
     "Neither the official registry nor the China-friendly mirror is reachable.": "No se puede acceder ni al registro oficial ni al mirror optimizado para China.",
     "Check the network, proxy, VPN, or firewall, then run the check again.": "Compruebe la red, el proxy, la VPN o el firewall y vuelva a ejecutar la comprobación.",
     "official npm registry": "El registro oficial de npm",
-    "China-friendly npmmirror": "El mirror de npmmirror optimizado para China"
+    "China-friendly npmmirror": "El mirror de npmmirror optimizado para China",
+    "Auto (recommended)": "Automático (recomendado)",
+    "HTTPS": "HTTPS",
+    "WebSocket": "WebSocket",
+    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "El modo automático usa WebSocket cuando está disponible y recurre a HTTPS. Use HTTPS para mayor compatibilidad o WebSocket para reducir la latencia."
   }
 }

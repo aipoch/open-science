@@ -351,6 +351,26 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('forwards a Codex WebSocket fallback from a runtime to the application callback', () => {
+    const onCodexWebSocketFallback = vi.fn()
+    let runtimeCallbacks: AcpRuntimeCallbacks | undefined
+    new AcpRuntimeCoordinator(
+      (callbacks) => {
+        runtimeCallbacks = callbacks
+        return createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks
+        }).runtime
+      },
+      { onCodexWebSocketFallback }
+    )
+
+    runtimeCallbacks?.onCodexWebSocketFallback?.()
+
+    expect(onCodexWebSocketFallback).toHaveBeenCalledOnce()
+  })
+
   it('routes Sessions through runtimes keyed by their explicit agent target', async () => {
     const targets: Array<AcpSessionAgentTarget | undefined> = []
     const created: ReturnType<typeof createFakeRuntime>[] = []

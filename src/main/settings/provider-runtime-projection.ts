@@ -86,6 +86,7 @@ class ProviderRuntimeProjectionOwner {
       id: provider.id,
       type: provider.type,
       codexAuthMode: provider.codexAuthMode,
+      codexTransport: provider.codexTransport,
       name: provider.name,
       apiEndpoints: this.resolveProviderApiEndpoints(provider, activeModel),
       baseUrl: provider.baseUrl,
@@ -236,6 +237,10 @@ class ProviderRuntimeProjectionOwner {
     return {
       type: provider.type,
       ...(provider.codexAuthMode === undefined ? {} : { codexAuthMode: provider.codexAuthMode }),
+      ...(provider.codexTransport === undefined ? {} : { codexTransport: provider.codexTransport }),
+      ...(provider.codexAutoUseHttps === undefined
+        ? {}
+        : { codexAutoUseHttps: provider.codexAutoUseHttps }),
       baseUrl: provider.baseUrl,
       model,
       ...(contextWindow === undefined ? {} : { contextWindow }),
