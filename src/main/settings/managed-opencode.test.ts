@@ -253,6 +253,30 @@ describe('installManagedOpencode', () => {
     expect(finalContentDuringVerification).toBe('WORKING-OPENCODE')
   })
 
+  it('returns a structured failure when the staging directory cannot be created', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const blockedDataRoot = join(root, 'blocked-data-root')
+    const logs: string[] = []
+    await writeFile(blockedDataRoot, 'not a directory')
+
+    const outcome = await installManagedOpencode({
+      installId: 'staging-setup-failure',
+      onEvent: (event) => {
+        if (event.kind === 'log') logs.push(event.chunk)
+      },
+      dataRoot: blockedDataRoot,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson: async () => {
+        throw new Error('registry should not be reached')
+      },
+      fetchTarball: async () => ({ stream: Readable.from([]) })
+    })
+
+    expect(outcome.result).toMatchObject({ ok: false, error: expect.stringContaining('ENOTDIR') })
+    expect(logs.some((chunk) => /ENOTDIR/.test(chunk))).toBe(true)
+  })
+
   // A non-AVX2 x64 host: the standard build dies with SIGILL, so the installer retries the -baseline
   // variant, which runs cleanly. This is what makes the onboarding "auto-installable" claim hold.
   it('retries the -baseline variant when the standard x64 build reports SIGILL, then succeeds', async () => {
@@ -744,18 +768,27 @@ describe('isManagedOpencodePath / uninstallManagedOpencode', () => {
 
   it('removes only owned staging and backup siblings', async () => {
     const uuid = '12345678-1234-1234-1234-123456789abc'
+    const unownedUuid = 'abcdefab-cdef-abcd-efab-cdefabcdefab'
     const stagingMarker = join(root, `opencode-managed.staging-${uuid}`, 'marker')
     const backupMarker = join(root, `opencode-managed.backup-${uuid}`, 'marker')
+    const unownedMarker = join(root, `opencode-managed.backup-${unownedUuid}`, 'marker')
     const lookalikeMarker = join(root, 'opencode-managed.backup-manual', 'marker')
-    for (const marker of [stagingMarker, backupMarker, lookalikeMarker]) {
+    for (const marker of [stagingMarker, backupMarker, unownedMarker, lookalikeMarker]) {
       await mkdir(dirname(marker), { recursive: true })
       await writeFile(marker, 'present')
+    }
+    for (const ownedRoot of [dirname(stagingMarker), dirname(backupMarker)]) {
+      await writeFile(
+        join(ownedRoot, '.open-science-managed-runtime'),
+        'open-science:opencode:v1\n'
+      )
     }
 
     await uninstallManagedOpencode(root)
 
     await expect(readFile(stagingMarker)).rejects.toThrow()
     await expect(readFile(backupMarker)).rejects.toThrow()
+    await expect(readFile(unownedMarker, 'utf8')).resolves.toBe('present')
     await expect(readFile(lookalikeMarker, 'utf8')).resolves.toBe('present')
   })
 

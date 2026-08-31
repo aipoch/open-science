@@ -1,7 +1,7 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, type Dirent } from 'node:fs'
-import { chmod, mkdir, readdir, rename, rm } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
@@ -170,21 +170,32 @@ export const isManagedOpencodePath = (resolvedPath: string, dataRoot: string): b
 
 const ORPHANED_OPENCODE_RUNTIME_PATTERN =
   /^opencode-managed\.(?:staging|backup)-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
+const OPENCODE_RUNTIME_OWNER = 'open-science:opencode:v1\n'
+
+const isOwnedOpencodeRuntime = async (root: string): Promise<boolean> =>
+  (await readFile(join(root, RUNTIME_OWNER_MARKER), 'utf8').catch(() => undefined)) ===
+  OPENCODE_RUNTIME_OWNER
 
 // Removes the app-managed OpenCode install tree and exact installer-owned staging/backup siblings.
 // Resolves (never rejects); a missing dir is a no-op so callers can uninstall idempotently.
 export const uninstallManagedOpencode = async (dataRoot: string): Promise<void> => {
   const root = dirname(managedOpencodeDir(dataRoot))
   const siblings = await readdir(dirname(root), { withFileTypes: true }).catch(() => [] as Dirent[])
+  const orphanCandidates = siblings
+    .filter((entry) => entry.isDirectory() && ORPHANED_OPENCODE_RUNTIME_PATTERN.test(entry.name))
+    .map((entry) => join(dirname(root), entry.name))
+  const ownedOrphans = (
+    await Promise.all(
+      orphanCandidates.map(async (path) =>
+        (await isOwnedOpencodeRuntime(path)) ? path : undefined
+      )
+    )
+  ).filter((path): path is string => path !== undefined)
   await Promise.all(
-    [
-      root,
-      ...siblings
-        .filter(
-          (entry) => entry.isDirectory() && ORPHANED_OPENCODE_RUNTIME_PATTERN.test(entry.name)
-        )
-        .map((entry) => join(dirname(root), entry.name))
-    ].map((path) => rm(path, { recursive: true, force: true }).catch(() => undefined))
+    [root, ...ownedOrphans].map((path) =>
+      rm(path, { recursive: true, force: true }).catch(() => undefined)
+    )
   )
 }
 
@@ -317,6 +328,12 @@ const replaceManagedOpencodeRoot = async (
   let backedUp = false
 
   try {
+    await writeFile(join(root, RUNTIME_OWNER_MARKER), OPENCODE_RUNTIME_OWNER)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  try {
     await renamePath(root, backup)
     backedUp = true
   } catch (error) {
@@ -423,6 +440,7 @@ export const installManagedOpencode = async ({
           error: `OpenCode installed but failed to run (${verification.reason}).${hint}`
         }
       }
+      await writeFile(join(stagedRoot, RUNTIME_OWNER_MARKER), OPENCODE_RUNTIME_OWNER)
 
       return { ok: true, version: resolution.version }
     } finally {
@@ -439,7 +457,19 @@ export const installManagedOpencode = async ({
   const preferBaseline = isX64 && !detectAvx2Dep()
   const firstKey = preferBaseline ? baselinePackageKey(platform.key) : platform.key
 
-  await mkdir(scratch, { recursive: true })
+  try {
+    await mkdir(scratch, { recursive: true })
+  } catch (error) {
+    lastError = error instanceof Error ? error.message : String(error)
+    onEvent({
+      kind: 'log',
+      installId,
+      stream: 'system',
+      chunk: `Failed to prepare the OpenCode staging directory: ${lastError}\n`
+    })
+    await rm(scratch, { recursive: true, force: true }).catch(() => undefined)
+    return { result: { installId, ok: false, error: lastError } }
+  }
   try {
     for (const registry of registries) {
       let reachedPublication = false

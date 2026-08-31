@@ -596,6 +596,32 @@ describe('managed-claude: install orchestration', () => {
       events.some((event) => event.kind === 'log' && event.chunk.includes('Free some space'))
     ).toBe(true)
   })
+
+  it('returns a structured failure when the staging directory cannot be created', async () => {
+    const blockedDataRoot = join(root, 'blocked-data-root')
+    const events: ClaudeInstallEvent[] = []
+    await writeFile(blockedDataRoot, 'not a directory')
+
+    const outcome = await installManagedClaude({
+      installId: 'staging-setup-failure',
+      onEvent: (event) => events.push(event),
+      dataRoot: blockedDataRoot,
+      registries: ['https://reg'],
+      platform,
+      fetchJson: async () => {
+        throw new Error('registry should not be reached')
+      },
+      fetchTarball: async () => ({ stream: Readable.from([]) }),
+      verifyBinary: async () => '2.1.209'
+    })
+
+    expect(outcome.result).toMatchObject({ ok: false, error: expect.stringContaining('ENOTDIR') })
+    expect(
+      events.some(
+        (event) => event.kind === 'log' && event.stream === 'system' && /ENOTDIR/.test(event.chunk)
+      )
+    ).toBe(true)
+  })
 })
 
 describe('isManagedClaudePath / uninstallManagedClaude', () => {
@@ -630,18 +656,27 @@ describe('isManagedClaudePath / uninstallManagedClaude', () => {
 
   it('removes only owned staging and backup siblings', async () => {
     const uuid = '12345678-1234-1234-1234-123456789abc'
+    const unownedUuid = 'abcdefab-cdef-abcd-efab-cdefabcdefab'
     const stagingMarker = join(root, `claude-code.staging-${uuid}`, 'marker')
     const backupMarker = join(root, `claude-code.backup-${uuid}`, 'marker')
+    const unownedMarker = join(root, `claude-code.backup-${unownedUuid}`, 'marker')
     const lookalikeMarker = join(root, 'claude-code.backup-manual', 'marker')
-    for (const marker of [stagingMarker, backupMarker, lookalikeMarker]) {
+    for (const marker of [stagingMarker, backupMarker, unownedMarker, lookalikeMarker]) {
       await mkdir(dirname(marker), { recursive: true })
       await writeFile(marker, 'present')
+    }
+    for (const ownedRoot of [dirname(stagingMarker), dirname(backupMarker)]) {
+      await writeFile(
+        join(ownedRoot, '.open-science-managed-runtime'),
+        'open-science:claude-code:v1\n'
+      )
     }
 
     await uninstallManagedClaude(root)
 
     await expect(readFile(stagingMarker)).rejects.toThrow()
     await expect(readFile(backupMarker)).rejects.toThrow()
+    await expect(readFile(unownedMarker, 'utf8')).resolves.toBe('present')
     await expect(readFile(lookalikeMarker, 'utf8')).resolves.toBe('present')
   })
 

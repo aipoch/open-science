@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream, type Dirent } from 'node:fs'
-import { chmod, mkdir, readdir, rename, rm } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -114,19 +114,30 @@ const isManagedClaudePath = (resolvedPath: string, dataRoot: string): boolean =>
 
 const ORPHANED_CLAUDE_RUNTIME_PATTERN =
   /^claude-code\.(?:staging|backup)-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
+const CLAUDE_RUNTIME_OWNER = 'open-science:claude-code:v1\n'
+
+const isOwnedClaudeRuntime = async (root: string): Promise<boolean> =>
+  (await readFile(join(root, RUNTIME_OWNER_MARKER), 'utf8').catch(() => undefined)) ===
+  CLAUDE_RUNTIME_OWNER
 
 // Removes the app-managed Claude install tree and exact installer-owned staging/backup siblings.
 // Resolves (never rejects); a missing dir is a no-op so callers can uninstall idempotently.
 const uninstallManagedClaude = async (dataRoot: string): Promise<void> => {
   const root = dirname(managedClaudeDir(dataRoot))
   const siblings = await readdir(dirname(root), { withFileTypes: true }).catch(() => [] as Dirent[])
+  const orphanCandidates = siblings
+    .filter((entry) => entry.isDirectory() && ORPHANED_CLAUDE_RUNTIME_PATTERN.test(entry.name))
+    .map((entry) => join(dirname(root), entry.name))
+  const ownedOrphans = (
+    await Promise.all(
+      orphanCandidates.map(async (path) => ((await isOwnedClaudeRuntime(path)) ? path : undefined))
+    )
+  ).filter((path): path is string => path !== undefined)
   await Promise.all(
-    [
-      root,
-      ...siblings
-        .filter((entry) => entry.isDirectory() && ORPHANED_CLAUDE_RUNTIME_PATTERN.test(entry.name))
-        .map((entry) => join(dirname(root), entry.name))
-    ].map((path) => rm(path, { recursive: true, force: true }).catch(() => undefined))
+    [root, ...ownedOrphans].map((path) =>
+      rm(path, { recursive: true, force: true }).catch(() => undefined)
+    )
   )
 }
 
@@ -451,6 +462,12 @@ const replaceManagedClaudeRoot = async (
   let backedUp = false
 
   try {
+    await writeFile(join(root, RUNTIME_OWNER_MARKER), CLAUDE_RUNTIME_OWNER)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  try {
     await renamePath(root, backup)
     backedUp = true
   } catch (error) {
@@ -501,7 +518,19 @@ const installManagedClaude = async ({
   const downloadDir = tmpDir ?? scratch
   let lastError = 'no registries configured'
 
-  await mkdir(scratch, { recursive: true })
+  try {
+    await mkdir(scratch, { recursive: true })
+  } catch (error) {
+    lastError = describeManagedInstallError(error)
+    onEvent({
+      kind: 'log',
+      installId,
+      stream: 'system',
+      chunk: `Failed to prepare the Claude staging directory: ${lastError}\n`
+    })
+    await rm(scratch, { recursive: true, force: true }).catch(() => undefined)
+    return { result: { installId, ok: false, error: lastError } }
+  }
   try {
     for (const registry of registries) {
       const tgzPath = join(downloadDir, `claude-download-${randomUUID()}.tgz`)
@@ -542,6 +571,7 @@ const installManagedClaude = async ({
             'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
           )
         }
+        await writeFile(join(stagedRoot, RUNTIME_OWNER_MARKER), CLAUDE_RUNTIME_OWNER)
 
         reachedPublication = true
         await replaceManagedClaudeRoot(stagedRoot, root, renamePath)
