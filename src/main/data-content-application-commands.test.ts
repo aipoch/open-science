@@ -19,6 +19,12 @@ import {
 } from '../shared/session-persistence'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import { ApplicationEventHub } from './application-events'
+import {
+  beginMigration,
+  clearMigrationPending,
+  waitForDataRootWriters,
+  withDataRootWrite
+} from './storage/migration-state'
 
 const callerContext = createCallerContext({
   clientId: 'renderer-1',
@@ -762,8 +768,10 @@ describe('Data and content application commands', () => {
     ).resolves.toBe(deps.session)
 
     expect(order).toEqual([
+      'write:start',
       'project:commit',
       'publish:project:created',
+      'write:end',
       'write:start',
       'session:commit',
       'publish:session:created',
@@ -773,6 +781,88 @@ describe('Data and content application commands', () => {
       session: deps.session,
       originClientId: 'web:renderer-1'
     })
+  })
+
+  it('rejects Project repository access while a data-root migration is pending', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.withDataRootWrite.mockImplementation(withDataRootWrite)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const operations = [
+      {
+        command: 'projectCreate' as const,
+        args: [{ name: 'Project' }]
+      },
+      {
+        command: 'projectGet' as const,
+        args: ['project-1']
+      },
+      {
+        command: 'projectList' as const,
+        args: []
+      },
+      {
+        command: 'projectUpdateArchive' as const,
+        args: [{ id: 'project-1', archived: true, expectedArchivedAt: null }]
+      },
+      {
+        command: 'projectUpdate' as const,
+        args: [{ id: 'project-1', name: 'Updated project', expectedUpdatedAt: 1 }]
+      }
+    ]
+
+    beginMigration()
+    try {
+      for (const operation of operations) {
+        await expect(
+          dispatchCommand(router, operation.command, operation.args).result
+        ).rejects.toThrow('Open Science is moving your data.')
+      }
+    } finally {
+      clearMigrationPending()
+    }
+
+    expect(deps.projects.create).not.toHaveBeenCalled()
+    expect(deps.projects.get).not.toHaveBeenCalled()
+    expect(deps.projects.list).not.toHaveBeenCalled()
+    expect(deps.projects.updateArchive).not.toHaveBeenCalled()
+    expect(deps.projects.update).not.toHaveBeenCalled()
+  })
+
+  it('keeps migration drain pending until an already-started Project operation finishes', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    let finishProject: (() => void) | undefined
+    deps.projects.create.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishProject = () => resolve(deps.project)
+        })
+    )
+    deps.withDataRootWrite.mockImplementation(withDataRootWrite)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    const projectResult = dispatchCommand(router, 'projectCreate', [{ name: 'Project' }]).result
+    await vi.waitFor(() => expect(finishProject).toBeTypeOf('function'))
+
+    beginMigration()
+    let drained = false
+    const drain = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+
+    try {
+      expect(drained).toBe(false)
+      finishProject?.()
+      await expect(projectResult).resolves.toBe(deps.project)
+      await drain
+      expect(drained).toBe(true)
+    } finally {
+      finishProject?.()
+      clearMigrationPending()
+      await projectResult.catch(() => undefined)
+    }
   })
 
   it('preserves the Session revision conflict code across the application command boundary', async () => {
@@ -911,7 +1001,7 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(deps.sessions.deleteSession).toHaveBeenCalledWith(deleteSessionRequest)
     expect(deps.sessions.editDetails).toHaveBeenCalledWith(editDetailsRequest)
-    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(6)
+    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(7)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
     expect(deps.events.publish).not.toHaveBeenCalledWith('project:deleted', expect.anything())
     expect(deps.events.publish).toHaveBeenCalledWith('session:deleted', deleteSessionRequest)
