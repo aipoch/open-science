@@ -560,6 +560,14 @@ export class AgentRuntimeManager {
         })
 
         if (outcome.result.ok && outcome.resolvedPath) {
+          const installedVersion = await this.detectDeps.getVersion(outcome.resolvedPath)
+          if (!installedVersion) {
+            const error =
+              'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
+            onEvent({ kind: 'log', installId, stream: 'system', chunk: `${error}\n` })
+            return { installId, ok: false, error }
+          }
+
           await this.repository.setClaudeInfo({
             resolvedPath: outcome.resolvedPath,
             version: outcome.version
