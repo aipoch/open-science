@@ -255,6 +255,7 @@ export const readDurableJsonFile = async <Value>(
     } catch (error) {
       if (!isMissingFileError(error)) throw error
       const candidates = await listTemporaryCandidates(filePath, dependencies)
+      await assertNoRecoveryBarrier(candidates, decode, dependencies)
       for (const candidate of candidates) {
         let candidateContents: string
         try {
