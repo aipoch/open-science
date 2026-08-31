@@ -129,6 +129,7 @@ const createWorkspaceRuntimeEventProcessor = (
     processingEventIds: Set<string>
     drainInFlight?: Promise<void>
     drainAgain: boolean
+    drainRetriesImmediately: boolean
     presentation: WorkspacePresentationLane
     retryTimer?: ReturnType<typeof setTimeout>
   }
@@ -152,6 +153,7 @@ const createWorkspaceRuntimeEventProcessor = (
         processedEventIds: new Set<string>(),
         processingEventIds: new Set<string>(),
         drainAgain: false,
+        drainRetriesImmediately: false,
         presentation: presentationBuffer.createLane()
       }
       eventLanes.set(laneKey, lane)
@@ -209,8 +211,15 @@ const createWorkspaceRuntimeEventProcessor = (
     }, delay)
   }
 
-  const drainLane = async (laneKey: string | symbol): Promise<void> => {
+  const drainLane = async (
+    laneKey: string | symbol,
+    drainRetriesImmediately = false
+  ): Promise<void> => {
     const lane = getEventLane(laneKey)
+    if (drainRetriesImmediately) {
+      lane.drainRetriesImmediately = true
+      cancelLaneRetry(lane)
+    }
 
     if (lane.drainInFlight) {
       lane.drainAgain = true
@@ -220,6 +229,7 @@ const createWorkspaceRuntimeEventProcessor = (
     lane.drainInFlight = (async () => {
       do {
         lane.drainAgain = false
+        if (lane.drainRetriesImmediately) cancelLaneRetry(lane)
         const pendingBeforeWait = pendingLaneEvents(lane)
         await presentationBuffer.prepare(lane.presentation, pendingBeforeWait)
         const selectedEvents = presentationBuffer.select(lane.presentation, pendingLaneEvents(lane))
@@ -265,7 +275,10 @@ const createWorkspaceRuntimeEventProcessor = (
         const madeProgress = selectedEvents.some((event) => lane.processedEventIds.has(event.id))
         for (const event of selectedEvents) releaseProcessedEvent(lane, event.id)
         const hasPending = pendingLaneEvents(lane).length > 0
-        if (madeProgress) {
+        if (lane.drainRetriesImmediately && lane.retryTimer) {
+          cancelLaneRetry(lane)
+          lane.drainAgain = true
+        } else if (madeProgress) {
           presentationBuffer.recordProgress(lane.presentation, selectedEvents, hasPending)
           if (hasPending) lane.drainAgain = true
         }
@@ -276,6 +289,7 @@ const createWorkspaceRuntimeEventProcessor = (
       await lane.drainInFlight
     } finally {
       lane.drainInFlight = undefined
+      lane.drainRetriesImmediately = false
       if (lane.acceptedEvents.size === 0) {
         cancelLaneRetry(lane)
         eventLanes.delete(laneKey)
@@ -348,7 +362,7 @@ const createWorkspaceRuntimeEventProcessor = (
         const lane = eventLanes.get(sessionId)
         if (lane) {
           presentationBuffer.force(lane.presentation)
-          await drainLane(sessionId)
+          await drainLane(sessionId, true)
         }
         return
       }
@@ -359,7 +373,7 @@ const createWorkspaceRuntimeEventProcessor = (
         for (const lane of eventLanes.values()) {
           presentationBuffer.force(lane.presentation)
         }
-        await Promise.all([...eventLanes.keys()].map((laneKey) => drainLane(laneKey)))
+        await Promise.all([...eventLanes.keys()].map((laneKey) => drainLane(laneKey, true)))
       } while (drainedVersion !== acceptedEventVersion)
     }
   }

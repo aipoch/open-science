@@ -518,13 +518,37 @@ describe('workspace agent runtime event processing', () => {
       await processor.process([event])
       expect(applyEvent).toHaveBeenCalledOnce()
 
-      await processor.drain()
       await vi.advanceTimersByTimeAsync(249)
       expect(applyEvent).toHaveBeenCalledOnce()
 
       await vi.advanceTimersByTimeAsync(1)
 
       expect(applyEvent).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('applies a scheduled retry before resolving an explicit session drain', async () => {
+    vi.useFakeTimers()
+    try {
+      const event = createEvent({
+        id: 'artifact-event-1',
+        kind: 'artifact',
+        runId: 'run-1',
+        artifactClaimId: 'claim-1'
+      })
+      const applyEvent = vi
+        .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+        .mockRejectedValueOnce(new Error('move failed'))
+        .mockResolvedValueOnce(true)
+      const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+      await processor.process([event])
+      await processor.drain(event.sessionId)
+
+      expect(applyEvent).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(0)
     } finally {
       vi.useRealTimers()
     }
