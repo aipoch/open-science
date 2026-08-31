@@ -64,14 +64,22 @@ const readSource = (path: string): string => readProductionSource(path, projectR
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
 const portableProjectPath = (path: string): string =>
   relative(projectRoot, path).replaceAll('\\', '/')
-const sourceFileFor = (path: string): SourceFile =>
-  createSourceFile(
+const sourceFileCache = new Map<string, SourceFile>()
+const sourceFileFor = (path: string): SourceFile => {
+  const cached = sourceFileCache.get(path)
+  if (cached) return cached
+  const sourceFile = createSourceFile(
     path,
     readSource(path),
     ScriptTarget.Latest,
     true,
     extname(path) === '.tsx' ? ScriptKind.TSX : ScriptKind.TS
   )
+  sourceFileCache.set(path, sourceFile)
+  return sourceFile
+}
+const sourceMentions = (sourcePath: string, needle: string): boolean =>
+  readSource(sourcePath).includes(needle)
 
 const productionSources = (): readonly string[] => listProductionSources(projectRoot)
 
@@ -216,11 +224,13 @@ describe('Reviewer orchestrator architecture', () => {
   })
 
   it('keeps the public facade behind the Reviewer IPC command owner', () => {
-    const importers = productionSources().filter((sourcePath) =>
-      importSpecifiersFrom(sourcePath).some(
-        (specifier) =>
-          resolveImportTarget(sourcePath, specifier) === modulePath(reviewerPaths.facade)
-      )
+    const importers = productionSources().filter(
+      (sourcePath) =>
+        sourceMentions(sourcePath, 'orchestrator') &&
+        importSpecifiersFrom(sourcePath).some(
+          (specifier) =>
+            resolveImportTarget(sourcePath, specifier) === modulePath(reviewerPaths.facade)
+        )
     )
     expect(importers.map(portableProjectPath)).toEqual(['src/main/reviewer/ipc.ts'])
     expect(importedNamesFrom(importers[0]!, reviewerPaths.facade)).toEqual(['runReview'])
@@ -243,6 +253,13 @@ describe('Reviewer orchestrator architecture', () => {
     )
 
     for (const sourcePath of productionSources()) {
+      if (
+        !sourceMentions(sourcePath, 'review-assessment-owner') &&
+        !sourceMentions(sourcePath, 'reviewer-fix-loop-owner') &&
+        !sourceMentions(sourcePath, 'reviewer-session-driver')
+      ) {
+        continue
+      }
       for (const specifier of importSpecifiersFrom(sourcePath)) {
         const target = resolveImportTarget(sourcePath, specifier)
         if (target && actualImporters.has(target)) {

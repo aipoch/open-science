@@ -36,6 +36,41 @@ function Invoke-SandboxHost {
   if ($LASTEXITCODE -ne 0) { throw "AppContainer $Command exited $LASTEXITCODE" }
 }
 
+function Complete-SandboxLaunch {
+  param(
+    [Parameter(Mandatory = $true)]
+    [System.Diagnostics.Process]$Process,
+    [int]$TimeoutMs = 15000
+  )
+  if (-not $Process.WaitForExit($TimeoutMs)) {
+    $Process.Refresh()
+    return $Process.ExitCode
+  }
+  $Process.Refresh()
+  if ($null -ne $Process.ExitCode) { return $Process.ExitCode }
+  # Start-Process -PassThru can leave ExitCode unpopulated after HasExited when stdout is redirected.
+  $deadline = (Get-Date).AddSeconds(2)
+  do {
+    Start-Sleep -Milliseconds 50
+    $Process.Refresh()
+  } while ($null -eq $Process.ExitCode -and (Get-Date) -le $deadline)
+  return $Process.ExitCode
+}
+
+function Test-SandboxLaunchSucceeded {
+  param(
+    [Parameter(Mandatory = $true)]
+    [System.Diagnostics.Process]$Process,
+    [Parameter(Mandatory = $true)]
+    [string]$CompletePath
+  )
+  $code = Complete-SandboxLaunch $Process
+  $complete = Test-Path -LiteralPath $CompletePath
+  if (-not $Process.HasExited -or -not $complete) { return $false }
+  if ($null -eq $code) { return $true }
+  return $code -eq 0
+}
+
 function Install-SandboxResources {
   param([string]$Identity, [string]$Root)
   Invoke-SandboxHost 'prepare-setup' $Identity $Root
@@ -264,9 +299,8 @@ try {
   while (-not $launchA.HasExited -and (Get-Date) -le $deadline) {
     Start-Sleep -Milliseconds 100
   }
-  if ($launchA.HasExited) { $launchA.WaitForExit() }
   $aError = if (Test-Path -LiteralPath $aStderr) { Get-Content -LiteralPath $aStderr -Raw } else { '<missing>' }
-  if (-not $launchA.HasExited -or $launchA.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $aComplete)) {
+  if (-not (Test-SandboxLaunchSucceeded -Process $launchA -CompletePath $aComplete)) {
     $stdout = if (Test-Path -LiteralPath $aStdout) { Get-Content -LiteralPath $aStdout -Raw } else { '<missing>' }
     throw "The first concurrent lease did not complete cleanly (exited: $($launchA.HasExited), exit code: $($launchA.ExitCode), complete: $(Test-Path -LiteralPath $aComplete)).`nstdout: $stdout`nstderr: $aError"
   }
@@ -282,9 +316,8 @@ try {
   while (-not $launchB.HasExited -and (Get-Date) -le $deadline) {
     Start-Sleep -Milliseconds 100
   }
-  if ($launchB.HasExited) { $launchB.WaitForExit() }
   $bError = if (Test-Path -LiteralPath $bStderr) { Get-Content -LiteralPath $bStderr -Raw } else { '<missing>' }
-  if (-not $launchB.HasExited -or $launchB.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $bComplete)) {
+  if (-not (Test-SandboxLaunchSucceeded -Process $launchB -CompletePath $bComplete)) {
     $stdout = if (Test-Path -LiteralPath $bStdout) { Get-Content -LiteralPath $bStdout -Raw } else { '<missing>' }
     throw "The second concurrent lease did not complete cleanly (exited: $($launchB.HasExited), exit code: $($launchB.ExitCode), complete: $(Test-Path -LiteralPath $bComplete)).`nstdout: $stdout`nstderr: $bError"
   }
