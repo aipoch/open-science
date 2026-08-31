@@ -31,6 +31,7 @@ describe('sandboxedPackageSpawn', () => {
     }
     const storageRoot = process.cwd()
     const packageCache = mkdtempSync(join(tmpdir(), 'open-science-package-cache-'))
+    const matplotlibCache = join(packageCache, 'matplotlib')
     temporaryDirectories.push(packageCache)
     const spawn = sandboxedPackageSpawn({
       processSandbox,
@@ -49,6 +50,7 @@ describe('sandboxedPackageSpawn', () => {
       PATH: process.env.PATH,
       PIP_CERT: '/trusted/bundle.pem',
       CONDA_PKGS_DIRS: packageCache,
+      MPLCONFIGDIR: matplotlibCache,
       OPENAI_API_KEY: 'must-not-cross'
     })
 
@@ -64,7 +66,8 @@ describe('sandboxedPackageSpawn', () => {
     )
     expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].env).toMatchObject({
       PATH: process.env.PATH,
-      PIP_CERT: '/trusted/bundle.pem'
+      PIP_CERT: '/trusted/bundle.pem',
+      MPLCONFIGDIR: matplotlibCache
     })
     expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].env).not.toHaveProperty(
       'OPENAI_API_KEY'
