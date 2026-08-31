@@ -71,6 +71,24 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(include).toMatch(/!macro customUnInstallCheckCurrentUser\b/)
   })
 
+  it('hands the first failed old-uninstaller attempt to project recovery without a misleading close-app dialog', () => {
+    // installUtil runs before customUnInstallCheck. If it loops internally, users see
+    // appCannotBeClosed after five non-zero exits even though that same exit may mean a stale or
+    // partially removed first-install registration. Return the first failure to the path-scoped
+    // recovery in this include instead of blaming a process that may not exist.
+    const installUtil = readFileSync(
+      join(appBuilderLibRoot, 'templates/nsis/include/installUtil.nsh'),
+      'utf8'
+    )
+    const uninstallOldVersion =
+      installUtil.match(/Function uninstallOldVersion([\s\S]*?)FunctionEnd/)?.[1] ?? ''
+    const checkResult = uninstallOldVersion.slice(uninstallOldVersion.indexOf('CheckResult:'))
+
+    expect(uninstallOldVersion).not.toContain('$(appCannotBeClosed)')
+    expect(checkResult).toMatch(/CheckResult:[\s\S]*?Return\s+DoesNotExist:/)
+    expect(checkResult).not.toContain('Goto UninstallLoop')
+  })
+
   it('continues the install when the old version is already gone despite a non-zero exit code', () => {
     // The spurious-exit-2 case: the uninstall completed but a benign trailing error leaked as the
     // process exit code. Detect it by the old executable no longer existing and keep installing.
