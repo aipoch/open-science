@@ -944,9 +944,10 @@ describe('RemoteSessionPairingManager', () => {
       vi.setSystemTime(0)
       const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
       roots.push(root)
+      const repository = new RemoteAccessRepository(root)
       const onAuthorizationExpired = vi.fn()
       const options = {
-        repository: new RemoteAccessRepository(root),
+        repository,
         isAllowedRemoteHost: (hostname: string) => hostname === 'home.example.ts.net',
         isEnabled: () => true,
         onChanged: vi.fn(),
@@ -999,6 +1000,9 @@ describe('RemoteSessionPairingManager', () => {
       expect(onAuthorizationExpired).toHaveBeenCalledTimes(2)
       expect(onAuthorizationExpired).toHaveBeenLastCalledWith(trustedAuthorization.principalId)
       expect(trustedAuthorization.isCurrent()).toBe(false)
+      await vi.waitFor(async () => {
+        expect((await repository.load()).trustedBrowsers).toHaveLength(0)
+      })
     } finally {
       manager?.dispose()
       vi.useRealTimers()
