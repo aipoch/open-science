@@ -697,4 +697,54 @@ describe('useAcpRuntime pending lifecycle', () => {
     expect(result.current.isConnecting).toBe(false)
     expect(result.current.state.cwd).toBe('/connected')
   })
+
+  it('keeps the connecting flag raised until all overlapping actions settle', async () => {
+    const first = createDeferred<{ sessionId: string }>()
+    const second = createDeferred<{ sessionId: string }>()
+    acpApi.createSession.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const { result } = await mountRuntime()
+
+    let firstAction!: Promise<{ sessionId: string }>
+    let secondAction!: Promise<{ sessionId: string }>
+    act(() => {
+      firstAction = result.current.createSession('/first')
+      secondAction = result.current.createSession('/second')
+    })
+    await act(async () => {
+      first.resolve({ sessionId: 'first' })
+      await firstAction
+    })
+
+    expect(result.current.isConnecting).toBe(true)
+
+    await act(async () => {
+      second.resolve({ sessionId: 'second' })
+      await secondAction
+    })
+    expect(result.current.isConnecting).toBe(false)
+  })
+
+  it('does not surface an older action failure after a newer action succeeds', async () => {
+    const older = createDeferred<{ sessionId: string }>()
+    const latest = createDeferred<{ sessionId: string }>()
+    acpApi.createSession.mockReturnValueOnce(older.promise).mockReturnValueOnce(latest.promise)
+    const { result } = await mountRuntime()
+
+    let olderAction!: Promise<{ sessionId: string }>
+    let latestAction!: Promise<{ sessionId: string }>
+    act(() => {
+      olderAction = result.current.createSession('/older')
+      latestAction = result.current.createSession('/latest')
+    })
+    await act(async () => {
+      latest.resolve({ sessionId: 'latest' })
+      await latestAction
+    })
+    await act(async () => {
+      older.reject(new Error('older failed'))
+      await olderAction.catch(() => undefined)
+    })
+
+    expect(result.current.actionError).toBeNull()
+  })
 })

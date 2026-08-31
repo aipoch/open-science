@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -240,7 +240,11 @@ describe('module impact shadow', () => {
     expect(report.shadow.graphStatus).toBe('not-used')
   })
 
-  it.each(['es.json', 'fr.json', 'ja.json', 'ko.json', 'ru.json', 'zh-Hans.json', 'zh-Hant.json'])(
+  it.each(
+    readdirSync(resolve('src/shared/i18n/locales'))
+      .filter((name) => name.endsWith('.json'))
+      .sort()
+  )(
     'owns %s catalog edits as a selective i18n module instead of an unknown full plan',
     (catalog) => {
       const report = reportFor([{ path: `src/shared/i18n/locales/${catalog}`, status: 'modified' }])

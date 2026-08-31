@@ -617,6 +617,7 @@
       "ownerPaths": [
         "src/main/settings/service.ts",
         "src/main/settings/network-proxy-settings-owner.ts",
+        "src/main/settings/settings-snapshot-commit-owner.ts",
         "src/main/settings/reviewer-model-owner.ts",
         "src/main/settings/subagent-model-owner.ts",
         "src/main/settings/vision-model-owner.ts"
@@ -632,6 +633,7 @@
       "testFiles": {
         "owner": [
           "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/settings-snapshot-commit-owner.test.ts",
           "src/main/settings/service.test.ts",
           "src/main/settings/service.providers.test.ts",
           "src/main/settings/service.connectors.test.ts"
@@ -846,6 +848,7 @@
     "i18n_catalog": {
       "ownerPaths": [
         "src/shared/i18n/core.ts",
+        "src/shared/i18n/locales/de.json",
         "src/shared/i18n/locales/es.json",
         "src/shared/i18n/locales/fr.json",
         "src/shared/i18n/locales/ja.json",

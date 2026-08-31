@@ -150,6 +150,67 @@ describe('NotebookSessionAggregate', () => {
     expect(queuedTask).not.toHaveBeenCalled()
   })
 
+  it('tracks concurrent kernel runs and lets only the latest starter publish cwd', () => {
+    const session = new NotebookSessionAggregate({
+      sessionId: 'session-1',
+      projectId: 'default-project',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      cwd: '/workspace/data',
+      notebookSessionRoot: '/workspace',
+      dataRoot: '/workspace/data',
+      runtimeRoot: '/runtime',
+      runJsonPath: '/workspace/run.json',
+      executionCount: 0,
+      executorGeneration: Symbol('executor-1'),
+      executor: {
+        execute: async () => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: '/workspace/data',
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      }
+    })
+    for (const [cellId, language] of [
+      ['cell-python', 'python'],
+      ['cell-r', 'r']
+    ] as const) {
+      session.beginCellWrite({
+        cellId,
+        language,
+        writeId: `write-${cellId}`,
+        source: 'agent',
+        startedAt: 1
+      })
+      session.finishCellWrite(cellId, `write-${cellId}`)
+    }
+
+    session.markCellRunning('cell-python', 'run-python-1', 1)
+    session.markCellRunning('cell-r', 'run-r-1', 2)
+    session.completeCellRun('cell-python', 'completed', '/workspace/python-first')
+
+    expect(session.hasActiveRun()).toBe(true)
+    expect(session.snapshot()).toMatchObject({
+      activeRunId: 'run-r-1',
+      cwd: '/workspace/data'
+    })
+
+    session.completeCellRun('cell-r', 'completed', '/workspace/r-latest')
+    expect(session.hasActiveRun()).toBe(false)
+    expect(session.cwd).toBe('/workspace/r-latest')
+
+    session.markCellRunning('cell-python', 'run-python-2', 3)
+    session.markCellRunning('cell-r', 'run-r-2', 4)
+    session.completeCellRun('cell-r', 'completed', '/workspace/r-newer')
+    session.completeCellRun('cell-python', 'completed', '/workspace/python-stale')
+
+    expect(session.hasActiveRun()).toBe(false)
+    expect(session.cwd).toBe('/workspace/r-newer')
+  })
+
   it('returns snapshots that cannot mutate owned cell or kernel state', () => {
     const session = new NotebookSessionAggregate({
       sessionId: 'session-1',

@@ -265,6 +265,7 @@ import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository
 import { LocalFsService } from './local-fs/service'
 import { SettingsService } from './settings/service'
 import { SettingsRepository } from './settings/repository'
+import { SettingsSnapshotCommitOwner } from './settings/settings-snapshot-commit-owner'
 import type { SettingsDocumentStore } from './settings/document-store'
 import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
@@ -435,6 +436,9 @@ export type ApplicationRuntimeInterfaces = {
     'configureDesktop' | 'syncViewState' | 'handleAppFocus' | 'handleWindowCreated' | 'refreshBadge'
   >
   settingsService: WindowSettingsCapabilities
+  commitClosePreference: (
+    preference: Parameters<WindowSettingsCapabilities['setClosePreference']>[0]
+  ) => Promise<void>
   taskAgent: TaskAgentPort
   taskControls: TaskControlPorts
   computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>
@@ -629,6 +633,10 @@ const createApplicationModules = async (
     })
   }))
   settingsServiceRef.current = settingsService
+  const settingsSnapshotCommits = new SettingsSnapshotCommitOwner(
+    settingsService,
+    applicationEvents
+  )
   const resolveSessionAgentTarget: SessionAgentTargetResolver = async (source) =>
     resolveValidatedSessionAgentTarget(source, await settingsService.getSettingsView())
   const resolveDefaultSessionAgentTarget = async (): Promise<AcpSessionAgentTarget> => {
@@ -3165,6 +3173,7 @@ const createApplicationModules = async (
     registerSettingsIpcHandlers({
       service: settingsService,
       workflows: settingsWorkflows,
+      snapshotCommits: settingsSnapshotCommits,
       listAppIconPreviews,
       connectorTemplateFiles: {
         select: async () => {
@@ -3870,16 +3879,21 @@ const createApplicationModules = async (
     settingsCore: {
       service: settingsService,
       appearance: settingsWorkflows.appearance,
+      snapshotCommits: settingsSnapshotCommits,
       emitInstallEvent: (event) => broadcastToRenderers(SETTINGS_INSTALL_LOG_CHANNEL, event),
       listAppIconPreviews
     },
     settingsIntegration: {
       skills: settingsWorkflows.skills,
       connectors: settingsWorkflows.connectors,
+      snapshotCommits: settingsSnapshotCommits,
       connectorApprovals: approvalBroker,
       skillImportApprovals: skillImportApprovalBroker
     },
-    settingsRuntime: { workflows: settingsWorkflows.runtime },
+    settingsRuntime: {
+      workflows: settingsWorkflows.runtime,
+      snapshotCommits: settingsSnapshotCommits
+    },
     compute: {
       compute: computeIpcModule.handlers,
       bookmarks: {
@@ -4046,6 +4060,11 @@ const createApplicationModules = async (
     taskNotifications,
     notificationInbox,
     settingsService,
+    commitClosePreference: async (preference) => {
+      await settingsSnapshotCommits.currentSnapshotAfter(
+        settingsService.setClosePreference(preference)
+      )
+    },
     taskAgent,
     taskControls: {
       specialists: {

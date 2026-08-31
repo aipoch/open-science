@@ -185,6 +185,7 @@ const useWorkspaceSessionController = ({
   const [downloadArtifactsDialog, setDownloadArtifactsDialog] = useState<ChatSession | null>(null)
   const [notebookDialog, setNotebookDialog] = useState<ChatSession | null>(null)
   const [exportConversationDialog, setExportConversationDialog] = useState<ChatSession | null>(null)
+  const exportConversationIntentRef = useRef(0)
   const [jobListDialog, setJobListDialog] = useState({ open: false, sessionId: '' })
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
   const deletingIdsRef = useRef(new Set<string>())
@@ -645,21 +646,28 @@ const useWorkspaceSessionController = ({
       },
       archive,
       openExportConversation: (session: ChatSession) => {
+        const intent = ++exportConversationIntentRef.current
         setExportError(null)
         if (session.contentLoaded === false) {
           void loadPersistedSession({ projectId: session.projectId, sessionId: session.id })
             .then((persisted) => {
               if (!persisted) throw new Error('Selected Session JSON is missing.')
               const hydrated = hydratePersistedSessionIfPresent(persisted)
-              if (!hydrated) return
+              if (!hydrated || intent !== exportConversationIntentRef.current) return
               setExportConversationDialog(hydrated)
             })
-            .catch(() => setExportError(t('Could not load this session for export.')))
+            .catch(() => {
+              if (intent === exportConversationIntentRef.current)
+                setExportError(t('Could not load this session for export.'))
+            })
           return
         }
         setExportConversationDialog(session)
       },
-      closeExportConversation: () => setExportConversationDialog(null),
+      closeExportConversation: () => {
+        exportConversationIntentRef.current += 1
+        setExportConversationDialog(null)
+      },
       openDelete,
       closeDelete: () => setDeleteDialog((current) => (current?.isDeleting ? current : null)),
       confirmDelete,

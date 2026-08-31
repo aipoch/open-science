@@ -72,6 +72,7 @@ import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
 import type { SkillExportArchive } from '../skills/export'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import {
   readAppIconVariant,
   readClosePreference,
@@ -98,6 +99,7 @@ const SETTINGS_INSTALL_LOG_CHANNEL = 'settings:install-log'
 export type SettingsIpcOptions = {
   service: SettingsService
   workflows: SettingsWorkflows
+  snapshotCommits: SettingsSnapshotCommitOwner
   // Renders the built-in icon variants to preview data URLs for the Appearance picker. Absent means
   // the picker gets an empty list (no bundled assets available, e.g. an environment without them).
   listAppIconPreviews?: () => AppIconPreview[]
@@ -122,63 +124,82 @@ const broadcastInstallEvent = (event: ClaudeInstallEvent): void => {
 const registerSettingsIpcHandlers = ({
   service,
   workflows,
+  snapshotCommits,
   listAppIconPreviews,
   connectorTemplateFiles,
   skillExportFiles
 }: SettingsIpcOptions): void => {
   ipcMainHandle('settings:get-preflight', () => service.getPreflight())
-  ipcMainHandle('settings:get-settings', () => service.getSettingsView())
+  ipcMainHandle('settings:get-settings', () => snapshotCommits.readCurrentSnapshot())
   ipcMainHandle('settings:encryption-available', () => service.isEncryptionAvailable())
   ipcMainHandle('settings:npm-available', () => service.isNpmAvailable())
-  ipcMainHandle('settings:check-environment', () => service.checkEnvironment())
-  ipcMainHandle('settings:detect-claude', () => service.detectClaude())
-  ipcMainHandle('settings:detect-codebuddy', () => service.detectCodeBuddy())
-  ipcMainHandle('settings:detect-opencode', () => service.detectOpencode())
-  ipcMainHandle('settings:detect-codex', () => service.detectCodex())
+  ipcMainHandle('settings:check-environment', () =>
+    snapshotCommits.projectAfter(service.checkEnvironment())
+  )
+  ipcMainHandle('settings:detect-claude', () =>
+    snapshotCommits.projectAfter(service.detectClaude())
+  )
+  ipcMainHandle('settings:detect-codebuddy', () =>
+    snapshotCommits.currentSnapshotAfter(service.detectCodeBuddy())
+  )
+  ipcMainHandle('settings:detect-opencode', () =>
+    snapshotCommits.currentSnapshotAfter(service.detectOpencode())
+  )
+  ipcMainHandle('settings:detect-codex', () =>
+    snapshotCommits.currentSnapshotAfter(service.detectCodex())
+  )
   ipcMainHandle('settings:install-opencode', (_event, request: InstallOpencodeRequest) =>
-    service.installOpencode(request, broadcastInstallEvent)
+    snapshotCommits.projectAfter(service.installOpencode(request, broadcastInstallEvent))
   )
   ipcMainHandle('settings:install-codebuddy', (_event, request: InstallCodeBuddyRequest) =>
-    service.installCodeBuddy(request, broadcastInstallEvent)
+    snapshotCommits.projectAfter(service.installCodeBuddy(request, broadcastInstallEvent))
   )
   ipcMainHandle('settings:install-codex', (_event, request: InstallCodexRequest) =>
-    service.installCodex(request, broadcastInstallEvent)
+    snapshotCommits.projectAfter(service.installCodex(request, broadcastInstallEvent))
   )
 
   ipcMainHandle('settings:install-claude', (_event, request: InstallClaudeRequest) =>
-    service.installClaude(request, broadcastInstallEvent)
+    snapshotCommits.projectAfter(service.installClaude(request, broadcastInstallEvent))
   )
 
   ipcMainHandle('settings:uninstall-claude', () =>
-    workflows.runtime.uninstallRuntime('uninstallClaude', 'claude-code')
+    snapshotCommits.currentSnapshotAfter(
+      workflows.runtime.uninstallRuntime('uninstallClaude', 'claude-code')
+    )
   )
 
   ipcMainHandle('settings:uninstall-opencode', () =>
-    workflows.runtime.uninstallRuntime('uninstallOpencode', 'opencode')
+    snapshotCommits.currentSnapshotAfter(
+      workflows.runtime.uninstallRuntime('uninstallOpencode', 'opencode')
+    )
   )
 
   ipcMainHandle('settings:uninstall-codebuddy', () =>
-    workflows.runtime.uninstallRuntime('uninstallCodeBuddy', 'codebuddy')
+    snapshotCommits.currentSnapshotAfter(
+      workflows.runtime.uninstallRuntime('uninstallCodeBuddy', 'codebuddy')
+    )
   )
 
   ipcMainHandle('settings:uninstall-codex', () =>
-    workflows.runtime.uninstallRuntime('uninstallCodex', 'codex')
+    snapshotCommits.currentSnapshotAfter(
+      workflows.runtime.uninstallRuntime('uninstallCodex', 'codex')
+    )
   )
 
   ipcMainHandle('settings:upsert-provider', (_event, request: UpsertProviderRequest) =>
-    workflows.runtime.upsertProvider(request)
+    snapshotCommits.currentSnapshotAfter(workflows.runtime.upsertProvider(request))
   )
   ipcMainHandle('settings:delete-provider', (_event, request: DeleteProviderRequest) =>
-    workflows.runtime.deleteProvider(request.id)
+    snapshotCommits.currentSnapshotAfter(workflows.runtime.deleteProvider(request.id))
   )
   ipcMainHandle('settings:set-active-provider', (_event, request: SetActiveProviderRequest) =>
-    workflows.runtime.setActiveProvider(request)
+    snapshotCommits.currentSnapshotAfter(workflows.runtime.setActiveProvider(request))
   )
   ipcMainHandle(
     'settings:set-agent-framework',
     async (_event, request: SetAgentFrameworkRequest) => {
       log.info('set agent framework requested', { id: request.id })
-      return workflows.runtime.setAgentFramework(request)
+      return snapshotCommits.currentSnapshotAfter(workflows.runtime.setAgentFramework(request))
     }
   )
   ipcMainHandle(
@@ -186,42 +207,34 @@ const registerSettingsIpcHandlers = ({
     async (_event, request: SetReasoningEffortRequest) => {
       const effort = readReasoningEffort(request)
       log.info('set reasoning effort requested', { effort })
-      return workflows.runtime.setReasoningEffort({ effort })
+      return snapshotCommits.currentSnapshotAfter(workflows.runtime.setReasoningEffort({ effort }))
     }
   )
   ipcMainHandle('settings:set-subagent-model', async (_event, request: SetSubagentModelRequest) => {
     const configuration = readSubagentModel(request)
-    const snapshot = await service.setSubagentModel(configuration)
-    broadcastToRenderers('settings:changed', snapshot)
-    return snapshot
+    return snapshotCommits.currentSnapshotAfter(service.setSubagentModel(configuration))
   })
   ipcMainHandle('settings:set-reviewer-model', async (_event, request: SetReviewerModelRequest) => {
     const configuration = readReviewerModel(request)
-    const snapshot = await service.setReviewerModel(configuration)
-    broadcastToRenderers('settings:changed', snapshot)
-    return snapshot
+    return snapshotCommits.currentSnapshotAfter(service.setReviewerModel(configuration))
   })
   ipcMainHandle(
     'settings:set-session-details-model',
     async (_event, request: SetSessionDetailsModelRequest) => {
       const configuration = readSessionDetailsModel(request)
-      const snapshot = await service.setSessionDetailsModel(configuration)
-      broadcastToRenderers('settings:changed', snapshot)
-      return snapshot
+      return snapshotCommits.currentSnapshotAfter(service.setSessionDetailsModel(configuration))
     }
   )
   ipcMainHandle('settings:set-vision-model', async (_event, request: SetVisionModelRequest) => {
     const configuration = readVisionModel(request)
-    const snapshot = await service.setVisionModel(configuration)
-    broadcastToRenderers('settings:changed', snapshot)
-    return snapshot
+    return snapshotCommits.currentSnapshotAfter(service.setVisionModel(configuration))
   })
   ipcMainHandle(
     'settings:set-notifications-enabled',
     async (_event, request: SetNotificationsEnabledRequest) => {
       const enabled = readNotificationsEnabled(request)
       log.info('set notifications enabled requested', { enabled })
-      return service.setNotificationsEnabled(enabled)
+      return snapshotCommits.currentSnapshotAfter(service.setNotificationsEnabled(enabled))
     }
   )
   ipcMainHandle(
@@ -229,7 +242,7 @@ const registerSettingsIpcHandlers = ({
     async (_event, request: SetShowNotificationContentRequest) => {
       const enabled = readShowNotificationContent(request)
       log.info('set show notification content requested', { enabled })
-      return service.setShowNotificationContent(enabled)
+      return snapshotCommits.currentSnapshotAfter(service.setShowNotificationContent(enabled))
     }
   )
   ipcMainHandle(
@@ -237,7 +250,9 @@ const registerSettingsIpcHandlers = ({
     async (_event, request: SetConversationSkillImportEnabledRequest) => {
       const enabled = readConversationSkillImportEnabled(request)
       log.info('set conversation Skill import enabled requested', { enabled })
-      return workflows.skills.setConversationSkillImportEnabled({ enabled })
+      return snapshotCommits.currentSnapshotAfter(
+        workflows.skills.setConversationSkillImportEnabled({ enabled })
+      )
     }
   )
   ipcMainHandle(
@@ -245,7 +260,7 @@ const registerSettingsIpcHandlers = ({
     async (_event, request: SetClosePreferenceRequest) => {
       const preference = readClosePreference(request)
       log.info('set close preference requested', { preference: preference ?? 'ask' })
-      return service.setClosePreference(preference)
+      return snapshotCommits.currentSnapshotAfter(service.setClosePreference(preference))
     }
   )
   ipcMainHandle(
@@ -253,7 +268,7 @@ const registerSettingsIpcHandlers = ({
     async (_event, request: SetProjectFilesFilterRequest) => {
       const filter = readProjectFilesFilter(request)
       log.info('set project files filter requested', { filter: filter ?? 'default' })
-      return service.setProjectFilesFilter(filter)
+      return snapshotCommits.currentSnapshotAfter(service.setProjectFilesFilter(filter))
     }
   )
   ipcMainHandle(
@@ -261,7 +276,7 @@ const registerSettingsIpcHandlers = ({
     async (_event, request: SetDefaultPermissionProfileRequest) => {
       const profile = readDefaultPermissionProfile(request)
       log.info('set default permission profile requested', { profile })
-      return service.setDefaultPermissionProfile(profile)
+      return snapshotCommits.currentSnapshotAfter(service.setDefaultPermissionProfile(profile))
     }
   )
   ipcMainHandle('settings:list-app-icons', (): AppIconPreview[] => listAppIconPreviews?.() ?? [])
@@ -270,48 +285,67 @@ const registerSettingsIpcHandlers = ({
     async (_event, request: SetAppIconVariantRequest) => {
       const variant = readAppIconVariant(request)
       log.info('set app icon variant requested', { variant })
-      return workflows.appearance.setAppIconVariant(variant)
+      return snapshotCommits.currentSnapshotAfter(workflows.appearance.setAppIconVariant(variant))
     }
   )
   ipcMainHandle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
-    service.validateProvider(request)
+    snapshotCommits.projectAfter(service.validateProvider(request))
   )
   ipcMainHandle('settings:cancel-codex-login', () => service.cancelCodexLogin())
   ipcMainHandle('settings:cancel-claude-login', () => service.cancelClaudeLogin())
-  ipcMainHandle('settings:login-shared-claude', () => workflows.runtime.loginClaudeShared())
-  ipcMainHandle('settings:logout-shared-claude', () => workflows.runtime.logoutClaudeShared())
+  ipcMainHandle('settings:login-shared-claude', () =>
+    snapshotCommits.projectAfter(workflows.runtime.loginClaudeShared())
+  )
+  ipcMainHandle('settings:logout-shared-claude', () =>
+    snapshotCommits.projectAfter(workflows.runtime.logoutClaudeShared())
+  )
   ipcMainHandle('settings:login-isolated-claude', (_event, token: string) =>
-    workflows.runtime.loginIsolatedClaude(readIsolatedClaudeToken(token))
+    snapshotCommits.projectAfter(
+      workflows.runtime.loginIsolatedClaude(readIsolatedClaudeToken(token))
+    )
   )
   ipcMainHandle('settings:login-isolated-claude-browser', () =>
-    workflows.runtime.loginIsolatedClaudeBrowser()
+    snapshotCommits.projectAfter(workflows.runtime.loginIsolatedClaudeBrowser())
   )
   ipcMainHandle('settings:cancel-isolated-claude-login', async () => {
     await service.cancelClaudeIsolatedLogin()
   })
-  ipcMainHandle('settings:logout-isolated-claude', () => workflows.runtime.logoutIsolatedClaude())
-  ipcMainHandle('settings:login-isolated-codex', () => workflows.runtime.loginIsolatedCodex())
-  ipcMainHandle('settings:logout-isolated-codex', () => workflows.runtime.logoutIsolatedCodex())
+  ipcMainHandle('settings:logout-isolated-claude', () =>
+    snapshotCommits.projectAfter(workflows.runtime.logoutIsolatedClaude())
+  )
+  ipcMainHandle('settings:login-isolated-codex', () =>
+    snapshotCommits.projectAfter(workflows.runtime.loginIsolatedCodex())
+  )
+  ipcMainHandle('settings:logout-isolated-codex', () =>
+    snapshotCommits.projectAfter(workflows.runtime.logoutIsolatedCodex())
+  )
   ipcMainHandle('settings:begin-xai-oauth-login', () => workflows.runtime.beginXaiOAuthLogin())
-  ipcMainHandle('settings:wait-xai-oauth-login', () => workflows.runtime.waitXaiOAuthLogin())
+  ipcMainHandle('settings:wait-xai-oauth-login', () =>
+    snapshotCommits.projectAfter(workflows.runtime.waitXaiOAuthLogin())
+  )
   ipcMainHandle('settings:cancel-xai-oauth-login', () => workflows.runtime.cancelXaiOAuthLogin())
-  ipcMainHandle('settings:logout-xai-oauth', () => workflows.runtime.logoutXaiOAuth())
+  ipcMainHandle('settings:logout-xai-oauth', () =>
+    snapshotCommits.currentSnapshotAfter(workflows.runtime.logoutXaiOAuth())
+  )
   ipcMainHandle(
     'settings:refresh-provider-models',
-    (_event, request: RefreshProviderModelsRequest) => service.refreshProviderModels(request)
+    (_event, request: RefreshProviderModelsRequest) =>
+      snapshotCommits.projectAfter(service.refreshProviderModels(request))
   )
-  ipcMainHandle('settings:mark-onboarding-complete', () => service.markOnboardingComplete())
+  ipcMainHandle('settings:mark-onboarding-complete', () =>
+    snapshotCommits.currentSnapshotAfter(service.markOnboardingComplete())
+  )
 
   ipcMainHandle('settings:get-package-mirror', () => service.getPackageMirror())
   ipcMainHandle('settings:get-notebook-network-status', () => service.getNotebookNetworkStatus())
   ipcMainHandle('settings:set-package-mirror', (_event, request: SetPackageMirrorRequest) =>
-    service.setPackageMirror(request)
+    snapshotCommits.projectAfter(service.setPackageMirror(request))
   )
   ipcMainHandle('settings:set-network-proxy', (_event, request: SetNetworkProxyRequest) =>
-    service.setNetworkProxy(request)
+    snapshotCommits.projectAfter(service.setNetworkProxy(request))
   )
   ipcMainHandle('settings:set-notebook-network', (_event, request: SetNotebookNetworkRequest) =>
-    service.setNotebookNetwork(request)
+    snapshotCommits.projectAfter(service.setNotebookNetwork(request))
   )
   ipcMainHandle('settings:install-notebook-network', () => service.installNotebookNetwork())
   ipcMainHandle('settings:remove-notebook-network', () => service.removeNotebookNetwork())

@@ -997,6 +997,27 @@ describe('settings repository', () => {
     expect(reloaded.onboardingCompletedAt).toBe(1234)
   })
 
+  it('preserves compute bookmarks across a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setComputeBookmarks('ssh:cluster', ['/scratch/project', '/data/results'])
+    expect(JSON.parse(await readFile(join(root, 'settings.json'), 'utf8'))).toMatchObject({
+      computeBookmarks: { 'ssh:cluster': ['/scratch/project', '/data/results'] }
+    })
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.computeBookmarks).toEqual({
+      'ssh:cluster': ['/scratch/project', '/data/results']
+    })
+
+    await new SettingsRepository(root).setNotificationsEnabled(false)
+    await expect(new SettingsRepository(root).getSettings()).resolves.toMatchObject({
+      computeBookmarks: { 'ssh:cluster': ['/scratch/project', '/data/results'] },
+      notificationsEnabled: false
+    })
+  })
+
   it('stamps pathsNormalizedAt once, is idempotent, and survives a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

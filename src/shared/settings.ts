@@ -480,6 +480,9 @@ export type AgentFrameworkView = {
 
 // Full renderer snapshot of settings state.
 export type SettingsSnapshot = {
+  // Volatile Main-authority projection order. It is not persisted; older peers may omit it.
+  // Renderer stores use it to reject an RPC response that arrives after a newer settings event.
+  revision?: number
   claude: ClaudeInfo
   // Detected opencode executable, for the framework-aware detection card.
   opencode: OpencodeInfo

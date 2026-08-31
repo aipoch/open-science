@@ -49,7 +49,20 @@ const upsertProjectList = (projects: Project[], project: Project): Project[] => 
 
 let projectLoadSequence = 0
 let projectMutationSequence = 0
-let projectDeletionRequestGeneration = 0
+let projectOperationGeneration = 0
+const projectProjectionGenerations = new Map<string, number>()
+
+const beginProjectProjection = (): number => ++projectOperationGeneration
+
+const commitProjectProjection = (id: string, generation: number): boolean => {
+  if (generation < (projectProjectionGenerations.get(id) ?? 0)) return false
+  projectProjectionGenerations.set(id, generation)
+  return true
+}
+
+const supersedeProjectProjection = (id: string): void => {
+  projectProjectionGenerations.set(id, beginProjectProjection())
+}
 
 export const createInitialProjectState = (): ProjectStoreData => ({
   projects: [],
@@ -95,32 +108,47 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const project = await window.api.projects.create(request)
 
     projectMutationSequence += 1
-    set((state) => ({ projects: upsertProjectList(state.projects, project), loadError: undefined }))
+    if (get().projects.some((current) => current.id === project.id)) {
+      set({ loadError: undefined })
+    } else {
+      supersedeProjectProjection(project.id)
+      set((state) => ({
+        projects: upsertProjectList(state.projects, project),
+        loadError: undefined
+      }))
+    }
 
     return project
   },
 
   // Applies an editable Project patch and merges the updated row into the cache.
   updateProject: async (request) => {
+    const generation = beginProjectProjection()
     const project = await window.api.projects.update(request)
 
     projectMutationSequence += 1
-    set((state) => ({ projects: upsertProjectList(state.projects, project) }))
+    if (commitProjectProjection(project.id, generation)) {
+      set((state) => ({ projects: upsertProjectList(state.projects, project) }))
+    }
 
     return project
   },
 
   updateProjectArchive: async (request) => {
+    const generation = beginProjectProjection()
     const project = await window.api.projects.updateArchive(request)
 
     projectMutationSequence += 1
-    set((state) => ({ projects: upsertProjectList(state.projects, project) }))
+    if (commitProjectProjection(project.id, generation)) {
+      set((state) => ({ projects: upsertProjectList(state.projects, project) }))
+    }
     return project
   },
 
   // Drops committed Project deletion from the cache. Session cascade is handled by the session store.
   deleteProject: async (id) => {
-    const generation = ++projectDeletionRequestGeneration
+    const projectionGeneration = beginProjectProjection()
+    const generation = ++projectOperationGeneration
     set((state) => {
       const projectDeletionRequests = new Map(state.projectDeletionRequests)
       projectDeletionRequests.set(id, { generation })
@@ -142,6 +170,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
 
     projectMutationSequence += 1
+    const ownsProjection = commitProjectProjection(id, projectionGeneration)
     set((state) => {
       const projectDeletionRequests = new Map(state.projectDeletionRequests)
       const request = projectDeletionRequests.get(id)
@@ -150,7 +179,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
       // Lifecycle events are the authoritative cross-window ordering stream. If one arrived while
       // this command was in flight, its newer pending/terminal projection must win over the RPC result.
-      if (!isCurrentRequest || request.lifecycleStatus !== undefined) {
+      if (!isCurrentRequest || request.lifecycleStatus !== undefined || !ownsProjection) {
         return { projectDeletionRequests }
       }
 
@@ -168,11 +197,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   upsertProject: (project) => {
+    supersedeProjectProjection(project.id)
     projectMutationSequence += 1
     set((state) => ({ projects: upsertProjectList(state.projects, project) }))
   },
 
   removeProject: (id, outcome = { status: 'deleted' }) => {
+    supersedeProjectProjection(id)
     projectMutationSequence += 1
     set((state) => {
       const pendingDeletionCleanupProjectIds = new Set(state.pendingDeletionCleanupProjectIds)

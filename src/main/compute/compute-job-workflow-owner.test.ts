@@ -238,6 +238,42 @@ const makeJobRepo = (
 }
 
 describe('ComputeJobWorkflowOwner.submitJob', () => {
+  it('does not create a job when cancellation wins after approval', async () => {
+    const controller = new AbortController()
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '123',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo: hostRepo } = makeRepo()
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(async () => {
+        controller.abort()
+        return 'once' as const
+      }),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = makeOwner(runner, hostRepo, broker, jobRepo)
+
+    await expect(
+      service.submitJob(
+        'ssh:biowulf',
+        'cancelled submission',
+        'echo hi',
+        {},
+        { sessionId: 's1', projectId: 'p1' },
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(createCalls).not.toHaveBeenCalled()
+    expect(runner.run).not.toHaveBeenCalled()
+  })
+
   it('keeps an unexpected live dispatch failure recoverable when launch state is unknown', async () => {
     const jobs = new Map<string, import('../../shared/compute').ComputeJob>()
     const runner: SshRunner = { run: vi.fn(() => Promise.reject(new Error('transport crashed'))) }

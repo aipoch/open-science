@@ -342,6 +342,7 @@ export class ComputeJobWorkflowOwner {
 
     let allowUnencryptedPersistence = !this.jobRepository.isFieldProtectionAvailable()
     await requestApproval(allowUnencryptedPersistence)
+    signal?.throwIfAborted()
 
     let evidenceCaptureStarted = false
     if (this.storageRoot) {
@@ -384,6 +385,7 @@ export class ComputeJobWorkflowOwner {
     let dispatchHandoffHeld = false
     let rowCreated = false
     const createRow = async (initialStatus: 'submitted' | 'queued'): Promise<void> => {
+      signal?.throwIfAborted()
       if (initialStatus === 'submitted') {
         sharedDispatchTracker.begin(jobId)
         dispatchHandoffHeld = true

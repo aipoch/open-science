@@ -12,6 +12,7 @@ import { canSatisfyHumanApproval, type CallerContext } from '../caller-context'
 import type { ApprovalBroker } from '../connectors/approval-broker'
 import type { SkillImportApprovalBroker } from '../skills/conversation-import'
 import { readConversationSkillImportEnabled } from './transport-validation'
+import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import type { ConnectorSettingsWorkflows } from './workflows/connectors'
 import type { SkillSettingsWorkflows } from './workflows/skills'
 
@@ -302,6 +303,7 @@ const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
 type IntegrationSettingsApplicationCommandDependencies = Readonly<{
   skills: SkillIntegrationWorkflows
   connectors: ConnectorIntegrationWorkflows
+  snapshotCommits: SettingsSnapshotCommitOwner
   connectorApprovals: Pick<ApprovalBroker, 'getPending' | 'replayPending' | 'respond'>
   skillImportApprovals: Pick<SkillImportApprovalBroker, 'respond' | 'replayPending'>
 }>
@@ -315,9 +317,11 @@ const registerIntegrationSettingsApplicationCommands = (
   try {
     scope.registerGroup(settingsSkillApplicationCommandGroup, {
       'settings:set-conversation-skill-import-enabled': ({ args }) =>
-        dependencies.skills.setConversationSkillImportEnabled({
-          enabled: readConversationSkillImportEnabled(args[0])
-        }),
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.skills.setConversationSkillImportEnabled({
+            enabled: readConversationSkillImportEnabled(args[0])
+          })
+        ),
       'settings:set-skill-enabled': ({ args }) => dependencies.skills.setSkillEnabled(args[0]),
       'settings:set-skills-enabled': ({ args }) => dependencies.skills.setSkillsEnabled(args[0]),
       'settings:create-skill': ({ args }) => dependencies.skills.createSkill(args[0]),

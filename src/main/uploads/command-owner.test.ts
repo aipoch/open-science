@@ -36,6 +36,14 @@ const invocationFor = <Args extends readonly unknown[]>(
   args
 })
 
+const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
 describe('upload command owner', () => {
   const temporaryRoots: string[] = []
 
@@ -300,6 +308,43 @@ describe('upload command owner', () => {
     await append
     await drain
     expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'in-flight-transfer' })
+  })
+
+  it('rejects abort after finish wins terminal settlement', async () => {
+    const finishing = deferred<undefined>()
+    const repository = {
+      beginTransfer: vi.fn(async () => ({
+        transferId: 'settling-transfer',
+        name: 'data.csv',
+        receivedBytes: 10,
+        totalBytes: 10
+      })),
+      finishTransfer: vi.fn(() => finishing.promise),
+      abortTransfer: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    const owner = createUploadCommandOwner(repository)
+    const leases = new ApplicationCallerLeaseRegistry()
+    const caller = createCaller(leases, 17)
+
+    await owner.beginTransfer(
+      invocationFor(caller, [
+        { transferId: 'settling-transfer', name: 'data.csv', size: 10 }
+      ] as const)
+    )
+    const finish = owner.finishTransfer(
+      invocationFor(caller, [{ transferId: 'settling-transfer' }] as const)
+    )
+    await vi.waitFor(() => expect(repository.finishTransfer).toHaveBeenCalledOnce())
+
+    try {
+      await expect(
+        owner.abortTransfer(invocationFor(caller, [{ transferId: 'settling-transfer' }] as const))
+      ).rejects.toThrow('Upload transfer is already finishing')
+      expect(repository.abortTransfer).not.toHaveBeenCalled()
+    } finally {
+      finishing.resolve(undefined)
+      await finish
+    }
   })
 
   it('deletes a staged native upload when its caller releases before claim', async () => {

@@ -52,6 +52,10 @@ function coverageThresholdsEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.VITEST_DEFER_COVERAGE_THRESHOLDS !== '1'
 }
 
+function fullSuiteShardAllowsEmptyProjects(argv: readonly string[]): boolean {
+  return argv.some((argument) => argument === '--shard' || argument.startsWith('--shard='))
+}
+
 const FULL_COVERAGE_THRESHOLDS = {
   lines: 90,
   functions: 88,
@@ -120,6 +124,9 @@ export default defineConfig({
     }
   },
   test: {
+    // Vitest shards each project independently. A valid full-suite shard can therefore contain no
+    // files for one project even though its other projects execute tests.
+    passWithNoTests: fullSuiteShardAllowsEmptyProjects(process.argv),
     // Keep successful suites quiet while retaining their captured console output on failure.
     silent: 'passed-only',
     server: {
@@ -207,6 +214,7 @@ export {
   coverageThresholdsEnabled,
   coverageThresholdsFor,
   FULL_COVERAGE_THRESHOLDS,
+  fullSuiteShardAllowsEmptyProjects,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
   VITEST_EXCLUDE_PATTERNS
 }

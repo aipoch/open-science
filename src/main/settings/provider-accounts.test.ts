@@ -292,6 +292,108 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
+  it('serializes isolated Codex logout with a concurrent authentication-mode edit', async () => {
+    const userCodexDir = join(dir, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), JSON.stringify({ tokens: { access: 'user' } }))
+    await module.upsertProvider({ type: 'codex-isolated' })
+
+    const logoutCancellation = deferred<void>()
+    const editCancellation = deferred<void>()
+    const editEntered = deferred<void>()
+    vi.mocked(codexAuth.cancelLogin)
+      .mockImplementationOnce(() => logoutCancellation.promise)
+      .mockImplementationOnce(() => {
+        editEntered.resolve()
+        return editCancellation.promise
+      })
+
+    const logout = module.logoutIsolatedCodex()
+    await vi.waitFor(() => expect(codexAuth.cancelLogin).toHaveBeenCalledOnce())
+    const originalGetSettings = repository.getSettings.bind(repository)
+    const editRead = deferred<StoredSettings>()
+    const getSettings = vi.spyOn(repository, 'getSettings').mockImplementation(async () => {
+      const settings = await originalGetSettings()
+      editRead.resolve(settings)
+      return settings
+    })
+    const edit = module.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-shared',
+      requireExisting: true,
+      reimportCodexAuthentication: true
+    })
+
+    const editEnteredDuringLogout = await Promise.race([
+      editRead.promise.then(() => true),
+      new Promise<false>((resolve) => setImmediate(() => resolve(false)))
+    ])
+    if (editEnteredDuringLogout) {
+      editCancellation.resolve()
+      await edit
+      logoutCancellation.resolve()
+    } else {
+      logoutCancellation.resolve()
+      await editEntered.promise
+      editCancellation.resolve()
+    }
+    await Promise.all([logout, edit])
+    getSettings.mockRestore()
+
+    expect(editEnteredDuringLogout).toBe(false)
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      id: 'builtin-codex-subscription',
+      codexAuthMode: 'imported'
+    })
+    await expect(
+      readFile(join(codexSubscriptionStorageDir(dir), 'auth.json'), 'utf8')
+    ).resolves.toContain('user')
+  })
+
+  it('does not restore isolated Codex validation after a concurrent logout', async () => {
+    await module.upsertProvider({ type: 'codex-isolated' })
+    const staleSettings = await repository.getSettings()
+    const staleRead = deferred<StoredSettings>()
+    vi.spyOn(repository, 'getSettings').mockImplementationOnce(() => staleRead.promise)
+
+    const login = module.loginIsolatedCodex()
+    await vi.waitFor(() => expect(codexAuth.loginIsolated).toHaveBeenCalledOnce())
+    await module.logoutIsolatedCodex()
+    staleRead.resolve(staleSettings)
+
+    await expect(login).resolves.toMatchObject({ ok: true, applied: false })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.codexAuthMode).toBe('isolated')
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
+  it('does not restore isolated Codex mode after a concurrent shared-mode edit', async () => {
+    const userCodexDir = join(dir, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), JSON.stringify({ tokens: { access: 'user' } }))
+    await module.upsertProvider({ type: 'codex-isolated' })
+    const staleSettings = await repository.getSettings()
+    const staleRead = deferred<StoredSettings>()
+    vi.spyOn(repository, 'getSettings').mockImplementationOnce(() => staleRead.promise)
+
+    const login = module.loginIsolatedCodex()
+    await vi.waitFor(() => expect(codexAuth.loginIsolated).toHaveBeenCalledOnce())
+    await module.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-shared',
+      requireExisting: true,
+      reimportCodexAuthentication: true
+    })
+    staleRead.resolve(staleSettings)
+
+    await expect(login).resolves.toMatchObject({ ok: true, applied: false })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      id: 'builtin-codex-subscription',
+      codexAuthMode: 'imported'
+    })
+  })
+
   it.each([
     {
       sourceType: 'claude-isolated',

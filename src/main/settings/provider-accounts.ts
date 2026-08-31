@@ -312,7 +312,7 @@ class ProviderAccountsModule {
   }
 
   async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
-    return this.auth.logoutIsolatedCodex()
+    return this.auth.serializeAccountMutation(() => this.auth.logoutIsolatedCodex())
   }
 
   async loginIsolatedClaude(token: string): Promise<ValidateProviderResult> {

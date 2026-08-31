@@ -100,7 +100,7 @@ export type RunReviewOptions = {
   fixLoopMaxRounds?: number
   // Called just before the fix loop starts (after initial review finds warn/fail). Used to lock
   // the session composer in the renderer.
-  onFixLoopStart?: () => void
+  onFixLoopStart?: () => void | Promise<void>
   // Called when the fix loop ends (all pass, cap reached, or aborted). Used to unlock the session
   // composer in the renderer.
   onFixLoopEnd?: () => void
@@ -190,7 +190,7 @@ const runReviewWithSession = async (
   const hasWarnOrFail = finalReview.checks.some((c) => c.status === 'warn' || c.status === 'fail')
 
   if (mainSessionId && hasWarnOrFail) {
-    onFixLoopStart?.()
+    await onFixLoopStart?.()
     try {
       await runReviewerFixLoop({
         sessionId,

@@ -140,7 +140,7 @@ describe('codexFramework', () => {
     expect(codexNativeModelInstructions).not.toContain('coding agent')
   })
 
-  it('disables every Codex native multi-agent implementation in every spawned profile', () => {
+  it('disables native multi-agent and Shell features across every backend route', () => {
     const framework = createCodexFramework()
     const configurations = [
       framework.prepareModelConfig(
@@ -155,16 +155,59 @@ describe('codexFramework', () => {
         { storageRoot: '/data/official', executablePath: '/runtime/codex-acp' }
       ),
       framework.prepareModelConfig(
+        {
+          type: 'custom',
+          apiEndpoints: ['responses'],
+          baseUrl: 'https://gateway.example/v1',
+          model: 'custom-responses',
+          key: 'secret'
+        },
+        { storageRoot: '/data/custom', executablePath: '/runtime/codex-acp' }
+      ),
+      framework.prepareModelConfig(
+        {
+          type: 'custom',
+          apiEndpoints: ['openai'],
+          baseUrl: 'https://gateway.example/v1',
+          model: 'chat-model',
+          key: 'secret'
+        },
+        {
+          storageRoot: '/data/bridge',
+          executablePath: '/runtime/codex-acp',
+          responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
+        }
+      ),
+      framework.prepareModelConfig(
+        {
+          type: 'custom',
+          apiEndpoints: ['responses'],
+          baseUrl: 'https://gateway.example/v1',
+          model: 'compatibility-model',
+          key: 'secret'
+        },
+        {
+          storageRoot: '/data/compatibility',
+          executablePath: '/runtime/codex-acp',
+          responsesBridge: {
+            baseUrl: 'http://127.0.0.1:43124/v1',
+            token: 'local-token',
+            kind: 'responses-compatibility'
+          }
+        }
+      ),
+      framework.prepareModelConfig(
+        { type: 'codex-shared', model: 'gpt-5.4' },
+        { storageRoot: '/data/shared', executablePath: '/runtime/codex-acp' }
+      ),
+      framework.prepareModelConfig(
         { type: 'codex-isolated', model: 'gpt-5.4' },
         { storageRoot: '/data/subscription', executablePath: '/runtime/codex-acp' }
       )
     ]
 
     expect(configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}').features)).toEqual(
-      [
-        { multi_agent: false, multi_agent_v2: false },
-        { multi_agent: false, multi_agent_v2: false }
-      ]
+      configurations.map(() => ({ multi_agent: false, multi_agent_v2: false, shell_tool: false }))
     )
   })
 
@@ -630,7 +673,9 @@ describe('codexFramework', () => {
       env: {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
-        CODEX_CONFIG: JSON.stringify({ features: { multi_agent: false, multi_agent_v2: false } })
+        CODEX_CONFIG: JSON.stringify({
+          features: { multi_agent: false, multi_agent_v2: false, shell_tool: false }
+        })
       }
     })
   })
@@ -646,7 +691,9 @@ describe('codexFramework', () => {
       env: {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
-        CODEX_CONFIG: JSON.stringify({ features: { multi_agent: false, multi_agent_v2: false } })
+        CODEX_CONFIG: JSON.stringify({
+          features: { multi_agent: false, multi_agent_v2: false, shell_tool: false }
+        })
       }
     })
   })

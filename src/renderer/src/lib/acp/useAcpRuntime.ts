@@ -14,7 +14,7 @@ import type {
   AcpStateSnapshot
 } from '../../../../shared/acp'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
 import {
   createRuntimeEventSubscriptionOwner,
@@ -133,6 +133,8 @@ const useAcpRuntime = (): {
   const [actionError, setActionError] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
+  const actionGenerationRef = useRef(0)
+  const pendingActionCountsRef = useRef(new Map<PendingSetter, number>())
   const [runtimeEventOwner] = useState(createRuntimeEventSubscriptionOwner)
   const onRuntimeEvent = (window.api.acp as Partial<Pick<typeof window.api.acp, 'onEvent'>>).onEvent
   const subscribeRuntimeEvents = onRuntimeEvent ? runtimeEventOwner.subscribe : undefined
@@ -200,27 +202,47 @@ const useAcpRuntime = (): {
     }
   }, [applyInitialSnapshot, applySnapshot, onRuntimeEvent, runtimeEventOwner])
 
+  const beginAction = useCallback((setPending?: PendingSetter): number => {
+    const generation = ++actionGenerationRef.current
+    setActionError(null)
+    if (setPending) {
+      const count = (pendingActionCountsRef.current.get(setPending) ?? 0) + 1
+      pendingActionCountsRef.current.set(setPending, count)
+      if (count === 1) setPending(true)
+    }
+    return generation
+  }, [])
+
+  const finishPendingAction = useCallback((setPending?: PendingSetter): void => {
+    if (!setPending) return
+    const remaining = (pendingActionCountsRef.current.get(setPending) ?? 1) - 1
+    if (remaining > 0) pendingActionCountsRef.current.set(setPending, remaining)
+    else {
+      pendingActionCountsRef.current.delete(setPending)
+      setPending(false)
+    }
+  }, [])
+
   // Runs an IPC action that returns a full runtime snapshot.
   const runSnapshotAction = useCallback(
     async (
       setPending: PendingSetter | undefined,
       action: SnapshotAction
     ): Promise<AcpStateSnapshot | undefined> => {
-      setActionError(null)
-      setPending?.(true)
+      const generation = beginAction(setPending)
 
       try {
         const snapshot = await action()
         applySnapshot(snapshot)
         return snapshot
       } catch (error) {
-        setActionError(getErrorMessage(error))
+        if (generation === actionGenerationRef.current) setActionError(getErrorMessage(error))
         return undefined
       } finally {
-        setPending?.(false)
+        finishPendingAction(setPending)
       }
     },
-    [applySnapshot]
+    [applySnapshot, beginAction, finishPendingAction]
   )
 
   // Runs an IPC action that returns a non-snapshot value such as a new session id.
@@ -232,19 +254,18 @@ const useAcpRuntime = (): {
       setPending: PendingSetter | undefined,
       action: ValueAction<Value>
     ): Promise<Value> => {
-      setActionError(null)
-      setPending?.(true)
+      const generation = beginAction(setPending)
 
       try {
         return await action()
       } catch (error) {
-        setActionError(getErrorMessage(error))
+        if (generation === actionGenerationRef.current) setActionError(getErrorMessage(error))
         throw error
       } finally {
-        setPending?.(false)
+        finishPendingAction(setPending)
       }
     },
-    []
+    [beginAction, finishPendingAction]
   )
 
   // Specialized helper for sendPrompt: rethrows errors (like runValueAction) but does NOT
@@ -254,7 +275,7 @@ const useAcpRuntime = (): {
     async (action: () => Promise<AcpStateSnapshot>): Promise<AcpStateSnapshot> => {
       // Clear on entry so the helper is self-consistent with the other action helpers and does
       // not rely on WorkspacePage's active-session visibility gate to hide a stale actionError.
-      setActionError(null)
+      beginAction()
       const snapshot = await action()
       // Apply state-sync side-effect before returning, matching runSnapshotAction's contract.
       // Without this, callers that do `void runtime.sendPrompt(...)` would discard the snapshot
@@ -262,7 +283,7 @@ const useAcpRuntime = (): {
       applySnapshot(snapshot)
       return snapshot
     },
-    [applySnapshot]
+    [applySnapshot, beginAction]
   )
 
   // Keep all renderer ACP IPC calls in one hook so the future conversation UI can reuse it.
@@ -452,32 +473,32 @@ const useAcpRuntime = (): {
         cancelled: !optionId,
         ...(restored ? { restored } : {})
       }
-      setActionError(null)
+      const generation = beginAction()
       try {
         const snapshot = await window.api.acp.respondToPermission(response)
         applySnapshot(snapshot)
         return snapshot
       } catch (error) {
-        setActionError(getErrorMessage(error))
+        if (generation === actionGenerationRef.current) setActionError(getErrorMessage(error))
         throw error
       }
     },
-    [applySnapshot]
+    [applySnapshot, beginAction]
   )
 
   const respondToElicitation = useCallback(
     async (response: ElicitationResponse): Promise<AcpStateSnapshot> => {
-      setActionError(null)
+      const generation = beginAction()
       try {
         const snapshot = await window.api.acp.respondToElicitation(response)
         applySnapshot(snapshot)
         return snapshot
       } catch (error) {
-        setActionError(getErrorMessage(error))
+        if (generation === actionGenerationRef.current) setActionError(getErrorMessage(error))
         throw error
       }
     },
-    [applySnapshot]
+    [applySnapshot, beginAction]
   )
 
   const setPermissionProfile = useCallback(

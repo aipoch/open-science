@@ -107,7 +107,8 @@ type SettingsPreferencesSliceOptions = {
   getState: () => SettingsPreferencesState
   setState: (patch: Partial<SettingsPreferencesState>) => void
   getCommands: () => SettingsPreferencesCommands
-  reconcileSnapshot: (snapshot: SettingsSnapshot) => void
+  // False means a newer cross-transport snapshot is already authoritative.
+  reconcileSnapshot: (snapshot: SettingsSnapshot) => boolean | void
   writeCoordinator: SettingsWriteCoordinator
 }
 
@@ -125,11 +126,15 @@ const OPTIMISTIC_PREFERENCE_WRITES = [
 
 export const omitInFlightOptimisticPreferences = <Patch extends Partial<SettingsPreferencesState>>(
   patch: Patch,
-  hasPending: (key: OptimisticSettingsWriteKey) => boolean
+  hasPending: (key: OptimisticSettingsWriteKey) => boolean,
+  acceptCommitted: (key: OptimisticSettingsWriteKey, value: unknown) => void
 ): Patch => {
   const next = { ...patch }
   for (const [field, key] of OPTIMISTIC_PREFERENCE_WRITES) {
-    if (hasPending(key)) delete next[field]
+    if (hasPending(key)) {
+      acceptCommitted(key, next[field])
+      delete next[field]
+    }
   }
   return next
 }
@@ -168,9 +173,17 @@ export const createSettingsPreferencesSlice = ({
 
     try {
       const snapshot = await write.run(command)
-      write.complete({ value: snapshot[field] as unknown as SettingsPreferencesState[Field] })
-      if (!write.isCurrent()) return
-      reconcileSnapshot(snapshot)
+      const isCurrent = write.isCurrent()
+      const accepted = reconcileSnapshot(snapshot) !== false
+      const confirmedValue = write.complete(
+        accepted
+          ? { value: snapshot[field] as unknown as SettingsPreferencesState[Field] }
+          : undefined
+      )
+      if (!isCurrent) return
+      if (!accepted) {
+        setState({ [field]: confirmedValue } as Partial<SettingsPreferencesState>)
+      }
       write.succeed()
     } catch (error) {
       const confirmedValue = write.complete()
@@ -350,14 +363,18 @@ export const createSettingsPreferencesSlice = ({
 
     setPackageMirror: async (mirror) => {
       const saved = await getCommands().setPackageMirror(mirror)
-      setState({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
+      const refresh = getCommands().getSettings
+      if (refresh) reconcileSnapshot(await refresh())
+      else setState({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
     },
 
     setNetworkProxy: async (networkProxy) => {
       const setNetworkProxy = getCommands().setNetworkProxy
       if (!setNetworkProxy) throw new Error('Network proxy settings are unavailable.')
       const saved = await setNetworkProxy(networkProxy)
-      setState({ networkProxy: saved })
+      const refresh = getCommands().getSettings
+      if (refresh) reconcileSnapshot(await refresh())
+      else setState({ networkProxy: saved })
     },
 
     setNotebookNetwork: async (notebookNetwork, baseAllowedDomains) => {
@@ -368,7 +385,9 @@ export const createSettingsPreferencesSlice = ({
         ...(baseAllowedDomains === undefined ? {} : { baseAllowedDomains })
       }
       const saved = await command(request)
-      setState({ notebookNetwork: saved })
+      const refresh = getCommands().getSettings
+      if (refresh) reconcileSnapshot(await refresh())
+      else setState({ notebookNetwork: saved })
       return saved
     }
   }

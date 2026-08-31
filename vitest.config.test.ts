@@ -7,6 +7,7 @@ import vitestConfig, {
   coverageThresholdsEnabled,
   coverageThresholdsFor,
   FULL_COVERAGE_THRESHOLDS,
+  fullSuiteShardAllowsEmptyProjects,
   resolveVitestMaxWorkers,
   VITEST_ARCHITECTURE_TEST_GLOBS,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
@@ -37,6 +38,13 @@ it('defers coverage thresholds only for explicit shard collection', () => {
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
     })
   ).toBeUndefined()
+})
+
+it('allows an empty Vitest project only during explicit shard collection', () => {
+  expect(fullSuiteShardAllowsEmptyProjects(['vitest', 'run', '--shard=1/2'])).toBe(true)
+  expect(fullSuiteShardAllowsEmptyProjects(['vitest', 'run', '--shard', '2/2'])).toBe(true)
+  expect(fullSuiteShardAllowsEmptyProjects(['vitest', 'run'])).toBe(false)
+  expect(vitestConfig.test?.passWithNoTests).toBe(fullSuiteShardAllowsEmptyProjects(process.argv))
 })
 
 it('ratchets full coverage without raising selective changed-source thresholds', () => {

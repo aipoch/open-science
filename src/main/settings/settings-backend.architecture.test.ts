@@ -343,6 +343,7 @@ describe('Settings backend ownership architecture', () => {
       'addCustomServer',
       'clearCodeBuddyInfo',
       'clearCodexInfo',
+      'clearCodexIsolatedValidationIfExists',
       'clearComputeGrants',
       'clearGrantedLocalRoots',
       'clearOpencodeInfo',
@@ -396,6 +397,7 @@ describe('Settings backend ownership architecture', () => {
       'updateClaudeIsolatedCredentialsIfExists',
       'updateClaudeIsolatedValidationIfKeyMatches',
       'updateClaudeSharedValidationIfUnchanged',
+      'updateCodexIsolatedValidationIfIdentityMatches',
       'updateCustomServer',
       'updateCustomServerOAuthState',
       'updateProviderModelCatalogIfTargetMatches',
@@ -821,6 +823,7 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_service_facade.ownerPaths).toEqual([
       'src/main/settings/service.ts',
       'src/main/settings/network-proxy-settings-owner.ts',
+      'src/main/settings/settings-snapshot-commit-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/subagent-model-owner.ts',
       'src/main/settings/vision-model-owner.ts'

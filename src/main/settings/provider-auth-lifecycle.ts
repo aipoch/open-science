@@ -68,6 +68,7 @@ class ProviderAuthLifecycleOwner {
   private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
   private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
   private accountMutationTail: Promise<void> = Promise.resolve()
+  private codexIsolatedLoginGeneration = 0
   private claudeSharedAuthStatusCache: { authenticated: boolean; checkedAt: number } | undefined
   private claudeSharedAuthStatusGeneration = 0
   private claudeSharedAuthStatusPromise:
@@ -155,6 +156,7 @@ class ProviderAuthLifecycleOwner {
     existing: StoredProvider | undefined,
     onAuthenticationReimported: () => void
   ): Promise<void> {
+    if (isCodexSubscriptionProvider(request.type)) this.codexIsolatedLoginGeneration += 1
     const reimport = request.type === 'codex-shared' && request.reimportCodexAuthentication === true
     if (request.type === 'codex-shared' && (existing?.codexAuthMode !== 'imported' || reimport)) {
       await this.codexAuth.cancelLogin()
@@ -179,6 +181,7 @@ class ProviderAuthLifecycleOwner {
 
   async cleanupProviderBeforeDelete(id: string): Promise<void> {
     if (isCodexSubscriptionProviderId(id)) {
+      this.codexIsolatedLoginGeneration += 1
       await this.codexAuth.cancelLogin()
       const codexHome = codexSubscriptionStorageDir(this.options.storageRoot)
       await clearImportedCodexProviderRoute(codexHome)
@@ -191,6 +194,7 @@ class ProviderAuthLifecycleOwner {
   }
 
   cancelCodexLogin(): void {
+    this.codexIsolatedLoginGeneration += 1
     void this.codexAuth.cancelLogin()
   }
 
@@ -199,6 +203,7 @@ class ProviderAuthLifecycleOwner {
   }
 
   async loginIsolatedCodex(): Promise<ValidateProviderResult> {
+    const loginGeneration = ++this.codexIsolatedLoginGeneration
     const result = this.codexAuthValidationResult(await this.codexAuth.loginIsolated())
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
@@ -208,24 +213,28 @@ class ProviderAuthLifecycleOwner {
       return { ...result, applied: false }
     }
 
-    await this.repository.upsertProvider(
-      result.ok
-        ? { ...provider, lastValidatedAt: Date.now(), lastValidationFailure: undefined }
-        : {
-            ...provider,
-            lastValidatedAt: undefined,
-            lastValidationFailure: {
-              at: Date.now(),
-              category: result.category,
-              status: result.status,
-              message: result.message
+    const applied = await this.serializeAccountMutation(() => {
+      if (this.codexIsolatedLoginGeneration !== loginGeneration) return Promise.resolve(false)
+      return this.repository.updateCodexIsolatedValidationIfIdentityMatches(
+        provider,
+        result.ok
+          ? { lastValidatedAt: Date.now(), lastValidationFailure: undefined }
+          : {
+              lastValidatedAt: undefined,
+              lastValidationFailure: {
+                at: Date.now(),
+                category: result.category,
+                status: result.status,
+                message: result.message
+              }
             }
-          }
-    )
-    return { ...result, applied: true }
+      )
+    })
+    return { ...result, applied }
   }
 
   async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
+    this.codexIsolatedLoginGeneration += 1
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
       (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
@@ -250,11 +259,7 @@ class ProviderAuthLifecycleOwner {
       }
     }
 
-    await this.repository.upsertProvider({
-      ...provider,
-      lastValidatedAt: undefined,
-      lastValidationFailure: undefined
-    })
+    await this.repository.clearCodexIsolatedValidationIfExists()
     return { ok: true, category: 'ok' }
   }
 
