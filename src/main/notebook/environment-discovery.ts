@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { DiscoveredInterpreter, EnvProvenance } from '../../shared/notebook-runtime'
 import { createLogger } from '../logger'
-import { isMacOSDeveloperToolsPythonStub, probeInterpreterVersion } from './python-command'
+import { isMacOSDeveloperToolsPythonStub, isPython3Version } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
 import {
   condaActivatedPath,
@@ -484,7 +484,12 @@ export const rscriptFor = (rInterpreterPath: string): string =>
 type DiscoveryExec = (
   file: string,
   args: readonly string[],
-  options: { timeout: number; windowsHide: boolean; env?: NodeJS.ProcessEnv }
+  options: {
+    timeout: number
+    windowsHide: boolean
+    env?: NodeJS.ProcessEnv
+    shell?: boolean
+  }
 ) => Promise<{ stdout: string; stderr: string }>
 
 type DefaultDiscoveryRuntimeDeps = DiscoveryEnvironmentDeps & {
@@ -518,13 +523,20 @@ export const defaultDiscoveryDeps = (
             PATH: condaActivatedPath(prefix, env.PATH, platform)
           }
         }
-      : { timeout, windowsHide: true }
+      : { timeout, windowsHide: true, env }
   }
   return {
     candidatePaths: defaultCandidatePaths(runtimeRoot, manualPaths, runtimeDeps),
     probeVersion: async (interpreterPath, language) => {
-      if (language === 'python') return probeInterpreterVersion(interpreterPath, [], { platform })
       try {
+        if (language === 'python') {
+          const { stdout, stderr } = await exec(interpreterPath, ['--version'], {
+            ...probeOptions(interpreterPath),
+            shell: platform === 'win32'
+          })
+          const output = `${stdout}\n${stderr}`
+          return isPython3Version(output) ? output.trim().replace(/^Python\s+/i, '') : undefined
+        }
         // No shell: execFile runs the interpreter directly, so a path with spaces/metacharacters is
         // handled safely (shell:true would break "C:\Program Files\…" and allow injection).
         const { stdout, stderr } = await exec(

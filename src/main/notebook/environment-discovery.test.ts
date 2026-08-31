@@ -14,6 +14,30 @@ import {
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, rBin, rScriptBin } from './runtime-paths'
 
 describe('defaultDiscoveryDeps Windows conda R probes', () => {
+  it('uses the injected environment and subprocess port for interpreter probes', async () => {
+    const env = { PATH: 'injected-path', DISCOVERY_SENTINEL: 'injected' }
+    const exec = vi.fn(
+      async (
+        _file: string,
+        args: readonly string[],
+        options: { env?: NodeJS.ProcessEnv }
+      ): Promise<{ stdout: string; stderr: string }> => {
+        expect(options.env).toBe(env)
+        return args.includes('--version')
+          ? { stdout: 'Python 3.12.4', stderr: '' }
+          : { stdout: 'TRUE', stderr: '' }
+      }
+    )
+    const deps = defaultDiscoveryDeps('/runtime', undefined, {
+      platform: 'linux',
+      env,
+      exec
+    })
+
+    await expect(deps.probeVersion('/python', 'python')).resolves.toBe('3.12.4')
+    expect(exec).toHaveBeenCalledWith('/python', ['--version'], expect.objectContaining({ env }))
+  })
+
   it('activates the interpreter own conda prefix for version and jsonlite probes', async () => {
     const prefix = 'C:\\Users\\HM\\OpenScience\\runtime\\envs\\default-r'
     const interpreter = `${prefix}\\Lib\\R\\bin\\R.exe`
@@ -52,13 +76,14 @@ describe('defaultDiscoveryDeps Windows conda R probes', () => {
 
   it('does not inject conda activation into an external Windows R installation', async () => {
     const interpreter = 'C:\\Program Files\\R\\R-4.4.3\\bin\\R.exe'
+    const env = { PATH: 'injected-path', DISCOVERY_SENTINEL: 'injected' }
     const exec = vi.fn(
       async (
         _file: string,
         args: readonly string[],
         options: { env?: NodeJS.ProcessEnv }
       ): Promise<{ stdout: string; stderr: string }> => {
-        expect(options.env).toBeUndefined()
+        expect(options.env).toBe(env)
         return args.includes('--version')
           ? { stdout: '', stderr: 'R version 4.4.3 (2025-02-28 ucrt)' }
           : { stdout: 'TRUE', stderr: '' }
@@ -66,6 +91,7 @@ describe('defaultDiscoveryDeps Windows conda R probes', () => {
     )
     const deps = defaultDiscoveryDeps('C:\\Users\\HM\\OpenScience\\runtime', undefined, {
       platform: 'win32',
+      env,
       exec
     })
 
