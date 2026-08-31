@@ -84,6 +84,34 @@ describe('Session file envelope versions', () => {
     expect(normalizeSessionFile({ ...legacySession(), revision: -1 })?.revision).toBe(0)
     expect(normalizeSessionFile({ ...legacySession(), revision: '7' })?.revision).toBe(0)
   })
+
+  it('redacts credentials while decoding a historical Session file', () => {
+    const activity = normalizeSessionFile(
+      createSessionWithActivity({
+        id: 'tool-secret',
+        status: 'completed',
+        rawInput: {
+          query: 'safe input',
+          connection: { apiKey: 'test-api-key-secret' }
+        },
+        rawOutput: {
+          result: 'safe output',
+          authorization: 'Bearer test-authorization-secret'
+        }
+      })
+    )?.activities?.[0]
+
+    expect(activity?.rawInput).toMatchObject({
+      query: 'safe input',
+      connection: { apiKey: '[redacted]' }
+    })
+    expect(activity?.rawOutput).toMatchObject({
+      result: 'safe output',
+      authorization: '[redacted]'
+    })
+    expect(JSON.stringify(activity)).not.toContain('test-api-key-secret')
+    expect(JSON.stringify(activity)).not.toContain('test-authorization-secret')
+  })
 })
 
 describe('Session Specialist binding persistence', () => {
@@ -2688,6 +2716,44 @@ describe('normalizeSessionFile with activities', () => {
     expect(normalizePermission(permission)?.state).toBe('pending')
     expect(normalizePermission({ ...permission, state: 'continuing' })?.state).toBe('continuing')
     expect(normalizePermission({ ...permission, state: 'unknown' })).toBeUndefined()
+  })
+
+  it('redacts credentials from persisted permission tool input', () => {
+    const restored = normalizeSessionFile(
+      {
+        ...createSessionWithActivity(undefined),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-secret',
+              sessionId: 'session-1',
+              toolCallId: 'tool-secret',
+              title: 'Call MCP tool',
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }],
+              rawInput: {
+                query: 'safe input',
+                connection: { password: 'test-password-secret' }
+              }
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      },
+      { preserveRuntimeState: true }
+    )
+    const rawInput = restored?.runtimeContext?.permission?.request.rawInput
+
+    expect(rawInput).toMatchObject({
+      query: 'safe input',
+      connection: { password: '[redacted]' }
+    })
+    expect(JSON.stringify(rawInput)).not.toContain('test-password-secret')
   })
 
   it.each(['pending', 'in_progress'] as const)(

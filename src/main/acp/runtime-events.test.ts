@@ -297,6 +297,44 @@ describe('ACP runtime event normalization', () => {
     })
   })
 
+  it('does not expose tool credentials through runtime events or persisted activities', () => {
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-secret',
+        kind: 'execute',
+        status: 'completed',
+        rawInput: {
+          query: 'safe input',
+          connection: { apiKey: 'test-api-key-secret' }
+        },
+        rawOutput: {
+          result: 'safe output',
+          authorization: 'Bearer test-authorization-secret'
+        }
+      }
+    }
+
+    const event = toAcpRuntimeEvent(notification, 'event-secret', 1710000000005)
+    const persisted = sanitizeToolActivity({
+      ...event,
+      sortIndex: 1,
+      eventIds: [event.id],
+      createdAt: event.timestamp,
+      updatedAt: event.timestamp
+    })
+
+    expect(event.rawInput).toMatchObject({ query: 'safe input' })
+    expect(event.rawOutput).toMatchObject({ result: 'safe output' })
+    expect(event.rawInput).toMatchObject({ connection: { apiKey: '[redacted]' } })
+    expect(event.rawOutput).toMatchObject({ authorization: '[redacted]' })
+    expect(JSON.stringify(event)).not.toContain('test-api-key-secret')
+    expect(JSON.stringify(event)).not.toContain('test-authorization-secret')
+    expect(JSON.stringify(persisted)).not.toContain('test-api-key-secret')
+    expect(JSON.stringify(persisted)).not.toContain('test-authorization-secret')
+  })
+
   it('bounds large tool detail fields before they enter runtime snapshots', () => {
     const event = new AcpRuntimeSnapshotOwner('/workspace').appendEvent(
       toAcpRuntimeEvent(

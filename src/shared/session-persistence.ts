@@ -66,7 +66,11 @@ import {
 } from './permission-grants'
 import { SIDE_CHAT_MESSAGE_LIMIT, type SideChatEntry } from './side-chat'
 import { sanitizeAgentUserChoiceRequest, type AgentUserChoicePrompt } from './elicitation'
-import { capToolDetailText, sanitizeToolContent } from './tool-detail-sanitizer'
+import {
+  capToolDetailText,
+  sanitizeRawToolPayload,
+  sanitizeToolContent
+} from './tool-detail-sanitizer'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
 export const SESSION_FILE_VERSION = 2
@@ -2314,16 +2318,8 @@ const boundedPermissionString = (value: unknown): string | undefined => {
 }
 
 const sanitizePermissionRawInput = (value: unknown): unknown | undefined => {
-  if (value === undefined) return undefined
-  try {
-    const serialized = JSON.stringify(value)
-    if (serialized === undefined || serialized.length > MAX_PERMISSION_CONTEXT_RAW_CHARS) {
-      return undefined
-    }
-    return JSON.parse(serialized) as unknown
-  } catch {
-    return undefined
-  }
+  if (value === null) return null
+  return sanitizeRawToolPayload(value, MAX_PERMISSION_CONTEXT_RAW_CHARS)
 }
 
 const sanitizePermissionCapability = (value: unknown): PermissionCapability | undefined => {
@@ -3028,21 +3024,6 @@ const asCappedString = (value: unknown): string | undefined => {
   return text ? capToolDetailText(text) : undefined
 }
 
-// Keeps small raw input/output payloads verbatim but drops oversized ones (e.g. base64 file bytes).
-const sanitizeRawPayload = (value: unknown): unknown | undefined => {
-  if (value === undefined || value === null) return undefined
-
-  try {
-    const serialized = JSON.stringify(value)
-
-    if (serialized === undefined || serialized.length > MAX_PERSISTED_RAW_CHARS) return undefined
-
-    return JSON.parse(serialized) as unknown
-  } catch {
-    return undefined
-  }
-}
-
 // Rebuilds tool file locations from path/line fields only.
 const sanitizeToolLocations = (value: unknown): PersistedToolCallLocation[] | undefined => {
   if (!Array.isArray(value)) return undefined
@@ -3130,8 +3111,8 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const toolKind = asString(activity.toolKind)
   const toolContent = sanitizeToolContent(activity.toolContent)
   const toolLocations = sanitizeToolLocations(activity.toolLocations)
-  const rawInput = sanitizeRawPayload(activity.rawInput)
-  const rawOutput = sanitizeRawPayload(activity.rawOutput)
+  const rawInput = sanitizeRawToolPayload(activity.rawInput, MAX_PERSISTED_RAW_CHARS)
+  const rawOutput = sanitizeRawToolPayload(activity.rawOutput, MAX_PERSISTED_RAW_CHARS)
   const terminalOutput = asCappedString(activity.terminalOutput)
   const terminalExitCode = asNumber(activity.terminalExitCode)
   const elicitation = sanitizeElicitationProjection(activity.elicitation)

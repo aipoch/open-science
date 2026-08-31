@@ -1,5 +1,8 @@
 const MAX_TOOL_DETAIL_TEXT_CHARS = 16_000
 const MAX_TOOL_DETAIL_CONTENT_CHARS = 32_000
+const REDACTED_MARKER = '[redacted]'
+const SENSITIVE_FIELD_PATTERN =
+  /(authorization|cookie|credential|password|secret|token|api[_-]?key)/iu
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -93,4 +96,24 @@ const sanitizeToolContent = (value: unknown): unknown[] | undefined => {
   return entries.length > 0 ? entries : undefined
 }
 
-export { capToolDetailText, sanitizeToolContent }
+// Rebuilds a bounded JSON-safe projection while replacing sensitive fields at every nesting level.
+const sanitizeRawToolPayload = (
+  value: unknown,
+  maxSerializedChars: number
+): unknown | undefined => {
+  if (value === undefined || value === null) return undefined
+
+  try {
+    const serialized = JSON.stringify(value, (key, nestedValue) =>
+      key && SENSITIVE_FIELD_PATTERN.test(key) ? REDACTED_MARKER : nestedValue
+    )
+
+    if (serialized === undefined || serialized.length > maxSerializedChars) return undefined
+
+    return JSON.parse(serialized) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+export { capToolDetailText, sanitizeRawToolPayload, sanitizeToolContent }
