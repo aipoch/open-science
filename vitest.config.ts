@@ -38,6 +38,7 @@ const BASE_VITEST_EXCLUDE_PATTERNS = [
 ]
 const VITEST_PORTABLE_CI_EXCLUDE_PATTERNS = [
   'src/renderer/src/i18n/resources.test.ts',
+  'scripts/database-migration-ledger-smoke.test.ts',
   'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
   'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts'
 ] as const
