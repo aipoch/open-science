@@ -325,4 +325,34 @@ describe('startNetworkMonitor silent recovery', () => {
     expect(checkConnectivity).not.toHaveBeenCalled()
     expect(useNetworkStore.getState().connectivity).toBe('unreachable')
   })
+
+  it('silently re-probes a fresh reachable result after system resume', async () => {
+    vi.resetModules()
+    let notifySystemResume: (() => void) | undefined
+    const checkConnectivity = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    ;(window as unknown as { api: unknown }).api = {
+      network: {
+        checkConnectivity,
+        onSystemResume: (listener: () => void) => {
+          notifySystemResume = listener
+          return vi.fn()
+        }
+      }
+    }
+    setNavigatorOnline(true)
+
+    const freshNetworkStore = await import('./network-store')
+    freshNetworkStore.startNetworkMonitor()
+    await vi.waitFor(() => {
+      expect(freshNetworkStore.useNetworkStore.getState().connectivity).toBe('reachable')
+    })
+
+    expect(notifySystemResume).toBeTypeOf('function')
+    notifySystemResume?.()
+
+    await vi.waitFor(() => {
+      expect(freshNetworkStore.useNetworkStore.getState().connectivity).toBe('unreachable')
+    })
+    expect(checkConnectivity).toHaveBeenCalledTimes(2)
+  })
 })

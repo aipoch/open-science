@@ -100,9 +100,9 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
 // Installs the window listeners and runs the first probe. Called once from the app entry
 // (main.tsx) — deliberately NOT at module scope, so importing the store in tests stays free
 // of side effects. Probing happens on startup, on every link recovery, on window focus /
-// becoming visible while a previous probe is failing or its known result has expired, and on demand
-// (Retry). There is no background polling: a changed path out (Wi-Fi, VPN, proxy, DNS) is picked up
-// when the user returns to the window, not on a timer.
+// becoming visible while a previous probe is failing or its known result has expired, after system
+// resume, and on demand (Retry). There is no background polling: a changed path out (Wi-Fi, VPN,
+// proxy, DNS) is picked up when the user returns to the window, not on a timer.
 let monitorStarted = false
 
 export const startNetworkMonitor = (): void => {
@@ -119,14 +119,16 @@ export const startNetworkMonitor = (): void => {
   })
 
   let silentRecheckQueued = false
+  let forcedSilentRecheckQueued = false
   let silentProbeInFlight = false
-  const silentlyRecheckIfStale = (): void => {
+  const silentlyRecheckIfStale = (force = false): void => {
     const { isOnline, connectivity } = useNetworkStore.getState()
     if (!isOnline) return
     const now = Date.now()
     const resultExpired =
       lastProbedAt === 0 || now < lastProbedAt || now - lastProbedAt >= REACHABILITY_RECHECK_TTL_MS
     if (
+      !force &&
       connectivity !== 'unreachable' &&
       connectivity !== 'probe-failed' &&
       !(connectivity === 'reachable' && resultExpired)
@@ -141,19 +143,23 @@ export const startNetworkMonitor = (): void => {
         silentProbeInFlight = false
       })
   }
-  const scheduleSilentRecheck = (): void => {
+  const scheduleSilentRecheck = (force = false): void => {
+    forcedSilentRecheckQueued ||= force
     if (silentRecheckQueued) return
     silentRecheckQueued = true
     queueMicrotask(() => {
       silentRecheckQueued = false
-      silentlyRecheckIfStale()
+      const shouldForce = forcedSilentRecheckQueued
+      forcedSilentRecheckQueued = false
+      silentlyRecheckIfStale(shouldForce)
     })
   }
 
-  window.addEventListener('focus', scheduleSilentRecheck)
+  window.addEventListener('focus', () => scheduleSilentRecheck())
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') scheduleSilentRecheck()
   })
+  window.api?.network?.onSystemResume?.(() => scheduleSilentRecheck(true))
 
   if (navigator.onLine) {
     void useNetworkStore.getState().probeConnectivity()

@@ -23,12 +23,6 @@ import type {
 // Menu action callbacks the tray is wired to.
 export type TrayHandlers = { onShow: () => void; onHide: () => void; onQuit: () => void }
 
-type PreventableSystemShutdownEvent = { preventDefault: () => void }
-type HeadlessSignalSource = {
-  once: (signal: 'SIGTERM' | 'SIGINT', listener: () => void) => unknown
-  removeListener: (signal: 'SIGTERM' | 'SIGINT', listener: () => void) => unknown
-}
-
 // Wires the window/tray/quit lifecycle for the UI process. Kept as a dependency-injected unit (no direct
 // electron imports beyond types) so the event ordering, migration-guard interaction, tray-quit cleanup,
 // and window recreation are unit-testable without a real Electron runtime.
@@ -86,11 +80,8 @@ export type AppLifecycleDeps = {
   countWindows: () => number
   // Headless web mode starts the backend and tray without opening a renderer window.
   createInitialWindow?: boolean
-  // Native process/power sources are injected so their global event bridges remain unit-testable.
-  headlessSignalSource?: HeadlessSignalSource
-  subscribePowerShutdown?: (listener: (event: PreventableSystemShutdownEvent) => void) => void
-  // Production binds the startup window before runtime composition and reuses the same idempotent
-  // binder here for later windows. Tests may omit it and exercise the built-in Windows bridge.
+  // Production binds the startup window before runtime composition and reuses the same tested,
+  // idempotent adapter here for later windows.
   bindSystemShutdownWindow?: (window: BrowserWindow) => void
   // Overridable for tests; defaults to the host platform.
   platform?: NodeJS.Platform
@@ -253,16 +244,7 @@ export const installAppLifecycle = (
     // taskbar attention can distinguish a legitimate minimized window from one hidden to the tray.
     window.on('hide', () => hiddenWindows.add(window))
     window.on('show', () => hiddenWindows.delete(window))
-    if (deps.bindSystemShutdownWindow) {
-      deps.bindSystemShutdownWindow(window)
-    } else if (platform === 'win32') {
-      // Respect the OS-owned session end while giving the existing shutdown owner an early,
-      // best-effort opportunity to clean up before Windows terminates the process.
-      window.on('query-session-end', requestSystemShutdown)
-      // This notification can no longer delay Windows logoff/shutdown. Retain it as a fallback for
-      // hosts that did not deliver query-session-end.
-      window.on('session-end', requestSystemShutdown)
-    }
+    deps.bindSystemShutdownWindow?.(window)
     return window
   }
 
@@ -296,22 +278,6 @@ export const installAppLifecycle = (
     onShow: showMainWindow,
     onHide: hideMainWindow,
     onQuit: () => deps.quit()
-  })
-
-  if (deps.createInitialWindow === false && deps.headlessSignalSource) {
-    const source = deps.headlessSignalSource
-    const onSignal = (): void => {
-      source.removeListener('SIGTERM', onSignal)
-      source.removeListener('SIGINT', onSignal)
-      requestSystemShutdown()
-    }
-    source.once('SIGTERM', onSignal)
-    source.once('SIGINT', onSignal)
-  }
-
-  deps.subscribePowerShutdown?.((event) => {
-    event.preventDefault()
-    requestSystemShutdown()
   })
 
   // Authoritative quit cleanup: stop the agent process tree (awaited, so Windows taskkill /T finishes)

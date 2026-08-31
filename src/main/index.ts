@@ -142,11 +142,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       prepareVisibleStartupRuntime,
       waitForStartupShell
     },
-    { parseWebModeOptions }
+    { parseWebModeOptions },
+    { installSystemLifecycleAdapters }
   ] = await Promise.all([
     import('./single-instance'),
     import('./app-startup'),
-    import('./web-service/options')
+    import('./web-service/options'),
+    import('./system-lifecycle-adapters')
   ])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
   if (
@@ -159,18 +161,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     return
   }
   const webMode = parseWebModeOptions(process.argv)
-  let signalSystemShutdown = (): void => {}
-  const systemShutdownWindows = new WeakSet<InstanceType<typeof BrowserWindow>>()
-  const bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
-    if (process.platform !== 'win32' || systemShutdownWindows.has(window)) return
-    systemShutdownWindows.add(window)
-    // Respect the OS-owned session end while giving the existing shutdown owner an early,
-    // best-effort opportunity to clean up before Windows terminates the process.
-    window.on('query-session-end', signalSystemShutdown)
-    // Windows no longer permits delaying shutdown at this point; retain a fallback for hosts that
-    // skipped query-session-end.
-    window.on('session-end', signalSystemShutdown)
+  let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
+    void window
   }
+  let installPowerMonitorListeners = (): void => {}
 
   // Initialize the file sink after the primary lock but before assets, the backend graph, and
   // app.whenReady so packaged startup failures remain locally diagnosable.
@@ -271,17 +265,16 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     quit: () => app.quit(),
     forceExit: () => app.exit(0),
     installSystemShutdownListeners: (requestSystemShutdown) => {
-      signalSystemShutdown = requestSystemShutdown
-
-      if (webMode.headless) {
-        const onSignal = (): void => {
-          process.removeListener('SIGTERM', onSignal)
-          process.removeListener('SIGINT', onSignal)
-          signalSystemShutdown()
-        }
-        process.once('SIGTERM', onSignal)
-        process.once('SIGINT', onSignal)
-      }
+      const adapters = installSystemLifecycleAdapters({
+        platform: process.platform,
+        headless: webMode.headless,
+        signalSource: process,
+        powerMonitor,
+        getWindows: () => BrowserWindow.getAllWindows(),
+        requestSystemShutdown
+      })
+      bindSystemShutdownWindow = adapters.bindWindow
+      installPowerMonitorListeners = adapters.installPowerMonitorListeners
     },
     prepare: async () => {
       // Start local-only Crashpad after the single-instance lock but before any BrowserWindow can
@@ -332,14 +325,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
 
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
-      if (process.platform !== 'win32') {
-        powerMonitor.on('shutdown', ((event?: { preventDefault?: () => void }) => {
-          // Electron's generated v39 type omits this documented event argument. Keep the bridge safe
-          // if a host also omits it at runtime.
-          event?.preventDefault?.()
-          signalSystemShutdown()
-        }) as () => void)
-      }
+      installPowerMonitorListeners()
       startupDiagnostics?.phase('prepare-shell')
       // The bridge is lightweight, but its protocol handler must exist before the first BrowserWindow
       // creates the default session. macOS otherwise treats later managed-preview requests as an

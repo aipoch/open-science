@@ -56,25 +56,6 @@ const makeFakeApp = (): FakeApp => {
   }
 }
 
-const makeFakeSignalSource = (): NonNullable<AppLifecycleDeps['headlessSignalSource']> & {
-  emit: (signal: 'SIGTERM' | 'SIGINT') => void
-} => {
-  const listeners = new Map<'SIGTERM' | 'SIGINT', () => void>()
-  return {
-    once(signal, listener): void {
-      listeners.set(signal, listener)
-    },
-    removeListener(signal, listener): void {
-      if (listeners.get(signal) === listener) listeners.delete(signal)
-    },
-    emit(signal): void {
-      const listener = listeners.get(signal)
-      listeners.delete(signal)
-      listener?.()
-    }
-  }
-}
-
 type FakeWindow = {
   destroyed: boolean
   minimized: boolean
@@ -163,6 +144,7 @@ type Harness = {
   showMainWindow: () => void
   getMainWindow: () => import('electron').BrowserWindow | undefined
   isMainWindowHidden: () => boolean
+  onSystemShutdown: () => void
   closeOpts: CapturedCloseOpts[]
   confirmClose: ReturnType<typeof vi.fn>
 }
@@ -183,8 +165,6 @@ const setup = (
       | 'isMigrationInProgress'
       | 'platform'
       | 'createInitialWindow'
-      | 'headlessSignalSource'
-      | 'subscribePowerShutdown'
       | 'onAppearanceChanged'
       | 'initialWindow'
       | 'configureMainWindow'
@@ -217,41 +197,40 @@ const setup = (
   )
   const detectActiveSessions = overrides.detectActiveSessions ?? ((): ActiveSessionInfo[] => [])
 
-  const { showMainWindow, getMainWindow, isMainWindowHidden } = installAppLifecycle({
-    app: app as unknown as AppLifecycleDeps['app'],
-    createMainWindow: (opts) => {
-      closeOpts.push(opts)
-      const w = makeFakeWindow()
-      windows.push(w)
-      return asWindow(w)
-    },
-    initialWindow: overrides.initialWindow,
-    configureMainWindow: overrides.configureMainWindow,
-    createTray: (handlers) => {
-      trayHandlers = handlers
-      return tray as unknown as import('electron').Tray | undefined
-    },
-    shutdownBackends,
-    prepareForQuit,
-    abortQuitPreparation,
-    flushSessionPersistence,
-    log: overrides.log,
-    flushLogs: overrides.flushLogs,
-    logFlushTimeoutMs: overrides.logFlushTimeoutMs,
-    rendererFlushTimeoutMs: overrides.rendererFlushTimeoutMs,
-    shutdownTrigger: overrides.shutdownTrigger,
-    isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
-    quit,
-    countWindows: () => windows.filter((w) => !w.destroyed).length,
-    createInitialWindow: overrides.createInitialWindow,
-    headlessSignalSource: overrides.headlessSignalSource,
-    subscribePowerShutdown: overrides.subscribePowerShutdown,
-    onAppearanceChanged: overrides.onAppearanceChanged,
-    platform: overrides.platform ?? 'linux',
-    detectActiveSessions,
-    hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
-    createConfirmClose: () => confirmClose
-  })
+  const { showMainWindow, getMainWindow, isMainWindowHidden, onSystemShutdown } =
+    installAppLifecycle({
+      app: app as unknown as AppLifecycleDeps['app'],
+      createMainWindow: (opts) => {
+        closeOpts.push(opts)
+        const w = makeFakeWindow()
+        windows.push(w)
+        return asWindow(w)
+      },
+      initialWindow: overrides.initialWindow,
+      configureMainWindow: overrides.configureMainWindow,
+      createTray: (handlers) => {
+        trayHandlers = handlers
+        return tray as unknown as import('electron').Tray | undefined
+      },
+      shutdownBackends,
+      prepareForQuit,
+      abortQuitPreparation,
+      flushSessionPersistence,
+      log: overrides.log,
+      flushLogs: overrides.flushLogs,
+      logFlushTimeoutMs: overrides.logFlushTimeoutMs,
+      rendererFlushTimeoutMs: overrides.rendererFlushTimeoutMs,
+      shutdownTrigger: overrides.shutdownTrigger,
+      isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
+      quit,
+      countWindows: () => windows.filter((w) => !w.destroyed).length,
+      createInitialWindow: overrides.createInitialWindow,
+      onAppearanceChanged: overrides.onAppearanceChanged,
+      platform: overrides.platform ?? 'linux',
+      detectActiveSessions,
+      hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
+      createConfirmClose: () => confirmClose
+    })
   return {
     app,
     windows,
@@ -265,6 +244,7 @@ const setup = (
     showMainWindow,
     getMainWindow,
     isMainWindowHidden,
+    onSystemShutdown,
     closeOpts,
     confirmClose
   }
@@ -381,14 +361,11 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
-  it('respects Windows session end while routing best-effort cleanup through the shutdown owner', async () => {
-    const { app, windows, shutdownBackends, flushSessionPersistence, quit, confirmClose } = setup({
-      platform: 'win32'
-    })
+  it('routes a system request through the existing shutdown owner', async () => {
+    const { app, onSystemShutdown, shutdownBackends, flushSessionPersistence, quit, confirmClose } =
+      setup()
 
-    const event = windows[0].emit('query-session-end')
-
-    expect(event.defaultPrevented).toBe(false)
+    onSystemShutdown()
     expect(quit).toHaveBeenCalledTimes(1)
 
     app.emit('before-quit')
@@ -400,26 +377,16 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
-  it('uses Windows session-end as a best-effort fallback when the query event was missed', () => {
-    const { windows, quit } = setup({ platform: 'win32' })
-
-    const event = windows[0].emit('session-end')
-
-    expect(event.defaultPrevented).toBe(false)
-    expect(quit).toHaveBeenCalledTimes(1)
-  })
-
   it('does not block a system shutdown on active work or renderer persistence conflicts', async () => {
     const flushSessionPersistence = vi.fn(async () => 'conflict' as const)
-    const { app, windows, shutdownBackends, confirmClose } = setup({
-      platform: 'win32',
+    const { app, onSystemShutdown, shutdownBackends, confirmClose } = setup({
       detectActiveSessions: () => [
         { projectId: 'project-1', sessionId: 'session-1', kind: 'delegated' }
       ],
       flushSessionPersistence
     })
 
-    windows[0].emit('query-session-end')
+    onSystemShutdown()
     app.emit('before-quit')
     await flush()
 
@@ -440,8 +407,7 @@ describe('installAppLifecycle', () => {
           })
       )
       .mockResolvedValue('conflict' as const)
-    const { app, closeOpts, windows, quit, confirmClose, shutdownBackends } = setup({
-      platform: 'win32',
+    const { app, closeOpts, onSystemShutdown, quit, confirmClose, shutdownBackends } = setup({
       flushSessionPersistence
     })
 
@@ -449,7 +415,7 @@ describe('installAppLifecycle', () => {
     app.emit('before-quit')
     expect(flushSessionPersistence).toHaveBeenCalledOnce()
 
-    windows[0].emit('query-session-end')
+    onSystemShutdown()
     resolvePreflight?.('conflict')
     await flush()
 
@@ -459,49 +425,6 @@ describe('installAppLifecycle', () => {
 
     expect(confirmClose).not.toHaveBeenCalled()
     expect(shutdownBackends).toHaveBeenCalledOnce()
-    expect(app.exit).toHaveBeenCalledWith(0)
-  })
-
-  it.each(['SIGTERM', 'SIGINT'] as const)(
-    'routes headless %s through the existing shutdown owner',
-    async (signal) => {
-      const headlessSignalSource = makeFakeSignalSource()
-      const { app, shutdownBackends, quit, confirmClose } = setup({
-        createInitialWindow: false,
-        headlessSignalSource
-      })
-
-      headlessSignalSource.emit(signal)
-      expect(quit).toHaveBeenCalledTimes(1)
-
-      app.emit('before-quit')
-      await flush()
-
-      expect(confirmClose).not.toHaveBeenCalled()
-      expect(shutdownBackends).toHaveBeenCalledTimes(1)
-      expect(app.exit).toHaveBeenCalledWith(0)
-    }
-  )
-
-  it('routes a preventable power shutdown through the existing shutdown owner', async () => {
-    let onPowerShutdown: ((event: QuitEvent) => void) | undefined
-    const { app, shutdownBackends, quit, confirmClose } = setup({
-      subscribePowerShutdown: (listener) => {
-        onPowerShutdown = listener
-      }
-    })
-    const event = makeQuitEvent()
-
-    onPowerShutdown?.(event)
-
-    expect(event.defaultPrevented).toBe(true)
-    expect(quit).toHaveBeenCalledTimes(1)
-
-    app.emit('before-quit')
-    await flush()
-
-    expect(confirmClose).not.toHaveBeenCalled()
-    expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
@@ -516,12 +439,11 @@ describe('installAppLifecycle', () => {
 
   it('preserves system shutdown intent until the migration guard reissues quit', async () => {
     let migrationInProgress = true
-    const { app, windows, shutdownBackends, confirmClose } = setup({
-      platform: 'win32',
+    const { app, onSystemShutdown, shutdownBackends, confirmClose } = setup({
       isMigrationInProgress: () => migrationInProgress
     })
 
-    windows[0].emit('query-session-end')
+    onSystemShutdown()
     app.emit('before-quit')
     expect(shutdownBackends).not.toHaveBeenCalled()
 
