@@ -629,8 +629,9 @@ describe('PR Gate workflow', () => {
       'runs-on': 'ubuntu-latest',
       'timeout-minutes': 10
     })
-    expect(workflow.jobs.linux_runtime.if).toContain("'linux_runtime'")
-    expect(workflow.jobs.linux_runtime.if).toContain("mode == 'full'")
+    expect(workflow.jobs.linux_runtime.if).toBe(
+      "${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}"
+    )
     const linuxDependencies = workflow.jobs.linux_runtime.steps?.find(
       ({ name }) => name === 'Install Linux sandbox dependency'
     )

@@ -526,9 +526,7 @@ jobs:
   linux_runtime:
     name: Linux Notebook isolation
     needs: preflight
-    # The full-plan fallback covers the introducing PR, whose trusted base classifier does not yet
-    # know this bundle. Once the classifier is on main, only the dedicated bundle selects this job.
-    if: ${{ needs.preflight.result == 'success' && (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') || (fromJSON(needs.preflight.outputs.plan).mode == 'full' && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'linux_runtime'))) }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
