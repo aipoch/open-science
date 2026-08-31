@@ -540,15 +540,17 @@ describe('review assessment owner', () => {
 
   it('records the upstream model instead of the Codex bridge catalog alias', async () => {
     const reviewRepository = makeRepository()
+    const upstreamModel = 'upstream-reviewer-model'
+    const bridgeCatalogAlias = 'bridge-catalog-alias'
 
     await runReviewAssessment({
       ...commonOptions(reviewRepository),
-      acpRuntime: runtime('glm-5.3', 'gpt-5.4', 'codex-bridge'),
+      acpRuntime: runtime(upstreamModel, bridgeCatalogAlias, 'codex-bridge'),
       mode: 'initial'
     })
 
     expect(reviewRepository.updateReview).toHaveBeenCalledWith('assessment-review', {
-      model: 'glm-5.3'
+      model: upstreamModel
     })
   })
 
