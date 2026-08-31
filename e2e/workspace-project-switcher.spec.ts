@@ -107,6 +107,21 @@ test('switches projects from the Workspace project menu and expands remaining pr
     contentType: 'image/png'
   })
 
+  await page.keyboard.press('End')
+  await page.keyboard.press('ArrowUp')
+  await expect(showRemaining).toBeFocused()
+  const focusedPresentation = await showRemaining.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return {
+      backgroundColor: style.backgroundColor,
+      boxShadow: style.boxShadow,
+      color: style.color
+    }
+  })
+  expect(focusedPresentation.backgroundColor).toBe('rgba(0, 0, 0, 0)')
+  expect(focusedPresentation.boxShadow).not.toBe('none')
+  expect(focusedPresentation.color).toBe(showRemainingPresentation.newProjectColor)
+
   await showRemaining.click()
   await expect(menu).toBeVisible()
   await expect(projectItems).toHaveCount(15)

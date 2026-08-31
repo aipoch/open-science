@@ -1098,6 +1098,9 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(showRemainingItem?.className).toContain('text-[11px]')
       expect(showRemainingItem?.className).toContain('text-muted-foreground')
       expect(showRemainingItem?.className).toContain('bg-transparent!')
+      expect(showRemainingItem?.className).toContain('focus-visible:ring-[3px]')
+      expect(showRemainingItem?.className).toContain('focus-visible:ring-ring/50')
+      expect(showRemainingItem?.className).toContain('data-[highlighted]:text-foreground!')
       expect(showRemainingItem?.querySelector('.lucide-chevron-down')).not.toBeNull()
       expect(showRemainingItem?.compareDocumentPosition(newProjectItem!)).toBe(
         Node.DOCUMENT_POSITION_FOLLOWING

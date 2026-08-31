@@ -410,7 +410,7 @@ const WorkspaceSidebarView = ({
                   >
                     <button
                       type="button"
-                      className="min-h-0! w-fit! gap-1 rounded-none! bg-transparent! px-2 py-1 text-[11px]! text-muted-foreground! hover:bg-transparent! hover:text-muted-foreground! focus:bg-transparent! data-[highlighted]:bg-transparent! data-[highlighted]:text-muted-foreground!"
+                      className="min-h-0! w-fit! gap-1 rounded-sm! bg-transparent! px-2 py-1 text-[11px]! text-muted-foreground! hover:bg-transparent! focus:bg-transparent! focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-transparent! data-[highlighted]:text-foreground!"
                     >
                       <ChevronDown
                         className="size-3.5 shrink-0"
