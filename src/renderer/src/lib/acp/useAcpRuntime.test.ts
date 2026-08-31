@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type {
   AcpPermissionResponse,
+  AcpRuntimeState,
   AcpRuntimeEvent,
   AcpStateSnapshot
 } from '../../../../shared/acp'
@@ -210,7 +211,7 @@ describe('useAcpRuntime snapshot action failures', () => {
     acpApi.connect.mockRejectedValueOnce(new Error('connect failed'))
     const { result } = await mountRuntime()
 
-    let returned: AcpStateSnapshot | undefined = createSnapshot()
+    let returned: AcpRuntimeState | undefined = createSnapshot()
     await act(async () => {
       returned = await result.current.connect('/workspace/project')
     })
@@ -681,7 +682,7 @@ describe('useAcpRuntime pending lifecycle', () => {
 
     expect(result.current.isConnecting).toBe(false)
 
-    let inFlight: Promise<AcpStateSnapshot | undefined> | undefined
+    let inFlight: Promise<AcpRuntimeState | undefined> | undefined
     await act(async () => {
       inFlight = result.current.connect('/workspace/project')
     })

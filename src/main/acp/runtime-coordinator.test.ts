@@ -4,8 +4,10 @@ import type {
   AcpPermissionRequest,
   AcpPermissionResponse,
   AcpRuntimeEvent,
-  AcpStateSnapshot
+  AcpStateSnapshot,
+  AcpStateUpdate
 } from '../../shared/acp'
+import { toAcpStateCommandResponse } from '../../shared/acp'
 import type { AcpSessionAgentTarget } from '../../shared/acp'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
@@ -246,6 +248,7 @@ const createFakeRuntime = (options: {
   const sendAppContinuation = vi.fn(runPrompt)
   const runtime = {
     getSnapshot: () => snapshot,
+    getState: () => toAcpStateCommandResponse({ ...snapshot, revision: 0 }).result,
     getActivePromptSessions: () => options.activePromptSessions ?? [],
     getQuitBlockingPromptSessions: () => options.quitBlockingSessions ?? [],
     hasLiveSession: (projectId: string, sessionId: string) =>
@@ -736,6 +739,45 @@ describe('AcpRuntimeCoordinator', () => {
     expect(incrementalPublicationConfigured).toBe(false)
   })
 
+  it('does not repeat retained event history through incremental state and command responses', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const stateChanges: AcpStateUpdate[] = []
+    const incrementalEvents: AcpRuntimeEvent[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {
+        onStateChanged: (state) => stateChanges.push(state),
+        onEvent: (event) => incrementalEvents.push(event)
+      }
+    )
+    const retainedPayload = `retained-tool-output:${'x'.repeat(8_000)}`
+
+    created[0].emitEvent({
+      id: 'large-tool-event',
+      timestamp: 1,
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      status: 'completed',
+      rawOutput: retainedPayload
+    })
+    created[0].emitState({ status: 'connected' })
+    const commandResponse = await coordinator.connect()
+
+    expect(incrementalEvents).toHaveLength(1)
+    expect.soft(JSON.stringify(stateChanges.at(-1))).not.toContain(retainedPayload)
+    expect.soft(JSON.stringify(commandResponse)).not.toContain(retainedPayload)
+  })
+
   it('retains snapshot-only events after a new runtime generation adopts the session', async () => {
     const retirement = createDeferred<void>()
     const created: ReturnType<typeof createFakeRuntime>[] = []
@@ -750,7 +792,7 @@ describe('AcpRuntimeCoordinator', () => {
         created.push(fake)
         return fake.runtime
       },
-      { onStateChanged: (snapshot) => snapshots.push(snapshot) }
+      { onStateChanged: (snapshot) => snapshots.push(snapshot as AcpStateSnapshot) }
     )
 
     const session = await coordinator.createSession()
@@ -938,7 +980,7 @@ describe('AcpRuntimeCoordinator', () => {
       },
       {
         onPermissionRequest: (request) => permissionEvents.push(request),
-        onStateChanged: (snapshot) => stateChanges.push(snapshot)
+        onStateChanged: (snapshot) => stateChanges.push(snapshot as AcpStateSnapshot)
       },
       '',
       undefined,

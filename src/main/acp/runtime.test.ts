@@ -19177,7 +19177,7 @@ describe('ACP runtime session management', () => {
         contextWindow: 128_000
       }),
       framework: opencodeFramework,
-      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot) }
+      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot as AcpStateSnapshot) }
     })
 
     await runtime.createSession({ cwd: '/workspace' })

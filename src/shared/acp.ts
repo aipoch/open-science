@@ -685,7 +685,7 @@ export type AcpPermissionGrant = {
   scope: AcpPermissionGrantScope
 }
 
-export type AcpStateSnapshot = {
+export type AcpRuntimeState = {
   // Main-owned construction order lets the renderer reject delayed older IPC snapshots. It is
   // transient runtime state and is not persisted with Session data.
   revision?: number
@@ -700,7 +700,6 @@ export type AcpStateSnapshot = {
   // before dispatch even though their final turn remains visible while it drains.
   sessionResumeRequiredIds?: string[]
   error?: string
-  events: AcpRuntimeEvent[]
   pendingPermissions: AcpPermissionRequest[]
   // Optional for rolling renderer/main reload compatibility; current runtimes always publish it.
   pendingElicitations?: PendingElicitationRequest[]
@@ -722,6 +721,33 @@ export type AcpStateSnapshot = {
   // interaction lock and also contains framework compaction control turns.
   agentPromptInFlightSessionIds?: string[]
   promptInFlightSessionIds: string[]
+}
+
+// Retained event history is an explicit synchronization payload. Routine state publications and
+// command responses use AcpRuntimeState so large tool payloads stay on the incremental event path.
+export type AcpStateSnapshot = AcpRuntimeState & {
+  events: AcpRuntimeEvent[]
+}
+
+// A new renderer accepts the historical full-snapshot state event during rolling development, while
+// current Main processes publish state without the retained event window.
+export type AcpStateUpdate = AcpRuntimeState & {
+  events?: AcpRuntimeEvent[]
+}
+
+export type AcpStateCommandResponse = {
+  revision: number
+  result: Omit<AcpRuntimeState, 'revision'>
+}
+
+export const toAcpStateCommandResponse = (state: AcpStateUpdate): AcpStateCommandResponse => {
+  if (state.revision === undefined) {
+    throw new Error('ACP command state is missing its Main-owned revision.')
+  }
+  const result = { ...state }
+  delete result.events
+  delete result.revision
+  return { revision: state.revision, result }
 }
 
 export type AcpConnectRequest = {

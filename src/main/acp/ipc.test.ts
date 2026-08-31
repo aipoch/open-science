@@ -12,6 +12,7 @@ import type {
   AcpResumeSessionRequest,
   AcpSteerFollowUpRequest
 } from '../../shared/acp'
+import { toAcpStateCommandResponse } from '../../shared/acp'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
@@ -99,6 +100,17 @@ const {
         cwd: '/workspace',
         sessionIds: ['session-1'],
         events: [],
+        pendingPermissions: [],
+        permissionProfiles: {},
+        permissionGrants: {},
+        promptInFlight: false,
+        promptInFlightSessionIds: [],
+        contextUsageBySession: {}
+      }),
+      getState: vi.fn().mockReturnValue({
+        status: 'idle',
+        cwd: '/workspace',
+        sessionIds: ['session-1'],
         pendingPermissions: [],
         permissionProfiles: {},
         permissionGrants: {},
@@ -279,9 +291,23 @@ afterEach(() => {
 it('routes delegated question responses to their owner without touching Main elicitation', async () => {
   const respondToElicitation = vi.fn()
   const respondDelegatedQuestion = vi.fn().mockResolvedValue(undefined)
-  const snapshot = { status: 'idle' }
+  const snapshot = {
+    revision: 1,
+    status: 'idle' as const,
+    cwd: '/workspace',
+    sessionIds: [],
+    events: [],
+    pendingPermissions: [],
+    permissionProfiles: {},
+    permissionGrants: {},
+    contextUsageBySession: {},
+    promptInFlight: false,
+    promptInFlightSessionIds: []
+  }
+  const commandResponse = toAcpStateCommandResponse(snapshot)
+  const runtimeState = { ...commandResponse.result, revision: commandResponse.revision }
   installAcpIpcHandlers(
-    { respondToElicitation, getSnapshot: () => snapshot } as never,
+    { respondToElicitation, getSnapshot: () => snapshot, getState: () => runtimeState } as never,
     {} as never,
     respondDelegatedQuestion,
     passThroughSessionAdmission
@@ -299,7 +325,7 @@ it('routes delegated question responses to their owner without touching Main eli
         answers: [{ questionIndex: 0, value: 'Strict' }]
       }
     })
-  ).resolves.toBe(snapshot)
+  ).resolves.toEqual(commandResponse)
   expect(respondDelegatedQuestion).toHaveBeenCalledWith({
     projectId: 'project-1',
     sessionId: 'session-1',
@@ -1509,7 +1535,11 @@ describe('installAcpIpcHandlers — native context compaction bridge', () => {
 
     expect(compactSession).toHaveBeenCalledOnce()
     expect(compactSession).toHaveBeenCalledWith(request)
-    expect(result).toMatchObject({ status: 'idle', cwd: '/workspace' })
+    expect(result).toMatchObject({
+      revision: expect.any(Number),
+      result: { status: 'idle', cwd: '/workspace' }
+    })
+    expect(result).not.toHaveProperty('result.events')
   })
 
   it('rejects compaction before runtime mutation when Session admission is closed', async () => {

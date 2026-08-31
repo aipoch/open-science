@@ -3,7 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { app } from 'electron'
 
-import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
@@ -218,7 +218,7 @@ const createAcpRuntime = ({
     publish: (events) => broadcastToRenderers('acp:event', events)
   })
   const defaultCallbacks: AcpRuntimeCallbacks = {
-    onStateChanged: (state: AcpStateSnapshot) => broadcastToRenderers('acp:state', state),
+    onStateChanged: (state: AcpStateUpdate) => broadcastToRenderers('acp:state', state),
     onEvent: (event: AcpRuntimeEvent) => {
       const projectId = event.sessionId
         ? runtimeCoordinatorRef.current?.liveSessionProjectId(event.sessionId)

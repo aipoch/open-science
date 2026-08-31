@@ -68,7 +68,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotProjection: createProjection,
       callbacks: {
         onEvent: (event) => order.push(`event:${event.text}`),
-        onStateChanged: (snapshot) => order.push(`state:${snapshot.events.length}`)
+        onStateChanged: (snapshot) => order.push(`state:${snapshot.events?.length ?? 0}`)
       },
       scheduleStatePublication: (publish) => {
         releaseScheduledState = publish
@@ -112,7 +112,7 @@ describe('AcpRuntimePublicationOwner', () => {
 
     owner.emitState()
     expect(onStateChanged).toHaveBeenCalledOnce()
-    expect(onStateChanged.mock.calls[0]?.[0].events).toHaveLength(6)
+    expect(onStateChanged.mock.calls[0]?.[0]).not.toHaveProperty('events')
   })
 
   it('coalesces streamed assistant thought state', () => {
@@ -146,7 +146,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotProjection: createProjection,
       callbacks: {
         onStateChanged: (snapshot) => {
-          for (const event of snapshot.events) {
+          for (const event of snapshot.events ?? []) {
             if (event.kind === 'message' && event.role === 'assistant' && event.text) {
               visibleChunks.set(event.id, event.text)
             }
@@ -178,7 +178,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotProjection: createProjection,
       callbacks: {
         onEvent: (event) => order.push(`event:${event.kind}`),
-        onStateChanged: (snapshot) => order.push(`state:${snapshot.events.length}`)
+        onStateChanged: (snapshot) => order.push(`state:${snapshot.events?.length ?? 0}`)
       },
       scheduleStatePublication: () => () => undefined
     })
@@ -197,7 +197,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotProjection: createProjection,
       callbacks: {
         onStateChanged: (snapshot) =>
-          snapshots.push(snapshot.events.map((event) => event.status ?? 'updating'))
+          snapshots.push((snapshot.events ?? []).map((event) => event.status ?? 'updating'))
       },
       scheduleStatePublication: () => () => undefined
     })
@@ -237,7 +237,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
       interactions: new AcpSessionInteractionOwner(),
       snapshotProjection: createProjection,
-      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot.events.length) },
+      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot.events?.length ?? 0) },
       scheduleStatePublication: () => () => undefined
     })
 

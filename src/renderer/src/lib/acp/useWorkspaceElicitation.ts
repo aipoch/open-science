@@ -77,7 +77,10 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
       permissionProfile,
       memoryEnabled
     }),
-  respondToElicitation: (response) => window.api.acp.respondToElicitation(response)
+  respondToElicitation: async (response) => {
+    const commandResponse = await window.api.acp.respondToElicitation(response)
+    return commandResponse.result
+  }
 })
 
 const useWorkspaceElicitation = (

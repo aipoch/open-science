@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpStateSnapshot } from '../../shared/acp'
+import { toAcpStateCommandResponse } from '../../shared/acp'
 import {
   createApplicationCommandRouter,
   type ApplicationCallerLease,
@@ -21,6 +22,7 @@ import {
 } from './application-commands'
 
 const snapshot: AcpStateSnapshot = {
+  revision: 1,
   status: 'connected',
   cwd: '/workspace',
   sessionIds: ['session-1'],
@@ -32,6 +34,7 @@ const snapshot: AcpStateSnapshot = {
   promptInFlight: false,
   promptInFlightSessionIds: []
 }
+const commandResponse = toAcpStateCommandResponse(snapshot)
 
 const sessionResponse = {
   sessionId: 'session-1',
@@ -43,6 +46,7 @@ const sessionResponse = {
 const createDependencies = (): AcpApplicationCommandDependencies => ({
   runtime: {
     getSnapshot: vi.fn(() => snapshot),
+    getState: vi.fn(() => ({ ...commandResponse.result, revision: commandResponse.revision })),
     connect: vi.fn(async () => snapshot),
     disconnect: vi.fn(async () => snapshot),
     resetSessionContext: vi.fn(async () => ({ ...sessionResponse, contextReset: true })),
@@ -115,7 +119,7 @@ describe('ACP application commands', () => {
 
     await expect(
       router.dispatcher.invoke(acpCommands.respondElicitation, invocation([response]))
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
     expect(respondDelegatedQuestion).toHaveBeenCalledWith({
       ...response.delegatedQuestion,
       requestId: response.requestId
@@ -182,9 +186,9 @@ describe('ACP application commands', () => {
     )
     await expect(
       router.dispatcher.invoke(acpCommands.connect, invocation([connect]))
-    ).resolves.toBe(snapshot)
-    await expect(router.dispatcher.invoke(acpCommands.disconnect, invocation([]))).resolves.toBe(
-      snapshot
+    ).resolves.toEqual(commandResponse)
+    await expect(router.dispatcher.invoke(acpCommands.disconnect, invocation([]))).resolves.toEqual(
+      commandResponse
     )
     await expect(
       router.dispatcher.invoke(acpCommands.createSession, invocation([createSession]))
@@ -194,31 +198,31 @@ describe('ACP application commands', () => {
     ).resolves.toBe(sessionResponse)
     await expect(
       router.dispatcher.invoke(acpCommands.continueInterruptedTurn, invocation([interruptedTurn]))
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
     await expect(
       router.dispatcher.invoke(acpCommands.resetSessionContext, invocation([resumeSession]))
     ).resolves.toMatchObject({ sessionId: 'session-1', contextReset: true })
     await expect(
       router.dispatcher.invoke(acpCommands.compactSession, invocation([compactSession]))
-    ).resolves.toBe(snapshot)
-    await expect(router.dispatcher.invoke(acpCommands.cancel, invocation([cancel]))).resolves.toBe(
-      snapshot
-    )
+    ).resolves.toEqual(commandResponse)
+    await expect(
+      router.dispatcher.invoke(acpCommands.cancel, invocation([cancel]))
+    ).resolves.toEqual(commandResponse)
     await expect(
       router.dispatcher.invoke(acpCommands.deleteSession, invocation([deleteSession]))
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
     await expect(
       router.dispatcher.invoke(acpCommands.respondPermission, invocation([permission]))
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
     await expect(
       router.dispatcher.invoke(acpCommands.respondElicitation, invocation([elicitation]))
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
     await expect(
       router.dispatcher.invoke(acpCommands.setPermissionProfile, invocation([profile]))
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
     await expect(
       router.dispatcher.invoke(acpCommands.revokePermissionGrant, invocation([grant]))
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
 
     expect(dependencies.runtime.connect).toHaveBeenCalledWith(connect)
     expect(dependencies.runtime.disconnect).toHaveBeenCalledWith()
@@ -250,7 +254,7 @@ describe('ACP application commands', () => {
         acpCommands.continueInterruptedTurn,
         invocation([request], createWebCallerContext('local-web'))
       )
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
     await expect(
       router.dispatcher.invoke(
         acpCommands.continueInterruptedTurn,
@@ -305,7 +309,7 @@ describe('ACP application commands', () => {
         acpCommands.saveAsSkill,
         invocation([request], createWebCallerContext('local-web'))
       )
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
     await expect(
       router.dispatcher.invoke(
         acpCommands.saveAsSkill,
@@ -366,7 +370,7 @@ describe('ACP application commands', () => {
         acpCommands.sendPrompt,
         invocation([request], createWebCallerContext('local-web'))
       )
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
     await expect(
       router.dispatcher.invoke(
         acpCommands.sendPrompt,
@@ -394,7 +398,7 @@ describe('ACP application commands', () => {
           acpCommands.respondPermission,
           invocation([response], callerContext)
         )
-      ).resolves.toBe(snapshot)
+      ).resolves.toEqual(commandResponse)
     }
 
     const deniedCallers = [
@@ -958,7 +962,7 @@ describe('ACP application commands', () => {
           acpCommands.respondElicitation,
           invocation([response], callerContext)
         )
-      ).resolves.toBe(snapshot)
+      ).resolves.toEqual(commandResponse)
     }
     await expect(
       router.dispatcher.invoke(
@@ -990,7 +994,7 @@ describe('ACP application commands', () => {
         acpCommands.setPermissionProfile,
         invocation([request], createTaskCallerContext())
       )
-    ).resolves.toBe(snapshot)
+    ).resolves.toEqual(commandResponse)
 
     expect(dependencies.runtime.setPermissionProfile).toHaveBeenCalledWith(request)
   })

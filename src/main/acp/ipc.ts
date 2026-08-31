@@ -20,8 +20,11 @@ import type {
   AcpResumeSessionRequest,
   AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
-  AcpSetPermissionProfileRequest
+  AcpSetPermissionProfileRequest,
+  AcpStateCommandResponse,
+  AcpStateUpdate
 } from '../../shared/acp'
+import { toAcpStateCommandResponse } from '../../shared/acp'
 import { sanitizeSessionReferences } from '../../shared/session-persistence'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpHandlerWorkflows } from './handler-workflows'
@@ -59,6 +62,9 @@ const withResponseAdmission = <Result>(
 ): Promise<Result> =>
   sessionId ? sessionAdmission.withSessionAvailableById(sessionId, operation) : operation()
 
+const stateCommand = async (operation: Promise<AcpStateUpdate>): Promise<AcpStateCommandResponse> =>
+  toAcpStateCommandResponse(await operation)
+
 const registerAcpIpcHandlerSet = (
   runtime: AcpRuntimeCoordinator,
   workflows: AcpHandlerWorkflows,
@@ -69,8 +75,10 @@ const registerAcpIpcHandlerSet = (
   resolveMemoryEnabled?: AcpSessionMemoryPreferenceResolver
 ): void => {
   ipcMainHandle('acp:get-state', () => runtime.getSnapshot())
-  ipcMainHandle('acp:connect', (_event, request: AcpConnectRequest) => runtime.connect(request))
-  ipcMainHandle('acp:disconnect', () => runtime.disconnect())
+  ipcMainHandle('acp:connect', (_event, request: AcpConnectRequest) =>
+    stateCommand(runtime.connect(request))
+  )
+  ipcMainHandle('acp:disconnect', () => stateCommand(runtime.disconnect()))
   ipcMainHandle('acp:create-session', (_event, request: AcpCreateSessionRequest) =>
     workflows.createSession(request)
   )
@@ -80,7 +88,7 @@ const registerAcpIpcHandlerSet = (
   ipcMainHandle(
     'acp:continue-interrupted-turn',
     (_event, request: AcpContinueInterruptedTurnRequest) =>
-      workflows.continueInterruptedTurn(request)
+      stateCommand(workflows.continueInterruptedTurn(request))
   )
   ipcMainHandle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
     sessionAdmission.withSessionAvailableById(request.sessionId, async (projectId) =>
@@ -93,8 +101,10 @@ const registerAcpIpcHandlerSet = (
     )
   )
   ipcMainHandle('acp:compact-session', (_event, request: AcpCompactSessionRequest) =>
-    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
-      runtime.compactSession(request)
+    stateCommand(
+      sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+        runtime.compactSession(request)
+      )
     )
   )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
@@ -118,7 +128,7 @@ const registerAcpIpcHandlerSet = (
       continuation: undefined,
       suppressUserMessage: undefined
     }
-    return workflows.sendPrompt(rendererRequest)
+    return stateCommand(workflows.sendPrompt(rendererRequest))
   })
   ipcMainHandle('acp:steer-follow-up', (_event, request: AcpSteerFollowUpRequest) =>
     runtime.steerFollowUp({
@@ -133,21 +143,23 @@ const registerAcpIpcHandlerSet = (
     })
   )
   ipcMainHandle('acp:save-as-skill', (_event, request: AcpSaveAsSkillRequest) =>
-    workflows.saveAsSkill(request)
+    stateCommand(workflows.saveAsSkill(request))
   )
   ipcMainHandle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>
-    runtime.cancelPrompt(request)
+    stateCommand(runtime.cancelPrompt(request))
   )
   ipcMainHandle('acp:delete-session', async (_event, request: AcpDeleteSessionRequest) => {
     // The coordinator owns session disappearance notifications for delete, connection loss, and
     // retirement. Keeping that signal in one layer prevents a successful delete from firing twice.
-    return runtime.deleteSession(request)
+    return stateCommand(runtime.deleteSession(request))
   })
   ipcMainHandle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
-    withResponseAdmission(
-      sessionAdmission,
-      resolvePermissionResponseSessionId(runtime.getSnapshot(), response),
-      () => runtime.respondToPermission(response)
+    stateCommand(
+      withResponseAdmission(
+        sessionAdmission,
+        resolvePermissionResponseSessionId(runtime.getSnapshot(), response),
+        () => runtime.respondToPermission(response)
+      )
     )
   )
   ipcMainHandle('acp:get-plan-projection', (_event, projectId: string, sessionId: string) =>
@@ -161,31 +173,37 @@ const registerAcpIpcHandlerSet = (
       )
   )
   ipcMainHandle('acp:respond-elicitation', (_event, response: ElicitationResponse) => {
-    return withResponseAdmission(
-      sessionAdmission,
-      resolveElicitationResponseSessionId(runtime.getSnapshot(), response),
-      () => {
-        if (response.delegatedQuestion) {
-          if (!respondDelegatedQuestion) {
-            throw new Error('Delegated question response owner is unavailable.')
+    return stateCommand(
+      withResponseAdmission(
+        sessionAdmission,
+        resolveElicitationResponseSessionId(runtime.getSnapshot(), response),
+        () => {
+          if (response.delegatedQuestion) {
+            if (!respondDelegatedQuestion) {
+              throw new Error('Delegated question response owner is unavailable.')
+            }
+            return respondDelegatedQuestion({
+              ...response.delegatedQuestion,
+              requestId: response.requestId
+            }).then(() => runtime.getState())
           }
-          return respondDelegatedQuestion({
-            ...response.delegatedQuestion,
-            requestId: response.requestId
-          }).then(() => runtime.getSnapshot())
+          return runtime.respondToElicitation(response)
         }
-        return runtime.respondToElicitation(response)
-      }
+      )
     )
   })
   ipcMainHandle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
-    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
-      runtime.setPermissionProfile(request)
+    stateCommand(
+      sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+        runtime.setPermissionProfile(request)
+      )
     )
   )
   ipcMainHandle('acp:revoke-permission-grant', (_event, request: AcpRevokePermissionGrantRequest) =>
-    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
-      runtime.revokePermissionGrant(request)
+    stateCommand(
+      sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+        runtime.revokePermissionGrant(request)
+      )
     )
   )
 }
