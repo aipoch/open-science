@@ -24,7 +24,7 @@ Open Science는 [AIPOCH](https://aipoch.com/open-science)가 과학자와 연구
 
 Open Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[Open Science v0.24.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 8월)_. Open Science v0.24.0은 프로젝트 간 이동이 더 빨라지고 코드 실행이 더 안전해집니다. 워크스페이스 메뉴의 프로젝트 빠른 전환기, 승인한 도메인으로 제한되고 새로운 대상은 대화 내 승인을 거치는 Notebook 및 컴퓨팅 네트워크 액세스, 사용자 지정 커넥터가 바인딩할 수 있는 기기 전역 공유 자격 증명, 한 번의 클릭으로 복원하는 안전 기본 권한, 그리고 독일어 인터페이스가 함께 제공됩니다. 이와 함께 Notebook 및 컴퓨팅 실행의 불변 파일 세대, 강화된 원격 컴퓨팅 작업, 런타임·커넥터·저장소에 관한 폭넓은 문제 수정이 포함됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
+> 💡 **[Open Science v0.24.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 8월)_. Open Science v0.24.0은 프로젝트 간 이동이 더 빨라지고 코드 실행이 더 안전해집니다. 워크스페이스 메뉴의 프로젝트 빠른 전환기, 승인한 도메인으로 제한되고 새로운 대상은 대화 내 승인을 거치는 Notebook 및 컴퓨팅 네트워크 액세스(Windows에서는 샌드박스 관리자 설정을 한 번 완료하면 적용됩니다), 사용자 지정 커넥터가 바인딩할 수 있는 기기 전역 공유 자격 증명, 한 번의 클릭으로 복원하는 안전 기본 권한, 그리고 독일어 인터페이스가 함께 제공됩니다. 이와 함께 Notebook 및 컴퓨팅 실행의 불변 파일 세대, 강화된 원격 컴퓨팅 작업, 런타임·커넥터·저장소에 관한 폭넓은 문제 수정이 포함됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="생성된 아티팩트가 포함된 에이전트 세션을 보여 주는 Open Science 오픈 소스 AI 연구 워크벤치 데스크톱 앱" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />

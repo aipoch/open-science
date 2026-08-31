@@ -24,7 +24,7 @@ Open Science 是由 [AIPOCH](https://aipoch.com/open-science) 为科学家和研
 
 Open Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[Open Science v0.24.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 8 月）_。Open Science v0.24.0 让项目之间切换更快、代码运行更安全：工作区菜单中的项目快速切换器、仅限 Open Science 默认域与你所批准域的 Notebook 和计算网络访问（新目标可在对话中批准）、可供自定义连接器绑定的设备级共享凭据、可一键恢复的安全默认权限，以及德语界面——此外还包括 Notebook 与计算运行的不可变文件世代、加固的远程计算作业，以及一大批运行时、连接器与存储修复。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[Open Science v0.24.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 8 月）_。Open Science v0.24.0 让项目之间切换更快、代码运行更安全：工作区菜单中的项目快速切换器、仅限 Open Science 默认域与你所批准域的 Notebook 和计算网络访问（新目标可在对话中批准；在 Windows 上，其管理员设置完成后生效）、可供自定义连接器绑定的设备级共享凭据、可一键恢复的安全默认权限，以及德语界面——此外还包括 Notebook 与计算运行的不可变文件世代、加固的远程计算作业，以及一大批运行时、连接器与存储修复。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science 开源 AI 研究工作台桌面应用工作区，其中显示了包含生成产物的智能体会话" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />

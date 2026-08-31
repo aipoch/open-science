@@ -1,14 +1,14 @@
 ## ✨ Highlights
 
 - **Move between projects in seconds.** The workspace project menu now lists your other active projects with title and description previews, so you can switch projects without leaving the session you are in. (#1957)
-- **Notebook code stays inside your network boundaries.** Notebook and compute runtimes can only reach Open Science defaults and the domains you approve, and when code tries a new destination, you approve or deny it right in the conversation. (#1911)
+- **Notebook code stays inside your network boundaries.** Notebook and compute runtimes can only reach Open Science defaults and the domains you approve, and when code tries a new destination, you approve or deny it right in the conversation. On Windows, protection applies once the sandbox's one-time administrator setup is complete. (#1911)
 - **Enter credentials once, reuse them everywhere.** API keys, access tokens, and OAuth sign-ins can be stored device-wide and bound to any custom connector's environment variables, headers, or sign-in. (#1948, #1963)
 - **A German interface.** German joins Spanish, French, Chinese (Simplified and Traditional), Japanese, Korean, and Russian, with README translations to match. (#1761)
 
 ## 🚀 New Features
 
 - **Project quick switcher** — the workspace project menu lists your other active projects with title and description previews; the first five are shown with the rest one click away, on desktop and mobile. (#1957)
-- **Notebook network sandbox** — Settings → Network manages the domains notebook and compute runtimes may reach. Blocked destinations route through the conversation approval flow with Deny, Allow once, and Always allow, and one-time decisions apply only to the exact command that requested them. (#1911)
+- **Notebook network sandbox** — Settings → Network manages the domains notebook and compute runtimes may reach. Blocked destinations route through the conversation approval flow with Deny, Allow once, and Always allow, and one-time decisions apply only to the exact command that requested them. On macOS and Linux the boundary is enforced out of the box; on Windows it applies after the sandbox's one-time administrator setup. (#1911)
 - **Device-wide shared credentials** — store API keys, access tokens, and OAuth sign-ins once under Settings → Credentials and bind them to custom connectors as environment variables, headers, or OAuth sign-ins. Browser sign-in runs as a separate, cancellable step, and stored values only resolve inside the app. (#1948, #1963)
 - **Safe default permissions with restore** — new installations seed safe grants for skill invocation and for reading literature linked to the current message, and Settings → Permissions gains a Restore defaults action that re-adds only the missing baseline without touching your other grants. (#1931)
 - **Windows onboarding suggests a data drive** — when a suitable secondary drive is available, first-run setup preselects it for the data location instead of the system drive, and the choice survives restarts. (#1930, #1956)
