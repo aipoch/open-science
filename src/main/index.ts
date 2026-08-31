@@ -164,12 +164,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   const bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
     if (process.platform !== 'win32' || systemShutdownWindows.has(window)) return
     systemShutdownWindows.add(window)
-    window.on('query-session-end', (event) => {
-      event.preventDefault()
-      signalSystemShutdown()
-    })
-    // Windows no longer permits delaying shutdown at this point; retain a best-effort fallback for
-    // hosts that skipped query-session-end.
+    // Respect the OS-owned session end while giving the existing shutdown owner an early,
+    // best-effort opportunity to clean up before Windows terminates the process.
+    window.on('query-session-end', signalSystemShutdown)
+    // Windows no longer permits delaying shutdown at this point; retain a fallback for hosts that
+    // skipped query-session-end.
     window.on('session-end', signalSystemShutdown)
   }
 

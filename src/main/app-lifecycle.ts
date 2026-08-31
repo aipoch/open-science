@@ -256,13 +256,11 @@ export const installAppLifecycle = (
     if (deps.bindSystemShutdownWindow) {
       deps.bindSystemShutdownWindow(window)
     } else if (platform === 'win32') {
-      window.on('query-session-end', (event) => {
-        event.preventDefault()
-        requestSystemShutdown()
-      })
-      // This notification can no longer delay Windows logoff/shutdown. It is only a best-effort
-      // fallback for a host that did not deliver query-session-end; the preventable event above owns
-      // the bounded, awaited path.
+      // Respect the OS-owned session end while giving the existing shutdown owner an early,
+      // best-effort opportunity to clean up before Windows terminates the process.
+      window.on('query-session-end', requestSystemShutdown)
+      // This notification can no longer delay Windows logoff/shutdown. Retain it as a fallback for
+      // hosts that did not deliver query-session-end.
       window.on('session-end', requestSystemShutdown)
     }
     return window

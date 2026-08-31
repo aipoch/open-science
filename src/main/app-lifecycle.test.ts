@@ -381,14 +381,14 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
-  it('routes a preventable Windows session end through the existing shutdown owner', async () => {
+  it('respects Windows session end while routing best-effort cleanup through the shutdown owner', async () => {
     const { app, windows, shutdownBackends, flushSessionPersistence, quit, confirmClose } = setup({
       platform: 'win32'
     })
 
     const event = windows[0].emit('query-session-end')
 
-    expect(event.defaultPrevented).toBe(true)
+    expect(event.defaultPrevented).toBe(false)
     expect(quit).toHaveBeenCalledTimes(1)
 
     app.emit('before-quit')
@@ -400,7 +400,7 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
-  it('uses Windows session-end as a best-effort fallback when the preventable event was missed', () => {
+  it('uses Windows session-end as a best-effort fallback when the query event was missed', () => {
     const { windows, quit } = setup({ platform: 'win32' })
 
     const event = windows[0].emit('session-end')
