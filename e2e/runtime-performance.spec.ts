@@ -107,8 +107,8 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
   ).toBe(1)
   expect(
     recoveryStorage?.notebookRunFileCount.last,
-    'the journey must persist one Notebook run per stress cycle'
-  ).toBe(stressCycles)
+    'the journey must reuse exactly one persisted Notebook run file'
+  ).toBe(1)
   expect(recoveryStorage?.sessionBytes.last).toBeGreaterThan(0)
   expect(recoveryStorage?.notebookRunBytes.last).toBeGreaterThan(0)
   console.log(`Runtime performance summary: ${result.summaryMarkdownPath}`)
