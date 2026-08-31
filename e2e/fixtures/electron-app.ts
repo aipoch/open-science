@@ -20,6 +20,84 @@ const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 type E2eWindowMode = 'hidden' | 'normal'
 type LiveProviderSelection = { kind: 'configured'; name: string } | { kind: 'codex-subscription' }
 
+const migrateSafeStorageKeyRef = async (
+  target: ElectronApplication,
+  sourceExecutable: string,
+  sourceKeyRef: string
+): Promise<string> => {
+  const publicKey = await target.evaluate(() => {
+    const crypto = process.getBuiltinModule('node:crypto')
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' }
+    })
+    ;(
+      globalThis as typeof globalThis & { __openScienceE2eCredentialPrivateKey?: string }
+    ).__openScienceE2eCredentialPrivateKey = privateKey
+    return publicKey
+  })
+
+  const sourceRoot = await mkdtemp(join(tmpdir(), 'open-science-credential-source-'))
+  const sourceApplication = await electron.launch({
+    executablePath: sourceExecutable,
+    args: [
+      ...(sourceExecutable.endsWith('/Electron') ? [APP_ROOT] : []),
+      `--user-data-dir=${join(sourceRoot, 'profile')}`
+    ],
+    env: {
+      ...process.env,
+      OPEN_SCIENCE_STORAGE_ROOT: join(sourceRoot, 'storage'),
+      OPEN_SCIENCE_E2E_STORAGE_ROOT: join(sourceRoot, 'storage'),
+      OPEN_SCIENCE_E2E_WINDOW_MODE: 'hidden'
+    }
+  })
+
+  try {
+    const sealedCredential = await sourceApplication.evaluate(
+      ({ safeStorage }, input) => {
+        const crypto = process.getBuiltinModule('node:crypto')
+        if (!input.keyRef.startsWith('enc:')) throw new Error('Unsupported credential reference.')
+        const plaintext = safeStorage.decryptString(
+          Buffer.from(input.keyRef.slice('enc:'.length), 'base64')
+        )
+        return crypto
+          .publicEncrypt(input.publicKey, Buffer.from(plaintext, 'utf8'))
+          .toString('base64')
+      },
+      { keyRef: sourceKeyRef, publicKey }
+    )
+
+    return await target.evaluate(({ safeStorage }, sealedCredential) => {
+      const crypto = process.getBuiltinModule('node:crypto')
+      const holder = globalThis as typeof globalThis & {
+        __openScienceE2eCredentialPrivateKey?: string
+      }
+      const privateKey = holder.__openScienceE2eCredentialPrivateKey
+      delete holder.__openScienceE2eCredentialPrivateKey
+      if (!privateKey) throw new Error('Credential migration key is unavailable.')
+      const plaintext = crypto.privateDecrypt(privateKey, Buffer.from(sealedCredential, 'base64'))
+      try {
+        return `enc:${safeStorage.encryptString(plaintext.toString('utf8')).toString('base64')}`
+      } finally {
+        plaintext.fill(0)
+      }
+    }, sealedCredential)
+  } finally {
+    await closeElectronApplicationForCleanup(
+      {
+        close: () => sourceApplication.close(),
+        forceClose: async () => {
+          const result = await terminateProcessTree(sourceApplication.process())
+          if (!result.reaped) throw new Error('Credential source process did not exit.')
+        }
+      },
+      { gracefulTimeoutMs: 3_000, forcedTimeoutMs: 3_000 }
+    ).catch(() => undefined)
+    await rm(sourceRoot, { recursive: true, force: true })
+  }
+}
+
 const electronLaunchTarget = (
   userDataRoot: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -553,7 +631,6 @@ class ElectronAppHarness implements ElectronApp {
     provider: LiveProviderSelection
     sourceSettingsPath: string
   }): Promise<Page> {
-    await this.close()
     const source = JSON.parse(await readFile(input.sourceSettingsPath, 'utf8')) as {
       codex?: {
         nativePath?: unknown
@@ -578,6 +655,21 @@ class ElectronAppHarness implements ElectronApp {
     if (configuredProviderName && (typeof provider!.keyRef !== 'string' || !provider!.keyRef)) {
       throw new Error(`Provider ${configuredProviderName} has no stored credential reference.`)
     }
+    const credentialSourceExecutable = process.env.OPEN_SCIENCE_FIGURE_E2E_CREDENTIAL_EXECUTABLE
+    if (provider && (provider.keyRef as string).startsWith('enc:') && !credentialSourceExecutable) {
+      throw new Error(
+        'OPEN_SCIENCE_FIGURE_E2E_CREDENTIAL_EXECUTABLE is required to migrate the configured provider credential into the isolated Electron profile.'
+      )
+    }
+    const isolatedKeyRef =
+      provider && credentialSourceExecutable
+        ? await migrateSafeStorageKeyRef(
+            this.runningApplication,
+            credentialSourceExecutable,
+            provider.keyRef as string
+          )
+        : undefined
+    await this.close()
     if (
       typeof source.codex?.resolvedPath !== 'string' ||
       typeof source.codex.nativePath !== 'string'
@@ -606,7 +698,9 @@ class ElectronAppHarness implements ElectronApp {
       `${JSON.stringify(
         {
           version: source.version,
-          providers: provider ? [provider] : [],
+          providers: provider
+            ? [{ ...provider, ...(isolatedKeyRef ? { keyRef: isolatedKeyRef } : {}) }]
+            : [],
           ...(provider
             ? {
                 activeProviderId: provider.id,

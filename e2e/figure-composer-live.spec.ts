@@ -5,6 +5,7 @@ import { test } from './fixtures/electron-app'
 
 const sourceSettingsPath = process.env.OPEN_SCIENCE_FIGURE_E2E_SOURCE_SETTINGS
 const liveTest = sourceSettingsPath ? test : test.skip
+const sequentialPanels = process.env.OPEN_SCIENCE_FIGURE_E2E_SEQUENTIAL_PANELS === '1'
 const liveProvider =
   process.env.OPEN_SCIENCE_FIGURE_E2E_PROVIDER_KIND === 'codex-subscription'
     ? ({ kind: 'codex-subscription' } as const)
@@ -15,10 +16,15 @@ const liveProvider =
 
 type FigureRun = {
   rootDone: boolean
+  rootFrameId?: string
   skillForced: boolean
   skillLoaded: boolean
   usedNativeSpawn: boolean
   delegateFrameCount: number
+  skillLoads: Array<{ frameId: string; title: string }>
+  panelNotebookRuns: Array<{ frameId: string; title: string }>
+  panelImageViews: Array<{ frameId: string; title: string; count: number }>
+  reviewImageViews: Array<{ frameId: string; title: string; count: number }>
   attempts: Array<{
     frameId: string
     attemptId: string
@@ -78,10 +84,15 @@ const readFigureRun = async (page: Page, projectId: string): Promise<FigureRun> 
       if (!session) {
         return {
           rootDone: false,
+          rootFrameId: undefined,
           skillForced: false,
           skillLoaded: false,
           usedNativeSpawn: false,
           delegateFrameCount: 0,
+          skillLoads: [],
+          panelNotebookRuns: [],
+          panelImageViews: [],
+          reviewImageViews: [],
           attempts: [],
           artifacts: [],
           files: [],
@@ -154,8 +165,51 @@ const readFigureRun = async (page: Page, projectId: string): Promise<FigureRun> 
       const files = await window.api.artifacts.listProjectFiles({ projectId })
       const rootFrameId = session.conversationGraph?.rootFrameId
       const rootMessages = messages.filter((message) => message.agentFrameId === rootFrameId)
+      const isTerminalActivity = (status: string): boolean =>
+        status === 'completed' || status === 'failed'
+      const skillLoads = (session.conversationGraph?.activities ?? [])
+        .filter(
+          (activity) =>
+            isTerminalActivity(activity.status) &&
+            (activity.title.startsWith('Loaded skill: ') ||
+              /os-figure-(?:composer|style)|figure-(?:composer|style)/i.test(activity.title))
+        )
+        .map((activity) => ({ frameId: activity.agentFrameId, title: activity.title }))
+      const reviewerFrameIds = new Set(
+        delegateFrames
+          .filter((frame) => /review/i.test(frame.delegateName ?? ''))
+          .map((frame) => frame.id)
+      )
+      const panelFrameIds = new Set(
+        delegateFrames
+          .filter((frame) => /panel[_-][ab](?:[_-]|$)/i.test(frame.delegateName ?? ''))
+          .map((frame) => frame.id)
+      )
+      const panelNotebookRuns = (session.conversationGraph?.activities ?? [])
+        .filter(
+          (activity) =>
+            isTerminalActivity(activity.status) &&
+            panelFrameIds.has(activity.agentFrameId) &&
+            activity.title === 'mcp.open-science-notebook.notebook_execute'
+        )
+        .map((activity) => ({ frameId: activity.agentFrameId, title: activity.title }))
+      const imageViews = (session.conversationGraph?.activities ?? [])
+        .filter((activity) => isTerminalActivity(activity.status))
+        .flatMap((activity) => {
+          const serializedContent = JSON.stringify(activity.toolContent ?? [])
+          const transientImageCount =
+            serializedContent.match(/\[image:\s*image\/(?:png|jpeg)\]/giu)?.length ?? 0
+          const count = Math.max(
+            activity.title.startsWith('View Image ') ? 1 : 0,
+            transientImageCount
+          )
+          return count > 0 ? [{ frameId: activity.agentFrameId, title: activity.title, count }] : []
+        })
+      const panelImageViews = imageViews.filter((view) => panelFrameIds.has(view.frameId))
+      const reviewImageViews = imageViews.filter((view) => reviewerFrameIds.has(view.frameId))
       return {
         rootDone: session.status === 'idle',
+        rootFrameId,
         skillForced: messages.some((message) =>
           message.parts?.some((part) => part.type === 'skill' && part.id === 'figure-composer')
         ),
@@ -170,6 +224,10 @@ const readFigureRun = async (page: Page, projectId: string): Promise<FigureRun> 
           (activity) => activity.title === 'spawnAgent'
         ),
         delegateFrameCount: delegateFrames.length,
+        skillLoads,
+        panelNotebookRuns,
+        panelImageViews,
+        reviewImageViews,
         attempts,
         artifacts,
         files: files
@@ -198,9 +256,17 @@ liveTest('completes figure-composer panel delegation in the real Electron app', 
     'Create a minimal two-panel scientific figure with the forced figure-composer Skill.',
     'This is an orchestration test: use exactly panels A and B, both simple schematics with no input data.',
     'Panel A shows input flowing into analysis; panel B shows analysis flowing into a result.',
+    'Treat A and B as two locally complete stage summaries, not one diagram continued across the seam; use distinct node styling so the repeated Analysis label is context, not a shared seam node.',
+    'Use a 120 mm, 12-column outline with one compact 38 mm row: A at row 0, col 0, colspan 6; B at row 0, col 6, colspan 6.',
+    'Set fixed_panel_set true because the exact two-panel A/B set is a user requirement; review must preserve it.',
     'Delegate both panel renderings to Subagents using the Skill workflow, compose them, and return the final Artifact.',
+    sequentialPanels
+      ? 'For this provider regression, use ordered waves of one: collect panel A to completion before dispatching panel B.'
+      : '',
     'Do not ask questions and do not add extra panels.'
-  ].join(' ')
+  ]
+    .filter(Boolean)
+    .join(' ')
   const editor = page.getByRole('textbox', { name: 'Ask anything' })
   await editor.fill('/figure')
   const skillOption = page
@@ -230,15 +296,16 @@ liveTest('completes figure-composer panel delegation in the real Electron app', 
     isPanelOutput(attempt.structuredOutput)
   const isCompositeAttempt = (attempt: FigureAttempt): attempt is CompositeAttempt =>
     isCompositeOutput(attempt.structuredOutput)
+  const panelLetter = (attempt: FigureAttempt): 'a' | 'b' | undefined => {
+    const letter = attempt.name?.match(/panel[_-]([ab])(?:[_-]|$)/i)?.[1]?.toLowerCase()
+    return letter === 'a' || letter === 'b' ? letter : undefined
+  }
+  const rawPanelAttempts = result.attempts.filter((attempt) => panelLetter(attempt) !== undefined)
   const panelAttempts = result.attempts.filter(isPanelAttempt)
   const compositeAttempts = result.attempts.filter(isCompositeAttempt)
   const reviewAttempts = result.attempts.filter((attempt) =>
     isReviewOutput(attempt.structuredOutput)
   )
-  const panelLetter = (attempt: FigureAttempt): 'a' | 'b' | undefined => {
-    const letter = attempt.name?.match(/panel[_-]([ab])(?:[_-]|$)/i)?.[1]?.toLowerCase()
-    return letter === 'a' || letter === 'b' ? letter : undefined
-  }
   const panelArtifact = (attempt: PanelAttempt): FigureRun['artifacts'][number] | undefined => {
     const letter = panelLetter(attempt)
     if (!letter) return undefined
@@ -258,8 +325,8 @@ liveTest('completes figure-composer panel delegation in the real Electron app', 
       attempt.artifactIds[0] === attempt.structuredOutput.panelVersionId &&
       panelArtifact(attempt) !== undefined
   )
-  const rejectedPanelAttempts = panelAttempts.filter(
-    (attempt) => !validPanelAttempts.includes(attempt)
+  const rejectedPanelAttempts = rawPanelAttempts.filter(
+    (attempt) => !isPanelAttempt(attempt) || !validPanelAttempts.includes(attempt)
   )
   const compositeArtifact = (
     attempt: CompositeAttempt
@@ -292,7 +359,11 @@ liveTest('completes figure-composer panel delegation in the real Electron app', 
   expect(result.skillLoaded, diagnostics).toBe(true)
   expect(result.usedNativeSpawn, diagnostics).toBe(false)
   expect(result.transcript, diagnostics).not.toContain('ACP connection closed')
+  expect(result.transcript, diagnostics).not.toMatch(
+    /delegation inputs must be immutable|delegation input is unavailable/i
+  )
   expect(result.attempts.length, diagnostics).toBeGreaterThanOrEqual(4)
+  expect(result.attempts.length, diagnostics).toBeLessThanOrEqual(8)
   expect(new Set(result.attempts.map((attempt) => attempt.frameId)).size, diagnostics).toBe(
     result.delegateFrameCount
   )
@@ -304,19 +375,36 @@ liveTest('completes figure-composer panel delegation in the real Electron app', 
     diagnostics
   ).toBe(true)
   expect(
-    result.attempts.every((attempt) => attempt.structuredOutputEvidencePresent),
+    result.attempts.every(
+      (attempt) =>
+        rejectedPanelAttempts.includes(attempt) || attempt.structuredOutputEvidencePresent
+    ),
     diagnostics
   ).toBe(true)
   expect(
     result.attempts.every(
       (attempt) =>
+        rejectedPanelAttempts.includes(attempt) ||
         isPanelOutput(attempt.structuredOutput) ||
         isCompositeOutput(attempt.structuredOutput) ||
         isReviewOutput(attempt.structuredOutput)
     ),
     diagnostics
   ).toBe(true)
-  expect(panelAttempts.length, diagnostics).toBeGreaterThanOrEqual(2)
+  expect(rawPanelAttempts.length, diagnostics).toBeGreaterThanOrEqual(2)
+  expect(rawPanelAttempts.length, diagnostics).toBeLessThanOrEqual(4)
+  for (const attempt of rawPanelAttempts) {
+    expect(
+      result.panelNotebookRuns.filter((run) => run.frameId === attempt.frameId).length,
+      diagnostics
+    ).toBeLessThanOrEqual(2)
+    expect(
+      result.panelImageViews
+        .filter((view) => view.frameId === attempt.frameId)
+        .reduce((total, view) => total + view.count, 0),
+      diagnostics
+    ).toBe(0)
+  }
   expect(
     validPanelAttempts.filter((attempt) => panelLetter(attempt) === 'a').length,
     diagnostics
@@ -344,6 +432,10 @@ liveTest('completes figure-composer panel delegation in the real Electron app', 
     )
     expect(rejected.status, diagnostics).toBe('completed')
     expect(rejected.endedAt, diagnostics).toBeDefined()
+    if (!isPanelAttempt(rejected)) {
+      expect(rejected.structuredOutputEvidencePresent, diagnostics).toBe(false)
+      expect(rejected.artifactIds, diagnostics).toHaveLength(0)
+    }
     expect(letter, diagnostics).toBeDefined()
     expect(retry, diagnostics).toBeDefined()
     expect(retry?.startedAt, diagnostics).toBeGreaterThanOrEqual(
@@ -354,6 +446,7 @@ liveTest('completes figure-composer panel delegation in the real Electron app', 
     expect(retry?.name, diagnostics).not.toBe(rejected.name)
   }
   expect(compositeAttempts.length, diagnostics).toBeGreaterThanOrEqual(1)
+  expect(compositeAttempts.length, diagnostics).toBeLessThanOrEqual(2)
   for (const attempt of compositeAttempts) {
     expect(attempt.status, diagnostics).toBe('completed')
     expect(attempt.artifactIds, diagnostics).toHaveLength(1)
@@ -372,6 +465,49 @@ liveTest('completes figure-composer panel delegation in the real Electron app', 
     ])
   }
   expect(reviewAttempts.length, diagnostics).toBeGreaterThanOrEqual(1)
+  expect(reviewAttempts.length, diagnostics).toBeLessThanOrEqual(2)
+  for (const review of reviewAttempts) {
+    const imageViewCount = result.reviewImageViews
+      .filter((view) => view.frameId === review.frameId)
+      .reduce((total, view) => total + view.count, 0)
+    expect(imageViewCount, diagnostics).toBeGreaterThanOrEqual(1)
+    expect(imageViewCount, diagnostics).toBeLessThanOrEqual(2)
+  }
+
+  const rootFigureAutoLoads = result.skillLoads.filter(
+    (load) =>
+      load.title.startsWith('Loaded skill: ') &&
+      /figure-composer|os-figure-composer/i.test(load.title)
+  )
+  expect(rootFigureAutoLoads, diagnostics).toHaveLength(1)
+  expect(result.rootFrameId, diagnostics).toBeDefined()
+  expect(rootFigureAutoLoads[0]?.frameId, diagnostics).toBe(result.rootFrameId)
+  const rootComposerSkillReads = result.skillLoads.filter(
+    (load) =>
+      load.frameId === result.rootFrameId &&
+      !load.title.startsWith('Loaded skill: ') &&
+      /os-figure-composer\/SKILL\.md|figure-composer\/SKILL\.md/i.test(load.title)
+  )
+  expect(rootComposerSkillReads, diagnostics).toHaveLength(1)
+  const unexpectedRootFigureAccesses = result.skillLoads.filter(
+    (load) =>
+      load.frameId === result.rootFrameId &&
+      /figure-composer|os-figure-composer|figure-style/i.test(load.title) &&
+      !(
+        load.title.startsWith('Loaded skill: ') &&
+        /figure-composer|os-figure-composer/i.test(load.title)
+      ) &&
+      !rootComposerSkillReads.includes(load)
+  )
+  expect(unexpectedRootFigureAccesses, diagnostics).toEqual([])
+  expect(
+    result.skillLoads.filter(
+      (load) =>
+        load.frameId !== result.rootFrameId &&
+        /figure-composer|os-figure-composer|figure-style/i.test(load.title)
+    ),
+    diagnostics
+  ).toEqual([])
 
   const latestComposite = compositeAttempts.at(-1)
   expect(latestComposite, diagnostics).toBeDefined()
