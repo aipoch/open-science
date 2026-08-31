@@ -216,7 +216,9 @@ export const preferredEndpoint = <const FrameworkEndpoints extends readonly Chat
   endpoints: readonly ChatApiEndpoint[],
   frameworkEndpoints: FrameworkEndpoints
 ): FrameworkEndpoints[number] | undefined => {
-  const shared = frameworkEndpoints.filter((endpoint) => endpoints.includes(endpoint))
+  const shared: FrameworkEndpoints[number][] = frameworkEndpoints.filter((endpoint) =>
+    endpoints.includes(endpoint)
+  )
 
   if (shared.length === 0) return undefined
 
