@@ -1745,7 +1745,11 @@ describe('mandatory product glossary', () => {
     expect(readme).toContain('Sitzungsnummern in der globalen Suche')
     expect(readme).toContain('Tastaturkürzel für eine neue Konversation')
     expect(readme).toContain('Schlüssel- oder Passwortauthentifizierung')
-    expect(readme).toContain('Open Science v0.23.0 veröffentlicht')
+    const rootPackage = JSON.parse(
+      readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
+    ) as { version: string }
+    // The banner assertion tracks the repo version instead of a hardcoded bump target.
+    expect(readme).toContain(`Open Science v${rootPackage.version} veröffentlicht`)
     expect(readme).toContain('CodeBuddy')
     expect(readme).toContain('Text-, Bild- und PDF-Anmerkungen')
     expect(readme).toContain('persistente Agentenerinnerungen')
