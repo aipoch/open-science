@@ -556,7 +556,9 @@ const registerCoreSettingsApplicationCommands = (
       },
       'settings:set-notebook-network': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-notebook-network')
-        return dependencies.service.setNotebookNetwork(args[0])
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.setNotebookNetwork(args[0])
+        )
       },
       'settings:set-project-files-filter': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-project-files-filter')

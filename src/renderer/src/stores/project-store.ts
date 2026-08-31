@@ -49,17 +49,20 @@ const upsertProjectList = (projects: Project[], project: Project): Project[] => 
 
 let projectLoadSequence = 0
 let projectMutationSequence = 0
-let projectDeletionRequestGeneration = 0
+let projectOperationGeneration = 0
 const projectProjectionGenerations = new Map<string, number>()
 
-const beginProjectProjection = (id: string): number => {
-  const generation = (projectProjectionGenerations.get(id) ?? 0) + 1
+const beginProjectProjection = (): number => ++projectOperationGeneration
+
+const commitProjectProjection = (id: string, generation: number): boolean => {
+  if (generation < (projectProjectionGenerations.get(id) ?? 0)) return false
   projectProjectionGenerations.set(id, generation)
-  return generation
+  return true
 }
 
-const isCurrentProjectProjection = (id: string, generation: number): boolean =>
-  projectProjectionGenerations.get(id) === generation
+const supersedeProjectProjection = (id: string): void => {
+  projectProjectionGenerations.set(id, beginProjectProjection())
+}
 
 export const createInitialProjectState = (): ProjectStoreData => ({
   projects: [],
@@ -108,7 +111,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (get().projects.some((current) => current.id === project.id)) {
       set({ loadError: undefined })
     } else {
-      beginProjectProjection(project.id)
+      supersedeProjectProjection(project.id)
       set((state) => ({
         projects: upsertProjectList(state.projects, project),
         loadError: undefined
@@ -120,11 +123,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // Applies an editable Project patch and merges the updated row into the cache.
   updateProject: async (request) => {
-    const generation = beginProjectProjection(request.id)
+    const generation = beginProjectProjection()
     const project = await window.api.projects.update(request)
 
     projectMutationSequence += 1
-    if (isCurrentProjectProjection(project.id, generation)) {
+    if (commitProjectProjection(project.id, generation)) {
       set((state) => ({ projects: upsertProjectList(state.projects, project) }))
     }
 
@@ -132,11 +135,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   updateProjectArchive: async (request) => {
-    const generation = beginProjectProjection(request.id)
+    const generation = beginProjectProjection()
     const project = await window.api.projects.updateArchive(request)
 
     projectMutationSequence += 1
-    if (isCurrentProjectProjection(project.id, generation)) {
+    if (commitProjectProjection(project.id, generation)) {
       set((state) => ({ projects: upsertProjectList(state.projects, project) }))
     }
     return project
@@ -144,8 +147,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // Drops committed Project deletion from the cache. Session cascade is handled by the session store.
   deleteProject: async (id) => {
-    const projectionGeneration = beginProjectProjection(id)
-    const generation = ++projectDeletionRequestGeneration
+    const projectionGeneration = beginProjectProjection()
+    const generation = ++projectOperationGeneration
     set((state) => {
       const projectDeletionRequests = new Map(state.projectDeletionRequests)
       projectDeletionRequests.set(id, { generation })
@@ -167,6 +170,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
 
     projectMutationSequence += 1
+    const ownsProjection = commitProjectProjection(id, projectionGeneration)
     set((state) => {
       const projectDeletionRequests = new Map(state.projectDeletionRequests)
       const request = projectDeletionRequests.get(id)
@@ -175,11 +179,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
       // Lifecycle events are the authoritative cross-window ordering stream. If one arrived while
       // this command was in flight, its newer pending/terminal projection must win over the RPC result.
-      if (
-        !isCurrentRequest ||
-        request.lifecycleStatus !== undefined ||
-        !isCurrentProjectProjection(id, projectionGeneration)
-      ) {
+      if (!isCurrentRequest || request.lifecycleStatus !== undefined || !ownsProjection) {
         return { projectDeletionRequests }
       }
 
@@ -197,13 +197,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   upsertProject: (project) => {
-    beginProjectProjection(project.id)
+    supersedeProjectProjection(project.id)
     projectMutationSequence += 1
     set((state) => ({ projects: upsertProjectList(state.projects, project) }))
   },
 
   removeProject: (id, outcome = { status: 'deleted' }) => {
-    beginProjectProjection(id)
+    supersedeProjectProjection(id)
     projectMutationSequence += 1
     set((state) => {
       const pendingDeletionCleanupProjectIds = new Set(state.pendingDeletionCleanupProjectIds)

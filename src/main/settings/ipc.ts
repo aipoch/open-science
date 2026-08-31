@@ -345,7 +345,7 @@ const registerSettingsIpcHandlers = ({
     snapshotCommits.projectAfter(service.setNetworkProxy(request))
   )
   ipcMainHandle('settings:set-notebook-network', (_event, request: SetNotebookNetworkRequest) =>
-    service.setNotebookNetwork(request)
+    snapshotCommits.projectAfter(service.setNotebookNetwork(request))
   )
   ipcMainHandle('settings:install-notebook-network', () => service.installNotebookNetwork())
   ipcMainHandle('settings:remove-notebook-network', () => service.removeNotebookNetwork())

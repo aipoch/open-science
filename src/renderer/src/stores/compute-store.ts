@@ -123,14 +123,17 @@ let hostProjectionGeneration = 0
 const hostProjectionGenerations = new Map<string, number>()
 const hostProbeRequestCounts = new Map<string, number>()
 
-const beginHostProjection = (providerId: string): number => {
-  const generation = ++hostProjectionGeneration
+const beginHostProjection = (): number => ++hostProjectionGeneration
+
+const commitHostProjection = (providerId: string, generation: number): boolean => {
+  if (generation < (hostProjectionGenerations.get(providerId) ?? 0)) return false
   hostProjectionGenerations.set(providerId, generation)
-  return generation
+  return true
 }
 
-const isCurrentHostProjection = (providerId: string, generation: number): boolean =>
-  hostProjectionGenerations.get(providerId) === generation
+const supersedeHostProjection = (providerId: string): void => {
+  hostProjectionGenerations.set(providerId, beginHostProjection())
+}
 
 export const createInitialComputeState = (): ComputeStoreData => ({
   hosts: [],
@@ -191,7 +194,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     const host = await window.api.compute.create(request)
 
     hostMutationSequence += 1
-    beginHostProjection(host.providerId)
+    supersedeHostProjection(host.providerId)
     set((state) => ({
       hosts: sortByCreatedDesc([
         host,
@@ -210,7 +213,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     }
     const host = result.host
     hostMutationSequence += 1
-    beginHostProjection(host.providerId)
+    supersedeHostProjection(host.providerId)
     set((state) => ({
       hosts: sortByCreatedDesc([
         host,
@@ -222,13 +225,14 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
   },
 
   resetPassword: async (request) => {
-    const generation = beginHostProjection(request.providerId)
+    const generation = beginHostProjection()
     const result = await window.api.compute.resetPassword(request)
     if (!result.ok) {
       throw Object.assign(new Error(result.errorCode), { code: result.errorCode })
     }
     hostMutationSequence += 1
-    if (isCurrentHostProjection(result.host.providerId, generation)) {
+    const ownsProjection = commitHostProjection(result.host.providerId, generation)
+    if (ownsProjection) {
       set((state) => ({
         hosts: state.hosts.map((host) =>
           host.providerId === result.host.providerId ? result.host : host
@@ -239,7 +243,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     // belongs to the previous credential revision). Re-probe so the Host's status refreshes on its
     // own instead of sitting at "Not probed". Fire-and-forget, like the Add form's post-create
     // probe: failures become probeResult.ok=false and surface in the detail UI.
-    if (isCurrentHostProjection(result.host.providerId, generation)) {
+    if (ownsProjection) {
       void get()
         .probeHost(result.host.providerId)
         .catch(() => undefined)
@@ -248,12 +252,13 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
   },
 
   changeAuthentication: async (request) => {
-    const generation = beginHostProjection(request.providerId)
+    const generation = beginHostProjection()
     const result = await window.api.compute.changeAuthentication(request)
     if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode })
     const host = result.host
     hostMutationSequence += 1
-    if (isCurrentHostProjection(host.providerId, generation)) {
+    const ownsProjection = commitHostProjection(host.providerId, generation)
+    if (ownsProjection) {
       set((state) => ({
         hosts: state.hosts.map((candidate) =>
           candidate.providerId === host.providerId ? host : candidate
@@ -264,7 +269,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     // Same as resetPassword: the commit clears the persisted probe snapshot, so re-probe in the
     // background. Without this, a successful "Test and save" leaves the Host looking disconnected
     // ("Not probed") even though the candidate connection was just verified.
-    if (isCurrentHostProjection(host.providerId, generation)) {
+    if (ownsProjection) {
       void get()
         .probeHost(host.providerId)
         .catch(() => undefined)
@@ -274,7 +279,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
 
   // Removes a host by provider id and drops it from the cache.
   deleteHost: async (providerId) => {
-    const generation = beginHostProjection(providerId)
+    const generation = beginHostProjection()
     const request: DeleteComputeHostRequest = { providerId }
     try {
       await window.api.compute.delete(request)
@@ -289,7 +294,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     }
 
     hostMutationSequence += 1
-    if (isCurrentHostProjection(providerId, generation)) {
+    if (commitHostProjection(providerId, generation)) {
       set((state) => ({ hosts: state.hosts.filter((host) => host.providerId !== providerId) }))
     }
   },
@@ -298,7 +303,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
   // the returned probeResult back into the cached host. Propagates errors so the UI can show the
   // failed banner; probeResult itself already carries the structured failure.
   probeHost: async (providerId) => {
-    const generation = beginHostProjection(providerId)
+    const generation = beginHostProjection()
     hostProbeRequestCounts.set(providerId, (hostProbeRequestCounts.get(providerId) ?? 0) + 1)
     set((state) => ({
       probingIds: new Set([...state.probingIds, providerId])
@@ -309,7 +314,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
       // Merge the returned probeResult into the cached host. Re-fetch the full host to pick up
       // shape / scratchRoot changes the probe may have written.
       const updatedHost = await window.api.compute.get(providerId)
-      if (isCurrentHostProjection(providerId, generation)) {
+      if (commitHostProjection(providerId, generation)) {
         set((state) => ({
           hosts: state.hosts.map((h) =>
             h.providerId === providerId ? (updatedHost ?? { ...h, probeResult }) : h
@@ -332,12 +337,12 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
   // Saves the details document via full replace (old_text guard prevents concurrent collisions).
   // The UI always writes with author='user'; issue 06 agent paths will call the same IPC directly.
   saveDetails: async (providerId, text, oldText) => {
-    const generation = beginHostProjection(providerId)
+    const generation = beginHostProjection()
     await window.api.compute.detailsSave(providerId, text, oldText, 'user')
     hostMutationSequence += 1
     // Re-fetch so detailsUpdatedAt/detailsUpdatedBy are reflected in the cache.
     const updatedHost = await window.api.compute.get(providerId)
-    if (updatedHost && isCurrentHostProjection(providerId, generation)) {
+    if (commitHostProjection(providerId, generation) && updatedHost) {
       set((state) => ({
         hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
       }))
@@ -346,11 +351,11 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
 
   // Sets the scratch root path and marks the host as pinned. Merges the updated host into cache.
   setScratch: async (providerId, path) => {
-    const generation = beginHostProjection(providerId)
+    const generation = beginHostProjection()
     await window.api.compute.scratchSet(providerId, path)
     hostMutationSequence += 1
     const updatedHost = await window.api.compute.get(providerId)
-    if (updatedHost && isCurrentHostProjection(providerId, generation)) {
+    if (commitHostProjection(providerId, generation) && updatedHost) {
       set((state) => ({
         hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
       }))
@@ -358,11 +363,11 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
   },
 
   clearScratch: async (providerId) => {
-    const generation = beginHostProjection(providerId)
+    const generation = beginHostProjection()
     await window.api.compute.scratchClear(providerId)
     hostMutationSequence += 1
     const updatedHost = await window.api.compute.get(providerId)
-    if (updatedHost && isCurrentHostProjection(providerId, generation)) {
+    if (commitHostProjection(providerId, generation) && updatedHost) {
       set((state) => ({
         hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
       }))
@@ -371,11 +376,11 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
 
   // Updates the concurrent job limit. Merges the updated host into cache.
   setConcurrency: async (providerId, limit) => {
-    const generation = beginHostProjection(providerId)
+    const generation = beginHostProjection()
     await window.api.compute.concurrencySet(providerId, limit)
     hostMutationSequence += 1
     const updatedHost = await window.api.compute.get(providerId)
-    if (updatedHost && isCurrentHostProjection(providerId, generation)) {
+    if (commitHostProjection(providerId, generation) && updatedHost) {
       set((state) => ({
         hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
       }))

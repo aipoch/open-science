@@ -91,6 +91,7 @@ type FakeSettingsService = Record<
   | 'getPackageMirror'
   | 'setPackageMirror'
   | 'setNetworkProxy'
+  | 'setNotebookNetwork'
   | 'listSkills'
   | 'getSkillDetail'
   | 'buildSkillExport'
@@ -217,6 +218,11 @@ const createFakeService = (): FakeSettingsService => ({
   getPackageMirror: vi.fn().mockResolvedValue({}),
   setPackageMirror: vi.fn().mockResolvedValue({}),
   setNetworkProxy: vi.fn().mockResolvedValue({ mode: 'system' }),
+  setNotebookNetwork: vi.fn().mockResolvedValue({
+    allowedDomains: [],
+    disabledOpenScienceDomainGroups: [],
+    disabledOpenScienceDomains: []
+  }),
   listSkills: vi.fn().mockResolvedValue([]),
   getSkillDetail: vi.fn().mockResolvedValue({
     id: 'demo',
@@ -1256,7 +1262,15 @@ describe('settings IPC handlers', () => {
     ['settings:refresh-provider-models', { providerId: 'p1' }],
     ['settings:mark-onboarding-complete', undefined],
     ['settings:set-package-mirror', {}],
-    ['settings:set-network-proxy', { mode: 'system' }]
+    ['settings:set-network-proxy', { mode: 'system' }],
+    [
+      'settings:set-notebook-network',
+      {
+        allowedDomains: [],
+        disabledOpenScienceDomainGroups: [],
+        disabledOpenScienceDomains: []
+      }
+    ]
   ])('broadcasts the current SettingsSnapshot after %s', async (channel, payload) => {
     handlers.clear()
     const service = createFakeService()

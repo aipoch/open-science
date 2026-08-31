@@ -150,6 +150,32 @@ describe('project store', () => {
     ])
   })
 
+  it('projects an older committed update when a later-started update fails', async () => {
+    const original = createProject({ name: 'Original', updatedAt: 1 })
+    const first = createDeferred<Project>()
+    setProjectsApi({
+      update: vi
+        .fn()
+        .mockReturnValueOnce(first.promise)
+        .mockRejectedValueOnce(new Error('newer update failed'))
+    })
+    useProjectStore.setState({ projects: [original], isLoaded: true })
+
+    const firstUpdate = useProjectStore
+      .getState()
+      .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'Committed' })
+    await expect(
+      useProjectStore
+        .getState()
+        .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'Failed' })
+    ).rejects.toThrow('newer update failed')
+    const committed = createProject({ name: 'Committed', updatedAt: 2 })
+    first.resolve(committed)
+    await firstUpdate
+
+    expect(useProjectStore.getState().projects).toEqual([committed])
+  })
+
   it('returns cleanup-pending while dropping a committed Project deletion from the cache', async () => {
     useProjectStore.setState({
       projects: [createProject({ id: 'keep' }), createProject({ id: 'drop' })],

@@ -186,6 +186,40 @@ describe('Settings core application commands', () => {
     expect(published).toEqual([currentSnapshot, currentSnapshot])
   })
 
+  it('commits notebook network writes through the authoritative snapshot owner', async () => {
+    const currentSnapshot = {
+      claude: {},
+      providers: [],
+      notebookNetwork: {
+        allowedDomains: ['pypi.org'],
+        disabledOpenScienceDomainGroups: [],
+        disabledOpenScienceDomains: []
+      }
+    }
+    const savedNetwork = currentSnapshot.notebookNetwork
+    const published: unknown[] = []
+    const snapshotCommits = new SettingsSnapshotCommitOwner(
+      { getSettingsView: vi.fn().mockResolvedValue(currentSnapshot) },
+      {
+        publish: (channel, payload) => {
+          if (channel === 'settings:changed') published.push(payload)
+        }
+      }
+    )
+    const { dependencies, serviceMethod } = createDependencies(snapshotCommits)
+    serviceMethod('setNotebookNetwork').mockResolvedValue(savedNetwork)
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.setNotebookNetwork,
+        invocation([savedNetwork] as const)
+      )
+    ).resolves.toBe(savedNetwork)
+    expect(published).toEqual([currentSnapshot])
+  })
+
   it('installs the exact command inventory and dispatches a remote-safe preflight query', async () => {
     const { dependencies, serviceMethod } = createDependencies()
     const preflight = { agentReady: true }

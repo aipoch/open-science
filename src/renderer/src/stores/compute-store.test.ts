@@ -555,6 +555,26 @@ describe('compute store — details', () => {
 
     expect(useComputeStore.getState().hosts).toEqual([latest])
   })
+
+  it('projects an older committed write when a later-started mutation fails', async () => {
+    const olderMutation = deferred<void>()
+    const committed = createHost({ detailsDoc: 'committed', updatedAt: 2 })
+    setComputeApi({
+      detailsSave: vi.fn().mockReturnValue(olderMutation.promise),
+      concurrencySet: vi.fn().mockRejectedValue(new Error('newer mutation failed')),
+      get: vi.fn().mockResolvedValue(committed)
+    })
+    useComputeStore.setState({ hosts: [createHost()] })
+
+    const olderWrite = useComputeStore.getState().saveDetails('ssh:biowulf', 'committed', '')
+    await expect(useComputeStore.getState().setConcurrency('ssh:biowulf', 20)).rejects.toThrow(
+      'newer mutation failed'
+    )
+    olderMutation.resolve(undefined)
+    await olderWrite
+
+    expect(useComputeStore.getState().hosts).toEqual([committed])
+  })
 })
 
 describe('compute store — probing', () => {
