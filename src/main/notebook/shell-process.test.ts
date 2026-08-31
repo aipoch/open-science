@@ -259,7 +259,7 @@ describe('notebook shell process behavior', () => {
             args: invocation.args,
             env: { OPEN_SCIENCE_SANDBOX_TEST: 'wrapped' },
             beginExecution,
-            annotateStderr: (stderr) => stderr,
+            annotateStderr: (stderr: string) => stderr,
             cleanup
           }
         })

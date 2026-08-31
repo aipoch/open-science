@@ -29,12 +29,12 @@ const baseProfile = (overrides: Partial<SpecialistView> = {}): SpecialistView =>
 
 // A SpecialistService fake that records every mutation call and returns a read-back view built from the
 // stored config so we can assert real read-back (not echoed input).
-const makeSpecialistService = (
-  initial: SpecialistView[]
-): SpecialistService & {
+type SpecialistServiceFake = SpecialistService & {
   calls: { method: string; args: unknown[] }[]
   setStored: (next: SpecialistView[]) => void
-} => {
+}
+
+const makeSpecialistService = (initial: SpecialistView[]): SpecialistServiceFake => {
   let stored: SpecialistView[] = initial
   const calls: { method: string; args: unknown[] }[] = []
   const bump = (view: SpecialistView): SpecialistView => ({
@@ -220,7 +220,7 @@ const makeSpecialistService = (
       stored = stored.map((p, i) => (i === idx ? next : p))
       return next
     }
-  } as unknown as SpecialistService & typeof svc
+  } as unknown as SpecialistServiceFake
   return svc
 }
 

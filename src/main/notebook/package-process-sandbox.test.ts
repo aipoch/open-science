@@ -25,7 +25,8 @@ describe('sandboxedPackageSpawn', () => {
         args: invocation.args,
         env: invocation.env,
         beginExecution: () => endExecution,
-        annotateStderr: (stderr) => `${stderr}<sandbox_violations>blocked</sandbox_violations>`,
+        annotateStderr: (stderr: string) =>
+          `${stderr}<sandbox_violations>blocked</sandbox_violations>`,
         cleanup
       }))
     }

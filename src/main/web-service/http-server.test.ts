@@ -332,7 +332,9 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => [], invoke: vi.fn() },
       tasks: {
-        subscribeProgress: (listener) => {
+        subscribeProgress: (
+          listener: (event: import('../../shared/task-api').TaskRunProgressEvent) => void
+        ) => {
           publishProgress = listener
           return () => {
             publishProgress = undefined

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { isModelBridgeSupported } from './provider-registry'
 import {
@@ -45,7 +45,9 @@ describe('provider endpoint compatibility', () => {
   })
 
   it('prefers the OpenAI endpoint when both sides support it (both + both → openai)', () => {
-    expect(preferredEndpoint(['anthropic', 'openai'], ['anthropic', 'openai'])).toBe('openai')
+    const openCodeEndpoint = preferredEndpoint(['anthropic', 'openai'], ['anthropic', 'openai'])
+    expectTypeOf(openCodeEndpoint).toEqualTypeOf<'anthropic' | 'openai' | undefined>()
+    expect(openCodeEndpoint).toBe('openai')
     // A both-provider on an anthropic-only framework falls back to the shared anthropic endpoint.
     expect(preferredEndpoint(['anthropic', 'openai'], ['anthropic'])).toBe('anthropic')
     // Single-endpoint providers resolve to that endpoint when shared.

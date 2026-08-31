@@ -550,6 +550,9 @@ export const createCompletionGatedControlToolInterceptor = (
   intercept: async <T>({
     context,
     execute
+  }: {
+    context: TrustedToolCompletionContext
+    execute(): Promise<T>
   }): Promise<{ kind: 'deliver'; result: T } | { kind: 'captured' }> => {
     const disposition = await runCompletionGatedTool({
       coordinator,

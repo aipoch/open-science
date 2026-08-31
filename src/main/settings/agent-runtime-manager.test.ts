@@ -30,7 +30,8 @@ vi.mock('./environment-check', () => ({
     ready: true,
     canAutoInstall: true,
     agentFrameworkId,
-    runtime: frameworks.find((framework) => framework.id === agentFrameworkId)?.runtime ?? {
+    runtime: frameworks.find((framework: { id: string }) => framework.id === agentFrameworkId)
+      ?.runtime ?? {
       found: false
     }
   }))

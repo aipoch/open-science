@@ -2294,11 +2294,11 @@ describe('mandatory product glossary', () => {
     /\bKEY=VALUE\b/g,
     /<code>[^<]*<\/code>/gi
   ]
-  const additionalRequiredIdentifiers = {
+  const additionalRequiredIdentifiers: Record<string, string[]> = {
     'The ZIP contains app metadata, the specialist.json you fill in, and a README.txt guide. Skills placed in the skills folder are discovered automatically.':
       ['skills/']
-  } satisfies Record<string, string[]>
-  const spanishRequiredIdentifiers = {
+  }
+  const spanishRequiredIdentifiers: Record<string, string[]> = {
     'Leave empty for 22 or Port from ~/.ssh/config.': ['Port'],
     'Leave empty to use User from ~/.ssh/config.': ['User'],
     'Password authentication requires a User and Port and never uses keys or ssh-agent.': [
@@ -2311,7 +2311,7 @@ describe('mandatory product glossary', () => {
     'Star {{app}} on GitHub, {{count}} stars': ['Star'],
     "It's free and open source. Star it on GitHub to help others find it, and come build in public with us on Discord and X. Thanks for being here.":
       ['Star']
-  } satisfies Record<string, string[]>
+  }
   const exactTechnicalIdentifiers = (text: string): string[] =>
     exactTechnicalIdentifierPatterns
       .flatMap((identifier) => text.match(identifier) ?? [])

@@ -29,7 +29,7 @@ describe('DatabaseStartupGate', () => {
         getState,
         retry,
         quit,
-        onStateChanged: (listener) => {
+        onStateChanged: (listener: (state: DatabaseStartupState) => void) => {
           publish = listener
           return () => undefined
         }

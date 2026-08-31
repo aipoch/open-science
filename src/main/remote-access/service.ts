@@ -118,7 +118,7 @@ export class RemoteAccessService {
   static async create(options: RemoteAccessServiceDeps = {}): Promise<RemoteAccessService> {
     const repository = options.repository ?? new RemoteAccessRepository(resolveConfigRoot())
     const context: { service?: RemoteAccessService } = {}
-    const pairingOptions = {
+    const pairingOptions: Parameters<typeof RemoteSessionPairingManager.create>[0] = {
       repository,
       isAllowedRemoteHost: (hostname) => context.service?.isAllowedRemoteHost(hostname) === true,
       isEnabled: () => context.service?.runtimeEnabled === true,

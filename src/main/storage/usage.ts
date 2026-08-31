@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs'
 import { readdir, stat, statfs } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -81,7 +82,7 @@ const runtimeUsage = async (dir: string): Promise<{ bytes: number; children: Usa
   if (condaBytes > 0) children.push({ name: 'conda', bytes: condaBytes })
 
   // one child per environment under envs/ (default-python/-r -> python/r, others by name).
-  let envEntries
+  let envEntries: Dirent[]
   try {
     envEntries = await readdir(join(dir, 'envs'), { withFileTypes: true })
   } catch (error) {

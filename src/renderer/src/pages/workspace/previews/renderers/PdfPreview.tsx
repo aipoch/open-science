@@ -979,7 +979,7 @@ const PdfPageCanvas = ({
       const viewport = page.getViewport({ scale: targetWidth / baseViewport.width })
       const textLayer = new TextLayerBuilder({
         pdfPage: page,
-        onAppend: (layer) => {
+        onAppend: (layer: HTMLDivElement) => {
           layer.style.setProperty('--total-scale-factor', String(viewport.scale))
           layer.style.setProperty('--scale-round-x', '1px')
           layer.style.setProperty('--scale-round-y', '1px')

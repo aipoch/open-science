@@ -7,7 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeHost } from '../../shared/compute'
 import type { DownloadDest } from '../../shared/remote-fs'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
-import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from './connection-broker'
+import {
+  ComputeConnectionError,
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from './connection-broker'
 import { ComputeRemoteOperationOwner } from './compute-remote-operation-owner'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
@@ -86,22 +90,25 @@ const makeOwner = (
 ): ComputeRemoteOperationOwner =>
   new ComputeRemoteOperationOwner(
     {
-      acquire: vi.fn(async () => ({
-        run: (command, options) => runner.run(fakeTarget, command, options),
-        upload: (localPath, remotePath) =>
-          runScpUpload(scpRunner, fakeTarget, localPath, remotePath),
-        download: async (remotePath, localPath, maxBytes) => {
-          await runScpTransfer(scpRunner, fakeTarget, remotePath, localPath)
-          const size = (await stat(localPath)).size
-          return {
-            exitCode: 0,
-            stderr: '',
-            timedOut: false,
-            bytesWritten: size,
-            exceeded: size > maxBytes
-          }
-        }
-      }))
+      acquire: vi.fn(
+        async () =>
+          ({
+            run: (command, options) => runner.run(fakeTarget, command, options),
+            upload: (localPath, remotePath) =>
+              runScpUpload(scpRunner, fakeTarget, localPath, remotePath),
+            download: async (remotePath, localPath, maxBytes) => {
+              await runScpTransfer(scpRunner, fakeTarget, remotePath, localPath)
+              const size = (await stat(localPath)).size
+              return {
+                exitCode: 0,
+                stderr: '',
+                timedOut: false,
+                bytesWritten: size,
+                exceeded: size > maxBytes
+              }
+            }
+          }) satisfies ComputeConnectionLease
+      )
     } as ComputeConnectionBrokerAcquirer,
     repository,
     approvalBroker,

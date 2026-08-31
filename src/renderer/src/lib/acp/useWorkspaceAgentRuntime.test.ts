@@ -9106,11 +9106,12 @@ describe('resendEditedWorkspaceMessage', () => {
     ).resolves.toBe(true)
     await flushRuntimeTasks()
 
-    expect(runtime.sendPrompt.mock.calls[0]?.[2]?.map((attachment) => attachment.id)).toEqual([
-      'edited-0',
-      'edited-1'
-    ])
-    expect(runtime.sendPrompt.mock.calls[0]?.[6]?.map((attachment) => attachment.id)).toEqual([
+    expect(
+      runtime.sendPrompt.mock.calls[0]?.[2]?.map((attachment: UploadedAttachment) => attachment.id)
+    ).toEqual(['edited-0', 'edited-1'])
+    expect(
+      runtime.sendPrompt.mock.calls[0]?.[6]?.map((attachment: UploadedAttachment) => attachment.id)
+    ).toEqual([
       'history-2',
       'history-3',
       'history-4',

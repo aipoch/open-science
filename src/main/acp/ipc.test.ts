@@ -9,9 +9,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   AcpCompactSessionRequest,
+  AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpSteerFollowUpRequest
 } from '../../shared/acp'
+import type { AcpRuntimeOptions } from './runtime'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
@@ -67,7 +69,7 @@ const {
   const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
   const sendAppContinuation = vi.fn().mockResolvedValue(undefined)
   const sendPrompt = vi.fn().mockResolvedValue(undefined)
-  const AcpRuntimeMock = vi.fn().mockImplementation(function (options) {
+  const AcpRuntimeMock = vi.fn().mockImplementation(function (options: AcpRuntimeOptions) {
     return {
       createSession,
       cancelPrompt,
@@ -82,12 +84,12 @@ const {
       resetSessionContext,
       requestProviderReconnect,
       resumeSession,
-      sendAppContinuation: (request, promptAttemptId) => {
+      sendAppContinuation: (request: AcpPromptRequest, promptAttemptId?: string) => {
         const prompting = sendAppContinuation(request, promptAttemptId)
         options.callbacks?.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
         return prompting
       },
-      sendPrompt: (request, promptAttemptId) => {
+      sendPrompt: (request: AcpPromptRequest, promptAttemptId?: string) => {
         const prompting = sendPrompt(request, promptAttemptId)
         return Promise.resolve(prompting).then((result) => {
           options.callbacks?.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
