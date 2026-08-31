@@ -831,8 +831,8 @@ class RuntimeResourceProfiler {
     const [tree, electronSnapshot, storage] = await Promise.all([
       this.readTree(rootPid),
       application
-        .evaluate(({ app }) =>
-          app.getAppMetrics().map((metric) => ({
+        .evaluate(({ app }) => {
+          const metrics = app.getAppMetrics().map((metric) => ({
             pid: metric.pid,
             type: metric.type,
             creationTime: metric.creationTime,
@@ -843,7 +843,10 @@ class RuntimeResourceProfiler {
             peakWorkingSetKb: metric.memory.peakWorkingSetSize,
             privateKb: metric.memory.privateBytes
           }))
-        )
+          return new Promise<typeof metrics>((resolveMetrics) => {
+            setImmediate(() => resolveMetrics(metrics))
+          })
+        })
         .then(
           (metrics) => ({ complete: true, metrics }),
           (error) => {
