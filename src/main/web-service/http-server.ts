@@ -446,7 +446,8 @@ export type ExternalWebAccess = {
 
 export type RunningWebServer = {
   port: number
-  closeExternalConnections: (sessionId?: string) => void
+  // Invalidates retained replay access before closing the matching remotely authorized sockets.
+  closeExternalConnections: (principalId?: string) => void
   close: () => Promise<void>
 }
 
@@ -1100,6 +1101,30 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const awaitingPong = new WeakSet<WebSocket>()
   const internalEventStream = new InternalWebEventStream()
   const publicTaskEventStream = new PublicTaskEventStream()
+  // A current remote authorization grants replay only from the first sequence that principal saw.
+  // Local Web clients keep the process-wide cursor so remote lifecycle changes never reload them.
+  const remoteReplayFloors = new Map<
+    string,
+    Readonly<{
+      internalAfter: number
+      publicTaskAfter: number
+    }>
+  >()
+  const replayFloorFor = (
+    principalId: string
+  ): Readonly<{
+    internalAfter: number
+    publicTaskAfter: number
+  }> => {
+    const existing = remoteReplayFloors.get(principalId)
+    if (existing) return existing
+    const created = {
+      internalAfter: internalEventStream.cursor().latestSequence,
+      publicTaskAfter: publicTaskEventStream.cursor().latestSequence
+    }
+    remoteReplayFloors.set(principalId, created)
+    return created
+  }
   const commandClient = createApplicationCommandClient()
   const taskIdempotencyRegistry = new TaskIdempotencyRegistry()
   const requestBodyBudgetRegistry = new RequestBodyBudgetRegistry(
@@ -1155,6 +1180,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         response.end('Unauthorized')
         return
       }
+      if (externalAuthorization) replayFloorFor(externalAuthorization.principalId)
       let clientNonce: string
       try {
         clientNonce = requestClientNonce(request)
@@ -1456,6 +1482,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       socket.close(1008, 'Remote access expired')
       return
     }
+    const replayFloor = externalAuthorization
+      ? replayFloorFor(externalAuthorization.principalId)
+      : undefined
     const clientId =
       externalAuthorization === undefined
         ? clientNonce
@@ -1499,10 +1528,13 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         const messages =
           streamId === null && afterValue === null
             ? [publicTaskEventStream.ready()]
-            : publicTaskEventStream.resume({
-                streamId: streamId ?? '',
-                after: afterValue === null ? Number.NaN : Number(afterValue)
-              })
+            : publicTaskEventStream.resume(
+                {
+                  streamId: streamId ?? '',
+                  after: afterValue === null ? Number.NaN : Number(afterValue)
+                },
+                replayFloor?.publicTaskAfter
+              )
         for (const message of messages) {
           if (!sendCurrentWebSocketMessage(socket, message)) break
         }
@@ -1521,7 +1553,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         const streamId = url.searchParams.get('stream') ?? ''
         const afterValue = url.searchParams.get('after')
         const after = afterValue === null ? Number.NaN : Number(afterValue)
-        for (const message of internalEventStream.resume({ streamId, after })) {
+        for (const message of internalEventStream.resume(
+          { streamId, after },
+          replayFloor?.internalAfter
+        )) {
           if (!sendCurrentWebSocketMessage(socket, message)) break
         }
       }
@@ -1609,6 +1644,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   return {
     port,
     closeExternalConnections: (principalId) => {
+      if (principalId === undefined) remoteReplayFloors.clear()
+      else remoteReplayFloors.delete(principalId)
       for (const [socket, authorization] of externalSockets) {
         if (principalId === undefined || authorization.principalId === principalId) {
           socket.close(1008, 'Remote access revoked')
@@ -1617,6 +1654,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     },
     close: async () => {
       taskIdempotencyRegistry.clear()
+      remoteReplayFloors.clear()
       clearInterval(eventHeartbeatInterval)
       removeBroadcastSink()
       removeTaskProgressSink?.()

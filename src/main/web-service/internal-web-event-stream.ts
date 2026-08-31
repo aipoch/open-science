@@ -89,13 +89,14 @@ class InternalWebEventStream {
     })
   }
 
-  resume(cursor: ResumeCursor): readonly string[] {
+  resume(cursor: ResumeCursor, minimumAfter = 0): readonly string[] {
     if (cursor.streamId !== this.#streamId) return [this.#resyncRequired('stream-changed')]
 
     const oldestSequence = this.#frames[0]?.sequence
     if (
       !Number.isSafeInteger(cursor.after) ||
       cursor.after < 0 ||
+      cursor.after < minimumAfter ||
       cursor.after > this.#latestSequence ||
       (cursor.after < this.#latestSequence &&
         (oldestSequence === undefined || cursor.after < oldestSequence - 1))

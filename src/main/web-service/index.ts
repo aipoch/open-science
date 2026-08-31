@@ -31,8 +31,8 @@ export type WebServiceController = {
   close: () => Promise<void>
   // Permanently closes the service and its Task adapter. Used only by application shutdown.
   dispose: () => Promise<void>
-  // Closes remotely authenticated sockets without disturbing local Web clients.
-  closeExternalConnections: (sessionId?: string) => void
+  // Invalidates retained replay access and closes remote sockets without disturbing local clients.
+  closeExternalConnections: (principalId?: string) => void
   // Subscribes to actual server stops, including attached shutdown requests from the CLI.
   onStopped: (listener: () => void) => () => void
   isRunning: () => boolean
@@ -123,7 +123,7 @@ const createWebServiceController = (
   let running:
     | {
         close: () => Promise<void>
-        closeExternalConnections: (sessionId?: string) => void
+        closeExternalConnections: (principalId?: string) => void
         port: number
         configRoot: string
       }
@@ -258,7 +258,7 @@ const createWebServiceController = (
     ensureStarted,
     close,
     dispose,
-    closeExternalConnections: (sessionId) => running?.closeExternalConnections(sessionId),
+    closeExternalConnections: (principalId) => running?.closeExternalConnections(principalId),
     onStopped: (listener) => {
       stoppedListeners.add(listener)
       return () => stoppedListeners.delete(listener)

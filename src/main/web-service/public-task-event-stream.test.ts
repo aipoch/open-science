@@ -74,4 +74,28 @@ describe('PublicTaskEventStream', () => {
       }
     ])
   })
+
+  it('refuses to replay frames older than an authorization floor', () => {
+    const stream = new PublicTaskEventStream({ streamId: 'stream-1' })
+    const event = {
+      runId: 'run-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      type: 'run.event' as const,
+      data: { id: 'event-1', timestamp: 1, kind: 'message' as const, level: 'info' as const }
+    }
+    stream.publish(event)
+    stream.publish(event)
+
+    expect(parseFrames(stream.resume({ streamId: 'stream-1', after: 0 }, 1))).toEqual([
+      expect.objectContaining({
+        type: 'stream.resync-required',
+        data: expect.objectContaining({ reason: 'cursor-expired' })
+      })
+    ])
+    expect(parseFrames(stream.resume({ streamId: 'stream-1', after: 1 }, 1))).toEqual([
+      expect.objectContaining({ sequence: 2, type: 'run.event' }),
+      expect.objectContaining({ type: 'stream.ready' })
+    ])
+  })
 })

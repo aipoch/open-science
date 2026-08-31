@@ -15,6 +15,7 @@ vi.mock('electron', () => ({
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
+import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
 import {
   isWebRpcChannel,
   WEB_EVENT_STREAM_PROTOCOL_VERSION,
@@ -1544,6 +1545,230 @@ describe('startWebHttpServer', () => {
       })
     ])
     publicSocket.close()
+  })
+
+  it('does not replay event frames that predate a remote principal authorization', async () => {
+    const authorizationFor = (request: IncomingMessage): ExternalWebAccessAuthorization =>
+      accessOnlyExternalAccess(String(request.headers['x-test-principal']))
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      tasks: {
+        subscribeProgress: () => () => undefined,
+        resolveActiveRun: (sessionId: string) =>
+          sessionId === 'task-session'
+            ? { runId: 'run-1', sessionId, projectId: 'project-1' }
+            : undefined
+      } as never,
+      externalAccess: {
+        authorizeHttp: async (request) => authorizationFor(request),
+        authorizeWebSocket: async (request) => authorizationFor(request)
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const bootstrapFor = async (
+      principalId: string
+    ): Promise<{ eventStream: { streamId: string; latestSequence: number } }> =>
+      (await (
+        await fetch(`${base}/api/bootstrap`, {
+          headers: { 'x-test-principal': principalId }
+        })
+      ).json()) as { eventStream: { streamId: string; latestSequence: number } }
+    const eventSocket = (
+      pathname: '/events' | '/api/v1/events',
+      principalId: string,
+      streamId: string,
+      after: number
+    ): WebSocket => {
+      const url = new URL(`${base.replace('http:', 'ws:')}${pathname}`)
+      url.searchParams.set(
+        'eventProtocol',
+        String(
+          pathname === '/events'
+            ? WEB_EVENT_STREAM_PROTOCOL_VERSION
+            : TASK_EVENT_STREAM_PROTOCOL_VERSION
+        )
+      )
+      url.searchParams.set('stream', streamId)
+      url.searchParams.set('after', String(after))
+      return new WebSocket(url, { headers: { 'x-test-principal': principalId } })
+    }
+    const nextMessage = (socket: WebSocket): Promise<Record<string, unknown>> =>
+      new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error(`Timed out waiting for event frame from ${socket.url}.`)),
+          500
+        )
+        socket.once('message', (data) => {
+          clearTimeout(timeout)
+          resolve(JSON.parse(data.toString()))
+        })
+      })
+
+    const firstPrincipal = await bootstrapFor('principal-before-event')
+    expect(firstPrincipal.eventStream.latestSequence).toBe(0)
+
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'event-before-second-principal',
+        timestamp: 1,
+        level: 'info',
+        sessionId: 'task-session',
+        kind: 'message',
+        text: 'Authorized-principal-only history'
+      }
+    ])
+
+    const firstInternalSocket = eventSocket(
+      '/events',
+      'principal-before-event',
+      firstPrincipal.eventStream.streamId,
+      0
+    )
+    await expect(nextMessage(firstInternalSocket)).resolves.toMatchObject({
+      kind: 'event',
+      sequence: 1,
+      channel: 'acp:event'
+    })
+    firstInternalSocket.close()
+
+    const secondPrincipal = await bootstrapFor('principal-after-event')
+    expect(secondPrincipal.eventStream.latestSequence).toBe(1)
+    const secondInternalSocket = eventSocket(
+      '/events',
+      'principal-after-event',
+      secondPrincipal.eventStream.streamId,
+      0
+    )
+    const secondInternalMessage = await nextMessage(secondInternalSocket)
+    secondInternalSocket.close()
+
+    const publicReadyUrl = new URL(`${base.replace('http:', 'ws:')}/api/v1/events`)
+    publicReadyUrl.searchParams.set('eventProtocol', String(TASK_EVENT_STREAM_PROTOCOL_VERSION))
+    const publicReadySocket = new WebSocket(publicReadyUrl, {
+      headers: { 'x-test-principal': 'principal-after-event' }
+    })
+    const publicReady = await nextMessage(publicReadySocket)
+    expect(publicReady).toMatchObject({
+      type: 'stream.ready',
+      data: { latestSequence: 1, streamId: expect.any(String) }
+    })
+    publicReadySocket.close()
+
+    const publicStreamId = (publicReady.data as { streamId: string }).streamId
+    const secondPublicSocket = eventSocket(
+      '/api/v1/events',
+      'principal-after-event',
+      publicStreamId,
+      0
+    )
+    const secondPublicMessage = await nextMessage(secondPublicSocket)
+    secondPublicSocket.close()
+
+    expect([secondInternalMessage, secondPublicMessage]).toMatchObject([
+      {
+        kind: 'resync-required',
+        reason: 'cursor-expired',
+        latestSequence: 1
+      },
+      {
+        type: 'stream.resync-required',
+        data: { reason: 'cursor-expired', latestSequence: 1 }
+      }
+    ])
+  })
+
+  it('invalidates remote replay floors for one principal or the current authorization generation', async () => {
+    const authorizationFor = (request: IncomingMessage): ExternalWebAccessAuthorization =>
+      accessOnlyExternalAccess(String(request.headers['x-test-principal']))
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      externalAccess: {
+        authorizeHttp: async (request) => authorizationFor(request),
+        authorizeWebSocket: async (request) => authorizationFor(request)
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const bootstrapFor = async (
+      principalId: string
+    ): Promise<{ eventStream: { streamId: string; latestSequence: number } }> =>
+      (await (
+        await fetch(`${base}/api/bootstrap`, {
+          headers: { 'x-test-principal': principalId }
+        })
+      ).json()) as { eventStream: { streamId: string; latestSequence: number } }
+    const resumeFor = (
+      principalId: string,
+      streamId: string,
+      after: number
+    ): Promise<Record<string, unknown>> => {
+      const url = new URL(`${base.replace('http:', 'ws:')}/events`)
+      url.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
+      url.searchParams.set('stream', streamId)
+      url.searchParams.set('after', String(after))
+      const socket = new WebSocket(url, { headers: { 'x-test-principal': principalId } })
+      return new Promise((resolve) =>
+        socket.once('message', (data) => {
+          socket.close()
+          resolve(JSON.parse(data.toString()))
+        })
+      )
+    }
+    const publishProject = (id: string): void =>
+      applicationEvents.publish('project:created', {
+        id,
+        name: id,
+        description: '',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: 1
+      })
+
+    const firstPrincipal = await bootstrapFor('principal-one')
+    publishProject('project-1')
+    const secondPrincipal = await bootstrapFor('principal-two')
+    publishProject('project-2')
+
+    server.closeExternalConnections('principal-one')
+    await bootstrapFor('principal-one')
+
+    await expect(
+      resumeFor('principal-one', firstPrincipal.eventStream.streamId, 0)
+    ).resolves.toMatchObject({ kind: 'resync-required', reason: 'cursor-expired' })
+    await expect(
+      resumeFor('principal-two', secondPrincipal.eventStream.streamId, 1)
+    ).resolves.toMatchObject({ kind: 'event', sequence: 2 })
+
+    server.closeExternalConnections()
+    publishProject('project-3')
+    await bootstrapFor('principal-two')
+
+    await expect(
+      resumeFor('principal-two', secondPrincipal.eventStream.streamId, 1)
+    ).resolves.toMatchObject({ kind: 'resync-required', reason: 'cursor-expired' })
   })
 
   it('replays owned public Task events from the requested sequence', async () => {
