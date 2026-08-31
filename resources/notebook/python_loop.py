@@ -90,6 +90,7 @@ class _BudgetTextIO(io.TextIOBase):
 # Protected-dirs audit hook, injected once into the persistent namespace. This is a DATA kernel with
 # NO outbound connector access: host.mcp lives only in the control-plane REPL kernel, and connector
 # data reaches python via the ./handoff channel. The namespace intentionally exposes no `host` symbol.
+_package_usage_state = {'external': False}
 _BOOTSTRAP = r'''
 import os, re, shlex, sys, warnings
 warnings.filterwarnings("ignore", message=".*is non-interactive, and thus cannot be shown")
@@ -354,13 +355,24 @@ def _command_writes_managed_runtime(command):
         return _text_references_managed_runtime(text) and bool(_runtime_write_command.search(text))
     return _shell_writes_managed_runtime(_command_text(command))
 
-def _protected_paths_audit(event, args):
+# A child interpreter can use distributions that never appear in this Kernel's module list.
+def _protected_paths_audit(event, args, _package_usage_state=_package_usage_state):
     if event in ("subprocess.Popen", "os.system", "os.posix_spawn", "os.exec") and args:
         command = args[1] if event in ("subprocess.Popen", "os.posix_spawn", "os.exec") and len(args) > 1 else args[0]
         if _command_mutates_packages(command):
             _blocked_environment_mutation()
         if _command_writes_managed_runtime(command):
             _blocked_environment_mutation()
+        executable = command[0] if isinstance(command, (list, tuple)) and command else command
+        executable = os.fsdecode(executable) if isinstance(executable, bytes) else str(executable)
+        name = _command_name(executable).lower().removesuffix(".exe")
+        if (
+            event == "os.system"
+            or re.fullmatch(r"(?:python(?:[0-9.]+)?|py|r|rscript|sh|bash|zsh|cmd|powershell|pwsh)", name)
+            or executable.startswith(sys.prefix + os.sep)
+            or executable.lower().endswith((".py", ".r", ".sh", ".bat", ".cmd"))
+        ):
+            _package_usage_state["external"] = True
         return
     if event in (
         "os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown", "os.truncate"
@@ -449,8 +461,9 @@ except ImportError:
     pass
 '''
 
-_globals = {"__name__": "__main__"}
+_globals = {"__name__": "__main__", "_package_usage_state": _package_usage_state}
 exec(compile(_BOOTSTRAP, "<bootstrap>", "exec"), _globals)
+_globals.pop("_package_usage_state")
 _namespace_internal_bindings = dict(_globals)
 
 _namespace_repr = reprlib.Repr()
@@ -612,7 +625,9 @@ def _capture_figures():
 def _capture_environment():
     packages = []
     seen = set()
-    for module_name, module in list(sys.modules.items()):
+    modules = list(sys.modules.items())
+    loaded_roots = {name.split(".", 1)[0] for name, module in modules if module is not None}
+    for module_name, module in modules:
         root_name = module_name.split(".", 1)[0]
         if not root_name or root_name.startswith("_") or root_name in seen or module is None:
             continue
@@ -632,6 +647,82 @@ def _capture_environment():
             "evidence_sources": ["python-kernel-modules"],
             "loaded_state": "loaded",
         })
+    # Map import roots to distributions before attesting that an installed package is unused.
+    # Names differ for packages such as Pillow/PIL and python-dateutil/dateutil.
+    try:
+        import importlib.metadata as metadata
+        import re
+        normalize = lambda name: re.sub(r"[-_.]+", "-", name).lower()
+        roots_by_distribution = {}
+        owners_by_root = metadata.packages_distributions()
+        loaded_paths = {
+            os.path.realpath(path)
+            for _, module in modules
+            if isinstance(path := getattr(module, "__file__", None), str)
+        }
+        # A module remains loaded after its directory is removed from sys.path. Inspect that
+        # original directory as well, rather than attributing it to a newly shadowing package.
+        metadata_paths = list(sys.path)
+        for root in loaded_roots:
+            module = sys.modules.get(root)
+            path = getattr(module, "__file__", None)
+            if isinstance(path, str):
+                directory = os.path.dirname(os.path.realpath(path))
+                metadata_paths.append(os.path.dirname(directory) if hasattr(module, "__path__") else directory)
+        metadata_paths = list(dict.fromkeys(os.path.realpath(path) for path in metadata_paths if isinstance(path, str)))
+        distributions = list(metadata.distributions(path=metadata_paths))
+        for dist in distributions:
+            name = dist.metadata.get("Name")
+            if name:
+                for root in (dist.read_text("top_level.txt") or "").split():
+                    owners_by_root.setdefault(root, []).append(name)
+        for root, names in owners_by_root.items():
+            for name in names:
+                roots_by_distribution.setdefault(normalize(name), set()).add(root)
+        by_name = {normalize(package["name"]): package for package in packages}
+        for dist in distributions:
+            name = dist.metadata.get("Name")
+            if not name:
+                continue
+            key = normalize(name)
+            roots = roots_by_distribution.get(key)
+            loaded = bool(roots and roots.intersection(loaded_roots))
+            ownership_known = bool(roots)
+            if loaded:
+                # Match actual loaded files, including shared namespaces and multiple copies of
+                # the same distribution. Import names alone do not establish installation identity.
+                files = dist.files
+                ownership_known = files is not None
+                loaded = bool(files is not None and any(
+                    os.path.realpath(dist.locate_file(file)) in loaded_paths for file in files
+                ))
+                if files is None:
+                    # Legacy metadata can omit RECORD. A concrete top-level module path still
+                    # identifies ordinary packages; shared namespaces remain unknown.
+                    loaded = any(
+                        os.path.realpath(dist.locate_file(path)) in loaded_paths
+                        for root in roots
+                        for path in (root + ".py", root + "/__init__.py")
+                    )
+                    ownership_known = loaded
+            existing = by_name.get(key)
+            if existing and loaded and (not existing["version"] or existing["version"] == dist.version):
+                existing["version"] = dist.version
+                existing["version_status"] = "known" if dist.version else "unavailable"
+                existing["evidence_sources"] = ["python-kernel-modules", "python-importlib-metadata"]
+                continue
+            packages.append({
+                "name": name,
+                "version": dist.version,
+                "version_status": "known" if dist.version else "unavailable",
+                "ecosystem": "python",
+                "evidence_sources": ["python-kernel-modules", "python-importlib-metadata"],
+                "loaded_state": "loaded" if loaded else ("installed-only" if ownership_known and not _package_usage_state["external"] else "unknown"),
+            })
+    except Exception:
+        # Without distribution mapping, retain the legacy module observation. The main process
+        # must not treat interpreter-only inventory rows as evidence of unused dependencies.
+        pass
     packages.sort(key=lambda package: package["name"].casefold())
     return {
         "runtime_version": ".".join(str(part) for part in sys.version_info[:3]),

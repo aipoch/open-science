@@ -1,10 +1,24 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { NotebookEnvironmentPackage } from '../../shared/notebook'
+import type {
+  ArtifactProvenanceGraph,
+  ProvenanceNotebookRun
+} from '../../shared/artifact-provenance'
+import type {
+  NotebookEnvironmentPackage,
+  NotebookPackageInstallerAttempt
+} from '../../shared/notebook'
+import {
+  prepareArtifactReproducibilityExecutionPlan,
+  sealArtifactReproducibilityRecipe
+} from '../artifacts/artifact-reproducibility-recipe'
 import { environmentCaptureProcessEnv, EnvironmentStateTracker } from './environment-state-tracker'
 
 let dataRoot: string | undefined
@@ -39,6 +53,555 @@ const readBinding = async (
 }
 
 describe('EnvironmentStateTracker', () => {
+  it.each([
+    { language: 'r', requested: 'org.Hs.eg.db', names: ['org.Hs.eg.db'], matched: true },
+    { language: 'r', requested: 'org.hs.eg.db', names: ['org.Hs.eg.db'], matched: false },
+    { language: 'r', requested: 'org..Hs.eg.db', names: ['org.Hs.eg.db'], matched: false },
+    {
+      language: 'r',
+      requested: 'bioconductor-org.hs.eg.db',
+      names: ['org.Hs.eg.db'],
+      matched: true
+    },
+    {
+      language: 'r',
+      requested: 'bioconductor-org-hs-eg-db',
+      names: ['org.Hs.eg.db'],
+      matched: false
+    },
+    { language: 'r', requested: 'r-r.utils', names: ['R.utils'], matched: true },
+    { language: 'r', requested: 'r-r.utils', names: ['R.utils', 'r.utils'], matched: false },
+    { language: 'python', requested: 'scikit_learn', names: ['scikit-learn'], matched: true }
+  ] as const)(
+    'checks $language package identity for $requested against $names',
+    async ({ language, requested, names, matched }) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'package-request-identity-'))
+      const packages: NotebookEnvironmentPackage[] = names.map((name) => ({
+        name,
+        version: '1.0',
+        versionStatus: 'known',
+        ecosystem: language,
+        evidenceSources: [language === 'r' ? 'r-installed-packages' : 'python-importlib-metadata']
+      }))
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled: vi
+          .fn()
+          .mockResolvedValueOnce({ packages: [] })
+          .mockResolvedValue({ packages }),
+        captureFingerprint: vi.fn().mockResolvedValue('stable')
+      })
+      const captureTarget = { ...target, language }
+      await tracker.markPackageMutationDirty(captureTarget, {
+        operationId: 'install-identity',
+        operation: 'install',
+        packages: [requested]
+      })
+      const result = await tracker.refreshAfterPackageMutation(captureTarget, {
+        operationId: 'install-identity',
+        operation: 'install',
+        packages: [requested],
+        result: 'success'
+      })
+      expect(result.result).toBe(matched ? 'success' : 'failure')
+      expect(result.packageChanges).toHaveLength(names.length)
+      expect(
+        result.packageChanges?.every(
+          (change) => change.relationship === (matched ? 'requested' : 'unattributed')
+        )
+      ).toBe(true)
+      const inspection = await tracker.inspectPackages(captureTarget, [requested])
+      expect(inspection.packages[0].status).toBe(
+        matched ? 'installed' : names.length > 1 ? 'unknown' : 'missing'
+      )
+    }
+  )
+
+  it('preserves distinct R package names when merging installed and loaded evidence', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'r-inventory-case-'))
+    const packages: NotebookEnvironmentPackage[] = ['R.utils', 'r.utils'].map((name, index) => ({
+      name,
+      version: `${index + 1}.0`,
+      versionStatus: 'known',
+      ecosystem: 'r',
+      evidenceSources: ['r-installed-packages'],
+      libraryRank: 1,
+      libraryScope: 'environment'
+    }))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockResolvedValue({ packages }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable')
+    })
+    const capture = await tracker.captureCompletedRun(
+      { ...target, language: 'r' },
+      {
+        packages: [{ ...packages[0], loadedState: 'loaded', evidenceSources: ['r-session-info'] }]
+      }
+    )
+    expect(capture.manifest.packages).toHaveLength(2)
+    expect(capture.manifest.packages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'R.utils', version: '1.0', loadedState: 'loaded' }),
+        expect.objectContaining({ name: 'r.utils', version: '2.0', loadedState: 'installed-only' })
+      ])
+    )
+  })
+
+  it.each([
+    {
+      requested: 'rcolorbrewer',
+      operation: 'install',
+      fallback: false,
+      recover: false,
+      expected: 'success'
+    },
+    {
+      requested: 'rcolorbrewer',
+      operation: 'uninstall',
+      fallback: false,
+      recover: false,
+      expected: 'failure'
+    },
+    {
+      requested: 'rcolorbrewer',
+      operation: 'install',
+      fallback: true,
+      recover: false,
+      expected: 'failure'
+    },
+    {
+      requested: 'rcolorbrewer',
+      operation: 'install',
+      fallback: false,
+      recover: true,
+      expected: 'success'
+    },
+    {
+      requested: 'r-rcolorbrewer',
+      operation: 'install',
+      fallback: true,
+      recover: false,
+      expected: 'failure'
+    },
+    {
+      requested: 'r-rcolorbrewer',
+      operation: 'uninstall',
+      fallback: true,
+      recover: false,
+      expected: 'failure'
+    }
+  ] as const)(
+    'uses actual R installer attempts for $operation (fallback: $fallback, recovery: $recover)',
+    async ({ requested, operation, fallback, recover, expected }) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'r-installer-name-'))
+      const packages: NotebookEnvironmentPackage[] = [
+        {
+          name: 'RColorBrewer',
+          version: '1.1-3',
+          versionStatus: 'known',
+          ecosystem: 'r',
+          evidenceSources: ['r-installed-packages']
+        }
+      ]
+      const attempts: NotebookPackageInstallerAttempt[] = [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          packages: ['r-rcolorbrewer'],
+          status: fallback ? 'failed' : 'succeeded',
+          mutationRisk: 'possible'
+        },
+        ...(fallback
+          ? [
+              {
+                groupOrdinal: 1,
+                installer: 'r-install-packages' as const,
+                packages: [requested],
+                status: 'succeeded' as const,
+                mutationRisk: 'possible' as const
+              }
+            ]
+          : [])
+      ]
+      const inspectInstalled = vi.fn().mockResolvedValueOnce({ packages: [] })
+      if (recover) inspectInstalled.mockRejectedValueOnce(new Error('refresh interrupted'))
+      inspectInstalled.mockResolvedValue({ packages })
+      const options = {
+        dataRoot,
+        inspectInstalled,
+        captureFingerprint: vi.fn().mockResolvedValue('stable')
+      }
+      const tracker = new EnvironmentStateTracker(options)
+      const captureTarget = { ...target, language: 'r' as const }
+      await tracker.markPackageMutationDirty(captureTarget, {
+        operationId: 'actual-installer',
+        operation,
+        packages: [requested]
+      })
+      const result = await tracker.refreshAfterPackageMutation(captureTarget, {
+        operationId: 'actual-installer',
+        operation,
+        packages: [requested],
+        attempts,
+        result: 'success'
+      })
+      if (recover) {
+        expect(result.reason).toBe('inventory-refresh-failed')
+        await new EnvironmentStateTracker(options).prepareRun(captureTarget)
+      } else {
+        expect(result.result).toBe(expected)
+      }
+      const capture = await tracker.captureCompletedRun(captureTarget)
+      expect(capture.manifest.operationLog?.[0]).toMatchObject({
+        result: expected,
+        packageChanges: [
+          expect.objectContaining({
+            name: 'RColorBrewer',
+            relationship: fallback ? 'unattributed' : 'requested'
+          })
+        ]
+      })
+    }
+  )
+
+  it.each([
+    { requested: 'R.utils', names: ['r.utils'], result: 'success' },
+    { requested: 'R.utils', names: ['R.utils', 'r.utils'], result: 'failure' },
+    { requested: 'r-r.utils', names: ['R.utils', 'r.utils'], result: 'failure' }
+  ])(
+    'verifies removal of $requested without confusing remaining R names',
+    async ({ requested, names, result }) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'r-removal-identity-'))
+      const packages: NotebookEnvironmentPackage[] = names.map((name) => ({
+        name,
+        version: '1.0',
+        versionStatus: 'known',
+        ecosystem: 'r',
+        evidenceSources: ['r-installed-packages']
+      }))
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled: vi.fn().mockResolvedValue({ packages }),
+        captureFingerprint: vi.fn().mockResolvedValue('stable')
+      })
+      const captureTarget = { ...target, language: 'r' as const }
+      await tracker.markPackageMutationDirty(captureTarget, {
+        operationId: 'remove-identity',
+        operation: 'uninstall',
+        packages: [requested]
+      })
+      const verification = await tracker.refreshAfterPackageMutation(captureTarget, {
+        operationId: 'remove-identity',
+        operation: 'uninstall',
+        packages: [requested],
+        result: 'success'
+      })
+      expect(verification.result).toBe(result)
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
+    'refreshes a %s inventory cached before reader revision tracking',
+    async (language) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'inventory-reader-revision-'))
+      const fingerprintOutput = 'FILE\tunchanged\t1\t1\n'
+      const probeTarget = { ...target, language }
+      const before = new EnvironmentStateTracker({
+        dataRoot,
+        captureFingerprint: async () =>
+          createHash('sha256').update(`${language}\n${fingerprintOutput}`).digest('hex'),
+        inspectInstalled: async () => ({ packages: [] })
+      })
+      await before.prepareRun(probeTarget)
+      const inspectInstalled = vi.fn(async () => ({ packages: [] }))
+      const current = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled,
+        execFile: async () => ({ stdout: fingerprintOutput, stderr: '' })
+      })
+      expect((await current.prepareRun(probeTarget)).inventoryRefreshed).toBe(true)
+      expect((await current.prepareRun(probeTarget)).inventoryRefreshed).toBe(false)
+      expect(inspectInstalled).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each([false, true])(
+    'preserves conflicting live Python versions regardless of observation order (%s)',
+    async (reverse) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'python-live-version-'))
+      const packageRow = (
+        version: string,
+        loadedState: 'loaded' | 'installed-only'
+      ): NotebookEnvironmentPackage => ({
+        name: 'extra-distribution',
+        version,
+        ecosystem: 'python',
+        versionStatus: 'known',
+        evidenceSources: ['python-kernel-modules', 'python-importlib-metadata'],
+        loadedState
+      })
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        captureFingerprint: async () => 'stable',
+        inspectInstalled: async () => ({
+          packages: [
+            {
+              ...packageRow('99.0', 'installed-only'),
+              evidenceSources: ['python-importlib-metadata']
+            }
+          ]
+        })
+      })
+      const packages = [packageRow('1.0', 'loaded'), packageRow('99.0', 'installed-only')]
+      const captured = await tracker.captureCompletedRun(target, {
+        packages: reverse ? packages.reverse() : packages
+      })
+      expect(captured.manifest.packages).toContainEqual(
+        expect.objectContaining({
+          version: '1.0',
+          loadedState: 'loaded'
+        })
+      )
+      expect(captured.manifest.packages).toContainEqual(
+        expect.objectContaining({
+          version: '99.0',
+          loadedState: 'installed-only'
+        })
+      )
+    }
+  )
+
+  for (const language of ['python', 'r'] as const) {
+    const command =
+      language === 'python'
+        ? process.env.OPEN_SCIENCE_TEST_PYTHON
+        : process.env.OPEN_SCIENCE_TEST_R_ENV
+          ? join(process.env.OPEN_SCIENCE_TEST_R_ENV, 'bin', 'Rscript')
+          : undefined
+    it.skipIf(!command)(
+      `invalidates the ${language} inventory when only library precedence changes`,
+      async () => {
+        dataRoot = await mkdtemp(join(tmpdir(), 'environment-path-order-'))
+        const first = join(dataRoot, 'first')
+        const second = join(dataRoot, 'second')
+        await mkdir(first)
+        await mkdir(second)
+        let libraries = [first, second]
+        const inspectInstalled = vi.fn(async () => ({ packages: [] }))
+        const execute = promisify(execFile)
+        const tracker = new EnvironmentStateTracker({
+          dataRoot,
+          inspectInstalled,
+          execFile: async (executable, args, options) => {
+            const setup =
+              language === 'python'
+                ? `import sys\nsys.path[:0] = ${JSON.stringify(libraries)}\n`
+                : `.libPaths(c(${libraries.map((path) => JSON.stringify(path)).join(',')}, .libPaths()))\n`
+            return execute(
+              executable,
+              [...args.slice(0, -1), setup + args[args.length - 1]],
+              options
+            )
+          }
+        })
+        const probeTarget = {
+          ...target,
+          language,
+          command: command!
+        }
+        const initial = await tracker.prepareRun(probeTarget)
+        expect(initial.fingerprint).toBeTruthy()
+        expect(initial.inventoryRefreshed).toBe(true)
+        const unchanged = await tracker.prepareRun(probeTarget)
+        expect(unchanged.fingerprint).toBe(initial.fingerprint)
+        expect(unchanged.inventoryRefreshed).toBe(false)
+
+        libraries = [second, first]
+        const reordered = await tracker.prepareRun(probeTarget)
+        expect(reordered.fingerprint).not.toBe(initial.fingerprint)
+        expect(reordered.inventoryRefreshed).toBe(true)
+        expect(inspectInstalled).toHaveBeenCalledTimes(2)
+      }
+    )
+  }
+
+  it('keeps a live external R library separate from the default library at the same rank', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'r-library-scope-'))
+    const prefix = join(dataRoot, 'env')
+    await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+    await writeFile(join(prefix, 'conda-meta/history'), 'baseline')
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      resolveMicromamba: async () => '/fake/micromamba',
+      captureFingerprint: async () => 'stable',
+      inspectInstalled: async () => ({
+        packages: [
+          {
+            name: 'RColorBrewer',
+            version: '1.1-3',
+            ecosystem: 'r',
+            versionStatus: 'known',
+            evidenceSources: ['r-installed-packages'],
+            libraryRank: 1,
+            libraryScope: 'environment'
+          }
+        ]
+      }),
+      execFile: vi.fn(async () => ({
+        stdout: JSON.stringify([
+          {
+            name: 'r-rcolorbrewer',
+            version: '1.1_3',
+            url: 'https://conda.example/r-rcolorbrewer.conda',
+            md5: 'a'.repeat(32)
+          }
+        ]),
+        stderr: ''
+      }))
+    })
+    const capture = await tracker.captureCompletedRun(
+      {
+        language: 'r',
+        runtimeSource: 'managed',
+        environmentName: 'default-r',
+        command: join(prefix, 'bin/Rscript'),
+        condaPrefix: prefix
+      },
+      {
+        packages: [
+          {
+            name: 'RColorBrewer',
+            version: '1.1.3',
+            ecosystem: 'r',
+            versionStatus: 'known',
+            evidenceSources: ['r-session-info'],
+            libraryRank: 1,
+            libraryScope: 'system',
+            loadedState: 'loaded'
+          }
+        ]
+      }
+    )
+    expect(capture.manifest.packages).toHaveLength(2)
+    expect(capture.manifest.packages).toContainEqual(
+      expect.objectContaining({
+        libraryScope: 'system',
+        loadedState: 'loaded',
+        evidenceSources: ['r-session-info']
+      })
+    )
+    expect(capture.environmentLock.state).toBe('partial')
+  })
+  it.each([
+    ['pandas', 'pandas'],
+    ['Extra_Package', 'extra-package'],
+    ['extra.package', 'Extra-Package']
+  ])(
+    'retains package diagnostics and merges %s with the live %s identity',
+    async (installedName, liveName) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-diagnostics-'))
+      const prefix = join(dataRoot, 'env')
+      await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+      await writeFile(join(prefix, 'conda-meta', 'history'), 'created\n')
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        resolveMicromamba: async () => '/fake/micromamba',
+        execFile: vi.fn(async () => ({
+          stdout: JSON.stringify([
+            {
+              name: 'python',
+              version: '3.13.2',
+              url: 'https://conda.example/python.conda',
+              md5: 'a'.repeat(32)
+            }
+          ]),
+          stderr: ''
+        })),
+        inspectInstalled: vi.fn().mockResolvedValue({
+          runtimeVersion: '3.13.2',
+          platform: 'linux',
+          architecture: 'x64',
+          packages: [
+            {
+              name: installedName,
+              version: '3.0.5',
+              versionStatus: 'known',
+              ecosystem: 'python',
+              evidenceSources: ['python-importlib-metadata']
+            }
+          ]
+        }),
+        captureFingerprint: async () => 'stable'
+      })
+      for (let index = 0; index < 2; index++) {
+        const capture = await tracker.captureCompletedRun(
+          {
+            language: 'python',
+            environmentName: 'analysis',
+            runtimeSource: 'managed',
+            command: join(prefix, 'bin', 'python'),
+            condaPrefix: prefix
+          },
+          { runtimeVersion: '3.13.2', packages: [] }
+        )
+        expect(capture.environmentLock).toMatchObject({
+          state: 'partial',
+          diagnostics: [
+            {
+              reason: 'package-lock-missing',
+              packageName: installedName.toLowerCase().replace(/[-_.]+/gu, '-'),
+              observedVersion: '3.0.5'
+            }
+          ]
+        })
+      }
+      const managedTarget = {
+        language: 'python' as const,
+        environmentName: 'analysis',
+        runtimeSource: 'managed' as const,
+        command: join(prefix, 'bin', 'python'),
+        condaPrefix: prefix
+      }
+      const pkg: NotebookEnvironmentPackage = {
+        name: liveName,
+        version: '3.0.5',
+        versionStatus: 'known',
+        ecosystem: 'python',
+        evidenceSources: ['python-importlib-metadata', 'python-kernel-modules'],
+        loadedState: 'installed-only'
+      }
+      const scoped = await tracker.captureCompletedRun(managedTarget, {
+        runtimeVersion: '3.13.2',
+        packages: [pkg]
+      })
+      expect(scoped.manifest.packages).toHaveLength(1)
+      expect(scoped.environmentLock.state).toBe('available')
+      expect(scoped.manifest.packages).toContainEqual(
+        expect.objectContaining({ name: liveName, loadedState: 'installed-only' })
+      )
+      if (scoped.environmentLock.state === 'unavailable') throw new Error('Expected captured lock')
+      const stored = JSON.parse(
+        await readFile(
+          join(
+            dataRoot,
+            'runtime/provenance/environment-locks',
+            scoped.environmentLock.lockChecksum + '.json'
+          ),
+          'utf8'
+        )
+      )
+      expect(stored.omittedPackages).toEqual([
+        `python:${liveName.toLowerCase().replace(/[-_.]+/gu, '-')}`
+      ])
+      const loaded = await tracker.captureCompletedRun(managedTarget, {
+        runtimeVersion: '3.13.2',
+        packages: [{ ...pkg, loadedState: 'loaded' }]
+      })
+      expect(loaded.environmentLock.state).toBe('partial')
+    }
+  )
+
   it('activates the complete Windows Conda DLL path for managed R probes', () => {
     const inherited = { Path: 'C:\\Windows\\System32', KEEP_ME: 'yes' }
     const prefix = 'C:\\Users\\Helix\\OpenScience\\runtime\\envs\\.r'
@@ -70,6 +633,103 @@ describe('EnvironmentStateTracker', () => {
     })
   })
 
+  it.skipIf(!process.env.OPEN_SCIENCE_TEST_R_ENV).each([
+    ...[undefined, 'RemoteSubdir', 'GithubSubdir'].map((field) => ({
+      label: field ?? 'github-root',
+      fields: [
+        'RemoteType: github',
+        'RemoteHost: api.github.com',
+        'RemoteUsername: research',
+        'RemoteRepo: monorepo',
+        `RemoteSha: ${'a'.repeat(40)}`,
+        'biocViews: Software',
+        ...(field ? [`${field}: packages/nestedpkg`] : [])
+      ],
+      expected: {
+        type: 'github',
+        repository: 'research/monorepo',
+        commit: 'a'.repeat(40),
+        ...(field ? { subdirectory: 'packages/nestedpkg' } : {})
+      }
+    })),
+    {
+      label: 'bioc-release',
+      fields: ['Repository: Bioconductor 3.20', 'biocViews: Software'],
+      expected: { type: 'bioconductor', version: '3.20' }
+    },
+    {
+      label: 'bioc-standard-remote',
+      fields: ['RemoteType: standard', 'Repository: Bioconductor 3.20', 'biocViews: Software'],
+      expected: { type: 'bioconductor', version: '3.20' }
+    },
+    {
+      label: 'bioc-custom-remote',
+      fields: ['RemoteType: gitlab', 'Repository: Bioconductor 3.20', 'biocViews: Software'],
+      expected: undefined
+    },
+    {
+      label: 'bioc-annotation-branch',
+      fields: [
+        'biocViews: AnnotationData',
+        'git_url: https://git.bioconductor.org/packages/nestedpkg',
+        'git_branch: RELEASE_3_20'
+      ],
+      expected: { type: 'bioconductor', version: '3.20' }
+    },
+    {
+      label: 'bioc-experiment-unknown',
+      fields: ['biocViews: ExperimentData'],
+      expected: { type: 'bioconductor' }
+    },
+    {
+      label: 'bioc-conflicting-release',
+      fields: [
+        'Repository: Bioconductor 3.20',
+        'git_url: https://git.bioconductor.org/packages/nestedpkg',
+        'git_branch: RELEASE_3_21'
+      ],
+      expected: { type: 'bioconductor' }
+    },
+    {
+      label: 'untrusted-branch',
+      fields: [
+        'biocViews: Software',
+        'git_url: https://example.org/packages/nestedpkg',
+        'git_branch: RELEASE_3_20'
+      ],
+      expected: { type: 'bioconductor' }
+    },
+    { label: 'cran', fields: ['Repository: CRAN'], expected: undefined }
+  ])('reads R package source metadata with real R: $label', async ({ fields, expected }) => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'r-source-description-'))
+    const library = join(dataRoot, 'library')
+    const packageRoot = join(library, 'nestedpkg')
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(
+      join(packageRoot, 'DESCRIPTION'),
+      ['Package: nestedpkg', 'Version: 1.0', ...fields].join('\n') + '\n'
+    )
+    const execute = promisify(execFile)
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      execFile: async (executable, args, options) => {
+        // Supply one inventory row; evaluate the production DESCRIPTION reader and TSV emitter.
+        // No R package is installed or loaded from this metadata fixture.
+        const setup = `installed.packages <- function(...) matrix(c("nestedpkg", "1.0", ${JSON.stringify(library)}), nrow=1, dimnames=list(NULL, c("Package", "Version", "LibPath")))\n`
+        return execute(executable, [...args.slice(0, -1), setup + args[args.length - 1]], options)
+      }
+    })
+    const inspected = await tracker.inspectPackages(
+      {
+        ...target,
+        language: 'r',
+        command: join(process.env.OPEN_SCIENCE_TEST_R_ENV!, 'bin', 'Rscript')
+      },
+      ['nestedpkg']
+    )
+    expect(inspected.packages[0]?.source).toEqual(expected)
+  })
+
   it('passes the activated Windows Conda DLL path to default R inventory and fingerprint spawns', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-r-spawn-'))
     const prefix = 'C:\\Users\\Helix\\OpenScience\\runtime\\envs\\.r'
@@ -83,7 +743,7 @@ describe('EnvironmentStateTracker', () => {
           options.maxBuffer === 8 * 1024 * 1024
             ? 'FILE\tconda-meta/history\t1\t1\n'
             : 'RUNTIME\t4.5.1\twin32\tx86_64\n' +
-              'PACKAGE\tggplot2\t4.0.0.9000\t\t4.5.1\t1\tenvironment\tgithub\tapi.github.com\ttidyverse\tggplot2\tmain\ta7b92f1\n' +
+              'PACKAGE\tggplot2\t4.0.0.9000\t\t4.5.1\t1\tenvironment\tgithub\tapi.github.com\ttidyverse\tggplot2\tmain\ta7b92f1\tpackages/ggplot2\n' +
               'PACKAGE\tfakepkg\t1.0.0\t\t4.5.1\t1\tenvironment\tgitlab\tgitlab.com\tgroup\tfakepkg\tmain\tdeadbeef\n',
         stderr: ''
       })
@@ -112,7 +772,8 @@ describe('EnvironmentStateTracker', () => {
             type: 'github',
             repository: 'tidyverse/ggplot2',
             ref: 'main',
-            commit: 'a7b92f1'
+            commit: 'a7b92f1',
+            subdirectory: 'packages/ggplot2'
           }
         }
       ]
@@ -475,47 +1136,54 @@ describe('EnvironmentStateTracker', () => {
     })
   })
 
-  it('rejects a GitHub package when the installed source has a different requested ref', async () => {
-    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-ref-mismatch-'))
-    const installedPackage = {
-      name: 'ggplot2',
-      version: '4.0.0.9000',
-      versionStatus: 'known' as const,
-      ecosystem: 'r' as const,
-      evidenceSources: ['r-installed-packages' as const],
-      source: {
-        type: 'github' as const,
-        repository: 'tidyverse/ggplot2',
-        ref: 'release'
+  it.each(['ref', 'subdirectory'] as const)(
+    'rejects a GitHub package when the installed source has a different requested %s',
+    async (mismatch) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-ref-mismatch-'))
+      const installedPackage = {
+        name: 'ggplot2',
+        version: '4.0.0.9000',
+        versionStatus: 'known' as const,
+        ecosystem: 'r' as const,
+        evidenceSources: ['r-installed-packages' as const],
+        source: {
+          type: 'github' as const,
+          repository: 'tidyverse/ggplot2',
+          ref: mismatch === 'ref' ? 'release' : 'main',
+          ...(mismatch === 'subdirectory' ? { subdirectory: 'packages/ggplot2' } : {})
+        }
       }
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled: vi
+          .fn()
+          .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
+          .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [installedPackage] }),
+        captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+      })
+      const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
+
+      await tracker.markPackageMutationDirty(rTarget, {
+        operationId: 'operation-github-ref-mismatch',
+        operation: 'install',
+        packages: ['tidyverse/ggplot2@main']
+      })
+      const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+        operationId: 'operation-github-ref-mismatch',
+        operation: 'install',
+        packages: ['tidyverse/ggplot2@main'],
+        result: 'success'
+      })
+
+      expect(verification).toMatchObject({
+        result: 'failure',
+        unsatisfiedPackages: ['tidyverse/ggplot2@main']
+      })
+      expect(
+        (await tracker.inspectPackages(rTarget, ['tidyverse/ggplot2@main'])).packages[0]?.status
+      ).toBe('missing')
     }
-    const tracker = new EnvironmentStateTracker({
-      dataRoot,
-      inspectInstalled: vi
-        .fn()
-        .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
-        .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [installedPackage] }),
-      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
-    })
-    const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
-
-    await tracker.markPackageMutationDirty(rTarget, {
-      operationId: 'operation-github-ref-mismatch',
-      operation: 'install',
-      packages: ['tidyverse/ggplot2@main']
-    })
-    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
-      operationId: 'operation-github-ref-mismatch',
-      operation: 'install',
-      packages: ['tidyverse/ggplot2@main'],
-      result: 'success'
-    })
-
-    expect(verification).toMatchObject({
-      result: 'failure',
-      unsatisfiedPackages: ['tidyverse/ggplot2@main']
-    })
-  })
+  )
 
   it('does not classify a Python path package as a GitHub source request', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-python-path-mutation-'))
@@ -554,55 +1222,78 @@ describe('EnvironmentStateTracker', () => {
     expect(verification.result).toBe('success')
   })
 
-  it('reports a GitHub ref or commit mutation when the package version is unchanged', async () => {
-    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-source-change-'))
-    const githubPackage = (ref: string, commit: string): NotebookEnvironmentPackage => ({
-      name: 'ggplot2',
-      version: '4.0.0.9000',
-      versionStatus: 'known' as const,
-      ecosystem: 'r' as const,
-      evidenceSources: ['r-installed-packages' as const],
-      source: { type: 'github' as const, repository: 'tidyverse/ggplot2', ref, commit }
-    })
-    const tracker = new EnvironmentStateTracker({
-      dataRoot,
-      inspectInstalled: vi
-        .fn()
-        .mockResolvedValueOnce({
-          runtimeVersion: '4.5.1',
-          packages: [githubPackage('main', 'abc123')]
-        })
-        .mockResolvedValueOnce({
-          runtimeVersion: '4.5.1',
-          packages: [githubPackage('release', 'def456')]
-        }),
-      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
-    })
-    const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
-
-    await tracker.markPackageMutationDirty(rTarget, {
-      operationId: 'operation-github-source-change',
-      operation: 'install',
-      packages: ['tidyverse/ggplot2@release']
-    })
-    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
-      operationId: 'operation-github-source-change',
-      operation: 'install',
-      packages: ['tidyverse/ggplot2@release'],
-      result: 'success'
-    })
-
-    expect(verification.packageChanges).toEqual([
-      expect.objectContaining({
+  it.each(['ref-and-commit', 'subdirectory'] as const)(
+    'reports a GitHub %s mutation when the package version is unchanged',
+    async (scenario) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-source-change-'))
+      const githubPackage = (
+        ref: string,
+        commit: string,
+        subdirectory?: string
+      ): NotebookEnvironmentPackage => ({
         name: 'ggplot2',
-        relationship: 'requested',
-        change: 'updated',
-        beforeVersion: '4.0.0.9000',
-        afterVersion: '4.0.0.9000',
-        source: expect.objectContaining({ ref: 'release', commit: 'def456' })
+        version: '4.0.0.9000',
+        versionStatus: 'known' as const,
+        ecosystem: 'r' as const,
+        evidenceSources: ['r-installed-packages' as const],
+        source: {
+          type: 'github' as const,
+          repository: 'tidyverse/ggplot2',
+          ref,
+          commit,
+          subdirectory
+        }
       })
-    ])
-  })
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled: vi
+          .fn()
+          .mockResolvedValueOnce({
+            runtimeVersion: '4.5.1',
+            packages: [githubPackage(scenario === 'subdirectory' ? 'release' : 'main', 'abc123')]
+          })
+          .mockResolvedValueOnce({
+            runtimeVersion: '4.5.1',
+            packages: [
+              githubPackage(
+                'release',
+                scenario === 'subdirectory' ? 'abc123' : 'def456',
+                scenario === 'subdirectory' ? 'packages/ggplot2' : undefined
+              )
+            ]
+          }),
+        captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+      })
+      const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
+
+      await tracker.markPackageMutationDirty(rTarget, {
+        operationId: 'operation-github-source-change',
+        operation: 'install',
+        packages: ['tidyverse/ggplot2@release']
+      })
+      const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+        operationId: 'operation-github-source-change',
+        operation: 'install',
+        packages: ['tidyverse/ggplot2@release'],
+        result: 'success'
+      })
+
+      expect(verification.packageChanges).toEqual([
+        expect.objectContaining({
+          name: 'ggplot2',
+          relationship: 'requested',
+          change: 'updated',
+          beforeVersion: '4.0.0.9000',
+          afterVersion: '4.0.0.9000',
+          source: expect.objectContaining({
+            ref: 'release',
+            commit: scenario === 'subdirectory' ? 'abc123' : 'def456',
+            ...(scenario === 'subdirectory' ? { subdirectory: 'packages/ggplot2' } : {})
+          })
+        })
+      ])
+    }
+  )
 
   it('captures a baseline before the first package mutation so uninstalls have a verified change', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-first-uninstall-'))
@@ -754,8 +1445,8 @@ describe('EnvironmentStateTracker', () => {
     expect(first.manifest.installedInventory.source).toBe('full-scan')
     expect(second.manifest.installedInventory.source).toBe('cache-reused')
     expect(second.manifest).toMatchObject({
-      complete: false,
-      captureStatus: 'partial',
+      complete: true,
+      captureStatus: 'complete',
       installedInventory: { validation: 'best-effort' }
     })
     expect(second.manifest.warnings).toContain('inventory-cache-best-effort')
@@ -771,6 +1462,196 @@ describe('EnvironmentStateTracker', () => {
     await expect(readFile(first.storagePath, 'utf8')).resolves.toBe(
       `${JSON.stringify(first.manifest, null, 2)}\n`
     )
+  })
+
+  it('publishes one content-addressed micromamba lock per unchanged environment revision', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-lock-'))
+    const condaPrefix = join(dataRoot, 'runtime', 'envs', 'default-python')
+    await mkdir(join(condaPrefix, 'conda-meta'), { recursive: true })
+    await writeFile(join(condaPrefix, 'conda-meta', 'history'), 'created\n')
+    const execute = vi.fn(async () => ({
+      stdout: JSON.stringify([
+        {
+          name: 'numpy',
+          version: '2.2.0',
+          url: 'https://conda.example/linux-64/numpy-2.2.0-py313_0.conda',
+          md5: '0123456789abcdef0123456789abcdef'
+        }
+      ]),
+      stderr: ''
+    }))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      resolveMicromamba: vi.fn().mockResolvedValue('/runtime/micromamba'),
+      execFile: execute,
+      inspectInstalled: vi.fn().mockResolvedValue({
+        runtimeVersion: '3.13.2',
+        platform: 'linux',
+        architecture: 'x64',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.2.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-importlib-metadata']
+          }
+        ]
+      }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python'),
+      now: () => new Date('2026-09-02T00:00:00.000Z')
+    })
+
+    const target = {
+      language: 'python' as const,
+      environmentName: 'default-python',
+      runtimeSource: 'managed' as const,
+      command: join(condaPrefix, 'bin', 'python'),
+      condaPrefix
+    }
+    const live = {
+      runtimeVersion: '3.13.2',
+      packages: [
+        {
+          name: 'numpy',
+          version: '2.2.0',
+          versionStatus: 'known' as const,
+          ecosystem: 'python' as const,
+          evidenceSources: ['python-kernel-modules' as const]
+        }
+      ]
+    }
+    const capture = await tracker.captureCompletedRun(target, live)
+    const repeated = await tracker.captureCompletedRun(target, live)
+
+    expect(capture.environmentLock).toMatchObject({
+      state: 'available',
+      format: 'environment-lock-bundle',
+      lockChecksum: expect.stringMatching(/^[a-f0-9]{64}$/u)
+    })
+    if (capture.environmentLock.state === 'unavailable') throw new Error('Expected a lock.')
+    expect(repeated.environmentLock).toMatchObject({
+      state: 'available',
+      lockChecksum: capture.environmentLock.lockChecksum
+    })
+    if (repeated.environmentLock.state === 'unavailable') throw new Error('Expected a lock.')
+    const serialized = await readFile(
+      join(
+        dataRoot,
+        'runtime',
+        'provenance',
+        'environment-locks',
+        `${capture.environmentLock.lockChecksum}.json`
+      ),
+      'utf8'
+    )
+    expect(JSON.parse(serialized)).toMatchObject({
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: 'python',
+      environmentName: 'default-python'
+    })
+    expect(JSON.parse(serialized)).not.toHaveProperty('capturedAt')
+    expect(JSON.parse(serialized)).not.toHaveProperty('environmentManifestChecksum')
+
+    const outputChecksum = 'a'.repeat(64)
+    const graph: ArtifactProvenanceGraph = {
+      schemaVersion: 1,
+      targetEntityId: 'artifact-version:version-1',
+      completeness: 'complete',
+      reasonCodes: [],
+      activities: [
+        {
+          activityId: 'run-1',
+          kind: 'notebook-run',
+          sequence: 0,
+          runIndex: 0,
+          inclusion: 'target-closure',
+          evidenceState: 'available'
+        },
+        {
+          activityId: 'artifact-publication:version-1',
+          kind: 'artifact-publication',
+          sequence: 1,
+          parentActivityId: 'run-1',
+          inclusion: 'target-closure',
+          evidenceState: 'available'
+        }
+      ],
+      entities: [
+        {
+          entityId: 'file-generation:output-1',
+          kind: 'file-generation',
+          generationId: 'output-1',
+          relativePath: 'result.csv',
+          pathPortability: 'relative',
+          checksum: outputChecksum,
+          sizeBytes: 10,
+          contentStorageKey: `execution-file-evidence/blobs/sha256-${outputChecksum}`
+        },
+        {
+          entityId: 'artifact-version:version-1',
+          kind: 'artifact-version',
+          versionId: 'version-1',
+          filename: 'result.csv',
+          checksum: outputChecksum,
+          sizeBytes: 10
+        }
+      ],
+      edges: [
+        {
+          kind: 'generated',
+          activityId: 'run-1',
+          entityId: 'file-generation:output-1',
+          authority: 'advisory',
+          evidenceSource: 'runtime-observation'
+        },
+        {
+          kind: 'used',
+          activityId: 'artifact-publication:version-1',
+          entityId: 'file-generation:output-1',
+          authority: 'authoritative',
+          evidenceSource: 'artifact-publication'
+        },
+        {
+          kind: 'generated',
+          activityId: 'artifact-publication:version-1',
+          entityId: 'artifact-version:version-1',
+          authority: 'authoritative',
+          evidenceSource: 'artifact-publication'
+        }
+      ]
+    }
+    const run: ProvenanceNotebookRun = {
+      runId: 'run-1',
+      runIndex: 0,
+      agentFrameId: 'agent-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1',
+      kernelKind: 'python',
+      environmentName: 'default-python',
+      environmentLock: repeated.environmentLock,
+      script: 'write_result()',
+      status: 'completed',
+      startedAt: '2026-09-02T00:00:00.000Z',
+      completedAt: '2026-09-02T00:00:01.000Z',
+      outputs: [],
+      inputFileVersionKeys: []
+    }
+    const recipe = sealArtifactReproducibilityRecipe({
+      provenanceGraph: graph,
+      inputFiles: [],
+      runs: [run]
+    })
+    await expect(
+      prepareArtifactReproducibilityExecutionPlan(recipe, 'original-inputs', dataRoot)
+    ).resolves.toMatchObject({
+      steps: [{ activityId: 'run-1' }],
+      environmentRequirements: [{ lockChecksum: repeated.environmentLock.lockChecksum }]
+    })
+
+    expect(execute).toHaveBeenCalledTimes(1)
   })
 
   it('refreshes the inventory once after one logical package mutation', async () => {
@@ -876,14 +1757,22 @@ describe('EnvironmentStateTracker', () => {
     const capture = await tracker.captureCompletedRun(rTarget)
 
     expect(inspectInstalled).toHaveBeenCalledTimes(2)
+    // BiocManager's active release must not relabel a CRAN package.
+    expect(
+      verification.packageChanges?.find((change) => change.name === 'ggplot2')
+    ).not.toHaveProperty('source')
+    expect(
+      capture.manifest.operationLog?.[0]?.packageChanges?.find(
+        (change) => change.name === 'ggplot2'
+      )
+    ).not.toHaveProperty('source')
     expect(verification.packageChanges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           name: 'ggplot2',
           relationship: 'requested',
           change: 'installed',
-          afterVersion: '3.5.2',
-          source: { type: 'bioconductor', version: '3.21' }
+          afterVersion: '3.5.2'
         }),
         expect.objectContaining({
           name: 'rlang',
@@ -909,8 +1798,7 @@ describe('EnvironmentStateTracker', () => {
             name: 'ggplot2',
             relationship: 'requested',
             change: 'installed',
-            afterVersion: '3.5.2',
-            source: { type: 'bioconductor', version: '3.21' }
+            afterVersion: '3.5.2'
           }),
           expect.objectContaining({
             name: 'rlang',
@@ -1069,58 +1957,65 @@ describe('EnvironmentStateTracker', () => {
     })
   })
 
-  it('marks a successful installer process as failed when the requested R package is absent', async () => {
-    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-unverified-mutation-'))
-    const inspectInstalled = vi.fn().mockResolvedValue({
-      runtimeVersion: '4.4.3',
-      packages: [
-        {
-          name: 'ggplot2',
-          version: '4.0.3',
-          versionStatus: 'known',
-          ecosystem: 'r',
-          evidenceSources: ['r-installed-packages']
-        }
-      ]
-    })
-    const tracker = new EnvironmentStateTracker({
-      dataRoot,
-      inspectInstalled,
-      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
-    })
-    const rTarget = {
-      language: 'r' as const,
-      environmentName: 'default-r',
-      runtimeSource: 'managed' as const,
-      command: '/runtime/default-r/bin/Rscript',
-      args: []
-    }
-
-    await tracker.markPackageMutationDirty(rTarget, {
-      operationId: 'operation-missing-dplyr',
-      operation: 'install',
-      packages: ['dplyr']
-    })
-    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
-      operationId: 'operation-missing-dplyr',
-      operation: 'install',
-      packages: ['dplyr'],
-      result: 'success'
-    })
-    const capture = await tracker.captureCompletedRun(rTarget)
-
-    expect(verification).toEqual({ result: 'failure', unsatisfiedPackages: ['dplyr'] })
-    expect(capture.manifest.operationLog).toEqual([
-      expect.objectContaining({
-        operationId: 'operation-missing-dplyr',
-        result: 'failure',
-        packages: ['dplyr']
+  it.each([
+    { requested: ['dplyr'], missing: 'dplyr' },
+    { requested: ['ggplot2', 'DESeq2'], missing: 'DESeq2' }
+  ])(
+    'rejects installer success when $missing is absent from the R inventory',
+    async ({ requested, missing }) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-unverified-mutation-'))
+      const inspectInstalled = vi.fn().mockResolvedValue({
+        runtimeVersion: '4.4.3',
+        packages: [
+          {
+            name: 'ggplot2',
+            version: '4.0.3',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            evidenceSources: ['r-installed-packages']
+          }
+        ]
       })
-    ])
-    expect(capture.manifest.packages).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: 'dplyr' })])
-    )
-  })
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled,
+        captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+      })
+      const rTarget = {
+        language: 'r' as const,
+        environmentName: 'default-r',
+        runtimeSource: 'managed' as const,
+        command: '/runtime/default-r/bin/Rscript',
+        args: []
+      }
+
+      await tracker.markPackageMutationDirty(rTarget, {
+        operationId: 'operation-missing-r-package',
+        operation: 'install',
+        packages: requested
+      })
+      const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+        operationId: 'operation-missing-r-package',
+        operation: 'install',
+        packages: requested,
+        result: 'success',
+        source: { type: 'bioconductor', version: '3.20' }
+      })
+      const capture = await tracker.captureCompletedRun(rTarget)
+
+      expect(verification).toMatchObject({ result: 'failure', unsatisfiedPackages: [missing] })
+      expect(capture.manifest.operationLog).toEqual([
+        expect.objectContaining({
+          operationId: 'operation-missing-r-package',
+          result: 'failure',
+          packages: requested
+        })
+      ])
+      expect(capture.manifest.packages).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: missing })])
+      )
+    }
+  )
 
   it('fails verification when the post-install inventory cannot be refreshed', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-refresh-failure-'))
@@ -1156,7 +2051,7 @@ describe('EnvironmentStateTracker', () => {
     ).resolves.toEqual({ result: 'failure', reason: 'inventory-refresh-failed' })
   })
 
-  it('retains installer source when a failed refresh is completed during recovery', async () => {
+  it('retains the observed Bioconductor release when a failed refresh is recovered', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-source-recovery-'))
     const rTarget = {
       language: 'r' as const,
@@ -1213,7 +2108,8 @@ describe('EnvironmentStateTracker', () => {
             version: '1.48.1',
             versionStatus: 'known',
             ecosystem: 'r',
-            evidenceSources: ['r-installed-packages']
+            evidenceSources: ['r-installed-packages'],
+            source: { type: 'bioconductor', version: '3.20' }
           }
         ]
       }),
@@ -1233,7 +2129,7 @@ describe('EnvironmentStateTracker', () => {
           expect.objectContaining({
             name: 'DESeq2',
             relationship: 'requested',
-            source: { type: 'bioconductor', version: '3.21' }
+            source: { type: 'bioconductor', version: '3.20' }
           })
         ]
       })

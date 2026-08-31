@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { execFile as execFileCallback } from 'node:child_process'
 import {
   mkdir,
@@ -14,10 +15,18 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve, win32 } from 'node:path'
+import { dirname, join, resolve, win32 } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { ProvenanceNotebookRun } from '../../shared/artifact-provenance'
+import type { NotebookRunRecord } from '../../shared/notebook'
+import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
+import {
+  resolveArtifactReproducibilityExecutionPlan,
+  sealArtifactReproducibilityRecipe
+} from '../artifacts/artifact-reproducibility-recipe'
+import { projectArtifactReproducibility } from '../artifacts/provenance-reproducibility-projection'
 import {
   beginComputeJobFileEvidence,
   completeWorkingFileEvidence,
@@ -529,6 +538,968 @@ describe('working-file evidence', () => {
         'utf8'
       )
     ).toBe(content)
+  })
+
+  it('corroborates a parsed output with its frozen generation', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'import numpy as np',
+          'import matplotlib.pyplot as plt',
+          'x = np.linspace(0, 2 * np.pi, 500)',
+          "plt.plot(x, np.sin(x), color='#1f77b4')",
+          "plt.savefig('sin.png', dpi=120)",
+          'plt.close()'
+        ].join('\n'),
+        language: 'python',
+        runId: 'run-corroborated-plot'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'sin.png'), 'image bytes')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'available',
+      fileReads: 'complete',
+      externalPaths: 'complete',
+      writerAttribution: 'complete',
+      generationCount: 1,
+      reasonCodes: []
+    })
+    const output = result.workingFiles[0]!
+    if (!output.checksum || output.size === undefined || !output.generationId) {
+      throw new Error('Expected the corroborated output to include immutable generation metadata')
+    }
+    const evidenceJson = await readFile(
+      join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+      'utf8'
+    )
+    const run: NotebookRunRecord = {
+      runId: 'run-corroborated-plot',
+      kernelEpochId: 'epoch-1',
+      kernelDispatched: true,
+      cellId: 'cell-1',
+      source: 'agent',
+      kernelKind: 'python',
+      script: "plt.savefig('sin.png')",
+      status: 'completed',
+      startedAt: 1,
+      endedAt: 2,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      artifacts: [],
+      workingFiles: result.workingFiles,
+      inputFiles: [],
+      fileEvidence: result.fileEvidence
+    }
+    const graph = sealArtifactProvenanceGraph({
+      target: {
+        versionId: 'version-sin',
+        filename: 'sin.png',
+        checksum: output.checksum,
+        sizeBytes: output.size,
+        producerRunId: run.runId,
+        sourceGenerationId: output.generationId
+      },
+      notebookActivities: [{ run, runIndex: 0, evidenceJson }],
+      computeActivities: []
+    })
+
+    expect(graph.completeness).toBe('complete')
+    expect(projectArtifactReproducibility(graph, []).startFrontiers[0]).toMatchObject({
+      eligibility: 'available',
+      crossingEntityIds: []
+    })
+    const persistedRun: ProvenanceNotebookRun = {
+      runId: run.runId,
+      runIndex: 0,
+      agentFrameId: 'agent-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1',
+      kernelEpochId: run.kernelEpochId,
+      kernelKind: 'python',
+      environmentName: 'default-python',
+      environmentLock: {
+        state: 'available',
+        format: 'environment-lock-bundle',
+        lockChecksum: 'a'.repeat(64)
+      },
+      script: run.script,
+      status: 'completed',
+      startedAt: '2026-09-02T00:00:00.000Z',
+      completedAt: '2026-09-02T00:00:01.000Z',
+      outputs: [],
+      inputFileVersionKeys: []
+    }
+    const recipe = sealArtifactReproducibilityRecipe({
+      provenanceGraph: graph,
+      inputFiles: [],
+      runs: [persistedRun]
+    })
+    expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toMatchObject({
+      steps: [{ activityId: run.runId }]
+    })
+  })
+
+  it('freezes only parsed reads and binds them to their exact registered input Version', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const inputContents = 'x\n1\n'
+    const inputChecksum = createHash('sha256').update(inputContents).digest('hex')
+    const inputRelativePath = `inputs/measurements-${inputChecksum.slice(0, 12)}.csv`
+    await mkdir(join(dataRoot, 'inputs'))
+    await Promise.all([
+      writeFile(join(dataRoot, inputRelativePath), inputContents),
+      writeFile(join(dataRoot, 'unrelated.csv'), 'private\n')
+    ])
+    let initialPaths: string[] = []
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'import pandas as pd',
+          `source = '${inputRelativePath}'`,
+          'frame = pd.read_csv(source)',
+          "frame.to_csv('summary.csv', index=False)"
+        ].join('\n'),
+        language: 'python',
+        runId: 'run-corroborated-table',
+        registeredInputFiles: [
+          {
+            inputFileVersionId: 'upload-version-measurements',
+            sourceKind: 'upload-version',
+            sourceFileId: 'upload-measurements',
+            sourceProjectId: 'project-1',
+            sourceSessionId: 'session-1',
+            filename: 'measurements.csv',
+            sizeBytes: Buffer.byteLength(inputContents),
+            checksum: inputChecksum,
+            storageKey: 'uploads/measurements/content',
+            association: 'turn-attached'
+          }
+        ]
+      },
+      {
+        watchDirectory: watcherUnavailable,
+        runEvidenceWorker: async (root, request, signal) => {
+          if (request.operation === 'begin') {
+            initialPaths = request.initialFiles.map(({ file }) => file.relativePath)
+          }
+          return runEvidenceWorker(root, request, signal)
+        }
+      }
+    )
+    await writeFile(join(dataRoot, 'summary.csv'), 'x\n1\n')
+
+    const result = await observation.finish()
+    const evidence = JSON.parse(
+      await readFile(
+        join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ) as {
+      relations: Array<{
+        relation: string
+        relativePath: string
+        registeredInput?: Record<string, string>
+      }>
+    }
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'available',
+      fileReads: 'complete',
+      writerAttribution: 'complete',
+      relationCount: 2,
+      generationCount: 2,
+      reasonCodes: []
+    })
+    expect(initialPaths).toEqual([`data/${inputRelativePath}`])
+    expect(result.confirmedReadPaths).toEqual([`data/${inputRelativePath}`])
+    expect(
+      evidence.relations.map(({ relation, relativePath }) => [relation, relativePath])
+    ).toEqual([
+      ['present-before', `data/${inputRelativePath}`],
+      ['created', 'data/summary.csv']
+    ])
+    expect(evidence.relations[0]?.registeredInput).toEqual({
+      sourceKind: 'upload-version',
+      inputFileVersionId: 'upload-version-measurements',
+      checksum: inputChecksum
+    })
+  })
+
+  it('does not persist files returned by an R directory listing as content reads', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    await Promise.all([
+      writeFile(join(dataRoot, 'sin_plot.png'), 'python sin image'),
+      writeFile(join(dataRoot, 'cos_plot.png'), 'python cos image')
+    ])
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'x <- seq(0, 2 * pi, length.out = 400)',
+          'png("sin_plot_r.png")',
+          'plot(x, sin(x))',
+          'dev.off()',
+          'png("cos_plot_r.png")',
+          'plot(x, cos(x))',
+          'dev.off()',
+          'list.files(pattern = "_r.png")'
+        ].join('\n'),
+        language: 'r',
+        runId: 'run-r-directory-listing'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await Promise.all([
+      writeFile(join(dataRoot, 'sin_plot_r.png'), 'r sin image'),
+      writeFile(join(dataRoot, 'cos_plot_r.png'), 'r cos image')
+    ])
+
+    const result = await observation.finish()
+    const evidence = JSON.parse(
+      await readFile(
+        join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ) as { relations: Array<{ relation: string; relativePath: string }> }
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'partial',
+      fileReads: 'complete',
+      externalPaths: 'partial',
+      writerAttribution: 'complete',
+      relationCount: 2,
+      generationCount: 2,
+      reasonCodes: ['external-paths-not-observed', 'source-analysis-unsupported-call']
+    })
+    expect(
+      evidence.relations.map(({ relation, relativePath }) => [relation, relativePath])
+    ).toEqual([
+      ['created', 'data/cos_plot_r.png'],
+      ['created', 'data/sin_plot_r.png']
+    ])
+  })
+
+  it('does not treat Matplotlib text styling as reading existing files', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    await Promise.all([
+      writeFile(join(dataRoot, 'sin_plot.png'), 'old Python plot'),
+      writeFile(join(dataRoot, 'cos_plot.png'), 'old Python plot'),
+      writeFile(join(dataRoot, 'sin_plot_r.png'), 'old R plot'),
+      writeFile(join(dataRoot, 'cos_plot_r.png'), 'old R plot')
+    ])
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'import matplotlib.pyplot as plt',
+          'fig, ax = plt.subplots()',
+          'wedges, texts, autotexts = ax.pie([1], autopct="%1.1f%%")',
+          'for text in autotexts:',
+          '    text.set_color("white")',
+          '    text.set_fontweight("bold")',
+          'plt.savefig("group_pie.png")'
+        ].join('\n'),
+        language: 'python',
+        runId: 'run-matplotlib-text-styling'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'group_pie.png'), 'new group plot')
+
+    const result = await observation.finish()
+    const evidence = JSON.parse(
+      await readFile(
+        join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ) as { relations: Array<{ relation: string; relativePath: string }> }
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'available',
+      fileReads: 'complete',
+      externalPaths: 'complete',
+      writerAttribution: 'complete',
+      relationCount: 1,
+      generationCount: 1,
+      reasonCodes: []
+    })
+    expect(
+      evidence.relations.map(({ relation, relativePath }) => [relation, relativePath])
+    ).toEqual([['created', 'data/group_pie.png']])
+  })
+
+  it('corroborates a same-run intermediate without requiring an initial generation', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'import pandas as pd',
+          "pd.DataFrame({'x': [1]}).to_csv('intermediate.csv', index=False)",
+          "frame = pd.read_csv('intermediate.csv')",
+          "frame.to_csv('result.csv', index=False)"
+        ].join('\n'),
+        language: 'python',
+        runId: 'run-corroborated-intermediate'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await Promise.all([
+      writeFile(join(dataRoot, 'intermediate.csv'), 'x\n1\n'),
+      writeFile(join(dataRoot, 'result.csv'), 'x\n1\n')
+    ])
+
+    const result = await observation.finish()
+    const evidence = JSON.parse(
+      await readFile(
+        join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ) as { relations: Array<{ relation: string; relativePath: string }> }
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'available',
+      fileReads: 'complete',
+      writerAttribution: 'complete',
+      relationCount: 2,
+      generationCount: 2,
+      reasonCodes: []
+    })
+    expect(
+      evidence.relations.map(({ relation, relativePath }) => [relation, relativePath])
+    ).toEqual([
+      ['created', 'data/intermediate.csv'],
+      ['created', 'data/result.csv']
+    ])
+  })
+
+  it.each(['python', 'r'] as const)(
+    'captures all %s outputs when watcher events omit a renamed directory',
+    async (language) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      let notify: ((event: string, filename: string) => void) | undefined
+      const watcher = Object.assign(new EventEmitter(), { close: vi.fn() })
+      const watchDirectory = vi.fn().mockImplementation((_root, _options, listener) => {
+        notify = listener
+        return watcher
+      })
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot,
+          notebookSessionRoot: sessionRoot,
+          cwd: dataRoot,
+          runId: `coalesced-${language}`,
+          language,
+          code:
+            language === 'python'
+              ? "import pandas as pd\nframe = pd.DataFrame({'x':[1]})\nframe.to_csv('summary.csv')\nframe.to_csv('batch/part.csv')"
+              : 'frame <- data.frame(x=1)\nwrite.csv(frame, "summary.csv")\nwrite.csv(frame, "batch/part.csv")'
+        },
+        { watchDirectory }
+      )
+      await mkdir(join(dataRoot, 'batch'))
+      await writeFile(join(dataRoot, 'summary.csv'), 'summary')
+      await writeFile(join(dataRoot, 'batch', 'part.csv'), 'part')
+      notify?.('change', 'summary.csv')
+      notify?.('rename', 'batch')
+      const result = await observation.finish()
+      expect(result.workingFiles.map((file) => file.relativePath)).toEqual([
+        'data/batch/part.csv',
+        'data/summary.csv'
+      ])
+      expect(result.fileEvidence).toMatchObject({ state: 'available', generationCount: 2 })
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
+    'freezes the previous file generation used by a %s append writer',
+    async (language) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      await writeFile(join(dataRoot, 'result.csv'), 'old rows\n')
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot,
+          notebookSessionRoot: sessionRoot,
+          cwd: dataRoot,
+          runId: `append-${language}`,
+          language,
+          code:
+            language === 'python'
+              ? "import pandas as pd\nframe = pd.DataFrame({'x':[1]})\nframe.to_csv('result.csv', mode='a')"
+              : 'frame <- data.frame(x=1)\nwrite.table(frame, "result.csv", append=TRUE)'
+        },
+        { watchDirectory: watcherUnavailable }
+      )
+      await writeFile(join(dataRoot, 'result.csv'), 'old rows\nnew rows\n')
+      const result = await observation.finish()
+      const evidence = JSON.parse(
+        await readFile(join(storageRoot!, ...result.fileEvidence.storageKey!.split('/')), 'utf8')
+      )
+      const before = evidence.relations.find(
+        (relation: { relation: string }) => relation.relation === 'present-before'
+      )
+      const after = evidence.relations.find(
+        (relation: { relation: string }) => relation.relation === 'modified'
+      )
+      expect(before?.generation).toBeDefined()
+      expect(after?.previousGenerationId).toBe(before.generation.generationId)
+      expect(result.fileEvidence).toMatchObject({ state: 'available', fileReads: 'complete' })
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
+    'allows a %s append writer to create its first output',
+    async (language) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      const code =
+        language === 'python'
+          ? "import pandas as pd\nframe = pd.DataFrame({'x':[1]})\nframe.to_csv('result.csv', mode='a')"
+          : 'frame <- data.frame(x=1)\nwrite.table(frame, "result.csv", append=TRUE)'
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot,
+          notebookSessionRoot: sessionRoot,
+          cwd: dataRoot,
+          runId: `append-new-${language}`,
+          language,
+          code
+        },
+        { watchDirectory: watcherUnavailable }
+      )
+      await writeFile(join(dataRoot, 'result.csv'), 'new rows\n')
+      const result = await observation.finish()
+      expect(result.fileEvidence).toMatchObject({
+        state: 'available',
+        fileReads: 'complete',
+        generationCount: 1
+      })
+      expect(result.confirmedReadPaths).toEqual([])
+    }
+  )
+
+  it('does not mistake a failed initial freeze for a new append destination', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    await writeFile(join(dataRoot, 'result.csv'), 'old rows too large for this evidence budget')
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        runId: 'append-unfrozen',
+        language: 'python',
+        code: "import pandas as pd\nframe=pd.DataFrame({'x':[1]})\nframe.to_csv('result.csv', mode='a')"
+      },
+      { watchDirectory: watcherUnavailable, maxGenerationBytes: 4 }
+    )
+    await writeFile(
+      join(dataRoot, 'result.csv'),
+      'old rows too large for this evidence budget\nnew rows'
+    )
+    const result = await observation.finish()
+    expect(result.fileEvidence.fileReads).toBe('partial')
+    expect(result.fileEvidence.state).not.toBe('available')
+  })
+
+  it('does not make a write-only overwrite depend on the previous file generation', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    await writeFile(join(dataRoot, 'result.csv'), 'old result')
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: "import pandas as pd\npd.DataFrame({'x': [1]}).to_csv('result.csv', index=False)",
+        language: 'python',
+        runId: 'run-corroborated-overwrite'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'result.csv'), 'x\n1\n')
+
+    const result = await observation.finish()
+    const evidence = JSON.parse(
+      await readFile(
+        join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ) as { relations: Array<Record<string, unknown>> }
+
+    expect(result.fileEvidence).toMatchObject({ state: 'available', relationCount: 1 })
+    expect(evidence.relations).toEqual([
+      expect.objectContaining({ relation: 'modified', relativePath: 'data/result.csv' })
+    ])
+    expect(evidence.relations[0]).not.toHaveProperty('previousGenerationId')
+  })
+
+  it('does not treat a URL reader argument as a frozen local input', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'import pandas as pd',
+          "frame = pd.read_csv('https://example.test/measurements.csv')",
+          "frame.to_csv('summary.csv', index=False)"
+        ].join('\n'),
+        language: 'python',
+        runId: 'run-remote-input'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'summary.csv'), 'x\n1\n')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'partial',
+      fileReads: 'partial',
+      externalPaths: 'partial',
+      writerAttribution: 'complete',
+      reasonCodes: expect.arrayContaining(['absolute-path-not-frozen'])
+    })
+  })
+
+  it('keeps exact output attribution when prior kernel values remain conservative', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: "plt.plot(x, y); plt.savefig('chart.png')",
+        language: 'python',
+        runId: 'run-prior-kernel-values'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'chart.png'), 'image bytes')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'partial',
+      fileReads: 'partial',
+      externalPaths: 'complete',
+      writerAttribution: 'complete',
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+
+  it('does not require unexecuted static write candidates to appear', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'import matplotlib.pyplot as plt',
+          'if False:',
+          "    plt.savefig('chart.svg')",
+          'else:',
+          "    plt.savefig('chart.png')"
+        ].join('\n'),
+        language: 'python',
+        runId: 'run-static-write-candidates'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'chart.png'), 'image bytes')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'available',
+      fileReads: 'complete',
+      externalPaths: 'complete',
+      writerAttribution: 'complete'
+    })
+  })
+
+  it('corroborates multiple Matplotlib outputs saved from a static loop', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'import matplotlib.pyplot as plt',
+          "plots = [('sin', 'sin.png'), ('cos', 'cos.png')]",
+          'for name, path in plots:',
+          '    plt.figure()',
+          '    plt.plot([0, 1])',
+          '    plt.savefig(path)',
+          '    plt.close()'
+        ].join('\n'),
+        language: 'python',
+        runId: 'run-static-multiple-plots'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await Promise.all([
+      writeFile(join(dataRoot, 'sin.png'), 'sin image'),
+      writeFile(join(dataRoot, 'cos.png'), 'cos image')
+    ])
+
+    await expect(observation.finish()).resolves.toMatchObject({
+      fileEvidence: {
+        state: 'available',
+        fileReads: 'complete',
+        externalPaths: 'complete',
+        writerAttribution: 'complete',
+        generationCount: 2,
+        reasonCodes: []
+      }
+    })
+  })
+
+  it('corroborates a newly modeled scientific writer', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: "import numpy as np\nnp.savez('arrays.npz', values=np.array([1]))",
+        language: 'python',
+        runId: 'run-numpy-archive'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'arrays.npz'), 'archive bytes')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'available',
+      fileReads: 'complete',
+      externalPaths: 'complete',
+      writerAttribution: 'complete'
+    })
+  })
+
+  it('corroborates CSV writer handle methods with a downstream plot', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'import csv',
+          'import matplotlib.pyplot as plt',
+          'csv_path = "groups.csv"',
+          'with open(csv_path, "w", newline="") as handle:',
+          '    writer = csv.writer(handle)',
+          '    writer.writerow(["sample", "group"])',
+          '    writer.writerows([("sample-1", "Ctrl"), ("sample-2", "IRI")])',
+          'with open(csv_path, "r") as handle:',
+          '    records = list(csv.DictReader(handle))',
+          'plt.pie([len(records)])',
+          'plt.savefig("pie_groups.png")'
+        ].join('\n'),
+        language: 'python',
+        runId: 'run-csv-writer-plot'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await Promise.all([
+      writeFile(join(dataRoot, 'groups.csv'), 'sample,group\nsample-1,Ctrl\nsample-2,IRI\n'),
+      writeFile(join(dataRoot, 'pie_groups.png'), 'plot bytes')
+    ])
+
+    await expect(observation.finish()).resolves.toMatchObject({
+      fileEvidence: {
+        state: 'available',
+        fileReads: 'complete',
+        externalPaths: 'complete',
+        writerAttribution: 'complete',
+        generationCount: 2,
+        reasonCodes: []
+      }
+    })
+  })
+
+  it.each([
+    [
+      'Zarr descendants',
+      'python' as const,
+      "dataset.to_zarr('climate.zarr')",
+      [
+        ['climate.zarr/zarr.json', '{}'],
+        ['climate.zarr/temperature/c/0/0', 'chunk']
+      ]
+    ],
+    [
+      'Shapefile companions',
+      'r' as const,
+      "sf::st_write(layer, 'boundaries.shp')",
+      [
+        ['boundaries.shp', 'shape'],
+        ['boundaries.shx', 'index'],
+        ['boundaries.dbf', 'attributes']
+      ]
+    ],
+    [
+      'GeoTIFF sidecars',
+      'r' as const,
+      "terra::writeRaster(raster, 'map.tif')",
+      [
+        ['map.tif', 'raster'],
+        ['map.tif.aux.xml', '<xml/>'],
+        ['map.tfw', 'world']
+      ]
+    ]
+  ])('corroborates scoped scientific writer %s', async (_name, language, code, files) => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code,
+        language,
+        runId: `run-scoped-${language}`
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    for (const [relativePath, contents] of files) {
+      const path = join(dataRoot, relativePath)
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, contents)
+    }
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      writerAttribution: 'complete',
+      scientificOutputCount: 1
+    })
+  })
+
+  it('does not let a directory scope claim an unrelated sibling change', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: "dataset.to_zarr('climate.zarr')",
+        language: 'python',
+        runId: 'run-scoped-directory-sibling'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await mkdir(join(dataRoot, 'climate.zarr'), { recursive: true })
+    await Promise.all([
+      writeFile(join(dataRoot, 'climate.zarr', 'zarr.json'), '{}'),
+      writeFile(join(dataRoot, 'unrelated.txt'), 'other')
+    ])
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence.writerAttribution).toBe('partial')
+  })
+
+  it('preserves the previous generation when a scoped writer modifies a member', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const metadataPath = join(dataRoot, 'climate.zarr', 'zarr.json')
+    await mkdir(dirname(metadataPath), { recursive: true })
+    await writeFile(metadataPath, '{"version":1}')
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: "dataset.to_zarr('climate.zarr')",
+        language: 'python',
+        runId: 'run-scoped-directory-update'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(metadataPath, '{"version":2}')
+
+    const result = await observation.finish()
+    const evidence = JSON.parse(
+      await readFile(
+        join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+        'utf8'
+      )
+    ) as { relations: Array<Record<string, unknown>> }
+
+    expect(result.fileEvidence.writerAttribution).toBe('complete')
+    expect(JSON.stringify(evidence)).not.toContain('writeScopes')
+    expect(evidence.relations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: 'present-before',
+          relativePath: 'data/climate.zarr/zarr.json'
+        }),
+        expect.objectContaining({
+          relation: 'modified',
+          relativePath: 'data/climate.zarr/zarr.json',
+          previousGenerationId: expect.any(String)
+        })
+      ])
+    )
+  })
+
+  it('does not corroborate an unmodeled likely file writer', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: "model.export_bundle('bundle.zip')",
+        language: 'python',
+        runId: 'run-unknown-exporter'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'bundle.zip'), 'archive bytes')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'partial',
+      writerAttribution: 'partial',
+      reasonCodes: expect.arrayContaining([
+        'dynamic-path-unresolved',
+        'source-analysis-unsupported-call'
+      ])
+    })
+  })
+
+  it.each([
+    [
+      'Python',
+      'python' as const,
+      [
+        'import matplotlib.pyplot as plt',
+        'def save_plot(path):',
+        '    plt.savefig(path)',
+        "save_plot('wrapped.png')"
+      ].join('\n')
+    ],
+    [
+      'R',
+      'r' as const,
+      [
+        'save_plot <- function(path) {',
+        '  ggplot2::ggsave(filename = path)',
+        '}',
+        "save_plot('wrapped.png')"
+      ].join('\n')
+    ]
+  ])(
+    'corroborates an output passed through a direct local %s wrapper',
+    async (_name, language, code) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot,
+          notebookSessionRoot: sessionRoot,
+          cwd: dataRoot,
+          code,
+          language,
+          runId: `run-${language}-file-wrapper`
+        },
+        { watchDirectory: watcherUnavailable }
+      )
+      await writeFile(join(dataRoot, 'wrapped.png'), 'image bytes')
+
+      const result = await observation.finish()
+
+      expect(result.fileEvidence).toMatchObject({
+        state: 'available',
+        fileReads: 'complete',
+        externalPaths: 'complete',
+        writerAttribution: 'complete',
+        reasonCodes: []
+      })
+    }
+  )
+
+  it('keeps a multi-step local file wrapper conservative', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: [
+          'import matplotlib.pyplot as plt',
+          'def save_plot(path):',
+          '    plt.tight_layout()',
+          '    plt.savefig(path)',
+          "save_plot('wrapped.png')"
+        ].join('\n'),
+        language: 'python',
+        runId: 'run-unsafe-file-wrapper'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'wrapped.png'), 'image bytes')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'partial',
+      writerAttribution: 'partial',
+      reasonCodes: expect.arrayContaining(['writer-not-isolated'])
+    })
+  })
+
+  it('corroborates an output path resolved from same-epoch source context', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: 'import matplotlib.pyplot as plt\nplt.savefig(output_path)',
+        language: 'python',
+        runId: 'run-contextual-output-path',
+        sourceFileAccessContext: {
+          staticStrings: [{ name: 'output_path', value: 'contextual.png' }],
+          staticCollections: [],
+          localFileWrappers: []
+        }
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'contextual.png'), 'image bytes')
+
+    const result = await observation.finish()
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'available',
+      fileReads: 'complete',
+      externalPaths: 'complete',
+      writerAttribution: 'complete',
+      reasonCodes: []
+    })
   })
 
   it('publishes distinct immutable generations that reuse an equal content blob', async () => {
@@ -1508,6 +2479,41 @@ describe('working-file evidence', () => {
     await expect(
       readFile(join(evidenceRoot, 'activity-interrupted', 'keep.txt'), 'utf8')
     ).resolves.toBe('unowned')
+  })
+
+  it('fails closed on unknown fields in an Activity recovery receipt', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot as string, 'execution-file-evidence')
+    await mkdir(evidenceRoot)
+    const receiptPath = join(evidenceRoot, 'receipt-invalid-modern.json')
+    await writeFile(
+      receiptPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        phase: 'prepared',
+        receiptName: 'receipt-invalid-modern.json',
+        stagingName: 'staging-invalid-modern',
+        finalName: 'activity-invalid-modern',
+        activityId: 'invalid-modern',
+        activityKind: 'notebook-run',
+        evidenceId: 'execution-file-evidence-invalid-modern',
+        storageKeyPrefix: 'execution-file-evidence',
+        ownershipToken: '00000000-0000-4000-8000-000000000031',
+        unexpectedField: true
+      })}\n`
+    )
+
+    await expect(
+      reconcileWorkingFileEvidence(
+        {
+          storageRoot: storageRoot as string,
+          root: evidenceRoot,
+          storageKeyPrefix: 'execution-file-evidence'
+        },
+        []
+      )
+    ).rejects.toThrow(/Invalid file-evidence recovery receipt/)
+    await expect(readFile(receiptPath, 'utf8')).resolves.toContain('unexpectedField')
   })
 
   it('recovers a prepared receipt after staging allocation using its ownership token', async () => {

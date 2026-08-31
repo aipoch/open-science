@@ -14,11 +14,13 @@ import {
   type NotebookInventoryRefreshAttempt,
   type NotebookLiveEnvironmentOverlay,
   type NotebookLanguage,
+  type NotebookRunEnvironmentLockCapture,
   type NotebookPackageSource,
   type NotebookPackageInstallerAttempt
 } from '../../shared/notebook'
 import { condaActivatedPath } from './runtime-paths'
 import { runtimeChildProcessErrorFields, type RuntimeDiagnosticLogger } from './runtime-diagnostics'
+import { EnvironmentLockCaptureOwner, type EnvironmentLockWorkspace } from './environment-lock'
 
 type EnvironmentExecFile = (
   command: string,
@@ -40,8 +42,8 @@ type EnvironmentCaptureTarget = {
   runtimeSource: 'managed' | 'external'
   command: string
   args?: string[]
-  // Conda prefix whose native DLL search path must be activated before spawning the interpreter.
-  // Required for Windows R; omitted for non-Conda external runtimes.
+  // Conda prefix used for exact Environment lock capture. Windows R also activates its native DLL
+  // search path from this prefix; omitted for non-Conda external runtimes.
   condaPrefix?: string
 }
 
@@ -133,6 +135,7 @@ type EnvironmentCaptureResult = {
   manifest: NotebookEnvironmentManifest
   checksum: string
   storagePath: string
+  environmentLock: NotebookRunEnvironmentLockCapture
 }
 
 type EnvironmentStateTrackerOptions = {
@@ -140,6 +143,7 @@ type EnvironmentStateTrackerOptions = {
   inspectInstalled?: (target: EnvironmentCaptureTarget) => Promise<InstalledEnvironmentInventory>
   captureFingerprint?: (target: EnvironmentCaptureTarget) => Promise<string | undefined>
   execFile?: EnvironmentExecFile
+  resolveMicromamba?: () => Promise<string | undefined>
   now?: () => Date
   platform?: NodeJS.Platform
   logger?: Pick<RuntimeDiagnosticLogger, 'warn' | 'error'>
@@ -273,10 +277,13 @@ const compactOperationLog = (
 
 const packageKey = (value: string): string => value.normalize('NFC').toLocaleLowerCase('und')
 
+const comparePackageKeys = (left: string, right: string): number =>
+  packageKey(left).localeCompare(packageKey(right)) || left.localeCompare(right)
+
 const packageIdentityKey = (pkg: NotebookEnvironmentPackage): string =>
   [
     pkg.ecosystem,
-    packageKey(pkg.name),
+    installedPackageNameKey(pkg),
     ...(pkg.ecosystem === 'r'
       ? [
           pkg.libraryRank !== undefined
@@ -290,11 +297,80 @@ const packageSourceKey = (pkg: NotebookEnvironmentPackage): string => {
   const source = pkg.source
   if (!source) return ''
   return source.type === 'github'
-    ? ['github', packageKey(source.repository), source.ref ?? '', source.commit ?? ''].join('\0')
+    ? [
+        'github',
+        packageKey(source.repository),
+        source.ref ?? '',
+        source.commit ?? '',
+        source.subdirectory ?? ''
+      ].join('\0')
     : ['bioconductor', source.version ?? ''].join('\0')
 }
 
 const requestedPackageKey = (value: string): string => packageKey(value).replace(/[-_.]+/gu, '-')
+
+const installedPackageNameKey = (pkg: NotebookEnvironmentPackage): string =>
+  pkg.ecosystem === 'r'
+    ? pkg.name
+    : pkg.ecosystem === 'python'
+      ? requestedPackageKey(pkg.name)
+      : packageKey(pkg.name)
+
+// R package names are exact identities. Explicit names or recorded Conda attempts may use aliases;
+// unlike Python distributions, dots and repeated dots are never interchangeable with hyphens.
+const requestedPackageIndex = (
+  language: NotebookLanguage,
+  packages: NotebookEnvironmentPackage[],
+  attempts: NotebookPackageInstallerAttempt[] = []
+): ((spec: string) => NotebookEnvironmentPackage[]) => {
+  const installerByName = new Map<string, NotebookPackageInstallerAttempt['installer']>()
+  if (language === 'r') {
+    for (const attempt of attempts) {
+      if (attempt.status === 'skipped') continue
+      for (const spec of attempt.packages) {
+        const name = packageNameFromSpec(spec, language)
+        if (name) installerByName.set(packageKey(name), attempt.installer)
+      }
+    }
+  }
+  const exact = new Map<string, NotebookEnvironmentPackage[]>()
+  const conda = new Map<string, NotebookEnvironmentPackage[]>()
+  for (const pkg of packages) {
+    if (pkg.ecosystem !== language) continue
+    const key = installedPackageNameKey(pkg)
+    const matches = exact.get(key) ?? []
+    matches.push(pkg)
+    exact.set(key, matches)
+    if (language === 'r') {
+      const alias = packageKey(pkg.name)
+      const aliases = conda.get(alias) ?? []
+      aliases.push(pkg)
+      conda.set(alias, aliases)
+    }
+  }
+  return (spec) => {
+    const name = packageNameFromSpec(spec, language)
+    if (!name) return []
+    const explicitCondaName = /^(?:r-|bioconductor-)/iu.test(spec.trim().split('::').at(-1) ?? '')
+    if (language === 'r') {
+      const installer = installerByName.get(packageKey(name))
+      const isConda = installer === undefined ? explicitCondaName : installer === 'conda'
+      const nativeName = packageNameFromSpec(spec, language, false)
+      return (isConda ? conda.get(packageKey(name)) : exact.get(nativeName ?? name)) ?? []
+    }
+    return exact.get(requestedPackageKey(name)) ?? []
+  }
+}
+
+const unambiguousRequestedPackage = (
+  packages: NotebookEnvironmentPackage[]
+): NotebookEnvironmentPackage | undefined => {
+  const first = packages[0]
+  return first &&
+    packages.every((pkg) => installedPackageNameKey(pkg) === installedPackageNameKey(first))
+    ? first
+    : undefined
+}
 
 const githubSourceFromSpec = (value: string): { repository: string; ref?: string } | undefined => {
   const spec = value.trim()
@@ -305,14 +381,18 @@ const githubSourceFromSpec = (value: string): { repository: string; ref?: string
   return { repository: packageKey(repository), ...(ref ? { ref } : {}) }
 }
 
-const packageNameFromSpec = (value: string, language: NotebookLanguage): string | undefined => {
+const packageNameFromSpec = (
+  value: string,
+  language: NotebookLanguage,
+  stripCondaPrefix = true
+): string | undefined => {
   const unqualified = value.trim().split('::').at(-1) ?? ''
   const pathName = /^[./\\]/u.test(unqualified)
     ? unqualified.split(/[/\\]/u).filter(Boolean).at(-1)
     : undefined
   const name = (pathName ?? unqualified).match(/^[A-Za-z0-9_.-]+/u)?.[0]
   if (!name) return undefined
-  if (language !== 'r') return name
+  if (language !== 'r' || !stripCondaPrefix) return name
   const lowerName = name.toLocaleLowerCase('und')
   if (lowerName.startsWith('r-')) return name.slice(2)
   if (lowerName.startsWith('bioconductor-')) return name.slice('bioconductor-'.length)
@@ -361,7 +441,8 @@ const pythonExactVersionMatches = (requested: string, installed: string | undefi
 const inspectRequestedPackage = (
   target: EnvironmentCaptureTarget,
   requested: string,
-  installed: NotebookEnvironmentPackage[] | undefined
+  installed: NotebookEnvironmentPackage[] | undefined,
+  lookup: ReturnType<typeof requestedPackageIndex>
 ): InspectedPackage => {
   const githubSource = target.language === 'r' ? githubSourceFromSpec(requested) : undefined
   const requestedName = githubSource
@@ -374,17 +455,19 @@ const inspectRequestedPackage = (
       status: 'unknown'
     }
   }
+  const candidates = githubSource ? [] : lookup(requested)
   const match = githubSource
     ? installed.find(
         (pkg) =>
           pkg.source?.type === 'github' &&
+          !pkg.source.subdirectory &&
           packageKey(pkg.source.repository) === githubSource.repository &&
           (githubSource.ref === undefined || pkg.source.ref === githubSource.ref)
       )
-    : installed.find((pkg) => requestedPackageKey(pkg.name) === requestedPackageKey(requestedName))
+    : unambiguousRequestedPackage(candidates)
   return match
     ? { requested, ...match, status: 'installed' }
-    : { requested, name: requestedName, status: 'missing' }
+    : { requested, name: requestedName, status: candidates.length > 0 ? 'unknown' : 'missing' }
 }
 
 const verifyPackageMutation = (
@@ -393,6 +476,10 @@ const verifyPackageMutation = (
   packages: NotebookEnvironmentPackage[]
 ): PackageMutationVerification => {
   if (outcome.result !== 'success') return { result: outcome.result }
+  const lookup = requestedPackageIndex(target.language, packages, outcome.attempts)
+  // A fallback cannot certify removal while the original explicit Conda target is still present.
+  const removalLookup =
+    outcome.operation === 'uninstall' ? requestedPackageIndex(target.language, packages) : undefined
   const unsatisfiedPackages = outcome.packages.filter((spec) => {
     const name = packageNameFromSpec(spec, target.language)
     const githubSource = target.language === 'r' ? githubSourceFromSpec(spec) : undefined
@@ -400,15 +487,16 @@ const verifyPackageMutation = (
       return !packages.some(
         (pkg) =>
           pkg.source?.type === 'github' &&
+          !pkg.source.subdirectory &&
           packageKey(pkg.source.repository) === githubSource.repository &&
           (githubSource.ref === undefined || pkg.source.ref === githubSource.ref)
       )
     }
     if (!name) return false
-    const installed = packages.find(
-      (pkg) => requestedPackageKey(pkg.name) === requestedPackageKey(name)
-    )
-    if (outcome.operation === 'uninstall') return installed !== undefined
+    const candidates = lookup(spec)
+    if (outcome.operation === 'uninstall')
+      return candidates.length > 0 || (removalLookup?.(spec).length ?? 0) > 0
+    const installed = unambiguousRequestedPackage(candidates)
     const exactVersion = exactVersionFromSpec(spec, target.language)
     return (
       !installed ||
@@ -424,18 +512,21 @@ const packageChangesForOperation = ({
   language,
   before,
   after,
-  requestedPackages
+  requestedPackages,
+  attempts
 }: {
   language: NotebookLanguage
   before?: NotebookEnvironmentPackage[]
   after: NotebookEnvironmentPackage[]
   requestedPackages: string[]
+  attempts?: NotebookPackageInstallerAttempt[]
 }): NotebookEnvironmentPackageChange[] => {
+  const lookup = requestedPackageIndex(language, [...(before ?? []), ...after], attempts)
   const requestedKeys = new Set(
     requestedPackages.flatMap((spec) => {
       if (language === 'r' && githubSourceFromSpec(spec)) return []
-      const name = packageNameFromSpec(spec, language)
-      return name ? [requestedPackageKey(name)] : []
+      const match = unambiguousRequestedPackage(lookup(spec))
+      return match ? [installedPackageNameKey(match)] : []
     })
   )
   const requestedGithubRepositories = new Set(
@@ -447,7 +538,7 @@ const packageChangesForOperation = ({
   const relationshipFor = (
     pkg: NotebookEnvironmentPackage
   ): NotebookEnvironmentPackageChange['relationship'] =>
-    requestedKeys.has(requestedPackageKey(pkg.name)) ||
+    (pkg.ecosystem === language && requestedKeys.has(installedPackageNameKey(pkg))) ||
     (pkg.source?.type === 'github' &&
       requestedGithubRepositories.has(packageKey(pkg.source.repository)))
       ? 'requested'
@@ -478,7 +569,9 @@ const packageChangesForOperation = ({
 
   const beforeByIdentity = new Map(before.map((pkg) => [packageIdentityKey(pkg), pkg]))
   const afterByIdentity = new Map(after.map((pkg) => [packageIdentityKey(pkg), pkg]))
-  const identities = [...new Set([...beforeByIdentity.keys(), ...afterByIdentity.keys()])].sort()
+  const identities = [...new Set([...beforeByIdentity.keys(), ...afterByIdentity.keys()])].sort(
+    comparePackageKeys
+  )
   const changes: NotebookEnvironmentPackageChange[] = []
   for (const identity of identities) {
     const previous = beforeByIdentity.get(identity)
@@ -512,7 +605,9 @@ const packageChangesWithSource = (
   changes: NotebookEnvironmentPackageChange[],
   source: NotebookPackageSource | undefined
 ): NotebookEnvironmentPackageChange[] =>
-  source
+  // BiocManager can install CRAN packages too. Its active release is operation context,
+  // not per-package source evidence; retain only sources observed in the inventory.
+  source?.type === 'github'
     ? changes.map((change) =>
         change.relationship === 'requested' && !change.source ? { ...change, source } : change
       )
@@ -526,7 +621,7 @@ const normalizePackage = (pkg: NotebookEnvironmentPackage): NotebookEnvironmentP
 
 const sortPackages = (packages: NotebookEnvironmentPackage[]): NotebookEnvironmentPackage[] =>
   [...packages].map(normalizePackage).sort((left, right) => {
-    const byName = packageKey(left.name).localeCompare(packageKey(right.name))
+    const byName = comparePackageKeys(left.name, right.name)
     if (byName !== 0) return byName
     const byEcosystem = left.ecosystem.localeCompare(right.ecosystem)
     if (byEcosystem !== 0) return byEcosystem
@@ -544,8 +639,31 @@ const mergePackages = (
     merged.set(packageIdentityKey(pkg), { ...pkg, loadedState: 'installed-only' })
   }
   for (const pkg of live) {
-    const key = packageIdentityKey(pkg)
-    const existing = merged.get(key)
+    let key = packageIdentityKey(pkg)
+    let existing = merged.get(key)
+    // Multiple copies can be observed after sys.path changes while an older module is still
+    // loaded. Preserve both live versions so observation order cannot erase required evidence.
+    if (
+      pkg.ecosystem === 'python' &&
+      pkg.version &&
+      existing?.version &&
+      pkg.version !== existing.version &&
+      existing.evidenceSources.includes('python-kernel-modules')
+    ) {
+      key += `\0version:${pkg.version}`
+      existing = merged.get(key)
+    }
+    // A cell can prepend its own .libPaths(). Equal ranks in the live and inspection
+    // interpreters then refer to different libraries; do not inherit the default copy's evidence.
+    if (
+      pkg.ecosystem === 'r' &&
+      pkg.libraryScope &&
+      existing?.libraryScope &&
+      pkg.libraryScope !== existing.libraryScope
+    ) {
+      key += `\0scope:${pkg.libraryScope}`
+      existing = undefined
+    }
     merged.set(key, {
       ...existing,
       ...pkg,
@@ -592,7 +710,8 @@ const R_INVENTORY_SCRIPT = [
   '    descriptionPath <- file.path(ip[i, "LibPath"], ip[i, "Package"], "DESCRIPTION")',
   '    description <- tryCatch(read.dcf(descriptionPath), error=function(e) matrix(character(), nrow=0, ncol=0))',
   '    field <- function(name) if (nrow(description) > 0 && name %in% colnames(description) && !is.na(description[1, name])) gsub("[\\t\\r\\n]", " ", description[1, name]) else ""',
-  '    cat("PACKAGE\\t", ip[i, "Package"], "\\t", ip[i, "Version"], "\\t", priority, "\\t", built, "\\t", libraryRank, "\\t", libraryScope, "\\t", field("RemoteType"), "\\t", field("RemoteHost"), "\\t", field("RemoteUsername"), "\\t", field("RemoteRepo"), "\\t", field("RemoteRef"), "\\t", field("RemoteSha"), "\\n", sep="")',
+  '    subdir <- field("RemoteSubdir"); if (!nzchar(subdir)) subdir <- field("GithubSubdir")',
+  '    cat("PACKAGE\\t", ip[i, "Package"], "\\t", ip[i, "Version"], "\\t", priority, "\\t", built, "\\t", libraryRank, "\\t", libraryScope, "\\t", field("RemoteType"), "\\t", field("RemoteHost"), "\\t", field("RemoteUsername"), "\\t", field("RemoteRepo"), "\\t", field("RemoteRef"), "\\t", field("RemoteSha"), "\\t", subdir, "\\t", field("Repository"), "\\t", field("biocViews"), "\\t", field("git_url"), "\\t", field("git_branch"), "\\n", sep="")',
   '  }',
   '}'
 ].join('\n')
@@ -600,10 +719,11 @@ const R_INVENTORY_SCRIPT = [
 // These probes hash only Runtime/library directory metadata. They are intentionally cheaper than
 // enumerating and parsing every installed distribution, but still notice added/removed package
 // directories and metadata replacements made outside the app's package-manager journal.
+// Preserve search-path order: reordering the same libraries can select a different package.
 const PYTHON_FINGERPRINT_SCRIPT = [
   'import os, pathlib, platform, sys',
   'print("RUNTIME\\t" + platform.python_version())',
-  'for raw in sorted(set(filter(None, sys.path))):',
+  'for raw in dict.fromkeys(filter(None, sys.path)):',
   '    root = pathlib.Path(raw)',
   '    if not root.is_dir(): continue',
   '    try:',
@@ -621,7 +741,7 @@ const PYTHON_FINGERPRINT_SCRIPT = [
 
 const R_FINGERPRINT_SCRIPT = [
   'cat("RUNTIME\\t", paste(R.version$major, R.version$minor, sep="."), "\\n", sep="")',
-  'for (root in sort(unique(.libPaths()))) {',
+  'for (root in unique(.libPaths())) {',
   '  info <- file.info(root)',
   '  if (is.na(info$mtime)) { cat("UNWATCHABLE\\t", root, "\\n", sep=""); next }',
   '  cat("ROOT\\t", root, "\\t", sprintf("%.9f", as.numeric(info$mtime)), "\\t", info$size, "\\n", sep="")',
@@ -634,6 +754,26 @@ const R_FINGERPRINT_SCRIPT = [
   '  }',
   '}'
 ].join('\n')
+
+const bioconductorPackageSource = (
+  repository = '',
+  biocViews = '',
+  gitUrl = '',
+  gitBranch = ''
+): Extract<NotebookPackageSource, { type: 'bioconductor' }> | undefined => {
+  const biocRepository = /^Bioconductor\b/iu.test(repository.trim())
+  const biocGit = /^https:\/\/git\.bioconductor\.org\/packages\/[^/?#\s]+$/u.test(gitUrl)
+  if (!biocRepository && !biocViews.trim() && !biocGit) return undefined
+  const repositoryRelease = /^Bioconductor\s+(\d+\.\d+)$/iu.exec(repository.trim())?.[1]
+  const branch = biocGit ? /^RELEASE_(\d+)_(\d+)$/u.exec(gitBranch) : undefined
+  const releases = new Set([
+    ...(repositoryRelease ? [repositoryRelease] : []),
+    ...(branch ? [`${branch[1]}.${branch[2]}`] : [])
+  ])
+  // Classification alone, or conflicting metadata, cannot pin an installed release. Never
+  // infer it from the current R version or the currently selected BiocManager release.
+  return { type: 'bioconductor', ...(releases.size === 1 ? { version: [...releases][0] } : {}) }
+}
 
 const parseInventory = (
   language: NotebookLanguage,
@@ -657,7 +797,12 @@ const parseInventory = (
       remoteUsername,
       remoteRepo,
       remoteRef,
-      remoteSha
+      remoteSha,
+      remoteSubdir,
+      repository,
+      biocViews,
+      gitUrl,
+      gitBranch
     ] = line.split('\t')
     if (kind === 'RUNTIME') {
       runtimeVersion = nameOrVersion || undefined
@@ -666,6 +811,10 @@ const parseInventory = (
       continue
     }
     if (kind !== 'PACKAGE' || !nameOrVersion) continue
+    const biocSource =
+      language === 'r' && (!remoteType || remoteType === 'standard')
+        ? bioconductorPackageSource(repository, biocViews, gitUrl, gitBranch)
+        : undefined
     packages.push({
       name: nameOrVersion,
       ...(version ? { version } : {}),
@@ -698,10 +847,13 @@ const parseInventory = (
               type: 'github' as const,
               repository: `${remoteUsername}/${remoteRepo}`,
               ...(remoteRef ? { ref: remoteRef } : {}),
-              ...(remoteSha ? { commit: remoteSha } : {})
+              ...(remoteSha ? { commit: remoteSha } : {}),
+              ...(remoteSubdir ? { subdirectory: remoteSubdir } : {})
             }
           }
-        : {})
+        : biocSource
+          ? { source: biocSource }
+          : {})
     })
   }
   return {
@@ -748,7 +900,11 @@ const captureFingerprintDefault = async (
     env: environmentCaptureProcessEnv(target, process.env, platform)
   })
   if (stdout.includes('UNWATCHABLE\t')) return undefined
-  return sha256(`${target.language}\n${stdout}`)
+  // Cached inventories must be refreshed when the reader gains new evidence fields, even
+  // when the installed files are unchanged. Do not rewrite historical manifest snapshots.
+  const inventoryScript =
+    target.language === 'python' ? PYTHON_INVENTORY_SCRIPT : R_INVENTORY_SCRIPT
+  return sha256(`${target.language}\n${sha256(inventoryScript)}\n${stdout}`)
 }
 
 class EnvironmentStateTracker {
@@ -762,12 +918,15 @@ class EnvironmentStateTracker {
   private readonly platform: NodeJS.Platform
   private readonly logger?: Pick<RuntimeDiagnosticLogger, 'warn' | 'error'>
   private readonly operationLogLimits: { maxEntries: number; maxBytes: number }
+  private readonly execute: EnvironmentExecFile
   private readonly targetQueues = new Map<string, Promise<void>>()
+  private readonly environmentLockCapture = new EnvironmentLockCaptureOwner()
 
   constructor(private readonly options: EnvironmentStateTrackerOptions) {
     this.platform = options.platform ?? process.platform
     this.logger = options.logger
     const execute = options.execFile ?? execFileAsync
+    this.execute = execute
     this.inspectInstalled =
       options.inspectInstalled ??
       ((target) => inspectInstalledDefault(target, this.platform, execute))
@@ -802,6 +961,7 @@ class EnvironmentStateTracker {
           ? 'full-scan'
           : 'cache-reused'
         : 'unavailable'
+      const lookup = requestedPackageIndex(target.language, inventory?.packages ?? [])
       return {
         inventory: {
           ...(inventory ? { capturedAt: inventory.capturedAt } : {}),
@@ -814,7 +974,7 @@ class EnvironmentStateTracker {
                 : 'unavailable'
         },
         packages: requestedPackages.map((requested) =>
-          inspectRequestedPackage(target, requested, inventory?.packages)
+          inspectRequestedPackage(target, requested, inventory?.packages, lookup)
         ),
         ...(warnings.length > 0 ? { warnings } : {})
       }
@@ -885,7 +1045,8 @@ class EnvironmentStateTracker {
   async captureCompletedRun(
     target: EnvironmentCaptureTarget,
     live?: NotebookLiveEnvironmentOverlay,
-    prepared?: EnvironmentRunCaptureStart
+    prepared?: EnvironmentRunCaptureStart,
+    lockWorkspace?: EnvironmentLockWorkspace
   ): Promise<EnvironmentCaptureResult> {
     const runStart = prepared ?? (await this.prepareRun(target))
     return this.serializeTarget(target, async () => {
@@ -938,11 +1099,7 @@ class EnvironmentStateTracker {
         warnings.push('inventory-cache-best-effort')
       }
       const complete = Boolean(
-        inventory &&
-        live &&
-        inventorySource === 'full-scan' &&
-        fingerprintStable &&
-        !environmentChangedDuringRun
+        inventory && live && fingerprintStable && !environmentChangedDuringRun
       )
       if (!live) warnings.push('Live Kernel package state unavailable.')
       const manifest: NotebookEnvironmentManifest = {
@@ -982,7 +1139,54 @@ class EnvironmentStateTracker {
       } catch (error) {
         throw new EnvironmentManifestPublicationError(error)
       }
-      return { manifest, checksum, storagePath }
+      const micromamba = await this.options.resolveMicromamba?.().catch((error) => {
+        this.logProbeFailure('warn', 'micromamba resolution failed', target, error)
+        return undefined
+      })
+      const lockCapture = await this.environmentLockCapture.capture(target, manifest, {
+        micromamba,
+        ...(endFingerprint ? { environmentFingerprint: endFingerprint } : {}),
+        ...(lockWorkspace ? { workspace: lockWorkspace } : {}),
+        execute: async (argv) => {
+          const [command, ...args] = argv
+          if (!command) throw new Error('Environment lock command is unavailable.')
+          return (
+            await this.execute(command, args, {
+              timeout: INSPECTION_TIMEOUT_MS,
+              maxBuffer: 32 * 1024 * 1024,
+              env: process.env
+            })
+          ).stdout
+        }
+      })
+      let environmentLock: NotebookRunEnvironmentLockCapture
+      if (lockCapture.state === 'unavailable') {
+        environmentLock = lockCapture
+      } else {
+        const lockSerialized = `${JSON.stringify(lockCapture.lock, null, 2)}\n`
+        const lockChecksum = sha256(lockSerialized)
+        try {
+          await this.writeImmutable(
+            join(this.environmentLockDirectory(), `${lockChecksum}.json`),
+            lockSerialized
+          )
+          environmentLock = {
+            state: lockCapture.captureStatus === 'complete' ? 'available' : 'partial',
+            format: lockCapture.lock.format,
+            lockChecksum,
+            ...(lockCapture.partialReasons
+              ? { partialReasons: [...lockCapture.partialReasons] }
+              : {}),
+            ...(lockCapture.diagnostics ? { diagnostics: lockCapture.diagnostics } : {})
+          }
+        } catch {
+          environmentLock = {
+            state: 'unavailable',
+            reason: 'environment-lock-publication-failed'
+          }
+        }
+      }
+      return { manifest, checksum, storagePath, environmentLock }
     })
   }
 
@@ -1100,7 +1304,8 @@ class EnvironmentStateTracker {
             language: target.language,
             before: beforeInventory?.packages,
             after: inventory.packages,
-            requestedPackages: outcome.packages
+            requestedPackages: outcome.packages,
+            attempts: outcome.attempts
           }),
           outcome.source
         )
@@ -1192,6 +1397,10 @@ class EnvironmentStateTracker {
 
   private manifestDirectory(): string {
     return join(this.options.dataRoot, 'runtime', 'provenance', 'environment-manifests')
+  }
+
+  private environmentLockDirectory(): string {
+    return join(this.options.dataRoot, 'runtime', 'provenance', 'environment-locks')
   }
 
   private operationPath(target: EnvironmentCaptureTarget, operationId: string): string {
@@ -1293,7 +1502,8 @@ class EnvironmentStateTracker {
         operationId: pending.operationId,
         operation: pending.operation,
         packages: pending.packages,
-        result: pending.terminalResult ?? 'failure'
+        result: pending.terminalResult ?? 'failure',
+        attempts: pending.attempts
       },
       inventory.packages
     )
@@ -1326,7 +1536,8 @@ class EnvironmentStateTracker {
               )?.packages
             : undefined,
           after: inventory.packages,
-          requestedPackages: pending.packages
+          requestedPackages: pending.packages,
+          attempts: pending.attempts
         }),
         pending.source
       )

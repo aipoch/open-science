@@ -135,6 +135,29 @@ describe('runMicromamba', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('streams stdout and stderr without changing successful completion', async () => {
+    const onOutput = vi.fn()
+
+    await runMicromamba(
+      [
+        process.execPath,
+        '-e',
+        "process.stdout.write('linking numpy\\n'); process.stderr.write('warning\\n')"
+      ],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      600_000,
+      onOutput
+    )
+
+    expect(onOutput.mock.calls.flatMap(([output]) => output)).toEqual([
+      { stream: 'stdout', text: 'linking numpy\n' },
+      { stream: 'stderr', text: 'warning\n' }
+    ])
+  })
+
   it('rejects with a short stderr excerpt on non-zero exit, keeping full tails in data', async () => {
     // The user-facing message prefers the stderr reason (not the package-plan stdout) so the
     // provisioning banner never floods; both full tails stay on the error's structured `data`.

@@ -67,10 +67,17 @@ describe('runtime certification workflow', () => {
 
     expect(install.run).toBe('node scripts/ci/npm-ci.mjs')
     expect(fetch.run).toContain('scripts/fetch-micromamba.mjs linux-64')
-    expect(create.run).toContain('python=3.12 matplotlib-base nomkl')
+    expect(create.run).toContain('python=3.12 matplotlib-base numpy pandas nomkl')
     expect(create.run).toContain('r-base=4.4 r-jsonlite r-ggplot2')
     expect(create.run).toContain('OPEN_SCIENCE_TEST_PY_ENV=')
     expect(create.run).toContain('OPEN_SCIENCE_TEST_R_ENV=')
+    expect(create.run).toContain('OPEN_SCIENCE_TEST_RESTORE_PY_ENV=$python_prefix')
+    expect(create.run).toContain('OPEN_SCIENCE_TEST_PYTHON=$python_prefix/bin/python')
+    expect(create.run).toContain('OPEN_SCIENCE_TEST_MICROMAMBA=$MICROMAMBA_BIN')
+    expect(create.run).toContain('OPEN_SCIENCE_TEST_SCIENTIFIC_RESTORE=1')
+    expect(step(source, 'Prepare local restoration archives').run).toContain(
+      'OPEN_SCIENCE_TEST_CONDA_ARCHIVES='
+    )
     expect(verify.run).toContain('library(jsonlite)')
     expect(verify.run).toContain('library(ggplot2)')
   })
@@ -87,6 +94,12 @@ describe('runtime certification workflow', () => {
       'host-mcp.integration.test.ts',
       'python-loop.integration.test.ts',
       'r-loop.integration.test.ts',
+      'reproduction-runtime.integration.test.ts',
+      'native-lock-restoration.test.ts',
+      'environment-state-tracker.test.ts',
+      'package-manager.test.ts',
+      'cross-turn-input-repro.integration.test.ts',
+      'input-resource-repro.integration.test.ts',
       'e2e.certification.test.ts',
       'agents-repl.integration.test.ts',
       'agents-repl.mutations.integration.test.ts',

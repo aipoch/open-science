@@ -10,11 +10,21 @@ import {
   decodeNotebookHelperEvidence,
   notebookHelperEvidenceKey
 } from '../notebook/helper-evidence'
+import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
+import {
+  artifactReproducibilityRecipeMatchesSnapshot,
+  artifactReproducibilityRecipeValue
+} from './artifact-reproducibility-recipe'
 
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
+
+const unsupportedNestedVersion = (value: unknown, currentVersion: number): boolean => {
+  const version = recordValue(value)?.schemaVersion
+  return Number.isSafeInteger(version) && Number(version) > currentVersion
+}
 
 const normalizeStoredProvenanceOutput = (value: unknown): ProvenanceNotebookOutput[] => {
   const output = recordValue(value)
@@ -94,7 +104,10 @@ const executionInputFileValue = (value: unknown): boolean => {
     Number.isFinite(input.sizeBytes) &&
     typeof input.checksum === 'string' &&
     typeof input.storageKey === 'string' &&
-    (input.association === 'turn-attached' || input.association === 'resolver-accessed')
+    (input.association === 'turn-attached' || input.association === 'resolver-accessed') &&
+    (input.accessEvidence === undefined ||
+      input.accessEvidence === 'resolver' ||
+      input.accessEvidence === 'file-evidence')
   )
 }
 
@@ -104,6 +117,88 @@ const executionInputKeyValue = (value: unknown): boolean => {
     key !== undefined &&
     (key.sourceKind === 'upload-version' || key.sourceKind === 'artifact-version') &&
     typeof key.inputFileVersionId === 'string'
+  )
+}
+
+const ENVIRONMENT_LOCK_PARTIAL_REASONS = new Set([
+  'environment-manifest-partial',
+  'non-conda-package-detected',
+  'non-conda-installer-detected',
+  'native-lock-file-best-effort',
+  'native-lock-file-rejected'
+])
+
+const ENVIRONMENT_LOCK_UNAVAILABLE_REASONS = new Set([
+  'environment-not-managed',
+  'conda-prefix-unavailable',
+  'micromamba-unavailable',
+  'environment-lock-capture-failed',
+  'environment-lock-invalid',
+  'environment-lock-publication-failed'
+])
+
+const environmentLockCaptureValue = (value: unknown): boolean => {
+  const capture = recordValue(value)
+  if (!capture || typeof capture.state !== 'string') return false
+  if (capture.state === 'unavailable') {
+    return (
+      typeof capture.reason === 'string' &&
+      ENVIRONMENT_LOCK_UNAVAILABLE_REASONS.has(capture.reason) &&
+      Object.keys(capture).every((key) => key === 'state' || key === 'reason')
+    )
+  }
+  const partialReasons = capture.partialReasons
+  const diagnostics = capture.diagnostics
+  return (
+    (capture.state === 'available' || capture.state === 'partial') &&
+    capture.format === 'environment-lock-bundle' &&
+    typeof capture.lockChecksum === 'string' &&
+    /^[a-f0-9]{64}$/u.test(capture.lockChecksum) &&
+    (partialReasons === undefined ||
+      (Array.isArray(partialReasons) &&
+        partialReasons.every(
+          (reason) => typeof reason === 'string' && ENVIRONMENT_LOCK_PARTIAL_REASONS.has(reason)
+        ))) &&
+    (capture.state === 'partial'
+      ? Array.isArray(partialReasons) && partialReasons.length > 0
+      : partialReasons === undefined) &&
+    (diagnostics === undefined ||
+      (capture.state === 'partial' &&
+        Array.isArray(diagnostics) &&
+        diagnostics.length <= 20 &&
+        diagnostics.every((value) => {
+          const diagnostic = recordValue(value)
+          return (
+            diagnostic &&
+            [
+              'package-lock-missing',
+              'package-version-unresolved',
+              'package-version-mismatch',
+              'package-not-captured',
+              'source-unpinned',
+              'source-mismatch',
+              'project-selection-unresolved'
+            ].includes(String(diagnostic.reason)) &&
+            ['packageName', 'observedVersion', 'lockedVersion'].every(
+              (key) =>
+                diagnostic[key] === undefined ||
+                (typeof diagnostic[key] === 'string' &&
+                  diagnostic[key].length > 0 &&
+                  diagnostic[key].length <= 200)
+            ) &&
+            Object.keys(diagnostic).every((key) =>
+              ['reason', 'packageName', 'observedVersion', 'lockedVersion'].includes(key)
+            )
+          )
+        }))) &&
+    Object.keys(capture).every(
+      (key) =>
+        key === 'state' ||
+        key === 'format' ||
+        key === 'lockChecksum' ||
+        key === 'partialReasons' ||
+        key === 'diagnostics'
+    )
   )
 }
 
@@ -133,6 +228,7 @@ const executionRunValue = (value: unknown): boolean => {
       run.status === 'interrupted' ||
       run.status === 'cancelled') &&
     (run.environmentName === undefined || typeof run.environmentName === 'string') &&
+    (run.environmentLock === undefined || environmentLockCaptureValue(run.environmentLock)) &&
     (run.scriptTruncated === undefined || run.scriptTruncated === true) &&
     (run.executionCount === undefined ||
       (typeof run.executionCount === 'number' && Number.isFinite(run.executionCount))) &&
@@ -230,6 +326,8 @@ function decodeSnapshotHelperEvidence(
 const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnapshot | undefined => {
   const snapshot = recordValue(value)
   const truncation = recordValue(snapshot?.truncation)
+  const graphUnsupported = unsupportedNestedVersion(snapshot?.provenanceGraph, 1)
+  const recipeUnsupported = unsupportedNestedVersion(snapshot?.reproducibilityRecipe, 1)
   if (
     snapshot?.schemaVersion !== 2 ||
     typeof snapshot.rootFrameId !== 'string' ||
@@ -243,6 +341,13 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
     !Array.isArray(snapshot.inputFiles) ||
     snapshot.inputFiles.some((input) => !executionInputFileValue(input)) ||
     !Array.isArray(snapshot.runs) ||
+    (snapshot.provenanceGraph !== undefined &&
+      !graphUnsupported &&
+      !artifactProvenanceGraphValue(snapshot.provenanceGraph)) ||
+    (snapshot.reproducibilityRecipe !== undefined &&
+      !recipeUnsupported &&
+      (!artifactReproducibilityRecipeValue(snapshot.reproducibilityRecipe) ||
+        snapshot.provenanceGraph === undefined)) ||
     (snapshot.truncation !== undefined &&
       (!truncation ||
         truncation.reason !== 'payload-limit' ||
@@ -256,15 +361,40 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
   ) {
     return undefined
   }
-  const normalized = value as PersistedArtifactExecutionSnapshot
-  return {
-    ...normalized,
-    ...decodeSnapshotHelperEvidence(snapshot, normalized.runs),
-    runs: normalized.runs.map((run) => ({
+  const persisted = value as PersistedArtifactExecutionSnapshot
+  const {
+    provenanceGraph: persistedGraph,
+    reproducibilityRecipe: persistedRecipe,
+    ...executionFields
+  } = persisted
+  const helperEvidence = decodeSnapshotHelperEvidence(snapshot, persisted.runs)
+  const normalizedSnapshot: PersistedArtifactExecutionSnapshot = {
+    ...executionFields,
+    ...(!graphUnsupported && persistedGraph ? { provenanceGraph: persistedGraph } : {}),
+    ...(!graphUnsupported && !recipeUnsupported && persistedRecipe
+      ? { reproducibilityRecipe: persistedRecipe }
+      : {}),
+    ...helperEvidence,
+    runs: persisted.runs.map((run) => ({
       ...run,
       outputs: (run.outputs as unknown[]).flatMap(normalizeStoredProvenanceOutput)
     }))
   }
+  if (
+    normalizedSnapshot.reproducibilityRecipe &&
+    normalizedSnapshot.provenanceGraph &&
+    !artifactReproducibilityRecipeMatchesSnapshot(normalizedSnapshot.reproducibilityRecipe, {
+      provenanceGraph: normalizedSnapshot.provenanceGraph,
+      inputFiles: normalizedSnapshot.inputFiles,
+      runs: normalizedSnapshot.runs,
+      helperModules: normalizedSnapshot.helperModules,
+      helperEvidenceStatus: normalizedSnapshot.helperEvidenceStatus,
+      truncation: normalizedSnapshot.truncation
+    })
+  ) {
+    return undefined
+  }
+  return normalizedSnapshot
 }
 
 export const decodeArtifactExecutionSnapshot = (

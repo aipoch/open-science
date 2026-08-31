@@ -3,18 +3,50 @@ import type {
   PersistedArtifactExecutionSnapshot,
   ProvenanceExecutionInputFile
 } from '../../shared/artifact-provenance'
+import { projectArtifactReproducibility } from './provenance-reproducibility-projection'
 
 export const projectPublicArtifactExecutionSnapshot = (
   persisted: PersistedArtifactExecutionSnapshot,
   inputFiles: ProvenanceExecutionInputFile[]
 ): ArtifactExecutionSnapshot => {
-  const { helperModules, ...withoutPrivateHelpers } = persisted
+  const reproducibility = persisted.provenanceGraph
+    ? projectArtifactReproducibility(persisted.provenanceGraph, persisted.runs)
+    : undefined
+  if (reproducibility) {
+    const recipe = persisted.reproducibilityRecipe
+    const captureCheckReasonCodes = recipe?.capture.reasonCodes ?? ['compute-recipe-unavailable']
+    reproducibility.checkReasonCodes = captureCheckReasonCodes
+    reproducibility.startFrontiers = reproducibility.startFrontiers.map((frontier) => {
+      const recipeFrontier = recipe?.frontiers.find(
+        (candidate) => candidate.frontierId === frontier.frontierId
+      )
+      const executable =
+        recipe?.capture.state === 'sealed' &&
+        recipeFrontier !== undefined &&
+        recipeFrontier.reasonCodes.length === 0 &&
+        recipeFrontier.stepIds.length > 0
+      return {
+        ...frontier,
+        eligibility: executable ? 'available' : 'blocked',
+        checkReasonCodes: recipeFrontier?.reasonCodes ?? captureCheckReasonCodes
+      }
+    })
+  }
   return {
-    ...withoutPrivateHelpers,
+    schemaVersion: persisted.schemaVersion,
+    rootFrameId: persisted.rootFrameId,
+    agentFrameId: persisted.agentFrameId,
+    messageBranchId: persisted.messageBranchId,
+    terminalPromptMessageId: persisted.terminalPromptMessageId,
+    producerRunId: persisted.producerRunId,
+    producerRunIndex: persisted.producerRunIndex,
+    createdAt: persisted.createdAt,
     inputFiles,
-    ...(helperModules
+    runs: persisted.runs,
+    ...(reproducibility ? { reproducibility } : {}),
+    ...(persisted.helperModules
       ? {
-          helperModules: helperModules.map((helper) => ({
+          helperModules: persisted.helperModules.map((helper) => ({
             helperId: helper.helperId,
             skillIdentity: helper.skillIdentity,
             packageOrigin: helper.packageOrigin,
@@ -25,6 +57,10 @@ export const projectPublicArtifactExecutionSnapshot = (
             sourceAvailable: true
           }))
         }
-      : {})
+      : {}),
+    ...(persisted.helperEvidenceStatus
+      ? { helperEvidenceStatus: persisted.helperEvidenceStatus }
+      : {}),
+    ...(persisted.truncation ? { truncation: persisted.truncation } : {})
   }
 }

@@ -136,6 +136,7 @@
         "src/main/agent-framework/opencode.ts",
         "src/main/agent-framework/types.ts",
         "src/main/app-lifecycle.ts",
+        "src/main/artifacts/artifact-reproducibility-execution.ts",
         "src/main/artifacts/durability.ts",
         "src/main/cli-install/launcher.ts",
         "src/main/compute/connection-adapters.ts",

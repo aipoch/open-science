@@ -35,18 +35,34 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
 
 const producerEvidence = (
   evidenceJson: string | null
-): { available: boolean; connectorInvocationId?: string } => {
-  if (!evidenceJson) return { available: false }
+): {
+  available: boolean
+  connectorInvocationId?: string
+  directlyReadInputKeys: Set<string>
+} => {
+  if (!evidenceJson) return { available: false, directlyReadInputKeys: new Set() }
   try {
-    const producer = recordValue(recordValue(JSON.parse(evidenceJson))?.producer)
+    const evidence = recordValue(JSON.parse(evidenceJson))
+    const producer = recordValue(evidence?.producer)
+    const directlyReadInputKeys = new Set(
+      (Array.isArray(evidence?.inputs) ? evidence.inputs : []).flatMap((value) => {
+        const input = recordValue(value)
+        return input?.access_evidence === 'file-evidence' &&
+          (input.source_kind === 'upload-version' || input.source_kind === 'artifact-version') &&
+          typeof input.input_file_version_id === 'string'
+          ? [`${input.source_kind}\0${input.input_file_version_id}`]
+          : []
+      })
+    )
     return {
       available: producer?.state === 'available',
+      directlyReadInputKeys,
       ...(producer?.kind === 'connector' && typeof producer.invocation_id === 'string'
         ? { connectorInvocationId: producer.invocation_id }
         : {})
     }
   } catch {
-    return { available: false }
+    return { available: false, directlyReadInputKeys: new Set() }
   }
 }
 
@@ -172,7 +188,9 @@ export class ReviewerTurnFileEvidenceReader {
         directlyRead: false
       })
       for (const input of version.inputs) {
-        const directlyRead = input.strongestAssociation === 'resolver-accessed'
+        const directlyRead =
+          input.strongestAssociation === 'resolver-accessed' ||
+          producer.directlyReadInputKeys.has(`${input.sourceKind}\0${input.inputFileVersionId}`)
         addSource({
           descriptor: descriptor({
             versionId: input.inputFileVersionId,
@@ -203,7 +221,9 @@ export class ReviewerTurnFileEvidenceReader {
     for (const run of documents.flatMap((document) => document.runs)) {
       if (!run.promptMessageId || !messageIds.has(run.promptMessageId)) continue
       for (const input of run.inputFiles ?? []) {
-        if (input.association !== 'resolver-accessed') continue
+        if (input.association !== 'resolver-accessed' && input.accessEvidence !== 'file-evidence') {
+          continue
+        }
         addSource({
           descriptor: await this.sourceDescriptor(input),
           executionId: run.runId,

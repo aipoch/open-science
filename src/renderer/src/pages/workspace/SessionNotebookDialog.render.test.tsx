@@ -162,7 +162,7 @@ describe('SessionNotebookContent', () => {
               sizeBytes: 42,
               checksum: 'a'.repeat(64),
               storageKey: 'internal-only',
-              association: 'turn-attached'
+              association: 'resolver-accessed'
             }
           ]
         })

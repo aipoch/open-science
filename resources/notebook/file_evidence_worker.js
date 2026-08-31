@@ -26,6 +26,7 @@ const MAX_REQUEST_BYTES = 64 * 1024 * 1024
 const MAX_INTERNAL_JSON_BYTES = 64 * 1024 * 1024
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const ACTIVITY_KINDS = new Set(['notebook-run', 'compute-job'])
+const REGISTERED_INPUT_SOURCE_KINDS = new Set(['upload-version', 'artifact-version'])
 const RECEIPT_NAME = /^receipt-[A-Za-z0-9][A-Za-z0-9._-]*\.json$/u
 const CAPTURE_FILE = 'capture.json'
 const ACTIVITY_BLOBS_DIRECTORY = 'blobs'
@@ -60,13 +61,39 @@ const sameIdentity = (left, right) =>
 const fingerprint = (value) =>
   [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs].join(':')
 const quarantineFingerprint = (value) => [value.dev, value.ino, value.size, value.mtimeMs].join(':')
-const uniqueReasons = (values) => [...new Set([...BASELINE_REASONS, ...values])].sort()
+const evidenceReasons = (request, values) => {
+  const baseline = BASELINE_REASONS.filter((reason) => {
+    if (reason === 'file-reads-not-observed') return request.fileReads !== 'complete'
+    if (reason === 'external-paths-not-observed') return request.externalPaths !== 'complete'
+    return request.writerAttribution !== 'complete'
+  })
+  return [...new Set([...baseline, ...values])].sort()
+}
 const assertSafeName = (value) => {
   if (!SAFE_NAME.test(value)) throw new Error(`Unsafe file-evidence name: ${value}`)
   return value
 }
 const assertActivityKind = (value) => {
   if (!ACTIVITY_KINDS.has(value)) throw new Error(`Unsafe file-evidence activity kind: ${value}`)
+  return value
+}
+const assertRegisteredInput = (value) => {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Object.keys(value).length !== 3 ||
+    Object.keys(value).some(
+      (field) => !['sourceKind', 'inputFileVersionId', 'checksum'].includes(field)
+    ) ||
+    !REGISTERED_INPUT_SOURCE_KINDS.has(value.sourceKind) ||
+    typeof value.inputFileVersionId !== 'string' ||
+    value.inputFileVersionId.length === 0 ||
+    value.inputFileVersionId.length > 512 ||
+    typeof value.checksum !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(value.checksum)
+  ) {
+    throw new Error('Invalid registered input identity in file evidence.')
+  }
   return value
 }
 const assertReceiptName = (value) => {
@@ -169,9 +196,37 @@ const replaceJson = (name, value) => {
   renameSync(temporaryName, name)
   syncDirectory()
 }
+const RECEIPT_REQUIRED_FIELDS = [
+  'schemaVersion',
+  'phase',
+  'receiptName',
+  'stagingName',
+  'finalName',
+  'activityId',
+  'activityKind',
+  'evidenceId',
+  'storageKeyPrefix',
+  'ownershipToken'
+]
+const receiptFields = (...phaseFields) =>
+  new Set([...RECEIPT_REQUIRED_FIELDS, 'parentActivityId', ...phaseFields])
+const RECEIPT_FIELDS_BY_PHASE = new Map([
+  ['prepared', receiptFields()],
+  ['allocated', receiptFields('stagingIdentity')],
+  ['capturing', receiptFields('stagingIdentity', 'captureChecksum')],
+  ['published', receiptFields('stagingIdentity', 'captureChecksum', 'finalIdentity')]
+])
 const receiptShape = (value) => {
-  if (!value || typeof value !== 'object' || value.schemaVersion !== 1) return false
-  if (!['prepared', 'allocated', 'capturing', 'published'].includes(value.phase)) return false
+  const expectedFields =
+    value && typeof value === 'object' ? RECEIPT_FIELDS_BY_PHASE.get(value.phase) : undefined
+  if (
+    !expectedFields ||
+    value.schemaVersion !== 1 ||
+    RECEIPT_REQUIRED_FIELDS.some((field) => !Object.hasOwn(value, field)) ||
+    Object.keys(value).some((field) => !expectedFields.has(field))
+  ) {
+    return false
+  }
   if (
     typeof value.activityId !== 'string' ||
     !ACTIVITY_KINDS.has(value.activityKind) ||
@@ -184,11 +239,19 @@ const receiptShape = (value) => {
   }
   try {
     assertReceiptName(value.receiptName)
+    assertSafeName(value.activityId)
+    assertSafeName(value.evidenceId)
     assertSafeName(value.stagingName)
     assertSafeName(value.finalName)
     assertSafeName(value.ownershipToken)
     assertStorageKeyPrefix(value.storageKeyPrefix)
   } catch {
+    return false
+  }
+  if (
+    value.receiptName !== `receipt-${value.activityId}.json` ||
+    value.finalName !== `activity-${value.activityId}`
+  ) {
     return false
   }
   if (value.phase !== 'prepared') {
@@ -1014,6 +1077,8 @@ const begin = (request) => {
     let newBytesUsed = 0
     const reasons = []
     for (const item of request.initialFiles) {
+      const registeredInput =
+        item.registeredInput === undefined ? undefined : assertRegisteredInput(item.registeredInput)
       const frozen = copyGeneration(
         item.file,
         item.generation,
@@ -1031,7 +1096,11 @@ const begin = (request) => {
         authority: item.relation === 'staged-input' ? 'explicit-transfer' : 'advisory'
       }
       if (frozen.state === 'available') {
+        if (registeredInput && frozen.generation.checksum !== registeredInput.checksum) {
+          throw new Error('Registered input checksum does not match its frozen generation.')
+        }
         relation.generation = frozen.generation
+        if (registeredInput) relation.registeredInput = registeredInput
         bytesUsed += frozen.generation.sizeBytes
         newBytesUsed += frozen.newBytes
       } else {
@@ -1239,9 +1308,21 @@ const persist = (request) => {
         .filter((relation) => relation.generation)
         .map((relation) => [relation.relativePath, relation.generation])
     )
-    const relations = [...capture.relations]
+    const readPaths = Array.isArray(request.readPaths)
+      ? new Set(request.readPaths.filter((path) => typeof path === 'string'))
+      : null
+    const relations = capture.relations.filter(
+      (relation) =>
+        relation.relation !== 'present-before' || !readPaths || readPaths.has(relation.relativePath)
+    )
     const generations = []
-    const reasons = [...request.reasonCodes, ...capture.reasonCodes]
+    const reasons = [
+      ...request.reasonCodes,
+      ...relations.flatMap((relation) => (relation.reasonCode ? [relation.reasonCode] : [])),
+      ...(capture.initialViewState === 'unavailable'
+        ? ['initial-file-generations-not-captured']
+        : [])
+    ]
     let bytesUsed = Number(capture.bytesUsed) || 0
     let newBytesUsed = 0
     for (const item of request.changes) {
@@ -1295,12 +1376,18 @@ const persist = (request) => {
       relations.push(relation)
     }
 
-    const reasonCodes = uniqueReasons(reasons)
-    const evidenceState = ['available', 'partial', 'unavailable'].includes(request.evidenceState)
+    const reasonCodes = evidenceReasons(request, reasons)
+    const requestedEvidenceState = ['available', 'partial', 'unavailable'].includes(
+      request.evidenceState
+    )
       ? request.evidenceState
       : request.rootsAvailable
         ? 'partial'
         : 'unavailable'
+    const evidenceState =
+      requestedEvidenceState === 'available' && reasonCodes.length > 0
+        ? 'partial'
+        : requestedEvidenceState
     const sidecar = {
       schemaVersion: 1,
       evidenceId: request.evidenceId,
@@ -1316,9 +1403,15 @@ const persist = (request) => {
           : request.rootsAvailable
             ? 'partial'
             : 'unavailable',
-      fileReads: 'unavailable',
-      externalPaths: 'unavailable',
-      writerAttribution: 'unavailable',
+      fileReads: ['complete', 'partial', 'unavailable'].includes(request.fileReads)
+        ? request.fileReads
+        : 'unavailable',
+      externalPaths: ['complete', 'partial', 'unavailable'].includes(request.externalPaths)
+        ? request.externalPaths
+        : 'unavailable',
+      writerAttribution: ['complete', 'partial', 'unavailable'].includes(request.writerAttribution)
+        ? request.writerAttribution
+        : 'unavailable',
       reasonCodes,
       scientificOutputs: request.scientificOutputs,
       relations

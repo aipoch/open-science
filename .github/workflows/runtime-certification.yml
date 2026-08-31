@@ -64,19 +64,46 @@ jobs:
           r_prefix="$RUNNER_TEMP/runtime-r"
 
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$python_prefix" \
-            --channel conda-forge python=3.12 matplotlib-base nomkl
+            --channel conda-forge python=3.12 matplotlib-base numpy pandas nomkl
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$r_prefix" \
             --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2
 
           echo "OPEN_SCIENCE_TEST_PY_ENV=$python_prefix/bin/python" >> "$GITHUB_ENV"
+          echo "OPEN_SCIENCE_TEST_PYTHON=$python_prefix/bin/python" >> "$GITHUB_ENV"
+          echo "OPEN_SCIENCE_TEST_RESTORE_PY_ENV=$python_prefix" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_R_ENV=$r_prefix" >> "$GITHUB_ENV"
+          echo "OPEN_SCIENCE_TEST_MICROMAMBA=$MICROMAMBA_BIN" >> "$GITHUB_ENV"
+          echo "OPEN_SCIENCE_TEST_SCIENTIFIC_RESTORE=1" >> "$GITHUB_ENV"
+
+      - name: Prepare local restoration archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          archives="$RUNNER_TEMP/reproduction-archives"
+          "$OPEN_SCIENCE_TEST_PY_ENV" - "$RUNNER_TEMP/micromamba-root/pkgs" "$archives" <<'PY'
+          import hashlib, pathlib, shutil, sys
+          cache, output = map(pathlib.Path, sys.argv[1:])
+          output.mkdir()
+          for pattern in ("*.conda", "*.tar.bz2"):
+              for source in cache.rglob(pattern):
+                  if not source.is_file():
+                      continue
+                  target = output / source.name
+                  if target.exists():
+                      with source.open("rb") as left, target.open("rb") as right:
+                          assert hashlib.file_digest(left, "sha256").digest() == hashlib.file_digest(right, "sha256").digest(), source.name
+                  else:
+                      shutil.copyfile(source, target)
+          assert any(output.iterdir()), "No restoration archives captured"
+          PY
+          echo "OPEN_SCIENCE_TEST_CONDA_ARCHIVES=$archives" >> "$GITHUB_ENV"
 
       - name: Verify runtime prerequisites
         shell: bash
         run: |
           set -euo pipefail
           "$OPEN_SCIENCE_TEST_PY_ENV" -c \
-            'import matplotlib; print("python=" + __import__("sys").version.split()[0] + " matplotlib=" + matplotlib.__version__)'
+            'import matplotlib, numpy, pandas; print("python=" + __import__("sys").version.split()[0] + " matplotlib=" + matplotlib.__version__ + " numpy=" + numpy.__version__ + " pandas=" + pandas.__version__)'
           "$OPEN_SCIENCE_TEST_R_ENV/bin/Rscript" -e \
             'library(jsonlite); library(ggplot2); cat("r=", as.character(getRversion()), " jsonlite=", as.character(packageVersion("jsonlite")), " ggplot2=", as.character(packageVersion("ggplot2")), "\n", sep="")'
 
@@ -90,6 +117,12 @@ jobs:
           src/main/notebook/host-mcp.integration.test.ts
           src/main/notebook/python-loop.integration.test.ts
           src/main/notebook/r-loop.integration.test.ts
+          src/main/notebook/reproduction-runtime.integration.test.ts
+          src/main/notebook/native-lock-restoration.test.ts
+          src/main/notebook/environment-state-tracker.test.ts
+          src/main/notebook/package-manager.test.ts
+          src/main/notebook/cross-turn-input-repro.integration.test.ts
+          src/main/notebook/input-resource-repro.integration.test.ts
           src/main/notebook/e2e.certification.test.ts
           src/main/agents/agents-repl.integration.test.ts
           src/main/agents/agents-repl.mutations.integration.test.ts

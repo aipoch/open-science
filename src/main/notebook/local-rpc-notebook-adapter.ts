@@ -45,7 +45,8 @@ const registeredInputFileSchema = z
     sizeBytes: z.number(),
     checksum: z.string(),
     storageKey: z.string(),
-    association: z.enum(['turn-attached', 'resolver-accessed'])
+    association: z.enum(['turn-attached', 'resolver-accessed']),
+    accessEvidence: z.enum(['resolver', 'file-evidence']).optional()
   })
   .strict()
 

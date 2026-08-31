@@ -23,6 +23,119 @@ const session = {
 }
 
 describe('ArchiveCoordinator', () => {
+  it.each(['session', 'project'] as const)(
+    'drains background checks on %s archive before admitting more work',
+    async (scope) => {
+      let finish!: () => void
+      const waiting = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      let projectArchived = false
+      let sessionArchived = false
+      const stop = vi.fn(async () => waiting)
+      const coordinator = new ArchiveCoordinator(
+        {
+          get: async () => ({ ...project, ...(projectArchived ? { archivedAt: 50 } : {}) }),
+          updateArchive: async () => {
+            projectArchived = true
+            return { ...project, archivedAt: 50 }
+          }
+        },
+        {
+          assertProjectArchivable: async () => [session.id],
+          sessionProjectId: async () => project.id,
+          assertSessionAvailable: async () => {
+            if (sessionArchived) throw new Error('Session archived')
+          },
+          updateArchive: async () => {
+            sessionArchived = true
+            return { ...session, archivedAt: 50 }
+          }
+        },
+        {
+          isSessionBusy: () => false,
+          isProjectBusy: () => false,
+          liveSessionProjectId: () => project.id
+        },
+        {
+          cancelSession: stop,
+          cancelProject: stop
+        }
+      )
+      const archived =
+        scope === 'session'
+          ? coordinator.updateSessionArchive({
+              projectId: project.id,
+              sessionId: session.id,
+              archived: true,
+              expectedRevision: 0
+            })
+          : coordinator.updateProjectArchive({
+              id: project.id,
+              archived: true,
+              expectedArchiveRevision: 0
+            })
+      await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce())
+      const start = vi.fn(async () => undefined)
+      const admission = coordinator.withSessionAvailable(project.id, session.id, start)
+      const rejection = expect(admission).rejects.toThrow()
+      await Promise.resolve()
+      expect(start).not.toHaveBeenCalled()
+      finish()
+      await archived
+      await rejection
+      expect(start).not.toHaveBeenCalled()
+      expect(stop).toHaveBeenCalledWith(
+        ...(scope === 'session' ? [project.id, session.id] : [project.id])
+      )
+    }
+  )
+
+  it('retains the durable archive and retries a failed background cleanup', async () => {
+    const stop = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('worker remains'))
+      .mockResolvedValue(undefined)
+    let archivedAt: number | undefined
+    const coordinator = new ArchiveCoordinator(
+      {
+        get: async () => ({ ...project, archivedAt, archiveRevision: archivedAt ? 1 : 0 }),
+        updateArchive: async () => {
+          archivedAt = 50
+          return { ...project, archivedAt }
+        }
+      },
+      {
+        assertProjectArchivable: async () => [session.id],
+        assertSessionAvailable: vi.fn(),
+        sessionProjectId: async () => project.id,
+        updateArchive: vi.fn()
+      },
+      {
+        isSessionBusy: () => false,
+        isProjectBusy: () => false,
+        liveSessionProjectId: () => project.id
+      },
+      { cancelProject: stop, cancelSession: vi.fn() }
+    )
+    await expect(
+      coordinator.updateProjectArchive({
+        id: project.id,
+        archived: true,
+        expectedArchiveRevision: 0
+      })
+    ).rejects.toThrow('worker remains')
+    await expect(
+      coordinator.withSessionAvailable(project.id, session.id, vi.fn())
+    ).rejects.toThrow()
+    await coordinator.updateProjectArchive({
+      id: project.id,
+      archived: true,
+      expectedArchiveRevision: 1
+    })
+    expect(stop).toHaveBeenCalledTimes(2)
+  })
+
   it('archives a project only after the complete idle child catalog is checked', async () => {
     const projects = {
       get: vi.fn().mockResolvedValue(project),

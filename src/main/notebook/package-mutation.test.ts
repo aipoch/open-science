@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,6 +12,7 @@ import {
   readOperationChild,
   RuntimeOperationJournal
 } from './operation-journal'
+import { importedEnvironmentLockMarkerPath } from './runtime-paths'
 
 type MutationOptions = ConstructorParameters<typeof NotebookPackageMutationOwner>[0]
 
@@ -113,6 +114,29 @@ describe('NotebookPackageMutationOwner', () => {
       target.request,
       expect.objectContaining({ signal: cancellation.signal })
     )
+  })
+
+  it('invalidates an imported-lock reuse marker before mutating its environment', async () => {
+    const { owner, options, target, runtimeRoot } = ownerHarness()
+    if (!target.journalTarget) throw new Error('Expected a managed environment target.')
+    mkdirSync(target.journalTarget, { recursive: true })
+    const markerPath = importedEnvironmentLockMarkerPath(target.journalTarget)
+    const checksum = 'a'.repeat(64)
+    const lockDirectory = join(runtimeRoot, 'imported-locks')
+    const nativeLocksRoot = join(lockDirectory, checksum)
+    mkdirSync(nativeLocksRoot, { recursive: true })
+    writeFileSync(join(lockDirectory, `${checksum}.txt`), '@EXPLICIT\n')
+    writeFileSync(join(nativeLocksRoot, 'requirements.lock'), 'numpy==2.0\n')
+    writeFileSync(markerPath, `${checksum}\n`)
+    vi.mocked(options.installPackages).mockImplementation(async () => {
+      expect(existsSync(markerPath)).toBe(false)
+      expect(existsSync(join(lockDirectory, `${checksum}.txt`))).toBe(false)
+      expect(existsSync(nativeLocksRoot)).toBe(false)
+      return { ok: true, needsRestart: false, log: 'installed', method: 'conda' }
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
+    expect(existsSync(markerPath)).toBe(false)
   })
 
   it('rechecks repair policy after acquiring the mutation lock', async () => {

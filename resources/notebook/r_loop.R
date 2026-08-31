@@ -345,6 +345,10 @@ runtime_command_mutates_packages <- function(command, args = character()) {
   }, logical(1)))
 }
 
+package_usage_state <- new.env(parent = emptyenv())
+package_usage_state$external_process <- FALSE
+runtime_write_policy_env$package_usage_state <- package_usage_state
+
 assert_runtime_process_allowed <- function(command, args = character()) {
   if (runtime_command_mutates_packages(command, args)) {
     stop(
@@ -358,6 +362,7 @@ assert_runtime_process_allowed <- function(command, args = character()) {
       call. = FALSE
     )
   }
+  package_usage_state$external_process <- TRUE
   invisible(NULL)
 }
 
@@ -760,6 +765,15 @@ capture_environment <- function() {
   loaded <- loadedNamespaces()
   attached <- sub("^package:", "", grep("^package:", search(), value = TRUE))
   libraries <- normalizePath(.libPaths(), winslash = "/", mustWork = FALSE)
+  runtime_home <- normalizePath(R.home(), winslash = "/", mustWork = FALSE)
+  user_libraries <- strsplit(Sys.getenv("R_LIBS_USER", ""), .Platform$path.sep, fixed = TRUE)[[1L]]
+  user_libraries <- normalizePath(path.expand(user_libraries[nzchar(user_libraries)]), winslash = "/", mustWork = FALSE)
+  library_scope <- function(path) {
+    if (is.null(path) || !nzchar(path)) return("unknown")
+    path <- normalizePath(path, winslash = "/", mustWork = FALSE)
+    within <- function(root) identical(path, root) || startsWith(path, paste0(root, "/"))
+    if (within(runtime_home)) "environment" else if (any(vapply(user_libraries, within, logical(1)))) "user" else "system"
+  }
   packages <- lapply(sort(unique(loaded)), function(package) {
     version <- suppressWarnings(try(as.character(utils::packageVersion(package)), silent = TRUE))
     if (inherits(version, "try-error")) version <- NULL
@@ -790,10 +804,31 @@ capture_environment <- function() {
       evidence_sources = list("r-session-info"),
       loaded_state = if (package %in% attached) "attached" else "loaded",
       library_rank = library_rank,
+      library_scope = if (inherits(package_path, "try-error") || !nzchar(package_path)) "unknown" else library_scope(dirname(package_path)),
       built_for_runtime = built,
       priority = priority
     )
   })
+  # The live Kernel must attest unused packages; a separate interpreter inventory cannot
+  # establish whether a namespace was loaded. Keep library rank to distinguish shadowed copies.
+  installed <- suppressWarnings(try(utils::installed.packages(), silent = TRUE))
+  if (!inherits(installed, "try-error")) {
+    unused <- installed[!installed[, "Package"] %in% loaded, , drop = FALSE]
+    packages <- c(packages, lapply(seq_len(nrow(unused)), function(index) {
+      entry <- unused[index, ]
+      library_rank <- match(normalizePath(entry[["LibPath"]], winslash = "/", mustWork = FALSE), libraries)
+      list(
+        name = entry[["Package"]],
+        version = entry[["Version"]],
+        version_status = "known",
+        ecosystem = "r",
+        evidence_sources = list("r-session-info", "r-installed-packages"),
+        loaded_state = if (package_usage_state$external_process) "unknown" else "installed-only",
+        library_rank = if (is.na(library_rank)) NULL else as.integer(library_rank),
+        library_scope = library_scope(entry[["LibPath"]])
+      )
+    }))
+  }
   list(
     runtime_version = paste(R.version$major, R.version$minor, sep = "."),
     packages = packages

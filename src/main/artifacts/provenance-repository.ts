@@ -3,7 +3,7 @@ import { readFile, realpath, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import type { PrismaClient } from '@prisma/client'
+import type { ArtifactVersion, PrismaClient } from '@prisma/client'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 
 import type {
@@ -73,6 +73,11 @@ import {
   type VersionFileRecovery
 } from '../managed-file-versions/version-file-operator'
 import { bindArtifactReconstructionEvidence } from './provenance-reconstruction-evidence'
+import { bindArtifactReproducibilityExecutionEvidence } from './provenance-reproducibility-execution-evidence'
+import {
+  ArtifactReproducibilityReceiptStore,
+  bindArtifactReproducibilityReceipts
+} from './artifact-reproducibility-receipts'
 import { ReviewerTurnFileEvidenceReader } from './reviewer-turn-file-evidence-reader'
 import { ContentRepository, type OpenedContent } from '../storage/content-repository'
 import {
@@ -80,6 +85,7 @@ import {
   type RecordArtifactLiteraturePdfReadRequest,
   type RecordArtifactLiteratureSearchRequest
 } from './literature-manifest'
+import type { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -89,6 +95,7 @@ type ArtifactProvenanceRepositoryOptions = {
   inputAuthority?: Pick<ImmutableInputAuthority, 'validateVersion'>
   compatibilityRepository?: ArtifactRepository
   notebookRepository?: Pick<NotebookRunRepository, 'readSessionDocuments'>
+  dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
   loadSession?: (
     projectId: string,
     appSessionId: string
@@ -319,6 +326,12 @@ class ArtifactProvenanceRepository {
         this.resolveVersionDerivedPath(request, filename),
       inspectVersionContent: (version) => this.inspectVersionContent(version)
     })
+    bindArtifactReproducibilityReceipts(
+      this,
+      new ArtifactReproducibilityReceiptStore({
+        resolveVersionDirectory: (request) => this.resolveVersionDirectory(request)
+      })
+    )
     bindArtifactReconstructionEvidence(this, (request) =>
       this.readModel.getVersionProvenance(
         request,
@@ -326,11 +339,23 @@ class ArtifactProvenanceRepository {
         { includePrivateHelperSource: true }
       )
     )
+    bindArtifactReproducibilityExecutionEvidence(this, async (request) => {
+      const provenance = await this.readModel.getVersionProvenance(
+        request,
+        { execution: true, messages: false, review: false },
+        { includePrivateExecution: true }
+      )
+      if (!provenance.execution) {
+        throw new Error('Artifact Version has no executable reproduction evidence.')
+      }
+      return provenance.execution
+    })
     this.producerCapture = new ArtifactProvenanceProducerCapture({
       inputAuthority,
       notebookRepository: this.notebookRepository,
       storageRoot: options.storageRoot,
       createId: this.createId,
+      dependencyAnalyzer: options.dependencyAnalyzer,
       computeJobReader: {
         findByProducer: async (projectId, sessionId, producerRunId, priorityJobIds = []) => {
           const client = await options.getClient()
@@ -364,9 +389,9 @@ class ArtifactProvenanceRepository {
             },
             select,
             orderBy: { createdAt: 'asc' },
-            take: 100 - priorityJobs.length
+            take: 101 - priorityJobs.length
           })
-          return [...priorityJobs, ...jobs].map((job) => {
+          const activities = [...priorityJobs, ...jobs].slice(0, 100).map((job) => {
             let fileEvidence
             try {
               fileEvidence = job.fileEvidence
@@ -381,22 +406,29 @@ class ArtifactProvenanceRepository {
               fileEvidence = undefined
             }
             return {
-              activity_id: job.id,
-              provider_id: job.providerId,
-              shape: job.shape,
-              status: job.status as import('../../shared/compute').ComputeJobStatus,
-              file_evidence: {
-                state: fileEvidence?.state ?? 'unavailable',
-                ...(fileEvidence?.evidenceId ? { evidence_id: fileEvidence.evidenceId } : {}),
-                ...(fileEvidence?.checksum ? { checksum: fileEvidence.checksum } : {}),
-                ...(fileEvidence?.storageKey ? { storage_key: fileEvidence.storageKey } : {}),
-                ...(fileEvidence?.generationCount !== undefined
-                  ? { generation_count: fileEvidence.generationCount }
-                  : {}),
-                reason_codes: fileEvidence?.reasonCodes ?? ['evidence-persistence-failed']
-              }
+              evidence: {
+                activity_id: job.id,
+                provider_id: job.providerId,
+                shape: job.shape,
+                status: job.status as import('../../shared/compute').ComputeJobStatus,
+                file_evidence: {
+                  state: fileEvidence?.state ?? 'unavailable',
+                  ...(fileEvidence?.evidenceId ? { evidence_id: fileEvidence.evidenceId } : {}),
+                  ...(fileEvidence?.checksum ? { checksum: fileEvidence.checksum } : {}),
+                  ...(fileEvidence?.storageKey ? { storage_key: fileEvidence.storageKey } : {}),
+                  ...(fileEvidence?.generationCount !== undefined
+                    ? { generation_count: fileEvidence.generationCount }
+                    : {}),
+                  reason_codes: fileEvidence?.reasonCodes ?? ['evidence-persistence-failed']
+                }
+              },
+              ...(fileEvidence ? { fileEvidence } : {})
             }
           })
+          return {
+            activities,
+            omittedActivityCount: Math.max(0, priorityJobs.length + jobs.length - activities.length)
+          }
         },
         findOutputOwners: async (
           projectId,
@@ -502,8 +534,8 @@ class ArtifactProvenanceRepository {
       durability: this.durability,
       resourceBudgets: options.resourceBudgets,
       writeBudgetOwner: this.writeBudgetOwner,
-      captureProducer: (request, createdAt, checksum, appGeneratedProducer) =>
-        this.producerCapture.captureProducer(request, createdAt, checksum, appGeneratedProducer),
+      captureProducer: (request, createdAt, target, appGeneratedProducer) =>
+        this.producerCapture.captureProducer(request, createdAt, target, appGeneratedProducer),
       prepareVersionPersistence: (input) => this.producerCapture.prepareVersionPersistence(input),
       prepareLiteratureManifest: (request, context) =>
         this.literatureManifestOwner.prepare(request, context),
@@ -980,10 +1012,14 @@ class ArtifactProvenanceRepository {
     return this.readModel.writeCodeReconstructionCache(request, serialized)
   }
 
-  private async resolveVersionDerivedPath(
-    request: GetArtifactVersionProvenanceRequest,
-    filename: string
-  ): Promise<string> {
+  private async resolveOwnedVersion(
+    request: GetArtifactVersionProvenanceRequest
+  ): Promise<
+    Pick<
+      ArtifactVersion,
+      'id' | 'contentBlobId' | 'contentStorageKey' | 'contentType' | 'sizeBytes' | 'checksum'
+    >
+  > {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'app session id')
     const artifactId = assertSafeSegment(request.artifactId, 'artifact id')
@@ -1007,6 +1043,22 @@ class ArtifactProvenanceRepository {
       }
     })
     if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
+    return version
+  }
+
+  private async resolveVersionDirectory(
+    request: GetArtifactVersionProvenanceRequest
+  ): Promise<string> {
+    const version = await this.resolveOwnedVersion(request)
+    // Historical verification records remain auditable when the original content is unavailable.
+    return dirname(resolveStorageKey(this.options.storageRoot, version.contentStorageKey))
+  }
+
+  private async resolveVersionDerivedPath(
+    request: GetArtifactVersionProvenanceRequest,
+    filename: string
+  ): Promise<string> {
+    const version = await this.resolveOwnedVersion(request)
     const content = await this.openVersionContent(version)
     return join(dirname(content.path), filename)
   }

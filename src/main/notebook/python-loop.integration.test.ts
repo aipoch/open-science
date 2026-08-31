@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   mkdirSync,
   mkdtempSync,
@@ -14,6 +14,23 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { framePythonNamespaceRequest } from './kernel-protocol'
+import {
+  reportedPythonCallbackPlot,
+  reportedPythonCallbackPrelude
+} from './reported-python-callback.fixture'
+import { startWorkingFileObservation } from './working-file-observer'
+import type { NotebookRunRecord } from '../../shared/notebook'
+import { NotebookDependencyAnalyzer } from './dependency-analysis'
+import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
+import { notebookPromptInputPath } from './prompt-input-materialization'
+import { reportedPathInput, reportedPathPlots } from './reported-python-path-plot.fixture'
+import { reportedSubplotsInput, reportedSubplots } from './reported-python-subplots.fixture'
+import {
+  reportedCountsSource,
+  reportedFailedPlot,
+  reportedBarRetry,
+  reportedPlotSetup
+} from './reported-python-failed-plot.fixture'
 
 // Run with: RUN_KERNEL=1 OPEN_SCIENCE_TEST_PY_ENV=/path/to/env/bin/python \
 //   npx vitest run src/main/notebook/python-loop.integration.test.ts
@@ -91,6 +108,486 @@ const startLoop = (
 }
 
 gate('python_loop.py', () => {
+  it.each(['Path input and two plots', 'nested subplots'] as const)(
+    'captures and replays the reported %s across runs',
+    async (scenario) => {
+      const subplots = scenario === 'nested subplots'
+      const filenames = subplots
+        ? ['synthetic_groups_group_plots.png']
+        : ['synthetic_groups_pie.png', 'synthetic_groups_bar.png']
+      const root = mkdtempSync(join(tmpdir(), 'python-path-plot-repro-'))
+      const notebookSessionRoot = join(root, 'notebook')
+      const dataRoot = join(notebookSessionRoot, 'data')
+      const content =
+        'sample,group\n' +
+        Array.from({ length: 66 }, (_, i) => `sample-${i},${i % 2 ? 'IRI' : 'Ctrl'}\n`).join('')
+      const checksum = createHash('sha256').update(content).digest('hex')
+      const inputPath = notebookPromptInputPath('sample-groups.csv', checksum)
+      const scripts = [
+        (subplots ? reportedSubplotsInput : reportedPathInput).replace(
+          'inputs/sample-groups-666666666666.csv',
+          inputPath
+        ),
+        (subplots ? reportedSubplots : reportedPathPlots).replace(
+          'inputs/sample-groups-666666666666.csv',
+          inputPath
+        )
+      ]
+      mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
+      writeFileSync(join(dataRoot, inputPath), content)
+      const environment = {
+        MPLBACKEND: 'Agg',
+        MPLCONFIGDIR: join(root, 'mpl'),
+        PYTHONDONTWRITEBYTECODE: '1',
+        OPEN_SCIENCE_KERNEL_FIGURES_DIR: join(root, 'figures')
+      }
+      const original = startLoop(pyBin!, environment)
+      let replay: ReturnType<typeof startLoop> | undefined
+      const runs: NotebookRunRecord[] = []
+      const analyzer = new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository: { readSessionRuns: async () => runs }
+      })
+      try {
+        expect(
+          (await original.send(`import os; os.chdir(${JSON.stringify(dataRoot)})`)).error
+        ).toBeNull()
+        for (const [index, script] of scripts.entries()) {
+          const runId = `run-${index}`
+          const observer = await startWorkingFileObservation({
+            dataRoot,
+            notebookSessionRoot,
+            cwd: dataRoot,
+            language: 'python',
+            code: script,
+            runId,
+            sourceFileAccessContext: await analyzer.sourceFileAccessContext({
+              projectId: 'project',
+              sessionId: 'session',
+              currentRunId: runId,
+              language: 'python',
+              environment: 'default-python',
+              kernelEpochId: 'epoch'
+            }),
+            registeredInputFiles: [
+              {
+                sourceKind: 'upload-version',
+                sourceFileId: 'groups',
+                inputFileVersionId: 'groups-v1',
+                sourceProjectId: 'project',
+                sourceSessionId: 'session',
+                filename: 'sample-groups.csv',
+                checksum,
+                sizeBytes: Buffer.byteLength(content),
+                storageKey: 'uploads/groups.csv',
+                association: index === 0 ? 'turn-attached' : 'resolver-accessed'
+              }
+            ]
+          })
+          const response = await original.send(script)
+          const files = await observer.finish()
+          expect(response.error).toBeNull()
+          expect(files.fileEvidence).toMatchObject({
+            state: 'available',
+            fileReads: 'complete',
+            writerAttribution: 'complete',
+            reasonCodes: []
+          })
+          expect(files.confirmedReadPaths ?? []).toEqual(
+            index === 0 || subplots ? [`data/${inputPath}`] : []
+          )
+          runs.push({
+            runId,
+            cellId: runId,
+            source: 'agent',
+            kernelKind: 'python',
+            kernelEpochId: 'epoch',
+            kernelDispatched: true,
+            environment: 'default-python',
+            script,
+            status: 'completed',
+            startedAt: index,
+            endedAt: index,
+            text: { stdout: response.stdout, stderr: response.stderr, traceback: '', plain: [] },
+            outputs: [],
+            artifacts: [],
+            inputFiles: [],
+            ...files
+          })
+          const projection = await analyzer.project({
+            projectId: 'project',
+            sessionId: 'session',
+            completedRun: runs[index]
+          })
+          expect(projection.stalenessByRunId[runId]).toEqual({ state: 'clear' })
+          expect(projection.dependenciesByRunId?.[runId]).toEqual(
+            index === 0 || subplots ? [] : ['run-0']
+          )
+        }
+        for (const filename of filenames) {
+          const output = runs[1].workingFiles.find(
+            (file) => file.relativePath === `data/${filename}`
+          )!
+          expect(output.checksum).toBeDefined()
+          const graph = sealArtifactProvenanceGraph({
+            target: {
+              versionId: 'version',
+              filename,
+              checksum: output.checksum!,
+              sizeBytes: output.size!,
+              producerRunId: 'run-1',
+              sourceGenerationId: output.generationId
+            },
+            notebookActivities: runs.map((run, runIndex) => ({
+              run,
+              runIndex,
+              evidenceJson: readFileSync(join(root, run.fileEvidence!.storageKey!), 'utf8')
+            })),
+            computeActivities: []
+          })
+          expect(graph.completeness).toBe('complete')
+        }
+        const replayRoot = join(root, 'replay')
+        mkdirSync(join(replayRoot, 'inputs'), { recursive: true })
+        writeFileSync(join(replayRoot, inputPath), content)
+        replay = startLoop(pyBin!, {
+          ...environment,
+          OPEN_SCIENCE_KERNEL_FIGURES_DIR: join(root, 'replay-figures')
+        })
+        expect(
+          (await replay.send(`import os; os.chdir(${JSON.stringify(replayRoot)})`)).error
+        ).toBeNull()
+        for (const script of scripts) expect((await replay.send(script)).error).toBeNull()
+        for (const filename of filenames) {
+          expect(readFileSync(join(replayRoot, filename))).toEqual(
+            readFileSync(join(dataRoot, filename))
+          )
+        }
+      } finally {
+        original.child.kill()
+        replay?.child.kill()
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
+  it('recovers the reported failed plot and replays the self-contained repair with captured files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-failed-plot-repro-'))
+    const notebookSessionRoot = join(root, 'notebook')
+    const dataRoot = join(notebookSessionRoot, 'data')
+    const content = 'group\n' + 'Ctrl\n'.repeat(33) + 'IRI\n'.repeat(33)
+    const checksum = createHash('sha256').update(content).digest('hex')
+    const inputPath = notebookPromptInputPath('groups.csv', checksum)
+    const countsSource = reportedCountsSource.replace(
+      'inputs/sample-groups-666666666666.csv',
+      inputPath
+    )
+    const repaired = [countsSource, reportedPlotSetup, reportedBarRetry].join('\n')
+    mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
+    writeFileSync(join(dataRoot, inputPath), content)
+    const environment = {
+      MPLBACKEND: 'Agg',
+      MPLCONFIGDIR: join(root, 'mpl'),
+      PYTHONDONTWRITEBYTECODE: '1',
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: join(root, 'figures')
+    }
+    const original = startLoop(pyBin!, environment)
+    let replay: ReturnType<typeof startLoop> | undefined
+    try {
+      expect(
+        (await original.send(`import os; os.chdir(${JSON.stringify(dataRoot)})`)).error
+      ).toBeNull()
+      expect((await original.send(countsSource)).error).toBeNull()
+      const failed = await original.send(reportedFailedPlot)
+      expect(failed.error).toContain('suptitle')
+      expect(failed.stdout).toContain('pie saved')
+      expect(existsSync(join(dataRoot, 'synthetic_groups_pie.png'))).toBe(true)
+      expect(existsSync(join(dataRoot, 'synthetic_groups_bar.png'))).toBe(false)
+      expect((await original.send(reportedBarRetry)).error).toBeNull()
+      const observer = await startWorkingFileObservation({
+        dataRoot,
+        notebookSessionRoot,
+        cwd: dataRoot,
+        language: 'python',
+        code: repaired,
+        runId: 'repair',
+        registeredInputFiles: [
+          {
+            sourceKind: 'upload-version',
+            sourceFileId: 'groups',
+            inputFileVersionId: 'groups-v1',
+            sourceProjectId: 'project',
+            sourceSessionId: 'session',
+            filename: 'groups.csv',
+            checksum,
+            sizeBytes: Buffer.byteLength(content),
+            storageKey: 'uploads/groups.csv',
+            association: 'turn-attached'
+          }
+        ]
+      })
+      const repairedResponse = await original.send(repaired)
+      const files = await observer.finish()
+      expect(repairedResponse.error).toBeNull()
+      expect(files.fileEvidence).toMatchObject({
+        state: 'available',
+        fileReads: 'complete',
+        writerAttribution: 'complete',
+        reasonCodes: []
+      })
+      expect(files.confirmedReadPaths).toEqual([`data/${inputPath}`])
+      expect(files.workingFiles.some((file) => file.relativePath === 'data/synthetic_groups_bar.png')).toBe(
+        true
+      )
+      const replayRoot = join(root, 'replay')
+      mkdirSync(join(replayRoot, 'inputs'), { recursive: true })
+      writeFileSync(join(replayRoot, inputPath), content)
+      replay = startLoop(pyBin!, environment)
+      expect(
+        (await replay.send(`import os; os.chdir(${JSON.stringify(replayRoot)})`)).error
+      ).toBeNull()
+      expect((await replay.send(repaired)).error).toBeNull()
+      expect(readFileSync(join(replayRoot, 'synthetic_groups_bar.png'))).toEqual(
+        readFileSync(join(dataRoot, 'synthetic_groups_bar.png'))
+      )
+    } finally {
+      original.child.kill()
+      replay?.child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('captures and replays the reported callback plot with complete file and dependency evidence', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-callback-repro-'))
+    const notebookSessionRoot = join(root, 'notebook')
+    const dataRoot = join(notebookSessionRoot, 'data')
+    mkdirSync(dataRoot, { recursive: true })
+    const environment = {
+      MPLBACKEND: 'Agg',
+      MPLCONFIGDIR: join(root, 'mpl'),
+      PYTHONDONTWRITEBYTECODE: '1',
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: join(root, 'figures')
+    }
+    const original = startLoop(pyBin!, environment)
+    let replay: ReturnType<typeof startLoop> | undefined
+    try {
+      expect(
+        (await original.send(`import os; os.chdir(${JSON.stringify(dataRoot)})`)).error
+      ).toBeNull()
+      expect((await original.send(reportedPythonCallbackPrelude)).error).toBeNull()
+      const observer = await startWorkingFileObservation({
+        dataRoot,
+        notebookSessionRoot,
+        cwd: dataRoot,
+        language: 'python',
+        code: reportedPythonCallbackPlot,
+        runId: 'plot',
+        registeredInputFiles: []
+      })
+      const response = await original.send(reportedPythonCallbackPlot)
+      const files = await observer.finish()
+      expect(response.error).toBeNull()
+      expect(response.stdout).toContain('saved')
+      // plt.close() leaves no live display figure; the saved PNG is captured below.
+      expect(response.figures).toHaveLength(0)
+      expect(files.fileEvidence).toMatchObject({
+        state: 'available',
+        fileReads: 'complete',
+        externalPaths: 'complete',
+        writerAttribution: 'complete',
+        reasonCodes: []
+      })
+      expect(files.confirmedReadPaths ?? []).toEqual([])
+      const output = files.workingFiles.find(
+        (file) => file.relativePath === 'data/group_pie_r.png'
+      )!
+      expect(output.checksum).toBeDefined()
+      const run: NotebookRunRecord = {
+        runId: 'plot',
+        cellId: 'plot',
+        source: 'agent',
+        kernelKind: 'python',
+        kernelEpochId: 'epoch',
+        kernelDispatched: true,
+        environment: 'default-python',
+        script: reportedPythonCallbackPlot,
+        status: 'completed',
+        startedAt: 1,
+        endedAt: 2,
+        text: { stdout: response.stdout, stderr: response.stderr, traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        inputFiles: [],
+        ...files
+      }
+      const projection = await new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository: { readSessionRuns: async () => [run] }
+      }).project({ projectId: 'project', sessionId: 'session', completedRun: run })
+      expect(projection.stalenessByRunId.plot).toEqual({ state: 'clear' })
+      expect(projection.dependenciesByRunId?.plot).toEqual([])
+      const graph = sealArtifactProvenanceGraph({
+        target: {
+          versionId: 'version',
+          filename: 'group_pie_r.png',
+          checksum: output.checksum!,
+          sizeBytes: output.size!,
+          producerRunId: run.runId,
+          sourceGenerationId: output.generationId
+        },
+        notebookActivities: [
+          {
+            run,
+            runIndex: 0,
+            evidenceJson: readFileSync(join(root, files.fileEvidence.storageKey!), 'utf8')
+          }
+        ],
+        computeActivities: []
+      })
+      expect(graph.completeness).toBe('complete')
+      const replayRoot = join(root, 'replay')
+      mkdirSync(replayRoot)
+      replay = startLoop(pyBin!, environment)
+      expect(
+        (await replay.send(`import os; os.chdir(${JSON.stringify(replayRoot)})`)).error
+      ).toBeNull()
+      expect((await replay.send(reportedPythonCallbackPlot)).error).toBeNull()
+      expect(readFileSync(join(replayRoot, 'group_pie_r.png'))).toEqual(
+        readFileSync(join(dataRoot, 'group_pie_r.png'))
+      )
+    } finally {
+      original.child.kill()
+      replay?.child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it.each(['extra_import', 'extra_distribution'])(
+    'keeps the loaded %s distribution identity after its original search path is removed',
+    async (importName) => {
+      const root = mkdtempSync(join(tmpdir(), 'python-library-shadow-'))
+      const libraries = ['1.0', '99.0'].map((version) => {
+        const library = join(root, version)
+        const distribution = join(library, `extra_distribution-${version}.dist-info`)
+        mkdirSync(distribution, { recursive: true })
+        writeFileSync(
+          join(distribution, 'METADATA'),
+          `Name: extra-distribution\nVersion: ${version}\n`
+        )
+        writeFileSync(join(distribution, 'top_level.txt'), `${importName}\n`)
+        writeFileSync(join(distribution, 'RECORD'), `${importName}.py,,\n`)
+        writeFileSync(join(library, `${importName}.py`), `__version__ = "${version}"\n`)
+        return library
+      })
+      const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+      try {
+        const loaded = await send(
+          `import sys; sys.path.insert(0, ${JSON.stringify(libraries[0])}); import ${importName}`
+        )
+        expect(loaded.error).toBeNull()
+        const switched = await send(
+          `sys.path.remove(${JSON.stringify(libraries[0])}); sys.path.insert(0, ${JSON.stringify(libraries[1])}); assert ${importName}.__version__ == "1.0"`
+        )
+        expect(switched.error).toBeNull()
+        const packages = switched.environment.packages.filter(
+          (pkg) => pkg.name.replace(/_/gu, '-') === 'extra-distribution'
+        )
+        expect(packages.filter((pkg) => pkg.loaded_state === 'loaded')).toEqual([
+          expect.objectContaining({ version: '1.0' })
+        ])
+        expect(packages).toContainEqual(
+          expect.objectContaining({ version: '99.0', loaded_state: 'installed-only' })
+        )
+      } finally {
+        child.kill()
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
+  it.each(['extra_import', '_extra_import'])(
+    'distinguishes unused distributions from dynamically imported %s aliases',
+    async (importName) => {
+      const root = mkdtempSync(join(tmpdir(), 'python-package-usage-'))
+      const distribution = join(root, 'extra_distribution-1.0.dist-info')
+      mkdirSync(distribution)
+      writeFileSync(join(distribution, 'METADATA'), 'Name: extra-distribution\nVersion: 1.0\n')
+      writeFileSync(join(distribution, 'top_level.txt'), `${importName}\n`)
+      writeFileSync(join(root, `${importName}.py`), '__version__ = "1.0"\n')
+      const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+      try {
+        const unused = await send(`import sys; sys.path.insert(0, ${JSON.stringify(root)})`)
+        expect(unused.error).toBeNull()
+        expect(unused.environment.packages).toContainEqual(
+          expect.objectContaining({
+            name: 'extra-distribution',
+            loaded_state: 'installed-only'
+          })
+        )
+        const childUse = await send(
+          'import subprocess; subprocess.run([sys.executable, "-c", "pass"], check=True)'
+        )
+        expect(childUse.error).toBeNull()
+        expect(childUse.environment.packages).toContainEqual(
+          expect.objectContaining({
+            name: 'extra-distribution',
+            loaded_state: 'unknown'
+          })
+        )
+        const used = await send(
+          `import importlib; extra = importlib.import_module("${importName}")`
+        )
+        expect(used.error).toBeNull()
+        expect(used.environment.packages).toContainEqual(
+          expect.objectContaining({
+            name: 'extra-distribution',
+            loaded_state: 'loaded'
+          })
+        )
+      } finally {
+        child.kill()
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
+  it('tracks shared namespace distributions independently and preserves unknown ownership', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-namespace-usage-'))
+    mkdirSync(join(root, 'shared_namespace'))
+    for (const name of ['used', 'unused', 'unknown']) {
+      const distribution = join(root, `namespace_${name}-1.0.dist-info`)
+      mkdirSync(distribution)
+      writeFileSync(join(distribution, 'METADATA'), `Name: namespace-${name}\nVersion: 1.0\n`)
+      writeFileSync(join(distribution, 'top_level.txt'), 'shared_namespace\n')
+      writeFileSync(join(root, 'shared_namespace', name + '.py'), 'value = 1\n')
+      if (name !== 'unknown')
+        writeFileSync(join(distribution, 'RECORD'), `shared_namespace/${name}.py,,\n`)
+    }
+    const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+    try {
+      const response = await send(
+        `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import shared_namespace.used`
+      )
+      expect(response.error).toBeNull()
+      const states = Object.fromEntries(
+        response.environment.packages
+          .filter((pkg) => pkg.name.startsWith('namespace-'))
+          .map((pkg) => [pkg.name, pkg.loaded_state])
+      )
+      expect(states).toEqual({
+        'namespace-used': 'loaded',
+        'namespace-unused': 'installed-only',
+        'namespace-unknown': 'unknown'
+      })
+    } finally {
+      child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it('returns fresh bounded user variables while filtering bootstrap and private names', async () => {
     const { child, send, inspect } = startLoop(pyBin as string, {})
     try {

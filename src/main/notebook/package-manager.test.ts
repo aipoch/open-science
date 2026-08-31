@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 
 // Force the fallback micromamba resolver to "not found" so the "cannot be resolved" case is
@@ -261,6 +263,25 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
     expect(result.stderr).toMatch(/Failed to record the installer worker/)
     expect(killedPid).toBeGreaterThan(0)
     await vi.waitFor(() => expect(() => process.kill(killedPid as number, 0)).toThrow())
+  })
+
+  it('does not start a package process after its operation is cancelled', async () => {
+    const controller = new AbortController()
+    const onChild = vi.fn()
+    controller.abort()
+    const result = defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 60000)'],
+      undefined,
+      onChild,
+      undefined,
+      false,
+      undefined,
+      { signal: controller.signal }
+    )
+
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' })
+    expect(onChild).not.toHaveBeenCalled()
   })
 
   it('retains bounded stdout/stderr tails and reports the exact discarded byte counts', async () => {
@@ -558,6 +579,7 @@ describe('installPackages', () => {
     expect(calls[0][0]).toBe(pipBin(prefix))
     expect(calls[0][1]).toEqual(['install', '-i', 'https://mirror.test/simple', 'seaborn'])
     expect(calls[0][2]?.PYTHONNOUSERSITE).toBe('1')
+    expect(calls[0][2]?.PIP_REPORT).toMatch(/report\.json$/u)
   })
 
   it('installs into an EXTERNAL interpreter via its own pip, never the app-managed prefix', async () => {
@@ -835,6 +857,7 @@ describe('installPackages', () => {
     expect(calls[0][0]).toBe(rScriptBin(envPrefix(runtimeRoot('/root'), DEFAULT_R_ENV)))
     expect(calls[0][1].join(' ')).toContain('BiocManager::install')
     expect(calls[0][1].join(' ')).toContain('update=FALSE')
+    expect(calls[0][1].join(' ')).toContain('options(repos=c(CRAN="https://cran.mirror.test"))')
     expect(result).toMatchObject({
       ok: true,
       method: 'biocmanager',
@@ -842,6 +865,66 @@ describe('installPackages', () => {
       source: { type: 'bioconductor', version: '3.21' }
     })
   })
+
+  it.skipIf(!process.env.OPEN_SCIENCE_TEST_R_ENV).each([false, true])(
+    'uses the configured CRAN mirror for mixed BiocManager installation (bootstrap: %s)',
+    async (bootstrap) => {
+      const root = mkdtempSync(join(tmpdir(), 'biocmanager-install-contract-'))
+      const library = rLibraryDir(envPrefix(runtimeRoot(root), DEFAULT_R_ENV))
+      const mirror = 'https://cran.mirror.test'
+      // Execute the generated installer in real R with offline installer doubles. The doubles
+      // inspect evaluated arguments/options; no repository access or package installation occurs.
+      const setup = [
+        `bootstrapped <- FALSE`,
+        `requireNamespace <- function(...) ${bootstrap ? 'FALSE' : 'TRUE'}`,
+        `install.packages <- function(pkgs, lib, repos) {`,
+        `  stopifnot(identical(pkgs, "BiocManager"), identical(lib, ${JSON.stringify(library)}), identical(repos, ${JSON.stringify(mirror)}))`,
+        `  bootstrapped <<- TRUE`,
+        `}`,
+        '`::` <- function(package, name) {',
+        '  stopifnot(identical(as.character(substitute(package)), "BiocManager"))',
+        '  switch(as.character(substitute(name)),',
+        '    install = function(pkgs, lib, ask, update, ...) {',
+        '      stopifnot(identical(pkgs, c("DESeq2", "org.Hs.eg.db", "ggplot2")), !ask, !update, length(list(...)) == 0L)',
+        `      stopifnot(identical(lib, ${JSON.stringify(library)}), dir.exists(lib))`,
+        `      stopifnot(identical(getOption("repos"), c(CRAN=${JSON.stringify(mirror)})))`,
+        `      stopifnot(identical(bootstrapped, ${bootstrap ? 'TRUE' : 'FALSE'}))`,
+        '      cat("INSTALL_CONTRACT_OK\\n")',
+        '    },',
+        '    version = function() "3.20",',
+        '    stop("Unexpected BiocManager call")',
+        '  )',
+        '}'
+      ].join('\n')
+      try {
+        const result = await installPackages(
+          {
+            language: 'r',
+            packages: ['DESeq2', 'org.Hs.eg.db', 'ggplot2'],
+            installer: 'biocmanager'
+          },
+          {
+            ...base,
+            storageRoot: root,
+            cranMirror: mirror,
+            spawn: async (_command, args) => {
+              const { stdout, stderr } = await promisify(execFile)(
+                rScriptBin(process.env.OPEN_SCIENCE_TEST_R_ENV!),
+                ['--vanilla', '--slave', '-e', `${setup}\n${args.at(-1)}`],
+                { env: { ...process.env, LC_ALL: 'en_US.UTF-8' }, timeout: 15_000 }
+              )
+              return { code: 0, stdout, stderr }
+            }
+          }
+        )
+        expect(result.ok).toBe(true)
+        expect(result.log).toContain('INSTALL_CONTRACT_OK')
+        expect(result.source).toEqual({ type: 'bioconductor', version: '3.20' })
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('installs an R package from GitHub with the requested ref', async () => {
     const { spawn, calls } = scriptedSpawn([ok])
@@ -859,6 +942,7 @@ describe('installPackages', () => {
     expect(calls[0][1].join(' ')).toContain('remotes::install_github')
     expect(calls[0][1].join(' ')).toContain('dependencies=TRUE')
     expect(calls[0][1].join(' ')).toContain('upgrade="never"')
+    expect(calls[0][1].join(' ')).toContain('options(repos=c(CRAN="https://cran.mirror.test"))')
     expect(result).toMatchObject({
       ok: true,
       method: 'github',
@@ -2112,9 +2196,18 @@ describe('installPackages shared pkgs cache lock', () => {
     // directly (unlocked). An exclusive repair requested meanwhile runs WITHOUT waiting — this both
     // documents the intended scope and guards against over-locking pip behind the cache lock.
     const order: string[] = []
+    let markStarted!: () => void
+    let finishInstall!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const finish = new Promise<void>((resolve) => {
+      finishInstall = resolve
+    })
     const spawn: InstallSpawn = async () => {
       order.push('pip-start')
-      await new Promise((r) => setTimeout(r, 10))
+      markStarted()
+      await finish
       order.push('pip-end')
       return ok
     }
@@ -2123,11 +2216,13 @@ describe('installPackages shared pkgs cache lock', () => {
       { language: 'python', packages: ['seaborn'], usePip: true, environment: 'my-analysis' },
       { spawn, ...base, pathExists: () => true }
     )
+    await started
     const cacheKey = micromambaCacheLockKey(join(runtimeRoot(base.storageRoot), 'pkgs'), {
       platform: 'linux'
     })
     const exclusive = withExclusiveCacheLock(cacheKey, async () => {
       order.push('repair')
+      finishInstall()
     })
     await Promise.all([install, exclusive])
 

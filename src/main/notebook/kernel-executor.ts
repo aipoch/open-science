@@ -639,6 +639,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
         truncated: response.outputTruncated || figureResult.truncated,
         workingFiles: fileObservation.workingFiles,
         fileEvidence: fileObservation.fileEvidence,
+        ...(fileObservation.confirmedReadPaths
+          ? { confirmedReadPaths: fileObservation.confirmedReadPaths }
+          : {}),
         ...(helperModulesInitialized.length ? { helperModulesInitialized } : {}),
         environmentOverlay: response.environmentOverlay
       }
@@ -649,7 +652,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
         ...(fileObservation
           ? {
               workingFiles: fileObservation.workingFiles,
-              fileEvidence: fileObservation.fileEvidence
+              fileEvidence: fileObservation.fileEvidence,
+              ...(fileObservation.confirmedReadPaths
+                ? { confirmedReadPaths: fileObservation.confirmedReadPaths }
+                : {})
             }
           : {})
       }
@@ -1011,6 +1017,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           filesystem: {
             readOnlyRoots: presentPaths([
               request.runtimeRoot,
+              request.resolvedInterpreter?.condaPrefix ?? '',
               request.inputRoot ?? '',
               kernelExecutableReadRoot(invocation.executable, kind, this.platform),
               loopPath,

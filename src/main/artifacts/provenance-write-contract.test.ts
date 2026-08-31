@@ -993,6 +993,11 @@ describe('artifact provenance producer and source validation', () => {
       producer: { producer_run_id: producerRunId },
       compute_executions: expect.arrayContaining([expect.objectContaining({ activity_id: jobId })])
     })
+    expect(JSON.parse(versionRow.executionSnapshotJson!)).toMatchObject({
+      provenanceGraph: {
+        reasonCodes: expect.arrayContaining(['history-truncated'])
+      }
+    })
   })
 
   it('infers the exact source owner from an ancestor Branch when producerRunId is omitted', async () => {

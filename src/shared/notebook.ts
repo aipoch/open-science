@@ -185,6 +185,7 @@ export type NotebookPackageSource =
       repository: string
       ref?: string
       commit?: string
+      subdirectory?: string
     }
   | {
       type: 'bioconductor'
@@ -332,6 +333,87 @@ export type NotebookRunEnvironmentCapture =
         | 'legacy-environment-reference-unavailable'
     }
 
+export type NotebookEnvironmentLockPartialReason =
+  | 'environment-manifest-partial'
+  | 'non-conda-package-detected'
+  | 'non-conda-installer-detected'
+  | 'native-lock-file-best-effort'
+  | 'native-lock-file-rejected'
+
+export type NotebookEnvironmentLockDiagnostic = {
+  reason:
+    | 'package-lock-missing'
+    | 'package-version-unresolved'
+    | 'package-version-mismatch'
+    | 'package-not-captured'
+    | 'source-unpinned'
+    | 'source-mismatch'
+    | 'project-selection-unresolved'
+  packageName?: string
+  observedVersion?: string
+  lockedVersion?: string
+}
+
+export type NotebookEnvironmentLockFile = {
+  path: string
+  checksum: string
+  content: string
+}
+
+export type NotebookEnvironmentLockComponent =
+  | {
+      ecosystem: 'conda'
+      format: 'conda-explicit-md5'
+      resolution: 'locked'
+      explicitLock: string
+      packages: string[]
+    }
+  | {
+      ecosystem: 'python'
+      format: 'uv-lock' | 'poetry-lock' | 'pip-requirements'
+      resolution: 'locked' | 'best-effort'
+      files: NotebookEnvironmentLockFile[]
+    }
+  | {
+      ecosystem: 'r'
+      format: 'renv-lock' | 'pak-lock'
+      resolution: 'locked'
+      files: NotebookEnvironmentLockFile[]
+    }
+
+export type NotebookEnvironmentLock = {
+  schemaVersion: 1
+  format: 'environment-lock-bundle'
+  kernelKind: NotebookLanguage
+  environmentName: string
+  platform?: string
+  architecture?: string
+  components: NotebookEnvironmentLockComponent[]
+  untrackedPackages?: string[]
+  // Native distributions observed as unused by this run; retained in the full inventory.
+  omittedPackages?: string[]
+  nonCondaInstallers?: NotebookPackageInstaller[]
+}
+
+export type NotebookRunEnvironmentLockCapture =
+  | {
+      state: 'available' | 'partial'
+      format: NotebookEnvironmentLock['format']
+      lockChecksum: string
+      partialReasons?: NotebookEnvironmentLockPartialReason[]
+      diagnostics?: NotebookEnvironmentLockDiagnostic[]
+    }
+  | {
+      state: 'unavailable'
+      reason:
+        | 'environment-not-managed'
+        | 'conda-prefix-unavailable'
+        | 'micromamba-unavailable'
+        | 'environment-lock-capture-failed'
+        | 'environment-lock-invalid'
+        | 'environment-lock-publication-failed'
+    }
+
 export type NotebookLiveEnvironmentOverlay = {
   runtimeVersion?: string
   packages: NotebookEnvironmentPackage[]
@@ -339,6 +421,7 @@ export type NotebookLiveEnvironmentOverlay = {
 }
 
 export type NotebookInputAssociation = 'turn-attached' | 'resolver-accessed'
+export type NotebookInputAccessEvidence = 'resolver' | 'file-evidence'
 
 // Path-independent immutable input identity captured from the trusted main-process registry. The
 // storage key is persisted only in run.json/evidence; summaries returned to agents and renderers omit
@@ -357,6 +440,7 @@ export type NotebookRunInputFile = {
   checksum: string
   storageKey: string
   association: NotebookInputAssociation
+  accessEvidence?: NotebookInputAccessEvidence
 }
 
 export type NotebookInputFileSummary = Omit<NotebookRunInputFile, 'storageKey'>
@@ -615,6 +699,9 @@ export type NotebookRunRecord = {
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
+  // Immutable package lock used to reconstruct this run's managed environment. Optional keeps
+  // historical run.json documents readable without fabricating restore coverage.
+  environmentLock?: NotebookRunEnvironmentLockCapture
   // Trusted turn/Branch attribution injected by the main-process RPC bridge. Legacy and user-run
   // records may omit it. An Artifact producer must share root/agent identity, belong to the trusted
   // Branch and message ancestry, and match the active Runtime Segment for the active prompt.

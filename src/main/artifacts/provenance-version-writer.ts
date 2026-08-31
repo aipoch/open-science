@@ -143,7 +143,7 @@ type ArtifactProvenanceVersionWriterOptions = {
   captureProducer: (
     request: CreateArtifactVersionRequest,
     createdAt: Date,
-    artifactChecksum: string,
+    target: { versionId: string; filename: string; checksum: string; sizeBytes: number },
     appGeneratedProducer?: AppGeneratedArtifactProducer
   ) => Promise<ArtifactVersionProducerCapture>
   prepareVersionPersistence: (input: {
@@ -398,7 +398,7 @@ class ArtifactProvenanceVersionWriter {
       const producer = await this.options.captureProducer(
         request,
         createdAt,
-        checksum,
+        { versionId, filename: request.filename, checksum, sizeBytes },
         appGeneratedProducer
       )
       const literatureManifest = await this.options.prepareLiteratureManifest(request.literature, {

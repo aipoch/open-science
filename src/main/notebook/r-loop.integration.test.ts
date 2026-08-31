@@ -3,7 +3,15 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { join, relative } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 
 import {
@@ -129,6 +137,108 @@ const installBlankPngMaterializationTrace = (
   ].join('\n')
 
 gate('r_loop.R', () => {
+  it('keeps the loaded R namespace identity when library search paths change', async () => {
+    const library = mkdtempSync(join(tmpdir(), 'r-library-shadow-'))
+    cpSync(join(rEnvPrefix!, 'lib/R/library/RColorBrewer'), join(library, 'RColorBrewer'), {
+      recursive: true
+    })
+    const description = join(library, 'RColorBrewer/DESCRIPTION')
+    writeFileSync(
+      description,
+      readFileSync(description, 'utf8').replace(/^Version:.*$/mu, 'Version: 99.0')
+    )
+    const { child, send } = startLoop(rscriptBin(), {})
+    try {
+      const original = await send(
+        'loadNamespace("RColorBrewer"); original_version <- as.character(getNamespaceVersion("RColorBrewer"))'
+      )
+      expect(original.error).toBeNull()
+      const observed = original.environmentOverlay?.packages.find(
+        (pkg) => pkg.name === 'RColorBrewer'
+      )
+      expect(observed?.version).toBeTruthy()
+      const reordered = await send(
+        `.libPaths(c(${JSON.stringify(library)}, .libPaths())); stopifnot(as.character(getNamespaceVersion("RColorBrewer")) == original_version)`
+      )
+      expect(reordered.error).toBeNull()
+      expect(reordered.environmentOverlay?.packages).toContainEqual(
+        expect.objectContaining({
+          name: 'RColorBrewer',
+          version: observed!.version,
+          libraryScope: 'environment',
+          loadedState: 'loaded'
+        })
+      )
+    } finally {
+      child.kill()
+      rmSync(library, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('captures the actual library scope after loading a package from another library', async () => {
+    const library = mkdtempSync(join(tmpdir(), 'r-live-library-'))
+    cpSync(join(rEnvPrefix!, 'lib/R/library/RColorBrewer'), join(library, 'RColorBrewer'), {
+      recursive: true
+    })
+    const { child, send } = startLoop(rscriptBin(), {})
+    try {
+      const result = await send(
+        `.libPaths(c(${JSON.stringify(library)}, .libPaths())); library(RColorBrewer)`
+      )
+      expect(result.error).toBeNull()
+      expect(result.environmentOverlay?.packages).toContainEqual(
+        expect.objectContaining({
+          name: 'RColorBrewer',
+          libraryRank: 1,
+          libraryScope: 'system',
+          loadedState: 'attached'
+        })
+      )
+      expect(result.environmentOverlay?.packages).toContainEqual(
+        expect.objectContaining({
+          name: 'base',
+          libraryScope: 'environment'
+        })
+      )
+    } finally {
+      child.kill()
+      rmSync(library, { recursive: true, force: true })
+    }
+  }, 60_000)
+  it('distinguishes unused packages from dynamically loaded namespaces', async () => {
+    const { child, send } = startLoop(join(rEnvPrefix!, 'bin', 'Rscript'), {})
+    try {
+      const unused = await send('1 + 1')
+      expect(unused.error).toBeNull()
+      expect(unused.environmentOverlay?.packages).toContainEqual(
+        expect.objectContaining({
+          name: 'splines',
+          loadedState: 'installed-only'
+        })
+      )
+      const childUse = await send(
+        'system2(file.path(R.home("bin"), "Rscript"), c("-e", shQuote("invisible(NULL)")))'
+      )
+      expect(childUse.error).toBeNull()
+      expect(childUse.environmentOverlay?.packages).toContainEqual(
+        expect.objectContaining({
+          name: 'splines',
+          loadedState: 'unknown'
+        })
+      )
+      const used = await send('loadNamespace("splines")')
+      expect(used.error).toBeNull()
+      expect(used.environmentOverlay?.packages).toContainEqual(
+        expect.objectContaining({
+          name: 'splines',
+          loadedState: 'loaded'
+        })
+      )
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it('returns bounded binding metadata without evaluating any binding values', async () => {
     const { child, send, inspect } = startLoop(rscriptBin(), {})
     try {

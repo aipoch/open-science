@@ -44,7 +44,8 @@ import { resolveDataRoot } from '../storage-root'
 import { withDataRootWrite } from '../storage/migration-state'
 import {
   readBoundedManagedFilePreviewLease,
-  type ManagedFilePreviewReadLease
+  type ManagedFilePreviewReadLease,
+  waitForManagedFilePublication
 } from '../managed-file-preview'
 import { createLogger, type Logger } from '../logger'
 import { ArtifactRepository } from './repository'
@@ -257,16 +258,21 @@ const createArtifactHandlers = (
               }
             : undefined
       const lease = logicalRequest
-        ? logicalRequest.versionId
-          ? dependencies.openManagedFileVersion
-            ? await dependencies.openManagedFileVersion({
-                ...logicalRequest,
-                versionId: logicalRequest.versionId
-              })
-            : undefined
-          : dependencies.openLatestManagedFile
-            ? await dependencies.openLatestManagedFile({ ...logicalRequest, versionId: undefined })
-            : undefined
+        ? await waitForManagedFilePublication(() =>
+            logicalRequest.versionId
+              ? dependencies.openManagedFileVersion
+                ? dependencies.openManagedFileVersion({
+                    ...logicalRequest,
+                    versionId: logicalRequest.versionId
+                  })
+                : Promise.resolve(undefined)
+              : dependencies.openLatestManagedFile
+                ? dependencies.openLatestManagedFile({
+                    ...logicalRequest,
+                    versionId: undefined
+                  })
+                : Promise.resolve(undefined)
+          )
         : undefined
       if (lease) {
         try {

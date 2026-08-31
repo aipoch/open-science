@@ -83,6 +83,30 @@ import type {
   GetArtifactVersionProvenanceRequest
 } from './artifact-provenance'
 import type {
+  ArtifactReproducibilityCheckRequest,
+  ArtifactReproducibilityCheckLogRecord,
+  ArtifactReproducibilityCheckState,
+  ArtifactEnvironmentLockBundleInfo,
+  ArtifactReproducibilityReceiptPage,
+  CancelArtifactReproducibilityCheckRequest,
+  ExportArtifactEnvironmentLockRequest,
+  ExportArtifactEnvironmentLockResult,
+  DescribeArtifactEnvironmentLockRequest,
+  ExportArtifactReproducibilityReceiptRequest,
+  ReadArtifactReproducibilityOutputRequest,
+  ArtifactReproducibilityReceiptScope,
+  ArtifactReproducibilityOutputStorage,
+  ArtifactReproducibilityOutputPreview,
+  ExportArtifactReproducibilityReceiptResult,
+  GetArtifactReproducibilityCheckLogRequest,
+  GetArtifactReproducibilityCheckRequest,
+  ImportArtifactEnvironmentLockRequest,
+  ImportArtifactEnvironmentLockResult,
+  CreateArtifactEnvironmentFromLockRequest,
+  CreateArtifactEnvironmentFromLockResult,
+  ListArtifactReproducibilityReceiptsRequest
+} from './artifact-reproducibility'
+import type {
   ArtifactCodeReconstructionState,
   GenerateArtifactCodeReconstructionRequest,
   GetArtifactCodeReconstructionRequest
@@ -866,6 +890,43 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'acp.steerFollowUp': callable<
     (request: AcpSteerFollowUpRequest) => Promise<AcpSteerFollowUpResult>
   >()('acp', ['acp:steer-follow-up']),
+  'artifacts.cancelReproducibilityCheck': callable<
+    (request: CancelArtifactReproducibilityCheckRequest) => Promise<void>
+  >()('artifacts', ['artifacts:cancel-reproducibility-check', ELECTRON], { optionalMember: true }),
+  'artifacts.exportEnvironmentLock': callable<
+    (request: ExportArtifactEnvironmentLockRequest) => Promise<ExportArtifactEnvironmentLockResult>
+  >()('artifacts', ['artifacts:export-environment-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.describeEnvironmentLock': callable<
+    (request: DescribeArtifactEnvironmentLockRequest) => Promise<ArtifactEnvironmentLockBundleInfo>
+  >()('artifacts', ['artifacts:describe-environment-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.importEnvironmentLock': callable<
+    (request: ImportArtifactEnvironmentLockRequest) => Promise<ImportArtifactEnvironmentLockResult>
+  >()('artifacts', ['artifacts:import-environment-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.createEnvironmentFromLock': callable<
+    (
+      request: CreateArtifactEnvironmentFromLockRequest
+    ) => Promise<CreateArtifactEnvironmentFromLockResult>
+  >()('artifacts', ['artifacts:create-environment-from-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.readReproducibilityOutput': callable<
+    (
+      request: ReadArtifactReproducibilityOutputRequest
+    ) => Promise<ArtifactReproducibilityOutputPreview>
+  >()('artifacts', ['artifacts:read-reproducibility-output', ELECTRON], { optionalMember: true }),
+  'artifacts.getReproducibilityOutputStorage': callable<
+    (request: ArtifactReproducibilityReceiptScope) => Promise<ArtifactReproducibilityOutputStorage>
+  >()('artifacts', ['artifacts:get-reproducibility-output-storage', ELECTRON], {
+    optionalMember: true
+  }),
+  'artifacts.clearReproducibilityOutputs': callable<
+    (request: ArtifactReproducibilityReceiptScope) => Promise<ArtifactReproducibilityOutputStorage>
+  >()('artifacts', ['artifacts:clear-reproducibility-outputs', ELECTRON], { optionalMember: true }),
+  'artifacts.exportReproducibilityReceipt': callable<
+    (
+      request: ExportArtifactReproducibilityReceiptRequest
+    ) => Promise<ExportArtifactReproducibilityReceiptResult>
+  >()('artifacts', ['artifacts:export-reproducibility-receipt', ELECTRON], {
+    optionalMember: true
+  }),
   'artifacts.finalizeRunArtifacts': callable<
     (request: FinalizeRunArtifactsRequest) => Promise<FinalizeRunArtifactsResult>
   >()('artifacts', ['artifacts:finalize-run']),
@@ -880,6 +941,18 @@ export const RENDERER_API_CONTRACT = Object.freeze({
       request: GetArtifactLineageRequest
     ) => Promise<ProvenanceReadResult<ArtifactLineageProvenance | undefined>>
   >()('artifacts', ['artifacts:get-lineage']),
+  'artifacts.getReproducibilityCheck': callable<
+    (
+      request: GetArtifactReproducibilityCheckRequest
+    ) => Promise<ArtifactReproducibilityCheckState | undefined>
+  >()('artifacts', ['artifacts:get-reproducibility-check', ELECTRON], { optionalMember: true }),
+  'artifacts.getReproducibilityCheckLog': callable<
+    (
+      request: GetArtifactReproducibilityCheckLogRequest
+    ) => Promise<ArtifactReproducibilityCheckLogRecord | undefined>
+  >()('artifacts', ['artifacts:get-reproducibility-check-log', ELECTRON], {
+    optionalMember: true
+  }),
   'artifacts.getVersionExecution': callable<
     (
       request: GetArtifactVersionProvenanceRequest
@@ -905,10 +978,22 @@ export const RENDERER_API_CONTRACT = Object.freeze({
       request: GetArtifactVersionProvenanceRequest
     ) => Promise<ProvenanceReadResult<ArtifactVersionReviewProvenance>>
   >()('artifacts', ['artifacts:get-version-review']),
+  'artifacts.listReproducibilityReceipts': callable<
+    (
+      request: ListArtifactReproducibilityReceiptsRequest
+    ) => Promise<ArtifactReproducibilityReceiptPage>
+  >()('artifacts', ['artifacts:list-reproducibility-receipts', ELECTRON], {
+    optionalMember: true
+  }),
   'artifacts.openFile': callable<(request: OpenArtifactFileRequest) => Promise<void>>()(
     'artifacts',
     ['artifacts:open-file', LOCAL]
   ),
+  'artifacts.onReproducibilityCheckChanged': callable<
+    (listener: (state: ArtifactReproducibilityCheckState) => void) => RemoveListener
+  >()('artifacts', ['artifacts:reproducibility-check-changed', ELECTRON_EVENT], {
+    optionalMember: true
+  }),
   'artifacts.readPreview': callable<
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('artifacts', ['artifacts:read-preview']),
@@ -918,6 +1003,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'artifacts.resolveVersionDescriptors': callable<
     (request: ResolveArtifactVersionDescriptorsRequest) => Promise<ArtifactVersionDescriptor[]>
   >()('artifacts', ['artifacts:resolve-version-descriptors']),
+  'artifacts.startReproducibilityCheck': callable<
+    (request: ArtifactReproducibilityCheckRequest) => Promise<ArtifactReproducibilityCheckState>
+  >()('artifacts', ['artifacts:start-reproducibility-check', ELECTRON], { optionalMember: true }),
   'cli.getStatus': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:get-status']),
   'cli.install': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:install', LOCAL]),
   'cli.uninstall': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:uninstall', LOCAL]),

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -93,6 +93,54 @@ describe('sandboxedPackageSpawn', () => {
     expect(preparationSignal).toBe(cancellation.signal)
     expect(onChild).not.toHaveBeenCalled()
   })
+  it.each(['darwin', 'win32'] as const)(
+    'uses an authorized runtime cwd and filters unsafe package options on %s',
+    async (platform) => {
+      const storageRoot = mkdtempSync(join(tmpdir(), 'open-science-package-storage-'))
+      const runtimeRoot = join(storageRoot, 'runtime')
+      mkdirSync(runtimeRoot)
+      temporaryDirectories.push(storageRoot)
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => {
+          if (!invocation.filesystem.readWriteRoots.includes(invocation.cwd)) {
+            throw new Error('getcwd: cannot access parent directories: Operation not permitted')
+          }
+          return {
+            executable: invocation.executable,
+            args: invocation.args,
+            env: invocation.env,
+            annotateStderr: (stderr: string) => stderr,
+            cleanup: vi.fn()
+          }
+        })
+      }
+      const spawn = sandboxedPackageSpawn({
+        processSandbox,
+        request: { language: 'python', packages: [], projectId: 'project-1' },
+        runtimeRoot,
+        storageRoot,
+        platform
+      })
+
+      await expect(
+        spawn(process.execPath, ['-e', ''], {
+          PIP_REPORT: join(storageRoot, 'report.json'),
+          PIP_TARGET: storageRoot,
+          PIP_CONFIG_FILE: join(storageRoot, 'pip.conf'),
+          Pip_Proxy: 'http://proxy.example:1086'
+        })
+      ).resolves.toMatchObject({ code: 0 })
+      expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].cwd).toBe(runtimeRoot)
+      const invocation = vi.mocked(processSandbox.wrap).mock.calls[0]?.[0]
+      expect(invocation?.env.PIP_REPORT).toBeUndefined()
+      expect(invocation?.env.PIP_CONFIG_FILE).toBeUndefined()
+      expect(invocation?.env.PIP_TARGET).toBeUndefined()
+      expect(invocation?.env.PIP_PROXY).toBe(
+        platform === 'win32' ? 'http://proxy.example:1086' : undefined
+      )
+      expect(invocation?.filesystem.readWriteRoots).not.toContain(storageRoot)
+    }
+  )
 
   it('runs an installer through the Notebook sandbox and preserves its lifecycle', async () => {
     const endExecution = vi.fn()
@@ -116,6 +164,10 @@ describe('sandboxedPackageSpawn', () => {
     const storageRoot = process.cwd()
     const packageCache = mkdtempSync(join(tmpdir(), 'open-science-package-cache-'))
     const matplotlibCache = join(packageCache, 'matplotlib')
+    const lockCwd = join(packageCache, 'locks')
+    const reportRoot = mkdtempSync(join(tmpdir(), 'open-science-pip-report-'))
+    temporaryDirectories.push(reportRoot)
+    mkdirSync(lockCwd)
     temporaryDirectories.push(packageCache)
     const spawn = sandboxedPackageSpawn({
       processSandbox,
@@ -124,36 +176,57 @@ describe('sandboxedPackageSpawn', () => {
         packages: ['example'],
         sessionId: 'session-1',
         projectId: 'project-1',
-        workspaceCwd: process.cwd()
+        workspaceCwd: packageCache
       },
       runtimeRoot: join(storageRoot, '.open-science-test-runtime', 'package-sandbox', 'runtime'),
       storageRoot
     })
+    const onOutput = vi.fn()
 
-    const result = await spawn(process.execPath, ['-e', 'process.stderr.write("installer")'], {
-      PATH: process.env.PATH,
-      PIP_CERT: '/trusted/bundle.pem',
-      PYTHONNOUSERSITE: '1',
-      CONDA_PKGS_DIRS: packageCache,
-      MPLCONFIGDIR: matplotlibCache,
-      OPENAI_API_KEY: 'must-not-cross'
-    })
+    const result = await spawn(
+      process.execPath,
+      ['-e', 'process.stderr.write("installer")'],
+      {
+        PATH: process.env.PATH,
+        PIP_CERT: '/trusted/bundle.pem',
+        PIP_REPORT: join(reportRoot, 'report.json'),
+        PIP_CONFIG_FILE: process.platform === 'win32' ? 'nul' : '/dev/null',
+        PIP_NO_INDEX: '1',
+        PIP_FIND_LINKS: '/trusted/wheels',
+        PYTHONNOUSERSITE: '1',
+        CONDA_PKGS_DIRS: packageCache,
+        MPLCONFIGDIR: matplotlibCache,
+        UV_PROJECT_ENVIRONMENT: packageCache,
+        OPENAI_API_KEY: 'must-not-cross'
+      },
+      undefined,
+      undefined,
+      false,
+      lockCwd,
+      { onOutput }
+    )
 
     expect(result.code).toBe(0)
     expect(result.stderr).toContain('installer<sandbox_violations>blocked</sandbox_violations>')
+    expect(onOutput).toHaveBeenCalledWith({ stream: 'stderr', text: 'installer' })
     expect(processSandbox.wrap).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-1',
         projectId: 'project-1',
         runtime: 'python',
-        cwd: process.cwd()
+        cwd: lockCwd
       })
     )
     expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].env).toMatchObject({
       PATH: process.env.PATH,
       PIP_CERT: '/trusted/bundle.pem',
+      PIP_REPORT: join(reportRoot, 'report.json'),
+      PIP_CONFIG_FILE: process.platform === 'win32' ? 'nul' : '/dev/null',
+      PIP_NO_INDEX: '1',
+      PIP_FIND_LINKS: '/trusted/wheels',
+      PYTHONNOUSERSITE: '1',
       MPLCONFIGDIR: matplotlibCache,
-      PYTHONNOUSERSITE: '1'
+      UV_PROJECT_ENVIRONMENT: packageCache
     })
     expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].env).not.toHaveProperty(
       'OPENAI_API_KEY'
@@ -162,6 +235,9 @@ describe('sandboxedPackageSpawn', () => {
       packageCache
     )
     expect(endExecution).toHaveBeenCalledOnce()
+    expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].filesystem.readWriteRoots).toContain(
+      reportRoot
+    )
     expect(cleanup).toHaveBeenCalledOnce()
     expect(cleanup).toHaveBeenCalledWith('exit', {
       processesTerminated: true

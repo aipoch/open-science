@@ -1444,7 +1444,14 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
     }
     const source = asRecord(item.source)
     if (source) {
-      compact.source = pickDefined(source, ['type', 'repository', 'ref', 'commit', 'version'])
+      compact.source = pickDefined(source, [
+        'type',
+        'repository',
+        'ref',
+        'commit',
+        'subdirectory',
+        'version'
+      ])
     }
     return [compact]
   })

@@ -3,6 +3,7 @@ import type {
   NotebookRunRecord,
   NotebookRunStaleness
 } from '../../shared/notebook'
+import type { NotebookFileCallEffect } from './notebook-call-effects'
 
 type NotebookDependencyAlias = {
   target: string
@@ -14,7 +15,7 @@ type NotebookDependencyAlias = {
 
 type NotebookDependencyTypeSummary = {
   name: string
-  kind: 'python-class' | 'python-module' | 'r-s4' | 'r-r6'
+  kind: 'python-class' | 'python-module' | 'r-s4' | 'r-r6' | 'r-function'
   complete?: boolean
   fields: Array<{ name: string; relationship: 'reference' | 'value' | 'unknown' }>
   methods: Array<{
@@ -57,6 +58,8 @@ type NotebookDependencyReceiverCall = {
   positionalArgumentNames?: string[][]
   positionalStaticBooleans?: Array<boolean | null>
   resultNames?: string[]
+  // Each flattened result name retains its position in a nested unpacking target.
+  resultPaths?: number[][]
   keywordArguments?: Array<{
     name: string
     argumentNames: string[]
@@ -71,6 +74,35 @@ type NotebookDependencyMemberWrite = {
   member?: string
   scope?: 'instance' | 'type'
   conditional?: boolean
+}
+
+type NotebookFileCallEffectSummary = Pick<NotebookFileCallEffect, 'kind' | 'inputForm'> & {
+  name: string
+  position: number
+  keywords: string[]
+  dependencyNames: string[]
+}
+
+type NotebookSourceFileAccessContext = {
+  staticStrings: Array<{ name: string; value: string }>
+  staticCollections: Array<{
+    name: string
+    values: string[]
+    entries?: Array<{ key: string; value: string }>
+    rKind?: 'vector' | 'list'
+  }>
+  localFileWrappers: NotebookFileCallEffectSummary[]
+  // Bounded identities only: no live objects, interpreter handles or settings.
+  pythonBindings?: Array<{ name: string; qualifiedName: string; kind: 'import' | 'object' }>
+  // Observed monkeypatches survive re-imports within the same kernel epoch.
+  pythonTaintedNamespaces?: string[]
+  // Derived from prior same-epoch facts for the live run only. The bounded sidecar serializer
+  // deliberately omits this field, so dependency-analysis.json remains unchanged.
+  resolvedKernelNames?: string[]
+  // Transient callable knowledge rebuilt from same-epoch dependency facts.
+  rFunctions?: Array<{ name: string; summary: NotebookDependencyTypeSummary }>
+  // Transient reference identities for Python collections; rebuilt from same-epoch facts.
+  staticCollectionAliases?: Array<{ target: string; source: string }>
 }
 
 type NotebookRunDependencyFacts =
@@ -126,6 +158,7 @@ type AnalyzedNotebookRun = {
 type NotebookDependencyProjection = {
   stalenessByRunId: Record<string, NotebookRunStaleness>
   invalidatedByRunId: Record<string, NotebookInvalidatedRun[]>
+  dependenciesByRunId?: Record<string, string[]>
 }
 
 type NotebookDependencyInterpreter = { command: string; args?: string[]; condaPrefix?: string }
@@ -138,6 +171,14 @@ type NotebookDependencyAnalysisSidecar = {
     {
       checksum: string
       facts: NotebookRunDependencyFacts
+      fileContext?: NotebookSourceFileAccessContext
+    }
+  >
+  projectionSnapshots: Record<
+    string,
+    {
+      checksum: string
+      projection: NotebookDependencyProjection
     }
   >
 }
@@ -147,6 +188,16 @@ type ProjectNotebookDependenciesRequest = {
   sessionId: string
   completedRun?: NotebookRunRecord
   interpreter?: NotebookDependencyInterpreter
+  throughRunId?: string
+}
+
+type NotebookSourceFileAccessContextRequest = {
+  projectId: string
+  sessionId: string
+  currentRunId: string
+  language: 'python' | 'r'
+  environment?: string
+  kernelEpochId: string
 }
 
 type AnalyzeNotebookScripts = (
@@ -154,6 +205,33 @@ type AnalyzeNotebookScripts = (
   language: 'python' | 'r',
   sources: readonly string[]
 ) => Promise<NotebookRunDependencyFacts[]>
+
+type NotebookSourceFileWriteScope = {
+  kind: 'directory' | 'shapefile' | 'geotiff'
+  path: string
+}
+
+type NotebookSourceFileAccessExtraction = {
+  reads: string[]
+  writes: string[]
+  writeScopes?: NotebookSourceFileWriteScope[]
+  unresolvedReads: boolean
+  unresolvedWrites: boolean
+  unsupportedExternalState: boolean
+  directoryStateRead: boolean
+  localFileWrappersComplete: boolean
+  context: NotebookSourceFileAccessContext
+}
+
+type NotebookSourceFileAccessAnalysis = {
+  readState: 'complete' | 'partial' | 'unavailable'
+  writeState: 'complete' | 'partial' | 'unavailable'
+  externalState: 'complete' | 'partial' | 'unavailable'
+  reads: string[]
+  writes: string[]
+  writeScopes?: NotebookSourceFileWriteScope[]
+  reasonCodes: Array<'dynamic-path-unresolved' | 'source-analysis-unsupported-call'>
+}
 
 export type {
   AnalyzeNotebookScripts,
@@ -167,6 +245,12 @@ export type {
   NotebookDependencyReceiverCall,
   NotebookDependencyTypeBinding,
   NotebookDependencyTypeSummary,
+  NotebookFileCallEffectSummary,
   NotebookRunDependencyFacts,
+  NotebookSourceFileAccessAnalysis,
+  NotebookSourceFileAccessContext,
+  NotebookSourceFileAccessContextRequest,
+  NotebookSourceFileAccessExtraction,
+  NotebookSourceFileWriteScope,
   ProjectNotebookDependenciesRequest
 }

@@ -60,6 +60,7 @@ import {
   defaultShellRuntimeBinding,
   shellRuntimePlatform
 } from './shell-runtime'
+import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
@@ -132,6 +133,10 @@ type NotebookExecutionOwnerOptions = {
     run: NotebookRunRecord,
     interpreter?: NotebookDependencyInterpreter
   ) => Promise<NotebookDependencyProjection>
+  sourceFileAccessContext?: (
+    session: NotebookSessionAggregate,
+    run: NotebookRunRecord
+  ) => Promise<NotebookSourceFileAccessContext | undefined>
   helperModules: Pick<
     NotebookHelperModuleHost,
     'preflight' | 'plan' | 'commitInitialized' | 'loadedEvidence'
@@ -814,6 +819,9 @@ class NotebookExecutionOwner {
                     return errorToExecutionResult(error, cwdBefore)
                   }
                   reachedExecutor = true
+                  const sourceFileAccessContext = await this.options
+                    .sourceFileAccessContext?.(session, durableAdmission.run)
+                    .catch(() => undefined)
                   let executionResult = await session
                     .execute({
                       runId,
@@ -838,7 +846,11 @@ class NotebookExecutionOwner {
                       resolvedInterpreter,
                       sessionId: session.sessionId,
                       projectId: session.projectId,
-                      inputRunLeaseId: request.inputRunLeaseId
+                      inputRunLeaseId: request.inputRunLeaseId,
+                      ...(durableAdmission.run.inputFiles?.length
+                        ? { registeredInputFiles: durableAdmission.run.inputFiles }
+                        : {}),
+                      ...(sourceFileAccessContext ? { sourceFileAccessContext } : {})
                     })
                     .catch((error: unknown) => {
                       executedOnLiveKernel = false
@@ -872,7 +884,11 @@ class NotebookExecutionOwner {
                     const capture = await this.options.environmentStateTracker.captureCompletedRun(
                       target,
                       result.environmentOverlay,
-                      environmentRunStart
+                      environmentRunStart,
+                      {
+                        sessionRoot: session.notebookSessionRoot,
+                        searchRoots: [result.cwdAfter ?? cwdBefore, session.notebookSessionRoot]
+                      }
                     )
                     return {
                       ...result,
@@ -885,7 +901,8 @@ class NotebookExecutionOwner {
                           : {})
                       },
                       environmentManifest: capture.manifest,
-                      environmentManifestChecksum: capture.checksum
+                      environmentManifestChecksum: capture.checksum,
+                      environmentLock: capture.environmentLock
                     }
                   } catch (error) {
                     return {

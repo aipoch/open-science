@@ -10,7 +10,11 @@ import type {
   NotebookDependencyTypeSummary,
   NotebookRunDependencyFacts
 } from './dependency-analysis-types'
-import { PYTHON_LIBRARY_EFFECTS, type PythonLibraryMethodEffect } from './python-library-effects'
+import {
+  PYTHON_LIBRARY_EFFECTS,
+  pythonUnpackedReturnType,
+  type PythonLibraryMethodEffect
+} from './python-library-effects'
 
 const DYNAMIC_NAMESPACE_ROOTS = new Set([
   'builtins',
@@ -193,34 +197,63 @@ const linkAliasClass = (left: string, right: string, aliases: Map<string, Set<st
   }
 }
 
-// Projects immutable run history into current dependency freshness. Cell identity is deliberately
-// absent: every call can use a new cellId while still sharing the same persistent kernel namespace.
-const projectNotebookDependencies = (
-  analyzedRuns: readonly AnalyzedNotebookRun[]
-): NotebookDependencyProjection => {
-  const stalenessByRunId: Record<string, NotebookRunStaleness> = {}
-  const invalidatedByRunId: Record<string, NotebookInvalidatedRun[]> = {}
-  const latestDefinitionsByNamespace = new Map<string, Map<string, string>>()
-  const referenceTokensByNamespace = new Map<string, Map<string, string>>()
-  const possibleAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
-  const rCopyAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
-  const builtinContainersByNamespace = new Map<string, Set<string>>()
-  const copyOnModifyNamesByNamespace = new Map<string, Set<string>>()
-  const typeSummariesByNamespace = new Map<string, Map<string, NotebookDependencyTypeSummary>>()
-  const objectTypesByNamespace = new Map<string, Map<string, NotebookDependencyTypeSummary>>()
-  const shadowedMembersByNamespace = new Map<string, Map<string, Set<string>>>()
-  const shadowedTypeMembers = new WeakMap<NotebookDependencyTypeSummary, Set<string>>()
-  const safeCallConsumersByNamespace = new Map<string, Map<string, Set<string>>>()
-  const possibleConsumersByNamespace = new Map<string, Map<string, Set<string>>>()
-  const unknownReasonsByNamespace = new Map<string, string[]>()
-  const uncertainBindingsByNamespace = new Map<string, Map<string, string[]>>()
-  const runIdsByNamespace = new Map<string, string[]>()
-  const downstream = new Map<string, Set<string>>()
-  const namedConsumers = new Map<string, Set<string>>()
-  const runsById = new Map(analyzedRuns.map(({ run }) => [run.runId, run]))
+class NotebookDependencyProjector {
+  private readonly stalenessByRunId: Record<string, NotebookRunStaleness> = {}
+  private readonly invalidatedByRunId: Record<string, NotebookInvalidatedRun[]> = {}
+  private readonly latestDefinitionsByNamespace = new Map<string, Map<string, string>>()
+  private readonly referenceTokensByNamespace = new Map<string, Map<string, string>>()
+  private readonly possibleAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
+  private readonly rCopyAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
+  private readonly builtinContainersByNamespace = new Map<string, Set<string>>()
+  private readonly copyOnModifyNamesByNamespace = new Map<string, Set<string>>()
+  private readonly typeSummariesByNamespace = new Map<
+    string,
+    Map<string, NotebookDependencyTypeSummary>
+  >()
+  private readonly objectTypesByNamespace = new Map<
+    string,
+    Map<string, NotebookDependencyTypeSummary>
+  >()
+  private readonly shadowedMembersByNamespace = new Map<string, Map<string, Set<string>>>()
+  private readonly shadowedTypeMembers = new WeakMap<NotebookDependencyTypeSummary, Set<string>>()
+  private readonly safeCallConsumersByNamespace = new Map<string, Map<string, Set<string>>>()
+  private readonly possibleConsumersByNamespace = new Map<string, Map<string, Set<string>>>()
+  private readonly unknownReasonsByNamespace = new Map<string, string[]>()
+  private readonly uncertainBindingsByNamespace = new Map<string, Map<string, string[]>>()
+  private readonly runIdsByNamespace = new Map<string, string[]>()
+  private readonly downstream = new Map<string, Set<string>>()
+  private readonly namedConsumers = new Map<string, Set<string>>()
+  private readonly directDependenciesByRunId = new Map<string, Set<string>>()
+  private readonly runsById = new Map<string, NotebookRunRecord>()
+  private readonly incompleteRunIds = new Set<string>()
 
-  for (const { run, facts: analyzedFacts } of analyzedRuns) {
+  append({ run, facts: analyzedFacts }: AnalyzedNotebookRun): void {
+    const {
+      stalenessByRunId,
+      invalidatedByRunId,
+      latestDefinitionsByNamespace,
+      referenceTokensByNamespace,
+      possibleAliasesByNamespace,
+      rCopyAliasesByNamespace,
+      builtinContainersByNamespace,
+      copyOnModifyNamesByNamespace,
+      typeSummariesByNamespace,
+      objectTypesByNamespace,
+      shadowedMembersByNamespace,
+      shadowedTypeMembers,
+      safeCallConsumersByNamespace,
+      possibleConsumersByNamespace,
+      unknownReasonsByNamespace,
+      uncertainBindingsByNamespace,
+      runIdsByNamespace,
+      downstream,
+      namedConsumers,
+      directDependenciesByRunId,
+      runsById
+    } = this
+    runsById.set(run.runId, run)
     const incompleteRun = isIncompleteRun(run)
+    if (incompleteRun) this.incompleteRunIds.add(run.runId)
     const incomplete = incompleteRun ? incompleteRunFacts(analyzedFacts) : undefined
     const facts = incomplete?.facts ?? analyzedFacts
     const conditionallyDefinedNames = new Set(facts.conditionallyDefinedNames ?? [])
@@ -232,7 +265,7 @@ const projectNotebookDependencies = (
           reasons: ['kernel-epoch-unavailable']
         }
       }
-      continue
+      return
     }
     const latestDefinitions =
       latestDefinitionsByNamespace.get(namespace) ?? new Map<string, string>()
@@ -665,7 +698,10 @@ const projectNotebookDependencies = (
           ? [returnedType]
           : []
       for (const [index, resultName] of (call.resultNames ?? []).entries()) {
-        const returnedType = returnedTypes[index]
+        const returnedType = pythonUnpackedReturnType(
+          returnedTypes,
+          call.resultPaths?.[index] ?? [index]
+        )
         const returnedSummary = returnedType ? typeSummaries.get(returnedType) : undefined
         if (returnedSummary) pendingTypeBindings.set(resultName, returnedSummary)
       }
@@ -851,17 +887,32 @@ const projectNotebookDependencies = (
             ) {
               return true
             }
-            return (
-              summary.methods.find((candidate) => candidate.name === reference.member)?.effect !==
-              'read'
-            )
           }
-          return (
-            summary.methods.find((candidate) => candidate.name === '__call__')?.effect !== 'read'
+          const callback = summary.methods.find(
+            (candidate) => candidate.name === (reference.member ?? '__call__')
           )
+          if (callback?.effect !== 'read') return true
+          typeAwareUsedNames.push(...(callback.usedNames ?? []))
+          typeAwareSafeCallNames.push(...(callback.safeCallNames ?? []))
+          return callback.safeCallNames?.some(nameIsShadowed) ?? false
         })
       )
       if (hasDynamicCallback) typeAwareReasons.push('opaque-call')
+      if (libraryEffect?.mutatesReceiverUnlessKeywordFalse) {
+        const option = call.keywordArguments?.find(
+          (keyword) => keyword.name === libraryEffect.mutatesReceiverUnlessKeywordFalse
+        )
+        if (
+          hasUnpackedKeywords ||
+          (option && option.staticBoolean !== true && option.staticBoolean !== false) ||
+          call.receiverChain?.length
+        ) {
+          typeAwarePossiblyMutatedNames.push(...mutationReceiverNames)
+          if (mutationReceiverNames.length) typeAwareReasons.push('opaque-mutation')
+        } else if (option?.staticBoolean !== false) {
+          addTypeAwareMutation([call.receiver])
+        }
+      }
       const mutatedKeyword = call.keywordArguments?.find(
         (keyword) => keyword.name === method?.mutatesKeyword
       )
@@ -971,6 +1022,7 @@ const projectNotebookDependencies = (
       dependents.add(run.runId)
       downstream.set(upstreamRunId, dependents)
     }
+    directDependenciesByRunId.set(run.runId, upstreamRunIds)
 
     const unknownUpstream = [...upstreamRunIds]
       .map((runId) => stalenessByRunId[runId])
@@ -991,7 +1043,10 @@ const projectNotebookDependencies = (
     stalenessByRunId[run.runId] = namespaceUnknownReasons
       ? { state: 'unknown', reasons: namespaceUnknownReasons }
       : currentRunReasons.length > 0
-        ? { state: 'unknown', reasons: currentRunReasons }
+        ? {
+            state: 'unknown',
+            reasons: [...new Set([...currentRunReasons, ...uncertainBindingReasons])]
+          }
         : uncertainBindingReasons.length > 0
           ? { state: 'unknown', reasons: uncertainBindingReasons }
           : unknownUpstream
@@ -1592,13 +1647,45 @@ const projectNotebookDependencies = (
     }
   }
 
-  for (const { run } of analyzedRuns) {
-    if (isIncompleteRun(run)) {
-      delete stalenessByRunId[run.runId]
+  projection(): NotebookDependencyProjection {
+    const stalenessByRunId = Object.fromEntries(
+      Object.entries(this.stalenessByRunId).filter(([runId]) => !this.incompleteRunIds.has(runId))
+    )
+    const dependenciesByRunId = Object.fromEntries(
+      [...this.directDependenciesByRunId].flatMap(([runId, dependencies]) =>
+        stalenessByRunId[runId]?.state === 'clear' &&
+        [...dependencies].every(
+          (dependencyRunId) => stalenessByRunId[dependencyRunId]?.state === 'clear'
+        )
+          ? [[runId, [...dependencies].sort()]]
+          : []
+      )
+    )
+    return {
+      stalenessByRunId,
+      invalidatedByRunId: Object.fromEntries(
+        Object.entries(this.invalidatedByRunId).map(([runId, invalidated]) => [
+          runId,
+          invalidated.map((entry) => ({
+            ...entry,
+            names: [...entry.names],
+            ...(entry.state === 'unknown' ? { reasons: [...entry.reasons] } : {})
+          }))
+        ])
+      ),
+      dependenciesByRunId
     }
   }
+}
 
-  return { stalenessByRunId, invalidatedByRunId }
+// Projects immutable run history into current dependency freshness. Cell identity is deliberately
+// absent: every call can use a new cellId while still sharing the same persistent kernel namespace.
+const projectNotebookDependencies = (
+  analyzedRuns: readonly AnalyzedNotebookRun[]
+): NotebookDependencyProjection => {
+  const projector = new NotebookDependencyProjector()
+  for (const analyzedRun of analyzedRuns) projector.append(analyzedRun)
+  return projector.projection()
 }
 
 const unavailableNotebookDependencyProjection = (
@@ -1612,7 +1699,12 @@ const unavailableNotebookDependencyProjection = (
         : []
     )
   ),
-  invalidatedByRunId: {}
+  invalidatedByRunId: {},
+  dependenciesByRunId: {}
 })
 
-export { projectNotebookDependencies, unavailableNotebookDependencyProjection }
+export {
+  NotebookDependencyProjector,
+  projectNotebookDependencies,
+  unavailableNotebookDependencyProjection
+}

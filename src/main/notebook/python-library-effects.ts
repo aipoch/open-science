@@ -1,11 +1,17 @@
+import type { NotebookFileCallEffect } from './notebook-call-effects'
+
 export type PythonLibraryMethodEffect = {
   effect: 'read' | 'mutate' | 'unknown'
+  // A library call's namespace effect and file arguments are independent facts.
+  // Keep them together when known so variable and file analysis cannot diverge.
+  file?: NotebookFileCallEffect
   unknownScope?: 'receiver' | 'namespace'
   unsafeNamespace?: boolean
   scopedOpaque?: boolean
   externalState?: boolean
   returnType?: string
   destructuredReturnTypes?: string[]
+  mutatesReceiverUnlessKeywordFalse?: string
   mutatesKeyword?: string
   mutatesPositionalArgument?: number
   callbackKeywords?: string[]
@@ -17,6 +23,7 @@ export type PythonLibraryMethodEffect = {
   returnsPossibleAliasOf?: 'receiver' | 'firstArgument'
   returnsAliasOfReceiver?: boolean
   returnsAliasOfKeyword?: string
+  preservesIterationTypesFrom?: 'receiver' | 'firstArgument'
   returnTypeWhenKeywordNotTrue?: {
     keyword: string
     returnType: string
@@ -41,14 +48,69 @@ export type PythonLibraryMethodEffect = {
 type PythonLibraryObjectSummary = {
   kind: 'module' | 'type'
   methods: Record<string, PythonLibraryMethodEffect>
+  iterationTypes?: string[]
   typeWhenMembersWritten?: Record<string, string>
+  // Resource handles may inspect or mutate external state through unmodeled methods.
+  unknownMethodsHaveExternalState?: boolean
 }
 
 type PythonLibraryEffects = Record<string, PythonLibraryObjectSummary>
 
+const annDataFileReaders: Record<string, PythonLibraryMethodEffect> = Object.fromEntries(
+  ['read_csv', 'read_h5ad', 'read_loom', 'read_mtx', 'read_text'].map((name) => [
+    name,
+    {
+      effect: 'read',
+      returnType: 'anndata.AnnData',
+      file: { kind: 'read', position: 0, keywords: ['filename'] }
+    }
+  ])
+)
+
+const medicalSingleFileSuffixes = [
+  '.nii',
+  '.nii.gz',
+  '.dcm',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.bmp',
+  '.tif',
+  '.tiff'
+]
+
 // Static effects are deliberately limited to stable, documented behavior used by ordinary
 // scientific Notebook code. Unknown methods continue through the conservative receiver-call path.
 const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
+  pathlib: {
+    kind: 'module',
+    methods: Object.fromEntries(
+      ['Path', 'PurePath', 'PosixPath', 'PurePosixPath', 'WindowsPath', 'PureWindowsPath'].map(
+        (name) => [name, { effect: 'read', returnType: 'pathlib.PurePath' }]
+      )
+    )
+  },
+  'pathlib.PurePath': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    // Constructing and transforming a path does not access the filesystem. Concrete
+    // Path I/O (resolve, glob, open, unlink, etc.) must retain separate evidence.
+    methods: {
+      joinpath: { effect: 'read', returnType: 'pathlib.PurePath' },
+      with_name: { effect: 'read', returnType: 'pathlib.PurePath' },
+      with_suffix: { effect: 'read', returnType: 'pathlib.PurePath' },
+      with_stem: { effect: 'read', returnType: 'pathlib.PurePath' },
+      as_posix: { effect: 'read' },
+      is_absolute: { effect: 'read' },
+      is_relative_to: { effect: 'read' },
+      relative_to: { effect: 'read', returnType: 'pathlib.PurePath' },
+      // These do not mutate the path object. The file parser captures their receiver path.
+      read_text: { effect: 'read' },
+      read_bytes: { effect: 'read' },
+      write_text: { effect: 'read' },
+      write_bytes: { effect: 'read' }
+    }
+  },
   importlib: {
     kind: 'module',
     methods: {
@@ -131,10 +193,45 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   },
   'csv.DictReader': { kind: 'type', methods: {} },
   'csv.reader': { kind: 'type', methods: {} },
+  io: {
+    kind: 'module',
+    methods: {
+      BytesIO: { effect: 'read', returnType: 'io.BytesIO' },
+      StringIO: { effect: 'read', returnType: 'io.StringIO' }
+    }
+  },
+  'io.BytesIO': {
+    kind: 'type',
+    methods: {
+      getvalue: { effect: 'read' },
+      read: { effect: 'mutate' },
+      seek: { effect: 'mutate' },
+      tell: { effect: 'read' },
+      truncate: { effect: 'mutate' },
+      write: { effect: 'mutate' }
+    }
+  },
+  'io.StringIO': {
+    kind: 'type',
+    methods: {
+      getvalue: { effect: 'read' },
+      read: { effect: 'mutate' },
+      seek: { effect: 'mutate' },
+      tell: { effect: 'read' },
+      truncate: { effect: 'mutate' },
+      write: { effect: 'mutate' }
+    }
+  },
   numpy: {
     kind: 'module',
     methods: {
       arange: { effect: 'read', returnType: 'numpy.ndarray' },
+      atleast_1d: {
+        effect: 'read',
+        returnType: 'numpy.ndarray',
+        preservesIterationTypesFrom: 'firstArgument',
+        returnsPossibleAliasOf: 'firstArgument'
+      },
       abs: {
         effect: 'read',
         returnType: 'numpy.ndarray',
@@ -160,6 +257,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         effect: 'read',
         returnType: 'numpy.ndarray',
         firstArgumentKeyword: 'a',
+        preservesIterationTypesFrom: 'firstArgument',
         returnsPossibleAliasOf: 'firstArgument'
       },
       column_stack: { effect: 'read', returnType: 'numpy.ndarray' },
@@ -242,6 +340,13 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         mutatesKeyword: 'out',
         mutatesPositionalArgument: 3
       },
+      ravel: {
+        effect: 'read',
+        returnType: 'numpy.ndarray',
+        firstArgumentKeyword: 'a',
+        preservesIterationTypesFrom: 'firstArgument',
+        returnsPossibleAliasOf: 'firstArgument'
+      },
       savetxt: {
         effect: 'read',
         possiblyMutatesFirstArgument: true,
@@ -274,6 +379,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   },
   'numpy.ndarray': {
     kind: 'type',
+    iterationTypes: ['numpy.ndarray'],
     methods: {
       astype: {
         effect: 'read',
@@ -286,18 +392,24 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       },
       copy: { effect: 'read', returnType: 'numpy.ndarray' },
       fill: { effect: 'mutate' },
-      flatten: { effect: 'read', returnType: 'numpy.ndarray' },
+      flatten: {
+        effect: 'read',
+        returnType: 'numpy.ndarray',
+        preservesIterationTypesFrom: 'receiver'
+      },
       max: { effect: 'read', mutatesKeyword: 'out', mutatesPositionalArgument: 1 },
       mean: { effect: 'read', mutatesKeyword: 'out', mutatesPositionalArgument: 2 },
       min: { effect: 'read', mutatesKeyword: 'out', mutatesPositionalArgument: 1 },
       ravel: {
         effect: 'read',
         returnType: 'numpy.ndarray',
+        preservesIterationTypesFrom: 'receiver',
         returnsPossibleAliasOf: 'receiver'
       },
       reshape: {
         effect: 'read',
         returnType: 'numpy.ndarray',
+        preservesIterationTypesFrom: 'receiver',
         returnsPossibleAliasOf: 'receiver'
       },
       resize: { effect: 'mutate' },
@@ -397,18 +509,21 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       },
       read_sql: {
         effect: 'read',
+        externalState: true,
         returnType: 'pandas.DataFrame',
         possiblyMutatesPositionalArgument: 1,
         possiblyMutatesKeyword: 'con'
       },
       read_sql_query: {
         effect: 'read',
+        externalState: true,
         returnType: 'pandas.DataFrame',
         possiblyMutatesPositionalArgument: 1,
         possiblyMutatesKeyword: 'con'
       },
       read_sql_table: {
         effect: 'read',
+        externalState: true,
         returnType: 'pandas.DataFrame',
         possiblyMutatesPositionalArgument: 1,
         possiblyMutatesKeyword: 'con'
@@ -490,14 +605,20 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         }
       },
       drop: { effect: 'read', returnType: 'pandas.DataFrame' },
+      drop_duplicates: { effect: 'read', returnType: 'pandas.DataFrame' },
       dropna: { effect: 'read', returnType: 'pandas.DataFrame' },
       fillna: { effect: 'read', returnType: 'pandas.DataFrame' },
+      // In-place and unknown in-place flags use the shared pandas mutation path.
+      ffill: { effect: 'read', returnType: 'pandas.DataFrame' },
+      bfill: { effect: 'read', returnType: 'pandas.DataFrame' },
       groupby: { effect: 'read', returnType: 'pandas.core.groupby.DataFrameGroupBy' },
       head: { effect: 'read', returnType: 'pandas.DataFrame' },
       join: { effect: 'read', returnType: 'pandas.DataFrame' },
       max: { effect: 'read', returnType: 'pandas.Series' },
       mean: { effect: 'read', returnType: 'pandas.Series' },
       min: { effect: 'read', returnType: 'pandas.Series' },
+      notna: { effect: 'read', returnType: 'pandas.DataFrame' },
+      isna: { effect: 'read', returnType: 'pandas.DataFrame' },
       melt: { effect: 'read', returnType: 'pandas.DataFrame' },
       merge: {
         effect: 'read',
@@ -522,7 +643,13 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         callbackKeywords: ['mapper', 'index', 'columns']
       },
       reset_index: { effect: 'read', returnType: 'pandas.DataFrame' },
+      round: { effect: 'read', returnType: 'pandas.DataFrame' },
       set_index: { effect: 'read', returnType: 'pandas.DataFrame' },
+      sort_index: {
+        effect: 'read',
+        returnType: 'pandas.DataFrame',
+        callbackKeywords: ['key']
+      },
       sort_values: {
         effect: 'read',
         returnType: 'pandas.DataFrame',
@@ -549,6 +676,9 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         possiblyMutatesFirstArgument: true,
         possiblyMutatesKeyword: 'path_or_buf'
       },
+      to_html: { effect: 'read' },
+      to_latex: { effect: 'read' },
+      to_markdown: { effect: 'read' },
       to_parquet: {
         effect: 'read',
         possiblyMutatesFirstArgument: true,
@@ -559,6 +689,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   },
   'pandas.core.groupby.DataFrameGroupBy': {
     kind: 'type',
+    iterationTypes: ['python.scalar', 'pandas.DataFrame'],
     methods: {
       mean: { effect: 'read', returnType: 'pandas.DataFrame' },
       sum: { effect: 'read', returnType: 'pandas.DataFrame' }
@@ -586,7 +717,10 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         }
       },
       dropna: { effect: 'read', returnType: 'pandas.Series' },
+      drop_duplicates: { effect: 'read', returnType: 'pandas.Series' },
       fillna: { effect: 'read', returnType: 'pandas.Series' },
+      ffill: { effect: 'read', returnType: 'pandas.Series' },
+      bfill: { effect: 'read', returnType: 'pandas.Series' },
       head: { effect: 'read', returnType: 'pandas.Series' },
       max: { effect: 'read' },
       mean: { effect: 'read' },
@@ -597,6 +731,14 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         callbackKeywords: ['index']
       },
       reset_index: { effect: 'read', returnType: 'pandas.DataFrame' },
+      round: { effect: 'read', returnType: 'pandas.Series' },
+      notna: { effect: 'read', returnType: 'pandas.Series' },
+      isna: { effect: 'read', returnType: 'pandas.Series' },
+      sort_index: {
+        effect: 'read',
+        returnType: 'pandas.Series',
+        callbackKeywords: ['key']
+      },
       sort_values: {
         effect: 'read',
         returnType: 'pandas.Series',
@@ -609,6 +751,11 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         possiblyMutatesKeyword: 'path_or_buf'
       },
       to_dict: { effect: 'read' },
+      to_frame: {
+        effect: 'read',
+        returnType: 'pandas.DataFrame',
+        returnsPossibleAliasOf: 'receiver'
+      },
       value_counts: { effect: 'read', returnType: 'pandas.Series' }
     }
   },
@@ -684,24 +831,18 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   },
   anndata: {
     kind: 'module',
-    methods: {
-      read_csv: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_h5ad: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_loom: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_mtx: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_text: { effect: 'read', returnType: 'anndata.AnnData' }
-    }
+    methods: annDataFileReaders
+  },
+  'anndata.io': {
+    kind: 'module',
+    methods: annDataFileReaders
   },
   scanpy: {
     kind: 'module',
     methods: {
+      ...annDataFileReaders,
       read_10x_h5: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_10x_mtx: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_csv: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_h5ad: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_loom: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_mtx: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_text: { effect: 'read', returnType: 'anndata.AnnData' }
+      read_10x_mtx: { effect: 'read', returnType: 'anndata.AnnData' }
     }
   },
   'anndata.AnnData': {
@@ -710,11 +851,222 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       copy: { effect: 'read', returnType: 'anndata.AnnData' },
       obs_names_make_unique: { effect: 'mutate' },
       var_names_make_unique: { effect: 'mutate' },
-      write: { effect: 'read' },
+      write: {
+        effect: 'read',
+        mutatesReceiverUnlessKeywordFalse: 'convert_strings_to_categoricals'
+      },
       write_csvs: { effect: 'read' },
-      write_h5ad: { effect: 'read' },
+      write_h5ad: {
+        effect: 'read',
+        mutatesReceiverUnlessKeywordFalse: 'convert_strings_to_categoricals'
+      },
       write_loom: { effect: 'read' },
       write_zarr: { effect: 'read' }
+    }
+  },
+  openslide: {
+    kind: 'module',
+    methods: {
+      OpenSlide: {
+        effect: 'read',
+        returnType: 'openslide.OpenSlide',
+        file: { kind: 'read', position: 0, keywords: ['filename'] }
+      },
+      open_slide: {
+        effect: 'read',
+        returnType: 'openslide.OpenSlide',
+        file: { kind: 'read', position: 0, keywords: ['filename'] }
+      }
+    }
+  },
+  cyvcf2: {
+    kind: 'module',
+    methods: {
+      // HTS modes and non-file streams are checked by file analysis. Readers
+      // retain cursor/index state; naming their VCF is not complete evidence.
+      VCF: { effect: 'read', returnType: 'cyvcf2.VCF', externalState: true },
+      Writer: {
+        effect: 'read',
+        returnType: 'cyvcf2.Writer',
+        possiblyMutatesPositionalArgument: 1,
+        possiblyMutatesKeyword: 'tmpl'
+      }
+    }
+  },
+  'cyvcf2.VCF': {
+    kind: 'type',
+    methods: {
+      set_index: {
+        effect: 'mutate',
+        externalState: true,
+        file: { kind: 'read', position: 0, keywords: ['index_path'] }
+      },
+      __call__: { effect: 'mutate', externalState: true },
+      close: { effect: 'mutate' },
+      set_samples: { effect: 'mutate' },
+      add_info_to_header: { effect: 'mutate' },
+      add_format_to_header: { effect: 'mutate' },
+      add_filter_to_header: { effect: 'mutate' },
+      add_to_header: { effect: 'mutate' }
+    }
+  },
+  'cyvcf2.Writer': {
+    kind: 'type',
+    methods: {
+      from_string: {
+        effect: 'read',
+        returnType: 'cyvcf2.Writer',
+        file: { kind: 'write', position: 0, keywords: ['fname'] }
+      },
+      write_record: { effect: 'mutate' },
+      write_header: { effect: 'mutate' },
+      close: { effect: 'mutate' }
+    }
+  },
+  pysam: {
+    kind: 'module',
+    methods: {
+      // File mode and explicit index/reference paths are handled together by
+      // file analysis. Implicit HTS indexes, reference caches and options remain external.
+      AlignmentFile: { effect: 'read', externalState: true }
+    }
+  },
+  'pyteomics.mgf': {
+    kind: 'module',
+    methods: {
+      MGF: {
+        effect: 'read',
+        file: { kind: 'read', position: 0, keywords: ['source'] }
+      },
+      IndexedMGF: {
+        effect: 'read',
+        externalState: true,
+        file: { kind: 'read', position: 0, keywords: ['source'] }
+      },
+      read: {
+        effect: 'read',
+        externalState: true,
+        file: { kind: 'read', position: 0, keywords: ['source'] }
+      },
+      write: {
+        effect: 'read',
+        possiblyMutatesFirstArgument: true,
+        callbackContainerKeywords: ['param_formatters'],
+        file: { kind: 'write', position: 1, keywords: ['output'] }
+      }
+    }
+  },
+  'pyteomics.mzml': {
+    kind: 'module',
+    methods: {
+      MzML: {
+        effect: 'read',
+        externalState: true,
+        file: { kind: 'read', position: 0, keywords: ['source'] }
+      },
+      read: {
+        effect: 'read',
+        externalState: true,
+        file: { kind: 'read', position: 0, keywords: ['source'] }
+      }
+    }
+  },
+  ...Object.fromEntries(
+    ['pyteomics.mgf.IndexedMGF', 'pyteomics.mzml.MzML'].map((name) => [
+      name,
+      {
+        kind: 'type' as const,
+        methods: {
+          prebuild_byte_offset_file: { effect: 'read' as const, externalState: true }
+        }
+      }
+    ])
+  ),
+  'openslide.OpenSlide': {
+    kind: 'type',
+    methods: {
+      read_region: { effect: 'read', returnType: 'PIL.Image.Image' },
+      get_thumbnail: { effect: 'read', returnType: 'PIL.Image.Image' },
+      close: { effect: 'mutate' }
+    }
+  },
+  'radiomics.featureextractor': {
+    kind: 'module',
+    methods: {
+      RadiomicsFeatureExtractor: {
+        effect: 'read',
+        returnType: 'radiomics.featureextractor.RadiomicsFeatureExtractor',
+        file: { kind: 'read', position: 0, keywords: [], pathOptional: true }
+      }
+    }
+  },
+  'radiomics.featureextractor.RadiomicsFeatureExtractor': {
+    kind: 'type',
+    methods: {
+      execute: {
+        effect: 'mutate',
+        file: {
+          kind: 'read',
+          position: 0,
+          keywords: ['imageFilepath'],
+          additionalPaths: [{ position: 1, keywords: ['maskFilepath'] }]
+        }
+      },
+      loadParams: {
+        effect: 'mutate',
+        file: { kind: 'read', position: 0, keywords: ['paramsFile'] }
+      }
+    }
+  },
+  SimpleITK: {
+    kind: 'module',
+    methods: {
+      ReadImage: {
+        effect: 'read',
+        returnType: 'SimpleITK.Image',
+        file: {
+          kind: 'read',
+          position: 0,
+          keywords: ['fileName'],
+          inputForm: 'paths',
+          singleFileSuffixes: medicalSingleFileSuffixes
+        }
+      },
+      WriteImage: {
+        effect: 'read',
+        file: {
+          kind: 'write',
+          position: 1,
+          keywords: ['fileName'],
+          inputForm: 'paths',
+          singleFileSuffixes: medicalSingleFileSuffixes
+        }
+      },
+      GetArrayFromImage: { effect: 'read', returnType: 'numpy.ndarray' },
+      GetArrayViewFromImage: {
+        effect: 'read',
+        returnType: 'numpy.ndarray',
+        returnsPossibleAliasOf: 'firstArgument'
+      },
+      GetImageFromArray: { effect: 'read', returnType: 'SimpleITK.Image' }
+    }
+  },
+  'SimpleITK.Image': {
+    kind: 'type',
+    methods: {
+      GetSize: { effect: 'read' },
+      GetSpacing: { effect: 'read' },
+      GetOrigin: { effect: 'read' },
+      GetDirection: { effect: 'read' },
+      GetDimension: { effect: 'read' },
+      GetNumberOfComponentsPerPixel: { effect: 'read' },
+      GetPixelID: { effect: 'read' },
+      SetSpacing: { effect: 'mutate' },
+      SetOrigin: { effect: 'mutate' },
+      SetDirection: { effect: 'mutate' },
+      SetPixel: { effect: 'mutate' },
+      SetMetaData: { effect: 'mutate' },
+      CopyInformation: { effect: 'mutate' }
     }
   },
   nibabel: {
@@ -841,7 +1193,15 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     kind: 'module',
     methods: {
       figure: { effect: 'read', returnType: 'matplotlib.figure.Figure' },
-      pie: { effect: 'read' },
+      pie: {
+        effect: 'read',
+        callbackKeywords: ['autopct'],
+        destructuredReturnTypes: [
+          'matplotlib.patches.Wedge',
+          'matplotlib.text.Text',
+          'matplotlib.text.Text'
+        ]
+      },
       savefig: { effect: 'read' },
       show: { effect: 'read' },
       subplots: {
@@ -856,25 +1216,157 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'matplotlib.figure.Figure': {
     kind: 'type',
     methods: {
+      add_gridspec: { effect: 'mutate', returnType: 'matplotlib.gridspec.GridSpec' },
+      add_subplot: { effect: 'mutate', returnType: 'matplotlib.axes.Axes' },
       savefig: { effect: 'read' },
+      suptitle: { effect: 'mutate', returnType: 'matplotlib.text.Text' },
       tight_layout: { effect: 'mutate' }
     }
   },
+  'matplotlib.gridspec.GridSpec': {
+    kind: 'type',
+    methods: {}
+  },
   'matplotlib.axes.Axes': {
     kind: 'type',
+    iterationTypes: ['matplotlib.axes.Axes'],
     methods: {
+      axis: { effect: 'mutate' },
       axhline: { effect: 'mutate' },
       axvline: { effect: 'mutate' },
+      bar: { effect: 'mutate', returnType: 'matplotlib.container.BarContainer' },
+      barh: { effect: 'mutate', returnType: 'matplotlib.container.BarContainer' },
+      bar_label: {
+        effect: 'mutate',
+        returnType: 'matplotlib.text.Text',
+        callbackKeywords: ['fmt']
+      },
+      flatten: {
+        effect: 'read',
+        returnType: 'matplotlib.axes.Axes',
+        preservesIterationTypesFrom: 'receiver'
+      },
       grid: { effect: 'mutate' },
+      hlines: { effect: 'mutate' },
+      hist: { effect: 'mutate' },
       legend: { effect: 'mutate' },
-      plot: { effect: 'mutate' },
+      pie: {
+        effect: 'mutate',
+        callbackKeywords: ['autopct'],
+        destructuredReturnTypes: [
+          'matplotlib.patches.Wedge',
+          'matplotlib.text.Text',
+          'matplotlib.text.Text'
+        ]
+      },
+      plot: { effect: 'mutate', returnType: 'matplotlib.lines.Line2DList' },
+      ravel: {
+        effect: 'read',
+        returnType: 'matplotlib.axes.Axes',
+        preservesIterationTypesFrom: 'receiver'
+      },
+      reshape: {
+        effect: 'read',
+        returnType: 'matplotlib.axes.Axes',
+        preservesIterationTypesFrom: 'receiver'
+      },
+      scatter: { effect: 'mutate' },
+      set_aspect: { effect: 'mutate' },
+      set_axisbelow: { effect: 'mutate' },
       set_title: { effect: 'mutate' },
       set_xlabel: { effect: 'mutate' },
       set_xlim: { effect: 'mutate' },
       set_xticklabels: { effect: 'mutate' },
       set_xticks: { effect: 'mutate' },
       set_ylabel: { effect: 'mutate' },
-      set_ylim: { effect: 'mutate' }
+      set_ylim: { effect: 'mutate' },
+      set_yticks: { effect: 'mutate' },
+      set_yticklabels: { effect: 'mutate' },
+      tick_params: { effect: 'mutate' },
+      text: { effect: 'mutate', returnType: 'matplotlib.text.Text' }
+    }
+  },
+  'matplotlib.container.BarContainer': {
+    kind: 'type',
+    iterationTypes: ['matplotlib.patches.Rectangle'],
+    methods: {}
+  },
+  'matplotlib.patches': {
+    kind: 'module',
+    methods: {
+      Patch: { effect: 'read', returnType: 'matplotlib.patches.Patch' }
+    }
+  },
+  'matplotlib.patches.Patch': {
+    kind: 'type',
+    methods: {
+      set_alpha: { effect: 'mutate' },
+      set_color: { effect: 'mutate' },
+      set_edgecolor: { effect: 'mutate' },
+      set_facecolor: { effect: 'mutate' },
+      set_linewidth: { effect: 'mutate' },
+      set_visible: { effect: 'mutate' }
+    }
+  },
+  'matplotlib.patches.Rectangle': {
+    kind: 'type',
+    methods: {
+      get_height: { effect: 'read' },
+      get_width: { effect: 'read' },
+      get_x: { effect: 'read' },
+      get_y: { effect: 'read' },
+      set_alpha: { effect: 'mutate' },
+      set_color: { effect: 'mutate' },
+      set_edgecolor: { effect: 'mutate' },
+      set_facecolor: { effect: 'mutate' },
+      set_height: { effect: 'mutate' },
+      set_linewidth: { effect: 'mutate' },
+      set_visible: { effect: 'mutate' },
+      set_width: { effect: 'mutate' },
+      set_x: { effect: 'mutate' },
+      set_y: { effect: 'mutate' }
+    }
+  },
+  'matplotlib.patches.Wedge': {
+    kind: 'type',
+    iterationTypes: ['matplotlib.patches.Wedge'],
+    methods: {
+      set_alpha: { effect: 'mutate' },
+      set_edgecolor: { effect: 'mutate' },
+      set_facecolor: { effect: 'mutate' },
+      set_linewidth: { effect: 'mutate' },
+      set_visible: { effect: 'mutate' }
+    }
+  },
+  'matplotlib.text.Text': {
+    kind: 'type',
+    iterationTypes: ['matplotlib.text.Text'],
+    methods: {
+      set_alpha: { effect: 'mutate' },
+      set_color: { effect: 'mutate' },
+      set_fontsize: { effect: 'mutate' },
+      set_fontweight: { effect: 'mutate' },
+      set_horizontalalignment: { effect: 'mutate' },
+      set_rotation: { effect: 'mutate' },
+      set_text: { effect: 'mutate' },
+      set_verticalalignment: { effect: 'mutate' },
+      set_visible: { effect: 'mutate' }
+    }
+  },
+  'matplotlib.lines.Line2DList': {
+    kind: 'type',
+    iterationTypes: ['matplotlib.lines.Line2D'],
+    methods: {}
+  },
+  'matplotlib.lines.Line2D': {
+    kind: 'type',
+    methods: {
+      set_alpha: { effect: 'mutate' },
+      set_color: { effect: 'mutate' },
+      set_linestyle: { effect: 'mutate' },
+      set_linewidth: { effect: 'mutate' },
+      set_marker: { effect: 'mutate' },
+      set_visible: { effect: 'mutate' }
     }
   },
   seaborn: {
@@ -1178,4 +1670,32 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   }
 }
 
-export { PYTHON_LIBRARY_EFFECTS }
+const pythonLibraryMethodEffect = (
+  typeName: string,
+  member: string
+): PythonLibraryMethodEffect | undefined => {
+  const summary = PYTHON_LIBRARY_EFFECTS[typeName]
+  return (
+    summary?.methods[member] ??
+    (summary?.unknownMethodsHaveExternalState
+      ? { effect: 'unknown', externalState: true, scopedOpaque: true }
+      : undefined)
+  )
+}
+
+// Follow tuple positions, then the library's known iterable element types.
+// An unmodeled element stays unknown; never flatten nested targets into return slots.
+const pythonUnpackedReturnType = (
+  returnedTypes: readonly string[],
+  path: readonly number[]
+): string | undefined => {
+  let typeName: string | undefined = returnedTypes[path[0]!]
+  for (const index of path.slice(1)) {
+    const elements: readonly string[] | undefined =
+      PYTHON_LIBRARY_EFFECTS[typeName ?? '']?.iterationTypes
+    typeName = elements?.[index] ?? (elements?.length === 1 ? elements[0] : undefined)
+  }
+  return typeName
+}
+
+export { PYTHON_LIBRARY_EFFECTS, pythonLibraryMethodEffect, pythonUnpackedReturnType }

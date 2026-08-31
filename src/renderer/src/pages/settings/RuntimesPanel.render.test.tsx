@@ -83,6 +83,7 @@ let pickInterpreter: ReturnType<typeof vi.fn>
 let provision: ReturnType<typeof vi.fn>
 let cancelBridge: ReturnType<typeof vi.fn>
 let repairBridge: ReturnType<typeof vi.fn>
+let importEnvironmentLock: ReturnType<typeof vi.fn>
 
 const provisionStatus: ProvisionStatus = {
   pythonReady: false,
@@ -145,6 +146,12 @@ beforeEach(() => {
   provision = vi.fn().mockRejectedValue(new Error('runtime CDN unavailable'))
   cancelBridge = vi.fn().mockResolvedValue(undefined)
   repairBridge = vi.fn().mockResolvedValue(undefined)
+  importEnvironmentLock = vi.fn().mockResolvedValue({
+    imported: true,
+    environmentName: 'repro-eeeeeeeeeeee',
+    kernelKind: 'python',
+    reused: false
+  })
   ;(window as unknown as { api: unknown }).api = {
     platform: 'linux',
     settings: {
@@ -154,6 +161,7 @@ beforeEach(() => {
       }),
       getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined)
     },
+    artifacts: { importEnvironmentLock },
     runtime: {
       listEnvironments,
       listPackages,
@@ -418,9 +426,19 @@ describe('RuntimesPanel', () => {
     const recheck = section?.querySelector<HTMLButtonElement>('[data-testid="runtimes-recheck"]')
     const checkedAt = section?.querySelector('[data-testid="runtimes-checked-at"]')
     expect(recheck?.textContent).toContain('Recheck')
-    expect(recheck?.parentElement?.parentElement?.className).toContain('ml-auto')
+    expect(recheck?.parentElement?.parentElement?.parentElement?.className).toContain('ml-auto')
     expect(checkedAt?.textContent).toContain('Last checked')
-    expect(recheck?.nextElementSibling).toBe(checkedAt)
+    expect(recheck?.parentElement?.nextElementSibling).toBe(checkedAt)
+  })
+
+  it('imports an external Environment bundle from global runtime settings', async () => {
+    await render()
+
+    await click(container.querySelector('[data-testid="runtimes-import-environment"]'))
+
+    expect(importEnvironmentLock).toHaveBeenCalledWith({})
+    expect(listEnvironments).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Environment imported as repro-eeeeeeeeeeee.')
   })
 
   it('disables Recheck until the initial registry load settles', async () => {

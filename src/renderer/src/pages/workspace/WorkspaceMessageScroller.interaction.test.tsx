@@ -3941,6 +3941,63 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     })
   })
 
+  it('requests the exact Artifact Version for a generated image thumbnail', async () => {
+    const enterViewport = installIntersectionObserver()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(new Blob(['image'], { type: 'image/png' }))
+      })
+    )
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the image',
+          artifactIds: ['artifact-version-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          artifactId: 'managed-artifact-1',
+          versionId: 'artifact-version-1',
+          isPublished: true,
+          kind: 'managed-file',
+          path: '/workspace/chart.png',
+          fileUrl: 'file:///workspace/chart.png',
+          name: 'chart.png',
+          mimeType: 'image/png',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+    await act(async () => {
+      enterViewport()
+      await Promise.resolve()
+    })
+
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'default',
+      fileId: 'managed-artifact-1',
+      versionId: 'artifact-version-1',
+      mimeType: 'image/png'
+    })
+  })
+
   it('does not fall back to a path-only thumbnail read for a legacy artifact', async () => {
     const enterViewport = installIntersectionObserver()
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')

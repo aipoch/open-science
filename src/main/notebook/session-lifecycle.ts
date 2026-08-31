@@ -75,6 +75,11 @@ type NotebookSessionLifecycleOptions = {
   callbacks?: NotebookSessionLifecycleCallbacks
   toSessionReference: (session: RuntimeSession) => NotebookSessionReference
   onKernelStatusPersistenceFailure?: (failure: NotebookKernelStatusPersistenceFailure) => void
+  finalizeKernelEpochs?: (request: {
+    projectId: string
+    sessionId: string
+    kernelEpochIds: readonly string[]
+  }) => Promise<void>
 }
 
 type InternalNotebookSessionRequest = NotebookSessionRequest & {
@@ -198,7 +203,14 @@ class NotebookSessionLifecycleOwner {
         initialTerminatedKernelInstances: document.kernel.terminatedKernelInstances,
         executor: ownedExecutor.executor,
         executorGeneration: ownedExecutor.generation,
-        lane
+        lane,
+        onKernelEpochsRetired: async (epochs) => {
+          await this.options.finalizeKernelEpochs?.({
+            projectId,
+            sessionId: request.sessionId,
+            kernelEpochIds: epochs.map(({ id }) => id)
+          })
+        }
       })
 
       try {
@@ -628,7 +640,7 @@ class NotebookSessionLifecycleOwner {
     const processKey = processKeyFor(kind, env)
     // The executor has already ended this concrete process. Rotate volatile dependency identity
     // even when the durable status projection fails, so a respawn cannot inherit the old namespace.
-    session.retireKernelEpoch(processKey)
+    await session.retireKernelEpoch(processKey)
     await this.persistKernelStatus(session, 'terminated', processKey)
     this.notifyChanged(session)
   }
@@ -642,7 +654,7 @@ class NotebookSessionLifecycleOwner {
     if (!session) return
     const processKey = processKeyFor(kind, env)
     session.markKernelTerminated(processKey)
-    session.retireKernelEpoch(processKey)
+    await session.retireKernelEpoch(processKey)
     await this.persistKernelStatus(session, 'terminated', processKey)
     this.notifyChanged(session)
   }

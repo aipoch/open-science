@@ -28,6 +28,11 @@ export type MicromambaErrorData = {
   stdoutTail?: string
 }
 
+export type MicromambaOutput = {
+  stream: 'stdout' | 'stderr'
+  text: string
+}
+
 const hasMicromambaErrorData = (error: unknown): error is { data: MicromambaErrorData } =>
   error instanceof Error &&
   typeof (error as { data?: unknown }).data === 'object' &&
@@ -195,7 +200,10 @@ export const runMicromamba = (
   // re-arm the intent so a crash before its PID is recorded blocks rather than trusting a prior PID.
   // Throwing here fails closed: nothing is spawned.
   onBeforeSpawn?: () => void,
-  timeoutMs = 600_000
+  timeoutMs = 600_000,
+  // Best-effort observer for live installer output. A consumer failure must not strand or fail the
+  // package process; final diagnostics are still retained independently in the bounded tails below.
+  onOutput?: (output: MicromambaOutput) => void
 ): Promise<void> =>
   new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
@@ -233,11 +241,21 @@ export const runMicromamba = (
     const startedAt = Date.now()
     const appendTail = (current: string, chunk: unknown): string =>
       `${current}${String(chunk)}`.slice(-maxTail)
+    const publishOutput = (stream: MicromambaOutput['stream'], chunk: unknown): void => {
+      const text = String(chunk)
+      try {
+        onOutput?.({ stream, text })
+      } catch {
+        // Live output is observational. Do not let a renderer subscriber interrupt provisioning.
+      }
+    }
     child.stdout.on('data', (chunk) => {
       stdout = appendTail(stdout, chunk)
+      publishOutput('stdout', chunk)
     })
     child.stderr.on('data', (chunk) => {
       stderr = appendTail(stderr, chunk)
+      publishOutput('stderr', chunk)
     })
 
     const cleanup = (): void => {

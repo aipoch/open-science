@@ -67,11 +67,21 @@ const parseEnvironmentPackage = (value: unknown): NotebookEnvironmentPackage | u
     versionStatus,
     ecosystem,
     evidenceSources,
-    ...(loadedState === 'attached' || loadedState === 'loaded' || loadedState === 'unknown'
+    ...(loadedState === 'attached' ||
+    loadedState === 'loaded' ||
+    loadedState === 'installed-only' ||
+    loadedState === 'unknown'
       ? { loadedState }
       : {}),
     ...(typeof pkg.library_rank === 'number' && Number.isInteger(pkg.library_rank)
       ? { libraryRank: pkg.library_rank }
+      : {}),
+    ...(ecosystem === 'r' &&
+    (pkg.library_scope === 'environment' ||
+      pkg.library_scope === 'user' ||
+      pkg.library_scope === 'system' ||
+      pkg.library_scope === 'unknown')
+      ? { libraryScope: pkg.library_scope }
       : {}),
     ...(typeof pkg.built_for_runtime === 'string' && pkg.built_for_runtime
       ? { builtForRuntime: pkg.built_for_runtime }

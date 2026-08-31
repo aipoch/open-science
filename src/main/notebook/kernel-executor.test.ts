@@ -563,6 +563,47 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     expect(cleanup).toHaveBeenCalledOnce()
   })
 
+  it('allows the sandbox to read a resolved interpreter prefix outside the runtime root', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-resolved-prefix-sandbox-'))
+    const request = baseRequest(cwdDir)
+    const restoredPrefix = join(cwdDir, 'restored-environments', 'lock-checksum')
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        beginExecution: () => () => undefined,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup: () => undefined
+      }))
+    }
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      platform: 'linux',
+      processSandbox
+    })
+
+    try {
+      await expect(
+        executor.execute({
+          ...request,
+          code: 'restored runtime',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          resolvedInterpreter: {
+            command: python3 as string,
+            condaPrefix: restoredPrefix
+          }
+        })
+      ).resolves.toMatchObject({ status: 'completed' })
+
+      const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
+      expect(sandboxInvocation.filesystem.readOnlyRoots).toContain(restoredPrefix)
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it('inspects only an already-live kernel and forwards the private-variable option', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-namespace-')
     const executor = makeExecutor()

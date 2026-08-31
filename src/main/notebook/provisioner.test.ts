@@ -13,6 +13,7 @@ import { basename, dirname, join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import type { NotebookEnvironmentLock } from '../../shared/notebook'
 import {
   addRepairRequired,
   DEFAULT_ENV_VERSION,
@@ -20,6 +21,7 @@ import {
   DEFAULT_R_ENV,
   envDirectoryName,
   envPrefix,
+  importedEnvironmentLockMarkerPath,
   legacyDefaultEnvPrefix,
   logicalEnvNameFromDirectory,
   pkgsCache,
@@ -45,6 +47,7 @@ import {
   type ProvisionerDeps
 } from './provisioner'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
+import type { InstallSpawn } from './package-manager'
 import { envsLockDir } from './runtime-relocation'
 import { serializeProvisioner } from './environment-operation-foundation'
 import { EnvironmentLeaseManager } from './environment-lease-manager'
@@ -1370,7 +1373,7 @@ const makeNamedEnvDeps = (
     fetchBundle: async () => undefined,
     runArgv: async (argv) => {
       argvs.push(argv)
-      const idx = argv.indexOf('--prefix')
+      const idx = argv.findIndex((value) => value === '--prefix' || value === '-p')
       const prefix = argv[idx + 1]
       // Named envs are always Python in these tests unless the packages carry r-base.
       const isR = argv.includes('r-base')
@@ -1447,6 +1450,211 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
       }
     }
   )
+  it('imports an exact lock online and reuses the checksum-marked environment', async () => {
+    const root = makeRoot()
+    const nativeWorker = vi.fn<InstallSpawn>(async () => ({ code: 0, stdout: '', stderr: '' }))
+    const nativeSpawn = vi.fn(() => nativeWorker)
+    const { deps, argvs } = makeNamedEnvDeps(root, { nativeSpawn })
+    const provisioner = new DefaultRuntimeProvisioner(deps)
+    const checksum = 'a'.repeat(64)
+    const explicitLock =
+      '@EXPLICIT\nhttps://repo.example.test/python-3.12.conda#0123456789abcdef0123456789abcdef\n'
+    const lock: NotebookEnvironmentLock = {
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: 'python',
+      environmentName: 'default-python',
+      components: [
+        {
+          ecosystem: 'conda',
+          format: 'conda-explicit-md5',
+          resolution: 'locked',
+          explicitLock,
+          packages: ['python', 'pip']
+        },
+        {
+          ecosystem: 'python',
+          format: 'pip-requirements',
+          resolution: 'locked',
+          files: [
+            {
+              path: 'requirements.lock',
+              checksum: '0'.repeat(64),
+              content: `numpy==2.0 --hash=sha256:${'1'.repeat(64)}\n`
+            }
+          ]
+        }
+      ],
+      untrackedPackages: ['python:numpy']
+    }
+
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(
+        `repro-${checksum.slice(0, 12)}`,
+        'python',
+        lock,
+        checksum,
+        { projectId: 'project-1' }
+      )
+    ).resolves.toMatchObject({ reused: false })
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(
+        `repro-${checksum.slice(0, 12)}`,
+        'python',
+        lock,
+        checksum,
+        { projectId: 'project-2' }
+      )
+    ).resolves.toMatchObject({ reused: true })
+
+    expect(argvs).toHaveLength(1)
+    expect(argvs[0]).not.toContain('--offline')
+    expect(argvs[0]).toEqual(expect.arrayContaining(['--file', expect.stringContaining(checksum)]))
+    expect(nativeSpawn).toHaveBeenCalledOnce()
+    expect(nativeWorker).toHaveBeenCalledWith(
+      expect.stringMatching(/python$/u),
+      expect.arrayContaining(['--require-hashes']),
+      expect.any(Object),
+      expect.any(Function),
+      expect.any(Function),
+      false,
+      expect.stringContaining(checksum),
+      { onOutput: undefined, signal: undefined }
+    )
+    expect(
+      readFileSync(
+        join(envPrefix(root, `repro-${checksum.slice(0, 12)}`), '.open-science-environment-lock'),
+        'utf8'
+      )
+    ).toBe(`${checksum}\n`)
+  })
+
+  it.each([
+    ['python', 'native'],
+    ['r', 'native'],
+    ['python', 'conda'],
+    ['r', 'conda'],
+    ['python', 'verification'],
+    ['r', 'verification'],
+    ['python', 'unconfirmed'],
+    ['r', 'unconfirmed']
+  ] as const)('handles an imported %s environment after a %s failure', async (language, phase) => {
+    const root = makeRoot()
+    const checksum = 'b'.repeat(64)
+    const name = `repro-${checksum.slice(0, 12)}`
+    const prefix = envPrefix(root, name)
+    const bin = language === 'python' ? pythonBin(prefix) : rBin(prefix)
+    const nativeWorker = vi.fn<InstallSpawn>()
+    if (phase === 'native')
+      nativeWorker.mockResolvedValueOnce({
+        code: 1,
+        stdout: '',
+        stderr: 'temporary import failure'
+      })
+    if (phase === 'unconfirmed')
+      nativeWorker.mockRejectedValueOnce(
+        new Error(`${CHILD_UNCONFIRMED}: temporary import failure`)
+      )
+    nativeWorker.mockResolvedValue({ code: 0, stdout: '', stderr: '' })
+    let firstWrite = true
+    let firstVerification = true
+    const blocked = new Set<string>()
+    const runArgv = vi.fn(async () => {
+      mkdirSync(dirname(bin), { recursive: true })
+      writeFileSync(bin, 'interpreter')
+      if (phase === 'conda' && firstWrite) {
+        firstWrite = false
+        throw new Error('temporary import failure')
+      }
+    })
+    const { deps } = makeNamedEnvDeps(root, {
+      runArgv,
+      blockPrefix: (path) => {
+        blocked.add(path)
+      },
+      isPrefixBlocked: (path) => blocked.has(path),
+      nativeSpawn: () => nativeWorker,
+      verify: async () => {
+        if (phase === 'verification' && firstVerification) {
+          firstVerification = false
+          throw new Error('temporary import failure')
+        }
+      }
+    })
+    const lock: NotebookEnvironmentLock = {
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: language,
+      environmentName: `default-${language}`,
+      components: [
+        {
+          ecosystem: 'conda',
+          format: 'conda-explicit-md5',
+          resolution: 'locked',
+          explicitLock: `@EXPLICIT\nhttps://repo.example.test/runtime.conda#${'0'.repeat(32)}\n`,
+          packages: language === 'python' ? ['python', 'pip'] : ['r-base', 'r-renv']
+        },
+        language === 'python'
+          ? {
+              ecosystem: 'python',
+              format: 'pip-requirements',
+              resolution: 'locked',
+              files: [
+                {
+                  path: 'requirements.lock',
+                  checksum: '0'.repeat(64),
+                  content: `numpy==2.0 --hash=sha256:${'1'.repeat(64)}\n`
+                }
+              ]
+            }
+          : {
+              ecosystem: 'r',
+              format: 'renv-lock',
+              resolution: 'locked',
+              files: [
+                {
+                  path: 'renv.lock',
+                  checksum: '0'.repeat(64),
+                  content: JSON.stringify({
+                    Packages: { ggplot2: { Version: '4.0.3', Source: 'Repository' } }
+                  })
+                }
+              ]
+            }
+      ],
+      untrackedPackages: [language === 'python' ? 'python:numpy' : 'r:ggplot2']
+    }
+    const provisioner = new DefaultRuntimeProvisioner(deps)
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(name, language, lock, checksum)
+    ).rejects.toThrow('temporary import failure')
+    if (phase === 'unconfirmed') {
+      expect(existsSync(bin)).toBe(true)
+      expect(existsSync(importedEnvironmentLockMarkerPath(prefix))).toBe(false)
+      expect(
+        await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()
+      ).toHaveLength(1)
+      await expect(
+        provisioner.createNamedEnvironmentFromLock(name, language, lock, checksum)
+      ).rejects.toThrow(/blocked|unconfirmed|recover/iu)
+      expect(runArgv).toHaveBeenCalledTimes(1)
+      return
+    }
+    expect(existsSync(prefix)).toBe(false)
+    expect(await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).toEqual([])
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(name, language, lock, checksum)
+    ).resolves.toMatchObject({ reused: false })
+    expect(nativeWorker).toHaveBeenCalledTimes(phase === 'conda' ? 1 : 2)
+    expect(runArgv).toHaveBeenCalledTimes(2)
+    expect(readFileSync(importedEnvironmentLockMarkerPath(prefix), 'utf8')).toBe(`${checksum}\n`)
+    writeFileSync(importedEnvironmentLockMarkerPath(prefix), `${'c'.repeat(64)}\n`)
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(name, language, lock, checksum)
+    ).rejects.toThrow('different origin')
+    expect(readFileSync(bin, 'utf8')).toBe('interpreter')
+    expect(runArgv).toHaveBeenCalledTimes(2)
+  })
 
   it('uses the injected platform for the interpreter it verifies', async () => {
     const root = makeRoot()
@@ -2061,6 +2269,26 @@ describe('DefaultRuntimeProvisioner.removeEnvironment', () => {
     expect(result).toBeUndefined()
     expect(listEnvironments).not.toHaveBeenCalled()
     expect(existsSync(namedPrefix)).toBe(false)
+  })
+
+  it('removes the durable lock material owned by an imported environment', () => {
+    const root = makeRoot()
+    const checksum = 'a'.repeat(64)
+    const namedPrefix = envPrefix(root, 'imported-analysis')
+    const lockDirectory = join(root, 'imported-locks')
+    const nativeLocksRoot = join(lockDirectory, checksum)
+    mkdirSync(join(pythonBin(namedPrefix), '..'), { recursive: true })
+    mkdirSync(nativeLocksRoot, { recursive: true })
+    writeFileSync(pythonBin(namedPrefix), 'x')
+    writeFileSync(importedEnvironmentLockMarkerPath(namedPrefix), `${checksum}\n`)
+    writeFileSync(join(lockDirectory, `${checksum}.txt`), '@EXPLICIT\n')
+    writeFileSync(join(nativeLocksRoot, 'requirements.lock'), 'numpy==2.0\n')
+
+    new DefaultRuntimeProvisioner(makeDeps(root)).removeEnvironment('imported-analysis')
+
+    expect(existsSync(namedPrefix)).toBe(false)
+    expect(existsSync(join(lockDirectory, `${checksum}.txt`))).toBe(false)
+    expect(existsSync(nativeLocksRoot)).toBe(false)
   })
 })
 

@@ -61,10 +61,13 @@ const projectPackageSource = (value: unknown): ArtifactPackageSourceEvidence => 
   }
   if (value.type === 'github') {
     if (
-      Object.keys(value).some((key) => !['type', 'repository', 'ref', 'commit'].includes(key)) ||
+      Object.keys(value).some(
+        (key) => !['type', 'repository', 'ref', 'commit', 'subdirectory'].includes(key)
+      ) ||
       typeof value.repository !== 'string' ||
       (value.ref !== undefined && typeof value.ref !== 'string') ||
-      (value.commit !== undefined && typeof value.commit !== 'string')
+      (value.commit !== undefined && typeof value.commit !== 'string') ||
+      (value.subdirectory !== undefined && typeof value.subdirectory !== 'string')
     ) {
       throw new Error('Artifact Version package source evidence is corrupt.')
     }
@@ -72,7 +75,8 @@ const projectPackageSource = (value: unknown): ArtifactPackageSourceEvidence => 
       type: value.type,
       repository: value.repository,
       ...(value.ref !== undefined ? { ref: value.ref } : {}),
-      ...(value.commit !== undefined ? { commit: value.commit } : {})
+      ...(value.commit !== undefined ? { commit: value.commit } : {}),
+      ...(value.subdirectory !== undefined ? { subdirectory: value.subdirectory } : {})
     }
   }
   if (

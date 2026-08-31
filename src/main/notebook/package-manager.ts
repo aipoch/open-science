@@ -68,6 +68,7 @@ import {
 } from './runtime-paths'
 import { toErrorMessage } from '../error-message'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
+import { withPipInstallEvidence } from './pip-install-evidence'
 
 export type InstallRequest = OptionalProjectIdScope & {
   language: NotebookLanguage
@@ -147,6 +148,7 @@ export type SpawnResult = {
 export type InstallSpawnOptions = Readonly<{
   signal?: AbortSignal
   timeoutMs?: number
+  onOutput?: (output: { stream: 'stdout' | 'stderr'; text: string }) => void
 }>
 export type InstallSpawn = (
   command: string,
@@ -995,6 +997,7 @@ export const defaultSpawn = (
   platform: NodeJS.Platform = process.platform,
   confirmProcessTreeTermination?: () => Promise<boolean>
 ): Promise<SpawnResult> => {
+  const onOutput = options?.onOutput
   const signal = options?.signal
   if (signal?.aborted) {
     return Promise.reject(
@@ -1089,9 +1092,19 @@ export const defaultSpawn = (
     const stderr = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
     child.stdout?.on('data', (chunk) => {
       stdout.push(chunk)
+      try {
+        onOutput?.({ stream: 'stdout', text: String(chunk) })
+      } catch {
+        // Installer output is observational and must not interrupt the package operation.
+      }
     })
     child.stderr?.on('data', (chunk) => {
       stderr.push(chunk)
+      try {
+        onOutput?.({ stream: 'stderr', text: String(chunk) })
+      } catch {
+        // Installer output is observational and must not interrupt the package operation.
+      }
     })
     if (condaJsonCapture) {
       if (child.stdout) child.stdout.pipe(condaJsonCapture.stdoutLimiter)
@@ -1317,11 +1330,11 @@ export async function installPackages(
     ...process.env,
     ...caBundleEnv(deps.caBundle)
   }
-  const run: InstallSpawn = (command, args) =>
+  const run: InstallSpawn = (command, args, env = spawnEnv) =>
     baseSpawn(
       command,
       args,
-      spawnEnv,
+      env,
       deps.onChild,
       deps.onBeforeSpawn,
       undefined,
@@ -1694,7 +1707,9 @@ export async function installPackages(
     if (req.usePip) {
       const pip = pipBin(prefix)
       const args = ['install', ...(deps.pypiIndex ? ['-i', deps.pypiIndex] : []), ...req.packages]
-      const result = await run(pip, args)
+      const result = await withPipInstallEvidence(prefix, (reportPath) =>
+        run(pip, args, { ...spawnEnv, ...(reportPath ? { PIP_REPORT: reportPath } : {}) })
+      )
       return {
         ok: result.code === 0,
         needsRestart: false,
@@ -1773,11 +1788,13 @@ export async function installPackages(
     const classification = classifyCondaFailure(result)
     const condaAttempt = installerAttempt(0, 'conda', req.packages, result, classification)
     if (condaFallbackIsAuthorized(classification)) {
-      const fallback = await run(pipBin(prefix), [
-        'install',
-        ...(deps.pypiIndex ? ['-i', deps.pypiIndex] : []),
-        ...req.packages
-      ])
+      const fallback = await withPipInstallEvidence(prefix, (reportPath) =>
+        run(
+          pipBin(prefix),
+          ['install', ...(deps.pypiIndex ? ['-i', deps.pypiIndex] : []), ...req.packages],
+          { ...spawnEnv, ...(reportPath ? { PIP_REPORT: reportPath } : {}) }
+        )
+      )
       const ok = fallback.code === 0
       return {
         ok,
@@ -1853,6 +1870,9 @@ export async function installPackages(
     const script =
       `dir.create(${JSON.stringify(rLib)}, recursive=TRUE, showWarnings=FALSE); ` +
       `.libPaths(c(${JSON.stringify(rLib)}, .libPaths())); ` +
+      // BiocManager rejects repos=; it combines this CRAN option with release-specific Bioc
+      // repositories. remotes also reads it for CRAN dependencies after its own bootstrap.
+      `options(repos=c(CRAN=${JSON.stringify(cran)})); ` +
       (req.installer === 'biocmanager'
         ? bootstrap('BiocManager') +
           `BiocManager::install(c(${vector}), lib=${JSON.stringify(rLib)}, ask=FALSE, update=FALSE); ` +

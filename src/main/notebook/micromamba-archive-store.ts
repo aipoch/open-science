@@ -167,6 +167,11 @@ const archiveFiles = async (
     if (!isInsideOrEqual(physicalRoot, physicalDir)) {
       throw new Error('Micromamba working cache traversal escaped its validated root.')
     }
+    // Extracted Conda packages contain ordinary payload symlinks (including dangling platform
+    // links). Their contents are not archive candidates. Skipping their native metadata marker
+    // only narrows the search; every published archive still needs transaction hash authority.
+    const packageMetadata = await lstat(join(dir, 'info', 'index.json')).catch(() => undefined)
+    if (packageMetadata?.isFile()) return
     let entries
     try {
       entries = await readdir(dir, { withFileTypes: true })

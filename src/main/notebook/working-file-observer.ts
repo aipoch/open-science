@@ -13,7 +13,12 @@ import {
   type ScientificOutputEvidence
 } from '../../shared/execution-file-evidence'
 import type { ComputeJob } from '../../shared/compute'
-import type { NotebookRunRecord, NotebookWorkingFile } from '../../shared/notebook'
+import type {
+  NotebookLanguage,
+  NotebookRunInputFile,
+  NotebookRunRecord,
+  NotebookWorkingFile
+} from '../../shared/notebook'
 import { assertDiskReserve } from '../bounded-file-io'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
@@ -21,22 +26,44 @@ import { availableBytes } from '../storage/usage'
 import { analyzeScientificOutputs } from './scientific-output-analysis'
 import { createRootNotebookLane } from './lane-identity'
 import { getNotebookFileEvidenceLocation } from './repository'
+import { notebookPromptInputPath } from './prompt-input-materialization'
+import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { reportNotebookFileAnalysis } from './evidence-diagnostics'
+import type {
+  NotebookSourceFileAccessContext,
+  NotebookSourceFileWriteScope
+} from './dependency-analysis-types'
 
 const log = createLogger('notebook:file-evidence')
 
 type WorkingFileObservationRequest = {
   dataRoot: string
   notebookSessionRoot: string
+  cwd?: string
+  code?: string
+  language?: NotebookLanguage
   fileEvidenceStorageRoot?: string
   fileEvidenceRoot?: string
   fileEvidenceStoragePrefix?: string
   runId?: string
+  registeredInputFiles?: readonly NotebookRunInputFile[]
   signal?: AbortSignal
+  sourceFileAccess?: {
+    readState: ExecutionFileEvidenceCoverage
+    writeState: ExecutionFileEvidenceCoverage
+    externalState: ExecutionFileEvidenceCoverage
+    reads: string[]
+    writes: string[]
+    writeScopes?: NotebookSourceFileWriteScope[]
+    reasonCodes: ExecutionFileEvidenceReason[]
+  }
+  sourceFileAccessContext?: NotebookSourceFileAccessContext
 }
 
 type WorkingFileObservationResult = {
   workingFiles: NotebookWorkingFile[]
   fileEvidence: ExecutionFileEvidenceSummary
+  confirmedReadPaths?: string[]
 }
 
 type WorkingFileObservation = {
@@ -106,6 +133,7 @@ type EvidenceWorkerBeginRequest = EvidenceWorkerBlobPoolBinding & {
     file: SnapshotEntry
     generation: { generationId: string; capturedAt: string }
     relation?: 'present-before' | 'staged-input'
+    registeredInput?: Pick<NotebookRunInputFile, 'sourceKind' | 'inputFileVersionId' | 'checksum'>
   }>
   maxGenerationBytes: number
   maxActivityBytes: number
@@ -131,6 +159,10 @@ type EvidenceWorkerPersistRequest = EvidenceWorkerBlobPoolBinding & {
   rootKinds: Array<'data' | 'handoff'>
   rootsAvailable: boolean
   evidenceState?: ExecutionFileEvidenceSummary['state']
+  fileReads?: ExecutionFileEvidenceCoverage
+  externalPaths?: ExecutionFileEvidenceCoverage
+  writerAttribution?: ExecutionFileEvidenceCoverage
+  readPaths?: string[]
   reasonCodes: ExecutionFileEvidenceReason[]
   scientificOutputs: ScientificOutputEvidence[]
   changes: Array<{
@@ -264,6 +296,8 @@ type ActiveEvidenceCapture = {
   maxActivityBytes: number
   maxEvidenceBytes: number
   diskReserveBytes: number
+  initialGenerationPaths: Set<string>
+  initialFilePaths: Set<string>
 }
 
 const activeByObservedRoot = new Map<string, Set<ActiveObservation>>()
@@ -1036,24 +1070,33 @@ const captureSnapshot = async (
     const visit = async (directory: string): Promise<void> => {
       const entries = await readdir(directory, { withFileTypes: true })
       entries.sort((left, right) => left.name.localeCompare(right.name))
+      const pending: string[] = []
+      const flushFiles = async (): Promise<void> => {
+        // Bound filesystem concurrency independently of directory depth, and keep sorted insertion
+        // order. Every entry still receives the same symlink, canonical-path and metadata checks.
+        const captured = await Promise.all(
+          pending.map((path) =>
+            snapshotEntry(observedRoot, logicalObservedRoot, logicalSessionRoot, path)
+          )
+        )
+        pending.length = 0
+        for (const file of captured) if (file) files.set(file.path, file)
+      }
       for (const entry of entries) {
         entriesSeen += 1
         if (entriesSeen > MAX_FALLBACK_SNAPSHOT_ENTRIES) throw new SnapshotEntryLimitError()
         const candidatePath = join(directory, entry.name)
         if (entry.isSymbolicLink()) continue
         if (entry.isDirectory()) {
+          await flushFiles()
           await visit(candidatePath)
           continue
         }
         if (!entry.isFile()) continue
-        const file = await snapshotEntry(
-          observedRoot,
-          logicalObservedRoot,
-          logicalSessionRoot,
-          candidatePath
-        )
-        if (file) files.set(file.path, file)
+        pending.push(candidatePath)
+        if (pending.length === 8) await flushFiles()
       }
+      await flushFiles()
     }
     await visit(observedRoot)
     return { state: 'available', files }
@@ -1260,60 +1303,18 @@ const startRootObservation = async (
         }
 
         try {
-          const changes: ObservedFileChange[] = []
-          for (const candidatePath of [...changedPaths].sort()) {
-            const logicalPath = resolve(logicalObservedRoot, relative(observedRoot, candidatePath))
-            const previous = before.files.get(logicalPath)
-            const current = await snapshotEntry(
-              observedRoot,
-              logicalObservedRoot,
-              logicalSessionRoot,
-              candidatePath
-            ).catch((error: unknown) => {
-              if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-              throw error
-            })
-            if (!current && previous) {
-              changes.push({
-                relation: 'deleted',
-                relativePath: previous.relativePath,
-                before: previous
-              })
-            } else if (current && !previous) {
-              changes.push({
-                relation: 'created',
-                relativePath: current.relativePath,
-                after: current
-              })
-            } else if (current && previous && !sameSnapshotEntry(previous, current)) {
-              changes.push({
-                relation: 'modified',
-                relativePath: current.relativePath,
-                before: previous,
-                after: current
-              })
-            }
+          // Watch events may be coalesced or report only a renamed directory. A non-empty
+          // event list is not a complete final view; reconcile the bounded tree before freezing.
+          const after = await captureSnapshot(observedRoot, logicalObservedRoot, logicalSessionRoot)
+          if (active.conflicted)
+            return { changes: [], reasonCodes: ['observer-conflict'], available: false }
+          if (after.state === 'unavailable')
+            return { changes: [], reasonCodes: [after.reason], available: false }
+          return {
+            changes: diffSnapshots(before.files, after.files),
+            reasonCodes: [],
+            available: true
           }
-          if (changes.length > 0) {
-            if (active.conflicted) {
-              return { changes: [], reasonCodes: ['observer-conflict'], available: false }
-            }
-            return {
-              changes: changes.sort((left, right) =>
-                left.relativePath.localeCompare(right.relativePath)
-              ),
-              reasonCodes: [],
-              available: true
-            }
-          }
-          return fallbackObservation(
-            observedRoot,
-            logicalObservedRoot,
-            logicalSessionRoot,
-            before.files,
-            [],
-            { active, unregister }
-          ).finish()
         } catch {
           return { changes: [], reasonCodes: ['observer-failed'], available: false }
         } finally {
@@ -1379,9 +1380,35 @@ const beginEvidenceCapture = async (
     maxActivityBytes: dependencies.maxActivityBytes ?? LOCAL_RESOURCE_BUDGETS.artifactTurnBytes,
     maxEvidenceBytes:
       dependencies.maxEvidenceBytes ?? LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
-    diskReserveBytes: dependencies.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+    diskReserveBytes: dependencies.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes,
+    initialGenerationPaths: new Set(),
+    initialFilePaths: new Set(
+      observations.flatMap((observation) =>
+        observation.initialFiles.map((file) => file.relativePath)
+      )
+    )
   }
-  const initialFiles = observations.flatMap((observation) => observation.initialFiles)
+  const initialFiles = selectInitialFilesForCapture(
+    observations.flatMap((observation) => observation.initialFiles),
+    request.sourceFileAccess
+  )
+  const registeredInputsByPath = new Map<
+    string,
+    Pick<NotebookRunInputFile, 'sourceKind' | 'inputFileVersionId' | 'checksum'> | undefined
+  >()
+  for (const input of request.registeredInputFiles ?? []) {
+    const path = `data/${notebookPromptInputPath(input.filename, input.checksum)}`
+    registeredInputsByPath.set(
+      path,
+      registeredInputsByPath.has(path)
+        ? undefined
+        : {
+            sourceKind: input.sourceKind,
+            inputFileVersionId: input.inputFileVersionId,
+            checksum: input.checksum
+          }
+    )
+  }
   const initialViewState: ExecutionFileEvidenceCoverage = observations.every(
     (observation) => observation.initialAvailable
   )
@@ -1428,7 +1455,10 @@ const beginEvidenceCapture = async (
           generation: {
             generationId: (dependencies.createId ?? randomUUID)(),
             capturedAt
-          }
+          },
+          ...(registeredInputsByPath.get(file.relativePath)
+            ? { registeredInput: registeredInputsByPath.get(file.relativePath) }
+            : {})
         })),
         maxGenerationBytes: capture.maxGenerationBytes,
         maxActivityBytes: capture.maxActivityBytes,
@@ -1443,6 +1473,9 @@ const beginEvidenceCapture = async (
     if (!('capturedInitialGenerations' in result)) {
       throw new Error('File-evidence initial capture returned an invalid result.')
     }
+    capture.initialGenerationPaths = new Set(
+      (result.initialGenerations ?? []).map((generation) => generation.relativePath)
+    )
     return capture
   } catch (error) {
     await runSerializedEvidenceWorker(
@@ -1460,6 +1493,191 @@ const beginEvidenceCapture = async (
     throw error
   } finally {
     reservedDiskBytes -= reservedBytes
+  }
+}
+
+const prepareSourceFileAccess = async (
+  request: WorkingFileObservationRequest
+): Promise<WorkingFileObservationRequest['sourceFileAccess']> => {
+  if (request.code === undefined) return undefined
+  const analysis = await analyzeNotebookSourceFileAccess(
+    request.language ?? 'python',
+    request.code,
+    request.sourceFileAccessContext
+  )
+  const sessionRoot = resolve(request.notebookSessionRoot)
+  const executionRoot = resolve(request.cwd ?? request.dataRoot)
+  let outsideReadRoots = false
+  let outsideWriteRoots = false
+  const normalizePath = (path: string): string | undefined => {
+    if (/^[a-z][a-z\d+.-]*:/iu.test(path)) {
+      return undefined
+    }
+    const absolute = resolve(executionRoot, path)
+    if (!isPathInside(sessionRoot, absolute)) {
+      return undefined
+    }
+    return toPortableNotebookRelativePath(relative(sessionRoot, absolute))
+  }
+  const reads = analysis.reads.flatMap((path) => {
+    const normalized = normalizePath(path)
+    if (!normalized) outsideReadRoots = true
+    return normalized ? [normalized] : []
+  })
+  const writes = analysis.writes.flatMap((path) => {
+    const normalized = normalizePath(path)
+    if (!normalized) outsideWriteRoots = true
+    return normalized ? [normalized] : []
+  })
+  const writeScopes = (analysis.writeScopes ?? []).flatMap((scope) => {
+    const normalized = normalizePath(scope.path)
+    if (!normalized) outsideWriteRoots = true
+    return normalized ? [{ ...scope, path: normalized }] : []
+  })
+  const reasonCodes: ExecutionFileEvidenceReason[] = [...analysis.reasonCodes]
+  if (outsideReadRoots || outsideWriteRoots) reasonCodes.push('absolute-path-not-frozen')
+  const constrainedState = (
+    state: ExecutionFileEvidenceCoverage,
+    outsideObservedRoots: boolean
+  ): ExecutionFileEvidenceCoverage =>
+    state === 'unavailable'
+      ? 'unavailable'
+      : state === 'complete' && !outsideObservedRoots
+        ? 'complete'
+        : 'partial'
+  const result = {
+    readState: constrainedState(analysis.readState, outsideReadRoots),
+    writeState: constrainedState(analysis.writeState, outsideWriteRoots),
+    externalState: constrainedState(analysis.externalState, outsideReadRoots || outsideWriteRoots),
+    reads: [...new Set(reads)].sort(),
+    writes: [...new Set(writes)].sort(),
+    ...(writeScopes.length ? { writeScopes } : {}),
+    reasonCodes: uniqueReasons(reasonCodes)
+  }
+  reportNotebookFileAnalysis(
+    request.runId,
+    request.language ?? 'python',
+    result,
+    Boolean(request.sourceFileAccessContext)
+  )
+  return result
+}
+
+const companionStemMatches = (
+  candidate: string,
+  stem: string,
+  suffixes: readonly string[]
+): boolean => {
+  const lowerCandidate = candidate.toLocaleLowerCase('en-US')
+  return suffixes.some(
+    (suffix) => lowerCandidate.endsWith(suffix) && candidate.slice(0, -suffix.length) === stem
+  )
+}
+
+const matchesWriteScope = (scope: NotebookSourceFileWriteScope, candidate: string): boolean => {
+  if (scope.kind === 'directory') return candidate.startsWith(`${scope.path}/`)
+  const lowerPath = scope.path.toLocaleLowerCase('en-US')
+  if (scope.kind === 'shapefile') {
+    if (!lowerPath.endsWith('.shp')) return false
+    return companionStemMatches(candidate, scope.path.slice(0, -'.shp'.length), [
+      '.shp.xml',
+      '.shp',
+      '.shx',
+      '.dbf',
+      '.prj',
+      '.cpg',
+      '.sbn',
+      '.sbx',
+      '.qix',
+      '.fix'
+    ])
+  }
+  const extension = lowerPath.endsWith('.tiff') ? '.tiff' : '.tif'
+  if (!lowerPath.endsWith(extension)) return false
+  const stem = scope.path.slice(0, -extension.length)
+  return (
+    candidate === scope.path ||
+    companionStemMatches(candidate, scope.path, ['.aux.xml', '.ovr']) ||
+    companionStemMatches(candidate, stem, ['.tfw', '.tifw', '.prj'])
+  )
+}
+
+function selectInitialFilesForCapture(
+  initialFiles: readonly SnapshotEntry[],
+  access: WorkingFileObservationRequest['sourceFileAccess']
+): readonly SnapshotEntry[] {
+  if (!access || access.readState !== 'complete' || access.writeState !== 'complete') {
+    return initialFiles
+  }
+  const paths = new Set([...access.reads, ...access.writes])
+  return initialFiles.filter(
+    (file) =>
+      paths.has(file.relativePath) ||
+      (access.writeScopes ?? []).some((scope) => matchesWriteScope(scope, file.relativePath))
+  )
+}
+
+const corroboratedCoverage = (
+  request: WorkingFileObservationRequest,
+  capture: ActiveEvidenceCapture,
+  changes: ObservedFileChange[],
+  rootsAvailable: boolean
+): {
+  evidenceState: ExecutionFileEvidenceSummary['state']
+  fileReads: ExecutionFileEvidenceCoverage
+  externalPaths: ExecutionFileEvidenceCoverage
+  writerAttribution: ExecutionFileEvidenceCoverage
+  reasonCodes: ExecutionFileEvidenceReason[]
+  readPaths?: string[]
+} => {
+  const access = request.sourceFileAccess
+  if (!access) {
+    return {
+      evidenceState: rootsAvailable ? 'partial' : 'unavailable',
+      fileReads: 'unavailable',
+      externalPaths: 'unavailable',
+      writerAttribution: 'unavailable',
+      reasonCodes: []
+    }
+  }
+  const declaredWrites = new Set(access.writes)
+  // Append/update writers may create a new file. Only an observed pre-existing destination
+  // needs an initial generation; a failed freeze must still remain a missing dependency.
+  const declaredReads = new Set(
+    access.reads.filter((path) => !declaredWrites.has(path) || capture.initialFilePaths.has(path))
+  )
+  const writeScopes = access.writeScopes ?? []
+  const readsComplete =
+    access.readState === 'complete' &&
+    [...declaredReads].every((path) => capture.initialGenerationPaths.has(path))
+  const writesComplete =
+    access.writeState === 'complete' &&
+    changes.every(
+      (change) =>
+        declaredWrites.has(change.relativePath) ||
+        writeScopes.some((scope) => matchesWriteScope(scope, change.relativePath))
+    )
+  const complete =
+    rootsAvailable && readsComplete && writesComplete && access.externalState === 'complete'
+  const unavailable =
+    access.readState === 'unavailable' &&
+    access.writeState === 'unavailable' &&
+    access.externalState === 'unavailable'
+  return {
+    evidenceState: complete ? 'available' : unavailable ? 'unavailable' : 'partial',
+    fileReads: readsComplete
+      ? 'complete'
+      : access.readState === 'unavailable'
+        ? 'unavailable'
+        : 'partial',
+    externalPaths: access.externalState,
+    writerAttribution: writesComplete
+      ? 'complete'
+      : access.writeState === 'unavailable'
+        ? 'unavailable'
+        : 'partial',
+    reasonCodes: access.reasonCodes,
+    ...(access.readState === 'complete' ? { readPaths: [...declaredReads].sort() } : {})
   }
 }
 
@@ -1516,9 +1734,30 @@ const persistEvidence = async (
     }
   }
 
+  const coverage = corroboratedCoverage(
+    request,
+    capture,
+    changes,
+    rootResults.every((result) => result.available)
+  )
+  const rootReasonCodes = rootResults
+    .flatMap((result) => result.reasonCodes)
+    .filter(
+      (reason) =>
+        reason !== 'watcher-unavailable' ||
+        coverage.fileReads !== 'complete' ||
+        coverage.writerAttribution !== 'complete'
+    )
+
   const plannedBytes = Math.min(
     capture.maxActivityBytes,
     Buffer.byteLength(JSON.stringify(changes))
+  )
+  const declaredReads = new Set(request.sourceFileAccess?.reads)
+  const replacementWrites = new Set(
+    request.sourceFileAccess?.writeState === 'complete'
+      ? request.sourceFileAccess.writes.filter((path) => !declaredReads.has(path))
+      : []
   )
   let reservedBytes = 0
   try {
@@ -1550,10 +1789,18 @@ const persistEvidence = async (
         blobStorageKeyPrefix: capture.blobStorageKeyPrefix,
         rootKinds,
         rootsAvailable: rootResults.every((result) => result.available),
-        reasonCodes: rootResults.flatMap((result) => result.reasonCodes),
+        evidenceState: coverage.evidenceState,
+        fileReads: coverage.fileReads,
+        externalPaths: coverage.externalPaths,
+        writerAttribution: coverage.writerAttribution,
+        ...(coverage.readPaths ? { readPaths: coverage.readPaths } : {}),
+        reasonCodes: [...rootReasonCodes, ...coverage.reasonCodes],
         scientificOutputs,
         changes: changes.map((change) => ({
-          change,
+          change:
+            change.relation === 'modified' && replacementWrites.has(change.relativePath)
+              ? { ...change, before: undefined }
+              : change,
           generation: {
             generationId: change.after ? (dependencies.createId ?? randomUUID)() : '',
             capturedAt: new Date((dependencies.now ?? Date.now)()).toISOString()
@@ -1612,6 +1859,17 @@ const startWorkingFileObservation = async (
   request: WorkingFileObservationRequest,
   dependencies: WorkingFileObservationDependencies = {}
 ): Promise<WorkingFileObservation> => {
+  const preparedRequest = {
+    ...request,
+    sourceFileAccess: await prepareSourceFileAccess(request).catch(() => ({
+      readState: 'unavailable' as const,
+      writeState: 'unavailable' as const,
+      externalState: 'unavailable' as const,
+      reads: [],
+      writes: [],
+      reasonCodes: ['source-analysis-unsupported-call' as const]
+    }))
+  }
   const logicalSessionRoot = resolve(request.notebookSessionRoot)
   const handoffRoot = join(logicalSessionRoot, 'handoff')
   const roots: Array<{ kind: 'data' | 'handoff'; path: string; logicalPath: string }> = [
@@ -1626,12 +1884,14 @@ const startWorkingFileObservation = async (
       startRootObservation(root.path, root.logicalPath, logicalSessionRoot, dependencies)
     )
   )
-  const capture = await beginEvidenceCapture(request, observations, dependencies).catch((error) => {
-    if (process.env.OPEN_SCIENCE_DEBUG_FILE_EVIDENCE === '1') {
-      log.error('file-evidence initial capture failed', diagnosticErrorFields(error))
+  const capture = await beginEvidenceCapture(preparedRequest, observations, dependencies).catch(
+    (error) => {
+      if (process.env.OPEN_SCIENCE_DEBUG_FILE_EVIDENCE === '1') {
+        log.error('file-evidence initial capture failed', diagnosticErrorFields(error))
+      }
+      return undefined
     }
-    return undefined
-  })
+  )
   let finished = false
   return {
     finish: async (signal) => {
@@ -1643,13 +1903,28 @@ const startWorkingFileObservation = async (
       }
       finished = true
       const results = await Promise.all(observations.map((observation) => observation.finish()))
-      return persistEvidence(
-        { ...request, signal: signal ?? request.signal },
+      const result = await persistEvidence(
+        { ...preparedRequest, signal: signal ?? request.signal },
         roots.map((root) => root.kind),
         results,
         capture,
         dependencies
       )
+      return {
+        ...result,
+        ...(result.fileEvidence.fileReads === 'complete' &&
+        preparedRequest.sourceFileAccess?.readState === 'complete' &&
+        preparedRequest.sourceFileAccess.reads.length > 0
+          ? {
+              confirmedReadPaths: preparedRequest.sourceFileAccess.reads.filter(
+                (path) =>
+                  !preparedRequest.sourceFileAccess!.writes.some(
+                    (candidate) => candidate === path
+                  ) || capture?.initialFilePaths.has(path)
+              )
+            }
+          : {})
+      }
     }
   }
 }
