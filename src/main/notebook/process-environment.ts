@@ -5,7 +5,16 @@ const COMMON_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'
 
 const POSIX_ENV_ALLOWLIST = ['HOME', 'USER', 'LOGNAME', 'SHELL'] as const
 
-const WINDOWS_ENV_ALLOWLIST = ['ComSpec', 'PATHEXT', 'SystemDrive', 'SystemRoot', 'WINDIR'] as const
+const WINDOWS_ENV_ALLOWLIST = [
+  'ComSpec',
+  'PATHEXT',
+  'ProgramFiles',
+  'ProgramFiles(x86)',
+  'ProgramW6432',
+  'SystemDrive',
+  'SystemRoot',
+  'WINDIR'
+] as const
 
 const projectEnvironment = (
   sourceEnv: NodeJS.ProcessEnv,
