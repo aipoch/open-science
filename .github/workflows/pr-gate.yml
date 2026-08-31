@@ -868,7 +868,8 @@ jobs:
         id: e2e_functional_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:journey -- --workers=2 --fail-on-flaky-tests
+        # Balance tests inside slow spec files without increasing the two-worker concurrency cap.
+        run: npm run test:e2e:journey -- --workers=2 --fully-parallel --fail-on-flaky-tests
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -884,7 +885,7 @@ jobs:
         id: e2e_workspace_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:workspace -- --workers=2 --fail-on-flaky-tests
+        run: npm run test:e2e:workspace -- --workers=2 --fully-parallel --fail-on-flaky-tests
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
         continue-on-error: true

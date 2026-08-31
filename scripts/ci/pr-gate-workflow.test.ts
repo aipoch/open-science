@@ -445,8 +445,8 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey -- --workers=2 --fail-on-flaky-tests',
-        'npm run test:e2e:workspace -- --workers=2 --fail-on-flaky-tests',
+        'npm run test:e2e:journey -- --workers=2 --fully-parallel --fail-on-flaky-tests',
+        'npm run test:e2e:workspace -- --workers=2 --fully-parallel --fail-on-flaky-tests',
         'npm run test:e2e:accessibility -- --fail-on-flaky-tests'
       ])
     )
