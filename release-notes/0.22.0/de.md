@@ -3,7 +3,7 @@
 - **Persistente Agentenerinnerungen.** Der Agent kann sich nun sitzungsübergreifend an wichtige Informationen erinnern. Die optionalen, in projektbezogenen Kategorien organisierten Einträge werden automatisch abgerufen, sobald eine Konversation sie berührt. In den Einstellungen lassen sich alle Einträge anzeigen, bearbeiten und löschen. (#1432)
 - **Provenienzbewusste Workflows für Abbildungen.** Die integrierten wissenschaftlichen Fähigkeiten erhalten registrierte Hilfsprogramme für die Gestaltung von Abbildungen, die Zusammenstellung mehrteiliger Abbildungen und publikationsreife Erläuterungen. Sie bauen auf unveränderlichen Artefakteingaben auf, sodass jede Abbildung auf ihre Ausgangsdaten zurückgeführt werden kann. (#1864)
 - **Zentrale Verwaltung von Anmeldeinformationen.** GitHub-Tokens, Konnektor-Schlüssel und Konnektor-Anmeldungen werden an einer Stelle verwaltet. Der Status ist sofort erkennbar, fehlerhafte Anmeldeinformationen lassen sich geführt wiederherstellen und betroffene Konnektoren werden anschließend automatisch erneut geprüft. (#1865)
-- **Ein vollständigeres Bild der Nutzung.** Das Nutzungsdashboard ordnet den Token-Verbrauch nun der jeweiligen Ausführung zu und berücksichtigt Modellaufrufe außerhalb der Hauptkonversation, einschließlich Seitenkonversationen, Delegation und Kontextkomprimierung. (#1877, #1874)
+- **Ein vollständigeres Bild der Nutzung.** Das Nutzungsdashboard ordnet den Token-Verbrauch nun der jeweiligen Ausführung zu und berücksichtigt Modellaufrufe außerhalb der Hauptkonversation, einschließlich Side-Chats, Delegation und Kontextkomprimierung. (#1877, #1874)
 
 ## 🚀 Neue Funktionen
 
@@ -15,7 +15,7 @@
 
 ## 🔧 Verbesserungen
 
-- Das Nutzungsdashboard berücksichtigt nun auch Modellaufrufe außerhalb der Hauptkonversation, etwa Seitenkonversationen, Delegation und Kontextkomprimierung. Die Summen entsprechen dadurch besser der Abrechnung des Anbieters. (#1874)
+- Das Nutzungsdashboard berücksichtigt nun auch Modellaufrufe außerhalb der Hauptkonversation, etwa Side-Chats, Delegation und Kontextkomprimierung. Die Summen entsprechen dadurch besser der Abrechnung des Anbieters. (#1874)
 - Erweiterte Zeilen für geladene Fähigkeiten zeigen das Fähigkeitsdokument als formatiertes Markdown an, bieten bei Ladefehlern eine Wiederholungsoption und lassen sich ohne Sprünge der Bildlaufposition öffnen. (#1812)
 - Ein fehlgeschlagener Update-Download führt nicht mehr in eine Sackgasse: Der Update-Dialog bleibt bedienbar und kann den Download sofort wiederholen. (#1868)
 - Update-Downloads und Runtime-Installationen wurden abgesichert: Update-Manifeste werden vor der Verwendung validiert, Installationsprogramme müssen von der vertrauenswürdigen Quelle stammen und abgebrochene Installationen werden vollständig bereinigt. (#1873)

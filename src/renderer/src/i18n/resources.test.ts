@@ -1110,6 +1110,10 @@ describe('mandatory product glossary', () => {
       uploadSkillFile: de.renderer['Upload a SKILL.md or text file'],
       browseMarketplace: de.renderer['Browse Marketplace'],
       continueInstallation: de.renderer['Continue installation'],
+      resume: de.renderer.Resume,
+      validate: de.renderer.Validate,
+      importAction: de.renderer.Import,
+      exportAction: de.renderer.Export,
       uncheckAll: de.renderer['Uncheck all']
     }).toEqual({
       addSshHost: 'SSH-Host hinzufügen',
@@ -1133,6 +1137,10 @@ describe('mandatory product glossary', () => {
       uploadSkillFile: 'SKILL.md- oder Textdatei hochladen',
       browseMarketplace: 'Marktplatz durchsuchen',
       continueInstallation: 'Installation fortsetzen',
+      resume: 'Fortsetzen',
+      validate: 'Prüfen',
+      importAction: 'Importieren',
+      exportAction: 'Exportieren',
       uncheckAll: 'Auswahl aufheben'
     })
   })
@@ -1160,6 +1168,39 @@ describe('mandatory product glossary', () => {
       openSource: 'Quelle im Browser öffnen',
       sourcePreview: 'Quellenvorschau: {{title}}',
       httpsOnly: 'Vorschau nur für HTTPS-Quellen verfügbar'
+    })
+  })
+
+  it('uses directory wording for German file-browser Home actions', () => {
+    expect({
+      home: de.renderer.Home,
+      goHome: de.renderer['Go to home'],
+      goHomeFolder: de.renderer['Go to home folder'],
+      jumpHome: de.renderer['Jump to Home, a drive, or a pinned folder']
+    }).toEqual({
+      home: 'Benutzerordner',
+      goHome: 'Zum Benutzerordner',
+      goHomeFolder: 'Zum Benutzerordner',
+      jumpHome:
+        'Wechseln Sie zum Benutzerordner, zu einem Laufwerk oder zu einem angehefteten Ordner'
+    })
+  })
+
+  it('uses Side-Chat consistently in German', () => {
+    expect({
+      add: de.renderer['Add to Side chat'],
+      resize: de.renderer['Resize Side chat panel'],
+      retryRestore: de.renderer['Retry Side chat restore'],
+      sendFollowUp: de.renderer['Send Side chat follow up'],
+      title: de.renderer['Side chat'],
+      followUp: de.renderer['Side chat follow up']
+    }).toEqual({
+      add: 'Zum Side-Chat hinzufügen',
+      resize: 'Größe des Side-Chat-Bereichs ändern',
+      retryRestore: 'Side-Chat-Wiederherstellung erneut versuchen',
+      sendFollowUp: 'Folgenachricht im Side-Chat senden',
+      title: 'Side-Chat',
+      followUp: 'Folgenachricht im Side-Chat'
     })
   })
 
@@ -1383,6 +1424,52 @@ describe('mandatory product glossary', () => {
       remoteOther: 'REMOTE · {{count}}',
       revokedConflicts:
         '{{count}} Berechtigungen widerrufen · Vor dem Widerruf anderweitig geändert: {{conflictCount}}'
+    })
+  })
+
+  it('uses reviewed German wording for memory limits and remote-job recovery', () => {
+    expect({
+      oneCategoryUsed: de.renderer['{{count}} of {{limit}} categories used_one'],
+      otherCategoriesUsed: de.renderer['{{count}} of {{limit}} categories used_other'],
+      cancelling: de.renderer.Cancelling,
+      cancelFailed: de.renderer['Unable to cancel remote job.'],
+      integrityWarning: de.renderer['Saved remote job data needs attention'],
+      integrityDetail:
+        de.renderer[
+          'This job remains visible, but automatic result analysis is paused because its saved state is incompatible.'
+        ],
+      loadFailed: de.renderer['Unable to load remote jobs.'],
+      harvestPending: de.renderer['Harvest pending. Open Science will retry automatically.'],
+      harvestFailed: de.renderer['Harvest failed. Remote files were left untouched.'],
+      queued: de.renderer['Waiting in queue'],
+      submitting: de.renderer.Submitting,
+      recoveryWarning: de.renderer['Remote job recovery needs attention'],
+      recoveryDetail:
+        de.renderer[
+          'Open Science could not check saved remote jobs. Retry to restore pending result analysis.'
+        ],
+      completed: de.renderer['Remote job completed'],
+      analysisStarted: de.renderer['Analysis started automatically']
+    }).toEqual({
+      oneCategoryUsed: 'Verwendete Kategorien: {{count}} von {{limit}}',
+      otherCategoriesUsed: 'Verwendete Kategorien: {{count}} von {{limit}}',
+      cancelling: 'Wird abgebrochen',
+      cancelFailed: 'Der Remote-Job konnte nicht abgebrochen werden.',
+      integrityWarning: 'Gespeicherte Remote-Job-Daten müssen geprüft werden',
+      integrityDetail:
+        'Dieser Job bleibt sichtbar, aber die automatische Ergebnisanalyse ist angehalten, da sich sein gespeicherter Zustand nicht verarbeiten lässt.',
+      loadFailed: 'Remote-Jobs konnten nicht geladen werden.',
+      harvestPending:
+        'Der Ergebnisabruf steht noch aus. Open Science versucht es automatisch erneut.',
+      harvestFailed:
+        'Der Ergebnisabruf ist fehlgeschlagen. Die Remote-Dateien wurden nicht verändert.',
+      queued: 'In der Warteschlange',
+      submitting: 'Wird übermittelt',
+      recoveryWarning: 'Problem bei der Wiederherstellung von Remote-Jobs',
+      recoveryDetail:
+        'Open Science konnte die gespeicherten Remote-Jobs nicht prüfen. Versuchen Sie es erneut, um die ausstehende Ergebnisanalyse fortzusetzen.',
+      completed: 'Remote-Job abgeschlossen',
+      analysisStarted: 'Analyse automatisch gestartet'
     })
   })
 

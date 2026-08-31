@@ -175,6 +175,12 @@ this pair backwards is the single most common failure in Simplified-to-Tradition
 | Data root             | Datenstammverzeichnis  | Racine des données         | データルート               | 데이터 루트            | Корневая папка данных        | 数据目录           | 資料目錄           |
 | Command line tool     | Befehlszeilenwerkzeug  | Outil en ligne de commande | コマンドラインツール       | 명령줄 도구            | Инструмент командной строки  | 命令行工具         | 命令列工具         |
 
+`Home` means `Start` for the app surface. The current bare `Home` catalog key is used by file
+browsers for the user's home directory, where German uses `Benutzerordner`.
+
+German keeps the product term `Side chat` as `Side-Chat` and forms compounds with hyphens, such as
+`Side-Chat-Bereich` and `Side-Chat-Wiederherstellung`.
+
 ## Spanish terminology
 
 Spanish is translated directly from the English source key. These terms are binding for prose in
