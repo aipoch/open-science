@@ -2730,7 +2730,8 @@ describe('SettingsPage layout', () => {
             browser: 'Chrome on iOS',
             platform: 'iOS/iPadOS',
             createdAt: Date.now(),
-            lastSeenAt: Date.now()
+            lastSeenAt: Date.now(),
+            expiresAt: Date.now() + 180 * 24 * 60 * 60 * 1_000
           }
         ]
       })
@@ -2745,6 +2746,7 @@ describe('SettingsPage layout', () => {
       expect(document.body.textContent).toContain('123456')
       expect(document.body.textContent).toContain('Allow for up to 12 hours')
       expect(document.body.textContent).not.toContain('Allow once')
+      expect(document.body.textContent).not.toContain('Invalid Date')
       expect(document.body.textContent).toContain(
         'Two-step verification requests and trusted browsers can be managed below'
       )
