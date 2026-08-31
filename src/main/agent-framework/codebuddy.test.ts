@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -39,7 +40,7 @@ describe('codebuddy framework', () => {
     })
 
     expect(config.env).toMatchObject({
-      CODEBUDDY_CONFIG_DIR: '/app-data/codebuddy',
+      CODEBUDDY_CONFIG_DIR: join('/app-data', 'codebuddy'),
       CODEBUDDY_API_KEY: 'test-key',
       CODEBUDDY_BASE_URL: 'https://gateway.example.test/v1',
       CODEBUDDY_MODEL: 'test-model',

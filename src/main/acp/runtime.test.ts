@@ -8217,7 +8217,7 @@ describe('ACP runtime session management', () => {
 
     expect(agent.resumedSessions.at(-1)).toMatchObject({
       sessionId: 'codebuddy-session-1',
-      cwd: '/workspace/first'
+      cwd: resolve('/workspace/first')
     })
     expect(agent.prompts.at(-1)).toEqual({
       sessionId: 'codebuddy-session-1',
