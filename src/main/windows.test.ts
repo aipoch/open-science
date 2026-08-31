@@ -1444,6 +1444,38 @@ describe('close chord interception', () => {
     )
   })
 
+  it('ignores an aborted load failure from a superseded main-frame navigation', async () => {
+    createMainWindow()
+    const window = currentWindow!
+    await Promise.resolve()
+
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/old.html',
+      frame: window.mainFrame
+    })
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/current.html',
+      frame: window.mainFrame
+    })
+    fireWebContentsEvent(
+      window,
+      'did-fail-load',
+      {},
+      -3,
+      'ERR_ABORTED',
+      'file:///app/old.html',
+      true
+    )
+
+    expect(window.loadFileMock).toHaveBeenCalledTimes(1)
+    expect(windowLogSpies.warn).not.toHaveBeenCalledWith(
+      'reloading renderer after document load failure',
+      expect.anything()
+    )
+  })
+
   it('recovers a main-frame document load failure within the renderer retry budget', async () => {
     showMessageBoxMock.mockReturnValueOnce(new Promise(() => undefined))
     createMainWindow()

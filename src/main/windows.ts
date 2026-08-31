@@ -57,6 +57,7 @@ const log = createLogger('window')
 const E2E_WINDOW_MODE_ENV = 'OPEN_SCIENCE_E2E_WINDOW_MODE'
 const RENDERER_RECOVERY_WINDOW_MS = 60_000
 const MAX_AUTOMATIC_RENDERER_RECOVERIES = 2
+const CHROMIUM_ERR_ABORTED = -3
 const ALLOWED_RENDERER_PERMISSIONS = new Set(['clipboard-sanitized-write'])
 const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
   'abnormal-exit',
@@ -488,6 +489,9 @@ const createMainWindow = (
       )
       if (!isMainFrame) return
       log.error('renderer document failed to load', { errorCode, errorDescription })
+      // Chromium reports a superseded navigation as ERR_ABORTED after the replacement navigation may
+      // already be current. Recovering that canceled document would overwrite the valid replacement.
+      if (errorCode === CHROMIUM_ERR_ABORTED) return
       // Explicit loadRenderer attempts are observed through their Promise so one Chromium failure only
       // consumes one recovery slot. A later top-level navigation has no pending Promise owner, so route
       // its failure through the same bounded recovery used for renderer process exits.
