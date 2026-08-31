@@ -3750,6 +3750,7 @@
     "{{count}} Connectors_other": "{{count}} 个连接器",
     "Remove this credential from its Connectors first.": "请先从使用此凭据的连接器中移除它。",
     "Remove this credential from this device?": "从此设备移除此凭据？",
+    "This permanently removes the stored credential from this device.": "这会从此设备永久移除已存储的凭据。",
     "Could not remove credential.": "无法移除凭据。",
     "No Connector credentials yet.": "尚无连接器凭据。",
     "Could not save credential.": "无法保存凭据。",

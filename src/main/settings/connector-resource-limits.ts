@@ -180,11 +180,6 @@ const assertAddCustomServerLimits = (request: AddCustomServerRequest): void => {
     'Connector arguments',
     'Connector argument'
   )
-  const secretBytes =
-    assertSecretRecord(request.env, 'Connector environment variables') +
-    assertSecretRecord(request.headers, 'Connector headers') +
-    (request.oauth ? assertOAuth(request.oauth) : 0)
-  assertSecretTotal(secretBytes)
   assertCredentialBindingRecord(
     request.envCredentialIds,
     'Connector environment credential bindings'

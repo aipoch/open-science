@@ -631,10 +631,7 @@ export function ConnectorAddForm({
             : {})
         }
         const created = await addCustomServer(request)
-        if (
-          request.oauth ||
-          (request.oauthCredentialId && selectedOAuthCredential?.status !== 'connected')
-        ) {
+        if (request.oauthCredentialId && selectedOAuthCredential?.status !== 'connected') {
           setOAuthSignInServer(created)
         } else {
           onDone()
@@ -1011,7 +1008,10 @@ export function ConnectorAddForm({
                                 {staticCredentials.length > 0 ? (
                                   staticCredentials.map((credential) => (
                                     <SelectItem key={credential.id} value={credential.id}>
-                                      {credential.displayName}
+                                      {credential.displayName} ·{' '}
+                                      {credential.kind === 'api_key'
+                                        ? t('API key')
+                                        : t('Access token')}
                                     </SelectItem>
                                   ))
                                 ) : (
@@ -1512,7 +1512,10 @@ export function ConnectorAddForm({
                                   {staticCredentials.length > 0 ? (
                                     staticCredentials.map((credential) => (
                                       <SelectItem key={credential.id} value={credential.id}>
-                                        {credential.displayName}
+                                        {credential.displayName} ·{' '}
+                                        {credential.kind === 'api_key'
+                                          ? t('API key')
+                                          : t('Access token')}
                                       </SelectItem>
                                     ))
                                   ) : (

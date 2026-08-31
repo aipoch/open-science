@@ -4181,6 +4181,7 @@
     "{{count}} Connectors_other": "{{count}} Коннектора",
     "Remove this credential from its Connectors first.": "Сначала удалите эти учётные данные из использующих их Коннекторов.",
     "Remove this credential from this device?": "Удалить эти учётные данные с устройства?",
+    "This permanently removes the stored credential from this device.": "Сохранённые учётные данные будут безвозвратно удалены с этого устройства.",
     "Could not remove credential.": "Не удалось удалить учётные данные.",
     "No Connector credentials yet.": "Учётных данных Коннекторов пока нет.",
     "Could not save credential.": "Не удалось сохранить учётные данные.",

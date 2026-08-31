@@ -65,6 +65,8 @@ describe('DeviceCredentialEditor', () => {
     expect(content?.className).not.toContain('mx-auto')
     expect(content?.className).not.toContain('max-w-')
     const [name, secret] = Array.from(container.querySelectorAll<HTMLInputElement>('input'))
+    expect(name?.getAttribute('aria-required')).toBe('true')
+    expect(secret?.getAttribute('aria-required')).toBe('true')
     setInputValue(name!, 'Lab API')
     const paste = new Event('paste', { bubbles: true, cancelable: true })
     Object.defineProperty(paste, 'clipboardData', {
@@ -205,7 +207,8 @@ describe('DeviceCredentialEditor', () => {
     )
     await act(async () => saveAndSignIn?.click())
 
-    expect(container.textContent).toContain('Sign-in cancelled')
+    expect(container.textContent).toContain('Could not connect credential.')
+    expect(container.textContent).not.toContain('Sign-in cancelled')
     expect(onDone).not.toHaveBeenCalled()
     const retry = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent === 'Sign in'
@@ -239,6 +242,11 @@ describe('DeviceCredentialEditor', () => {
     )
     expect(preRegistered?.checked).toBe(true)
     expect(preRegistered?.disabled).toBe(true)
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLInputElement>('input'))
+        .find((input) => input.type === 'password')
+        ?.getAttribute('aria-required')
+    ).toBe('true')
     expect(document.body.querySelector('[aria-label="Credential type"]')?.textContent).toContain(
       'OAuth'
     )

@@ -91,6 +91,65 @@ describe('CredentialsPanel', () => {
     expect(remove?.getAttribute('aria-disabled')).toBe('true')
   })
 
+  it('confirms device credential removal with the shared alert dialog', async () => {
+    const removeDeviceCredential = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      deviceCredentials: [
+        {
+          id: 'credential-remove',
+          displayName: 'Temporary token',
+          kind: 'token',
+          status: 'stored',
+          consumerCount: 0,
+          consumerNames: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      loadDeviceCredentials: vi.fn().mockResolvedValue(undefined),
+      removeDeviceCredential
+    })
+
+    await act(async () => {
+      root.render(
+        <CredentialsPanel
+          view={{ kind: 'list' }}
+          onNavigate={vi.fn()}
+          onOpenConnector={vi.fn()}
+          onOpenProvider={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Remove Temporary token"]')
+        ?.click()
+    })
+    expect(document.body.textContent).toContain('Remove this credential from this device?')
+
+    const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Cancel'
+    )
+    await act(async () => cancel?.click())
+    expect(removeDeviceCredential).not.toHaveBeenCalled()
+    expect(document.body.textContent).not.toContain('Remove this credential from this device?')
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Remove Temporary token"]')
+        ?.click()
+    })
+    const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Remove'
+    )
+    await act(async () => confirm?.click())
+
+    expect(removeDeviceCredential).toHaveBeenCalledWith({ id: 'credential-remove' })
+    expect(document.body.textContent).not.toContain('Remove this credential from this device?')
+  })
+
   it('aggregates service credentials and links custom MCP secrets to their owner', async () => {
     const onOpenConnector = vi.fn()
     await act(async () => {

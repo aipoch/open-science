@@ -3748,6 +3748,7 @@
     "{{count}} Connectors_other": "커넥터 {{count}}개",
     "Remove this credential from its Connectors first.": "먼저 이 자격 증명을 사용하는 커넥터에서 제거하세요.",
     "Remove this credential from this device?": "이 기기에서 자격 증명을 제거하시겠습니까?",
+    "This permanently removes the stored credential from this device.": "이 기기에 저장된 자격 증명을 영구적으로 제거합니다.",
     "Could not remove credential.": "자격 증명을 제거하지 못했습니다.",
     "No Connector credentials yet.": "아직 커넥터 자격 증명이 없습니다.",
     "Could not save credential.": "자격 증명을 저장하지 못했습니다.",

@@ -20,8 +20,8 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import { errorDetail } from '@/lib/error-detail'
 import { useSettingsStore } from '@/stores/settings-store'
+import { localizeCredentialError } from './credential-error-message'
 import { MaskedPasswordField } from './MaskedPasswordField'
 
 type DeviceCredentialEditorProps = {
@@ -191,7 +191,7 @@ export function DeviceCredentialEditor({
           onDone(created)
         } catch (error) {
           setMessage({
-            text: errorDetail(error) ?? t('Could not connect credential.'),
+            text: localizeCredentialError(error, t, 'Could not connect credential.'),
             tone: 'error'
           })
         }
@@ -205,7 +205,7 @@ export function DeviceCredentialEditor({
     } catch (error) {
       if (kind === 'oauth') setAdvancedOpen(true)
       setMessage({
-        text: errorDetail(error) ?? t('Could not save credential.'),
+        text: localizeCredentialError(error, t, 'Could not save credential.'),
         tone: 'error'
       })
     } finally {
@@ -226,7 +226,7 @@ export function DeviceCredentialEditor({
       setMessage({ text: t('Credential connected.'), tone: 'success' })
     } catch (error) {
       setMessage({
-        text: errorDetail(error) ?? t('Could not connect credential.'),
+        text: localizeCredentialError(error, t, 'Could not connect credential.'),
         tone: 'error'
       })
     } finally {
@@ -243,7 +243,7 @@ export function DeviceCredentialEditor({
       setMessage({ text: t('Credential disconnected.'), tone: 'success' })
     } catch (error) {
       setMessage({
-        text: errorDetail(error) ?? t('Could not disconnect credential.'),
+        text: localizeCredentialError(error, t, 'Could not disconnect credential.'),
         tone: 'error'
       })
     } finally {
@@ -274,8 +274,15 @@ export function DeviceCredentialEditor({
         </div>
 
         <label className={fieldClassName}>
-          <span className={labelClassName}>{t('Name')}</span>
-          <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+          <span className={labelClassName}>
+            {t('Name')}
+            <RequiredMark />
+          </span>
+          <Input
+            aria-required="true"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+          />
           <span className={helperClassName}>
             {t('Use a name that identifies the account or service.')}
           </span>
@@ -493,7 +500,11 @@ export function DeviceCredentialEditor({
                           {t('Client secret')}
                           {requiresOAuthClientSecret ? <RequiredMark /> : null}
                         </span>
-                        <MaskedPasswordField value={secret} onChange={setSecret} />
+                        <MaskedPasswordField
+                          aria-required={requiresOAuthClientSecret || undefined}
+                          value={secret}
+                          onChange={setSecret}
+                        />
                         <span className={helperClassName}>
                           {requiresOAuthClientSecret
                             ? t('This imported Connector requires a client secret entered locally.')
@@ -510,8 +521,15 @@ export function DeviceCredentialEditor({
 
         {kind !== 'oauth' ? (
           <label className={fieldClassName}>
-            <span className={labelClassName}>{editing ? t('Replacement value') : t('Value')}</span>
-            <MaskedPasswordField value={secret} onChange={setSecret} />
+            <span className={labelClassName}>
+              {editing ? t('Replacement value') : t('Value')}
+              {!editing ? <RequiredMark /> : null}
+            </span>
+            <MaskedPasswordField
+              aria-required={!editing || undefined}
+              value={secret}
+              onChange={setSecret}
+            />
             <span className={helperClassName}>
               {editing
                 ? t('Leave blank to keep the stored value.')

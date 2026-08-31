@@ -4054,6 +4054,7 @@
     "{{count}} Connectors_other": "{{count}} Connecteurs",
     "Remove this credential from its Connectors first.": "Supprimez d’abord ces informations d’identification de leurs Connecteurs.",
     "Remove this credential from this device?": "Supprimer ces informations d’identification de cet appareil ?",
+    "This permanently removes the stored credential from this device.": "Cette action supprime définitivement les informations d’identification enregistrées sur cet appareil.",
     "Could not remove credential.": "Impossible de supprimer les informations d’identification.",
     "No Connector credentials yet.": "Aucune information d’identification de Connecteur pour le moment.",
     "Could not save credential.": "Impossible d’enregistrer les informations d’identification.",

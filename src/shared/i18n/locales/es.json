@@ -4054,6 +4054,7 @@
     "{{count}} Connectors_other": "{{count}} Conectores",
     "Remove this credential from its Connectors first.": "Quite primero esta credencial de sus Conectores.",
     "Remove this credential from this device?": "¿Quitar esta credencial de este equipo?",
+    "This permanently removes the stored credential from this device.": "Esto quita permanentemente la credencial almacenada de este equipo.",
     "Could not remove credential.": "No se pudo quitar la credencial.",
     "No Connector credentials yet.": "Todavía no hay credenciales de Conectores.",
     "Could not save credential.": "No se pudo guardar la credencial.",

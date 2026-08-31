@@ -1463,10 +1463,8 @@ export type AddCustomServerRequest = {
   transport: CustomServerTransport
   command?: string
   args?: string[]
-  env?: Record<string, string>
   envCredentialIds?: Record<string, string>
   url?: string
-  headers?: Record<string, string>
   headerCredentialIds?: Record<string, string>
   oauthCredentialId?: string
   // Non-secret registration requirements checked against a selected shared OAuth credential.
@@ -1475,14 +1473,6 @@ export type AddCustomServerRequest = {
   // Request-only marker from an imported template. Main validates the selected shared credential;
   // the marker is never persisted on the Connector.
   requiresOAuthClientSecret?: boolean
-  oauth?: {
-    clientMetadataUrl?: string
-    authorizationServerUrl?: string
-    scopes?: string[]
-    clientId?: string
-    redirectUri?: string
-    clientSecret?: string
-  } | null
 }
 export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
 export type RemoveCustomServerRequest = { id: string }

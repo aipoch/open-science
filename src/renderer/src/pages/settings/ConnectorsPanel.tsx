@@ -55,6 +55,7 @@ import { specialistsUsingConnector, type SpecialistUsage } from './specialist-re
 import { ResourceTagBadges, ResourceTagMenu, TagFilter } from './ResourceTagControls'
 import { SkillUsageAgents } from './SkillUsageAgents'
 import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
+import { localizeCredentialError } from './credential-error-message'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
@@ -197,9 +198,7 @@ export function ConnectorsPanel({
         })
       }
     } catch (error) {
-      setOAuthConnectionError(
-        error instanceof Error ? error.message : t('Failed to disconnect Connector.')
-      )
+      setOAuthConnectionError(localizeCredentialError(error, t, 'Failed to disconnect Connector.'))
     } finally {
       setOAuthConnectionBusy(false)
     }

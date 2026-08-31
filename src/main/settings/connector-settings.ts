@@ -101,9 +101,7 @@ const sharedOAuthMatchesServer = (
 }
 
 const normalizeOAuthConfig = (
-  oauth:
-    | Exclude<AddCustomServerRequest['oauth'], null | undefined>
-    | Exclude<UpdateCustomServerRequest['oauth'], null | undefined>
+  oauth: Exclude<UpdateCustomServerRequest['oauth'], null | undefined>
 ): NonNullable<StoredCustomMcpServer['oauth']> => ({
   ...(oauth.clientMetadataUrl?.trim() ? { clientMetadataUrl: oauth.clientMetadataUrl.trim() } : {}),
   ...(oauth.authorizationServerUrl?.trim()
@@ -609,8 +607,26 @@ class ConnectorSettingsModule {
   private async addCustomServerSerialized(
     request: AddCustomServerRequest
   ): Promise<ConnectorsSnapshot> {
+    const untrustedRequest = request as AddCustomServerRequest & {
+      env?: Record<string, string>
+      headers?: Record<string, string>
+      oauth?: unknown
+    }
+    if (
+      untrustedRequest.env !== undefined ||
+      untrustedRequest.headers !== undefined ||
+      untrustedRequest.oauth !== undefined
+    ) {
+      throw new Error('New Connectors must use shared Credentials')
+    }
     assertCredentialFieldsAreEncrypted(request)
-    if (hasAmbiguousCustomMcpCredentialNames(request)) {
+    if (
+      hasAmbiguousCustomMcpCredentialNames({
+        ...request,
+        ...(request.envCredentialIds ? { envRefs: request.envCredentialIds } : {}),
+        ...(request.headerCredentialIds ? { headerRefs: request.headerCredentialIds } : {})
+      })
+    ) {
       throw new Error('Duplicate credential names are not allowed on this platform.')
     }
     if (request.transport !== 'stdio' && request.url) {
@@ -632,9 +648,6 @@ class ConnectorSettingsModule {
     if (existingServers.some((server) => server.name === name)) {
       throw new Error(`A custom connector named "${name}" already exists`)
     }
-    if (request.transport === 'stdio' && request.oauth) {
-      throw new Error('OAuth is only supported for remote custom connectors')
-    }
     if (request.transport !== 'stdio' && request.envCredentialIds) {
       throw new Error('Environment credentials are only supported for local custom connectors')
     }
@@ -646,28 +659,16 @@ class ConnectorSettingsModule {
         'Header and OAuth credentials are only supported for remote custom connectors'
       )
     }
-    if (
-      request.oauthCredentialId &&
-      (request.oauth || request.headers || request.headerCredentialIds)
-    ) {
+    if (request.oauthCredentialId && request.headerCredentialIds) {
       throw new Error('OAuth and static headers cannot be configured together')
     }
-    if (request.oauth && request.headers && Object.keys(request.headers).length > 0) {
-      throw new Error('OAuth and static headers cannot be configured together')
-    }
-    const oauth =
-      request.oauth && request.transport !== 'stdio'
-        ? normalizeOAuthConfig(request.oauth)
-        : undefined
-    const clientSecret = request.oauth?.clientSecret?.trim() || undefined
-    if (oauth) validateOAuthRegistration(oauth, Boolean(clientSecret))
     const sharedOAuth = request.oauthCredentialId
       ? await this.deviceCredentials?.resolveOAuth(request.oauthCredentialId)
       : undefined
     if (request.oauthCredentialId && !sharedOAuth) {
       throw new Error(`OAuth credential is unavailable: ${request.oauthCredentialId}`)
     }
-    if (request.requiresOAuthClientSecret && !sharedOAuth?.hasClientSecret && !clientSecret) {
+    if (request.requiresOAuthClientSecret && !sharedOAuth?.hasClientSecret) {
       throw new Error('The selected OAuth credential requires a client secret')
     }
     if (sharedOAuth && canonicalizeResourceUri(request.url ?? '') !== sharedOAuth.resourceUri) {
@@ -700,23 +701,17 @@ class ConnectorSettingsModule {
       name,
       displayName,
       transport: request.transport,
-      enabled: !request.oauth && (!sharedOAuth || Boolean(sharedOAuth.state?.tokens?.access_token)),
+      enabled: !sharedOAuth || Boolean(sharedOAuth.state?.tokens?.access_token),
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
       ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
-      ...(request.env && Object.keys(request.env).length > 0
-        ? { envRefs: this.encryptSecretRecord(request.env) }
-        : request.envCredentialIds && Object.keys(request.envCredentialIds).length > 0
-          ? { envRefs: this.credentialRefRecord(request.envCredentialIds) }
-          : {}),
+      ...(request.envCredentialIds && Object.keys(request.envCredentialIds).length > 0
+        ? { envRefs: this.credentialRefRecord(request.envCredentialIds) }
+        : {}),
       ...(request.url?.trim() ? { url: request.url.trim() } : {}),
-      ...(request.headers && Object.keys(request.headers).length > 0
-        ? { headerRefs: this.encryptSecretRecord(request.headers) }
-        : request.headerCredentialIds && Object.keys(request.headerCredentialIds).length > 0
-          ? { headerRefs: this.credentialRefRecord(request.headerCredentialIds) }
-          : {}),
-      ...(oauth ? { oauth } : {}),
-      ...(clientSecret ? { oauthClientSecretRef: encryptKey(clientSecret) } : {}),
+      ...(request.headerCredentialIds && Object.keys(request.headerCredentialIds).length > 0
+        ? { headerRefs: this.credentialRefRecord(request.headerCredentialIds) }
+        : {}),
       ...(sharedOAuth ? { oauthRef: credentialReference(sharedOAuth.id) } : {})
     }
     let server = sanitizeCustomMcpServer(candidate)
@@ -831,6 +826,12 @@ class ConnectorSettingsModule {
     const storedExisting = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
       (server) => server.id === request.id
     )
+    if (request.env && Object.keys(request.env).length > 0) {
+      throw new Error('Environment values must use shared Credentials')
+    }
+    if (request.headers && Object.keys(request.headers).length > 0) {
+      throw new Error('Header values must use shared Credentials')
+    }
     const existing = (await this.getConnectors())?.customMcpServers?.find(
       (server) => server.id === request.id
     )
@@ -840,6 +841,9 @@ class ConnectorSettingsModule {
     await this.validateStaticCredentialBindings(request.envCredentialIds, 'env')
     await this.validateStaticCredentialBindings(request.headerCredentialIds, 'header')
     const existingSharedOAuthCredentialId = parseCredentialReference(storedExisting?.oauthRef)
+    if (request.oauth && !storedExisting?.oauth && !existingSharedOAuthCredentialId) {
+      throw new Error('OAuth settings must use a shared Credential')
+    }
     if (request.oauthCredentialId && request.oauth !== undefined) {
       throw new Error('Shared OAuth credentials and Connector OAuth settings cannot be combined')
     }

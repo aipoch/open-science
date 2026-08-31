@@ -108,11 +108,13 @@ const decodeCredential = (value: unknown): StoredDeviceCredential => {
     if (!resourceUri || (value.transport !== 'streamable_http' && value.transport !== 'sse')) {
       throw new Error('Invalid OAuth credential record')
     }
+    const normalizedResourceUri = canonicalizeResourceUri(resourceUri)
+    assertSecureCustomMcpUrl(normalizedResourceUri)
     const credential: StoredDeviceCredential = {
       id,
       displayName,
       kind: 'oauth',
-      resourceUri: canonicalizeResourceUri(resourceUri),
+      resourceUri: normalizedResourceUri,
       transport: value.transport,
       oauth: decodeOAuthConfig(value.oauth),
       ...(optionalString(value.clientSecretRef)

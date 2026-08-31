@@ -351,12 +351,19 @@ describe('SettingsService: load diagnostics', () => {
 describe('SettingsService: custom MCP OAuth', () => {
   it('delegates authentication and returns the refreshed connector snapshot', async () => {
     const service = createService()
+    const credential = await service.createDeviceCredential({
+      displayName: 'OAuth MCP',
+      kind: 'oauth',
+      resourceUri: 'https://mcp.example.test',
+      transport: 'streamable_http',
+      oauth: { scopes: ['openid'] }
+    })
     const added = await service.addCustomServer({
       name: 'oauth-mcp',
       displayName: 'OAuth MCP',
       transport: 'streamable_http',
       url: 'https://mcp.example.test',
-      oauth: { scopes: ['openid'] }
+      oauthCredentialId: credential.createdCredential.id
     })
     const id = added.customServers[0].id
     const authenticator = vi.fn(async (serverId: string) => {
@@ -380,27 +387,34 @@ describe('SettingsService: custom MCP OAuth', () => {
 
   it('disconnects locally by closing runtime access and removing stored OAuth tokens', async () => {
     const service = createService()
+    const credential = await service.createDeviceCredential({
+      displayName: 'OAuth MCP',
+      kind: 'oauth',
+      resourceUri: 'https://mcp.example.test',
+      transport: 'streamable_http',
+      oauth: { scopes: ['openid'] }
+    })
     const added = await service.addCustomServer({
       name: 'oauth-mcp',
       displayName: 'OAuth MCP',
       transport: 'streamable_http',
       url: 'https://mcp.example.test',
-      oauth: { scopes: ['openid'] }
+      oauthCredentialId: credential.createdCredential.id
     })
     const id = added.customServers[0].id
     await service.saveCustomServerOAuthState(id, {
       tokens: { access_token: 'access', token_type: 'Bearer' }
     })
     const disconnectRuntime = vi.fn(async () => undefined)
-    service.setCustomServerAuthenticator(vi.fn(), vi.fn(), disconnectRuntime)
+    service.setDeviceCredentialAuthenticator(vi.fn(), vi.fn(), disconnectRuntime)
 
     const snapshot = await service.disconnectCustomServer(id)
 
-    expect(disconnectRuntime).toHaveBeenCalledWith(id)
+    expect(disconnectRuntime).toHaveBeenCalledWith(credential.createdCredential.id)
     expect(snapshot.customServers[0]).toMatchObject({ enabled: false, oauth: { hasTokens: false } })
-    expect(
-      (await repository.getSettings()).connectors?.customMcpServers?.[0].oauthRef
-    ).toBeUndefined()
+    expect((await repository.getSettings()).connectors?.customMcpServers?.[0].oauthRef).toBe(
+      `credential:${credential.createdCredential.id}`
+    )
   })
 })
 

@@ -471,6 +471,7 @@ describe('ConnectorAddForm (local command)', () => {
     expect(addButton()?.disabled).toBe(true)
 
     selectOption('Credential for API_TOKEN', 'Example API token')
+    expect(document.body.textContent).toContain('Example API token · Access token')
     expect(addButton()?.disabled).toBe(false)
     await act(async () => addButton()?.click())
 

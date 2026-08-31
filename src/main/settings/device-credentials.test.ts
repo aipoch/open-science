@@ -391,6 +391,29 @@ describe('DeviceCredentialStore', () => {
     )
   })
 
+  it('rejects a persisted OAuth resource that is neither HTTPS nor loopback HTTP', async () => {
+    await writeFile(
+      join(root, 'credentials.json'),
+      JSON.stringify({
+        version: 1,
+        credentials: [
+          {
+            id: 'oauth-insecure-resource',
+            displayName: 'Insecure OAuth',
+            kind: 'oauth',
+            resourceUri: 'http://mcp.example.test/',
+            transport: 'streamable_http',
+            oauth: {},
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+
+    await expect(new DeviceCredentialStore(root).list()).rejects.toThrow(/HTTPS|loopback/u)
+  })
+
   it('round-trips explicit connector references', () => {
     expect(parseCredentialReference(credentialReference('credential-id'))).toBe('credential-id')
     expect(parseCredentialReference('enc:ciphertext')).toBeUndefined()

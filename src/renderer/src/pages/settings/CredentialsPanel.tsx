@@ -1,11 +1,26 @@
-import { BookOpen, Check, KeyRound, Server, Trash2 } from 'lucide-react'
+import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
+import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ProviderView } from '../../../../shared/settings'
-import type { OpenAlexCredentialValidation } from '../../../../shared/settings'
+import type {
+  DeviceCredentialView,
+  OpenAlexCredentialValidation,
+  ProviderView
+} from '../../../../shared/settings'
 import { GitHubMark } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
+import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { errorDetail } from '@/lib/error-detail'
@@ -13,6 +28,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { GitHubTokenControl } from './GitHubTokenControl'
 import { MaskedPasswordField } from './MaskedPasswordField'
 import { DeviceCredentialEditor } from './DeviceCredentialEditor'
+import { localizeCredentialError } from './credential-error-message'
 import { SettingsSection } from './SettingsLayout'
 
 export type CredentialsServiceId = 'github' | 'literature' | 'openalex'
@@ -68,6 +84,7 @@ export function CredentialsPanel({
   const email = emailDraft?.source === storedEmail ? emailDraft.value : storedEmail
   const [busy, setBusy] = useState(false)
   const [credentialMessage, setCredentialMessage] = useState<string>()
+  const [credentialToRemove, setCredentialToRemove] = useState<DeviceCredentialView>()
   const [feedback, setFeedback] = useState<{
     serviceId: CredentialsServiceId
     message: string
@@ -401,6 +418,20 @@ export function CredentialsPanel({
     }
   ]
 
+  const confirmCredentialRemoval = async (): Promise<void> => {
+    if (!credentialToRemove || busy) return
+    setBusy(true)
+    setCredentialMessage(undefined)
+    try {
+      await removeDeviceCredential({ id: credentialToRemove.id })
+      setCredentialToRemove(undefined)
+    } catch (error) {
+      setCredentialMessage(localizeCredentialError(error, t, 'Could not remove credential.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-8 p-5">
       <section>
@@ -500,17 +531,8 @@ export function CredentialsPanel({
                           disabled={busy}
                           onClick={() => {
                             if (credential.consumerCount > 0) return
-                            if (!window.confirm(t('Remove this credential from this device?')))
-                              return
-                            setBusy(true)
                             setCredentialMessage(undefined)
-                            void removeDeviceCredential({ id: credential.id })
-                              .catch((error) =>
-                                setCredentialMessage(
-                                  errorDetail(error) ?? t('Could not remove credential.')
-                                )
-                              )
-                              .finally(() => setBusy(false))
+                            setCredentialToRemove(credential)
                           }}
                         >
                           <Trash2 className="size-4" aria-hidden="true" />
@@ -597,6 +619,68 @@ export function CredentialsPanel({
           <p className="mt-4 text-sm text-muted-foreground">{t('No custom credentials yet.')}</p>
         )}
       </section>
+
+      <AlertDialog.Root
+        open={credentialToRemove !== undefined}
+        onOpenChange={(open) => {
+          if (!open && !busy) setCredentialToRemove(undefined)
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <AlertDialog.Title className={dialogTitleClassName}>
+                {t('Remove this credential from this device?')}
+              </AlertDialog.Title>
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Close')}
+                  className={dialogCloseButtonClassName}
+                  disabled={busy}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
+            </div>
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {t('This permanently removes the stored credential from this device.')}
+              </AlertDialog.Description>
+              {credentialMessage ? (
+                <p className="mt-4 text-sm text-destructive" role="alert">
+                  {credentialMessage}
+                </p>
+              ) : null}
+            </div>
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
+                  disabled={busy}
+                >
+                  {t('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={busy}
+                onClick={() => void confirmCredentialRemoval()}
+              >
+                {busy ? t('Removing…') : t('Remove')}
+              </Button>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </div>
   )
 }
