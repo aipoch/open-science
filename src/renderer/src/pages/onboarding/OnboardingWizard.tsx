@@ -37,6 +37,7 @@ const STEP_LABELS = {
   location: 'Data location'
 }
 const loadStorageInfoFromBridge = (): Promise<StorageInfo> => window.api.storage.getInfo()
+const WINDOWS_STORAGE_RECOMMENDATION_TIMEOUT_MS = 2_000
 
 const windowsDriveLetter = (path: string): string | undefined => {
   const match = /^([a-z]):[\\/]/i.exec(path)
@@ -47,7 +48,8 @@ const windowsDriveLetter = (path: string): string | undefined => {
 // OpenScience folders are deliberately skipped: adopting historical data remains an explicit user
 // choice through Browse rather than a silent onboarding default.
 const findWindowsStorageDefault = async (
-  storageInfo: StorageInfo
+  storageInfo: StorageInfo,
+  signal: AbortSignal
 ): Promise<LocationDraft | null> => {
   if (
     window.api.platform !== 'win32' ||
@@ -66,6 +68,7 @@ const findWindowsStorageDefault = async (
   } catch {
     return null
   }
+  if (signal.aborted) return null
 
   const candidates = drives
     .map((drive) => ({ drive, letter: windowsDriveLetter(drive.path) }))
@@ -78,8 +81,10 @@ const findWindowsStorageDefault = async (
     .sort((left, right) => left.letter.localeCompare(right.letter))
 
   for (const { drive } of candidates) {
+    if (signal.aborted) return null
     try {
       const inspection = await window.api.storage.inspectDataRoot(drive.path)
+      if (signal.aborted) return null
       if (inspection.kind === 'move' && inspection.targetWasAbsent === true) {
         return {
           chosenParent: drive.path,
@@ -94,6 +99,28 @@ const findWindowsStorageDefault = async (
   }
 
   return null
+}
+
+// Drive enumeration and candidate inspection cross the OS filesystem boundary, where a disconnected
+// mapped drive may never settle. Recommendation is opportunistic, so bound the whole attempt and
+// keep the already-loaded default instead of leaving the setup UI busy indefinitely.
+const resolveWindowsStorageDefault = async (
+  storageInfo: StorageInfo
+): Promise<LocationDraft | null> => {
+  const controller = new AbortController()
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<null>((resolve) => {
+    timeout = setTimeout(() => {
+      controller.abort()
+      resolve(null)
+    }, WINDOWS_STORAGE_RECOMMENDATION_TIMEOUT_MS)
+  })
+
+  try {
+    return await Promise.race([findWindowsStorageDefault(storageInfo, controller.signal), deadline])
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+  }
 }
 
 // Keeps the five-step sequence visible without turning the lightweight setup flow into navigation.
@@ -236,7 +263,7 @@ const OnboardingWizard = ({
     }
 
     let cancelled = false
-    void findWindowsStorageDefault(dataRootInfo).then((recommendedDraft) => {
+    void resolveWindowsStorageDefault(dataRootInfo).then((recommendedDraft) => {
       if (cancelled || locationDraftTouched.current) return
 
       if (recommendedDraft) {

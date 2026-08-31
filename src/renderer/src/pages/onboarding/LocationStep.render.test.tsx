@@ -91,10 +91,10 @@ describe('LocationStep', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('disables Continue, but not Back or Browse, while resolving the Windows default', async () => {
+  it('keeps navigation available while resolving the optional Windows default', async () => {
     await renderStep(true)
 
-    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
     expect(findButton(/back/i)?.disabled).toBe(false)
     expect(findButton(/browse/i)?.disabled).toBe(false)
   })
