@@ -8,7 +8,12 @@ import { isNewer, type UpdateApplyOptions, type UpdateStatus } from '../../share
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
 import { fetchManifest } from './manifest'
-import { canStartUpdateDownload, type InstallGate, type UpdateStrategy } from './strategy'
+import {
+  canStartUpdateDownload,
+  toAvailableUpdateStatus,
+  type InstallGate,
+  type UpdateStrategy
+} from './strategy'
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
@@ -504,7 +509,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.downloadToken?.cancel()
     this.downloadToken = undefined
     if (this.status.state === 'downloading') {
-      this.setStatus({ ...this.status, state: 'available', progress: undefined })
+      this.setStatus(toAvailableUpdateStatus(this.status))
     }
     this.downloadOperation?.cancel({ reason: 'user' })
     return this.status

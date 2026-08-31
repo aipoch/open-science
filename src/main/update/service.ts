@@ -16,7 +16,7 @@ import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnosti
 import type { Logger } from '../logger'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'
-import { canStartUpdateDownload, type UpdateStrategy } from './strategy'
+import { canStartUpdateDownload, toAvailableUpdateStatus, type UpdateStrategy } from './strategy'
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
@@ -402,7 +402,7 @@ export class UpdateService implements UpdateStrategy {
     this.downloadAbort = undefined
     this.downloadOperation?.cancel({ reason: 'user' })
     if (this.status.state === 'downloading') {
-      this.setStatus({ ...this.status, state: 'available', progress: undefined })
+      this.setStatus(toAvailableUpdateStatus(this.status))
     }
     return this.status
   }
