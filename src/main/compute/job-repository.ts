@@ -294,7 +294,13 @@ export class ComputeJobRepository {
     const rows = await client.computeJob.findMany({
       where: {
         status: { in: ['success', 'failed', 'timeout'] },
-        harvestedAt: null
+        harvestedAt: null,
+        // A cancellation fulfilled while the Job was still queued has no remote execution to
+        // harvest. Submitted/running cancellations keep their normal best-effort harvest path.
+        NOT: {
+          submittedAt: null,
+          operations: { some: { kind: 'cancel', phase: 'settled', outcome: 'fulfilled' } }
+        }
       },
       include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }

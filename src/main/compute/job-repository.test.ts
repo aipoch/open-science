@@ -7,6 +7,7 @@ import { ComputeJobRepository } from './job-repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from './connection-broker'
 import { dispatchJob } from './job-dispatcher'
+import { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import { ComputeHostRepository } from './repository'
 import { OptionalSecureStorageStringProtection, type SecureStorageCipher } from './credential-vault'
 
@@ -764,6 +765,26 @@ describe('ComputeJob repository (SQLite integration)', () => {
       commandHash: 'h3'
     })
     await repo.update('job-running', { status: 'running' })
+
+    // A Job cancelled before submission has no remote execution and must not enter harvest recovery.
+    await repo.create({
+      id: 'job-cancelled-while-queued',
+      providerId: 'ssh:test',
+      shape: 'direct_ssh',
+      sessionId: 's1',
+      projectId: 'p1',
+      intent: 'cancel before dispatch',
+      command: 'sleep 9999',
+      commandHash: 'h5',
+      initialStatus: 'queued'
+    })
+    const operations = new ComputeJobOperationRepository(() => Promise.resolve(client))
+    await operations.request(
+      'job-cancelled-while-queued',
+      'cancel',
+      { projectId: 'p1', sessionId: 's1', providerId: 'ssh:test' },
+      new Date()
+    )
 
     // error status — must NOT be returned (error jobs don't get harvested).
     await repo.create({

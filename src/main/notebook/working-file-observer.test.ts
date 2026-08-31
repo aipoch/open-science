@@ -333,6 +333,14 @@ describe('working-file evidence', () => {
       producerRunId: 'run-compute',
       inputs: []
     })
+    await beginComputeJobFileEvidence({
+      storageRoot,
+      projectId: 'project-compute',
+      sessionId: 'session-compute',
+      jobId: 'job-cancelled-while-queued',
+      producerRunId: 'run-compute',
+      inputs: []
+    })
 
     await expect(
       reconcileComputeJobFileEvidence(storageRoot, [
@@ -343,6 +351,7 @@ describe('working-file evidence', () => {
           producer_run_id: 'run-compute',
           file_evidence: committed,
           status: 'success',
+          submitted_at: Date.now(),
           harvested_at: Date.now()
         },
         {
@@ -351,6 +360,7 @@ describe('working-file evidence', () => {
           session_id: 'session-compute',
           producer_run_id: 'run-compute',
           status: 'running',
+          submitted_at: Date.now(),
           harvested_at: undefined
         },
         {
@@ -359,10 +369,21 @@ describe('working-file evidence', () => {
           session_id: 'session-compute',
           producer_run_id: 'run-compute',
           status: 'success',
+          submitted_at: Date.now(),
           harvested_at: Date.now()
+        },
+        {
+          job_id: 'job-cancelled-while-queued',
+          project_id: 'project-compute',
+          session_id: 'session-compute',
+          producer_run_id: 'run-compute',
+          status: 'failed',
+          cancellation_status: 'cancelled',
+          submitted_at: undefined,
+          harvested_at: undefined
         }
       ])
-    ).resolves.toEqual({ removedStagingEntries: 2, removedActivityEntries: 0 })
+    ).resolves.toEqual({ removedStagingEntries: 3, removedActivityEntries: 0 })
 
     await expect(
       readdir(join(storageRoot, 'execution-file-evidence', 'project-compute', 'session-compute'))
@@ -375,7 +396,9 @@ describe('working-file evidence', () => {
     ).resolves.not.toEqual(
       expect.arrayContaining([
         'receipt-job-harvested-unavailable.json',
-        'staging-job-harvested-unavailable'
+        'staging-job-harvested-unavailable',
+        'receipt-job-cancelled-while-queued.json',
+        'staging-job-cancelled-while-queued'
       ])
     )
     await expect(

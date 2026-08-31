@@ -28,6 +28,8 @@ import type { ComputeHostRepository } from './repository'
 import type { ScpRunner } from './scp-runner'
 import type { SshRunner } from './ssh-runner'
 import { SessionCacheOwner } from './session-cache-owner'
+import { cleanupComputeJobFileEvidence } from '../notebook/working-file-observer'
+import { createLogger, errorLogFields } from '../logger'
 import {
   createSshConfigCompatibilityBroker,
   projectComputeCredentialStatus
@@ -41,6 +43,8 @@ export type {
   ComputeJobReadScope,
   RawInputSpec
 } from './compute-job-workflow-owner'
+
+const log = createLogger('compute')
 
 export type ComputeServiceDependencies = Readonly<{
   runner: SshRunner
@@ -68,6 +72,7 @@ export class ComputeService {
   private readonly repository: ComputeHostRepository
   private readonly concurrencyManager?: ConcurrencyManager
   private readonly credentialVault?: Pick<CredentialVault, 'credentialStatus'>
+  private readonly storageRoot?: string
 
   constructor(dependencies: ComputeServiceDependencies) {
     const {
@@ -89,6 +94,7 @@ export class ComputeService {
     this.repository = repository
     this.concurrencyManager = concurrencyManager
     this.credentialVault = credentialVault
+    this.storageRoot = storageRoot
     const effectiveConnectionBroker =
       connectionBroker ?? createSshConfigCompatibilityBroker(repository, runner, scpRunner)
     this.hostProfiles = new ComputeHostProfileOwner(effectiveConnectionBroker, repository)
@@ -232,6 +238,23 @@ export class ComputeService {
     }
     const result = await this.jobCancellation.request(jobId, scope)
     const job = await this.jobWorkflow.getJob(jobId, scope)
+    if (
+      result.cancellation_status === 'cancelled' &&
+      job.submitted_at === undefined &&
+      this.storageRoot
+    ) {
+      await cleanupComputeJobFileEvidence({
+        storageRoot: this.storageRoot,
+        projectId: job.project_id,
+        sessionId: job.session_id,
+        jobId
+      }).catch((error) =>
+        log.warn('Queued Compute Job file-evidence cleanup deferred to startup recovery.', {
+          jobId,
+          ...errorLogFields(error)
+        })
+      )
+    }
     this.handleJobUpdated(job)
     if (result.cancellation_status === 'cancelled') {
       await this.concurrencyManager?.onJobCompleted()

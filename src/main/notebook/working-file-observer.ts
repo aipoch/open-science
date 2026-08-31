@@ -871,6 +871,8 @@ type ComputeJobFileEvidenceRecord = Pick<
   | 'producer_run_id'
   | 'file_evidence'
   | 'status'
+  | 'cancellation_status'
+  | 'submitted_at'
   | 'harvested_at'
 >
 
@@ -956,7 +958,10 @@ const reconcileComputeJobFileEvidence = async (
           storageKey: evidence.storageKey
         })
       } else {
-        const mayStillPublishEvidence = job.status !== 'error' && job.harvested_at === undefined
+        const cancelledBeforeSubmission =
+          job.cancellation_status === 'cancelled' && job.submitted_at === undefined
+        const mayStillPublishEvidence =
+          !cancelledBeforeSubmission && job.status !== 'error' && job.harvested_at === undefined
         if (mayStillPublishEvidence) deferredActivityIds.push(job.job_id)
       }
     }
