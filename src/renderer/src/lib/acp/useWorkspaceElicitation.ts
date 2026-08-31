@@ -3,6 +3,8 @@ import { useCallback } from 'react'
 import type {
   AcpResumeSessionRequest,
   AcpSessionAgentTarget,
+  AcpStateCommandResponse,
+  AcpStateSnapshot,
   ElicitationResponse,
   PendingElicitationRequest
 } from '../../../../shared/acp'
@@ -78,8 +80,9 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
       memoryEnabled
     }),
   respondToElicitation: async (response) => {
-    const commandResponse = await window.api.acp.respondToElicitation(response)
-    return commandResponse.result
+    const commandResponse = (await window.api.acp.respondToElicitation(response)) as
+      AcpStateCommandResponse | AcpStateSnapshot
+    return 'result' in commandResponse ? commandResponse.result : commandResponse
   }
 })
 
