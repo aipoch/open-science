@@ -22,8 +22,10 @@ const setup = (
   const powerMonitor = new EventEmitter()
   const requestSystemShutdown = vi.fn()
   const windows: SystemLifecycleWindow[] = []
+  const platform = options.platform ?? 'linux'
   const adapters = installSystemLifecycleAdapters({
-    platform: options.platform ?? 'linux',
+    windowSessionEndEvents: platform === 'win32',
+    powerShutdownEvent: platform !== 'win32',
     headless: options.headless ?? false,
     signalSource: signalSource as ShutdownSignalSource,
     powerMonitor: powerMonitor as unknown as Pick<PowerMonitor, 'on'>,

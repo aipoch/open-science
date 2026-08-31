@@ -266,7 +266,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     forceExit: () => app.exit(0),
     installSystemShutdownListeners: (requestSystemShutdown) => {
       const adapters = installSystemLifecycleAdapters({
-        platform: process.platform,
+        windowSessionEndEvents: process.platform === 'win32',
+        powerShutdownEvent: process.platform !== 'win32',
         headless: webMode.headless,
         signalSource: process,
         powerMonitor,

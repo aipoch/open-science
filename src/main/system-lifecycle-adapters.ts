@@ -12,7 +12,8 @@ type ShutdownSignalSource = {
 type SystemLifecycleWindow = Pick<BrowserWindow, 'isDestroyed' | 'on' | 'webContents'>
 
 type SystemLifecycleAdapterDeps = {
-  platform: NodeJS.Platform
+  windowSessionEndEvents: boolean
+  powerShutdownEvent: boolean
   headless: boolean
   signalSource: ShutdownSignalSource
   powerMonitor: Pick<PowerMonitor, 'on'>
@@ -44,7 +45,7 @@ export const installSystemLifecycleAdapters = (
 
   return {
     bindWindow: (window) => {
-      if (deps.platform !== 'win32' || boundWindows.has(window)) return
+      if (!deps.windowSessionEndEvents || boundWindows.has(window)) return
       boundWindows.add(window)
       // Respect the OS-owned session end while giving the shutdown owner an early best-effort start.
       window.on('query-session-end', deps.requestSystemShutdown)
@@ -60,7 +61,7 @@ export const installSystemLifecycleAdapters = (
         }
       })
 
-      if (deps.platform === 'win32') return
+      if (!deps.powerShutdownEvent) return
       deps.powerMonitor.on('shutdown', ((event?: { preventDefault?: () => void }) => {
         // Electron's generated v39 type omits this documented event argument. Keep the bridge safe
         // if a host also omits it at runtime.
