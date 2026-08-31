@@ -7,7 +7,7 @@ import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
 
 // RemoteJobRow appears at the bottom of the repl_execute tool-call block that submitted a job.
 // Design: design.md §5a — ⚡ host alias | intent | running · elapsed ›
-// The row is only shown while the job is in a non-terminal state (submitted/running).
+// The row stays at its originating tool activity through terminal completion.
 // Clicking the row opens JobDetailModal.
 
 type RemoteJobRowProps = {
@@ -31,6 +31,29 @@ export function RemoteJobRow({ job, onOpen }: RemoteJobRowProps): React.JSX.Elem
 
   // Truncate long intent text to keep the row compact
   const intentDisplay = job.intent.length > 60 ? `${job.intent.slice(0, 57)}…` : job.intent
+  const statusLabel = (() => {
+    if (job.cancellation_status === 'cancelling') return t('Cancelling')
+    if (job.cancellation_status === 'cancelled') return t('Cancelled')
+    switch (job.status) {
+      case 'queued':
+        return t('Waiting in queue')
+      case 'submitted':
+        return t('Submitting')
+      case 'running':
+        return t('Running')
+      case 'success':
+        return t('finished')
+      case 'failed':
+        return t('failed')
+      case 'timeout':
+        return t('timed out')
+      case 'error':
+        return t('error')
+    }
+  })()
+  const showElapsed =
+    job.cancellation_status !== 'cancelled' &&
+    (job.status === 'queued' || job.status === 'submitted' || job.status === 'running')
 
   return (
     <button
@@ -50,7 +73,8 @@ export function RemoteJobRow({ job, onOpen }: RemoteJobRowProps): React.JSX.Elem
         {intentDisplay}
       </span>
       <span className="text-[11px] shrink-0" style={{ color: 'var(--session-waiting)' }}>
-        {job.status === 'submitted' ? t('queued') : t('running')} · {elapsedStr}
+        {statusLabel}
+        {showElapsed ? ` · ${elapsedStr}` : ''}
       </span>
       <ChevronRight size={12} className="text-muted-foreground shrink-0" aria-hidden="true" />
     </button>

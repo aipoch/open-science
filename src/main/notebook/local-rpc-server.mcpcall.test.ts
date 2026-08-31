@@ -1315,6 +1315,32 @@ describe('computeCall RPC', () => {
     ])
   })
 
+  it('routes computeCall op=job_cancel with trusted Session and Project ownership', async () => {
+    const result = { job_id: 'job-42', status: 'running', cancellation_status: 'cancelling' }
+    const cancelJob = vi.fn(async () => result)
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { cancelJob } as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'job_cancel', provider_id: 'ssh:biowulf', job_id: 'job-42' }
+      })
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ result })
+    expect(cancelJob).toHaveBeenCalledWith(
+      { sessionId: 's-42', projectId: 'project-1' },
+      'ssh:biowulf',
+      'job-42'
+    )
+  })
+
   it('routes computeCall op=job_result to getJobResult', async () => {
     const fakeResult = {
       job_id: 'job-42',

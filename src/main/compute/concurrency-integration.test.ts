@@ -15,6 +15,10 @@ import { ComputeApprovalBroker } from './compute-approval-broker'
 import type { SshRunner } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
 import { computeProviderId, type ComputeJob } from '../../shared/compute'
+import { createComputeJobRuntime } from './job-runtime'
+import type { ComputeConnectionBroker, ComputeConnectionBrokerAcquirer } from './connection-broker'
+import { JobPoller } from './job-poller'
+import { DispatchTracker } from './dispatch-tracker'
 
 // Mock the job-dispatcher module to prevent real SSH dispatches
 vi.mock('./job-dispatcher', async () => {
@@ -117,6 +121,212 @@ describe('ConcurrencyManager integration with ComputeService', () => {
 
     const job = await jobRepo.get(result.job_id)
     expect(job?.status).toBe('submitted')
+  })
+
+  it('reconciles persisted queued jobs when the Compute Job runtime cold-starts', async () => {
+    const providerId = computeProviderId('test-host')
+    await jobRepo.create({
+      allowUnencryptedPersistence: true,
+      id: 'persisted-queued-job',
+      providerId,
+      shape: 'direct_ssh',
+      sessionId: 'session-cold-start',
+      projectId: 'project-1',
+      intent: 'resume persisted queue',
+      command: 'echo resumed',
+      commandHash: 'hash',
+      timeoutSeconds: 60,
+      remoteWorkdir: '~/.openscience/jobs/persisted-queued-job',
+      initialStatus: 'queued'
+    })
+    const poller = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      pause: vi.fn(async () => undefined),
+      resume: vi.fn()
+    }
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: service,
+        hostRepository: hostRepo,
+        jobRepository: jobRepo,
+        connectionBroker: {} as ComputeConnectionBroker,
+        storageRoot
+      },
+      { createPoller: () => poller }
+    )
+
+    runtime.start()
+
+    await vi.waitFor(async () => {
+      expect((await jobRepo.get('persisted-queued-job'))?.status).toBe('submitted')
+    })
+    expect(poller.start).toHaveBeenCalledOnce()
+    await runtime.stop()
+  })
+
+  it('does not promote or launch queued work after runtime stop begins', async () => {
+    const providerId = computeProviderId('test-host')
+    await jobRepo.create({
+      allowUnencryptedPersistence: true,
+      id: 'queued-during-runtime-stop',
+      providerId,
+      shape: 'direct_ssh',
+      sessionId: 'session-runtime-stop',
+      projectId: 'project-1',
+      intent: 'remain queued after stop',
+      command: 'echo stopped',
+      commandHash: 'hash-stop',
+      timeoutSeconds: 60,
+      remoteWorkdir: '~/.openscience/jobs/queued-during-runtime-stop',
+      initialStatus: 'queued'
+    })
+    let releaseStartupScan: (() => void) | undefined
+    const startupScanBlocked = new Promise<void>((resolve) => {
+      releaseStartupScan = resolve
+    })
+    let markStartupScanStarted: (() => void) | undefined
+    const startupScanStarted = new Promise<void>((resolve) => {
+      markStartupScanStarted = resolve
+    })
+    const findQueuedJobs = jobRepo.findQueuedJobs.bind(jobRepo)
+    jobRepo.findQueuedJobs = async () => {
+      markStartupScanStarted?.()
+      await startupScanBlocked
+      return findQueuedJobs()
+    }
+    const dispatchQueuedJob = vi.fn(async () => undefined)
+    const manager = new ConcurrencyManager(jobRepo, hostRepo, dispatchQueuedJob)
+    const runtimeService = new ComputeService({
+      runner: makeFakeRunner(),
+      repository: hostRepo,
+      approvalBroker: makeFakeBroker(),
+      scpRunner: makeFakeScp(),
+      jobRepository: jobRepo,
+      storageRoot,
+      concurrencyManager: manager
+    })
+    const poller = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      pause: vi.fn(async () => undefined),
+      resume: vi.fn()
+    }
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: runtimeService,
+        hostRepository: hostRepo,
+        jobRepository: jobRepo,
+        connectionBroker: {} as ComputeConnectionBroker,
+        storageRoot
+      },
+      { createPoller: () => poller }
+    )
+
+    runtime.start()
+    await startupScanStarted
+    const stopping = runtime.stop()
+    releaseStartupScan?.()
+    await stopping
+
+    expect((await jobRepo.get('queued-during-runtime-stop'))?.status).toBe('queued')
+    expect(dispatchQueuedJob).not.toHaveBeenCalled()
+  })
+
+  it('holds dispatch handoff ownership while a queued promotion becomes poller-visible', async () => {
+    const providerId = computeProviderId('test-host')
+    await jobRepo.create({
+      allowUnencryptedPersistence: true,
+      id: 'queued-handoff-job',
+      providerId,
+      shape: 'direct_ssh',
+      sessionId: 'session-handoff',
+      projectId: 'project-1',
+      intent: 'handoff race',
+      command: 'echo handoff',
+      commandHash: 'hash',
+      timeoutSeconds: 60,
+      remoteWorkdir: '~/.openscience/jobs/queued-handoff-job',
+      initialStatus: 'queued'
+    })
+    const acquire = vi.fn()
+    const dispatchTracker = new DispatchTracker()
+    const poller = new JobPoller({
+      connectionBroker: { acquire } as unknown as ComputeConnectionBrokerAcquirer,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      dispatchTracker
+    })
+    const updateIfStatus = jobRepo.updateIfStatus.bind(jobRepo)
+    jobRepo.updateIfStatus = async (...args) => {
+      const updated = await updateIfStatus(...args)
+      if (args[2].status === 'submitted') await poller.tick()
+      return updated
+    }
+    const manager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      async () => undefined,
+      undefined,
+      undefined,
+      dispatchTracker
+    )
+
+    await manager.onJobCompleted()
+
+    expect((await jobRepo.get('queued-handoff-job'))?.status).toBe('submitted')
+    expect(acquire).not.toHaveBeenCalled()
+    expect(dispatchTracker.has('queued-handoff-job')).toBe(false)
+  })
+
+  it('starts independent eligible queued work without waiting for older staging', async () => {
+    const firstProviderId = computeProviderId('test-host')
+    const secondHost = await hostRepo.create({
+      sshAlias: 'second-host',
+      displayName: 'Second Host'
+    })
+    for (const [jobId, providerId, sessionId] of [
+      ['queued-slow-staging', firstProviderId, 'session-slow'],
+      ['queued-independent', secondHost.providerId, 'session-independent']
+    ] as const) {
+      await jobRepo.create({
+        allowUnencryptedPersistence: true,
+        id: jobId,
+        providerId,
+        shape: 'direct_ssh',
+        sessionId,
+        projectId: 'project-1',
+        intent: 'independent staging',
+        command: 'echo queued',
+        commandHash: `${jobId}-hash`,
+        timeoutSeconds: 60,
+        remoteWorkdir: `~/.openscience/jobs/${jobId}`,
+        initialStatus: 'queued'
+      })
+    }
+    let releaseSlowStaging: (() => void) | undefined
+    const slowStaging = new Promise<void>((resolve) => {
+      releaseSlowStaging = resolve
+    })
+    const started: string[] = []
+    const manager = new ConcurrencyManager(jobRepo, hostRepo, async (jobId) => {
+      started.push(jobId)
+      if (jobId === 'queued-slow-staging') await slowStaging
+    })
+
+    const reconciling = manager.onJobCompleted()
+    try {
+      await vi.waitFor(
+        () => expect(started).toEqual(['queued-slow-staging', 'queued-independent']),
+        { timeout: 250 }
+      )
+    } finally {
+      releaseSlowStaging?.()
+    }
+    await reconciling
+
+    expect((await jobRepo.get('queued-slow-staging'))?.status).toBe('submitted')
+    expect((await jobRepo.get('queued-independent'))?.status).toBe('submitted')
   })
 
   it('should submit job with status=queued when session limit reached', async () => {
@@ -269,6 +479,36 @@ describe('ConcurrencyManager integration with ComputeService', () => {
         { sessionId: 'session-1', projectId: 'project-1' }
       )
     ).rejects.toThrow(/queue is full/)
+  })
+
+  it('dispatches immediately when the queue is full but an active slot is available', async () => {
+    const providerId = computeProviderId('test-host')
+    for (let index = 0; index < 100; index++) {
+      await jobRepo.create({
+        allowUnencryptedPersistence: true,
+        id: `full-queue-${index}`,
+        providerId,
+        shape: 'direct_ssh',
+        sessionId: 'blocked-session',
+        projectId: 'project-1',
+        intent: 'fill queue',
+        command: 'echo queued',
+        commandHash: `hash-${index}`,
+        timeoutSeconds: 60,
+        remoteWorkdir: `~/.openscience/jobs/full-queue-${index}`,
+        initialStatus: 'queued'
+      })
+    }
+
+    const result = await service.submitJob(
+      providerId,
+      'use free active slot',
+      'echo immediate',
+      {},
+      { sessionId: 'eligible-session', projectId: 'project-1' }
+    )
+
+    expect(result.status).toBe('submitted')
   })
 
   it('should auto-dispatch queued job when completed job frees a slot', async () => {

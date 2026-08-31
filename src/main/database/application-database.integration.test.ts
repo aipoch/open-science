@@ -174,7 +174,8 @@ describe('application database (integration)', () => {
         '0019_session_usage_attribution',
         '0020_compute_job_analysis_state',
         '0021_compute_job_analysis_constraints',
-        '0022_memory_global_content_unique'
+        '0022_memory_global_content_unique',
+        '0023_compute_job_operation'
       ]
     })
 
@@ -1211,7 +1212,8 @@ describe('application database (integration)', () => {
         '0019_session_usage_attribution',
         '0020_compute_job_analysis_state',
         '0021_compute_job_analysis_constraints',
-        '0022_memory_global_content_unique'
+        '0022_memory_global_content_unique',
+        '0023_compute_job_operation'
       ]
     })
 

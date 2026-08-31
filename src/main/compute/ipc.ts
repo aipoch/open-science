@@ -6,6 +6,7 @@ import { BrowserWindow, shell } from 'electron'
 
 import type {
   ChangeComputeHostAuthenticationRequest,
+  CancelComputeJobRequest,
   ChangeComputeHostAuthenticationResult,
   ComputeApprovalDecision,
   ComputeHost,
@@ -39,6 +40,7 @@ import { ComputeService, type ArtifactResolver } from './compute-service'
 import { ConcurrencyManager } from './concurrency-manager'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
+import { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import { createComputeJobDeletionOwner, type ComputeJobDeletionOwner } from './job-deletion-owner'
 import { readSshConfigHostAliases } from './ssh-config'
 import { ComputeConnectionError, type ComputeConnectionBroker } from './connection-broker'
@@ -103,11 +105,13 @@ export const toJobSummary = async (
   const workspaceCwd = join(harvestDir, '..', '..')
 
   let featuredFiles: string[] = []
-  try {
-    const entries = await readdirRecursive(featuredDir)
-    featuredFiles = entries.map((abs) => workspaceRelativePath(workspaceCwd, abs))
-  } catch {
-    // Directory does not exist or is unreadable — emit empty list (execution-error / harvest_failed).
+  if (!job.harvest_error) {
+    try {
+      const entries = await readdirRecursive(featuredDir)
+      featuredFiles = entries.map((abs) => workspaceRelativePath(workspaceCwd, abs))
+    } catch {
+      // Directory does not exist or is unreadable — emit an empty list.
+    }
   }
 
   return {
@@ -116,7 +120,12 @@ export const toJobSummary = async (
     display_name: displayName,
     shape: job.shape,
     session_id: job.session_id,
+    project_id: job.project_id,
     status: job.status,
+    raw_status: job.raw_status,
+    integrity_issues: job.integrity_issues,
+    needs_attention: job.needs_attention,
+    cancellation_status: job.cancellation_status,
     intent: job.intent,
     created_at: job.created_at,
     started_at: job.started_at,
@@ -206,6 +215,9 @@ type ComputeHandlers = {
   approvalFinishSessionDeletion: (sessionId: string, retained: boolean) => void
   // Returns either a Session feed or the bounded global non-terminal activity projection.
   jobsList: (filter: ComputeJobsListFilter) => Promise<JobSummary[]>
+  jobsCancel: (
+    request: CancelComputeJobRequest
+  ) => Promise<import('../../shared/compute').JobStatusResult>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
   jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   // Marks the given job ids as notification-consumed. Idempotent (issue 05).
@@ -230,7 +242,8 @@ const createComputeHandlers = (
   permissionGrantRegistry?: PermissionGrantRegistry,
   hostLifecycle?: ComputeHostLifecycle,
   authenticationDependencies?: ComputeAuthenticationDependencies,
-  sessionCacheOwner?: SessionCacheOwner
+  sessionCacheOwner?: SessionCacheOwner,
+  operationRepository?: ComputeJobOperationRepository
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -344,6 +357,7 @@ const createComputeHandlers = (
       approvalBroker: broker,
       scpRunner,
       jobRepository,
+      operationRepository,
       artifactResolver,
       storageRoot,
       sessionCacheOwner,
@@ -483,6 +497,12 @@ const createComputeHandlers = (
         )
       )
     },
+    jobsCancel: (request) =>
+      service.cancelJob(request.jobId, {
+        projectId: request.projectId,
+        sessionId: request.sessionId,
+        providerId: request.providerId
+      }),
     jobsPendingNotification: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hostNameMap = await listHostNames()
@@ -532,6 +552,9 @@ const createDefaultComputeHostRepository = (): ComputeHostRepository =>
 const createDefaultComputeJobRepository = (): ComputeJobRepository =>
   new ComputeJobRepository(() => getProjectDbClient(resolveStorageRoot()))
 
+const createDefaultComputeJobOperationRepository = (): ComputeJobOperationRepository =>
+  new ComputeJobOperationRepository(() => getProjectDbClient(resolveStorageRoot()))
+
 // Broadcasts a job summary to all renderer windows. Called by the JobPoller onJobUpdated hook
 // and by the job dispatcher on status transitions (Phase 3d, design.md §9).
 export const broadcastJobUpdated = (summary: JobSummary): void =>
@@ -552,9 +575,25 @@ export const createJobUpdatedBroadcaster =
       } catch {
         // Preserve provider fallback; likewise, only a successful null Job lookup proves deletion.
       }
-      if (!(await jobRepository.get(job.job_id).catch(() => true))) return
-      const summary = await toJobSummary(job, displayName, storageRoot)
-      if (await jobRepository.get(job.job_id).catch(() => true)) broadcastJobUpdated(summary)
+      const current = await jobRepository.get(job.job_id).catch(() => null)
+      if (!current) return
+      let summary = await toJobSummary(current, displayName, storageRoot)
+      // Filesystem scanning above yields. Re-read immediately before delivery so a terminal or
+      // consumed transition committed during that scan cannot be overwritten by an older snapshot.
+      const verified = await jobRepository.get(job.job_id).catch(() => null)
+      if (!verified) return
+      if (
+        verified.status !== current.status ||
+        verified.finished_at !== current.finished_at ||
+        verified.exit_code !== current.exit_code ||
+        verified.notified_at !== current.notified_at ||
+        verified.notification_consumed_at !== current.notification_consumed_at ||
+        verified.harvested_at !== current.harvested_at ||
+        verified.harvest_error !== current.harvest_error
+      ) {
+        summary = await toJobSummary(verified, displayName, storageRoot)
+      }
+      broadcastJobUpdated(summary)
     })().catch(() => undefined)
   }
 
@@ -564,6 +603,7 @@ type ComputeIpcModule = {
   connectionBroker: ComputeConnectionBroker
   jobDeletionOwner: ComputeJobDeletionOwner
   jobRepository: ComputeJobRepository
+  operationRepository: ComputeJobOperationRepository
   hostRepository: ComputeHostRepository
   enabledComputeHostsRegistry: EnabledComputeHostsRegistry
   sessionCacheOwner: SessionCacheOwner
@@ -589,6 +629,7 @@ const createComputeIpcModule = (
   legacyComputeGrants?: LegacyComputeGrantPort,
   hostLifecycle?: ComputeHostLifecycle
 ): ComputeIpcModule => {
+  const operationRepository = createDefaultComputeJobOperationRepository()
   const storageRoot = resolveStorageRoot()
   const dataRoot = resolveDataRoot()
   const sessionCacheOwner = new SessionCacheOwner(dataRoot)
@@ -614,7 +655,8 @@ const createComputeIpcModule = (
     permissionGrantRegistry,
     hostLifecycle,
     undefined,
-    sessionCacheOwner
+    sessionCacheOwner,
+    operationRepository
   )
   const jobDeletionOwner = createComputeJobDeletionOwner({
     jobRepository,
@@ -629,6 +671,7 @@ const createComputeIpcModule = (
     connectionBroker: handlers.connectionBroker,
     jobDeletionOwner,
     jobRepository,
+    operationRepository,
     hostRepository: repository,
     enabledComputeHostsRegistry,
     sessionCacheOwner
@@ -640,6 +683,7 @@ export {
   createComputeIpcModule,
   createDefaultComputeHostRepository,
   createDefaultComputeJobRepository,
+  createDefaultComputeJobOperationRepository,
   enabledComputeHostsRegistry
 }
 export { COMPUTE_JOBS_LIST_CHANNEL, installComputeIpcHandlers } from './electron-ipc-adapter'

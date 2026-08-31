@@ -76,6 +76,7 @@ import type {
   SpecialistExportSaveResult
 } from './specialist-package'
 import type {
+  CancelComputeJobRequest,
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeJobsListFilter,
@@ -94,6 +95,7 @@ import type {
   DeleteComputeHostRequest,
   DetailsAuthor,
   JobSummary,
+  JobStatusResult,
   ProbeResult
 } from './compute'
 import type { DirListing, DownloadDest, LocalFile } from './remote-fs'
@@ -858,6 +860,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.jobsList': callable<(filter: ComputeJobsListFilter) => Promise<JobSummary[]>>()(
     'compute',
     ['compute:jobs:list']
+  ),
+  'compute.jobsCancel': callable<(request: CancelComputeJobRequest) => Promise<JobStatusResult>>()(
+    'compute',
+    ['compute:jobs:cancel']
   ),
   'compute.jobsMarkConsumed': callable<(sessionId: string, jobIds: string[]) => Promise<void>>()(
     'compute',

@@ -92,6 +92,10 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0022_memory_global_content_unique',
     checksum: '0f02a6cace6991db4377da8a2f8d52dad221cb2fede595bf11bab90c64737ac8'
+  },
+  {
+    id: '0023_compute_job_operation',
+    checksum: 'c625e336996c7dd1eba64da8ccd306104ccd68cf219e60ee2c3889749f86b079'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

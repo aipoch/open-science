@@ -10,6 +10,7 @@ import {
   ConversationGraphMaterializationError,
   decodeSessionFile,
   materializeSessionConversationGraph,
+  isComputeJobCompletionAttribution,
   isReviewerCorrectionAttribution,
   sanitizeActivityGroup,
   normalizeSessionFile,
@@ -519,6 +520,123 @@ describe('message attribution persistence', () => {
       purpose: 'correction',
       causeReviewId: 'review-1'
     })
+  })
+
+  it('preserves a Compute completion delivery identity through Session JSON and Conversation Graph projection', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'compute-delivery-message-1',
+          role: 'user',
+          content: 'Analyze completed remote jobs.',
+          status: 'complete',
+          eventIds: [],
+          attribution: {
+            kind: 'application',
+            feature: 'compute',
+            purpose: 'job-completion-analysis',
+            deliveryKey: 'compute_done:session-1:job-1,job-2',
+            jobIds: ['job-1', 'job-2']
+          },
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    const attribution = {
+      kind: 'application',
+      feature: 'compute',
+      purpose: 'job-completion-analysis',
+      deliveryKey: 'compute_done:session-1:job-1,job-2',
+      jobIds: ['job-1', 'job-2']
+    }
+    expect(session?.messages[0]?.attribution).toEqual(attribution)
+    expect(isComputeJobCompletionAttribution(session?.messages[0]?.attribution)).toBe(true)
+    expect(
+      session &&
+        materializeSessionConversationGraph(session).conversationGraph?.messages[0]?.attribution
+    ).toEqual(attribution)
+  })
+
+  it('preserves a non-authoritative Compute completion presentation through Session JSON', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'compute-presentation-message-1',
+          role: 'user',
+          content: 'Analyze completed remote jobs.',
+          status: 'complete',
+          eventIds: [],
+          presentation: { kind: 'compute-job-completion' },
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]?.presentation).toEqual({ kind: 'compute-job-completion' })
+    expect(
+      session &&
+        materializeSessionConversationGraph(session).conversationGraph?.messages[0]?.presentation
+    ).toEqual({ kind: 'compute-job-completion' })
+  })
+
+  it.each([
+    [
+      'an extended marker',
+      'user',
+      'Analyze completed remote jobs.',
+      { kind: 'compute-job-completion', rendererClaim: true }
+    ],
+    [
+      'a marker from an Agent message',
+      'agent',
+      'Analysis result.',
+      { kind: 'compute-job-completion' }
+    ]
+  ] as const)('drops %s', (_label, role, content, presentation) => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'compute-presentation-message-1',
+          role,
+          content,
+          status: 'complete',
+          eventIds: [],
+          presentation,
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]?.presentation).toBeUndefined()
+  })
+
+  it('rejects malformed or extended Compute delivery attribution', () => {
+    expect(
+      sanitizeMessageAttribution({
+        kind: 'application',
+        feature: 'compute',
+        purpose: 'job-completion-analysis',
+        deliveryKey: 'compute_done:session-1:job-1',
+        jobIds: []
+      })
+    ).toBeUndefined()
+    expect(
+      sanitizeMessageAttribution({
+        kind: 'application',
+        feature: 'compute',
+        purpose: 'job-completion-analysis',
+        deliveryKey: 'compute_done:session-1:job-1',
+        jobIds: ['job-1'],
+        rendererClaim: true
+      })
+    ).toBeUndefined()
   })
 
   it('drops malformed or extended attribution without dropping the Message', () => {

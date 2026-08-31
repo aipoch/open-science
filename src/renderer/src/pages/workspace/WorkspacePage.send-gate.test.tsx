@@ -331,6 +331,63 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
   })
 
+  it('gates branch and Agent controls for a hidden automatic application delivery', async () => {
+    const runningSession = createSession({
+      status: 'running',
+      conversationGraph: {
+        schemaVersion: 1,
+        rootFrameId: 'root',
+        activeFrameId: 'root',
+        frames: [
+          {
+            id: 'root',
+            originBindingState: 'root',
+            kind: 'root',
+            status: 'running',
+            activeBranchId: 'branch-a',
+            createdAt: 1
+          }
+        ],
+        branches: [
+          {
+            id: 'branch-a',
+            agentFrameId: 'root',
+            headMessageId: 'message-a',
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        messages: [],
+        activities: [],
+        activityGroups: [],
+        runtimeSegments: []
+      }
+    })
+    useSessionStore.setState({ sessions: [runningSession], selectedSessionId: 'sess-a' })
+    await renderPage()
+    expect(conversationProps.permissions.canChangePermissionProfile).toBe(true)
+
+    act(() => {
+      void conversationProps.conversation.admitApplicationMessage({
+        session: runningSession,
+        text: 'Analyze job-1.',
+        attribution: {
+          kind: 'application',
+          feature: 'compute',
+          purpose: 'job-completion-analysis',
+          deliveryKey: 'compute_done:sess-a:job-1',
+          jobIds: ['job-1']
+        }
+      })
+    })
+
+    expect(conversationProps.conversation.queue.items).toEqual([])
+    expect(conversationProps.conversation.queue.hasPendingWork).toBe(true)
+    expect(conversationProps.conversation.availability.branch).toBe(false)
+    expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
+    expect(conversationProps.agentControls.canChange).toBe(false)
+  })
+
   it('does not query Plan authority before a newly bound Session is persisted', async () => {
     useSessionStore.setState({
       sessions: [createSession({ status: 'running' })],

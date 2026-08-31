@@ -1,11 +1,6 @@
 import type { ComputeJob } from '../../shared/compute'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
-import {
-  computeRemoteWorkdir,
-  quoteRemotePath,
-  REMOTE_PROCESS_OWNERSHIP_FUNCTION,
-  type RemoteHandle
-} from './job-dispatcher'
+import { computeRemoteWorkdir, quoteRemotePath, type RemoteHandle } from './job-dispatcher'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import type {
   ComputeJobOwner,
@@ -17,6 +12,8 @@ import {
   classifyConnectionFailure,
   type ComputeConnectionBrokerAcquirer
 } from './connection-broker'
+import { remoteJobPidTerminationFunctionLines } from './remote-job-process'
+import { parseRemoteJobHandle, parseRemoteJobWorkdir } from './remote-job-handle'
 
 type ComputeJobDeletionRepository = Pick<ComputeJobRepository, 'findByOwner' | 'listOwners'>
 type ComputeJobOwnerLiveness = boolean | 'unknown'
@@ -62,37 +59,17 @@ type ComputeJobDeletionOwnerDeps = {
 
 const ACTIVE_STATUSES = new Set<ComputeJob['status']>(['submitted', 'running'])
 
-const validatedRemoteWorkdir = (job: ComputeJob, fallback?: string): string => {
-  const workdir = job.remote_workdir ?? fallback
-  const safeJobId = /^[A-Za-z0-9_-]+$/.test(job.job_id)
-  const hasTraversal = workdir?.split('/').some((part) => part === '.' || part === '..')
-  if (
-    !workdir ||
-    !safeJobId ||
-    /[\0\r\n]/.test(workdir) ||
-    hasTraversal ||
-    !workdir.endsWith(`/.openscience/jobs/${job.job_id}`)
-  ) {
-    throw new Error(`Unsafe remote work directory for Compute Job ${job.job_id}.`)
-  }
-  return workdir
-}
-
 const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | undefined => {
   if (!ACTIVE_STATUSES.has(job.status)) return undefined
   if (!job.remote_handle) {
     if (job.status === 'submitted') return undefined
     throw new Error(`Invalid remote handle for active Compute Job ${job.job_id}.`)
   }
-  try {
-    const handle = JSON.parse(job.remote_handle) as RemoteHandle
-    if (!Number.isSafeInteger(handle.pid) || handle.pid <= 0 || handle.workdir !== workdir) {
-      throw new Error('invalid handle')
-    }
-    return handle
-  } catch {
+  const handle = parseRemoteJobHandle(job.remote_handle, workdir)
+  if (!handle) {
     throw new Error(`Invalid remote handle for active Compute Job ${job.job_id}.`)
   }
+  return handle
 }
 
 const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): string => {
@@ -113,16 +90,7 @@ const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): stri
     `workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P || true)`,
     'expected_workdir=${scratch_root%/}/' + quotedWorkdirSuffix,
     '[ -z "$workdir" ] || { [ -n "$scratch_root" ] && [ "$workdir" = "$expected_workdir" ]; } || exit 1',
-    REMOTE_PROCESS_OWNERSHIP_FUNCTION,
-    'kill_job_pid() {',
-    '  pid=$1',
-    '  process_owned_by_workdir "$pid" "$workdir" || return 0',
-    '  kill -TERM -- -$pid 2>/dev/null || true',
-    '  kill -TERM $pid 2>/dev/null || true',
-    '  process_owned_by_workdir "$pid" "$workdir" || return 0',
-    '  kill -KILL -- -$pid 2>/dev/null || true',
-    '  kill -KILL $pid 2>/dev/null || true',
-    '}'
+    ...remoteJobPidTerminationFunctionLines()
   ]
   if (handle) lines.push(`kill_job_pid ${handle.pid}`)
   lines.push(
@@ -287,14 +255,24 @@ class ComputeJobDeletionOwner {
     }
 
     await this.armOwner(owner, false)
+    // Runtime pause is global. Hold it only through the owner-scoped barrier and dispatch drain;
+    // durable remote cleanup runs later under that barrier without freezing unrelated owners.
+    const runtime = this.runtime
     let runtimePaused = false
     try {
-      if (this.runtime) {
-        await this.runtime.pause()
-        runtimePaused = true
+      try {
+        if (runtime) {
+          await runtime.pause()
+          runtimePaused = true
+        }
+        const observed = await this.deps.jobRepository.findByOwner(owner)
+        await this.dispatchTracker.waitFor(observed.map((job) => job.job_id))
+      } finally {
+        if (runtimePaused) runtime?.resume()
       }
-      const observed = await this.deps.jobRepository.findByOwner(owner)
-      await this.dispatchTracker.waitFor(observed.map((job) => job.job_id))
+
+      // The owner barrier now excludes these rows from new polling/dispatch. Build the cleanup plan
+      // without holding the global runtime pause so unrelated owners keep making progress.
       const jobs = await this.deps.jobRepository.findByOwner(owner)
       const remoteCleanups: PreparedRemoteCleanup[] = []
       for (const job of jobs) {
@@ -307,12 +285,8 @@ class ComputeJobDeletionOwner {
       })
       this.preparedDeletion = { owner, remoteCleanups, outcome, settleOutcome }
     } catch (error) {
-      try {
-        if (!this.retainedOwners.has(this.ownerKey(owner))) {
-          await this.releaseOwnerBarrier(owner)
-        }
-      } finally {
-        if (runtimePaused) this.runtime?.resume()
+      if (!this.retainedOwners.has(this.ownerKey(owner))) {
+        await this.releaseOwnerBarrier(owner)
       }
       throw error
     }
@@ -335,7 +309,6 @@ class ComputeJobDeletionOwner {
     this.preparedDeletion = undefined
     prepared.settleOutcome({ status: 'released' })
     this.releaseCommittedOwnerBarriers(owner)
-    this.runtime?.resume()
   }
 
   private async abortOwner(owner: ComputeJobOwner): Promise<void> {
@@ -350,7 +323,6 @@ class ComputeJobDeletionOwner {
     if (prepared) {
       this.preparedDeletion = undefined
       prepared.settleOutcome({ status: 'released' })
-      this.runtime?.resume()
     }
   }
 
@@ -388,7 +360,10 @@ class ComputeJobDeletionOwner {
     if (job.status === 'queued') return undefined
     const host = await this.deps.hostRepository.get(job.provider_id)
     const fallbackWorkdir = host ? computeRemoteWorkdir(host.scratchRoot, job.job_id) : undefined
-    const workdir = validatedRemoteWorkdir(job, fallbackWorkdir)
+    const workdir = parseRemoteJobWorkdir(job.job_id, job.remote_workdir, fallbackWorkdir)
+    if (!workdir) {
+      throw new Error(`Unsafe remote work directory for Compute Job ${job.job_id}.`)
+    }
     const handle = activeRemoteHandle(job, workdir)
     return {
       jobId: job.job_id,
@@ -424,12 +399,7 @@ const createComputeJobDeletionOwner = (
     lifecycle: new ComputeJobLifecycle(deps.jobRepository)
   })
 
-export {
-  ComputeJobDeletionOwner,
-  cleanupCommand,
-  createComputeJobDeletionOwner,
-  validatedRemoteWorkdir
-}
+export { ComputeJobDeletionOwner, cleanupCommand, createComputeJobDeletionOwner }
 export type {
   ComputeJobDeletionLifecycle,
   ComputeJobDeletionOwnerDeps,

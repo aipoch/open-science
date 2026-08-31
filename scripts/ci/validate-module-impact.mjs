@@ -113,9 +113,18 @@ export function validateModuleImpactManifest(
     if (unexpectedTestKinds.length > 0) {
       throw new Error(`${moduleId}.testFiles has unknown kinds: ${unexpectedTestKinds.join(', ')}`)
     }
-    const declaredTests = moduleTestKinds.flatMap((kind) =>
-      requireStringArray(module.testFiles[kind], `${moduleId}.testFiles.${kind}`)
-    )
+    const declaredTests = []
+    const classifiedTests = new Set()
+    for (const kind of moduleTestKinds) {
+      const tests = requireStringArray(module.testFiles[kind], `${moduleId}.testFiles.${kind}`)
+      for (const testFile of tests) {
+        if (classifiedTests.has(testFile)) {
+          throw new Error(`${moduleId}.testFiles classifies ${testFile} more than once`)
+        }
+        classifiedTests.add(testFile)
+        declaredTests.push(testFile)
+      }
+    }
     if (declaredTests.length === 0) throw new Error(`${moduleId}.testFiles must not be empty`)
     for (const testFile of declaredTests) {
       validateRepositoryPath(testFile, `${moduleId}.testFiles`, pathExists)

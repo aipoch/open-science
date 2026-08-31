@@ -101,11 +101,12 @@ type CloseEvent = { preventDefault: () => void; defaultPrevented: boolean }
 // currentWindow and lastWindow both point at the latest window; two describe blocks, one shared fake.
 let currentWindow: FakeBrowserWindow | undefined
 let lastWindow: FakeBrowserWindow | undefined
+let loadRendererDocument = (): Promise<void> => Promise.resolve()
 
 class FakeBrowserWindow {
   closeMock = vi.fn()
   destroyMock = vi.fn()
-  loadFileMock = vi.fn(() => Promise.resolve())
+  loadFileMock = vi.fn(() => loadRendererDocument())
   sendMock = vi.fn()
   showMock = vi.fn()
   webContentsHandlers = new Map<string, WebContentsHandler>()
@@ -1020,6 +1021,7 @@ describe('window-open external handler', () => {
 describe('close chord interception', () => {
   beforeEach(() => {
     currentWindow = undefined
+    loadRendererDocument = () => Promise.resolve()
     ipcMainOnMock.mockReset()
     ipcMainRemoveListenerMock.mockReset()
     findOverlayMock.open.mockClear()
@@ -1332,6 +1334,171 @@ describe('close chord interception', () => {
     expect(JSON.stringify(windowLogSpies.error.mock.calls)).not.toContain('session-content')
   })
 
+  it('destroys an unusable window when the initial renderer load promise rejects', async () => {
+    loadRendererDocument = () => Promise.reject(new Error('renderer entry unavailable'))
+
+    createMainWindow()
+    const window = currentWindow!
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/index.html',
+      frame: window.mainFrame
+    })
+
+    await vi.waitFor(() => expect(window.destroyMock).toHaveBeenCalledTimes(1))
+  })
+
+  it('keeps the window when a stale initial load rejects after crash recovery starts', async () => {
+    let rejectInitial!: (error: Error) => void
+    let loadAttempt = 0
+    loadRendererDocument = () => {
+      loadAttempt += 1
+      if (loadAttempt === 1) {
+        return new Promise<void>((_resolve, reject) => {
+          rejectInitial = reject
+        })
+      }
+      return Promise.resolve()
+    }
+
+    createMainWindow()
+    const window = currentWindow!
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
+    expect(window.loadFileMock).toHaveBeenCalledTimes(2)
+    await Promise.resolve()
+
+    rejectInitial(new Error('superseded initial load'))
+    await vi.waitFor(() =>
+      expect(windowLogSpies.error).toHaveBeenCalledWith('renderer document load rejected', {
+        errorName: 'Error'
+      })
+    )
+
+    expect(window.destroyMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps the window when a newer top-level reload supersedes the initial load', async () => {
+    let rejectInitial!: (error: Error) => void
+    loadRendererDocument = () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectInitial = reject
+      })
+
+    createMainWindow()
+    const window = currentWindow!
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/index.html',
+      frame: window.mainFrame
+    })
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/index.html',
+      frame: window.mainFrame
+    })
+
+    rejectInitial(new Error('superseded initial load'))
+    await vi.waitFor(() =>
+      expect(windowLogSpies.error).toHaveBeenCalledWith('renderer document load rejected', {
+        errorName: 'Error'
+      })
+    )
+
+    expect(window.destroyMock).not.toHaveBeenCalled()
+  })
+
+  it('recovers a newer navigation failure while a stale explicit load is pending', () => {
+    let loadAttempt = 0
+    loadRendererDocument = () => {
+      loadAttempt += 1
+      return loadAttempt === 1 ? new Promise<void>(() => undefined) : Promise.resolve()
+    }
+
+    createMainWindow()
+    const window = currentWindow!
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/index.html',
+      frame: window.mainFrame
+    })
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/reloaded.html',
+      frame: window.mainFrame
+    })
+
+    fireWebContentsEvent(
+      window,
+      'did-fail-load',
+      {},
+      -105,
+      'NAME_NOT_RESOLVED',
+      'file:///app/reloaded.html',
+      true
+    )
+
+    expect(window.loadFileMock).toHaveBeenCalledTimes(2)
+    expect(windowLogSpies.warn).toHaveBeenCalledWith(
+      'reloading renderer after document load failure',
+      { automaticRecoveryAttempt: 1 }
+    )
+  })
+
+  it('ignores an aborted load failure from a superseded main-frame navigation', async () => {
+    createMainWindow()
+    const window = currentWindow!
+    await Promise.resolve()
+
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/old.html',
+      frame: window.mainFrame
+    })
+    fireWebContentsEvent(window, 'did-start-navigation', {
+      ...mainFrameNavigation,
+      url: 'file:///app/current.html',
+      frame: window.mainFrame
+    })
+    fireWebContentsEvent(
+      window,
+      'did-fail-load',
+      {},
+      -3,
+      'ERR_ABORTED',
+      'file:///app/old.html',
+      true
+    )
+
+    expect(window.loadFileMock).toHaveBeenCalledTimes(1)
+    expect(windowLogSpies.warn).not.toHaveBeenCalledWith(
+      'reloading renderer after document load failure',
+      expect.anything()
+    )
+  })
+
+  it('recovers a main-frame document load failure within the renderer retry budget', async () => {
+    showMessageBoxMock.mockReturnValueOnce(new Promise(() => undefined))
+    createMainWindow()
+    const window = currentWindow!
+    await Promise.resolve()
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      fireWebContentsEvent(
+        window,
+        'did-fail-load',
+        {},
+        -105,
+        'NAME_NOT_RESOLVED',
+        'file:///app/index.html',
+        true
+      )
+      await Promise.resolve()
+    }
+
+    expect(window.loadFileMock).toHaveBeenCalledTimes(3)
+    expect(showMessageBoxMock).toHaveBeenCalledTimes(1)
+  })
+
   it('records a preload failure without logging its path or error text', () => {
     createMainWindow()
     const window = currentWindow!
@@ -1396,6 +1563,63 @@ describe('close chord interception', () => {
     )
     await vi.waitFor(() => expect(window.loadFileMock).toHaveBeenCalledTimes(4))
   })
+
+  it('counts rejected renderer recovery loads toward the retry dialog', async () => {
+    createMainWindow()
+    const window = currentWindow!
+    await Promise.resolve()
+    loadRendererDocument = () => Promise.reject(new Error('renderer entry unavailable'))
+    showMessageBoxMock.mockReturnValueOnce(new Promise(() => undefined))
+
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
+
+    await vi.waitFor(() => expect(showMessageBoxMock).toHaveBeenCalledTimes(1))
+    expect(window.loadFileMock).toHaveBeenCalledTimes(3)
+  })
+
+  it.each([
+    ['before', false],
+    ['after', true]
+  ])(
+    'counts a renderer crash and its recovery load rejection only once %s navigation starts',
+    async (_timing, navigationStarted) => {
+      let rejectRecoveryLoad!: (error: Error) => void
+      let loadAttempt = 0
+      loadRendererDocument = () => {
+        loadAttempt += 1
+        if (loadAttempt === 2) {
+          return new Promise<void>((_resolve, reject) => {
+            rejectRecoveryLoad = reject
+          })
+        }
+        return Promise.resolve()
+      }
+
+      createMainWindow()
+      const window = currentWindow!
+      await Promise.resolve()
+
+      fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
+      if (navigationStarted) {
+        fireWebContentsEvent(window, 'did-start-navigation', {
+          ...mainFrameNavigation,
+          url: 'file:///app/index.html',
+          frame: window.mainFrame
+        })
+      }
+      fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
+
+      rejectRecoveryLoad(new Error('renderer exited during recovery'))
+      await vi.waitFor(() =>
+        expect(windowLogSpies.error).toHaveBeenCalledWith('renderer document load rejected', {
+          errorName: 'Error'
+        })
+      )
+
+      expect(window.loadFileMock).toHaveBeenCalledTimes(3)
+      expect(showMessageBoxMock).not.toHaveBeenCalled()
+    }
+  )
 
   it('destroys the blank window when the user closes a renderer crash-loop prompt', async () => {
     showMessageBoxMock.mockResolvedValueOnce({ response: 1 })

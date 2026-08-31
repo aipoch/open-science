@@ -176,7 +176,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     expect(jobsTransitionAnalysis).not.toHaveBeenCalled()
   })
 
-  it('removes a queued turn-end listener when persistence becomes unavailable', async () => {
+  it('removes a delivery turn-end listener when persistence becomes unavailable', async () => {
     jobsPendingNotification.mockResolvedValueOnce([])
     useSessionStore.setState({
       ...createInitialSessionState(),
@@ -198,6 +198,12 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     act(() => useSessionJobStore.getState().applyUpdate(makeCompletedJob()))
     await act(async () => Promise.resolve())
 
+    expect(sendMessage).toHaveBeenCalledOnce()
+    expect(jobsTransitionAnalysis).toHaveBeenCalledOnce()
+    expect(jobsTransitionAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'dispatched' })
+    )
+
     await act(async () => root.render(<Probe enabled={false} />))
     act(() => {
       useSessionStore.setState((state) => ({
@@ -208,8 +214,8 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     })
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
 
-    expect(sendMessage).not.toHaveBeenCalled()
-    expect(jobsTransitionAnalysis).not.toHaveBeenCalled()
+    expect(sendMessage).toHaveBeenCalledOnce()
+    expect(jobsTransitionAnalysis).toHaveBeenCalledOnce()
   })
 
   it('keeps one trigger when the runtime send callback changes during an analysis turn', async () => {

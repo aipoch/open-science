@@ -7,13 +7,13 @@
 // Design decisions:
 // - One readiness-scoped effect owns the trigger and every subscription so delayed work cannot cross
 //   a persistence recovery boundary.
-// - `isSessionInFlight` reads from useSessionStore.getState() synchronously — no subscription needed.
+// - The shared application Message queue owns pre-send readiness and in-flight barriers.
 // - The restart-recovery scan covers every persisted Session from the App-lifetime owner.
 
-import { useEffect, useEffectEvent } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 
-import { useWorkspaceAgentRuntime } from '../acp/useWorkspaceAgentRuntime'
 import {
+  flushSessionPersistence,
   hydratePersistedSessionIfPresent,
   loadPersistedSession
 } from '../session-persistence/session-persistence'
@@ -22,7 +22,19 @@ import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
 import type { ComputeJobAnalysisState } from '../../../../shared/compute'
 
-// Matches the sendMessage signature returned by useWorkspaceAgentRuntime.
+type AdmitMessageFn = (input: {
+  session: ChatSession
+  text: string
+  messageId: string
+  attribution: {
+    kind: 'application'
+    feature: 'compute'
+    purpose: 'job-completion-analysis'
+    deliveryKey: string
+    jobIds: string[]
+  }
+}) => Promise<{ sessionId: string; messageId: string } | undefined>
+
 type SendMessageFn = (input: {
   sessionId?: string
   text: string
@@ -34,17 +46,38 @@ type SendMessageFn = (input: {
 
 type UseJobAnalysisEffectOptions = {
   enabled: boolean
+  admitMessage?: AdmitMessageFn
+  // Retained as a test seam; production owns delivery through admitMessage and the shared queue.
   sendMessage: SendMessageFn
 }
+
+type JobAnalysisRecoveryStatus = Readonly<{
+  error: 'pending-scan-failed' | undefined
+  retry: () => void
+}>
 
 // Subscribes to all done-state compute:job-updated broadcasts and runs the analysis turn trigger.
 // Also scans every Session for pending notifications on startup (restart recovery path).
 export const useJobAnalysisEffect = ({
   enabled,
+  admitMessage,
   sendMessage
-}: UseJobAnalysisEffectOptions): void => {
-  const sendLatestMessage = useEffectEvent(
-    (input: Parameters<SendMessageFn>[0]): ReturnType<SendMessageFn> => sendMessage(input)
+}: UseJobAnalysisEffectOptions): JobAnalysisRecoveryStatus => {
+  const [error, setError] = useState<JobAnalysisRecoveryStatus['error']>()
+  const retryScanRef = useRef<() => void>(() => undefined)
+  const retry = useCallback(() => retryScanRef.current(), [])
+  const admitLatestMessage = useEffectEvent(
+    (input: Parameters<AdmitMessageFn>[0]): ReturnType<AdmitMessageFn> => {
+      if (admitMessage) return admitMessage(input)
+      return sendMessage({
+        sessionId: input.session.id,
+        text: input.text,
+        cwd: input.session.cwd,
+        projectId: input.session.projectId,
+        preserveSelection: true,
+        messageId: input.messageId
+      })
+    }
   )
 
   useEffect(() => {
@@ -69,28 +102,24 @@ export const useJobAnalysisEffect = ({
     }
 
     const trigger = createJobAnalysisTrigger({
-      isSessionInFlight: (sessionId) => {
-        const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
-        return (
-          session?.status === 'running' ||
-          session?.status === 'waiting-for-user' ||
-          session?.status === 'waiting-permission' ||
-          session?.status === 'waiting-plan-approval'
-        )
-      },
-      sendPrompt: async (sessionId, text, messageId) => {
+      sendPrompt: async (sessionId, text, messageId, jobIds) => {
         if (!isActive) return undefined
         const session = await loadAnalysisSession(sessionId)
         if (!isActive || !session) return undefined
-        return sendLatestMessage({
-          sessionId,
+        return admitLatestMessage({
+          session,
           text,
-          cwd: session.cwd,
-          projectId: session.projectId,
-          preserveSelection: true,
-          messageId
+          messageId,
+          attribution: {
+            kind: 'application',
+            feature: 'compute',
+            purpose: 'job-completion-analysis',
+            deliveryKey: `compute_done:${sessionId}:${[...new Set(jobIds)].sort().join(',')}`,
+            jobIds: [...jobIds]
+          }
         })
       },
+      flushPersistence: () => flushSessionPersistence(),
       createMessageId: () => `analysis-${globalThis.crypto.randomUUID()}`,
       transitionAnalysis: async (request) => {
         if (!isActive || typeof window.api?.compute?.jobsTransitionAnalysis !== 'function') {
@@ -181,11 +210,13 @@ export const useJobAnalysisEffect = ({
         .jobsPendingNotification({ allSessions: true })
         .then((jobs) => {
           if (!isActive) return
+          setError(undefined)
           const jobStore = useSessionJobStore.getState()
           for (const job of jobs) jobStore.applyUpdate(job)
         })
         .catch((error) => {
           if (!isActive) return
+          setError('pending-scan-failed')
           console.warn('[compute] analysis-turn:pending-scan-failed', error)
           pendingScanRetry = setTimeout(() => {
             pendingScanRetry = undefined
@@ -195,6 +226,7 @@ export const useJobAnalysisEffect = ({
     }
 
     const initialState = useSessionJobStore.getState()
+    retryScanRef.current = () => scanPendingJobs()
     feedNotifiedJobs(initialState)
     scanPendingJobs()
 
@@ -204,6 +236,7 @@ export const useJobAnalysisEffect = ({
 
     return () => {
       isActive = false
+      retryScanRef.current = () => undefined
       clearTimeout(pendingScanRetry)
       trigger.dispose()
       unsubscribeJobs()
@@ -211,12 +244,7 @@ export const useJobAnalysisEffect = ({
       turnEndUnsubscribes.clear()
     }
   }, [enabled])
+  return { error, retry }
 }
 
-const JobAnalysisRuntimeBridge = ({ enabled }: { enabled: boolean }): null => {
-  const runtime = useWorkspaceAgentRuntime()
-  useJobAnalysisEffect({ enabled, sendMessage: runtime.sendMessage })
-  return null
-}
-
-export { JobAnalysisRuntimeBridge }
+export type { UseJobAnalysisEffectOptions }

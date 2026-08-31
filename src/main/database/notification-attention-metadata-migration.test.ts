@@ -81,10 +81,11 @@ describe('notification attention metadata migration', () => {
         '0019_session_usage_attribution',
         '0020_compute_job_analysis_state',
         '0021_compute_job_analysis_constraints',
-        '0022_memory_global_content_unique'
+        '0022_memory_global_content_unique',
+        '0023_compute_job_operation'
       ],
       from: '0006_database_domain_constraints',
-      to: '0022_memory_global_content_unique'
+      to: '0023_compute_job_operation'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
@@ -115,9 +116,12 @@ describe('notification attention metadata migration', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0021_compute_job_analysis_constraints.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0022_memory_global_content_unique.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0023_compute_job_operation.backup`)
     ).resolves.toBeUndefined()
 
     await expect(

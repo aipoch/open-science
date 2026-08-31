@@ -1668,6 +1668,7 @@ const createApplicationModules = async (
     connectionBroker,
     jobDeletionOwner,
     jobRepository,
+    operationRepository,
     hostRepository,
     sessionCacheOwner,
     enabledComputeHostsRegistry: hostsRegistry
@@ -1699,6 +1700,7 @@ const createApplicationModules = async (
       jobDeletionOwner,
       hostRepository,
       jobRepository,
+      operationRepository,
       storageRoot: dataRoot
     },
     (dependencies) => {

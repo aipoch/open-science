@@ -44,6 +44,7 @@ type ComputeCommandOwner = Pick<
   | 'approvalReplay'
   | 'approvalReplayPending'
   | 'jobsList'
+  | 'jobsCancel'
   | 'jobsPendingNotification'
   | 'jobsMarkConsumed'
   | 'jobsTransitionAnalysis'
@@ -197,6 +198,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'jobsList'>,
     OwnerResult<ComputeCommandOwner, 'jobsList'>
   >('compute:jobs:list'),
+  jobsCancel: defineApplicationCommand<
+    'compute:jobs:cancel',
+    OwnerArgs<ComputeCommandOwner, 'jobsCancel'>,
+    OwnerResult<ComputeCommandOwner, 'jobsCancel'>
+  >('compute:jobs:cancel'),
   jobsPendingNotification: defineApplicationCommand<
     'compute:jobs:pending-notification',
     OwnerArgs<ComputeCommandOwner, 'jobsPendingNotification'>,
@@ -262,6 +268,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.hostSelectedSet,
   computeApplicationCommands.get,
   computeApplicationCommands.jobsList,
+  computeApplicationCommands.jobsCancel,
   computeApplicationCommands.jobsMarkConsumed,
   computeApplicationCommands.jobsPendingNotification,
   computeApplicationCommands.jobsTransitionAnalysis,
@@ -395,6 +402,7 @@ const registerComputeApplicationCommands = (
         return dependencies.compute.approvalReplayPending()
       },
       'compute:jobs:list': ({ args }) => dependencies.compute.jobsList(args[0]),
+      'compute:jobs:cancel': ({ args }) => dependencies.compute.jobsCancel(args[0]),
       'compute:jobs:pending-notification': ({ args }) =>
         dependencies.compute.jobsPendingNotification(args[0]),
       'compute:jobs:mark-consumed': ({ args }) =>

@@ -3416,18 +3416,9 @@ describe('Brazilian Portuguese safety copy', () => {
       '{{count}} protected Skills will be kept._many',
       '{{count}} habilidades protegidas serão mantidas.'
     ],
-    [
-      '{{count}} of {{limit}} categories used_one',
-      '{{count}} de {{limit}} categorias usadas'
-    ],
-    [
-      '{{count}} of {{limit}} categories used_many',
-      '{{count}} de {{limit}} categorias usadas'
-    ],
-    [
-      '{{count}} of {{limit}} categories used_other',
-      '{{count}} de {{limit}} categorias usadas'
-    ]
+    ['{{count}} of {{limit}} categories used_one', '{{count}} de {{limit}} categorias usadas'],
+    ['{{count}} of {{limit}} categories used_many', '{{count}} de {{limit}} categorias usadas'],
+    ['{{count}} of {{limit}} categories used_other', '{{count}} de {{limit}} categorias usadas']
   ])('keeps reviewed agreement in %s', (key, expected) => {
     expect(catalog('pt-BR')[key]).toBe(expected)
   })
@@ -3461,7 +3452,32 @@ describe('Brazilian Portuguese safety copy', () => {
     [
       'Username changed. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
       'O nome de usuário foi alterado. Selecione novamente este host de computação como destino de execução em cada sessão e aprove as novas permissões.'
-    ]
+    ],
+    ['Unable to cancel remote job.', 'Não foi possível cancelar a tarefa remota.'],
+    ['Cancelling', 'Cancelando'],
+    ['Saved remote job data needs attention', 'Os dados salvos da tarefa remota requerem atenção'],
+    [
+      'This job remains visible, but automatic result analysis is paused because its saved state is incompatible.',
+      'Esta tarefa continua visível, mas a análise automática dos resultados está pausada porque o estado salvo é incompatível.'
+    ],
+    ['Unable to load remote jobs.', 'Não foi possível carregar as tarefas remotas.'],
+    [
+      'Harvest pending. Open Science will retry automatically.',
+      'A coleta está pendente. O Open Science fará uma nova tentativa automaticamente.'
+    ],
+    [
+      'Harvest failed. Remote files were left untouched.',
+      'A coleta falhou. Os arquivos remotos não foram alterados.'
+    ],
+    ['Waiting in queue', 'Aguardando na fila'],
+    ['Submitting', 'Enviando'],
+    ['Remote job recovery needs attention', 'A recuperação de tarefas remotas requer atenção'],
+    [
+      'Open Science could not check saved remote jobs. Retry to restore pending result analysis.',
+      'O Open Science não conseguiu verificar as tarefas remotas salvas. Tente novamente para retomar a análise pendente dos resultados.'
+    ],
+    ['Remote job completed', 'Tarefa remota concluída'],
+    ['Analysis started automatically', 'A análise foi iniciada automaticamente']
   ])('uses consistent remote-compute terminology for %s', (key, expected) => {
     expect(catalog('pt-BR')[key]).toBe(expected)
   })

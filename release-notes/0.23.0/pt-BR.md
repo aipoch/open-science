@@ -2,7 +2,7 @@
 
 - **Leia artigos com o Agente.** Vincule até três PDFs a uma sessão como contexto de leitura: o Agente pode ler a página atual, percorrer o documento inteiro e pesquisar os arquivos vinculados. Selecione um texto ou uma região na visualização aprimorada do PDF para enviá-los como evidência e localizá-los no documento de origem com um clique. (#1791)
 - **Variáveis do Notebook sempre à mão.** O terminal compartilhado sugere nomes de variáveis ativas do kernel durante a digitação e, em visualizações amplas, o painel Variáveis fica acoplado ao lado das células e do terminal, sem substituí-los. (#1919, #1918)
-- **Planos de assinatura da Tencent.** Tencent Coding Plan, para a China continental, e Token Plan, para outros países, passam a integrar os provedores disponíveis junto com o TokenHub pré-pago por uso. (#1901)
+- **Planos de assinatura da Tencent.** Tencent Coding Plan, para a China continental, e Token Plan, para outros países, passam a integrar os provedores disponíveis junto com o TokenHub com cobrança por uso. (#1901)
 - **Dados locais mais seguros.** A mudança do local de armazenamento de dados é atômica e preserva metadados de artefatos, rascunhos de uploads e a identidade das versões dos artefatos; relatórios de diagnóstico compartilhados com o suporte ocultam dados sensíveis por padrão. (#1882, #1904, #1905, #1907)
 
 ## 🚀 Novos recursos
@@ -10,7 +10,7 @@
 - **Contexto de leitura e evidências em PDF** — vincule até três PDFs com várias páginas a uma sessão usando ações explícitas para vincular e desvincular; o Agente lê a página atual, percorre o documento inteiro em lotes ou pesquisa os PDFs vinculados, e o conteúdo lido permanece estável em envios na fila, novas tentativas, ramificações e retomadas. A visualização aprimorada do PDF oferece texto selecionável, seleção de áreas, sumário e miniaturas, pesquisa no documento, navegação entre páginas e controles de zoom. As seleções se tornam anotações de evidência que podem ser localizadas no documento de origem com um clique. (#1791)
 - **Sugestões de variáveis ativas do kernel** — o terminal do Notebook sugere nomes de variáveis correspondentes do kernel Python ou R em execução, junto com seus tipos, com navegação pelo teclado e compatibilidade segura com editores de método de entrada. (#1919)
 - **Painel Variáveis acoplado em visualizações amplas** — quando a visualização do Notebook tem largura suficiente, as variáveis ativas ficam em uma coluna lateral enquanto as células e o terminal permanecem visíveis; visualizações estreitas mantêm a tela focada em Variáveis, e o painel volta a ser acoplado automaticamente quando há espaço. (#1918)
-- **Tencent Coding Plan e Token Plan** — provedores dedicados a planos de assinatura, com endpoints para a China continental e outros países e uma lista própria de modelos selecionados, disponíveis junto com o Tencent TokenHub pré-pago por uso. (#1901)
+- **Tencent Coding Plan e Token Plan** — provedores dedicados a planos de assinatura, com endpoints para a China continental e outros países e uma lista própria de modelos selecionados, disponíveis junto com o Tencent TokenHub com cobrança por uso. (#1901)
 
 ## 🔧 Melhorias
 

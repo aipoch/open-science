@@ -142,10 +142,15 @@ let mockJobsById: Map<string, JobSummary> = new Map()
 
 vi.mock('@/stores/session-job-store', () => ({
   useSessionJobStore: (
-    selector: (s: { jobsById: Map<string, JobSummary>; hydrate: () => Promise<void> }) => unknown
+    selector: (s: {
+      jobsById: Map<string, JobSummary>
+      loadErrorBySession: Map<string, string>
+      hydrate: () => Promise<void>
+    }) => unknown
   ) =>
     selector({
       jobsById: mockJobsById,
+      loadErrorBySession: new Map(),
       hydrate: () => Promise.resolve()
     })
 }))
@@ -358,6 +363,23 @@ describe('WorkspaceMessageScroller Reviewer Correction lifecycle', () => {
     expect(html).toContain('Handed off to the Agent · response started')
     expect(html).not.toContain('animate-spin')
     expect(html).not.toContain(correction.content)
+  })
+
+  it('keeps a reloaded Compute completion as a system event', async () => {
+    const compute = createMessage({
+      id: 'compute-completion-1',
+      content: 'A remote job has finished. Please analyze the results.',
+      presentation: { kind: 'compute-job-completion' }
+    })
+    const html = await renderScroller(
+      createSession({ status: 'idle', activeRun: undefined, messages: [compute] })
+    )
+
+    expect(html).toContain('data-testid="compute-job-completion-event"')
+    expect(html).toContain('Remote job completed')
+    expect(html).toContain('Analysis started automatically')
+    expect(html).not.toContain(compute.content)
+    expect(html).not.toContain('data-slot="user-message-bubble"')
   })
 })
 

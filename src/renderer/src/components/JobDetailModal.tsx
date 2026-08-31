@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ExternalLink, X } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { ArrowLeft, ExternalLink, ShieldAlert, TriangleAlert, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
@@ -10,6 +10,7 @@ import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/di
 import { cn } from '@/lib/utils'
 import { JobStatusBadge } from './JobStatusBadge'
 import { JobTerminalOutput } from './JobTerminalOutput'
+import { ErrorNotice } from './error-notice'
 import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
 import { FileBrowserModal } from '../pages/settings/FileBrowserModal'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -77,7 +78,10 @@ function SessionJobsList({
                     <span className="rounded bg-muted px-2 py-0.5 text-xs text-secondary-foreground">
                       {job.display_name}
                     </span>
-                    <JobStatusBadge status={job.status} />
+                    <JobStatusBadge
+                      status={job.status}
+                      cancellationStatus={job.cancellation_status}
+                    />
                   </div>
                 </div>
                 <span className="shrink-0 text-[12px] text-muted-foreground">
@@ -115,6 +119,19 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
 
   // Pull latest data from the store on every render (store subscribes to compute:job-updated).
   const latestJob = useSessionJobStore((s) => s.jobsById.get(job.job_id)) ?? job
+  const hydrateJobs = useSessionJobStore((s) => s.hydrate)
+  const loadError = useSessionJobStore((s) => s.loadErrorBySession.get(job.session_id))
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isCancellingRequest, setIsCancellingRequest] = useState(false)
+  const [cancelError, setCancelError] = useState<string>()
+  const refreshJob = useCallback(async (): Promise<void> => {
+    setIsRefreshing(true)
+    try {
+      await hydrateJobs(job.session_id, { activate: false })
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [hydrateJobs, job.session_id])
   const openSettingsToComputeAuthentication = useSettingsStore(
     (state) => state.openSettingsToComputeAuthentication
   )
@@ -127,6 +144,29 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
   // Track elapsed time for running jobs
   const [now, setNow] = useState(() => Date.now())
   const isRunning = latestJob.status === 'running' || latestJob.status === 'submitted'
+  const isActive =
+    latestJob.status === 'queued' ||
+    latestJob.status === 'submitted' ||
+    latestJob.status === 'running'
+  const isCancelling = latestJob.cancellation_status === 'cancelling'
+  const cancelJob = useCallback(async (): Promise<void> => {
+    if (!latestJob.project_id) return
+    setIsCancellingRequest(true)
+    setCancelError(undefined)
+    try {
+      await window.api.compute.jobsCancel({
+        jobId: latestJob.job_id,
+        providerId: latestJob.provider_id,
+        sessionId: latestJob.session_id,
+        projectId: latestJob.project_id
+      })
+      await hydrateJobs(latestJob.session_id, { activate: false })
+    } catch (error) {
+      setCancelError(error instanceof Error ? error.message : t('Unable to cancel remote job.'))
+    } finally {
+      setIsCancellingRequest(false)
+    }
+  }, [hydrateJobs, latestJob, t])
 
   // Tick for elapsed time
   useEffect(() => {
@@ -135,26 +175,12 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
     return () => clearInterval(id)
   }, [isRunning])
 
-  // ≈15s refresh trigger for terminal output (store already updates via compute:job-updated broadcast
-  // which the app subscribes to; this force-tick ensures the component re-renders with fresh tail).
-  const [refreshTick, setRefreshTick] = useState(0)
-  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
+  // Broadcasts are the fast path; a real list fetch repairs a missed renderer event or stale tail.
   useEffect(() => {
-    if (!isRunning) {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
-      return
-    }
-    refreshTimerRef.current = setInterval(() => {
-      setRefreshTick((t) => t + 1)
-    }, TERMINAL_REFRESH_MS)
-    return () => {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
-    }
-  }, [isRunning])
-
-  // Suppress unused variable warning — refreshTick is consumed to trigger re-render cycle
-  void refreshTick
+    if (!isRunning) return undefined
+    const timer = setInterval(() => void refreshJob(), TERMINAL_REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [isRunning, refreshJob])
 
   // Compute runtime display
   const runtimeDisplay = (): string => {
@@ -183,7 +209,32 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
           {t('Back')}
         </button>
         <span className="flex-1 min-w-0 truncate text-[13px] font-medium">{latestJob.intent}</span>
-        <JobStatusBadge status={latestJob.status} />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-testid="job-detail-refresh"
+          disabled={isRefreshing}
+          onClick={() => void refreshJob()}
+        >
+          {t('Refresh')}
+        </Button>
+        {isActive && latestJob.cancellation_status !== 'cancelled' ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="job-cancel"
+            disabled={isCancelling || isCancellingRequest || !latestJob.project_id}
+            onClick={() => void cancelJob()}
+          >
+            {isCancelling || isCancellingRequest ? t('Cancelling') : t('Cancel')}
+          </Button>
+        ) : null}
+        <JobStatusBadge
+          status={latestJob.status}
+          cancellationStatus={latestJob.cancellation_status}
+        />
       </div>
 
       {/* Meta info grid */}
@@ -192,7 +243,16 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         data-testid="job-meta"
       >
         <MetaRow label={t('Provider')} value={latestJob.display_name} />
-        <MetaRow label={t('Status')} value={latestJob.status} />
+        <MetaRow
+          label={t('Status')}
+          value={
+            latestJob.cancellation_status === 'cancelled'
+              ? t('Cancelled')
+              : latestJob.cancellation_status === 'cancelling'
+                ? t('Cancelling')
+                : latestJob.status
+          }
+        />
         <MetaRow label={t('Runtime', { context: 'duration' })} value={runtimeDisplay()} />
         <MetaRow
           label={t('Remote workdir')}
@@ -215,23 +275,87 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         </div>
       </div>
 
-      {runtimeErrorCode ? (
+      {latestJob.needs_attention ? (
         <div
           role="alert"
-          className="m-3 rounded-lg border border-status-failure-border bg-status-failure-subtle/50 px-3 py-2 text-sm text-status-failure-strong"
+          data-testid="job-integrity-diagnostic"
+          className="flex justify-center border-b border-border p-5"
         >
-          <p>{computeRuntimeRecoveryCopy(runtimeErrorCode, t)}</p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-2"
-            onClick={() =>
-              openSettingsToComputeAuthentication(latestJob.provider_id, runtimeErrorCode)
+          <ErrorNotice
+            icon={ShieldAlert}
+            tone="red"
+            title={t('Saved remote job data needs attention')}
+            description={t(
+              'This job remains visible, but automatic result analysis is paused because its saved state is incompatible.'
+            )}
+            errorCode={latestJob.integrity_issues
+              ?.map((issue) => `${issue.code}: ${issue.rawErrorCode ?? issue.rawStatus}`)
+              .join('\n')}
+          />
+        </div>
+      ) : null}
+
+      {runtimeErrorCode ? (
+        <div role="alert" className="flex justify-center border-b border-border p-5">
+          <ErrorNotice
+            icon={ShieldAlert}
+            tone="red"
+            title={computeRuntimeRecoveryCopy(runtimeErrorCode, t)}
+            primaryButton={{
+              label: computeRuntimeRecoveryAction(runtimeErrorCode, t),
+              onClick: () =>
+                openSettingsToComputeAuthentication(latestJob.provider_id, runtimeErrorCode)
+            }}
+          />
+        </div>
+      ) : null}
+
+      {cancelError ? (
+        <div role="alert" className="flex justify-center border-b border-border p-5">
+          <ErrorNotice
+            icon={TriangleAlert}
+            tone="amber"
+            title={t('Unable to cancel remote job.')}
+            primaryButton={{
+              label: t('Retry'),
+              onClick: () => void cancelJob(),
+              loading: isCancellingRequest
+            }}
+          />
+        </div>
+      ) : null}
+
+      {loadError ? (
+        <div role="alert" className="flex justify-center border-b border-border p-5">
+          <ErrorNotice
+            icon={TriangleAlert}
+            tone="amber"
+            title={t('Unable to load remote jobs.')}
+            primaryButton={{
+              label: t('Retry'),
+              onClick: () => void refreshJob(),
+              loading: isRefreshing
+            }}
+          />
+        </div>
+      ) : null}
+
+      {latestJob.harvest_error && !runtimeErrorCode ? (
+        <div role="alert" className="flex justify-center border-b border-border p-5">
+          <ErrorNotice
+            icon={TriangleAlert}
+            tone="amber"
+            title={
+              latestJob.harvest_error.startsWith('harvest pending:')
+                ? t('Harvest pending. Open Science will retry automatically.')
+                : t('Harvest failed. Remote files were left untouched.')
             }
-          >
-            {computeRuntimeRecoveryAction(runtimeErrorCode, t)}
-          </Button>
+            primaryButton={{
+              label: t('Refresh'),
+              onClick: () => void refreshJob(),
+              loading: isRefreshing
+            }}
+          />
         </div>
       ) : null}
 
