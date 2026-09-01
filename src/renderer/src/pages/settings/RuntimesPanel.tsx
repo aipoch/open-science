@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useRuntimeSettingsStore } from '@/stores/runtime-settings-store'
 import {
+  isCurrentAppManagedDefault,
   isEnvEnabled,
   type DiscoveredInterpreter,
   type EnvPackage,
@@ -305,9 +306,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       // The provisioner updates files and registry metadata in the main process; reload both the
       // discovered environments and persisted enablement before rendering the completed card.
       const snapshot = await recheckRuntimeSettings()
-      const managed = snapshot.envs[language].find(
-        (environment) => environment.provenance === 'app-managed'
-      )
+      const managed = snapshot.envs[language].find(isCurrentAppManagedDefault)
       if (managed) {
         const next = await window.api.runtime.setEnvironmentEnabled(language, managed.envId, true)
         setEnablement(language, next)
@@ -367,7 +366,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   // Managed readiness is derived from discovery: the app-managed env for a language is present and
   // runnable once it is set up (replaces the old survey().managed readiness).
   const managedRunnableFor = (language: NotebookLanguage): boolean =>
-    (envs?.[language] ?? []).some((env) => env.provenance === 'app-managed' && env.runnable)
+    (envs?.[language] ?? []).some((env) => isCurrentAppManagedDefault(env) && env.runnable)
 
   // One environment card (detected app-managed or user-own): identity + readiness + enable toggle,
   // plus the install-authorization row for an enabled external env. Shared by the managed-first card
@@ -432,7 +431,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                 ) : null}
               </Button>
             ) : null}
-            {env.provenance === 'app-managed' ? (
+            {isCurrentAppManagedDefault(env) ? (
               <Button
                 type="button"
                 variant="destructive"
@@ -563,8 +562,8 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             // App-managed goes FIRST; the user's own detected interpreters follow. A provisioned
             // app-managed env appears in `list` (provenance app-managed) and renders as a normal card;
             // when it isn't set up yet there is no such entry, so a setup card is shown in its place.
-            const managedEnv = list.find((env) => env.provenance === 'app-managed')
-            const ownEnvs = list.filter((env) => env.provenance !== 'app-managed')
+            const managedEnv = list.find(isCurrentAppManagedDefault)
+            const otherEnvs = list.filter((env) => env !== managedEnv)
 
             return (
               <SettingsSection
@@ -731,7 +730,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                     </div>
                   )}
 
-                  {ownEnvs.map((env) => renderEnvCard(id, env))}
+                  {otherEnvs.map((env) => renderEnvCard(id, env))}
                 </div>
               </SettingsSection>
             )

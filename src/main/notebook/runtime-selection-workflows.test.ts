@@ -299,17 +299,27 @@ describe('runtime selection workflows', () => {
     await expect(workflows.getAgentEnvironmentCreationEnabled()).resolves.toBe(false)
   })
 
-  it('uninstalls only the discovered app-managed default and leaves it disabled', async () => {
+  it('uninstalls only the exact current managed default when a legacy managed prefix also exists', async () => {
     const settingsService = fakeSettingsService()
-    const materializedRuntimeId = '/data/runtime/envs/default-python-3.13/bin/python'
     const rawRuntimeId = managedRuntimeIdentity('/data/runtime', 'python', DEFAULT_PY_ENV).runtimeId
+    const legacyRuntimeId = '/data/runtime/envs/default-python-3.13/bin/python'
     discoveryState.python = [
       {
         language: 'python',
         provenance: 'app-managed',
-        envId: materializedRuntimeId,
-        interpreterPath: materializedRuntimeId,
-        label: 'Managed Python',
+        envId: legacyRuntimeId,
+        interpreterPath: legacyRuntimeId,
+        label: 'Legacy managed Python',
+        condaEnv: 'default-python-3.13',
+        runnable: true
+      },
+      {
+        language: 'python',
+        provenance: 'app-managed',
+        envId: rawRuntimeId,
+        interpreterPath: rawRuntimeId,
+        label: 'Current managed Python',
+        condaEnv: DEFAULT_PY_ENV,
         runnable: true
       },
       {
@@ -333,21 +343,23 @@ describe('runtime selection workflows', () => {
 
     expect(uninstallManagedEnvironment).toHaveBeenCalledWith('python')
     expect(settingsService.enablement.get('python')?.enabled).toMatchObject({
-      [materializedRuntimeId]: false,
       [rawRuntimeId]: false
     })
+    expect(settingsService.enablement.get('python')?.enabled[legacyRuntimeId]).toBeUndefined()
     expect(settingsService.enablement.get('python')?.enabled['/usr/bin/python3']).toBeUndefined()
   })
 
   it('refuses managed uninstall while work is running before changing persisted state', async () => {
     const settingsService = fakeSettingsService()
+    const runtimeId = managedRuntimeIdentity('/data/runtime', 'python', DEFAULT_PY_ENV).runtimeId
     discoveryState.python = [
       {
         language: 'python',
         provenance: 'app-managed',
-        envId: '/managed/python',
-        interpreterPath: '/managed/python',
+        envId: runtimeId,
+        interpreterPath: runtimeId,
         label: 'Managed Python',
+        condaEnv: DEFAULT_PY_ENV,
         runnable: true
       }
     ]

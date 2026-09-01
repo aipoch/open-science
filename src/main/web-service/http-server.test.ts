@@ -2901,15 +2901,18 @@ describe('startWebHttpServer', () => {
     expect(localOnly(runtimeChannels)).toEqual([
       'runtime:pick-interpreter',
       'runtime:register-interpreter',
+      'runtime:set-agent-environment-creation-enabled',
       'runtime:set-environment-enabled',
       'runtime:set-install-authorized',
       'runtime:set-selection',
+      'runtime:uninstall-managed-environment',
       'runtime:unregister-interpreter'
     ])
     expect(
       runtimeChannels.filter((channel) => !localOnly(runtimeChannels).includes(channel))
     ).toEqual([
       'runtime:describe-usage',
+      'runtime:get-agent-environment-creation-enabled',
       'runtime:get-enablement',
       'runtime:list-environments',
       'runtime:list-package-counts',

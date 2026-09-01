@@ -6,6 +6,7 @@ import type {
   RuntimeSurvey,
   RuntimeUsage
 } from '../../shared/notebook-runtime'
+import { isCurrentAppManagedDefault } from '../../shared/notebook-runtime'
 import {
   createExternalAdapter,
   createManagedAdapter,
@@ -308,7 +309,7 @@ const createRuntimeSelectionWorkflows = (
         environmentName
       ).runtimeId
       const managed = (await discoverLanguageEnvs(request.language)).find(
-        (environment) => environment.provenance === 'app-managed'
+        isCurrentAppManagedDefault
       )
       if (managed) {
         const usage = deps.describeRuntimeUsage?.(request.language, managed.envId) ?? {

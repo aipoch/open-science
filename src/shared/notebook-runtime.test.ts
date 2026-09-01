@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { DiscoveredInterpreter, EnvProvenance, RuntimeEnablement } from './notebook-runtime'
-import { isEnvEnabled, packageToolFor } from './notebook-runtime'
+import { isCurrentAppManagedDefault, isEnvEnabled, packageToolFor } from './notebook-runtime'
 
 const env = (provenance: EnvProvenance, envId = '/env'): DiscoveredInterpreter => ({
   language: 'python',
@@ -44,5 +44,29 @@ describe('packageToolFor', () => {
   it("routes the user's own envs to their own pip / R library, never micromamba", () => {
     expect(packageToolFor('python', false)).toBe('pip')
     expect(packageToolFor('r', false)).toBe('r-library')
+  })
+})
+
+describe('isCurrentAppManagedDefault', () => {
+  it('accepts only the exact logical default and rejects legacy versioned and user-owned envs', () => {
+    expect(isCurrentAppManagedDefault({ ...env('app-managed'), condaEnv: 'default-python' })).toBe(
+      true
+    )
+    expect(
+      isCurrentAppManagedDefault({ ...env('app-managed'), condaEnv: 'default-python-3.13' })
+    ).toBe(false)
+    expect(isCurrentAppManagedDefault({ ...env('user-own'), condaEnv: 'default-python' })).toBe(
+      false
+    )
+  })
+
+  it('uses the exact R default for R environments', () => {
+    expect(
+      isCurrentAppManagedDefault({
+        ...env('app-managed'),
+        language: 'r',
+        condaEnv: 'default-r'
+      })
+    ).toBe(true)
   })
 })

@@ -20,10 +20,11 @@ const pythonEnvs: DiscoveredInterpreter[] = [
   {
     language: 'python',
     provenance: 'app-managed',
-    envId: '/data/runtime/envs/default-python-3.12/bin/python',
-    interpreterPath: '/data/runtime/envs/default-python-3.12/bin/python',
+    envId: '/data/runtime/envs/default-python/bin/python',
+    interpreterPath: '/data/runtime/envs/default-python/bin/python',
     label: 'Python 3.12 (managed)',
     version: '3.12.4',
+    condaEnv: 'default-python',
     runnable: true
   },
   {
@@ -101,7 +102,7 @@ beforeEach(() => {
     .mockImplementation(async (language: string): Promise<Record<string, number | null>> =>
       language === 'python'
         ? {
-            '/data/runtime/envs/default-python-3.12/bin/python': 2,
+            '/data/runtime/envs/default-python/bin/python': 2,
             '/usr/bin/python3': 1
           }
         : {}
@@ -270,7 +271,7 @@ describe('RuntimesPanel', () => {
     const text = container.textContent ?? ''
     expect(text).toContain('Python 3.12 (managed)')
     expect(text).toContain('3.12.4')
-    expect(text).toContain('/data/runtime/envs/default-python-3.12/bin/python')
+    expect(text).toContain('/data/runtime/envs/default-python/bin/python')
     expect(text).toContain('System Python')
     expect(text).toContain('/usr/bin/python3')
     // R conda env card, including its provider/type and readiness gap.
@@ -331,7 +332,21 @@ describe('RuntimesPanel', () => {
     })
   })
 
-  it('offers uninstall only for app-managed environments and confirms by language', async () => {
+  it('offers uninstall only for the exact managed default when a legacy managed prefix also exists', async () => {
+    const legacyManaged: DiscoveredInterpreter = {
+      language: 'python',
+      provenance: 'app-managed',
+      envId: '/data/runtime/envs/default-python-3.11/bin/python',
+      interpreterPath: '/data/runtime/envs/default-python-3.11/bin/python',
+      label: 'Legacy Python 3.11 (managed)',
+      version: '3.11.9',
+      condaEnv: 'default-python-3.11',
+      runnable: true
+    }
+    listEnvironments.mockResolvedValue({
+      python: [legacyManaged, ...pythonEnvs],
+      r: rEnvs
+    })
     await render()
 
     const uninstallButtons = container.querySelectorAll('[data-testid="runtime-uninstall-button"]')
@@ -339,6 +354,11 @@ describe('RuntimesPanel', () => {
     expect(uninstallButtons[0]?.closest('[data-testid="runtime-card"]')?.textContent).toContain(
       'Python 3.12 (managed)'
     )
+    const legacyCard = Array.from(container.querySelectorAll('[data-testid="runtime-card"]')).find(
+      (card) => card.textContent?.includes('Legacy Python 3.11 (managed)')
+    )
+    expect(legacyCard).toBeDefined()
+    expect(legacyCard?.querySelector('[data-testid="runtime-uninstall-button"]')).toBeNull()
 
     await click(uninstallButtons[0] ?? null)
     const dialog = document.querySelector('[data-testid="runtime-uninstall-dialog"]')
@@ -485,7 +505,7 @@ describe('RuntimesPanel', () => {
     // "Disable after current work" = drain (no force).
     expect(setEnvironmentEnabled).toHaveBeenCalledWith(
       'python',
-      '/data/runtime/envs/default-python-3.12/bin/python',
+      '/data/runtime/envs/default-python/bin/python',
       false,
       undefined
     )
@@ -505,7 +525,7 @@ describe('RuntimesPanel', () => {
     await click(forceBtn ?? null)
     expect(setEnvironmentEnabled).toHaveBeenCalledWith(
       'python',
-      '/data/runtime/envs/default-python-3.12/bin/python',
+      '/data/runtime/envs/default-python/bin/python',
       false,
       true
     )
@@ -784,7 +804,7 @@ describe('RuntimesPanel packages dialog', () => {
 
   it('omits a badge for envs whose count came back null in the bulk response', async () => {
     listPackageCounts.mockResolvedValue({
-      '/data/runtime/envs/default-python-3.12/bin/python': 2,
+      '/data/runtime/envs/default-python/bin/python': 2,
       '/usr/bin/python3': null
     })
     await render()
@@ -815,7 +835,7 @@ describe('RuntimesPanel packages dialog', () => {
       )
     ).toBe(true)
     expect(dialog?.textContent).toContain('Packages in Python 3.12 (managed)')
-    expect(dialog?.textContent).toContain('/data/runtime/envs/default-python-3.12/bin/python')
+    expect(dialog?.textContent).toContain('/data/runtime/envs/default-python/bin/python')
     expect(document.querySelectorAll('[data-testid="runtime-package-row"]').length).toBe(2)
     // Conda-style listing: Build/Channel columns + the conda/pypi summary.
     expect(dialog?.textContent).toContain('Build')

@@ -204,7 +204,10 @@ const stubWindowApi = (): void => {
     runtime: {
       listEnvironments: vi.fn().mockResolvedValue({ python: [], r: [] }),
       getEnablement: vi.fn().mockResolvedValue({ enabled: {}, installAuthorized: {} }),
+      getAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
+      setAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
       setEnvironmentEnabled: vi.fn().mockResolvedValue({ enabled: {}, installAuthorized: {} }),
+      uninstallManagedEnvironment: vi.fn().mockResolvedValue(undefined),
       registerInterpreter: vi.fn().mockResolvedValue([]),
       pickInterpreter: vi.fn().mockResolvedValue(null)
     }
