@@ -67,8 +67,14 @@ const withSideChatShutdown = async (
   runtimeTeardown: Promise<{ reaped: boolean }>,
   sideChatTeardown: Promise<void>
 ): Promise<{ reaped: boolean }> => {
-  const [runtimeOutcome] = await Promise.all([runtimeTeardown, sideChatTeardown])
-  return runtimeOutcome
+  const [runtimeResult, sideChatResult] = await Promise.allSettled([
+    runtimeTeardown,
+    sideChatTeardown
+  ])
+  if (runtimeResult.status === 'rejected') throw runtimeResult.reason
+  return {
+    reaped: runtimeResult.value?.reaped === true && sideChatResult.status === 'fulfilled'
+  }
 }
 
 // Normal quit/relaunch budget: keep it short so a stuck backend can't hang quit.

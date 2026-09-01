@@ -188,6 +188,32 @@ describe('BackendShutdownCoordinator', () => {
     })
   })
 
+  it('keeps waiting for a hung runtime when Side Chat suspension fails first', async () => {
+    vi.useFakeTimers()
+    const deps = makeDeps({
+      runtime: {
+        shutdownForQuit: vi.fn(async () => ({ reaped: true })),
+        shutdownForUpdateGate: vi.fn(() => new Promise<never>(() => {}))
+      },
+      sideChat: {
+        shutdown: vi.fn(async () => undefined),
+        suspendAll: vi.fn(async () => Promise.reject(new Error('save failed')))
+      }
+    })
+    const coordinator = new BackendShutdownCoordinator(deps)
+
+    const pending = coordinator.runForUpdateGate(25)
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+
+    await vi.advanceTimersByTimeAsync(24)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(pending).resolves.toEqual({ completed: false, reaped: false })
+  })
+
   it('reports completed:false (and reaped:false) when the gate teardown exceeds its budget', async () => {
     vi.useFakeTimers()
     const deps = makeDeps({
