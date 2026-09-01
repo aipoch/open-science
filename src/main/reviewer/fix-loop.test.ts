@@ -399,6 +399,7 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
     const client = createProjectDbClient(temporaryRoot!)
     await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
+    const onReviewUpdate = vi.fn()
 
     const reviewRun = runReview({
       sessionId: 'session-1',
@@ -409,6 +410,7 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
       acpRuntime: runtime,
       artifactStorageRoot: temporaryRoot!,
       mainSessionId: 'main-session-1',
+      onReviewUpdate,
       agentTarget: {
         frameworkId: 'codex',
         providerId: 'provider-1',
@@ -436,6 +438,14 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
         outcome: null,
         checks: [expect.objectContaining({ status: 'fail' })]
       })
+      expect(onReviewUpdate).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          id: initialReview?.id,
+          lifecycle: 'running',
+          outcome: null,
+          checks: [expect.objectContaining({ status: 'fail' })]
+        })
+      )
     } finally {
       releaseCorrection()
     }

@@ -191,6 +191,7 @@ const runReviewWithSession = async (
   const hasWarnOrFail = finalReview.checks.some((c) => c.status === 'warn' || c.status === 'fail')
 
   if (mainSessionId && hasWarnOrFail) {
+    onReviewUpdate?.(finalReview)
     await onFixLoopStart?.()
     try {
       await runReviewerFixLoop({
