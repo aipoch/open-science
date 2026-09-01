@@ -44,7 +44,7 @@ type NotebookPackageMutationOwnerOptions = {
   runtimeRoot: string
   environmentOperations: Pick<
     NotebookEnvironmentOperations,
-    'runMutation' | 'logPackageFailure' | 'logPackageResult'
+    'runPackageMutation' | 'logPackageFailure' | 'logPackageResult'
   >
   environmentStateTracker: Pick<
     EnvironmentStateTracker,
@@ -101,7 +101,7 @@ class NotebookPackageMutationOwner {
     try {
       // The journal begins inside the environment lock so Reset cannot clear this new operation
       // between intent recording and the first installer spawn.
-      await this.options.environmentOperations.runMutation(environmentName, async () => {
+      await this.options.environmentOperations.runPackageMutation(environmentName, async () => {
         const repairRefusal = this.options.recheckRepair(target)
         if (repairRefusal) {
           result = repairRefusal.result

@@ -146,6 +146,7 @@ export class NotebookEnvironmentOperations {
   private readonly restartRecommendations = new Set<string>()
   private readonly revocationDrains = new Set<Promise<void>>()
   private readonly repairBlocks = new Set<string>()
+  private readonly removals = new Set<string>()
   private provisioner: DefaultEnvProvisioner | undefined
   private reportProvisionProgress: (progress: ProvisionProgress) => void = () => undefined
   private progress: ProvisionProgress | undefined
@@ -213,6 +214,24 @@ export class NotebookEnvironmentOperations {
 
   runMutation<T>(environment: string, operation: () => Promise<T>): Promise<T> {
     return this.withLease('mutation', environment, 'exclusive', operation)
+  }
+
+  runPackageMutation<T>(environment: string, operation: () => Promise<T>): Promise<T> {
+    if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
+    return this.withLease('mutation', environment, 'exclusive', async () => {
+      if (this.removals.has(environment)) throw this.removalInProgress(environment)
+      return operation()
+    })
+  }
+
+  async runRemoval<T>(environment: string, operation: () => Promise<T>): Promise<T> {
+    if (this.removals.has(environment)) throw this.removalInProgress(environment)
+    this.removals.add(environment)
+    try {
+      return await operation()
+    } finally {
+      this.removals.delete(environment)
+    }
   }
 
   describeRuntimeUsage(
@@ -452,5 +471,11 @@ export class NotebookEnvironmentOperations {
     } catch {
       // Diagnostics are best-effort and must never replace the installer result.
     }
+  }
+
+  private removalInProgress(environment: string): Error {
+    return new Error(
+      `RUNTIME_ENVIRONMENT_REMOVING: Runtime Environment "${environment}" is being uninstalled.`
+    )
   }
 }

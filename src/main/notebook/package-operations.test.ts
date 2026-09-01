@@ -110,7 +110,7 @@ const harness = (
       logPackageFailure: vi.fn(),
       logPackageResult: vi.fn(),
       recommendRestart: vi.fn(),
-      runMutation: async <Result>(
+      runPackageMutation: async <Result>(
         _environment: string,
         operation: () => Promise<Result>
       ): Promise<Result> => operation(),

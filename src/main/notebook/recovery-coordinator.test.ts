@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, win32 } from 'node:path'
+import { basename, dirname, join, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
@@ -133,6 +133,40 @@ describe('NotebookRecoveryCoordinator', () => {
     expect(await journal.pending()).toHaveLength(1)
     expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
     expect(coordinator.snapshot().blockedPrefixes).toContain(prefix)
+  })
+
+  it('retains and blocks a managed removal routed through a symlinked envs root', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const outsideEnvs = join(root!, 'outside-envs')
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const outsidePrefix = join(outsideEnvs, basename(prefix))
+    const marker = readyMarkerPath(runtimeRoot)
+    await Promise.all([
+      mkdir(runtimeRoot, { recursive: true }),
+      mkdir(outsidePrefix, { recursive: true })
+    ])
+    await writeFile(join(outsidePrefix, 'keep'), 'x')
+    await symlink(
+      outsideEnvs,
+      join(runtimeRoot, 'envs'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'remove-symlinked-envs',
+      kind: 'remove',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'remove-python',
+      startedAt: 100,
+      targetPaths: [prefix, marker]
+    })
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+
+    await coordinator.recover()
+
+    expect(existsSync(join(outsidePrefix, 'keep'))).toBe(true)
+    expect(await journal.pending()).toHaveLength(1)
+    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
   })
 
   it('finalizes a leftover working cache only after recovery has no blocked writer', async () => {

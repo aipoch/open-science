@@ -68,6 +68,10 @@ import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { InstallRequest } from './package-manager'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import {
+  assertManagedRuntimeRemovalOwnership,
+  managedRuntimeRemovalTargets
+} from './managed-runtime-removal'
+import {
   isChildUnconfirmedError,
   captureMicromamba,
   micromambaDiagnosticText,
@@ -1403,12 +1407,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     beforeRemove?: () => Promise<void>
   ): Promise<void> {
     const name = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-    const prefix = envPrefix(this.deps.root, name, this.platform)
-    const targets = [
-      prefix,
-      language === 'r' ? rReadyMarkerPath(this.deps.root) : readyMarkerPath(this.deps.root)
-    ]
     await this.withEnvPrefixLock(name, async () => {
+      const removal = managedRuntimeRemovalTargets(this.deps.root, language, this.platform)
+      assertManagedRuntimeRemovalOwnership(this.deps.root, removal)
       await beforeRemove?.()
       const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.deps.root))
       const operationId = randomUUID()
@@ -1418,15 +1419,15 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
         runtimeId: name,
         phase: `remove-${language}`,
         startedAt: Date.now(),
-        targetPaths: targets
+        targetPaths: removal.targets
       })
       try {
-        for (const target of targets) rmSync(target, { recursive: true, force: true })
+        for (const target of removal.targets) rmSync(target, { recursive: true, force: true })
         await journal.complete(operationId)
       } catch (error) {
         // Keep the durable intent for startup retry and prevent this provisioner from recreating the
         // prefix before that retry has cleared it.
-        this.pendingRemovalPrefixes.add(prefix)
+        for (const prefix of removal.prefixes) this.pendingRemovalPrefixes.add(prefix)
         throw error
       }
     })

@@ -20,16 +20,10 @@ import {
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
 import { verifyExecutable } from './provisioner-runtime'
 import {
-  addRepairRequired,
-  DEFAULT_PY_ENV,
-  DEFAULT_R_ENV,
-  envPrefix,
-  legacyDefaultEnvPrefix,
-  pythonBin,
-  rBin,
-  rReadyMarkerPath,
-  readyMarkerPath
-} from './runtime-paths'
+  assertManagedRuntimeRemovalOwnership,
+  parseManagedRuntimeRemovalTargets
+} from './managed-runtime-removal'
+import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 
 const log = createLogger('notebook:recovery')
@@ -210,9 +204,7 @@ export class NotebookRecoveryCoordinator {
       return
     }
 
-    const validatedRemovalTargets = (
-      record: RuntimeOperationRecord
-    ): { prefix: string; targets: readonly string[] } => {
+    const removalLanguage = (record: RuntimeOperationRecord): 'python' | 'r' => {
       const language =
         record.runtimeId === DEFAULT_R_ENV
           ? 'r'
@@ -220,24 +212,7 @@ export class NotebookRecoveryCoordinator {
             ? 'python'
             : undefined
       if (!language) throw new Error('Interrupted Runtime removal has an unknown target.')
-      const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-      const expectedMarker =
-        language === 'r' ? rReadyMarkerPath(this.runtimeRoot) : readyMarkerPath(this.runtimeRoot)
-      const allowedPrefixes = new Set([
-        envPrefix(this.runtimeRoot, environmentName),
-        legacyDefaultEnvPrefix(this.runtimeRoot, environmentName)
-      ])
-      const targets = record.targetPaths ?? []
-      const recordedPrefixes = targets.filter((target) => allowedPrefixes.has(target))
-      if (
-        targets.length !== 2 ||
-        new Set(targets).size !== 2 ||
-        !targets.includes(expectedMarker) ||
-        recordedPrefixes.length !== 1
-      ) {
-        throw new Error('Interrupted Runtime removal contains an unsafe filesystem target.')
-      }
-      return { prefix: recordedPrefixes[0], targets }
+      return language
     }
 
     const reconciled = await reconcileInterruptedOperations(journal, {
@@ -331,8 +306,13 @@ export class NotebookRecoveryCoordinator {
         addRepairRequired(this.runtimeRoot, marker.key, marker.reason)
       },
       removeTargets: async (record) => {
-        const { targets } = validatedRemovalTargets(record)
-        for (const target of targets) await rm(target, { recursive: true, force: true })
+        const removal = parseManagedRuntimeRemovalTargets(
+          this.runtimeRoot,
+          removalLanguage(record),
+          record.targetPaths ?? []
+        )
+        assertManagedRuntimeRemovalOwnership(this.runtimeRoot, removal)
+        for (const target of removal.targets) await rm(target, { recursive: true, force: true })
       },
       blockUnknownChildTarget: async (record) => {
         if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
@@ -350,7 +330,12 @@ export class NotebookRecoveryCoordinator {
             // The delete may have succeeded before journal completion failed. Keep this exact prefix
             // blocked so no new provision can be recreated under a stale remove intent that recovery
             // will replay on the next attempt.
-            nextStartupBlockedPrefixes.add(validatedRemovalTargets(record).prefix)
+            const removal = parseManagedRuntimeRemovalTargets(
+              this.runtimeRoot,
+              removalLanguage(record),
+              record.targetPaths ?? []
+            )
+            for (const prefix of removal.prefixes) nextStartupBlockedPrefixes.add(prefix)
           } catch {
             // Unsafe remove records remain retained, but never turn an unvalidated path into authority.
           }

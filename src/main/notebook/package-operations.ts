@@ -83,7 +83,7 @@ type NotebookPackageOperationsOptions = {
     | 'logPackageFailure'
     | 'logPackageResult'
     | 'recommendRestart'
-    | 'runMutation'
+    | 'runPackageMutation'
     | 'runShared'
   >
   environmentStateTracker: Pick<

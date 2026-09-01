@@ -814,65 +814,67 @@ class NotebookRuntimeService {
       )
     }
 
-    await this.environmentManagement.uninstallManagedEnvironment(
-      language,
-      async (lockedEnvironmentName) => {
-        const targets = Array.from(this.sessions.values()).filter((session) => {
-          const binding = session.runtimeBinding(language)
-          return (
-            binding?.source !== 'external' &&
-            this.resolveRunEnv(session, language) === lockedEnvironmentName
-          )
-        })
-        if (
-          targets.some(
-            (session) =>
-              session.hasPendingExecution(targetProcessKey) ||
-              session.kernelStatus(targetProcessKey) === 'running'
-          )
-        ) {
-          throw new Error(
-            `RUNTIME_UNINSTALL_IN_USE: the ${language} Runtime is running work. Wait for it to finish before uninstalling.`
+    await this.environmentOperations.runRemoval(environmentName, () =>
+      this.environmentManagement.uninstallManagedEnvironment(
+        language,
+        async (lockedEnvironmentName) => {
+          const targets = Array.from(this.sessions.values()).filter((session) => {
+            const binding = session.runtimeBinding(language)
+            return (
+              binding?.source !== 'external' &&
+              this.resolveRunEnv(session, language) === lockedEnvironmentName
+            )
+          })
+          if (
+            targets.some(
+              (session) =>
+                session.hasPendingExecution(targetProcessKey) ||
+                session.kernelStatus(targetProcessKey) === 'running'
+            )
+          ) {
+            throw new Error(
+              `RUNTIME_UNINSTALL_IN_USE: the ${language} Runtime is running work. Wait for it to finish before uninstalling.`
+            )
+          }
+
+          await this.runtimeBindingOwner.runWrites(
+            targets.map((session) => session.sessionId),
+            async () => {
+              for (const session of targets) {
+                const binding = session.runtimeBinding(language)
+                let bindingChanged = false
+                if (
+                  binding?.source === 'managed' &&
+                  binding.envName === lockedEnvironmentName &&
+                  binding.reason !== 'missing'
+                ) {
+                  bindingChanged = this.runtimeBindingOwner.markUnavailable(
+                    session,
+                    language,
+                    'missing'
+                  )
+                }
+
+                const status = session.kernelStatus(targetProcessKey)
+                if (status !== undefined && status !== 'terminated') {
+                  await session.terminateExecutor(
+                    language === 'r' ? 'r' : 'python',
+                    lockedEnvironmentName
+                  )
+                  await this.sessionLifecycle.clearPersistedKernelTermination(
+                    session,
+                    targetProcessKey
+                  )
+                  session.clearProcessState(targetProcessKey)
+                }
+                if (bindingChanged) await this.runtimeBindingOwner.persist(session)
+                if (bindingChanged || status !== undefined)
+                  this.sessionLifecycle.notifyChanged(session)
+              }
+            }
           )
         }
-
-        await this.runtimeBindingOwner.runWrites(
-          targets.map((session) => session.sessionId),
-          async () => {
-            for (const session of targets) {
-              const binding = session.runtimeBinding(language)
-              let bindingChanged = false
-              if (
-                binding?.source === 'managed' &&
-                binding.envName === lockedEnvironmentName &&
-                binding.reason !== 'missing'
-              ) {
-                bindingChanged = this.runtimeBindingOwner.markUnavailable(
-                  session,
-                  language,
-                  'missing'
-                )
-              }
-
-              const status = session.kernelStatus(targetProcessKey)
-              if (status !== undefined && status !== 'terminated') {
-                await session.terminateExecutor(
-                  language === 'r' ? 'r' : 'python',
-                  lockedEnvironmentName
-                )
-                await this.sessionLifecycle.clearPersistedKernelTermination(
-                  session,
-                  targetProcessKey
-                )
-                session.clearProcessState(targetProcessKey)
-              }
-              if (bindingChanged) await this.runtimeBindingOwner.persist(session)
-              if (bindingChanged || status !== undefined)
-                this.sessionLifecycle.notifyChanged(session)
-            }
-          }
-        )
-      }
+      )
     )
   }
 

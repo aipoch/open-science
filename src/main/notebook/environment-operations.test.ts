@@ -306,6 +306,36 @@ describe('NotebookEnvironmentOperations', () => {
     expect(order).toEqual(['drain', 'terminate', 'remove'])
   })
 
+  it('rejects a queued package mutation after managed removal closes admission', async () => {
+    const { owner } = await createOwner()
+    const order: string[] = []
+    let releaseExecution!: () => void
+    const execution = owner.runShared(
+      'execution',
+      'default-python',
+      () =>
+        new Promise<void>((resolve) => {
+          order.push('execution')
+          releaseExecution = resolve
+        })
+    )
+    await vi.waitFor(() => expect(releaseExecution).toBeTypeOf('function'))
+
+    const packageMutation = owner.runPackageMutation('default-python', async () => {
+      order.push('package')
+    })
+    const packageOutcome = expect(packageMutation).rejects.toThrow('RUNTIME_ENVIRONMENT_REMOVING')
+    const removal = owner.runRemoval('default-python', () =>
+      owner.runMutation('default-python', async () => {
+        order.push('remove')
+      })
+    )
+
+    releaseExecution()
+    await Promise.all([execution, packageOutcome, removal])
+    expect(order).toEqual(['execution', 'remove'])
+  })
+
   it('keeps restart, repair, recovery, and redacted diagnostics in one snapshot', async () => {
     const { owner } = await createOwner()
 
