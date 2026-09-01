@@ -1,137 +1,215 @@
 # Security Policy
 
-Open Science is a desktop research workbench that runs an AI agent, executes code
-locally, and handles your credentials and data on your own machine. We take the
-security of that surface seriously and appreciate reports that help us keep it safe.
+Open Science is a local-first research workbench that runs AI agents, executes code,
+connects to external services, and stores research data and credentials on the user's
+computer. We take vulnerabilities in those trust boundaries seriously and appreciate
+coordinated reports that help us protect users.
 
 ## Supported versions
 
-This project is pre-1.0 and moving fast. Only the latest `0.x` release (and the
-`main` branch) receives security fixes.
+Open Science is pre-1.0 and changes quickly. Security fixes are provided for the latest
+tagged `0.x` release and the `main` branch only.
 
 | Version               | Supported |
 | --------------------- | --------- |
 | latest `0.x` / `main` | ✅        |
 | older releases        | ❌        |
 
-The **Nightly (latest main)** pre-release tracks unreviewed commits and is provided
-as-is for testing — treat it as less hardened than tagged releases.
+The **Nightly (latest main)** prerelease contains newer, less-reviewed code and has
+different signing and provenance guarantees from a stable release. Do not use Nightly
+for sensitive work unless you accept that additional risk.
 
 ## Reporting a vulnerability
 
-**Do not open a public issue, discussion, or pull request for security problems.**
-A public report exposes the details to everyone before a fix ships.
+**Do not open a public issue, discussion, pull request, or chat thread for a suspected
+vulnerability.** Public disclosure may expose users before a fix is available.
 
-Report privately via GitHub's **"Report a vulnerability"** button under this
-repository's **Security** tab (Private Vulnerability Reporting). If that is
-unavailable to you, contact a maintainer directly through the channels listed in
-the [README](README.md#get-involved) rather than filing anything public.
+Use GitHub's private
+[Report a vulnerability](https://github.com/aipoch/open-science/security/advisories/new)
+form. The report and follow-up discussion remain in a private repository security
+advisory.
 
-Please include:
+Please include as much of the following as you can:
 
-- affected component (desktop shell, agent runtime, notebook kernel, file
-  upload/preview, packaging/updater, or a specific config)
-- version or commit, and your OS/platform
-- reproduction steps and the impact you observed
+- the affected Open Science version or commit and operating system;
+- the affected surface, such as the desktop shell, Web or remote access, agent runtime,
+  Notebook sandbox, Connector, credential store, updater, installer, or build pipeline;
+- prerequisites, reproduction steps, and a minimal proof of concept;
+- the security impact and the boundary or data you expected to remain protected; and
+- any relevant logs, screenshots, or stack traces after removing secrets and private data.
 
-We aim to acknowledge reports within a few days. Please give us reasonable time to
-ship a fix before any public disclosure.
+We aim to acknowledge a report within a few days, validate the issue, keep the reporter
+informed of material progress, and coordinate a fix and disclosure. Please allow
+reasonable time for affected users to receive a fix before publishing details. When
+appropriate, maintainers will use the private advisory to coordinate a GitHub Security
+Advisory and CVE.
 
-## Verifying your download
+### Responsible testing
 
-Official builds are distributed **only** through this repository's
-[GitHub Releases](https://github.com/aipoch/open-science/releases) page. Do not run
-`.dmg` / `.exe` / `.AppImage` / `.deb` files obtained from anywhere else.
+When investigating a suspected vulnerability:
 
-Every release ships a `SHA256SUMS.txt`. Verify your download before opening it:
+- use accounts, systems, projects, and data that you own or are authorized to test;
+- avoid social engineering, denial of service, broad automated scanning, persistence,
+  destructive actions, or disruption of other users and services;
+- access only the minimum data needed to demonstrate impact and stop if you encounter
+  data that is not yours; and
+- do not exfiltrate, retain, or publicly disclose secrets or personal, patient, or
+  unpublished research data.
+
+## What to report
+
+Reports are especially useful when they demonstrate one of these outcomes:
+
+- bypassing authentication, pairing, caller authorization, approval, or scoped
+  permission checks across Electron, local Web, remote Web, the CLI, or the Task SDK;
+- escaping a renderer, preview, Notebook process, filesystem, or network boundary;
+- causing code execution or sensitive file access by merely opening or previewing an
+  untrusted project file, attachment, artifact, link, Skill, or Specialist package;
+- exposing credentials, session contents, project data, diagnostics, or local paths to
+  an unintended renderer, process, browser, model provider, Connector, or remote host;
+- crossing project, session, user, or remote-browser isolation boundaries;
+- accepting forged, rolled-back, or tampered update, installer, runtime, marketplace,
+  or release artifacts; or
+- a reachable vulnerability or compromise in a dependency or install-time download.
+
+A crash, model hallucination, prompt injection, or known platform limitation is not by
+itself a vulnerability. It becomes security-relevant when it crosses a documented trust
+boundary, grants unintended authority, or exposes data beyond what the user authorized.
+
+## Current trust model and limitations
+
+Open Science is local-first, but it is not offline and not every action is confined to an
+OS sandbox. Treat project content, model output, downloaded files, Skills, Specialist
+packages, custom Connectors, MCP servers, and remote compute hosts as untrusted until you
+have reviewed them.
+
+- **Agent actions and permissions.** Agent-driven side effects route through Open
+  Science's permission system. Session-, project-, and global-scoped grants, safe default
+  grants, and Full access can intentionally suppress repeated prompts. An approval means
+  the user authorized an action; it does not prove that generated code or external content
+  is safe.
+- **Local Notebook execution.** Python, R, REPL, Notebook Bash, and package-management
+  processes run through the app-owned Notebook process sandbox. macOS uses Seatbelt and
+  Linux uses bubblewrap to enforce filesystem and network policy. Access is limited to
+  declared roots, and outbound connections are limited to Open Science defaults and
+  user-approved public domains. Bypassing either boundary is in scope.
+- **Windows Notebook execution.** Standard mode supplies an authenticated proxy, but
+  software that ignores proxy settings is not network-contained. Protected mode requires
+  an explicit administrator setup in Settings and uses AppContainer and Windows Filtering
+  Platform rules. Until that setup succeeds, do not treat Windows Notebook network policy
+  as a hard security boundary.
+- **Remote compute.** Approved commands run as the configured user on the remote host and
+  are not sandboxed by Open Science. Review the command, working directory, resources, and
+  destination before approving it.
+- **Models and Connectors.** Content needed for a model request, Web search, Connector call,
+  OAuth flow, or remote job may be sent to the selected third party. The permission gate
+  controls whether Open Science initiates a call; it does not control how the receiving
+  service stores or processes data.
+- **Renderer and previews.** Electron renderers use context isolation, renderer sandboxing,
+  a restricted preload bridge, deny-by-default Chromium permissions, navigation guards,
+  and Content Security Policy. File and source previews add their own constrained frames
+  and protocols. These are defense-in-depth boundaries, not a reason to trust previewed
+  content.
+- **Web and remote access.** The optional local Web UI binds to `127.0.0.1` by default.
+  Remote browser access is opt-in and uses an HTTPS Remote.It route, a six-digit pairing
+  request, and explicit approval on an already authorized client. A browser trusted for
+  180 days can operate the exposed workspace capabilities until it expires or is revoked;
+  protect and review the trusted-browser list like an account session.
+
+Known security-hardening gaps are tracked in the
+[Roadmap](ROADMAP.md#capability-map). A documented limitation alone is not a new
+vulnerability, but a bypass of the implemented control or an impact beyond the documented
+limitation is in scope and should be reported privately.
+
+## Credentials, local data, and diagnostics
+
+Production installations use two local storage areas by default:
+
+- `~/.open-science` is the fixed configuration root for settings, the application
+  database, session state, permissions, provider profiles, and Skills; and
+- `~/OpenScience` is the default data root for artifacts, uploads, Notebook and workspace
+  data, managed runtimes, and related large files. The data root can be relocated in
+  Settings.
+
+Development builds use `~/.open-science-project` and `~/OpenScience-DEV` unless an
+explicit development override is supplied. Application logs live in Electron's
+operating-system-specific logs directory. Open Science does not encrypt ordinary project,
+session, Notebook, artifact, or log content at rest; use operating-system account controls
+and full-disk encryption when that data is sensitive.
+
+API keys, Connector secrets and OAuth state, GitHub tokens, and compute passwords saved
+through Open Science's credential stores are encrypted with Electron `safeStorage` backed
+by the operating system's secure storage. New secret writes fail closed when a secure
+backend is unavailable, including Linux's unprotected `basic_text` backend. Provider
+subscription logins may also use app-owned provider profile files in the configuration
+root according to that provider CLI's authentication format. The renderer receives masked
+or non-secret projections rather than plaintext credential values.
+
+Diagnostics use shared redaction rules, and in-app report dialogs require review and
+consent for the exact payload. Redaction is best-effort: always inspect the final text and
+remove API keys, access tokens, cookies, passwords, private keys, patient identifiers,
+unpublished data, private paths, and other sensitive content before sharing it.
+
+Never attach the contents of either storage root, a provider profile, credential file,
+shell environment, or unreviewed log bundle to a public issue or pull request.
+
+## Verifying an official build
+
+Installers are published on this repository's
+[GitHub Releases](https://github.com/aipoch/open-science/releases) page. The in-app updater
+uses the project's official update feed. Do not run installers or accept update metadata
+obtained from an unrelated mirror or third party.
+
+Each stable release includes `SHA256SUMS.txt`. Download that file from the same GitHub
+Release and compare the entry for your installer:
 
 ```bash
-# macOS / Linux
+# macOS
 shasum -a 256 aipoch-open-science-<version>-mac-arm64.dmg
-# compare the output against the matching line in SHA256SUMS.txt
+
+# Linux
+sha256sum aipoch-open-science-<version>-linux-x86_64.AppImage
 ```
 
-The checksum proves the file is intact; **build provenance** proves where it came
-from. Every tagged release attaches a signed [SLSA provenance][slsa] attestation
-tying each installer to the exact commit and CI run that produced it. Verify it with
-the [GitHub CLI](https://cli.github.com/):
+```powershell
+# Windows PowerShell
+Get-FileHash .\aipoch-open-science-<version>-win-x64-setup.exe -Algorithm SHA256
+```
+
+A matching checksum proves that the bytes match the release checksum, but it does not by
+itself prove who built them. Stable tagged installers also have a signed SLSA build
+provenance attestation tying the exact bytes to this repository's Release workflow and
+commit:
 
 ```bash
-gh attestation verify aipoch-open-science-<version>-mac-arm64.dmg --repo aipoch/open-science
+gh attestation verify <installer-path> --repo aipoch/open-science
 ```
 
-A passing check means the binary was built by this repository's Release workflow from
-a specific commit — not repackaged by a third party. (Nightly builds are not attested.)
+Platform signing currently differs:
 
-[slsa]: https://slsa.dev/spec/v1.0/provenance
+- stable macOS applications are Developer ID signed, notarized by Apple, and stapled;
+- Windows installers are currently unsigned and may show an **Unknown publisher** or
+  SmartScreen warning; and
+- Linux does not provide an equivalent platform code-signing prompt.
 
-Builds are **not** signed with a paid Apple/Microsoft certificate yet, so your OS
-will show an "unverified developer" (macOS) or "unknown publisher" (Windows) prompt
-on first launch. That prompt is expected and is **not** evidence of tampering — but
-a checksum mismatch is. See the
-[macOS Gatekeeper note](README.md#building-from-source-macos-gatekeeper-note) for the
-one-time steps to open an unsigned build.
-
-## Credentials and local data — do not leak them
-
-Open Science is local-first. Credentials and project data stay on your machine, and
-the agent is deliberately isolated from your ambient shell environment:
-
-- The agent runs under an app-owned config directory (`~/.open-science/claude`).
-  Inherited `ANTHROPIC_*` shell variables (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-  `ANTHROPIC_BASE_URL`) are **dropped** before it launches, so a stray key in your
-  shell never leaks into a run.
-- The default (local) provider uses the Claude auth stored in that app config
-  directory — imported from your `~/.claude` Claude Code login, or created by an
-  in-app login.
-- API tokens for a custom gateway that you enter in the app are **encrypted at rest**
-  with the OS keychain (Electron `safeStorage`); the UI only ever shows a masked hint.
-- Project data, sessions, notebooks, and artifacts live under `~/.open-science`
-  (production) or `~/.open-science-project` (development builds).
-
-**Never paste an API key, access token, or other credential — or the contents of
-those directories — into an issue, PR, log excerpt, or screenshot.** Redact secrets
-before sharing anything for a bug report.
-
-## Scope and trust boundaries
-
-Some behavior is intentional by design and is **not** a vulnerability on its own:
-
-- **The notebook kernel and the agent's tool calls execute code and shell commands
-  by design.** Running local code is the product's purpose. A tool-call approval gate
-  is the current control in front of higher-risk actions.
-- **Remote-compute downloads gate on approval by _initiator_, not by destination.**
-  A remote file pulled to the OS Downloads folder or published as a project artifact is
-  a **UI-initiated** action — the user clicked the button, and that click _is_ the
-  authorization, so no separate approval card is shown. Only **session-cache** downloads
-  (the agent pulling a remote file into the session workspace via its Python/tool API)
-  are agent-initiated and therefore go through the `ComputeApprovalBroker` before any
-  `scp` runs. This is intentional: prompting a user to approve the download they just
-  clicked would be noise, whereas an agent reaching for remote data is exactly what the
-  gate exists to surface. All destinations still validate the remote path (absolute, no
-  glob, no shell metacharacters) and enforce size caps regardless of initiator.
-- **Sandboxing is still on the roadmap.** Network allowlisting, a credential vault,
-  directory-scoped file access, and per-scope permission tiers are **not implemented
-  yet** (tracked as 🟡 _Security & Permissions_ in the [Roadmap](ROADMAP.md#capability-map)).
-  The absence of these is a known limitation, not a defect to report — though ideas on
-  how to build them are very welcome as Issues/Discussions.
-
-Reports we especially want to hear about:
-
-- ways an untrusted project file, attachment, or preview can execute code or read
-  files **outside** the intended tool-call flow (e.g. a malicious file that runs code
-  when merely opened or previewed);
-- credential or local-data exposure beyond what you explicitly provide;
-- issues in packaging, the auto-updater, or the release/download path;
-- vulnerable or compromised dependencies (including anything pulled in by
-  `postinstall`'s `prisma generate` / `electron-builder install-app-deps` step).
+Nightly macOS builds use an ad-hoc signature and Nightly installers do not receive the
+stable release provenance attestation. A platform warning can be expected for an unsigned
+build, but it is never evidence that the file is safe; verify the source and checksum.
 
 ## Dependencies and supply chain
 
-Open Science is an Electron + npm application. If you find a vulnerability rooted in a
-third-party dependency, please report it to the upstream project as well; we will help
-triage and will bump the affected dependency.
+Open Science is an Electron and npm application. If a vulnerability originates in a
+third-party dependency, runtime, model framework, Connector, or MCP server, report the
+reachable Open Science impact privately here and notify the upstream project when it is
+safe to do so.
+
+Building from source runs the repository's `postinstall` steps and downloads pinned
+runtime components. Clone from the official repository, review changes to `package-lock.json`
+and install scripts, and do not run `npm install` on an untrusted branch. Install Skills,
+Specialist packages, custom Connectors, and remote compute configurations only from sources
+you trust.
 
 ---
 
-_This policy will evolve as the project's sandboxing and permission model matures._
+_This policy will evolve as Open Science's permission, sandbox, remote-access, and release
+boundaries mature._
