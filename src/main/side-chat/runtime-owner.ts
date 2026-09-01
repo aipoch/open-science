@@ -282,6 +282,7 @@ class SideChatRuntimeOwner {
   private readonly dormantByParent = new Map<string, DormantSideChat>()
   private readonly startingByParent = new Map<string, StartingSideChat>()
   private readonly closingByParent = new Map<string, Promise<void>>()
+  private readonly dispatches = new Set<Promise<void>>()
   private readonly closeRequestedParents = new Set<string>()
   private readonly invalidatedParents = new Set<string>()
   private readonly invalidatedProjects = new Set<string>()
@@ -561,7 +562,13 @@ class SideChatRuntimeOwner {
   }
 
   send(request: SideChatPromptRequest & Readonly<{ historyPreamble?: string }>): Promise<void> {
-    return this.dispatch(request)
+    const dispatch = this.dispatch(request)
+    this.dispatches.add(dispatch)
+    const finish = (): void => {
+      this.dispatches.delete(dispatch)
+    }
+    void dispatch.then(finish, finish)
+    return dispatch
   }
 
   parentFor(
@@ -783,12 +790,14 @@ class SideChatRuntimeOwner {
         if (result.status === 'rejected') failures.push(result.reason)
       }
     }
+    const dispatches = [...this.dispatches]
     const starting = [...this.startingByParent.values()]
     const activating = [...this.dormantByParent.values()]
       .map((dormant) => dormant.activating)
       .filter((activation): activation is Promise<ActiveSideChat> => Boolean(activation))
     for (const chat of starting) this.closeRequestedParents.add(chat.parentSessionId)
     await settle(this.activeChats().map((active) => this.suspendActive(active)))
+    await Promise.allSettled(dispatches)
     await Promise.all(activating.map((activation) => activation.catch(() => undefined)))
     await settle(starting.map((chat) => chat.done.promise))
     await settle(this.activeChats().map((active) => this.suspendActive(active)))
@@ -803,9 +812,10 @@ class SideChatRuntimeOwner {
   ): Promise<void> {
     const text = requirePromptText(request.text)
     const active = await this.ensureActive(request.sideSessionId)
-    if (this.isAdmissionSuspended()) throw new Error('Side chat is shutting down.')
+    this.assertDispatchActive(active)
     if (active.turn || active.running) throw new Error('A Side chat prompt is already running.')
     await this.flushQueuedPersistence(active)
+    this.assertDispatchActive(active)
     let historyPreamble = request.historyPreamble
     let needsReplay = active.needsReplay === true
     if (needsReplay) {
@@ -814,6 +824,7 @@ class SideChatRuntimeOwner {
     while (active.reconnect) {
       const reconnect = active.reconnect
       await reconnect
+      this.assertDispatchActive(active)
       if (active.reconnect !== reconnect) continue
       const resumed = await active.runtime.resumeSession({
         sessionId: active.runtimeSessionId,
@@ -826,6 +837,7 @@ class SideChatRuntimeOwner {
         previousFrameworkId: active.frameworkId,
         ...(active.backendId ? { previousBackendId: active.backendId } : {})
       })
+      this.assertDispatchActive(active)
       this.applyProviderIdentity(active, resumed)
       this.syncBridgeScopes(active)
       if (active.reconnect === reconnect) active.reconnect = undefined
@@ -835,6 +847,7 @@ class SideChatRuntimeOwner {
         historyPreamble = buildResumeFallback(active)
       }
       await this.persistActive(active, 'open')
+      this.assertDispatchActive(active)
     }
     const resumeFallback = buildResumeFallback(active)
     active.entrySequence += 1
@@ -858,6 +871,7 @@ class SideChatRuntimeOwner {
       this.touch(active)
       throw error
     }
+    this.assertDispatchActive(active)
     const accepted = deferred()
     active.turnAccepted = accepted
     const turn = active.runtime.sendPrompt({
@@ -1098,6 +1112,16 @@ class SideChatRuntimeOwner {
 
   private isAdmissionSuspended(): boolean {
     return this.shuttingDown || Boolean(this.suspension) || this.handoffAdmissionHeld
+  }
+
+  private assertDispatchActive(active: ActiveSideChat): void {
+    if (
+      this.isAdmissionSuspended() ||
+      active.closing ||
+      this.activeByParent.get(active.parentSessionId) !== active
+    ) {
+      throw new Error('Side chat is shutting down.')
+    }
   }
 
   private applyProviderIdentity(
@@ -1512,7 +1536,9 @@ class SideChatRuntimeOwner {
 
   private async suspendActive(
     active: ActiveSideChat,
-    lifecycle: PersistedSideChat['lifecycle'] = active.turn ? 'interrupted' : 'open'
+    lifecycle: PersistedSideChat['lifecycle'] = active.turn || active.running
+      ? 'interrupted'
+      : 'open'
   ): Promise<void> {
     const existing = this.closingByParent.get(active.parentSessionId)
     if (existing) return existing
