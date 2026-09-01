@@ -83,6 +83,7 @@ export class NotebookRecoveryCoordinator {
   private readonly liveUnconfirmedPrefixes = new Set<string>()
   private readonly liveUnconfirmedRuntimeIds = new Set<string>()
   private recoveryCorrupt = false
+  private unsafeRemovalRetained = false
   private disposed = false
 
   constructor(
@@ -127,7 +128,8 @@ export class NotebookRecoveryCoordinator {
     if (
       this.startupBlockedPrefixes.size > 0 ||
       this.startupBlockedRuntimeIds.size > 0 ||
-      this.recoveryCorrupt
+      this.recoveryCorrupt ||
+      this.unsafeRemovalRetained
     ) {
       await this.recover()
     }
@@ -153,7 +155,7 @@ export class NotebookRecoveryCoordinator {
   }
 
   isPrefixBlocked(prefix: string): boolean {
-    if (this.disposed || this.blockedPrefixes.has(prefix)) return true
+    if (this.disposed || this.unsafeRemovalRetained || this.blockedPrefixes.has(prefix)) return true
     return this.recoveryCorrupt && !this.corruptResetAllowlist.has(prefix)
   }
 
@@ -162,7 +164,7 @@ export class NotebookRecoveryCoordinator {
   }
 
   isGloballyBlocked(): boolean {
-    return this.disposed || this.recoveryCorrupt
+    return this.disposed || this.recoveryCorrupt || this.unsafeRemovalRetained
   }
 
   clearPrefixBlock(prefix: string): void {
@@ -202,6 +204,7 @@ export class NotebookRecoveryCoordinator {
     const nextStartupBlockedRuntimeIds = new Set<string>()
     const publishedArchiveRecords: RuntimeOperationRecord[] = []
     let recoveryIncomplete = false
+    let unsafeRemovalRetained = false
 
     await rm(join(this.runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
       () => undefined
@@ -355,9 +358,13 @@ export class NotebookRecoveryCoordinator {
               removalLanguage(record),
               record.targetPaths ?? []
             )
+            assertManagedRuntimeRemovalOwnership(this.runtimeRoot, removal)
             for (const prefix of removal.prefixes) nextStartupBlockedPrefixes.add(prefix)
           } catch {
-            // Unsafe remove records remain retained, but never turn an unvalidated path into authority.
+            // A retained remove intent whose structural paths or physical ownership cannot be proven
+            // safe blocks every write. Never turn any of its unvalidated paths into delete authority,
+            // and never let a per-prefix corrupt-journal reset bypass this independent barrier.
+            unsafeRemovalRetained = true
           }
         }
         recoveryIncomplete = true
@@ -388,6 +395,7 @@ export class NotebookRecoveryCoordinator {
       this.blockedRuntimeIds.add(runtimeId)
     }
     this.recoveryCorrupt = false
+    this.unsafeRemovalRetained = unsafeRemovalRetained
     this.corruptResetAllowlist.clear()
 
     for (const record of reconciled) {

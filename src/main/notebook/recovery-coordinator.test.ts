@@ -132,7 +132,11 @@ describe('NotebookRecoveryCoordinator', () => {
 
     expect(existsSync(unsafe)).toBe(true)
     expect(await journal.pending()).toHaveLength(1)
-    expect(coordinator.isPrefixBlocked(envPrefix(runtimeRoot, DEFAULT_PY_ENV))).toBe(false)
+    const managedPrefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    expect(coordinator.isGloballyBlocked()).toBe(true)
+    expect(coordinator.isPrefixBlocked(managedPrefix)).toBe(true)
+    coordinator.allowCorruptReset(managedPrefix)
+    expect(coordinator.isPrefixBlocked(managedPrefix)).toBe(true)
   })
 
   it('blocks recreation when removal succeeds but journal completion remains pending', async () => {
@@ -203,6 +207,8 @@ describe('NotebookRecoveryCoordinator', () => {
     expect(existsSync(join(outsidePrefix, 'keep'))).toBe(true)
     expect(await journal.pending()).toHaveLength(1)
     expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
+    expect(coordinator.isGloballyBlocked()).toBe(true)
+    expect(coordinator.isPrefixBlocked(envPrefix(runtimeRoot, DEFAULT_R_ENV))).toBe(true)
   })
 
   it('finalizes a leftover working cache only after recovery has no blocked writer', async () => {
