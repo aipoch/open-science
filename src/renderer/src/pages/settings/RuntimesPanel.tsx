@@ -36,6 +36,7 @@ import {
   useSettingsSearchShortcut
 } from './settings-search-shortcut'
 import { PythonIcon, RIcon } from './language-icons'
+import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
 
 // v4 Runtime Registry write surface: one CARD per discovered interpreter per language. Each card can
@@ -53,9 +54,14 @@ const LANGUAGES: ReadonlyArray<{ id: NotebookLanguage; label: string; icon: Reac
 type RuntimesPanelProps = {
   title: string
   description: React.ReactNode
+  onOpenNetworkProtection?: () => void
 }
 
-const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.Element => {
+const RuntimesPanel = ({
+  title,
+  description,
+  onOpenNetworkProtection
+}: RuntimesPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
   const envs = useRuntimeSettingsStore((state) => state.envs)
@@ -455,6 +461,9 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           </div>
         }
       >
+        {onOpenNetworkProtection ? (
+          <NotebookNetworkProtectionBanner onOpen={onOpenNetworkProtection} />
+        ) : null}
         {error !== null && (
           <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">
             {error === 'Could not load runtimes.' ? t('Could not load runtimes.') : error}

@@ -154,7 +154,8 @@ const installApi = (): void => {
       }),
       onConnectorRuntimeChanged: vi.fn().mockReturnValue(() => undefined),
       getPackageMirror: vi.fn().mockResolvedValue({}),
-      setPackageMirror: vi.fn().mockResolvedValue({})
+      setPackageMirror: vi.fn().mockResolvedValue({}),
+      getNotebookNetworkStatus: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] })
     },
     acp: {
       getState: vi.fn().mockResolvedValue({ promptInFlight: false, promptInFlightSessionIds: [] }),
@@ -3305,6 +3306,39 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalledWith(
       expect.objectContaining({ condaChannel: 'https://mirror.example/conda' })
     )
+  })
+
+  it('opens Notebook network access from the Runtimes protection banner', async () => {
+    useRuntimeSettingsStore.setState({
+      envs: { python: [], r: [] },
+      loaded: true,
+      checkedAt: Date.now()
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    await act(async () => {
+      navButton('Runtimes')?.click()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const banner = document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
+    expect(banner?.textContent).toContain('Notebook network protection is active.')
+
+    const manage = Array.from(banner?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Manage network access'
+    )
+    await act(async () => {
+      manage?.click()
+    })
+
+    expect(document.body.querySelector('[aria-label="Back to network"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Notebook network access')
+    expect(document.body.querySelector('[aria-label="Allowed domains"]')).not.toBeNull()
   })
 
   it('shows a breadcrumb in the header when a skill detail is open, and returns on breadcrumb click', async () => {
