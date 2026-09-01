@@ -551,8 +551,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const modelView: ModelView = currentRoute.panel === 'model' ? currentRoute.view : { kind: 'list' }
   const connectorsView: ConnectorsView =
     currentRoute.panel === 'connectors' ? currentRoute.view : { kind: 'list' }
+  const notebookNetworkAvailable =
+    typeof window.api.settings.getNotebookNetworkStatus === 'function' &&
+    !document.documentElement.hasAttribute('data-open-science-notebook-network-unavailable')
   const networkView: NetworkView =
-    currentRoute.panel === 'network' ? currentRoute.view : { kind: 'list' }
+    currentRoute.panel === 'network' &&
+    (currentRoute.view.kind !== 'domains' || notebookNetworkAvailable)
+      ? currentRoute.view
+      : { kind: 'list' }
   const computeView: ComputeView =
     currentRoute.panel === 'compute' ? currentRoute.view : { kind: 'list' }
   const specialistsView: SpecialistsView =
@@ -1637,16 +1643,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.'
                       )}
                       onOpenNetworkProtection={
-                        typeof window.api.settings.getNotebookNetworkStatus !== 'function' ||
-                        document.documentElement.hasAttribute(
-                          'data-open-science-notebook-network-unavailable'
-                        )
-                          ? undefined
-                          : () => navigateNetwork({ kind: 'domains' })
+                        notebookNetworkAvailable
+                          ? () => navigateNetwork({ kind: 'domains' })
+                          : undefined
                       }
                     />
                   ) : activePanel === 'network' ? (
-                    <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
+                    <NetworkPanel
+                      view={networkView}
+                      onNavigate={navigateNetwork}
+                      notebookNetworkAvailable={notebookNetworkAvailable}
+                    />
                   ) : activePanel === 'usage' ? (
                     <TokenUsagePanel sessions={sessions} projects={projects} />
                   ) : activePanel === 'general' ? (

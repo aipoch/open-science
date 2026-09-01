@@ -3389,6 +3389,27 @@ describe('SettingsPage layout', () => {
     ).toBeNull()
   })
 
+  it('falls back from an unavailable remote Notebook domains route', async () => {
+    document.documentElement.setAttribute('data-open-science-notebook-network-unavailable', '')
+    useSettingsStore.setState({
+      pendingSettingsIntent: {
+        requestId: 1,
+        route: { panel: 'network', view: { kind: 'domains' } }
+      }
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(navButton('Network')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.querySelector('[aria-label="Back to network"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Allowed domains"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Notebook network access"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Network status"]')).not.toBeNull()
+  })
+
   it('shows a breadcrumb in the header when a skill detail is open, and returns on breadcrumb click', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
