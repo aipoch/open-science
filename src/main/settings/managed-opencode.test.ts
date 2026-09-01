@@ -1,7 +1,17 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -170,6 +180,40 @@ describe('installManagedOpencode', () => {
     expect(outcome.result.error).toMatch(/failed to run/)
     expect(outcome.result.error).toMatch(/AVX2/)
     expect(await readFile(existingPath, 'utf8')).toBe('WORKING-OPENCODE')
+  })
+
+  it('rejects a symlinked runtime root without modifying its target', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const externalRoot = join(root, 'external-opencode')
+    const externalMarker = join(externalRoot, '.open-science-managed-runtime')
+    const managedRoot = dirname(managedOpencodeDir(root))
+    await mkdir(externalRoot, { recursive: true })
+    await writeFile(externalMarker, 'EXTERNAL-DATA')
+    await symlink(externalRoot, managedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho replacement\n') }
+    ])
+
+    const outcome = await installManagedOpencode({
+      installId: 'reject-symlinked-root',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson: async (url) =>
+        url.endsWith('/opencode-ai')
+          ? { 'dist-tags': { latest: '1.18.3' } }
+          : { dist: { tarball: 'https://reg/opencode.tgz', integrity: sha512(tgz) } },
+      fetchTarball: async () => ({ stream: Readable.from(tgz), totalBytes: tgz.length }),
+      verifyBinary: () => ({ ok: true }),
+      tmpDir: root
+    })
+
+    expect(await readFile(externalMarker, 'utf8')).toBe('EXTERNAL-DATA')
+    expect(outcome.result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/symbolic link/i)
+    })
   })
 
   it('restores the existing runtime when publication fails', async () => {

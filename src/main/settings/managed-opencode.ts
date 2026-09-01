@@ -1,7 +1,7 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, type Dirent } from 'node:fs'
-import { chmod, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
@@ -340,6 +340,22 @@ const replaceManagedOpencodeRoot = async (
 ): Promise<void> => {
   const backup = `${root}.backup-${randomUUID()}`
   let backedUp = false
+
+  const rejectSymbolicLink = async (path: string, label: string): Promise<void> => {
+    const stats = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    })
+    if (stats?.isSymbolicLink()) {
+      throw new Error(`Refusing to replace ${label} because it is a symbolic link: ${path}`)
+    }
+  }
+
+  await rejectSymbolicLink(root, 'the managed OpenCode runtime root')
+  await rejectSymbolicLink(
+    join(root, RUNTIME_OWNER_MARKER),
+    'the managed OpenCode runtime ownership marker'
+  )
 
   try {
     await writeFile(join(root, RUNTIME_OWNER_MARKER), OPENCODE_RUNTIME_OWNER)

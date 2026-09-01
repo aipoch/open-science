@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -513,6 +513,36 @@ describe('managed-claude: install orchestration', () => {
 
     expect(outcome.result.ok).toBe(false)
     expect(await readFile(existingPath, 'utf8')).toBe('WORKING-CLAUDE')
+  })
+
+  it('rejects a symlinked runtime root without modifying its target', async () => {
+    const externalRoot = join(root, 'external-claude')
+    const externalMarker = join(externalRoot, '.open-science-managed-runtime')
+    const managedRoot = dirname(managedClaudeDir(root))
+    await mkdir(externalRoot, { recursive: true })
+    await writeFile(externalMarker, 'EXTERNAL-DATA')
+    await symlink(externalRoot, managedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    const { tgz } = fixture()
+
+    const outcome = await installManagedClaude({
+      installId: 'reject-symlinked-root',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform,
+      fetchJson: async (url) =>
+        url.endsWith('claude-code-linux-x64/2.1.209')
+          ? { dist: { tarball: 'https://reg/x.tgz', integrity: sha512(tgz) } }
+          : { 'dist-tags': { latest: '2.1.209' } },
+      fetchTarball: async () => ({ stream: Readable.from([tgz]), totalBytes: tgz.length }),
+      verifyBinary: async () => '2.1.209'
+    })
+
+    expect(await readFile(externalMarker, 'utf8')).toBe('EXTERNAL-DATA')
+    expect(outcome.result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/symbolic link/i)
+    })
   })
 
   it('restores the existing runtime when publication fails', async () => {
