@@ -254,7 +254,7 @@ describe('Web bootstrap event connection', () => {
                 message: 'Invalid project request.'
               }
             }),
-            { status: 500, headers: { 'content-type': 'application/json' } }
+            { status: 400, headers: { 'content-type': 'application/json' } }
           )
         }
         throw new Error(`Unexpected fetch: ${String(input)}`)

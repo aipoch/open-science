@@ -828,12 +828,33 @@ describe('startWebHttpServer', () => {
       },
       body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
     })
-    expect(invalidResponse.status).toBe(500)
+    expect(invalidResponse.status).toBe(400)
     expect(await invalidResponse.json()).toEqual({
       protocolVersion: WEB_RPC_PROTOCOL_VERSION,
       ok: false,
       error: { code: 'invalid-command-arguments', message: 'Invalid project request.' }
     })
+
+    for (const [code, expectedStatus] of [
+      ['command-unavailable', 404],
+      ['session-revision-conflict', 409]
+    ] as const) {
+      directInvoke.mockRejectedValueOnce(new ApplicationCommandError(code, `Rejected: ${code}`))
+      const rejectedResponse = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+          'x-open-science-client': 'direct-client'
+        },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      })
+      expect(rejectedResponse.status).toBe(expectedStatus)
+      expect(await rejectedResponse.json()).toMatchObject({
+        ok: false,
+        error: { code }
+      })
+    }
 
     directInvoke.mockRejectedValueOnce(
       new Error('SQLITE_CANTOPEN: /Users/private/.open-science/open-science.db')
@@ -1981,6 +2002,113 @@ describe('startWebHttpServer', () => {
     ])
     internalSocket.close()
     publicSocket.close()
+  })
+
+  it('closes event sockets with a protocol error when a client sends data', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?token=test-token`)
+    await new Promise<void>((resolve) => socket.once('open', resolve))
+    const closed = new Promise<{ code: number; reason: string } | undefined>((resolve) => {
+      const timeout = setTimeout(() => resolve(undefined), 500)
+      socket.once('close', (code, reason) => {
+        clearTimeout(timeout)
+        resolve({ code, reason: reason.toString() })
+      })
+    })
+
+    socket.send('unexpected inbound data')
+
+    const outcome = await closed
+    if (socket.readyState === WebSocket.OPEN) socket.close()
+    expect(outcome).toEqual({ code: 1002, reason: 'Inbound messages are not supported' })
+  })
+
+  it('rejects event socket messages larger than the inbound payload budget', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?token=test-token`)
+    socket.on('error', () => undefined)
+    await new Promise<void>((resolve) => socket.once('open', resolve))
+    const closed = new Promise<number | undefined>((resolve) => {
+      const timeout = setTimeout(() => resolve(undefined), 500)
+      socket.once('close', (code) => {
+        clearTimeout(timeout)
+        resolve(code)
+      })
+    })
+
+    socket.send(Buffer.alloc(1_025))
+
+    const outcome = await closed
+    if (socket.readyState === WebSocket.OPEN) socket.close()
+    expect(outcome).toBe(1009)
+  })
+
+  it('rejects Web RPC responses larger than the response byte budget', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: {
+        channels: () => ['projects:list'],
+        invoke: vi.fn().mockResolvedValue('x'.repeat(16 * 1024 * 1024))
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    })
+
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({
+      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      ok: false,
+      error: {
+        code: 'handler_error',
+        message: 'RPC response exceeds the 16 MiB byte budget.'
+      }
+    })
   })
 
   it('exposes only versioned, schema-valid RPC contract channels', async () => {

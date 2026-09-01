@@ -106,14 +106,30 @@ const pairingCookie = (value: string): string =>
 const clearCookie = (name: string): string =>
   `${name}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
 
-const normalizeHost = (host: string | undefined): string | undefined => {
+const normalizeRemoteHost = (
+  host: string | undefined
+): Readonly<{ hostname: string; origin: string }> | undefined => {
   if (!host) return undefined
   try {
-    return new URL(`https://${host}`).hostname.toLowerCase()
+    const parsed = new URL(`https://${host}`)
+    if (
+      parsed.protocol !== 'https:' ||
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== '/' ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return undefined
+    }
+    return { hostname: parsed.hostname.toLowerCase(), origin: parsed.origin }
   } catch {
     return undefined
   }
 }
+
+const normalizeHost = (host: string | undefined): string | undefined =>
+  normalizeRemoteHost(host)?.hostname
 
 const describeBrowser = (userAgent: string | undefined): BrowserDescription => {
   const value = userAgent ?? ''
@@ -402,14 +418,22 @@ export class RemoteSessionPairingManager {
 
   private isExpectedRemoteRequest(request: IncomingMessage, requireOrigin: boolean): boolean {
     if (!this.options.isEnabled()) return false
-    const remoteHost = normalizeHost(request.headers.host)
-    if (!remoteHost || !this.options.isAllowedRemoteHost(remoteHost)) return false
+    const remoteHost = normalizeRemoteHost(request.headers.host)
+    if (!remoteHost || !this.options.isAllowedRemoteHost(remoteHost.hostname)) return false
 
     const origin = request.headers.origin
     if (!origin) return !requireOrigin
     try {
       const parsed = new URL(origin)
-      return parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === remoteHost
+      return (
+        parsed.protocol === 'https:' &&
+        !parsed.username &&
+        !parsed.password &&
+        parsed.pathname === '/' &&
+        !parsed.search &&
+        !parsed.hash &&
+        parsed.origin === remoteHost.origin
+      )
     } catch {
       return false
     }

@@ -57,11 +57,13 @@ const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // for other authenticated clients. Browser uploads use much smaller 8 MiB chunks in normal use.
 const MAX_CLIENT_IN_FLIGHT_RPC_BODY_BYTES = 64 * 1024 * 1024
 const MAX_SERVER_IN_FLIGHT_RPC_BODY_BYTES = 128 * 1024 * 1024
+const MAX_WEB_RPC_RESPONSE_BYTES = 16 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
 // The replay stream retains 16 MiB. Keep 64 KiB for its mandatory ready frame and framing overhead.
 const MAX_WEBSOCKET_BUFFERED_BYTES = 16 * 1024 * 1024 + 64 * 1024
+const MAX_WEBSOCKET_INBOUND_BYTES = 1_024
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
 const MAX_TASK_IDEMPOTENCY_BYTES = 64 * 1024 * 1024
@@ -400,6 +402,13 @@ const publicApplicationCommandError = (
     ? toApplicationCommandErrorEnvelope(error)
     : { code: 'command-failed', message: INTERNAL_SERVER_ERROR_MESSAGE }
 
+const applicationCommandErrorStatus = (error: ApplicationCommandError): number => {
+  if (error.code === 'invalid-command-arguments') return 400
+  if (error.code === 'command-unavailable') return 404
+  if (error.code === 'session-revision-conflict') return 409
+  return 500
+}
+
 const sendWebSocketMessage = (socket: WebSocket, message: string): boolean => {
   if (socket.readyState !== WebSocket.OPEN) return false
   if (socket.bufferedAmount + Buffer.byteLength(message) > MAX_WEBSOCKET_BUFFERED_BYTES) {
@@ -453,22 +462,35 @@ export type RunningWebServer = {
   close: () => Promise<void>
 }
 
-const json = (response: ServerResponse, status: number, value: unknown): void => {
-  const content = Buffer.from(
-    JSON.stringify(value ?? null, (_key, child) => {
-      if (child instanceof ArrayBuffer || ArrayBuffer.isView(child)) {
-        const bytes =
-          child instanceof ArrayBuffer
-            ? new Uint8Array(child)
-            : new Uint8Array(child.buffer, child.byteOffset, child.byteLength)
-        return { $binary: Buffer.from(bytes).toString('base64') }
-      }
-      return child
-    })
-  )
+class WebRpcResponseBudgetExceededError extends Error {
+  readonly name = 'WebRpcResponseBudgetExceededError'
+
+  constructor() {
+    super('RPC response exceeds the 16 MiB byte budget.')
+  }
+}
+
+const json = (
+  response: ServerResponse,
+  status: number,
+  value: unknown,
+  maxBytes = Number.POSITIVE_INFINITY
+): void => {
+  const content = JSON.stringify(value ?? null, (_key, child) => {
+    if (child instanceof ArrayBuffer || ArrayBuffer.isView(child)) {
+      const bytes =
+        child instanceof ArrayBuffer
+          ? new Uint8Array(child)
+          : new Uint8Array(child.buffer, child.byteOffset, child.byteLength)
+      return { $binary: Buffer.from(bytes).toString('base64') }
+    }
+    return child
+  })
+  const contentBytes = Buffer.byteLength(content)
+  if (contentBytes > maxBytes) throw new WebRpcResponseBudgetExceededError()
   response.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
-    'content-length': String(content.byteLength),
+    'content-length': String(contentBytes),
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff'
   })
@@ -1171,7 +1193,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     options.webClientRetention?.maxClientsPerPrincipal,
     options.webClientRetention?.httpIdleTtlMs
   )
-  const wsServer = new WebSocketServer({ noServer: true })
+  const wsServer = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_WEBSOCKET_INBOUND_BYTES
+  })
 
   const isWebSocketAuthorizationCurrent = (socket: WebSocket): boolean => {
     const authorization = externalSockets.get(socket)
@@ -1414,11 +1439,16 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             callerContext,
             parsed.data.args
           )
-          json(response, 200, {
-            protocolVersion: WEB_RPC_PROTOCOL_VERSION,
-            ok: true,
-            result: result ?? null
-          })
+          json(
+            response,
+            200,
+            {
+              protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+              ok: true,
+              result: result ?? null
+            },
+            MAX_WEB_RPC_RESPONSE_BYTES
+          )
         } catch (error) {
           log.warn('web rpc rejected', {
             channel,
@@ -1430,8 +1460,14 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             webRpcError(response, 401, 'invalid_request', error.message)
             return
           }
+          if (error instanceof WebRpcResponseBudgetExceededError) {
+            webRpcError(response, 500, 'handler_error', error.message)
+            return
+          }
           const publicError = publicApplicationCommandError(error)
-          webRpcError(response, 500, publicError.code, publicError.message)
+          const status =
+            error instanceof ApplicationCommandError ? applicationCommandErrorStatus(error) : 500
+          webRpcError(response, status, publicError.code, publicError.message)
         } finally {
           request.off('aborted', releaseDisconnectedClient)
           response.off('close', releaseDisconnectedClient)
@@ -1543,6 +1579,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       releaseApprovalPresence?.()
       lease.release()
     })
+    // This is a server-to-client event stream. `ws` performs the protocol close for oversized
+    // messages before emitting `error`; consuming it here prevents an attacker-triggered exception.
+    socket.on('error', () => undefined)
+    socket.on('message', () => socket.close(1002, 'Inbound messages are not supported'))
     socket.on('pong', () => awaitingPong.delete(socket))
     if (url.searchParams.get('liveness') === '1') livenessSockets.add(socket)
     if (url.pathname === '/api/v1/events') {
