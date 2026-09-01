@@ -778,7 +778,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               ctx.appIconControllerBox.current?.setAppearance(appearance),
             log: ctx.log,
             flushLogs
-          },
+          } satisfies Omit<Parameters<typeof ctx.installAppLifecycle>[0], 'shutdownBackends'>,
           {
             // Application composition owns the one bounded ACP/Notebook shutdown. Remaining surfaces
             // close afterward in their established order, even when an earlier disposer rejects.

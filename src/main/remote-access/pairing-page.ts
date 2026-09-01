@@ -72,7 +72,7 @@ export const renderPairingPage = (params: {
       <h1>Approve this browser</h1>
       <p>On your home computer, open Open Science → Settings → Remote, then verify and approve the pairing code below.</p>
       <div class="code" aria-label="Pairing code">${code}</div>
-      <p>Choose “Allow for up to 12 hours” or “Always trust this browser”. Do not share this pairing code with anyone.</p>
+      <p>Choose “Allow for up to 12 hours” or “Trust this browser for 180 days”. Do not share this pairing code with anyone.</p>
       <div class="device">${browser} · ${platform}</div>
       <div id="status" class="status"><span class="dot"></span><span>Waiting for approval…</span></div>
     </main>
@@ -110,7 +110,7 @@ export const renderPairingPage = (params: {
             return;
           }
         } catch { /* retry while the home computer reconnects */ }
-        window.setTimeout(poll, 1200);
+        window.setTimeout(poll, 2000);
       };
       poll();
     </script>

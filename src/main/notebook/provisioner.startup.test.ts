@@ -278,7 +278,7 @@ describe('createProductionProvisioner', () => {
         executable: process.execPath,
         args: ['-e', 'process.exit(0)'],
         env: { PATH: process.env.PATH },
-        annotateStderr: (stderr) => stderr,
+        annotateStderr: (stderr: string) => stderr,
         cleanup
       }))
     }

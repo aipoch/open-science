@@ -69,7 +69,7 @@ describe('exportRuntimeLocks', () => {
     const shortPrefix = join(envsDir, '.p')
     const legacyPrefix = join(envsDir, DEFAULT_PY_ENV)
     for (const prefix of [shortPrefix, legacyPrefix]) {
-      const bin = pythonBin(prefix)
+      const bin = pythonBin(prefix, 'win32')
       await mkdir(dirname(bin), { recursive: true })
       await writeFile(bin, '')
     }

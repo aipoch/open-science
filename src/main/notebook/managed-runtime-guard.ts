@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { realpathSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { join, posix, resolve, win32 } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 
@@ -83,40 +83,57 @@ const RUNTIME_WRITE_RULES: Record<NotebookExecutionSurface, RegExp> = {
   repl: /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|unlink|unlinkSync|rename|renameSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|copyFile|copyFileSync)\s*\(/iu
 }
 
-const canonicalGuardPath = (value: string, cwd: string): string | undefined => {
+const guardPathApi = (platform: NodeJS.Platform): typeof posix =>
+  platform === 'win32' ? win32 : posix
+
+const canonicalGuardPath = (
+  value: string,
+  cwd: string,
+  platform: NodeJS.Platform
+): string | undefined => {
   const raw = value.trim().replace(/^(?:(["']))([\s\S]*)\1$/u, '$2')
   if (!raw || /[$%`<>|;&\r\n]/u.test(raw)) return undefined
-  const absolute = resolve(cwd, raw)
+  const pathApi = guardPathApi(platform)
+  const absolute = pathApi.resolve(cwd, raw)
   let cursor = absolute
   const suffix: string[] = []
   while (true) {
     try {
-      return resolve(realpathSync(cursor), ...suffix)
+      return pathApi.resolve(realpathSync(cursor), ...suffix)
     } catch {
-      const parent = dirname(cursor)
+      const parent = pathApi.dirname(cursor)
       if (parent === cursor) return absolute
-      suffix.unshift(basename(cursor))
+      suffix.unshift(pathApi.basename(cursor))
       cursor = parent
     }
   }
 }
 
-const canonicalPathIsWithin = (candidate: string, root: string): boolean => {
-  const normalizedCandidate = process.platform === 'win32' ? candidate.toLowerCase() : candidate
-  const normalizedRoot = process.platform === 'win32' ? root.toLowerCase() : root
-  const pathFromRoot = relative(normalizedRoot, normalizedCandidate)
+const canonicalPathIsWithin = (
+  candidate: string,
+  root: string,
+  platform: NodeJS.Platform
+): boolean => {
+  const pathApi = guardPathApi(platform)
+  const normalizedCandidate = platform === 'win32' ? candidate.toLowerCase() : candidate
+  const normalizedRoot = platform === 'win32' ? root.toLowerCase() : root
+  const pathFromRoot = pathApi.relative(normalizedRoot, normalizedCandidate)
   return (
     pathFromRoot === '' ||
-    (pathFromRoot !== '..' && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot))
+    (pathFromRoot !== '..' &&
+      !pathFromRoot.startsWith(`..${pathApi.sep}`) &&
+      !pathApi.isAbsolute(pathFromRoot))
   )
 }
 
 const referencesManagedRuntimePath = (
   source: string,
   runtimeRoot: string,
-  cwd: string
+  cwd: string,
+  platform: NodeJS.Platform
 ): boolean => {
-  const canonical = resolve(runtimeRoot)
+  const pathApi = guardPathApi(platform)
+  const canonical = pathApi.resolve(runtimeRoot)
   const variants = new Set([
     canonical,
     canonical.replaceAll('\\', '/'),
@@ -142,10 +159,12 @@ const referencesManagedRuntimePath = (
   if (/(?:^|[^A-Za-z0-9_])OPEN_SCIENCE_RUNTIME_DIR(?:$|[^A-Za-z0-9_])/u.test(source)) {
     return true
   }
-  const canonicalTarget = canonicalGuardPath(source, cwd)
-  const canonicalRoot = canonicalGuardPath(runtimeRoot, cwd)
+  const canonicalTarget = canonicalGuardPath(source, cwd, platform)
+  const canonicalRoot = canonicalGuardPath(runtimeRoot, cwd, platform)
   return Boolean(
-    canonicalTarget && canonicalRoot && canonicalPathIsWithin(canonicalTarget, canonicalRoot)
+    canonicalTarget &&
+    canonicalRoot &&
+    canonicalPathIsWithin(canonicalTarget, canonicalRoot, platform)
   )
 }
 
@@ -600,7 +619,8 @@ const commandName = (word: string | undefined): string =>
 const resolveSequenceCwd = (
   target: string | undefined,
   runtimeRoot: string,
-  cwd: string
+  cwd: string,
+  platform: NodeJS.Platform
 ): string => {
   if (!target) return cwd
   const unquoted = target.replace(/^['"]|['"]$/gu, '')
@@ -608,23 +628,31 @@ const resolveSequenceCwd = (
     .replace(/\$\{?env:OPEN_SCIENCE_RUNTIME_DIR\}?/giu, () => runtimeRoot)
     .replace(/\$\{?OPEN_SCIENCE_RUNTIME_DIR\}?/gu, () => runtimeRoot)
     .replace(/%OPEN_SCIENCE_RUNTIME_DIR%/giu, () => runtimeRoot)
+  const pathApi = guardPathApi(platform)
   const normalizedExpanded =
-    sep === '\\' ? expanded.replaceAll('/', sep) : expanded.replaceAll('\\', sep)
-  const resolvedTarget = canonicalGuardPath(normalizedExpanded, cwd)
+    pathApi.sep === '\\'
+      ? expanded.replaceAll('/', pathApi.sep)
+      : expanded.replaceAll('\\', pathApi.sep)
+  const resolvedTarget = canonicalGuardPath(normalizedExpanded, cwd, platform)
   if (resolvedTarget) return resolvedTarget
-  if (referencesManagedRuntimePath(target, runtimeRoot, cwd)) {
-    return canonicalGuardPath(runtimeRoot, cwd) ?? resolve(cwd, runtimeRoot)
+  if (referencesManagedRuntimePath(target, runtimeRoot, cwd, platform)) {
+    return canonicalGuardPath(runtimeRoot, cwd, platform) ?? pathApi.resolve(cwd, runtimeRoot)
   }
-  return resolve(cwd, normalizedExpanded)
+  return pathApi.resolve(cwd, normalizedExpanded)
 }
 
-const sequenceTargetWritesRuntime = (target: string, runtimeRoot: string, cwd: string): boolean => {
-  if (referencesManagedRuntimePath(target, runtimeRoot, cwd)) return true
+const sequenceTargetWritesRuntime = (
+  target: string,
+  runtimeRoot: string,
+  cwd: string,
+  platform: NodeJS.Platform
+): boolean => {
+  if (referencesManagedRuntimePath(target, runtimeRoot, cwd, platform)) return true
   // Preserve the existing fail-closed behavior for a dynamic target while the current directory is
   // managed, but allow a statically resolved absolute destination outside the runtime.
   return (
-    canonicalGuardPath(target, cwd) === undefined &&
-    referencesManagedRuntimePath('.', runtimeRoot, cwd)
+    canonicalGuardPath(target, cwd, platform) === undefined &&
+    referencesManagedRuntimePath('.', runtimeRoot, cwd, platform)
   )
 }
 
@@ -632,6 +660,7 @@ const shellSequenceWritesRuntime = (
   source: string,
   runtimeRoot: string,
   cwd: string,
+  platform: NodeJS.Platform,
   depth = 0
 ): boolean => {
   let currentCwd = cwd
@@ -640,23 +669,33 @@ const shellSequenceWritesRuntime = (
     const executable = commandName(words[0])
     if (executable === 'cd') {
       const target = words.find((word, index) => index > 0 && !word.startsWith('-'))
-      currentCwd = resolveSequenceCwd(target, runtimeRoot, currentCwd)
+      currentCwd = resolveSequenceCwd(target, runtimeRoot, currentCwd, platform)
     }
     const targets = shellRuntimeWriteTargets(command)
-    if (targets.some((target) => sequenceTargetWritesRuntime(target, runtimeRoot, currentCwd))) {
+    if (
+      targets.some((target) =>
+        sequenceTargetWritesRuntime(target, runtimeRoot, currentCwd, platform)
+      )
+    ) {
       return true
     }
-    if (referencesManagedRuntimePath('.', runtimeRoot, currentCwd) && depth < 8) {
+    if (referencesManagedRuntimePath('.', runtimeRoot, currentCwd, platform) && depth < 8) {
       const payload = invocationPayload(words)
       if (
         payload?.surface === 'bash' &&
-        shellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, depth + 1)
+        shellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, platform, depth + 1)
       ) {
         return true
       }
       if (
         payload?.surface === 'powershell' &&
-        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, depth + 1)
+        powerShellSequenceWritesRuntime(
+          payload.source,
+          runtimeRoot,
+          currentCwd,
+          platform,
+          depth + 1
+        )
       ) {
         return true
       }
@@ -664,7 +703,14 @@ const shellSequenceWritesRuntime = (
         payload &&
         payload.surface !== 'bash' &&
         payload.surface !== 'powershell' &&
-        hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, currentCwd, depth + 1)
+        hasManagedRuntimeWrite(
+          payload.source,
+          payload.surface,
+          runtimeRoot,
+          currentCwd,
+          platform,
+          depth + 1
+        )
       ) {
         return true
       }
@@ -718,7 +764,8 @@ const powerShellRuntimeWriteTargets = (command: string): string[] => {
 const powerShellDotNetWritesRuntime = (
   source: string,
   runtimeRoot: string,
-  cwd: string
+  cwd: string,
+  platform: NodeJS.Platform
 ): boolean => {
   const pattern =
     /\[(?:System\.)?IO\.(?:File|Directory)\]::(?:WriteAllText|AppendAllText|WriteAllBytes|Create|CreateText|AppendText|Move|Replace|Delete|CreateDirectory)\s*\(/giu
@@ -726,7 +773,7 @@ const powerShellDotNetWritesRuntime = (
     const openIndex = match.index + match[0].lastIndexOf('(')
     const call = matchingCall(source, match.index, openIndex)
     const target = call ? callArguments(call, openIndex - match.index)[0] : undefined
-    if (target && referencesManagedRuntimePath(target, runtimeRoot, cwd)) return true
+    if (target && referencesManagedRuntimePath(target, runtimeRoot, cwd, platform)) return true
   }
   return false
 }
@@ -735,6 +782,7 @@ const powerShellSequenceWritesRuntime = (
   source: string,
   runtimeRoot: string,
   cwd: string,
+  platform: NodeJS.Platform,
   depth = 0
 ): boolean => {
   let currentCwd = cwd
@@ -747,24 +795,34 @@ const powerShellSequenceWritesRuntime = (
         pathFlag >= 0
           ? words[pathFlag + 1]
           : words.find((word, index) => index > 0 && !word.startsWith('-'))
-      currentCwd = resolveSequenceCwd(target, runtimeRoot, currentCwd)
+      currentCwd = resolveSequenceCwd(target, runtimeRoot, currentCwd, platform)
     }
     const targets = powerShellRuntimeWriteTargets(command)
-    if (targets.some((target) => sequenceTargetWritesRuntime(target, runtimeRoot, currentCwd))) {
+    if (
+      targets.some((target) =>
+        sequenceTargetWritesRuntime(target, runtimeRoot, currentCwd, platform)
+      )
+    ) {
       return true
     }
-    if (powerShellDotNetWritesRuntime(command, runtimeRoot, currentCwd)) return true
-    if (referencesManagedRuntimePath('.', runtimeRoot, currentCwd) && depth < 8) {
+    if (powerShellDotNetWritesRuntime(command, runtimeRoot, currentCwd, platform)) return true
+    if (referencesManagedRuntimePath('.', runtimeRoot, currentCwd, platform) && depth < 8) {
       const payload = invocationPayload(words)
       if (
         payload?.surface === 'bash' &&
-        shellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, depth + 1)
+        shellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, platform, depth + 1)
       ) {
         return true
       }
       if (
         payload?.surface === 'powershell' &&
-        powerShellSequenceWritesRuntime(payload.source, runtimeRoot, currentCwd, depth + 1)
+        powerShellSequenceWritesRuntime(
+          payload.source,
+          runtimeRoot,
+          currentCwd,
+          platform,
+          depth + 1
+        )
       ) {
         return true
       }
@@ -772,7 +830,14 @@ const powerShellSequenceWritesRuntime = (
         payload &&
         payload.surface !== 'bash' &&
         payload.surface !== 'powershell' &&
-        hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, currentCwd, depth + 1)
+        hasManagedRuntimeWrite(
+          payload.source,
+          payload.surface,
+          runtimeRoot,
+          currentCwd,
+          platform,
+          depth + 1
+        )
       ) {
         return true
       }
@@ -1023,12 +1088,13 @@ const hasDirectManagedRuntimeWrite = (
   source: string,
   surface: NotebookExecutionSurface,
   runtimeRoot: string,
-  cwd: string
+  cwd: string,
+  platform: NodeJS.Platform
 ): boolean => {
   if (surface === 'bash') {
     const executableSource = stripShellComments(source)
     return [executableSource, resolveShellLiteralAssignments(executableSource)].some((candidate) =>
-      shellSequenceWritesRuntime(candidate, runtimeRoot, cwd)
+      shellSequenceWritesRuntime(candidate, runtimeRoot, cwd, platform)
     )
   }
 
@@ -1036,8 +1102,8 @@ const hasDirectManagedRuntimeWrite = (
     const executableSource = stripShellComments(source)
     return [executableSource, resolvePowerShellLiteralAssignments(executableSource)].some(
       (candidate) =>
-        powerShellSequenceWritesRuntime(candidate, runtimeRoot, cwd) ||
-        powerShellDotNetWritesRuntime(candidate, runtimeRoot, cwd)
+        powerShellSequenceWritesRuntime(candidate, runtimeRoot, cwd, platform) ||
+        powerShellDotNetWritesRuntime(candidate, runtimeRoot, cwd, platform)
     )
   }
 
@@ -1058,7 +1124,7 @@ const hasDirectManagedRuntimeWrite = (
         call,
         source.slice(match.index, openIndex + 1),
         openIndex - match.index
-      ).some((target) => referencesManagedRuntimePath(target, runtimeRoot, cwd))
+      ).some((target) => referencesManagedRuntimePath(target, runtimeRoot, cwd, platform))
     ) {
       return true
     }
@@ -1071,7 +1137,8 @@ const executionBridgeWritesRuntime = (
   source: string,
   surface: NotebookExecutionSurface,
   runtimeRoot: string,
-  cwd: string
+  cwd: string,
+  platform: NodeJS.Platform
 ): boolean => {
   if (surface === 'bash' || surface === 'powershell') return false
   const maskedSource =
@@ -1085,7 +1152,7 @@ const executionBridgeWritesRuntime = (
 
     if (bridgeUsesShellCommandString(call, surface)) {
       const command = quotedLiteralValues(firstArgument)[0]
-      return command ? shellSequenceWritesRuntime(command, runtimeRoot, cwd) : false
+      return command ? shellSequenceWritesRuntime(command, runtimeRoot, cwd, platform) : false
     }
 
     if (
@@ -1100,7 +1167,7 @@ const executionBridgeWritesRuntime = (
     if (firstArgument.at(-1) !== closing) return false
     const argv = callArguments(`(${firstArgument.slice(1, -1)})`, 0)
     return shellRuntimeWriteTargetsFromWords(argv, [], true).some((target) =>
-      sequenceTargetWritesRuntime(target, runtimeRoot, cwd)
+      sequenceTargetWritesRuntime(target, runtimeRoot, cwd, platform)
     )
   })
 }
@@ -1110,13 +1177,14 @@ const hasManagedRuntimeWrite = (
   surface: NotebookExecutionSurface,
   runtimeRoot: string,
   cwd: string,
+  platform: NodeJS.Platform,
   depth = 0
 ): boolean =>
-  hasDirectManagedRuntimeWrite(source, surface, runtimeRoot, cwd) ||
-  executionBridgeWritesRuntime(source, surface, runtimeRoot, cwd) ||
+  hasDirectManagedRuntimeWrite(source, surface, runtimeRoot, cwd, platform) ||
+  executionBridgeWritesRuntime(source, surface, runtimeRoot, cwd, platform) ||
   (depth < 8 &&
     executionPayloads(source, surface).some((payload) =>
-      hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, cwd, depth + 1)
+      hasManagedRuntimeWrite(payload.source, payload.surface, runtimeRoot, cwd, platform, depth + 1)
     ))
 
 // Single policy seam shared by data-cell and shell execution. This is intentionally independent from
@@ -1125,12 +1193,14 @@ export const detectManagedRuntimeMutation = ({
   source,
   surface,
   runtimeRoot,
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  platform = process.platform
 }: {
   source: string
   surface: NotebookExecutionSurface
   runtimeRoot: string
   cwd?: string
+  platform?: NodeJS.Platform
 }): ManagedRuntimeMutation | undefined => {
   const rule = findPackageMutationRule(source, surface)
   if (rule) {
@@ -1142,7 +1212,7 @@ export const detectManagedRuntimeMutation = ({
     }
   }
 
-  if (hasManagedRuntimeWrite(source, surface, runtimeRoot, cwd)) {
+  if (hasManagedRuntimeWrite(source, surface, runtimeRoot, cwd, platform)) {
     return {
       installer: 'direct managed-runtime write',
       message:

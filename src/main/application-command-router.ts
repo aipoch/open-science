@@ -55,11 +55,10 @@ export type ApplicationCommandGroup<
 }>
 
 export type ApplicationCommandHandlers<Commands extends readonly AnyApplicationCommand[]> = {
-  readonly [Command in Commands[number] as Command['name']]: Command extends ApplicationCommand<
-    string,
-    infer Args,
-    infer Result
-  >
+  readonly [Name in Commands[number]['name']]: Extract<
+    Commands[number],
+    Readonly<{ name: Name }>
+  > extends ApplicationCommand<string, infer Args, infer Result>
     ? ApplicationCommandHandler<Args, Result>
     : never
 }
@@ -69,9 +68,9 @@ export type ApplicationCommandInstallation = Readonly<{
 }>
 
 export type ApplicationCommandRegistrationScope = Readonly<{
-  registerGroup: <Name extends string, Commands extends readonly AnyApplicationCommand[]>(
-    group: ApplicationCommandGroup<Name, Commands>,
-    handlers: ApplicationCommandHandlers<Commands>
+  registerGroup: <Group extends ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>>(
+    group: Group,
+    handlers: ApplicationCommandHandlers<Group['commands']>
   ) => void
   complete: (cleanup?: () => void) => ApplicationCommandInstallation
   rollback: () => void

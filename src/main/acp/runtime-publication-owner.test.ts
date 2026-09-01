@@ -333,7 +333,9 @@ describe('AcpRuntimePublicationOwner', () => {
       }
     })
 
-    owner.pushEvent({ kind: 'message', level: 'info', text: 'hello' }, () => order.push('appended'))
+    owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'hello' }, () =>
+      order.push('appended')
+    )
 
     expect(order).toEqual(['appended', 'event'])
     owner.emitState()
@@ -392,6 +394,7 @@ describe('AcpRuntimePublicationOwner', () => {
       kind: 'message',
       level: 'info',
       sessionId: 'session-1',
+      role: 'assistant',
       text: 'inherited'
     })
     owner.pushEvent({
@@ -399,6 +402,7 @@ describe('AcpRuntimePublicationOwner', () => {
       level: 'info',
       sessionId: 'session-1',
       promptMessageId: 'explicit-prompt',
+      role: 'assistant',
       text: 'explicit'
     })
     interactions.release(prompt)
@@ -407,6 +411,7 @@ describe('AcpRuntimePublicationOwner', () => {
       kind: 'message',
       level: 'info',
       sessionId: 'session-1',
+      role: 'assistant',
       text: 'compaction'
     })
     interactions.release(compaction)
@@ -438,6 +443,7 @@ describe('AcpRuntimePublicationOwner', () => {
         kind: 'message' as const,
         level: 'info' as const,
         sessionId: 'session-1',
+        role: 'assistant' as const,
         text: 'frozen-chunk'
       })
     )
@@ -464,7 +470,12 @@ describe('AcpRuntimePublicationOwner', () => {
 
     expect(owner.getSnapshot().sessionIds).toEqual(['session-1'])
     expect(owner.nextEventId()).toBe('acp-event-1')
-    owner.pushEvent({ kind: 'message', level: 'info', text: 'after reservation' })
+    owner.pushEvent({
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      text: 'after reservation'
+    })
 
     expect(owner.getSnapshot().sessionIds).toEqual(['session-2'])
     expect(owner.getSnapshot().events[0]?.id).toBe('acp-event-2')

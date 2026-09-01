@@ -427,7 +427,7 @@ describe('dispatchJob', () => {
         })
     }
     const lease = leaseFromRunners(runner)
-    lease.redactSensitiveOutputs = vi.fn(async (values) =>
+    lease.redactSensitiveOutputs = vi.fn(async (values: readonly string[]) =>
       values.map((value) => value.replaceAll(secret, '[redacted]'))
     )
     const { repo, transition } = makeJobRepo(job)

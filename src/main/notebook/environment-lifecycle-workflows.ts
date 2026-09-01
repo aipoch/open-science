@@ -30,6 +30,7 @@ type NotebookEnvironmentLifecycle = {
 type NotebookEnvironmentLifecycleDeps = {
   provisioner: RuntimeProvisioner | undefined
   root: string
+  platform?: NodeJS.Platform
   projectProgress: (progress: ProvisionProgress) => void
   waitForRecovery?: () => Promise<void>
   assertProvisionAllowed?: (language: NotebookLanguage) => void
@@ -84,6 +85,7 @@ const createNotebookEnvironmentLifecycle = (
   if (!deps.provisioner) return createUnavailableLifecycle(deps)
 
   const provisioner = serializeProvisioner(deps.provisioner)
+  const platform = deps.platform ?? process.platform
 
   const status = (): Promise<ProvisionStatus> =>
     withDataRootWrite(async () => {
@@ -148,7 +150,7 @@ const createNotebookEnvironmentLifecycle = (
         if (deps.waitForRecovery) await deps.waitForRecovery()
         await provisioner.restoreRelocatedEnvs(deps.projectProgress)
 
-        const action = planStartupAction(deps.root, DEFAULT_ENV_VERSION)
+        const action = planStartupAction(deps.root, DEFAULT_ENV_VERSION, platform)
         if (action === 'ready') return
         if (action === 'upgrade') {
           await provisioner.upgradeIfNeeded(deps.projectProgress)
@@ -160,7 +162,7 @@ const createNotebookEnvironmentLifecycle = (
         // maintain Python eagerly when it was actually provisioned before; fresh Python stays lazy.
         const pythonWasProvisioned =
           readReadyMarker(deps.root) !== undefined ||
-          existsSync(envPrefix(deps.root, DEFAULT_PY_ENV))
+          existsSync(envPrefix(deps.root, DEFAULT_PY_ENV, platform))
         if (pythonWasProvisioned) await provisioner.repair('python', deps.projectProgress)
       })
     } catch (error) {

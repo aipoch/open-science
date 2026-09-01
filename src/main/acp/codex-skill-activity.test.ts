@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
 
-const toolEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
+const toolEvent = (
+  overrides: Partial<Extract<AcpRuntimeEvent, { kind: 'tool' }>>
+): AcpRuntimeEvent => ({
   id: 'event-1',
   timestamp: 1,
   level: 'info',

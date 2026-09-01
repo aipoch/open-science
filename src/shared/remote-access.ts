@@ -41,6 +41,7 @@ export type TrustedRemoteBrowserView = {
   platform: string
   createdAt: number
   lastSeenAt: number
+  expiresAt: number
 }
 
 export type RemoteAccessSnapshot = {
@@ -152,7 +153,8 @@ const trustedRemoteBrowserViewSchema: z.ZodType<TrustedRemoteBrowserView> = z
     browser: z.string(),
     platform: z.string(),
     createdAt: z.number().finite(),
-    lastSeenAt: z.number().finite()
+    lastSeenAt: z.number().finite(),
+    expiresAt: z.number().finite()
   })
   .strict()
 export const remoteAccessSnapshotSchema: z.ZodType<RemoteAccessSnapshot> = z

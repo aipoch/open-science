@@ -3,7 +3,7 @@ import type { PromptResponse } from '@agentclientprotocol/sdk'
 import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
   type AcpModelCallUsage,
-  type AcpRuntimeEvent,
+  type AcpRuntimeEventInput,
   type AcpTerminalContextWindow,
   type AcpTurnTokenUsage
 } from '../../shared/acp'
@@ -21,7 +21,7 @@ import type { TurnSkillHandle, TurnSkillOutcome } from './turn-skill-owner'
 const log = createLogger('acp')
 type LogFields = Record<string, unknown>
 type LogLevel = 'error' | 'info' | 'warn'
-type RuntimeEventInput = Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
+type RuntimeEventInput = AcpRuntimeEventInput
 export type AcpPromptFinalizationOutcome =
   ProviderPromptOutcome | Readonly<{ kind: 'failed'; error: unknown }>
 export type AcpPromptFinalizationHandles = Readonly<{

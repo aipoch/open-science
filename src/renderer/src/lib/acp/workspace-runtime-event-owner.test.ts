@@ -174,7 +174,9 @@ describe('live runtime event ingest', () => {
       useWorkspaceRuntimeEventIngest(
         {
           state: createSnapshot(),
-          subscribeRuntimeEvents: (listener) => {
+          subscribeRuntimeEvents: (
+            listener: (events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void
+          ) => {
             publish = listener
             return unsubscribe
           }

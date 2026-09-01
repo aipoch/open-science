@@ -221,8 +221,12 @@ const rScriptExecutable = ['/usr/local/bin/Rscript', '/opt/homebrew/bin/Rscript'
 
 // Symlinks an env's python interpreter to the system python3 under a runtime root, so the strict
 // resolver (env interpreter only -- no system-PATH fallback) finds it and spawns the fake loop.
-const stubEnvPython = async (runtimeRootDir: string, name: string): Promise<void> => {
-  const bin = pythonBin(envPrefix(runtimeRootDir, name))
+const stubEnvPython = async (
+  runtimeRootDir: string,
+  name: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<void> => {
+  const bin = pythonBin(envPrefix(runtimeRootDir, name, platform), platform)
   await mkdir(dirname(bin), { recursive: true })
   await symlink(python3 as string, bin)
 }
@@ -236,9 +240,12 @@ const stubEnvR = async (runtimeRootDir: string, name: string): Promise<void> => 
 
 // Makes a temp cwd AND stubs its default-python env interpreter, so a default-env execute() passes the
 // readiness gate and spawns the fake loop under an on-disk env interpreter (never a system python).
-const makeDefaultEnvCwd = async (prefix: string): Promise<string> => {
+const makeDefaultEnvCwd = async (
+  prefix: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), prefix))
-  await stubEnvPython(join(dir, 'runtime'), DEFAULT_PY_ENV)
+  await stubEnvPython(join(dir, 'runtime'), DEFAULT_PY_ENV, platform)
   return dir
 }
 
@@ -992,7 +999,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
   }, 15_000)
 
   it('drops and respawns the kernel when Windows cancellation cannot preserve it', async () => {
-    cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-')
+    cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-', 'win32')
     const terminated: Array<['python' | 'r' | 'repl', string]> = []
     const executor = new NotebookKernelExecutor({
       pythonLoopPath: FIXTURE,

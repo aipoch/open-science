@@ -212,16 +212,21 @@ export const isProviderUsableByFramework = (
 // The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
 // /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
 // undefined when the pair is incompatible.
-export const preferredEndpoint = (
+export const preferredEndpoint = <const FrameworkEndpoints extends readonly ChatApiEndpoint[]>(
   endpoints: readonly ChatApiEndpoint[],
-  frameworkEndpoints: readonly ChatApiEndpoint[]
-): ChatApiEndpoint | undefined => {
-  const shared = endpoints.filter((endpoint) => frameworkEndpoints.includes(endpoint))
+  frameworkEndpoints: FrameworkEndpoints
+): FrameworkEndpoints[number] | undefined => {
+  const shared: FrameworkEndpoints[number][] = frameworkEndpoints.filter((endpoint) =>
+    endpoints.includes(endpoint)
+  )
 
   if (shared.length === 0) return undefined
 
-  if (shared.includes('responses')) return 'responses'
-  return shared.includes('openai') ? 'openai' : 'anthropic'
+  return (
+    shared.find((endpoint) => endpoint === 'responses') ??
+    shared.find((endpoint) => endpoint === 'openai') ??
+    shared.find((endpoint) => endpoint === 'anthropic')
+  )
 }
 
 // Detected claude executable metadata, persisted so later spawns skip re-detection.

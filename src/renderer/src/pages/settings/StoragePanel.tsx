@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useStorageInfoStore } from '@/stores/storage-info-store'
+import { resolveLocalPath } from '../../../../shared/local-fs'
 import type {
   DataRootKind,
   DataRootInspection,
@@ -115,12 +116,14 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const retryStorageInfo = (): void => {
     void refreshStorageInfo().catch(() => undefined)
   }
+  const canOpenWorkspaceFolders = navigator.userAgent.includes('Electron')
   const initialStorageFailure = environmentCheck?.checks.some(
     (check) => check.id === 'storage' && check.status === 'failed'
   )
   const [hasRecheckedStorage, setHasRecheckedStorage] = useState(false)
   const [isCheckingStorage, setIsCheckingStorage] = useState(false)
   const [revealError, setRevealError] = useState<string | undefined>()
+  const [workspaceOpenError, setWorkspaceOpenError] = useState<string | undefined>()
   const [newPath, setNewPath] = useState('')
   // The classification of `newPath` (a PARENT the user typed/picked), keyed by the exact path it
   // was computed for so a stale response for an already-superseded path never drives the action
@@ -183,6 +186,21 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     } finally {
       setHasRecheckedStorage(true)
       setIsCheckingStorage(false)
+    }
+  }
+
+  const handleOpenWorkspace = async (workspaceName: string): Promise<void> => {
+    if (!info) return
+    setWorkspaceOpenError(undefined)
+    const workspaceRoot = resolveLocalPath(info.dataRoot, 'workspaces', window.api.platform)
+    const workspacePath = resolveLocalPath(workspaceRoot, workspaceName, window.api.platform)
+    try {
+      const error = await window.api.localFs.openPath(workspacePath)
+      if (error) setWorkspaceOpenError(error)
+    } catch (error) {
+      setWorkspaceOpenError(
+        error instanceof Error ? error.message : t('Could not open that folder.')
+      )
     }
   }
 
@@ -601,6 +619,11 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                   {t('Could not scan storage usage. Try again.')}
                 </p>
               ) : null}
+              {workspaceOpenError ? (
+                <p className="mb-3 text-sm text-destructive" role="alert">
+                  {workspaceOpenError}
+                </p>
+              ) : null}
               {totalBytes > 0 ? (
                 <div className="flex h-2 gap-0.5 overflow-hidden rounded bg-muted">
                   {categories
@@ -671,9 +694,23 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                               <span className="truncate text-muted-foreground" title={child.name}>
                                 {child.name}
                               </span>
-                              <span className="shrink-0 tabular-nums text-muted-foreground">
-                                {formatBytes(child.bytes)}
-                              </span>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <span className="tabular-nums text-muted-foreground">
+                                  {formatBytes(child.bytes)}
+                                </span>
+                                {category.key === 'workspaces' && canOpenWorkspaceFolders ? (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={t('Open folder')}
+                                    title={t('Open folder')}
+                                    onClick={() => void handleOpenWorkspace(child.name)}
+                                  >
+                                    <FolderOpen className="size-3.5" aria-hidden="true" />
+                                  </Button>
+                                ) : null}
+                              </div>
                             </div>
                           ))}
                         </div>

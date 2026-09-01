@@ -249,6 +249,14 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
 
+  it('bounds recovery after repeated kernel-process failures', () => {
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/repeated kernel-process failures/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/retry once at most/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/stop Notebook tools/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/report the failure/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('then revise/rerun')
+  })
+
   it('directs agents to concise Host SDK help without prefetching every topic', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Main/root agents')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain("await host.help('delegate')")

@@ -259,6 +259,7 @@ describe('describeTaskNotification', () => {
       kind: 'message',
       level: 'info',
       sessionId: 'session-1',
+      role: 'assistant',
       text: 'working…'
     }
 

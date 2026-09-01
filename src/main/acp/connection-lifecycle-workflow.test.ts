@@ -6,6 +6,7 @@ import {
   type SetProviderRequest
 } from '@agentclientprotocol/sdk'
 import type { AcpConnectRequest, AcpStateSnapshot } from '../../shared/acp'
+import type { AcpConnectionResourceOwner } from './connection-resource-owner'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 
 const connection = {} as ClientConnection
@@ -98,7 +99,8 @@ describe('AcpConnectionLifecycleWorkflow', () => {
       diagnosticContext: () => ({ framework: 'claude-code', generation: 1, status: 'closed' }),
       openCandidate: vi.fn(async () => candidate) as never,
       connectResources: {
-        connect: async (operation) => operation(attempt)
+        connect: async (operation: Parameters<AcpConnectionResourceOwner['connect']>[0]) =>
+          operation(attempt)
       } as never
     })
 
@@ -187,7 +189,8 @@ describe('AcpConnectionLifecycleWorkflow', () => {
       diagnosticContext: () => ({ framework: 'claude-code', generation: 1, status: 'closed' }),
       openCandidate: vi.fn(async () => candidate) as never,
       connectResources: {
-        connect: async (operation) => operation(attempt)
+        connect: async (operation: Parameters<AcpConnectionResourceOwner['connect']>[0]) =>
+          operation(attempt)
       } as never
     })
 

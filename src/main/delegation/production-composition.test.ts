@@ -2379,18 +2379,23 @@ describe('production delegated-work composition', () => {
         updatedAt: 5
       }
     )
-    const attach = vi.fn(async (_key, input) => {
-      graph.messages.find(({ id }) => id === input.messageId)!.artifactIds = input.artifacts.map(
-        ({ versionId, id }) => versionId ?? id
-      )
-      durable.artifacts = input.artifacts.map((artifact) => ({
-        id: artifact.versionId ?? artifact.id,
-        artifactId: artifact.artifactId,
-        versionId: artifact.versionId,
-        kind: 'managed-file' as const,
-        path: artifact.path
-      }))
-    })
+    const attach = vi.fn(
+      async (
+        _key: Parameters<DelegatedWorkRecordCommands['attachDelegatedMessageArtifacts']>[0],
+        input: Parameters<DelegatedWorkRecordCommands['attachDelegatedMessageArtifacts']>[1]
+      ) => {
+        graph.messages.find(({ id }) => id === input.messageId)!.artifactIds = input.artifacts.map(
+          ({ versionId, id }) => versionId ?? id
+        )
+        durable.artifacts = input.artifacts.map((artifact) => ({
+          id: artifact.versionId ?? artifact.id,
+          artifactId: artifact.artifactId,
+          versionId: artifact.versionId,
+          kind: 'managed-file' as const,
+          path: artifact.path
+        }))
+      }
+    )
     const artifact: ArtifactFile = {
       id: 'version-atomic',
       artifactId: 'artifact-atomic',
@@ -2703,7 +2708,9 @@ describe('production delegated-work composition', () => {
     })
     const artifactHandlers = createArtifactHandlers(artifactRepository, artifactRunRegistry, {
       provenance: {
-        finalizeRun: async (request) => {
+        finalizeRun: async (
+          request: Parameters<ArtifactProvenanceRepository['finalizeRun']>[0]
+        ) => {
           await ownership.validateFinalizationOwnership(request)
           return versionsByRun.get(request.artifactRunId) ?? []
         }

@@ -14,7 +14,7 @@ import {
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
+import type { ComputeConnectionBrokerAcquirer, ComputeConnectionLease } from './connection-broker'
 import type { ConcurrencyManager } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
 import { JobPoller } from './job-poller'
@@ -103,17 +103,20 @@ vi.mock('./ssh-runner', async (importOriginal) => {
 })
 
 const brokerFromRunner = (runner: SshRunner): ComputeConnectionBrokerAcquirer => ({
-  acquire: vi.fn(async () => ({
-    run: (command, options) => runner.run(fakeTarget, command, options),
-    upload: vi.fn(async () => undefined),
-    download: vi.fn(async () => ({
-      exitCode: 0,
-      stderr: '',
-      timedOut: false,
-      bytesWritten: 0,
-      exceeded: false
-    }))
-  }))
+  acquire: vi.fn(
+    async () =>
+      ({
+        run: (command, options) => runner.run(fakeTarget, command, options),
+        upload: vi.fn(async () => undefined),
+        download: vi.fn(async () => ({
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 0,
+          exceeded: false
+        }))
+      }) satisfies ComputeConnectionLease
+  )
 })
 
 const makeOwner = (

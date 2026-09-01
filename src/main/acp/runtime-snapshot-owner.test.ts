@@ -112,7 +112,12 @@ describe('AcpRuntimeSnapshotOwner', () => {
     // Cross the amortized trim threshold (2 × the 500-event cap) at least once.
     const total = 1_200
     for (let index = 0; index < total; index += 1) {
-      owner.appendEvent({ kind: 'message', level: 'info', text: `chunk-${index}` })
+      owner.appendEvent({
+        kind: 'message',
+        level: 'info',
+        role: 'assistant',
+        text: `chunk-${index}`
+      })
     }
 
     const events = owner.snapshot(createProjection()).events
@@ -127,7 +132,7 @@ describe('AcpRuntimeSnapshotOwner', () => {
     const owner = new AcpRuntimeSnapshotOwner('/workspace')
     const raw = { nested: { value: 'before' } }
 
-    owner.appendEvent({ kind: 'message', level: 'info', text: 'chunk', raw })
+    owner.appendEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'chunk', raw })
     raw.nested.value = 'after'
 
     expect(owner.snapshot(createProjection()).events[0]?.raw).toEqual({
@@ -141,6 +146,7 @@ describe('AcpRuntimeSnapshotOwner', () => {
     const input = Object.freeze({
       kind: 'message' as const,
       level: 'info' as const,
+      role: 'assistant' as const,
       text: 'chunk',
       raw
     })

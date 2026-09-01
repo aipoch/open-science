@@ -147,9 +147,11 @@ const COMPUTE_AUTHENTICATION_PRESENTATIONS = {
 const computeAuthenticationPresentation = (
   code: ComputeAuthenticationErrorCode,
   surface: ComputeAuthenticationPresentationSurface
-): ComputeAuthenticationPresentation | undefined =>
-  COMPUTE_AUTHENTICATION_PRESENTATIONS[code][surface] as
-    ComputeAuthenticationPresentation | undefined
+): ComputeAuthenticationPresentation | undefined => {
+  const presentations: ComputeAuthenticationPresentationEntry =
+    COMPUTE_AUTHENTICATION_PRESENTATIONS[code]
+  return presentations[surface]
+}
 
 const isComputeAuthenticationErrorCode = (
   value: unknown

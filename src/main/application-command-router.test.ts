@@ -58,13 +58,22 @@ describe('application command router', () => {
   it('registers a typed group atomically and dispatches late registrations', async () => {
     const router = createApplicationCommandRouter()
     const scope = router.registrar.createScope()
-    const read = vi.fn(({ args }: ApplicationInvocation<readonly [string]>) => `value:${args[0]}`)
-    const write = vi.fn().mockResolvedValue(true)
+    const read = vi.fn()
+    const write = vi.fn()
 
     expect(router.dispatcher.commandNames()).toEqual([])
     scope.registerGroup(sampleCommands, {
-      'sample.read': read,
-      'sample.write': write
+      'sample.read': (invocation) => {
+        expectTypeOf(invocation).toEqualTypeOf<ApplicationInvocation<readonly [id: string]>>()
+        read(invocation)
+        return `value:${invocation.args[0]}`
+      },
+      'sample.write': async (invocation) => {
+        expectTypeOf(invocation.args).toEqualTypeOf<readonly [id: string, value: string]>()
+        expectTypeOf(invocation.callerContext).toEqualTypeOf<CallerContext>()
+        write(invocation)
+        return true
+      }
     })
 
     expect(router.dispatcher.commandNames()).toEqual(['sample.read', 'sample.write'])

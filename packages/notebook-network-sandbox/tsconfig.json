@@ -5,8 +5,8 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "noEmit": true,
-    "rootDir": ".",
+    "rootDir": "../..",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "runtime/src/**/*.ts"]
+  "include": ["src/**/*.ts", "runtime/src/**/*.ts", "../../src/shared/notebook-network.ts"]
 }

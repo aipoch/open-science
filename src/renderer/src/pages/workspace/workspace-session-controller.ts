@@ -237,6 +237,7 @@ const useWorkspaceSessionController = ({
   const canArchive = (session: ChatSession): boolean =>
     isPersistenceReady &&
     !session.isPending &&
+    !session.compacting &&
     session.archivedAt === undefined &&
     !archivingIds.has(session.id) &&
     !deletingIds.has(session.id) &&

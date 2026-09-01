@@ -769,7 +769,8 @@ describe('durable delegated work', () => {
       frame: ['child-frame'],
       attempt: ['child-attempt'],
       message: ['child-prompt'],
-      runtime: ['child-runtime']
+      runtime: ['child-runtime'],
+      question: []
     }
     const work = createDurableDelegatedWork({
       execution,
@@ -1686,7 +1687,7 @@ describe('durable delegated work', () => {
     const open = vi.fn(async () => ({ finalize, dispose }))
     const project = vi.fn(async () => artifacts)
     const artifactEvidence: DelegatedArtifactEvidence = { open, project }
-    const counts = { frame: 0, attempt: 0, message: 0, runtime: 0 }
+    const counts = { frame: 0, attempt: 0, message: 0, runtime: 0, question: 0 }
     const work = createDurableDelegatedWork({
       execution,
       records,
@@ -1778,7 +1779,7 @@ describe('durable delegated work', () => {
     }
     const project = vi.fn(async () => [persistedReview])
     const reviewEvidence: DelegatedReviewEvidence = { project }
-    const counts = { frame: 0, attempt: 0, message: 0, runtime: 0 }
+    const counts = { frame: 0, attempt: 0, message: 0, runtime: 0, question: 0 }
     const first = createDurableDelegatedWork({
       execution,
       records,
@@ -1882,7 +1883,7 @@ describe('durable delegated work', () => {
         project: async () => []
       },
       createId: (() => {
-        const counts = { frame: 0, attempt: 0, message: 0, runtime: 0 }
+        const counts = { frame: 0, attempt: 0, message: 0, runtime: 0, question: 0 }
         return (kind) => `${kind}-${++counts[kind]}`
       })()
     })
@@ -1952,7 +1953,7 @@ describe('durable delegated work', () => {
         project: async ({ attemptId }) => (finalized.has(attemptId) ? evidenceFor(attemptId) : [])
       },
       createId: (() => {
-        const counts = { frame: 0, attempt: 0, message: 0, runtime: 0 }
+        const counts = { frame: 0, attempt: 0, message: 0, runtime: 0, question: 0 }
         return (kind) => `${kind}-${++counts[kind]}`
       })()
     })
@@ -2499,7 +2500,7 @@ describe('durable delegated work', () => {
         }
       },
       createId: (() => {
-        const counts = { frame: 0, attempt: 0, message: 0, runtime: 0 }
+        const counts = { frame: 0, attempt: 0, message: 0, runtime: 0, question: 0 }
         return (kind) => `${kind}-${++counts[kind]}`
       })()
     })
@@ -2692,7 +2693,8 @@ describe('durable delegated work', () => {
           frame: 'cwd-frame',
           attempt: 'cwd-attempt',
           message: 'cwd-message',
-          runtime: 'cwd-runtime'
+          runtime: 'cwd-runtime',
+          question: 'cwd-question'
         })[kind]
     })
     const result = prepared.delegate(
@@ -2841,7 +2843,7 @@ describe('durable delegated work', () => {
         await durableRecords.terminalize(input)
       }
     }
-    const counts = { frame: 0, attempt: 0, message: 0, runtime: 0 }
+    const counts = { frame: 0, attempt: 0, message: 0, runtime: 0, question: 0 }
     const work = createDurableDelegatedWork({
       execution,
       records,

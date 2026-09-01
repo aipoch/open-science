@@ -30,9 +30,7 @@ export default defineConfig(
       '**/.superpowers/**',
       // Keep official shadcn registry output unmodified; local adaptations live in wrappers.
       'src/renderer/src/components/ui/message-scroller.tsx',
-      // Keep the pinned low-level runtime and native helper sources auditable against their
-      // provenance. Open Science-owned adapter code under the package's src/ directory is linted.
-      'packages/notebook-network-sandbox/runtime/**',
+      // Keep the pinned native helper sources auditable against their provenance.
       'packages/notebook-network-sandbox/vendor/**'
     ]
   },
@@ -55,6 +53,13 @@ export default defineConfig(
     rules: {
       ...eslintPluginReactHooks.configs.recommended.rules,
       ...eslintPluginReactRefresh.configs.vite.rules
+    }
+  },
+  {
+    // The pinned runtime intentionally matches C0 controls before logging protocol violations.
+    files: ['packages/notebook-network-sandbox/runtime/src/gateway/violation-log.ts'],
+    rules: {
+      'no-control-regex': 'off'
     }
   },
   {

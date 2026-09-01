@@ -224,6 +224,7 @@ describe('Project-owned data catalog architecture', () => {
       'compute-job-remote-workdirs',
       'compute-session-cache',
       'project-session-json',
+      'managed-session-workspaces',
       'artifact-bytes',
       'upload-bytes',
       'delegated-frame-workspaces',
@@ -266,6 +267,19 @@ describe('Project-owned data catalog architecture', () => {
     expect(
       PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'execution-file-evidence')?.resources
     ).toEqual(['execution-file-evidence/<projectId>/', 'notebook-file-evidence/<projectId>/'])
+  })
+
+  it('catalogs retained managed Session workspaces as Project-owned data', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'managed-session-workspaces')
+    ).toMatchObject({
+      medium: 'filesystem',
+      resources: ['workspaces/<workspaceId>/'],
+      policy: {
+        kind: 'retained-history',
+        effect: 'retain'
+      }
+    })
   })
 
   it('checks declared Prisma cascades and Restrict boundaries through generated DMMF', () => {

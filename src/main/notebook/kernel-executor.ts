@@ -653,13 +653,13 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // clear spawn ENOENT below.
     if (request.resolvedInterpreter) return
 
-    const prefix = envPrefix(request.runtimeRoot, env)
+    const prefix = envPrefix(request.runtimeRoot, env, this.platform)
 
     if (kind === 'python') {
       // Every env (default and named) is gated on its own on-disk interpreter: there is no system-PATH
       // fallback, so a missing interpreter is always a hard error here rather than a silent leak to a
       // system python. The default env keeps its "still being prepared" wording; a named env is named.
-      if (!existsSync(pythonBin(prefix))) {
+      if (!existsSync(pythonBin(prefix, this.platform))) {
         throw new Error(
           env === DEFAULT_PY_ENV
             ? 'The Python environment is still being prepared — retry shortly. Do NOT create a new environment; the default one provisions automatically.'
@@ -669,7 +669,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       return
     }
 
-    if (!existsSync(rBin(prefix))) {
+    if (!existsSync(rBin(prefix, this.platform))) {
       throw new Error(
         env === DEFAULT_R_ENV
           ? 'The R environment is still being prepared — retry shortly. Do NOT create a new environment; the default one provisions automatically.'
@@ -795,7 +795,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // spawn fails only for a genuinely missing interpreter.
     const spawnCwd = existsSync(request.cwd) ? request.cwd : undefined
     const spawnEnv = this.buildEnv(kind, request, figuresDir, workloadCacheEnv)
-    const prefix = envPrefix(request.runtimeRoot, env)
+    const prefix = envPrefix(request.runtimeRoot, env, this.platform)
 
     let command: string
     let args: string[]
@@ -812,7 +812,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
       // system-PATH fallback; a missing managed interpreter still surfaces a clear ENOENT). This is
       // the seam that lets the user choose the kernel instead of hard-binding the app conda prefix.
       loopPath = kind === 'r' ? this.rLoopPath : this.pythonLoopPath
-      const managedBin = kind === 'r' ? rScriptBin(prefix) : pythonBin(prefix)
+      const managedBin =
+        kind === 'r' ? rScriptBin(prefix, this.platform) : pythonBin(prefix, this.platform)
       command = request.resolvedInterpreter?.command ?? managedBin
       args = [...(request.resolvedInterpreter?.args ?? []), loopPath]
     }
@@ -920,7 +921,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           ? this.platform === 'win32'
             ? request.resolvedInterpreter.condaPrefix
             : undefined
-          : envPrefix(request.runtimeRoot, resolveRequestEnv(kind, request))
+          : envPrefix(request.runtimeRoot, resolveRequestEnv(kind, request), this.platform)
     const env: NodeJS.ProcessEnv = {
       ...buildNotebookKernelEnvironment(this.platform),
       ...workloadCacheEnv,
