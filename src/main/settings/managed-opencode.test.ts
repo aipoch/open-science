@@ -20,8 +20,9 @@ import { gzipSync } from 'node:zlib'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { nonRegularMarkerPaths } = vi.hoisted(() => ({
-  nonRegularMarkerPaths: new Set<string>()
+const { nonRegularMarkerPaths, markerReplacementsOnRead } = vi.hoisted(() => ({
+  nonRegularMarkerPaths: new Set<string>(),
+  markerReplacementsOnRead: new Map<string, string>()
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -31,11 +32,26 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     lstat: async (path: string) =>
       nonRegularMarkerPaths.has(String(path))
         ? ({ isFile: () => false } as Awaited<ReturnType<typeof actual.lstat>>)
-        : actual.lstat(path)
+        : actual.lstat(path),
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      const path = String(args[0])
+      const replacement = markerReplacementsOnRead.get(path)
+      if (replacement !== undefined) {
+        markerReplacementsOnRead.delete(path)
+        const replacementPath = `${path}.replacement`
+        await actual.writeFile(replacementPath, replacement, { flag: 'wx' })
+        await actual.rm(path)
+        await actual.rename(replacementPath, path)
+      }
+      return actual.readFile(...args)
+    }
   }
 })
 
-afterEach(() => nonRegularMarkerPaths.clear())
+afterEach(() => {
+  nonRegularMarkerPaths.clear()
+  markerReplacementsOnRead.clear()
+})
 
 import {
   classifyVerifyResult,
@@ -938,6 +954,21 @@ describe('isManagedOpencodePath / uninstallManagedOpencode', () => {
     await writeFile(orphanPayload, 'present')
     await writeFile(externalMarker, 'open-science:opencode:v1\n')
     await link(externalMarker, join(orphanRoot, '.open-science-managed-runtime'))
+
+    await uninstallManagedOpencode(root)
+
+    await expect(readFile(orphanPayload, 'utf8')).resolves.toBe('present')
+  })
+
+  it('preserves an orphan when its ownership marker changes after metadata validation', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const orphanRoot = join(root, `opencode-managed.backup-${uuid}`)
+    const orphanPayload = join(orphanRoot, 'user-data')
+    const ownerMarker = join(orphanRoot, '.open-science-managed-runtime')
+    await mkdir(orphanRoot, { recursive: true })
+    await writeFile(orphanPayload, 'present')
+    await writeFile(ownerMarker, 'unowned\n')
+    markerReplacementsOnRead.set(ownerMarker, 'open-science:opencode:v1\n')
 
     await uninstallManagedOpencode(root)
 

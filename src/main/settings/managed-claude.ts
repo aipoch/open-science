@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream, createWriteStream, type Dirent } from 'node:fs'
-import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { constants, createReadStream, createWriteStream, type Dirent, type Stats } from 'node:fs'
+import { chmod, lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -118,6 +118,29 @@ const STAGED_CLAUDE_RUNTIME_PATTERN =
   /^claude-code\.staging-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
 const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
 const CLAUDE_RUNTIME_OWNER = 'open-science:claude-code:v1\n'
+const NO_FOLLOW_OPEN_FLAG = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0
+
+const readClaudeRuntimeOwnerMarker = async (
+  markerPath: string,
+  pathStats: Stats
+): Promise<string> => {
+  const marker = await open(markerPath, constants.O_RDONLY | NO_FOLLOW_OPEN_FLAG)
+  try {
+    const markerStats = await marker.stat()
+    if (markerStats.dev !== pathStats.dev || markerStats.ino !== pathStats.ino) {
+      throw new Error(`Refusing to use a changed ownership marker: ${markerPath}`)
+    }
+    if (!markerStats.isFile()) {
+      throw new Error(`Refusing to use a non-file ownership marker: ${markerPath}`)
+    }
+    if (markerStats.nlink > 1) {
+      throw new Error(`Refusing to use an ownership marker with multiple hard links: ${markerPath}`)
+    }
+    return await marker.readFile('utf8')
+  } finally {
+    await marker.close()
+  }
+}
 
 const ensureClaudeRuntimeOwnerMarker = async (root: string): Promise<void> => {
   const markerPath = join(root, RUNTIME_OWNER_MARKER)
@@ -147,7 +170,7 @@ const ensureClaudeRuntimeOwnerMarker = async (root: string): Promise<void> => {
   if (markerStats.nlink > 1) {
     throw new Error(`Refusing to use an ownership marker with multiple hard links: ${markerPath}`)
   }
-  if ((await readFile(markerPath, 'utf8')) !== CLAUDE_RUNTIME_OWNER) {
+  if ((await readClaudeRuntimeOwnerMarker(markerPath, markerStats)) !== CLAUDE_RUNTIME_OWNER) {
     throw new Error(`Refusing to replace an unrecognized ownership marker: ${markerPath}`)
   }
 }
@@ -156,7 +179,10 @@ const isOwnedClaudeRuntime = async (root: string): Promise<boolean> => {
   const markerPath = join(root, RUNTIME_OWNER_MARKER)
   const markerStats = await lstat(markerPath).catch(() => undefined)
   if (!markerStats?.isFile() || markerStats.nlink > 1) return false
-  return (await readFile(markerPath, 'utf8').catch(() => undefined)) === CLAUDE_RUNTIME_OWNER
+  return (
+    (await readClaudeRuntimeOwnerMarker(markerPath, markerStats).catch(() => undefined)) ===
+    CLAUDE_RUNTIME_OWNER
+  )
 }
 
 const findOwnedClaudeRuntimeSiblings = async (
