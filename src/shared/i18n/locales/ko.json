@@ -1346,7 +1346,7 @@
     "Make read-only": "읽기 전용으로 만들기",
     "Manage": "관리",
     "Manage compute...": "컴퓨팅 관리...",
-    "Manage network access": "네트워크 액세스 관리",
+    "Network settings": "네트워크 설정",
     "Notebook Python, R, REPL, Bash, and package downloads are limited to approved domains.": "Notebook Python, R, REPL, Bash 및 패키지 다운로드는 허용된 도메인으로 제한됩니다.",
     "Open Network settings to review the required setup.": "필요한 설정을 검토하려면 네트워크 설정을 여세요.",
     "Open Network settings to review availability and allowed domains.": "사용 가능 여부와 허용된 도메인을 검토하려면 네트워크 설정을 여세요.",

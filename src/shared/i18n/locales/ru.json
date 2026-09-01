@@ -1394,7 +1394,7 @@
     "Make read-only": "Сделать только для чтения",
     "Manage": "Управлять",
     "Manage compute...": "Управлять вычислениями...",
-    "Manage network access": "Управлять сетевым доступом",
+    "Network settings": "Настройки сети",
     "Notebook Python, R, REPL, Bash, and package downloads are limited to approved domains.": "Сетевой доступ Notebook Python, R, REPL, Bash и загрузки пакетов ограничен разрешёнными доменами.",
     "Open Network settings to review the required setup.": "Откройте настройки сети, чтобы проверить необходимые параметры.",
     "Open Network settings to review availability and allowed domains.": "Откройте настройки сети, чтобы проверить доступность функции и разрешённые домены.",

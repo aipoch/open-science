@@ -1407,7 +1407,7 @@
     "Make sure you're on the latest version and relaunch. If it persists, create an issue below with the error code.": "请确认已升级到最新版本并重新启动。如果问题仍然存在，请通过下方按钮创建 Issue 并附上错误代码。",
     "Manage": "管理",
     "Manage compute...": "管理算力……",
-    "Manage network access": "管理网络访问",
+    "Network settings": "网络设置",
     "Notebook Python, R, REPL, Bash, and package downloads are limited to approved domains.": "Notebook Python、R、REPL、Bash 和软件包下载仅限访问允许的域名。",
     "Open Network settings to review the required setup.": "打开网络设置以查看所需配置。",
     "Open Network settings to review availability and allowed domains.": "打开网络设置以查看可用性和允许的域名。",

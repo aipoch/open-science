@@ -1396,7 +1396,7 @@
     "Make read-only": "Rendre en lecture seule",
     "Manage": "Gérer",
     "Manage compute...": "Gérer le calcul...",
-    "Manage network access": "Gérer l’accès réseau",
+    "Network settings": "Paramètres réseau",
     "Notebook Python, R, REPL, Bash, and package downloads are limited to approved domains.": "Notebook Python, R, REPL, Bash et les téléchargements de paquets sont limités aux domaines autorisés.",
     "Open Network settings to review the required setup.": "Ouvrez les paramètres Réseau pour vérifier la configuration requise.",
     "Open Network settings to review availability and allowed domains.": "Ouvrez les paramètres Réseau pour vérifier la disponibilité et les domaines autorisés.",

@@ -1331,7 +1331,7 @@
     "Make sure you're on the latest version and relaunch. If it persists, create an issue below with the error code.": "最新バージョンを使用していることを確認して再起動してください。それでも解決しない場合は、下のボタンからエラーコードを添えて Issue を作成してください。",
     "Manage": "管理",
     "Manage compute...": "コンピューティングを管理…",
-    "Manage network access": "ネットワークアクセスを管理",
+    "Network settings": "ネットワーク設定",
     "Notebook Python, R, REPL, Bash, and package downloads are limited to approved domains.": "Notebook Python、R、REPL、Bash、パッケージのダウンロードは、許可済みドメインに制限されます。",
     "Open Network settings to review the required setup.": "必要な設定を確認するには、ネットワーク設定を開いてください。",
     "Open Network settings to review availability and allowed domains.": "利用可否と許可済みドメインを確認するには、ネットワーク設定を開いてください。",

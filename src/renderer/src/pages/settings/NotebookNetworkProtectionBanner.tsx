@@ -198,7 +198,7 @@ const NotebookNetworkProtectionBanner = ({
           )}
           onClick={onOpen}
         >
-          {t('Manage network access')}
+          {t('Network settings')}
         </Button>
       </div>
     </section>

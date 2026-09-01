@@ -3330,7 +3330,7 @@ describe('SettingsPage layout', () => {
     expect(banner?.textContent).toContain('Notebook network protection is active.')
 
     const manage = Array.from(banner?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Manage network access'
+      (button) => button.textContent?.trim() === 'Network settings'
     )
     await act(async () => {
       manage?.click()
