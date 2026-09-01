@@ -54,6 +54,7 @@ const createLifecycle = (
     projectProgress?: (progress: ProvisionProgress) => void
     waitForRecovery?: () => Promise<void>
     assertProvisionAllowed?: (language: 'python' | 'r') => void
+    runProvisionAdmission?: <T>(language: 'python' | 'r', operation: () => Promise<T>) => Promise<T>
     onRepairCompleted?: (language: 'python' | 'r') => Promise<void> | void
   } = {}
 ): NotebookEnvironmentLifecycle =>
@@ -64,6 +65,7 @@ const createLifecycle = (
     projectProgress: options.projectProgress ?? (() => undefined),
     waitForRecovery: options.waitForRecovery,
     assertProvisionAllowed: options.assertProvisionAllowed,
+    runProvisionAdmission: options.runProvisionAdmission,
     onRepairCompleted: options.onRepairCompleted
   })
 
@@ -340,6 +342,77 @@ describe('createNotebookEnvironmentLifecycle', () => {
     const lifecycle = createLifecycle(provisioner, { waitForRecovery })
     await lifecycle.repair('python')
     expect(order).toEqual(['recovery', 'repair'])
+  })
+
+  it('rejects UI provision and repair when managed removal has closed admission', async () => {
+    const provisioner = fakeProvisioner()
+    const admittedLanguages: Array<'python' | 'r'> = []
+    const runProvisionAdmission = async <T>(
+      language: 'python' | 'r',
+      operation: () => Promise<T>
+    ): Promise<T> => {
+      void operation
+      admittedLanguages.push(language)
+      throw new Error('RUNTIME_ENVIRONMENT_REMOVING: default-python is being uninstalled')
+    }
+    const lifecycle = createLifecycle(provisioner, { runProvisionAdmission })
+
+    await expect(lifecycle.provision('python')).rejects.toThrow('RUNTIME_ENVIRONMENT_REMOVING')
+    await expect(lifecycle.repair('python')).rejects.toThrow('RUNTIME_ENVIRONMENT_REMOVING')
+
+    expect(admittedLanguages).toEqual(['python', 'python'])
+    expect(provisioner.provisionPython).not.toHaveBeenCalled()
+    expect(provisioner.repair).not.toHaveBeenCalled()
+  })
+
+  it('holds UI provision admission until the shared provisioner call settles', async () => {
+    const order: string[] = []
+    const provisioner = fakeProvisioner({
+      provisionR: vi.fn(async () => {
+        order.push('provision')
+      })
+    })
+    const runProvisionAdmission = async <T>(
+      _language: 'python' | 'r',
+      operation: () => Promise<T>
+    ): Promise<T> => {
+      order.push('admit')
+      try {
+        return await operation()
+      } finally {
+        order.push('release')
+      }
+    }
+    const lifecycle = createLifecycle(provisioner, { runProvisionAdmission })
+
+    await lifecycle.provision('r')
+
+    expect(order).toEqual(['admit', 'provision', 'release'])
+  })
+
+  it('holds startup admission for both managed defaults before entering the shared queue', async () => {
+    const order: string[] = []
+    const provisioner = fakeProvisioner({
+      restoreRelocatedEnvs: vi.fn(async () => {
+        order.push('startup')
+      })
+    })
+    const runProvisionAdmission = async <T>(
+      language: 'python' | 'r',
+      operation: () => Promise<T>
+    ): Promise<T> => {
+      order.push(`admit:${language}`)
+      try {
+        return await operation()
+      } finally {
+        order.push(`release:${language}`)
+      }
+    }
+    const lifecycle = createLifecycle(provisioner, { runProvisionAdmission })
+
+    await lifecycle.startup()
+
+    expect(order).toEqual(['admit:python', 'admit:r', 'startup', 'release:r', 'release:python'])
   })
 
   it('UI provision refuses when the default env is recovery-blocked (but repair is the recovery)', async () => {

@@ -628,6 +628,19 @@ class NotebookRuntimeService {
     this.environmentOperations.setDefaultEnvProvisioner(provisioner, onProgress)
   }
 
+  // Lifecycle setup/reset/startup uses the same transactional admission as lazy default
+  // provisioning. The reservation is acquired before the shared provisioner queue is entered, so
+  // uninstall drains already-admitted work and rejects requests that arrive after its barrier closes.
+  runDefaultEnvironmentProvisionAdmission<T>(
+    language: NotebookLanguage,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    return this.environmentOperations.runProvisionAdmission(
+      this.defaultEnvNameFor(language),
+      operation
+    )
+  }
+
   // Before running a data cell against a DEFAULT env, build it from the offline bundle if it isn't
   // materialized yet — so an agent's first R (or Python) run auto-provisions instead of erroring and
   // nudging the agent to create a redundant named env. Named envs are NOT auto-created here: the agent

@@ -210,7 +210,7 @@ export class NotebookEnvironmentOperations {
       this.progress = scoped
       this.reportProvisionProgress(scoped)
     }
-    await this.runProvision(input.environment, async () => {
+    await this.runProvisionAdmission(input.environment, async () => {
       try {
         if (input.language === 'r') await provisioner.provisionR(report)
         else await provisioner.provisionPython(report)
@@ -539,7 +539,7 @@ export class NotebookEnvironmentOperations {
     }
   }
 
-  private runProvision<T>(environment: string, operation: () => Promise<T>): Promise<T> {
+  runProvisionAdmission<T>(environment: string, operation: () => Promise<T>): Promise<T> {
     if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
 
     let resolveDrain!: () => void
