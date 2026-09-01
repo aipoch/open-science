@@ -1,6 +1,11 @@
 {
   "common": {
     "Cancel": "Abbrechen",
+    "Stay": "In der App bleiben",
+    "Retry saving": "Speichern erneut versuchen",
+    "Force quit": "Beenden erzwingen",
+    "Saving is not finished": "Speichern ist noch nicht abgeschlossen",
+    "Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.": "Open Science konnte nicht bestätigen, dass alle letzten Änderungen gespeichert wurden. Versuchen Sie das Speichern erneut oder erzwingen Sie das Beenden; dabei können letzte Änderungen verloren gehen.",
     "Quit_verb": "Beenden",
     "Quit Open Science?": "Open Science beenden?",
     "PDF": "PDF",

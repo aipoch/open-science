@@ -102,7 +102,9 @@ export const createCloseConfirm = (
         await persistPreference(choice, result.remember)
         return choice
       } catch {
-        return enforceDelegatedBlock(variant === 'quit' ? 'quit' : 'minimize')
+        return enforceDelegatedBlock(
+          variant === 'quit' ? 'quit' : variant === 'close-to-tray' ? 'minimize' : 'cancel'
+        )
       }
     }
 
@@ -170,16 +172,19 @@ export const createCloseConfirm = (
         if (!acked) startFallback()
       }, ackTimeoutMs)
 
-      deps.send({ requestId, variant, sessions, reviewerActive })
+      try {
+        deps.send({ requestId, variant, sessions, reviewerActive })
+      } catch {
+        startFallback()
+      }
     })
   }
 }
 
 // Native fallback when the renderer can't render the modal (dead/hung, or no window — e.g. macOS
 // after the window was closed but the app stays resident). The coordinator only reaches this with
-// work running (an empty quit list fast-paths to 'quit'), so both variants still ASK: quit offers
-// Quit/Cancel, close-to-tray offers Minimize/Quit. A destroyed window can't parent a dialog, so fall
-// back to a windowless one.
+// work running (an empty quit list fast-paths to 'quit'), so every reachable variant still asks. A
+// destroyed window can't parent a dialog, so fall back to a windowless one.
 const nativeFallback = async (
   getWindow: () => BrowserWindow | undefined,
   variant: CloseConfirmVariant,
@@ -187,46 +192,62 @@ const nativeFallback = async (
   translate: NativeTranslator
 ): Promise<NativeCloseConfirmResult> => {
   const hasDelegatedWork = hasDelegatedActiveSession(sessions)
-  const options = hasDelegatedWork
-    ? {
-        type: 'warning' as const,
-        buttons: [
-          variant === 'quit' ? translate('Return to tasks') : translate('Minimize to tray')
-        ],
-        defaultId: 0,
-        cancelId: 0,
-        title: 'Open Science',
-        message: translate('Subagents are still running'),
-        detail: translate(
-          'Return to the running tasks and stop their subagents before quitting Open Science.'
-        )
-      }
-    : variant === 'quit'
+  const options =
+    variant === 'persistence-failed'
       ? {
-          type: 'question' as const,
-          buttons: [translate('Cancel'), translate('Quit', { context: 'verb' })],
+          type: 'warning' as const,
+          buttons: [translate('Stay'), translate('Retry saving'), translate('Force quit')],
           defaultId: 0,
           cancelId: 0,
           title: 'Open Science',
-          message: translate('Quit Open Science?'),
-          detail: translate('Work is still running and will be interrupted if you quit.')
+          message: translate('Saving is not finished'),
+          detail: translate(
+            'Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.'
+          )
         }
-      : {
-          type: 'question' as const,
-          buttons: [translate('Minimize to tray'), translate('Quit', { context: 'verb' })],
-          defaultId: 0,
-          cancelId: 0,
-          title: 'Open Science',
-          message: translate('Minimize to tray or quit?'),
-          detail: translate('Background work may still be running.'),
-          checkboxLabel: translate("Don't ask again"),
-          checkboxChecked: true
-        }
+      : hasDelegatedWork
+        ? {
+            type: 'warning' as const,
+            buttons: [
+              variant === 'quit' ? translate('Return to tasks') : translate('Minimize to tray')
+            ],
+            defaultId: 0,
+            cancelId: 0,
+            title: 'Open Science',
+            message: translate('Subagents are still running'),
+            detail: translate(
+              'Return to the running tasks and stop their subagents before quitting Open Science.'
+            )
+          }
+        : variant === 'quit'
+          ? {
+              type: 'question' as const,
+              buttons: [translate('Cancel'), translate('Quit', { context: 'verb' })],
+              defaultId: 0,
+              cancelId: 0,
+              title: 'Open Science',
+              message: translate('Quit Open Science?'),
+              detail: translate('Work is still running and will be interrupted if you quit.')
+            }
+          : {
+              type: 'question' as const,
+              buttons: [translate('Minimize to tray'), translate('Quit', { context: 'verb' })],
+              defaultId: 0,
+              cancelId: 0,
+              title: 'Open Science',
+              message: translate('Minimize to tray or quit?'),
+              detail: translate('Background work may still be running.'),
+              checkboxLabel: translate("Don't ask again"),
+              checkboxChecked: true
+            }
   const window = getWindow()
   const { response, checkboxChecked } =
     window && !window.isDestroyed()
       ? await dialog.showMessageBox(window, options)
       : await dialog.showMessageBox(options)
+  if (variant === 'persistence-failed') {
+    return { choice: response === 1 ? 'retry' : response === 2 ? 'force-quit' : 'cancel' }
+  }
   if (hasDelegatedWork) return { choice: variant === 'quit' ? 'cancel' : 'minimize' }
   if (variant === 'quit') return { choice: response === 1 ? 'quit' : 'cancel' }
   return {

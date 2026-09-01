@@ -2,6 +2,11 @@
   "common": {
     "Approval needed": "需要批准",
     "Cancel": "取消",
+    "Stay": "留在应用中",
+    "Retry saving": "重试保存",
+    "Force quit": "强制退出",
+    "Saving is not finished": "保存尚未完成",
+    "Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.": "Open Science 无法确认所有最近的更改均已保存。请重试保存，或强制退出并承担丢失最近更改的风险。",
     "Plan approval needed": "计划需要批准",
     "Response needed": "需要回复",
     "Task completed": "任务已完成",

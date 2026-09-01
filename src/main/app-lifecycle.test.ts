@@ -769,24 +769,69 @@ describe('installAppLifecycle', () => {
   })
 
   it.each(['send-failed', 'timeout'] as const)(
-    'continues quit when the renderer persistence preflight returns %s',
+    'aborts ordinary quit and asks for consent when the renderer persistence preflight returns %s',
     async (outcome) => {
       const flushSessionPersistence = vi.fn(async () => outcome)
-      const { app, closeOpts, prepareForQuit, abortQuitPreparation, shutdownBackends } = setup({
-        flushSessionPersistence
-      })
+      const confirmClose = vi.fn(async () => 'cancel' as const)
+      const { app, closeOpts, prepareForQuit, abortQuitPreparation, shutdownBackends, windows } =
+        setup({ flushSessionPersistence, confirmClose })
       closeOpts[0].requestQuit()
 
       app.emit('before-quit')
       await flush()
 
-      expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
-      expect(prepareForQuit).toHaveBeenCalledOnce()
-      expect(abortQuitPreparation).not.toHaveBeenCalled()
-      expect(shutdownBackends).toHaveBeenCalledOnce()
-      expect(app.exit).toHaveBeenCalledWith(0)
+      expect(flushSessionPersistence).toHaveBeenCalledOnce()
+      expect(prepareForQuit).not.toHaveBeenCalled()
+      expect(abortQuitPreparation).toHaveBeenCalledOnce()
+      expect(confirmClose).toHaveBeenCalledWith('persistence-failed', [])
+      expect(shutdownBackends).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+      expect(windows[0].visible).toBe(true)
+      expect(windows[0].focused).toBe(true)
     }
   )
+
+  it('retries an ordinary quit after the user chooses to retry saving', async () => {
+    const confirmClose = vi.fn(async () => 'retry' as never)
+    const { app, closeOpts, quit } = setup({
+      flushSessionPersistence: vi.fn(async () => 'timeout' as const),
+      confirmClose
+    })
+    closeOpts[0].requestQuit()
+    expect(quit).toHaveBeenCalledOnce()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('persistence-failed', [])
+    expect(quit).toHaveBeenCalledTimes(2)
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('uses the current degraded shutdown only after the user explicitly chooses force quit', async () => {
+    const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
+    const confirmClose = vi.fn(async () => 'force-quit' as never)
+    const { app, closeOpts, quit, prepareForQuit, abortQuitPreparation, shutdownBackends } = setup({
+      flushSessionPersistence,
+      confirmClose
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(quit).toHaveBeenCalledTimes(2)
+    expect(app.exit).not.toHaveBeenCalled()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(flushSessionPersistence).toHaveBeenCalledTimes(3)
+    expect(prepareForQuit).toHaveBeenCalledOnce()
+    expect(abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
 
   it('keeps the app open when the terminal renderer flush conflicts', async () => {
     const flushSessionPersistence = vi
@@ -847,15 +892,15 @@ describe('installAppLifecycle', () => {
   })
 
   it.each(['send-failed', 'timeout'] as const)(
-    'continues quit when the terminal renderer flush returns %s',
+    'aborts ordinary quit and asks for consent when the terminal renderer flush returns %s',
     async (outcome) => {
       const flushSessionPersistence = vi
         .fn()
         .mockResolvedValueOnce('completed' as const)
         .mockResolvedValueOnce(outcome)
-      const { app, closeOpts, prepareForQuit, abortQuitPreparation, shutdownBackends } = setup({
-        flushSessionPersistence
-      })
+      const confirmClose = vi.fn(async () => 'cancel' as const)
+      const { app, closeOpts, prepareForQuit, abortQuitPreparation, shutdownBackends, windows } =
+        setup({ flushSessionPersistence, confirmClose })
       closeOpts[0].requestQuit()
 
       app.emit('before-quit')
@@ -863,9 +908,12 @@ describe('installAppLifecycle', () => {
 
       expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
       expect(prepareForQuit).toHaveBeenCalledOnce()
-      expect(abortQuitPreparation).not.toHaveBeenCalled()
-      expect(shutdownBackends).toHaveBeenCalledOnce()
-      expect(app.exit).toHaveBeenCalledWith(0)
+      expect(abortQuitPreparation).toHaveBeenCalledOnce()
+      expect(confirmClose).toHaveBeenCalledWith('persistence-failed', [])
+      expect(shutdownBackends).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+      expect(windows[0].visible).toBe(true)
+      expect(windows[0].focused).toBe(true)
     }
   )
 

@@ -166,11 +166,13 @@ export const WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL = 'window:close-confirm-respo
 // asks the user via the confirmation modal.
 export type CloseClassification = 'close' | 'hide' | 'confirm' | 'quit'
 
-// 'close-to-tray' = Windows X (Minimize vs Quit); 'quit' = explicit quit (Quit vs Cancel).
-export type CloseConfirmVariant = 'close-to-tray' | 'quit'
+// 'close-to-tray' = Windows X (Minimize vs Quit); 'quit' = explicit quit (Quit vs Cancel);
+// 'persistence-failed' = an ordinary quit could not confirm that Renderer state was saved.
+export type CloseConfirmVariant = 'close-to-tray' | 'quit' | 'persistence-failed'
 
-// 'minimize' only occurs for the 'close-to-tray' variant; 'cancel' keeps the app/window as-is.
-export type CloseConfirmChoice = 'quit' | 'minimize' | 'cancel'
+// 'minimize' only occurs for the 'close-to-tray' variant; 'retry' and 'force-quit' only occur for
+// 'persistence-failed'; 'cancel' keeps the app/window as-is.
+export type CloseConfirmChoice = 'quit' | 'minimize' | 'cancel' | 'retry' | 'force-quit'
 
 // Saved behavior for the Windows titlebar close action. Undefined means ask every time.
 export type CloseActionPreference = Extract<CloseConfirmChoice, 'quit' | 'minimize'>

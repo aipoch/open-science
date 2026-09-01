@@ -2,7 +2,10 @@ import type { App, BrowserWindow, Tray } from 'electron'
 
 import type { ActiveSessionInfo } from '../shared/storage'
 import type { SessionPersistenceFlushAbortReason } from '../shared/session-persistence-flush'
-import { type RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
+import {
+  rendererSessionPersistenceFlushBlocksShutdown,
+  type RendererSessionPersistenceFlushOutcome
+} from './session-persistence/renderer-flush'
 import type { ShutdownStepOutcome } from './lifecycle-shutdown'
 import { flushDiagnosticsWithTimeout } from './diagnostics/flush'
 import { diagnosticErrorFields, type Logger } from './logger'
@@ -58,7 +61,7 @@ export type AppLifecycleDeps = {
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
   // Reopens Main/renderer admission when persistence prevents an orderly quit from committing.
-  abortQuitPreparation: (reason: SessionPersistenceFlushAbortReason) => Promise<void> | void
+  abortQuitPreparation: (reason?: SessionPersistenceFlushAbortReason) => Promise<void> | void
   // Drains renderer runtime events and its ordered Session write queue before the window disappears.
   flushSessionPersistence: (
     timeoutMs?: number
@@ -139,6 +142,9 @@ export const installAppLifecycle = (
   // confirmation modal is ever open at a time. The renderer holds a single request slot; a second
   // dispatch would silently overwrite the first and strand its promise forever (see app-lifecycle.test.ts).
   let confirmInFlight = false
+  // Set only after the persistence-failure dialog's explicit destructive choice. The next committed
+  // ordinary attempt still retries both Renderer flushes, but their failures cannot cancel that attempt.
+  let forceQuitAfterPersistenceFailure = false
 
   const normalizeStepOutcome = (outcome: ShutdownStepOutcome | void): ShutdownStepOutcome =>
     outcome ?? 'completed'
@@ -155,6 +161,9 @@ export const installAppLifecycle = (
     outcome: RendererSessionPersistenceFlushOutcome
   ): SessionPersistenceFlushAbortReason | undefined =>
     outcome === 'conflict' || outcome === 'renderer-failed' ? outcome : undefined
+  const rendererPersistenceNeedsConsent = (
+    outcome: RendererSessionPersistenceFlushOutcome
+  ): boolean => outcome === 'timeout' || outcome === 'send-failed'
   const shutdownTrigger = (): ApplicationShutdownTrigger => {
     try {
       return deps.shutdownTrigger?.() ?? currentApplicationShutdownTrigger()
@@ -377,6 +386,8 @@ export const installAppLifecycle = (
 
     event.preventDefault()
     shutdownStarted = true
+    const persistenceFailureIsForced = forceQuitAfterPersistenceFailure
+    forceQuitAfterPersistenceFailure = false
     void (async () => {
       const diagnostics = deps.log
         ? startDiagnosticOperation(deps.log, {
@@ -391,6 +402,7 @@ export const installAppLifecycle = (
       let rendererFlushResult: ShutdownStepOutcome
       let backendTeardownResult: ShutdownStepOutcome
       let shutdownAbortReason: SessionPersistenceFlushAbortReason | undefined
+      let persistenceFailureNeedsConsent = false
       const flushRendererSessionPersistence = async (
         phase: 'renderer-session-preflight' | 'renderer-session-flush',
         timeoutMs: number
@@ -417,8 +429,12 @@ export const installAppLifecycle = (
         rendererPreflightOutcome = preflight.outcome
         rendererPreflightResult = preflight.result
         const preflightAbortReason = rendererPersistenceAbortReason(rendererPreflightOutcome)
-        if (ordinaryQuit && preflightAbortReason) {
+        const preflightNeedsConsent = rendererPersistenceNeedsConsent(rendererPreflightOutcome)
+        const preflightBlocksShutdown =
+          rendererSessionPersistenceFlushBlocksShutdown(rendererPreflightOutcome)
+        if (ordinaryQuit && !persistenceFailureIsForced && preflightBlocksShutdown) {
           shutdownAbortReason = preflightAbortReason
+          persistenceFailureNeedsConsent = preflightNeedsConsent
           diagnostics?.complete({
             degraded: true,
             rendererPreflightOutcome,
@@ -452,8 +468,12 @@ export const installAppLifecycle = (
         rendererFlushOutcome = finalFlush.outcome
         rendererFlushResult = finalFlush.result
         const finalAbortReason = rendererPersistenceAbortReason(rendererFlushOutcome)
-        if (ordinaryQuit && finalAbortReason) {
+        const finalNeedsConsent = rendererPersistenceNeedsConsent(rendererFlushOutcome)
+        const finalBlocksShutdown =
+          rendererSessionPersistenceFlushBlocksShutdown(rendererFlushOutcome)
+        if (ordinaryQuit && !persistenceFailureIsForced && finalBlocksShutdown) {
           shutdownAbortReason = finalAbortReason
+          persistenceFailureNeedsConsent = finalNeedsConsent
           diagnostics?.complete({
             degraded: true,
             rendererPreflightResult,
@@ -499,7 +519,7 @@ export const installAppLifecycle = (
           if (result === 'timeout') deps.log?.warn('final log flush timed out')
         }
       } finally {
-        if (shutdownAbortReason) {
+        if (shutdownAbortReason || persistenceFailureNeedsConsent) {
           try {
             await deps.abortQuitPreparation(shutdownAbortReason)
           } catch (error) {
@@ -519,6 +539,28 @@ export const installAppLifecycle = (
           } else {
             clearApplicationShutdownTrigger()
             showMainWindow()
+            if (persistenceFailureNeedsConsent && !confirmInFlight) {
+              confirmInFlight = true
+              try {
+                const choice = await confirmClose('persistence-failed', [])
+                if (choice === 'retry') requestConfirmedQuit()
+                else if (choice === 'force-quit') {
+                  forceQuitAfterPersistenceFailure = true
+                  requestConfirmedQuit()
+                }
+              } catch (error) {
+                try {
+                  deps.log?.error(
+                    'persistence failure confirmation failed',
+                    diagnosticErrorFields(error)
+                  )
+                } catch {
+                  // A failed confirmation keeps the app open; diagnostics remain best-effort.
+                }
+              } finally {
+                confirmInFlight = false
+              }
+            }
           }
         } else {
           trayBox.current?.destroy()

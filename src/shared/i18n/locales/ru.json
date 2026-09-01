@@ -2,6 +2,11 @@
   "common": {
     "Approval needed": "Требуется разрешение",
     "Cancel": "Отмена",
+    "Stay": "Остаться в приложении",
+    "Retry saving": "Повторить сохранение",
+    "Force quit": "Выйти принудительно",
+    "Saving is not finished": "Сохранение не завершено",
+    "Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.": "Open Science не удалось подтвердить сохранение всех последних изменений. Повторите сохранение или выйдите принудительно, рискуя потерять последние изменения.",
     "Plan approval needed": "План необходимо утвердить",
     "Response needed": "Требуется ответ",
     "Task completed": "Задача выполнена",

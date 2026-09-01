@@ -2,6 +2,11 @@
   "common": {
     "Approval needed": "Approbation nécessaire",
     "Cancel": "Annuler",
+    "Stay": "Rester dans l’application",
+    "Retry saving": "Réessayer d’enregistrer",
+    "Force quit": "Forcer à quitter",
+    "Saving is not finished": "L’enregistrement n’est pas terminé",
+    "Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.": "Open Science n’a pas pu confirmer que toutes les modifications récentes avaient été enregistrées. Réessayez d’enregistrer ou forcez la fermeture, au risque de perdre des modifications récentes.",
     "Plan approval needed": "Approbation du plan nécessaire",
     "Response needed": "Réponse nécessaire",
     "Task completed": "Tâche terminée",

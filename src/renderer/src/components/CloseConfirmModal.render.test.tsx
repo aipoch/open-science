@@ -240,6 +240,39 @@ describe('CloseConfirmModal', () => {
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r3', choice: 'quit' })
   })
 
+  it('explains an unfinished save and lets the user retry the orderly quit', async () => {
+    render()
+    act(() => {
+      emit({ requestId: 'r-persistence', variant: 'persistence-failed', sessions: [] })
+    })
+
+    await findByText(/Saving is not finished/)
+    expect(document.body.textContent).toContain(
+      'Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.'
+    )
+    const retryButton = await findButtonByName(/^Retry saving$/)
+    act(() => retryButton.click())
+    expect(sendResponse).toHaveBeenCalledWith({
+      requestId: 'r-persistence',
+      choice: 'retry'
+    })
+  })
+
+  it('requires an explicit destructive action to force quit after an unfinished save', async () => {
+    render()
+    act(() => {
+      emit({ requestId: 'r-force-persistence', variant: 'persistence-failed', sessions: [] })
+    })
+
+    const forceQuitButton = await findButtonByName(/^Force quit$/)
+    expect(forceQuitButton.className).toContain('bg-destructive')
+    act(() => forceQuitButton.click())
+    expect(sendResponse).toHaveBeenCalledWith({
+      requestId: 'r-force-persistence',
+      choice: 'force-quit'
+    })
+  })
+
   it('blocks quitting for delegated work and only acknowledges by staying in the app', async () => {
     render()
     act(() => {

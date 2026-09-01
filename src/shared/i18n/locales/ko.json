@@ -2,6 +2,11 @@
   "common": {
     "Approval needed": "승인 필요",
     "Cancel": "취소",
+    "Stay": "앱에 머물기",
+    "Retry saving": "저장 다시 시도",
+    "Force quit": "강제 종료",
+    "Saving is not finished": "저장이 완료되지 않았습니다",
+    "Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.": "Open Science에서 최근 변경 사항이 모두 저장되었는지 확인하지 못했습니다. 저장을 다시 시도하거나 최근 변경 사항이 손실될 위험을 감수하고 강제 종료하세요.",
     "Plan approval needed": "계획 승인 필요",
     "Response needed": "응답 필요",
     "Task completed": "작업 완료",
