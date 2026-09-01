@@ -177,18 +177,22 @@ type SidebarProject = { id: string; name: string; description: string }
 const mountProjectSidebar = async (
   otherProjects: readonly SidebarProject[],
   onOpenProject: (projectId: string) => void = vi.fn()
-): Promise<{ cleanup: () => void; openMenu: () => void }> => {
+): Promise<{
+  cleanup: () => void
+  openMenu: () => void
+  rerenderSessions: (sessions: ChatSession[]) => Promise<void>
+}> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
 
-  await act(async () => {
+  const render = (sessions: ChatSession[]): void => {
     root.render(
       <WorkspaceSidebar
         projectName="Example project"
         otherProjects={otherProjects}
-        sessions={[createSession({ id: 'session-a' })]}
+        sessions={sessions}
         activeSessionId="session-a"
         canCreateConversation
         canMutateConversations
@@ -210,6 +214,10 @@ const mountProjectSidebar = async (
         onNewProject={vi.fn()}
       />
     )
+  }
+
+  await act(async () => {
+    render([createSession({ id: 'session-a' })])
   })
 
   return {
@@ -218,7 +226,10 @@ const mountProjectSidebar = async (
       container.remove()
     },
     openMenu: () =>
-      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]'))
+      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]')),
+    rerenderSessions: async (sessions) => {
+      await act(async () => render(sessions))
+    }
   }
 }
 
@@ -1094,6 +1105,40 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('keeps menu-item arrow navigation when project search is hidden', async () => {
+    const projects = Array.from({ length: 5 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const settings = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim() === 'Project settings')
+      const firstProject = document.body.querySelector<HTMLElement>('[data-project-id]')
+
+      await act(async () => {
+        settings?.focus()
+        settings?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+        await new Promise((resolve) => window.setTimeout(resolve, 0))
+      })
+
+      expect(document.activeElement).toBe(firstProject)
+
+      await act(async () => {
+        firstProject?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+        await new Promise((resolve) => window.setTimeout(resolve, 0))
+      })
+
+      expect(document.activeElement).toBe(settings)
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
   it('centers project search and uses the shared clear button treatment', async () => {
     const projects = Array.from({ length: 6 }, (_, index) => ({
       id: `project-${index + 1}`,
@@ -1165,13 +1210,40 @@ describe('WorkspaceSidebar accessible render', () => {
         '[aria-label="Clear search"]'
       )
       await act(async () => {
-        clearButton?.focus()
+        search?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(clearButton)
+
+      await act(async () => {
         clearButton?.click()
       })
 
       expect(search?.value).toBe('')
       expect(document.activeElement).toBe(search)
       expect(document.body.querySelector('[aria-label="Project actions"]')).not.toBeNull()
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('does not recompute project matches for session-only rerenders', async () => {
+    let descriptionReadCount = 0
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      get description(): string {
+        descriptionReadCount += 1
+        return `Description ${index + 1}`
+      }
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      const readsAfterMount = descriptionReadCount
+      await mounted.rerenderSessions([
+        createSession({ id: 'session-a', title: 'Updated session title' })
+      ])
+      expect(descriptionReadCount).toBe(readsAfterMount)
     } finally {
       mounted.cleanup()
     }
@@ -1232,6 +1304,33 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('highlights Unicode matches at their original text positions', async () => {
+    const otherProjects = [
+      { id: 'project-1', name: 'İstanbul', description: 'City study' },
+      { id: 'project-2', name: 'Alpha', description: 'First cohort' },
+      { id: 'project-3', name: 'Beta', description: 'Second cohort' },
+      { id: 'project-4', name: 'Gamma', description: 'Third cohort' },
+      { id: 'project-5', name: 'Delta', description: 'Fourth cohort' },
+      { id: 'project-6', name: 'Epsilon', description: 'Fifth cohort' }
+    ]
+    const mounted = await mountProjectSidebar(otherProjects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 's')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const istanbul = document.body.querySelector<HTMLElement>('[data-project-id="project-1"]')
+      expect(istanbul?.querySelector('[data-project-title] .text-primary')?.textContent).toBe('s')
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
   it('moves from project search into the first result and opens it with the keyboard', async () => {
     const onOpenProject = vi.fn()
     const otherProjects = [
@@ -1265,6 +1364,16 @@ describe('WorkspaceSidebar accessible render', () => {
 
       const firstResult = document.body.querySelector<HTMLElement>('[data-project-id]')
       expect(firstResult?.dataset.projectId).toBe('project-6')
+      expect(document.activeElement).toBe(firstResult)
+
+      await act(async () => {
+        firstResult?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(search)
+
+      await act(async () => {
+        search?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      })
       expect(document.activeElement).toBe(firstResult)
 
       await act(async () => {

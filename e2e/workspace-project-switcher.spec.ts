@@ -213,7 +213,7 @@ test('switches projects from the Workspace project menu and expands remaining pr
     Math.abs((searchPresentation?.leftInset ?? 0) - (searchPresentation?.rightInset ?? 0))
   ).toBe(0)
 
-  await clearSearch.focus()
+  await search.press('Tab')
   await expect(clearSearch).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(search).toHaveValue('')

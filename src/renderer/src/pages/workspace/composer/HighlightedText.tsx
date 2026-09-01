@@ -5,10 +5,12 @@ import { Fragment } from 'react'
 // ignored. With no positions this is just the plain text.
 export const HighlightedText = ({
   text,
-  positions
+  positions,
+  highlightClassName = 'bg-transparent font-semibold text-inherit underline decoration-1 underline-offset-2'
 }: {
   text: string
   positions: number[]
+  highlightClassName?: string
 }): React.JSX.Element => {
   if (positions.length === 0) return <>{text}</>
 
@@ -21,10 +23,7 @@ export const HighlightedText = ({
     if (run.length === 0) return
     segments.push(
       runIsHit ? (
-        <mark
-          key={endExclusive}
-          className="bg-transparent font-semibold text-inherit underline decoration-1 underline-offset-2"
-        >
+        <mark key={endExclusive} className={highlightClassName}>
           {run}
         </mark>
       ) : (

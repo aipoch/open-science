@@ -20,6 +20,11 @@ describe('fuzzyScore', () => {
     expect(fuzzyScore('lit', 'Literature Review')?.positions).toEqual([0, 1, 2])
   })
 
+  it('reports positions in the original text when lowercase expansion changes string length', () => {
+    expect(fuzzyScore('s', 'İstanbul')?.positions).toEqual([1])
+    expect(fuzzyScore('İs', 'İstanbul')?.positions).toEqual([0, 1])
+  })
+
   it('returns null when the query is not an ordered subsequence', () => {
     expect(fuzzyScore('zz', 'Literature Review')).toBeNull()
     // Right chars, wrong order.

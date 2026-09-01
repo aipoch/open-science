@@ -17,7 +17,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { Fragment, useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
@@ -38,6 +38,7 @@ import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import { NotificationBell } from '@/components/NotificationBell'
 
 import { projectPresentedSessionActionability } from './session-wait-reason'
+import { HighlightedText } from './composer/HighlightedText'
 import { fuzzyScore } from './composer/fuzzy-match'
 import {
   SessionHoverPreview,
@@ -110,6 +111,7 @@ type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
   onShowAllProjectsChange?: (showAllProjects: boolean) => void
   projectQuery?: string
   onProjectQueryChange?: (query: string) => void
+  projectMatches?: ProjectMenuMatch[]
   onProjectMenuOpenChange?: (open: boolean) => void
 }
 
@@ -244,6 +246,21 @@ const sessionRowActionClassName =
 // Shared icon wrapper inside each menu item row.
 const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-center'
 
+const handleProjectMenuActionKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+  if (event.key !== 'ArrowDown') return
+  const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
+  const actions = Array.from(
+    menu?.querySelectorAll<HTMLElement>('[data-project-menu-action]:not([data-disabled])') ?? []
+  )
+  const search = menu?.querySelector<HTMLInputElement>('[data-project-search]')
+  if (actions.at(-1) !== event.currentTarget || !search) return
+
+  // Search is outside Radix's item collection, so bridge the visual order explicitly.
+  event.preventDefault()
+  event.stopPropagation()
+  search.focus()
+}
+
 type ProjectMenuMatch = {
   project: NonNullable<WorkspaceSidebarProps['otherProjects']>[number]
   description: string
@@ -284,46 +301,6 @@ const matchProjects = (
     else descriptionMatches.push(match)
   })
   return [...titleMatches, ...descriptionMatches]
-}
-
-const ProjectMatchText = ({
-  text,
-  positions
-}: {
-  text: string
-  positions: number[]
-}): React.JSX.Element => {
-  if (positions.length === 0) return <>{text}</>
-
-  const highlighted = new Set(positions)
-  const segments: React.JSX.Element[] = []
-  let run = ''
-  let runIsHighlighted = highlighted.has(0)
-
-  const flush = (endExclusive: number): void => {
-    if (!run) return
-    segments.push(
-      runIsHighlighted ? (
-        <span key={endExclusive} className="text-primary">
-          {run}
-        </span>
-      ) : (
-        <Fragment key={endExclusive}>{run}</Fragment>
-      )
-    )
-    run = ''
-  }
-
-  for (let index = 0; index < text.length; index += 1) {
-    const isHighlighted = highlighted.has(index)
-    if (isHighlighted !== runIsHighlighted) {
-      flush(index)
-      runIsHighlighted = isHighlighted
-    }
-    run += text[index]
-  }
-  flush(text.length)
-  return <>{segments}</>
 }
 
 // Left navigation owns session selection, creation entry, and workspace settings.
@@ -372,6 +349,7 @@ const WorkspaceSidebarView = ({
   onShowAllProjectsChange,
   projectQuery = '',
   onProjectQueryChange,
+  projectMatches: providedProjectMatches,
   onProjectMenuOpenChange
 }: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -386,7 +364,7 @@ const WorkspaceSidebarView = ({
   const activeStarNudgeKey = (mobileMode ? isMobileOpen : sidebarToggle?.state !== 'collapsed')
     ? starNudgeKey
     : undefined
-  const projectMatches = matchProjects(otherProjects, projectQuery)
+  const projectMatches = providedProjectMatches ?? matchProjects(otherProjects, projectQuery)
   const visibleProjectMatches = showAllProjects
     ? projectMatches
     : projectMatches.slice(0, INITIAL_PROJECT_MENU_LIMIT)
@@ -457,16 +435,23 @@ const WorkspaceSidebarView = ({
                   search.focus()
                 }}
               >
-                <DropdownMenuItem className="gap-2" onSelect={() => onOpenProjectSettings()}>
+                <DropdownMenuItem
+                  data-project-menu-action
+                  className="gap-2"
+                  onSelect={() => onOpenProjectSettings()}
+                  onKeyDown={handleProjectMenuActionKeyDown}
+                >
                   <span className={sessionMenuIconClassName}>
                     <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
                   </span>
                   {t('Project settings')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
+                  data-project-menu-action
                   className="gap-2"
                   disabled={!canDownloadProjectArtifacts || !onDownloadProjectArtifacts}
                   onSelect={() => onDownloadProjectArtifacts?.()}
+                  onKeyDown={handleProjectMenuActionKeyDown}
                 >
                   <span className={sessionMenuIconClassName}>
                     <Download className="size-4" strokeWidth={2} aria-hidden="true" />
@@ -504,7 +489,30 @@ const WorkspaceSidebarView = ({
                           event.stopPropagation()
                           return
                         }
-                        if (event.key !== 'Escape' && event.key !== 'Tab') event.stopPropagation()
+                        if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
+                          event.preventDefault()
+                          const actions = Array.from(
+                            event.currentTarget
+                              .closest<HTMLElement>('[role="menu"]')
+                              ?.querySelectorAll<HTMLElement>(
+                                '[data-project-menu-action]:not([data-disabled])'
+                              ) ?? []
+                          )
+                          actions.at(-1)?.focus()
+                          event.stopPropagation()
+                          return
+                        }
+                        if (event.key === 'Tab') {
+                          event.preventDefault()
+                          const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
+                          const nextTarget = projectQuery
+                            ? menu?.querySelector<HTMLElement>('[data-project-clear]')
+                            : menu?.querySelector<HTMLElement>('[data-project-id]')
+                          nextTarget?.focus()
+                          event.stopPropagation()
+                          return
+                        }
+                        if (event.key !== 'Escape') event.stopPropagation()
                       }}
                     />
                     {projectQuery ? (
@@ -512,9 +520,34 @@ const WorkspaceSidebarView = ({
                         type="button"
                         variant="ghost"
                         size="icon-xs"
+                        data-project-clear
                         aria-label={t('Clear search')}
                         className="absolute right-1 top-1/2 -translate-y-1/2 text-text-100 hover:bg-bg-200 hover:text-text-100"
                         onMouseDown={(event) => event.preventDefault()}
+                        onKeyDown={(event) => {
+                          if (
+                            event.key === 'ArrowUp' ||
+                            event.key === 'ArrowLeft' ||
+                            (event.key === 'Tab' && event.shiftKey)
+                          ) {
+                            event.preventDefault()
+                            event.currentTarget.parentElement
+                              ?.querySelector<HTMLInputElement>('[data-project-search]')
+                              ?.focus()
+                            event.stopPropagation()
+                            return
+                          }
+                          if (event.key === 'ArrowDown' || event.key === 'Tab') {
+                            event.preventDefault()
+                            event.currentTarget
+                              .closest<HTMLElement>('[role="menu"]')
+                              ?.querySelector<HTMLElement>('[data-project-id]')
+                              ?.focus()
+                            event.stopPropagation()
+                            return
+                          }
+                          if (event.key !== 'Escape') event.stopPropagation()
+                        }}
                         onClick={(event) => {
                           // Restore focus before the controlled clear unmounts this keyboard target.
                           event.currentTarget.parentElement
@@ -534,13 +567,23 @@ const WorkspaceSidebarView = ({
                   </p>
                 ) : null}
                 {visibleProjectMatches.map(
-                  ({ project, description, titlePositions, descriptionPositions }) => (
+                  ({ project, description, titlePositions, descriptionPositions }, index) => (
                     <DropdownMenuItem
                       key={project.id}
                       data-project-id={project.id}
                       className="items-start py-2"
                       disabled={!onOpenProject}
                       onSelect={() => onOpenProject?.(project.id)}
+                      onKeyDown={(event) => {
+                        if (index !== 0 || event.key !== 'ArrowUp') return
+                        const search = event.currentTarget
+                          .closest<HTMLElement>('[role="menu"]')
+                          ?.querySelector<HTMLInputElement>('[data-project-search]')
+                        if (!search) return
+                        event.preventDefault()
+                        event.stopPropagation()
+                        search.focus()
+                      }}
                     >
                       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                         <span
@@ -548,14 +591,22 @@ const WorkspaceSidebarView = ({
                           className="truncate font-medium"
                           title={project.name}
                         >
-                          <ProjectMatchText text={project.name} positions={titlePositions} />
+                          <HighlightedText
+                            text={project.name}
+                            positions={titlePositions}
+                            highlightClassName="bg-transparent text-primary"
+                          />
                         </span>
                         {description ? (
                           <span
                             data-project-description
                             className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground"
                           >
-                            <ProjectMatchText text={description} positions={descriptionPositions} />
+                            <HighlightedText
+                              text={description}
+                              positions={descriptionPositions}
+                              highlightClassName="bg-transparent text-primary"
+                            />
                           </span>
                         ) : null}
                       </span>
@@ -981,6 +1032,10 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
   const [showAllProjects, setShowAllProjects] = useState(false)
   const [projectQuery, setProjectQuery] = useState('')
+  const projectMatches = useMemo(
+    () => matchProjects(props.otherProjects ?? [], projectQuery),
+    [props.otherProjects, projectQuery]
+  )
   const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
   const isMac = window.api?.platform === 'darwin'
 
@@ -1059,6 +1114,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       showAllProjects={showAllProjects}
       onShowAllProjectsChange={setShowAllProjects}
       projectQuery={projectQuery}
+      projectMatches={projectMatches}
       onProjectQueryChange={(query) => {
         setProjectQuery(query)
         setShowAllProjects(false)
