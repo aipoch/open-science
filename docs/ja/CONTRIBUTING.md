@@ -129,7 +129,7 @@ ci/ai-pr-review
 - 命名、構成、慣用表現など周囲のコードスタイルに合わせます。
 - フォーマットは Prettier が処理します。`npm run format` は任意ですが、リポジトリ全体のファイルを書き換えるため、コミット前に変更を確認してください。
 - ESLint が Lint を強制します。`npm run lint` を実行してください。
-- ユーザー向け文字列を `react-i18next` の `t()` 翻訳関数で囲みます。対応する翻訳を `src/shared/i18n/locales/de.json`（ドイツ語）、`src/shared/i18n/locales/es.json`（スペイン語）、`src/shared/i18n/locales/fr.json`（フランス語）、`src/shared/i18n/locales/ja.json`（日本語）、`src/shared/i18n/locales/ko.json`（韓国語）、`src/shared/i18n/locales/ru.json`（ロシア語）、`src/shared/i18n/locales/zh-Hans.json`（簡体字中国語）、`src/shared/i18n/locales/zh-Hant.json`（繁体字中国語）の `renderer` 名前空間に追加します。英語テキストを翻訳キーに使い、コードコメントとドキュメントは英語のままにします。
+- ユーザー向け文字列を `react-i18next` の `t()` 翻訳関数で囲みます。対応する翻訳を `src/shared/i18n/locales/de.json`（ドイツ語）、`src/shared/i18n/locales/es.json`（スペイン語）、`src/shared/i18n/locales/fr.json`（フランス語）、`src/shared/i18n/locales/ja.json`（日本語）、`src/shared/i18n/locales/ko.json`（韓国語）、`src/shared/i18n/locales/pt-BR.json`（ブラジルポルトガル語）、`src/shared/i18n/locales/ru.json`（ロシア語）、`src/shared/i18n/locales/zh-Hans.json`（簡体字中国語）、`src/shared/i18n/locales/zh-Hant.json`（繁体字中国語）の `renderer` 名前空間に追加します。英語テキストを翻訳キーに使い、コードコメントとドキュメントは英語のままにします。
 
 ## 検証ポリシー
 

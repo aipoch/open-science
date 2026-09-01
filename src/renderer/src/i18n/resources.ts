@@ -8,6 +8,10 @@ import { common as esCommon, renderer as esRenderer } from '../../../shared/i18n
 import { common as frCommon, renderer as frRenderer } from '../../../shared/i18n/locales/fr.json'
 import { common as jaCommon, renderer as jaRenderer } from '../../../shared/i18n/locales/ja.json'
 import { common as koCommon, renderer as koRenderer } from '../../../shared/i18n/locales/ko.json'
+import {
+  common as ptBrCommon,
+  renderer as ptBrRenderer
+} from '../../../shared/i18n/locales/pt-BR.json'
 import { common as ruCommon, renderer as ruRenderer } from '../../../shared/i18n/locales/ru.json'
 import {
   common as zhHansCommon,
@@ -46,6 +50,10 @@ export const resources = {
   ko: createNamespacedResource({
     [COMMON_NAMESPACE]: koCommon,
     [RENDERER_NAMESPACE]: koRenderer
+  }),
+  'pt-BR': createNamespacedResource({
+    [COMMON_NAMESPACE]: ptBrCommon,
+    [RENDERER_NAMESPACE]: ptBrRenderer
   }),
   ru: createNamespacedResource({
     [COMMON_NAMESPACE]: ruCommon,

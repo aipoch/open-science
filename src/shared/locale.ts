@@ -5,7 +5,18 @@
 // The locales that actually paint. Script subtags are the canonical form: 'zh-Hans' / 'zh-Hant'
 // rather than 'zh-CN' / 'zh-TW', because the script is what selects the catalog — a Traditional
 // reader in Singapore and one in Taiwan get the same copy.
-export const LOCALES = ['en', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru', 'de', 'es'] as const
+export const LOCALES = [
+  'en',
+  'zh-Hans',
+  'zh-Hant',
+  'ja',
+  'ko',
+  'fr',
+  'pt-BR',
+  'ru',
+  'de',
+  'es'
+] as const
 export type Locale = (typeof LOCALES)[number]
 
 // Language names stay in their own language so a reader stranded in the wrong locale can recover.
@@ -17,6 +28,7 @@ export const LOCALE_SELF_NAMES = {
   ja: '日本語',
   ko: '한국어',
   fr: 'Français',
+  'pt-BR': 'Português (Brasil)',
   ru: 'Русский',
   de: 'Deutsch',
   es: 'Español'
@@ -56,6 +68,13 @@ export const isLocale = (value: unknown): value is Locale =>
 export const isLanguagePreference = (value: unknown): value is LanguagePreference =>
   typeof value === 'string' && (LANGUAGE_PREFERENCES as readonly string[]).includes(value)
 
+// `pt` was persisted by the first Portuguese localization. Keep it only as a read-time migration;
+// all current callers and stored values use the region-specific catalog identifier.
+export const normalizeLanguagePreference = (value: unknown): LanguagePreference | undefined => {
+  if (value === 'pt') return 'pt-BR'
+  return isLanguagePreference(value) ? value : undefined
+}
+
 // Regions written in Simplified script; everything else Chinese falls back to Simplified, which is
 // the larger population and matches what Windows/macOS do for a bare 'zh'.
 const SIMPLIFIED_REGIONS = new Set(['cn', 'sg', 'my'])
@@ -72,6 +91,10 @@ const matchTag = (tag: string): Locale | undefined => {
   if (language === 'en') return 'en'
   if (language === 'es') return 'es'
   if (language === 'fr') return 'fr'
+  if (language === 'pt') {
+    if (rest.length === 0 || rest.includes('br')) return 'pt-BR'
+    return undefined
+  }
   if (language === 'ja') return 'ja'
   if (language === 'ko') return 'ko'
   if (language === 'ru') return 'ru'

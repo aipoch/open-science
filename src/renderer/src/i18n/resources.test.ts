@@ -22,6 +22,7 @@ import es from '../../../shared/i18n/locales/es.json'
 import fr from '../../../shared/i18n/locales/fr.json'
 import ja from '../../../shared/i18n/locales/ja.json'
 import ko from '../../../shared/i18n/locales/ko.json'
+import ptBr from '../../../shared/i18n/locales/pt-BR.json'
 import ru from '../../../shared/i18n/locales/ru.json'
 import zhHans from '../../../shared/i18n/locales/zh-Hans.json'
 import zhHant from '../../../shared/i18n/locales/zh-Hant.json'
@@ -45,6 +46,7 @@ const commonCatalogs = {
   fr: fr.common,
   ja: ja.common,
   ko: ko.common,
+  'pt-BR': ptBr.common,
   ru: ru.common,
   'zh-Hans': zhHans.common,
   'zh-Hant': zhHant.common
@@ -56,6 +58,7 @@ const sourceCatalogs = {
   fr: { ...fr.common, ...fr.renderer },
   ja: { ...ja.common, ...ja.renderer },
   ko: { ...ko.common, ...ko.renderer },
+  'pt-BR': { ...ptBr.common, ...ptBr.renderer },
   ru: { ...ru.common, ...ru.renderer },
   'zh-Hans': { ...zhHans.common, ...zhHans.renderer },
   'zh-Hant': { ...zhHant.common, ...zhHant.renderer }
@@ -67,6 +70,7 @@ const rendererCatalogs = {
   fr: fr.renderer,
   ja: ja.renderer,
   ko: ko.renderer,
+  'pt-BR': ptBr.renderer,
   ru: ru.renderer,
   'zh-Hans': zhHans.renderer,
   'zh-Hant': zhHant.renderer
@@ -161,6 +165,7 @@ const REQUIRED_PLURAL_CATEGORIES = {
   fr: ['one', 'many', 'other'],
   ja: ['other'],
   ko: ['other'],
+  'pt-BR': ['one', 'many', 'other'],
   ru: ['one', 'few', 'many', 'other'],
   'zh-Hans': ['other'],
   'zh-Hant': ['other']
@@ -548,6 +553,12 @@ describe.each(TRANSLATED)('%s native catalog', (locale) => {
         specialist: '스페셜리스트',
         connector: '커넥터'
       },
+      'pt-BR': {
+        subagent: 'subagente',
+        skill: 'habilidade',
+        specialist: 'especialista',
+        connector: 'conector'
+      },
       ru: {
         subagent: 'субагент',
         skill: 'навык',
@@ -613,6 +624,15 @@ describe('process catalog boundaries', () => {
         Skill: '스킬',
         Specialist: '스페셜리스트',
         Connector: '커넥터'
+      }
+    },
+    {
+      locale: 'pt-BR' as const,
+      expected: {
+        Subagent: 'Subagente',
+        Skill: 'Habilidade',
+        Specialist: 'Especialista',
+        Connector: 'Conector'
       }
     },
     {
@@ -757,6 +777,10 @@ describe('dynamic counted lookup translations', () => {
       expected: ['방금 확인함', '3시간 전에 확인함', '3일 전', '3일 전']
     },
     {
+      locale: 'pt-BR' as const,
+      expected: ['verificado agora mesmo', 'verificado há 3 h', 'há 3 d', 'há 3 dias']
+    },
+    {
       locale: 'ru' as const,
       expected: ['проверено только что', 'проверено 3 ч назад', '3 дн. назад', '3 дн. назад']
     }
@@ -821,6 +845,22 @@ describe('dynamic counted lookup translations', () => {
       '5 субагентов',
       '1.5 субагента'
     ])
+  })
+
+  it('selects Brazilian Portuguese one, many, and other forms', async () => {
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: 'pt-BR',
+      fallbackLng: 'en',
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      resources: { 'pt-BR': { translation: catalog('pt-BR') } }
+    })
+
+    expect([1, 2, 1_000_000, 1.5].map((count) => instance.t('{{count}} files', { count }))).toEqual(
+      ['1 arquivo', '2 arquivos', '1000000 arquivos', '1.5 arquivo']
+    )
   })
 })
 
@@ -1887,6 +1927,28 @@ describe('mandatory product glossary', () => {
       'Claude setup token': 'Claude 설정 토큰',
       'Token: {{masked}}': '토큰: {{masked}}'
     },
+    'pt-BR': {
+      Agent: 'Agente',
+      'Agent framework': 'Framework de agentes',
+      'Command line tool': 'Ferramenta de linha de comando',
+      Diagnostics: 'Diagnósticos',
+      failed: 'falha',
+      Skills: 'Habilidades',
+      Specialist: 'Especialista',
+      Specialists: 'Especialistas',
+      Marketplace: 'Marketplace',
+      Connector: 'Conector',
+      Main: 'Agente principal',
+      Light: 'Claro',
+      Resume: 'Retomar',
+      Running: 'Em execução',
+      running: 'em execução',
+      Terminal: 'Terminal',
+      Shell: 'Linha de comando',
+      'Token usage': 'Uso de tokens',
+      'Claude setup token': 'Token de configuração do Claude',
+      'Token: {{masked}}': 'Token: {{masked}}'
+    },
     ru: {
       Agent: 'Агент',
       Skills: 'Навыки',
@@ -1911,6 +1973,7 @@ describe('mandatory product glossary', () => {
       'zh-Hant': /主模型/u,
       ja: /メインモデル/u,
       ko: /메인 모델/u,
+      'pt-BR': /modelo principal/iu,
       ru: /основн\p{L}*\s+модел/iu
     },
     mainAgent: {
@@ -1921,6 +1984,7 @@ describe('mandatory product glossary', () => {
       'zh-Hant': /主智能體/u,
       ja: /メインエージェント/u,
       ko: /메인 에이전트/u,
+      'pt-BR': /[Aa]gente principal/u,
       ru: /главн\p{L}*\s+агент/iu
     },
     subagent: {
@@ -1931,6 +1995,7 @@ describe('mandatory product glossary', () => {
       'zh-Hant': /子智能體/u,
       ja: /サブエージェント/u,
       ko: /서브에이전트/u,
+      'pt-BR': /subagentes?/iu,
       ru: /субагент/iu
     }
   } satisfies Record<string, Record<TranslatedLocale, RegExp>>
@@ -2021,6 +2086,7 @@ describe('mandatory product glossary', () => {
       fr: 'réglage du fournisseur',
       ja: 'プロバイダー設定を使用',
       ko: '모델 제공업체 설정 사용',
+      'pt-BR': 'padrão do provedor',
       ru: 'настройка поставщика',
       'zh-Hans': '由服务商决定',
       'zh-Hant': '由服務商決定'
@@ -2248,6 +2314,7 @@ describe('mandatory product glossary', () => {
       'zh-Hant': /命令列/,
       ja: /シェル/,
       ko: /셸/,
+      'pt-BR': /linhas? de comando/iu,
       ru: /командн/iu
     }[locale]
     const offenders = Object.entries(catalog(locale))
@@ -2419,6 +2486,12 @@ describe('mandatory product glossary', () => {
       untranslatedAgent: /\b(?:sub)?agents?\b/i,
       untranslatedSkill: /\bskills?\b/i
     },
+    'pt-BR': {
+      agent: 'agente',
+      skill: 'habilidade',
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
     ru: {
       agent: /агент/iu,
       skill: /навык/iu,
@@ -2489,6 +2562,7 @@ describe('mandatory product glossary', () => {
     'zh-Hant': { credential: '權杖', model: '詞元' },
     ja: { credential: 'トークン', model: 'トークン' },
     ko: { credential: '토큰', model: '토큰' },
+    'pt-BR': { credential: 'token', model: 'token' },
     ru: { credential: 'токен', model: 'токен' }
   } satisfies Record<TranslatedLocale, { credential: string; model: string }>
 
@@ -2503,7 +2577,7 @@ describe('mandatory product glossary', () => {
         ? expected.credential
         : expected.model
       return !prose.toLocaleLowerCase(locale).includes(term.toLocaleLowerCase(locale)) ||
-        (locale !== 'de' && locale !== 'es' && /\btokens?\b/i.test(prose))
+        (locale !== 'de' && locale !== 'pt-BR' && locale !== 'es' && /\btokens?\b/i.test(prose))
         ? [`${key}: ${term}`]
         : []
     })
@@ -2514,7 +2588,10 @@ describe('mandatory product glossary', () => {
   it.each(TRANSLATED)('%s localizes generic product nouns', (locale) => {
     const localizedGlossary = [
       { source: /\bSpecialists?\b/i, untranslated: /\bSpecialists?\b/i },
-      { source: /\bMarketplace\b/, untranslated: /\bMarketplace\b/ },
+      {
+        source: /\bMarketplace\b/,
+        untranslated: locale === 'pt-BR' ? /$^/ : /\bMarketplace\b/
+      },
       { source: /\bConnectors?\b/i, untranslated: /\bConnectors?\b/i },
       { source: /\bMain\b/, untranslated: /\bMain\b/ }
     ]
@@ -3809,6 +3886,767 @@ describe('Russian safety copy', () => {
     ]
   ])('preserves the scope of %s', (key, expected) => {
     expect(catalog('ru')[key]).toBe(expected)
+  })
+})
+
+describe('Brazilian Portuguese safety copy', () => {
+  it.each([
+    ['Args', 'Argumentos'],
+    ['Database', 'Banco de dados'],
+    ['Marketplace', 'Marketplace'],
+    ['Notebooks', 'Notebooks'],
+    ['Prompt', 'Prompt'],
+    ['Provenance', 'Proveniência'],
+    ['Provider', 'Provedor'],
+    ['Reviewer', 'Revisor'],
+    ['Runtime', 'Ambiente de execução'],
+    ['Runtime_duration', 'Tempo de execução'],
+    ['Skills', 'Habilidades']
+  ])('uses established Brazilian technical terminology for %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it('keeps kernel as the established Brazilian scientific-computing term', () => {
+    const glossary = readFileSync(
+      join(__dirname, '..', '..', '..', '..', 'docs', 'i18n-glossary.md'),
+      'utf8'
+    )
+    const ptBrGlossary = glossary.match(
+      /## Brazilian Portuguese terminology\n(?<section>[\s\S]*?)\n## Spanish terminology/u
+    )?.groups?.section
+    const kernelOffenders = allCatalogEntries('pt-BR')
+      .filter(([key]) => /\bkernels?\b/iu.test(englishOf(key)))
+      .filter(([, value]) => !/\bkernels?\b/iu.test(value))
+      .map(([key]) => key)
+
+    expect(ptBrGlossary).toMatch(/^\| kernel\s+\| kernel\s+\|$/mu)
+    expect(kernelOffenders).toEqual([])
+  })
+
+  it.each([
+    ['Execution evidence', 'Evidências de execução'],
+    ['Could not inspect variables.', 'Não foi possível inspecionar as variáveis.'],
+    ['Filter variables', 'Filtrar variáveis'],
+    ['Filter variables...', 'Filtrar variáveis...'],
+    ['Inspect variables', 'Inspecionar variáveis'],
+    ['No live namespace', 'Nenhum namespace ativo'],
+    ['No variables match this filter.', 'Nenhuma variável corresponde a este filtro.'],
+    [
+      'Only the first bounded set of variables is shown.',
+      'Apenas o primeiro conjunto limitado de variáveis é exibido.'
+    ],
+    ['Reading live variables...', 'Lendo variáveis ativas...'],
+    ['Refresh variables', 'Atualizar variáveis'],
+    [
+      'Run code with the agent to activate this kernel and create live variables.',
+      'Execute código com o agente para ativar este kernel e criar variáveis ativas.'
+    ],
+    ['Show private variables', 'Mostrar variáveis privadas'],
+    ['Size / Shape', 'Tamanho / Formato'],
+    ['This namespace has no variables.', 'Este namespace não contém variáveis.'],
+    ['Type', 'Tipo'],
+    ['Variables', 'Variáveis'],
+    [
+      'Variables are available only while this kernel is live',
+      'As variáveis ficam disponíveis somente enquanto este kernel está ativo'
+    ],
+    [
+      'Variables are available when this kernel is idle',
+      'As variáveis ficam disponíveis quando este kernel está ocioso'
+    ],
+    ['Variables changed. Refreshing...', 'As variáveis mudaram. Atualizando...'],
+    ['Variables may have changed.', 'As variáveis podem ter mudado.'],
+    ['Variables: {{count}}_one', '{{count}} variável'],
+    ['Variables: {{count}}_many', '{{count}} variáveis'],
+    ['Variables: {{count}}_other', '{{count}} variáveis']
+  ])('keeps the live Notebook variable browser native in %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Analyst', 'Analista'],
+    ['Answered', 'Respondido'],
+    ['Approval needed', 'Aprovação necessária'],
+    ['Close detail panel', 'Fechar painel de detalhes'],
+    ['Connecting to Open Science', 'Conectando ao Open Science'],
+    ['Probe', 'Verificar'],
+    ['Reconnecting to Open Science', 'Reconectando ao Open Science'],
+    ['Repair', 'Reparar'],
+    ['Reveal', 'Mostrar'],
+    ['Reveal in Finder', 'Mostrar no Finder'],
+    ['Sign out', 'Sair da conta'],
+    [
+      'The request timed out and was stopped.',
+      'A solicitação excedeu o tempo limite e foi interrompida.'
+    ]
+  ])('keeps the action or status of %s clear and idiomatic', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Choose PDFs for Reading', 'Escolher PDFs para leitura'],
+    [
+      'Linked to this conversation. The Agent reads only the pages needed for your question.',
+      'Vinculado a esta conversa. O Agente lê apenas as páginas necessárias para responder à sua pergunta.'
+    ],
+    ['PDF interaction tools', 'Ferramentas de interação com o PDF'],
+    [
+      'Let the agent recall and save memory in this conversation.',
+      'Permitir que o Agente consulte e salve informações na memória desta conversa.'
+    ],
+    ['Auto-recall', 'Recuperação automática'],
+    [
+      'Used for GitHub Skill discovery and imports. The credential is verified before saving.',
+      'Usada para descobrir e importar Habilidades do GitHub. A credencial é verificada antes de ser salva.'
+    ],
+    [
+      'Contact information and an optional NCBI API key used by research-service Connector calls.',
+      'Informações de contato e uma chave de API opcional do NCBI usadas por chamadas do Conector de serviços de pesquisa.'
+    ],
+    [
+      'System notifications are supported on this device.',
+      'As notificações do sistema estão disponíveis neste dispositivo.'
+    ],
+    [
+      'This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.',
+      'Esta tarefa será executada com a sua conta no host, sem isolamento em sandbox. Antes de aprovar, revise o comando, os recursos, o diretório de trabalho remoto e o tempo limite.'
+    ]
+  ])('keeps new 0.22 and 0.23 product copy native in %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    [
+      'A reviewer agent checks every change before it lands.',
+      'Um agente revisor verifica todas as alterações antes que elas sejam aplicadas.'
+    ],
+    [
+      'Reviews plans and code changes before they land.',
+      'Revisa planos e alterações de código antes que sejam aplicados.'
+    ],
+    ["Couldn't load hosts.", 'Não foi possível carregar os hosts.'],
+    ['Last scanned {{time}}', 'Última verificação: {{time}}']
+  ])('uses natural Brazilian Portuguese for %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Found {{count}} skills._one', '{{count}} habilidade encontrada.'],
+    ['Found {{count}} skills._other', '{{count}} habilidades encontradas.'],
+    ['Found {{count}} skills._many', '{{count}} habilidades encontradas.'],
+    ['{{count}} findings_one', '{{count}} constatação'],
+    ['{{count}} findings_other', '{{count}} constatações'],
+    ['{{count}} findings_many', '{{count}} constatações'],
+    ['{{count}} jobs_one', '{{count}} tarefa'],
+    ['{{count}} jobs_other', '{{count}} tarefas'],
+    ['{{count}} jobs_many', '{{count}} tarefas'],
+    ['{{count}} sessions_one', '{{count}} sessão'],
+    ['{{count}} sessions_other', '{{count}} sessões'],
+    ['{{count}} sessions_many', '{{count}} sessões']
+  ])('keeps count, noun order, and agreement for %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    [
+      'Add attachment, save as skill, view context window, view plan, or request review',
+      'Adicionar anexo, salvar como habilidade, ver a janela de contexto, ver o plano ou solicitar revisão'
+    ],
+    [
+      'Add attachment, save as skill, view context window, or request review',
+      'Adicionar anexo, salvar como habilidade, ver a janela de contexto ou solicitar revisão'
+    ],
+    [
+      'Only checked Skills are bundled. Connector names are imported as selected references; full access can only be chosen later in the configuration page.',
+      'Apenas as habilidades marcadas são incluídas no pacote. Os nomes dos conectores são importados como referências selecionadas; o acesso completo só pode ser escolhido posteriormente na página de configuração.'
+    ],
+    [
+      "Skills aren't available with {{name}}; use Claude Code for skill-based workflows.",
+      'As habilidades não estão disponíveis com {{name}}; use o Claude Code para fluxos de trabalho baseados em habilidades.'
+    ]
+  ])('preserves every command and selection state in %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    [
+      'Skill relationships changed. Refresh the preview and review again.',
+      'As relações entre habilidades mudaram. Atualize a visualização e revise novamente.'
+    ],
+    [
+      'This Specialist changed. Refresh the preview and review again.',
+      'Este especialista mudou. Atualize a visualização e revise novamente.'
+    ],
+    [
+      'Owned Skill · v{{version}} · bundled by default.',
+      'Habilidade própria · v{{version}} · incluída no pacote por padrão.'
+    ],
+    [
+      'Installed Skill · v{{version}} · include it to bundle a copy.',
+      'Habilidade instalada · v{{version}} · selecione-a para incluir uma cópia no pacote.'
+    ],
+    ['Requires Codex ACP v{{version}} or later', 'Requer o Codex ACP v{{version}} ou posterior'],
+    ['Delete selected Skills?', 'Excluir as habilidades selecionadas?'],
+    [
+      'Deleted Skills are removed from this device and cannot be recovered.',
+      'As habilidades excluídas são removidas deste dispositivo e não podem ser recuperadas.'
+    ]
+  ])('uses imperative, sentence case, and intact version labels in %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it('preserves every v{{placeholder}} technical prefix without inserted whitespace', () => {
+    const offenders = Object.entries(catalog('pt-BR'))
+      .filter(([key, value]) => {
+        const versionPrefixes = englishOf(key).match(/v\{\{\w+\}\}/g) ?? []
+        return versionPrefixes.some((prefix) => !value.includes(prefix))
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each([
+    [
+      '{{count}} Specialists. Installed Skills can change Agent behavior._one',
+      '{{count}} especialista. Habilidades instaladas podem alterar o comportamento do agente.'
+    ],
+    [
+      '{{count}} Specialists. Installed Skills can change Agent behavior._other',
+      '{{count}} especialistas. Habilidades instaladas podem alterar o comportamento do agente.'
+    ],
+    [
+      '{{count}} Specialists. Installed Skills can change Agent behavior._many',
+      '{{count}} especialistas. Habilidades instaladas podem alterar o comportamento do agente.'
+    ]
+  ])('keeps Specialist counts grammatical in %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it('does not contain known machine-translation artifacts', () => {
+    const artifacts =
+      /Argóis|Respondedo|Aprovaçãos|execuçãos|Provença|esto aplicativo|jogada interrompida|painel de detalhes de close|não são sandboxed|carregar anfitriões|Designação das mercadorias|Exportar a Marcação|código Claude|Lista de conexões|Duplicar o nome|não incluem segredos|se inscreve em você|tempos de execução do Notebook|mudar a hora de correr|apenas edita para arquivos|streaming de arquivos salva|tokens compartilhadas|não assinado em|inscrição do navegador|agentes de execução|GitHub número|Claude dona de aplicativos|estão indisponível|Atualizar baixado|Correr o código|Assine a sessão|precisa de entrar|Inicie sessão|Biocondutor|\bquiseres\b|\blinha de comandos\b|\ba reparar\b|\bpartilh\p{L}*|\bcorreu mal\b|\btransferir\b|\binvestigação\b|\bem bruto\b|\beliminar\b|\bsondad\p{L}*|\bfacultativ\p{L}*|\bscoping\b|\bconversação\b|\bligação\b|\bapag(?:ar|ad[ao]s?)\b|\bdeletad[ao]s?\b|\bgerir\b|\brecolha\b|\b(?:uma|a|da|na|esta|nenhuma) host\b|\bpára\b|\bsonda\b/iu
+    const offenders = Object.entries(catalog('pt-BR'))
+      .filter(([, value]) => artifacts.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each([
+    [
+      'Injected into the system prompt of every agent session in this project, including resumed ones. Sent to the model provider with every session — do not include secrets.',
+      'Injetado no prompt do sistema de cada sessão de agente deste projeto, inclusive nas sessões retomadas. Enviado ao provedor do modelo em todas as sessões — não inclua informações confidenciais.'
+    ],
+    [
+      'This Provider no longer exists. Your draft has not been saved.',
+      'Este provedor não existe mais. Seu rascunho não foi salvo.'
+    ],
+    [
+      'This agent has no native auto mode. Open Science auto-approves only edits to files inside the workspace — commands, network, and MCP tools still ask.',
+      'Este agente não tem um modo automático nativo. O Open Science aprova automaticamente apenas edições em arquivos dentro do espaço de trabalho — comandos, rede e ferramentas MCP continuam exigindo aprovação.'
+    ],
+    ['Main Agent', 'Agente principal'],
+    ['Runtimes', 'Ambientes de execução'],
+    ['Notebook runtimes', 'Ambientes de execução do Notebook'],
+    ['Compute', 'Computação'],
+    ['Test & continue', 'Testar e continuar'],
+    ['Not signed in', 'Login não realizado'],
+    ['OAuth (browser sign-in)', 'OAuth (login pelo navegador)'],
+    [
+      'One or more agent runtimes could not be detected.',
+      'Não foi possível detectar um ou mais ambientes de execução do agente.'
+    ],
+    [
+      'Plan approved, but execution was interrupted. Send a message to continue.',
+      'Plano aprovado, mas a execução foi interrompida. Envie uma mensagem para continuar.'
+    ],
+    [
+      'The encrypted credential cannot be used on this device. Password authentication is blocked and does not fall back to SSH configuration.',
+      'A credencial criptografada não pode ser usada neste dispositivo. A autenticação por senha está bloqueada e não usa a configuração SSH como alternativa.'
+    ],
+    [
+      'The saved credential is missing. Password authentication is blocked and does not fall back to SSH configuration.',
+      'A credencial salva está ausente. A autenticação por senha está bloqueada e não usa a configuração SSH como alternativa.'
+    ],
+    ['Test and update', 'Testar e atualizar'],
+    ['Compute execution target: {{name}}', 'Destino de execução de computação: {{name}}'],
+    ['Compute execution targets: {{names}}', 'Destinos de execução de computação: {{names}}'],
+    ['Sign in to {{name}}', 'Fazer login em {{name}}'],
+    ['{{name}} needs sign-in', '{{name}} requer login'],
+    [
+      'Authorization expired or was revoked. Sign in again to keep this Connector available.',
+      'A autorização expirou ou foi revogada. Faça login novamente para manter este Conector disponível.'
+    ],
+    ['Bioconductor', 'Bioconductor'],
+    ['Open GitHub issue', 'Abrir issue no GitHub'],
+    ['Detach connector', 'Desvincular o conector'],
+    ['Run JS code?', 'Executar código JS?'],
+    ['Download manually', 'Baixar manualmente'],
+    ['Download failed', 'Falha no download'],
+    ['Download failed for {{name}}', 'Falha no download de {{name}}'],
+    ['Download failed. Try again', 'O download falhou. Tente novamente'],
+    ['Download notebooks', 'Baixar Notebooks'],
+    ['Download script', 'Baixar script'],
+    [
+      'Downloads a self-contained OpenCode — no Node.js or npm required.',
+      'Baixa um OpenCode independente — sem exigir Node.js ou npm.'
+    ],
+    [
+      'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',
+      'Artefatos baixados: {{downloaded}} de {{total}}. Falhas: {{failed}}.'
+    ],
+    [
+      'Drag to rotate · Scroll to zoom · Shift + drag to pan',
+      'Arraste para girar · Role para aplicar zoom · Shift + arraste para deslocar'
+    ],
+    [
+      'Maximum input tokens must be a positive whole number of tokens.',
+      'O número máximo de tokens de entrada deve ser um número inteiro positivo.'
+    ],
+    [
+      'Maximum output tokens must be a positive whole number of tokens.',
+      'O número máximo de tokens de saída deve ser um número inteiro positivo.'
+    ],
+    ['Maximum output tokens', 'Máximo de tokens de saída'],
+    [
+      'Install Claude Agent below, or install it manually and re-detect.',
+      'Instale o Claude Agent abaixo ou instale-o manualmente e faça uma nova detecção.'
+    ],
+    ['Install log', 'Log da instalação'],
+    ['Install progress', 'Progresso da instalação'],
+    ['Install source', 'Fonte da instalação'],
+    [
+      'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.',
+      'Permite que o Open Science instale pacotes neste ambiente. As instalações são feitas no seu próprio ambiente, não no armazenamento gerenciado pelo aplicativo.'
+    ],
+    ['Offline', 'Offline'],
+    [
+      "This data folder was last written by a newer release. Older builds can't safely read its newer format.",
+      'Esta pasta de dados foi gravada pela última vez por uma versão mais recente. As compilações mais antigas não conseguem ler com segurança esse formato mais recente.'
+    ],
+    [
+      'The producer run could not be identified from the captured evidence.',
+      'Não foi possível identificar a execução produtora com base nas evidências capturadas.'
+    ],
+    ['Streamable HTTP', 'Streamable HTTP'],
+    [
+      'MCP server must define either command or url.',
+      'O servidor MCP deve definir command ou url.'
+    ],
+    [
+      'Credential values were excluded and must be entered locally.',
+      'Os valores de credenciais foram excluídos e devem ser inseridos localmente.'
+    ],
+    [
+      'MCP Registry server.json manifests cannot be imported as installed MCP client configurations.',
+      'Os manifestos server.json do MCP Registry não podem ser importados como configurações instaladas de cliente MCP.'
+    ],
+    ['Failed to set concurrency limit.', 'Não foi possível definir o limite de concorrência.'],
+    [
+      'Run {{runNumber}} · Message {{messageNumber}}',
+      'Execução {{runNumber}} · Mensagem {{messageNumber}}'
+    ],
+    [
+      'Run {{run}}, {{state}}, {{tokens}} context-window tokens',
+      'Execução {{run}}, {{state}}, {{tokens}} tokens da janela de contexto'
+    ],
+    [
+      'Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.',
+      'A execução [{{index}}] alterou {{names}} posteriormente. Esta saída é o instantâneo registrado antes dessa alteração; esta execução foi concluída normalmente.'
+    ],
+    [
+      "Tencent's coding agent for the terminal.",
+      'Agente de programação da Tencent para a linha de comando.'
+    ],
+    [
+      'CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.',
+      'O CodeBuddy é necessário para este framework. Instale-o abaixo ou faça a instalação manual e execute uma nova detecção.'
+    ],
+    [
+      'Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.',
+      'Baixa o CodeBuddy para o ambiente de execução gerenciado pelo aplicativo e o executa com o ambiente de execução do próprio aplicativo — sem exigir que Node.js ou npm estejam instalados globalmente.'
+    ]
+  ])('keeps reviewed high-risk Brazilian Portuguese copy exact in %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Browser link copied.', 'Link do navegador copiado.'],
+    ['Description', 'Descrição'],
+    ['Export Markdown', 'Exportar Markdown'],
+    ['Desktop only', 'Somente no aplicativo para desktop'],
+    [
+      'Optional provider-reported input cap.',
+      'Limite opcional de entrada informado pelo provedor.'
+    ],
+    ['Saved conversation data was damaged', 'Os dados da conversa salva foram danificados'],
+    ['Test connection', 'Testar conexão'],
+    ['Runs', 'Execuções'],
+    ['Input (uncached)', 'Entrada (sem cache)']
+  ])('removes literal or European Portuguese wording from %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['{{count}} resources_one', '{{count}} recurso'],
+    ['{{count}} resources_other', '{{count}} recursos'],
+    ['{{count}} resources_many', '{{count}} recursos'],
+    [
+      '{{count}} selected Skills can be deleted._one',
+      '{{count}} habilidade selecionada pode ser excluída.'
+    ],
+    [
+      '{{count}} selected Skills can be deleted._other',
+      '{{count}} habilidades selecionadas podem ser excluídas.'
+    ],
+    [
+      '{{count}} selected Skills can be deleted._many',
+      '{{count}} habilidades selecionadas podem ser excluídas.'
+    ],
+    [
+      '{{count}} protected Skills will be kept._one',
+      '{{count}} habilidade protegida será mantida.'
+    ],
+    [
+      '{{count}} protected Skills will be kept._other',
+      '{{count}} habilidades protegidas serão mantidas.'
+    ],
+    [
+      '{{count}} protected Skills will be kept._many',
+      '{{count}} habilidades protegidas serão mantidas.'
+    ],
+    ['{{count}} of {{limit}} categories used_one', '{{count}} de {{limit}} categorias usadas'],
+    ['{{count}} of {{limit}} categories used_many', '{{count}} de {{limit}} categorias usadas'],
+    ['{{count}} of {{limit}} categories used_other', '{{count}} de {{limit}} categorias usadas']
+  ])('keeps reviewed agreement in %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Host', 'Host'],
+    ['Last probe succeeded', 'A última verificação foi bem-sucedida'],
+    ['Job ID', 'ID da tarefa'],
+    ['Completed remote job: {{intent}}', 'Tarefa remota concluída: {{intent}}'],
+    ['Notebook runtime', 'Ambiente de execução do Notebook'],
+    ['Reset runtime', 'Redefinir ambiente de execução'],
+    ['Could not remove this Compute Host.', 'Não foi possível remover este host de computação.'],
+    ['Remove Compute Host?', 'Remover host de computação?'],
+    ['Remove Host', 'Remover host'],
+    ['Credential configured', 'Credencial configurada'],
+    ['Review Host settings', 'Revisar configurações do host'],
+    [
+      'No SSH hosts yet. Add one to let Open Science run compute on your servers.',
+      'Ainda não há hosts SSH. Adicione um para que o Open Science execute tarefas nos seus servidores.'
+    ],
+    ['No hosts in ~/.ssh/config', 'Nenhum host em ~/.ssh/config'],
+    ['This host no longer exists.', 'Este host não existe mais.'],
+    [
+      'Working directory for remote jobs. Pinned paths are never overwritten by re-probe.',
+      'Pasta de trabalho para tarefas remotas. Caminhos fixados nunca são sobrescritos por uma nova verificação.'
+    ],
+    [
+      'The Compute Host connection failed. Check the Host and network, then try again.',
+      'A conexão com o host de computação falhou. Verifique o host e a rede e tente novamente.'
+    ],
+    [
+      'Username changed. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'O nome de usuário foi alterado. Selecione novamente este host de computação como destino de execução em cada sessão e aprove as novas permissões.'
+    ],
+    ['Unable to cancel remote job.', 'Não foi possível cancelar a tarefa remota.'],
+    ['Cancelling', 'Cancelando'],
+    ['Saved remote job data needs attention', 'Os dados salvos da tarefa remota requerem atenção'],
+    [
+      'This job remains visible, but automatic result analysis is paused because its saved state is incompatible.',
+      'Esta tarefa continua visível, mas a análise automática dos resultados está pausada porque o estado salvo é incompatível.'
+    ],
+    ['Unable to load remote jobs.', 'Não foi possível carregar as tarefas remotas.'],
+    [
+      'Harvest pending. Open Science will retry automatically.',
+      'A coleta está pendente. O Open Science fará uma nova tentativa automaticamente.'
+    ],
+    [
+      'Harvest failed. Remote files were left untouched.',
+      'A coleta falhou. Os arquivos remotos não foram alterados.'
+    ],
+    ['Waiting in queue', 'Aguardando na fila'],
+    ['Submitting', 'Enviando'],
+    ['Remote job recovery needs attention', 'A recuperação de tarefas remotas requer atenção'],
+    [
+      'Open Science could not check saved remote jobs. Retry to restore pending result analysis.',
+      'O Open Science não conseguiu verificar as tarefas remotas salvas. Tente novamente para retomar a análise pendente dos resultados.'
+    ],
+    ['Remote job completed', 'Tarefa remota concluída'],
+    ['Analysis started automatically', 'A análise foi iniciada automaticamente']
+  ])('uses consistent remote-compute terminology for %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Connector list', 'Lista de conectores'],
+    ['Duplicate Connector name', 'Nome de conector duplicado'],
+    ['Duplicate Skill name', 'Nome de habilidade duplicado'],
+    ['Invalid system prompt', 'Prompt do sistema inválido'],
+    ['Unbundled Skills omitted', 'Habilidades não incluídas no pacote foram omitidas'],
+    ['Install Specialist', 'Instalar especialista'],
+    [
+      'Specialist switch is pending for {{name}}',
+      'A troca de especialista para {{name}} está pendente'
+    ],
+    [
+      'Some Specialist data could not be read.',
+      'Não foi possível ler alguns dados do especialista.'
+    ],
+    [
+      'Open Science could not finish checking its database.',
+      'O Open Science não conseguiu concluir a verificação do banco de dados.'
+    ],
+    ['No Skills are selected.', 'Nenhuma habilidade está selecionada.'],
+    ['No imported or personal Skills yet.', 'Ainda não há habilidades importadas ou pessoais.']
+  ])('keeps validation and empty-state diagnostics precise for %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Allow globally', 'Permitir em todos os projetos'],
+    ['Approval applies to this call only.', 'A aprovação se aplica somente a esta chamada.'],
+    ['This call only', 'Somente esta chamada'],
+    [
+      'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
+      'As permissões individuais continuam revogáveis; "Revogar tudo" fica desativado até que o conjunto completo seja conhecido.'
+    ],
+    ['Allow for this conversation', 'Permitir para esta conversa'],
+    ['Allow for this project', 'Permitir para este projeto'],
+    ['Clear all session grants', 'Revogar todas as permissões da sessão'],
+    ['Delete project', 'Excluir projeto'],
+    [
+      'Deleting this project will stop its running tasks and notebooks.',
+      'Excluir este projeto interromperá as tarefas e os Notebooks em execução.'
+    ],
+    ['Retry', 'Tentar novamente'],
+    [
+      'This message snapshot was created by a newer version of Open Science. Update the app to view it.',
+      'Este instantâneo da mensagem foi criado por uma versão mais recente do Open Science. Atualize o aplicativo para visualizá-lo.'
+    ],
+    [
+      'SSH configuration verified and activated. Saved password deleted. Select this Compute Host again as an execution target in each Session and approve new Permission Grants.',
+      'A configuração SSH foi verificada e ativada. A senha salva foi excluída. Selecione novamente este Host de computação como destino de execução em cada sessão e aprove as novas permissões.'
+    ],
+    [
+      'The saved username or password was rejected. Update it before trying again.',
+      'O nome de usuário ou a senha salvos foram rejeitados. Atualize-os antes de tentar novamente.'
+    ]
+  ])('preserves the scope and consequence of %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it('does not invent literal quantities in counted copy', () => {
+    const offenders = Object.entries(catalog('pt-BR'))
+      .filter(([key]) => englishOf(key).includes('{{count}}'))
+      .filter(([key]) => !/\d/.test(englishOf(key).replace(/\{\{\w+\}\}/g, '')))
+      .filter(([, value]) => /\d/.test(value.replace(/\{\{\w+\}\}/g, '')))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses Brazilian Portuguese for core product nouns and actions', () => {
+    const europeanPortuguese =
+      /(?:projectos?|ficheiros?|utilizadores?|ecrãs?|actual\p{L}*|contacto\p{L}*|\bdirect(?:o|a|os|as|amente)\b|facto\p{L}*|objectivo\p{L}*|óptim\p{L}*|acç(?:ão|ões)|interacç(?:ão|ões)|seleccion\p{L}*|afect\p{L}*|artefactos?|antevis(?:ão|ões)|regist(?:ad|ar|o)\p{L}*|controlos?|desactiv\p{L}*|\bactiv[ao]s?\b|equipas?|foguet(?:ão|ões)|subvenções|subsídios?|palavras?-passe|por omissão|\baceder\p{L}*|\bsítios? web\b|\b(?:tu|tens|teu|tua|teus|tuas|contigo)\b)/iu
+    const lowercaseEuropeanPronoun = /\bti\b/u
+    const hasEuropeanPortuguese = (value: string): boolean =>
+      europeanPortuguese.test(value) || lowercaseEuropeanPronoun.test(value)
+    const offenders = Object.entries(catalog('pt-BR'))
+      .filter(([, value]) => hasEuropeanPortuguese(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+    expect(hasEuropeanPortuguese('Esta aplicação usa um ambiente gerido.')).toBe(false)
+    expect(hasEuropeanPortuguese('Configurações de TI')).toBe(false)
+    expect(hasEuropeanPortuguese('Criado por ti.')).toBe(true)
+    expect(hasEuropeanPortuguese('O projecto foi seleccionado.')).toBe(true)
+    expect(hasEuropeanPortuguese('O item foi afectado.')).toBe(true)
+    expect(hasEuropeanPortuguese('Não tens acesso.')).toBe(true)
+    expect(hasEuropeanPortuguese('Não foi possível aceder ao sítio Web.')).toBe(true)
+    expect(hasEuropeanPortuguese('Este subsídio foi concedido.')).toBe(true)
+    expect(hasEuropeanPortuguese('O foguetão está pronto.')).toBe(true)
+  })
+
+  it.each([
+    ['Dismiss', 'Dispensar'],
+    ['Dismiss permission Undo', 'Fechar aviso de desfazer permissão'],
+    ['Minimize or quit?', 'Minimizar ou sair?'],
+    ['Sign in & continue', 'Entrar e continuar'],
+    ['Registry writes', 'Gravações no registro']
+  ])('keeps %s actionable and unambiguous', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Archive_verb', 'Arquivar'],
+    ['Block', 'Bloquear'],
+    ['Grant folder access', 'Conceder acesso à pasta'],
+    ['Grant folder…', 'Conceder acesso à pasta…'],
+    ['Grant this folder', 'Conceder acesso a esta pasta'],
+    ['Revoke session grant for {{label}}', 'Revogar permissão de sessão para {{label}}'],
+    ['Revoked {{count}} permissions_one', '{{count}} permissão revogada'],
+    ['Revoked {{count}} permissions_other', '{{count}} permissões revogadas'],
+    ['Revoked {{count}} permissions_many', '{{count}} permissões revogadas'],
+    ['OAuth sign-in failed.', 'Falha ao entrar com OAuth.']
+  ])('preserves the action and result of %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    ['Could not sign out of xAI.', 'Não foi possível sair do xAI.'],
+    ['Could not sign out of Claude.', 'Não foi possível sair do Claude.'],
+    ['Could not sign out of Codex.', 'Não foi possível sair do Codex.'],
+    ['Hide API key', 'Ocultar chave de API'],
+    ['Paste API key', 'Colar chave de API'],
+    ['Show API key', 'Mostrar chave de API'],
+    [
+      'Test failed: authentication rejected — check the API key.',
+      'Falha no teste: autenticação rejeitada — verifique a chave de API.'
+    ],
+    ['Port', 'Porta'],
+    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
+    [
+      'Port must be an integer from 1 through 65535.',
+      'A porta deve ser um número inteiro de 1 a 65535.'
+    ],
+    [
+      'Leave empty for 22 or Port from ~/.ssh/config.',
+      'Deixe em branco para usar 22 ou o valor de Port em ~/.ssh/config.'
+    ],
+    ['Scratch', 'Área temporária'],
+    ['Scratch root', 'Raiz da área temporária'],
+    ['Scratch root path', 'Caminho da raiz da área temporária'],
+    ['Failed to set scratch root.', 'Não foi possível definir a raiz da área temporária.'],
+    ['FIRST-TIME SETUP', 'CONFIGURAÇÃO INICIAL'],
+    ['Rocket', 'Foguete'],
+    ['Re-running…', 'Executando novamente...'],
+    ['Download as .ipynb', 'Baixar como .ipynb'],
+    ['Download {{kernel}} as .ipynb', 'Baixar {{kernel}} como .ipynb'],
+    ['Download {{kernel}} cells as .ipynb', 'Baixar células de {{kernel}} como .ipynb'],
+    [
+      'Run a Python or R cell first to enable .ipynb export.',
+      'Execute primeiro uma célula Python ou R para habilitar a exportação de .ipynb.'
+    ],
+    [
+      'Save one .ipynb per data kernel ({{count}} files) to a chosen directory._one',
+      'Salve um arquivo .ipynb por kernel de dados ({{count}} arquivo) em um diretório escolhido.'
+    ],
+    [
+      'Save one .ipynb per data kernel ({{count}} files) to a chosen directory._other',
+      'Salve um arquivo .ipynb por kernel de dados ({{count}} arquivos) em um diretório escolhido.'
+    ],
+    [
+      'Save one .ipynb per data kernel ({{count}} files) to a chosen directory._many',
+      'Salve um arquivo .ipynb por kernel de dados ({{count}} arquivos) em um diretório escolhido.'
+    ],
+    [
+      'e.g. biowulf, lab-gpu, coder.myworkspace',
+      'Por exemplo, biowulf, lab-gpu, coder.myworkspace'
+    ],
+    [' or ', ' ou '],
+    [', ', ', '],
+    ['Archived project “{{name}}”.', 'Projeto arquivado “{{name}}”.'],
+    ['Archived session “{{title}}”.', 'Sessão arquivada “{{title}}”.'],
+    ['Directory could not be accessed.', 'Não foi possível acessar a pasta.'],
+    ['Website', 'Site'],
+    [
+      'Creates Plans and records decisions you make during review. This Permission Grant never approves a Plan; you must approve each Plan separately.',
+      'Cria Planos e registra as decisões tomadas durante a revisão. Esta concessão de permissão nunca aprova um Plano; você deve aprovar cada Plano separadamente.'
+    ],
+    [
+      'Open Science will not save API keys until the operating-system credential vault is available. Unlock or authorize the system keychain, then retry.',
+      'O Open Science não salvará chaves de API até que o cofre de credenciais do sistema operacional esteja disponível. Desbloqueie ou autorize o chaveiro do sistema e tente novamente.'
+    ]
+  ])('keeps reviewed operational copy for %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it.each([
+    [
+      'Save this provider, then sign in from its card with a device code. Open Science securely refreshes the login and exposes Messages, Chat Completions, and Responses locally.',
+      'Salve este provedor e entre pelo cartão dele com um código de dispositivo. O Open Science atualiza o login com segurança e disponibiliza Messages, Chat Completions e Responses localmente.'
+    ],
+    [
+      "Messages API uses the framework's Anthropic-compatible thinking request automatically.",
+      'A Messages API usa automaticamente a solicitação de raciocínio compatível com a Anthropic do framework.'
+    ],
+    [
+      'Responses API uses its native reasoning request automatically.',
+      'A Responses API usa automaticamente a solicitação de raciocínio nativa.'
+    ],
+    [
+      'Base URL, key, and model for a Messages or Chat Completions endpoint',
+      'URL base, chave e modelo para um endpoint Messages ou Chat Completions'
+    ],
+    [
+      'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.',
+      'Este modelo não é compatível com a ponte Codex Chat Completions. Escolha outro modelo para uma sessão do Codex.'
+    ],
+    [
+      'Contact email and optional NCBI API key for research services.',
+      'E-mail de contato e chave de API opcional do NCBI para serviços de pesquisa.'
+    ],
+    ['Mermaid syntax could not be rendered', 'Não foi possível renderizar a sintaxe do Mermaid']
+  ])('keeps protocol identifiers unchanged in %s', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it('does not add spaces inside placeholder punctuation or code spans', () => {
+    const offenders = Object.entries(catalog('pt-BR'))
+      .filter(([, value]) => /\(\s+\{\{|\}\}\s+\)|`\s+\{\{|\}\}\s+`/.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not contain machine-tokenization artifacts', () => {
+    const artifact =
+      /\p{L}-\s+\p{L}|\p{L}\.(?:csv|ipynb|json|md|pdf|skill|ya?ml|zip)\b|\{\{\w+\}\}\s+%|<\/[^>]+>\s+[).,;]|[“"]\s+\{\{|\}\}\s+[”"]/u
+    const offenders = Object.entries(catalog('pt-BR'))
+      .filter(([key, value]) => artifact.test(value) && !artifact.test(englishOf(key)))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses Brazilian gerunds for in-progress status copy', () => {
+    const inProgressSource =
+      /^(?:Adding|Applying|Archiving|Awaiting|Beginning|Building|Cancelling|Changing|Checking|Cleaning|Compacting|Connecting|Copying|Creating|Decoding|Deleting|Detecting|Disabling|Discarding|Downloading|Enabling|Estimating|Exporting|Extracting|Fetching|Finding|Finishing|Generating|Importing|Installing|Interacting|Listing|Loading|Matching|Moving|Opening|Pairing|Parsing|Preparing|Probing|Reading|Re-running|Reconfiguring|Reconnecting|Refreshing|Reloading|Removing|Rendering|Resolving|Restarting|Restoring|Resuming|Retrying|Reviewing|Running|Saving|Scanning|Searching|Selecting|Sending|Setting up|Signing in|Starting|Stopping|Submitting|Summarizing|Switching|Testing|Thinking|Uninstalling|Updating|Uploading|Validating|Verifying|Waiting|Working)\b/u
+    const isInProgressStatus = (source: string): boolean =>
+      inProgressSource.test(source) && !source.endsWith('?')
+    const nonBrazilianProgressive =
+      /^(?:(?:está|estão)\s+a\s+|a\s+)?(?:abrir|adicionar|aguardar|alterar|analisar|antever|apagar|assinar|ativar|cancelar|carregar|começar|compactar|configurar|copiar|criar|decodificar|desativar|desfrutar|desinstalar|detectar|eliminar|encontrar|enviar|executar|exportar|extrair|instalar|ler|ligar|limpar|mudar|mover|parar|pensar|preparar|processar|procurar|renderizar|resolver|restaurar|retomar|rever|salvar|sincronizar|sondar|testar|trabalhar|transferir|verificar)\b/iu
+    const offenders = Object.entries(catalog('pt-BR'))
+      .filter(([key]) => isInProgressStatus(englishOf(key)))
+      .filter(([, value]) => nonBrazilianProgressive.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+    expect(isInProgressStatus('Loading…')).toBe(true)
+    expect(isInProgressStatus('Uploading {{name}}')).toBe(true)
+    expect(isInProgressStatus('Changing Notebook file access will stop kernels. Continue?')).toBe(
+      false
+    )
+    expect(isInProgressStatus('This helps you start a local session.')).toBe(false)
+    expect(nonBrazilianProgressive.test('Está a carregar…')).toBe(true)
+    expect(nonBrazilianProgressive.test('Adicionar máquina…')).toBe(true)
+    expect(nonBrazilianProgressive.test('Começando a configurar o ambiente…')).toBe(false)
+  })
+
+  it.each([
+    ['Decoding TIFF image', 'Decodificando imagem TIFF'],
+    ['Refreshing Marketplace…', 'Atualizando o Marketplace…'],
+    ['Stopping subagents', 'Parando subagentes'],
+    ['Stopping…', 'Parando...'],
+    ['Submitting response', 'Enviando resposta'],
+    ['Uninstalling…', 'Desinstalando...']
+  ])('keeps %s in an active Brazilian Portuguese form', (key, expected) => {
+    expect(catalog('pt-BR')[key]).toBe(expected)
   })
 })
 

@@ -138,6 +138,7 @@ describe('readReleaseNotes', () => {
     writeFileSync(join(dir, 'en.md'), '  English notes\n')
     writeFileSync(join(dir, 'zh-Hans.md'), '  简体中文说明\n')
     writeFileSync(join(dir, 'fr.md'), '  Notes françaises\n')
+    writeFileSync(join(dir, 'pt-BR.md'), '  Notas da versão\n')
     writeFileSync(join(dir, 'de.md'), '  Deutsche Versionshinweise\n')
     writeFileSync(join(dir, 'es.md'), '  Notas en español\n')
 
@@ -146,6 +147,7 @@ describe('readReleaseNotes', () => {
       localizedNotes: {
         'zh-Hans': '简体中文说明',
         fr: 'Notes françaises',
+        'pt-BR': 'Notas da versão',
         de: 'Deutsche Versionshinweise',
         es: 'Notas en español'
       }

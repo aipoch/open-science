@@ -1,9 +1,9 @@
 # Localization Glossary
 
 The binding reference for the `common`, `native`, and `renderer` namespaces in
-`src/shared/i18n/locales/de.json`, `es.json`, `fr.json`, `ja.json`, `ko.json`, `ru.json`,
-`zh-Hans.json`, and `zh-Hant.json`. There is no English catalog: **the key is the English source
-text**.
+`src/shared/i18n/locales/de.json`, `es.json`, `fr.json`, `ja.json`, `ko.json`, `pt-BR.json`,
+`ru.json`, `zh-Hans.json`, and `zh-Hant.json`. There is no English catalog: **the key is the English
+source text**.
 `t('Data folder not found')` renders that sentence verbatim in English and looks it up in the
 localized catalogs, so a missing translation falls back to correct English rather than a raw key
 path. This keeps the English legible in a code diff, which is where copy actually gets reviewed.
@@ -11,8 +11,9 @@ path. This keeps the English legible in a code diff, which is where copy actuall
 Traditional Chinese is a **separate translation**, not a character conversion of Simplified. The
 software vocabulary genuinely differs (`file` is 文件 in Simplified but 檔案 in Traditional, where
 文件 means _document_), so running a converter over `zh-Hans` produces wrong copy. Translate from the
-English key and consult the tables below. German, Spanish, French, Japanese, Korean, and Russian are
-also translated independently from the English key; do not derive them from another catalog.
+English key and consult the tables below. German, Spanish, French, Japanese, Korean, Brazilian
+Portuguese, and Russian are also translated independently from the English key; do not derive them
+from another catalog.
 
 ## Key conventions
 
@@ -25,10 +26,11 @@ are off, so the periods and colons inside an English sentence stay part of the k
 - **Plurals**: the key is the English _plural_ form and the call site passes the singular:
   `t('{{count}} files selected', { count, defaultValue_one: '{{count}} file selected' })`. Chinese,
   Japanese, and Korean have one plural category, so their entries take the `_other` suffix and `_one`
-  entries are rejected. German has `one` and `other` categories. French and Spanish have `one`,
-  `many`, and `other` categories, so `_one`, `_many`, and `_other` entries are required. The `_many`
-  category is selected for values such as 1,000,000 and can usually reuse the `_other` translation.
-  Russian requires the complete `_one`, `_few`, `_many`, and `_other` set for every counted key.
+  entries are rejected. German has `one` and `other` categories. French, Brazilian Portuguese, and
+  Spanish have `one`, `many`, and `other` categories, so `_one`, `_many`, and `_other` entries are
+  required. The `_many` category is selected for values such as 1,000,000 and can usually reuse the
+  `_other` translation. Russian requires the complete `_one`, `_few`, `_many`, and `_other` set for
+  every counted key.
 - **Context** disambiguates two different meanings that share one English string — `t('Compute', {
 context: 'noun' })` keys `Compute_noun`. Only translated catalogs carry the suffixed entry;
   English ignores context and renders the base key.
@@ -51,10 +53,10 @@ Never translated, in any catalog:
 - Translate generic `Skill` and `Agent` prose according to the core table below. Keep exact file
   names, commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`,
   `.skill`, `skill://`, `skills/`, `.agents/skills`, `AGENTS.md`, `ssh-agent`, and `setup-token`.
-- Translate `token` by meaning: German uses Token, Spanish retains token, and French uses jeton for
-  both meanings; model input, output, context, and usage counts use 词元 / 詞元 / トークン / 토큰 /
-  токен; authentication credentials use 令牌 / 權杖 / トークン / 토큰 / токен. API field names such
-  as `max_tokens` remain unchanged.
+- Translate `token` by meaning: German uses Token, Spanish and Brazilian Portuguese retain token,
+  and French uses jeton for both meanings; model input, output, context, and usage counts use 词元 /
+  詞元 / トークン / 토큰 / токен; authentication credentials use 令牌 / 權杖 / トークン / 토큰 /
+  токен. API field names such as `max_tokens` remain unchanged.
 - The `Open Science` name is fixed by `docs/design.md`, but the home tagline beneath it **is**
   translated.
 
@@ -181,6 +183,85 @@ browsers for the user's home directory, where German uses `Benutzerordner`.
 German keeps the product term `Side chat` as `Side-Chat` and forms compounds with hyphens, such as
 `Side-Chat-Bereich` and `Side-Chat-Wiederherstellung`.
 
+## Brazilian Portuguese terminology
+
+Brazilian Portuguese is translated directly from the English source key. These terms are binding
+for prose in the `common`, `native`, and `renderer` namespaces:
+
+| en                 | pt-BR                   |
+| ------------------ | ----------------------- |
+| project            | projeto                 |
+| session            | sessão                  |
+| conversation       | conversa                |
+| workspace          | espaço de trabalho      |
+| message            | mensagem                |
+| task               | tarefa                  |
+| run                | execução                |
+| turn               | turno                   |
+| agent              | agente                  |
+| subagent           | subagente               |
+| agent framework    | framework de agentes    |
+| model              | modelo                  |
+| provider           | provedor                |
+| subscription       | assinatura              |
+| skill              | habilidade              |
+| specialist         | especialista            |
+| marketplace        | Marketplace             |
+| connector          | conector                |
+| shell              | linha de comando        |
+| main agent         | agente principal        |
+| token (model)      | token                   |
+| token (credential) | token                   |
+| kernel             | kernel                  |
+| artifact           | artefato                |
+| activity group     | grupo de atividades     |
+| tool               | ferramenta              |
+| compute host       | host de computação      |
+| runtime            | ambiente de execução    |
+| environment        | ambiente                |
+| preview            | visualização            |
+| reasoning effort   | esforço de raciocínio   |
+| context            | contexto                |
+| context compaction | compactação de contexto |
+
+| en                   | pt-BR                    |
+| -------------------- | ------------------------ |
+| create / new         | criar / novo             |
+| edit                 | editar                   |
+| rename               | renomear                 |
+| delete               | excluir                  |
+| retry                | tentar novamente         |
+| resume               | retomar                  |
+| stop                 | parar                    |
+| cancel               | cancelar                 |
+| install / uninstall  | instalar / desinstalar   |
+| validate             | validar                  |
+| import / export      | importar / exportar      |
+| upload / download    | enviar / baixar          |
+| reveal in folder     | mostrar na pasta         |
+| minimize to tray     | minimizar para a bandeja |
+| idle                 | ocioso                   |
+| running              | em execução              |
+| waiting for approval | aguardando aprovação     |
+| failed               | falha                    |
+| completed            | concluído                |
+| pending              | pendente                 |
+
+| en                    | pt-BR                          |
+| --------------------- | ------------------------------ |
+| Home                  | Início                         |
+| Onboarding            | Configuração inicial           |
+| General               | Geral                          |
+| Appearance            | Aparência                      |
+| Theme                 | Tema                           |
+| System / Light / Dark | Sistema / Claro / Escuro       |
+| Language              | Idioma                         |
+| Notifications         | Notificações                   |
+| Diagnostics           | Diagnósticos                   |
+| Permissions           | Permissões                     |
+| Data root             | Raiz de dados                  |
+| Command line tool     | Ferramenta de linha de comando |
+
 ## Spanish terminology
 
 Spanish is translated directly from the English source key. These terms are binding for prose in
@@ -236,6 +317,10 @@ the `common`, `native`, and `renderer` namespaces:
   identifiers keep their original spelling.
 - German prose uses sentence case and established desktop UI terms. Retained product names and
   technical identifiers keep their original spelling; `Notebook`, `Agent`, and `Token` stay fixed.
+- Brazilian Portuguese prose uses Brazilian spelling and sentence case. Use `você`, `arquivo`,
+  `excluir`, `salvar`, and `habilidade` consistently; retain `Marketplace`, product names, and
+  technical identifiers exactly. Translate permission grants as `permissões`, never the financial
+  sense `subsídios`.
 - Spanish uses neutral international wording. Prefer `equipo` over the regional `computadora` or
   `ordenador`, `archivo` over `fichero`, and established community terms such as `prompt`, `kernel`,
   `endpoint`, `framework` and `host` when translating them would make the interface less precise.
@@ -252,5 +337,5 @@ the `common`, `native`, and `renderer` namespaces:
 - No exclamation points, per `docs/design.md`.
 - Don't pad imperatives with 请. `Check the network` is 检查网络连接, not 请检查网络连接.
 - Language names in the language picker are written in their own language and never translated:
-  `English`, `Deutsch`, `Español`, `Français`, `日本語`, `한국어`, `Русский`, `简体中文`, `繁體中文`.
-  Only the `System` option follows the interface language.
+  `English`, `Deutsch`, `Español`, `Français`, `Português (Brasil)`, `日本語`, `한국어`, `Русский`,
+  `简体中文`, `繁體中文`. Only the `System` option follows the interface language.

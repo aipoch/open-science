@@ -26,7 +26,7 @@ describe('LocalePreferenceOwner', () => {
   it('creates isolated native i18next instances with CLDR plurals and direct English fallback', async () => {
     const messages =
       (await import('./main-process-messages')) as typeof import('./main-process-messages') & {
-        createNativeI18n?: (locale: 'de' | 'en' | 'es' | 'fr' | 'ru' | 'zh-Hans') => {
+        createNativeI18n?: (locale: 'de' | 'en' | 'es' | 'fr' | 'pt-BR' | 'ru' | 'zh-Hans') => {
           t: (key: string, options?: Record<string, string | number>) => string
         }
       }
@@ -38,6 +38,7 @@ describe('LocalePreferenceOwner', () => {
     const german = messages.createNativeI18n('de')
     const spanish = messages.createNativeI18n('es')
     const french = messages.createNativeI18n('fr')
+    const portuguese = messages.createNativeI18n('pt-BR')
     const russian = messages.createNativeI18n('ru')
     const simplifiedChinese = messages.createNativeI18n('zh-Hans')
     const key = '{{count}} notebooks already exist in the chosen directory.'
@@ -61,6 +62,11 @@ describe('LocalePreferenceOwner', () => {
       'Le dossier choisi contient déjà 1 Notebook.',
       'Le dossier choisi contient déjà 2 Notebooks.',
       'Le dossier choisi contient déjà 1000000 Notebooks.'
+    ])
+    expect([1, 2, 1_000_000].map((count) => portuguese.t(key, options(count)))).toEqual([
+      'Já existe 1 Notebook no diretório selecionado.',
+      'Já existem 2 Notebooks no diretório selecionado.',
+      'Já existem 1000000 Notebooks no diretório selecionado.'
     ])
     expect([1, 2, 1_000_000].map((count) => spanish.t(key, options(count)))).toEqual([
       'Ya existe 1 Notebook en el directorio elegido.',
@@ -151,6 +157,7 @@ describe('LocalePreferenceOwner', () => {
     expect(translateNativeMessage('ko', 'Quit', { context: 'verb' })).toBe('종료')
     expect(translateNativeMessage('ru', 'Quit', { context: 'verb' })).toBe('Выйти')
     expect(translateNativeMessage('fr', 'Quit', { context: 'verb' })).toBe('Quitter')
+    expect(translateNativeMessage('pt-BR', 'Quit', { context: 'verb' })).toBe('Sair')
     expect(translateNativeMessage('es', 'Quit', { context: 'verb' })).toBe('Salir')
     expect(
       translateNativeMessage(
@@ -173,6 +180,12 @@ describe('LocalePreferenceOwner', () => {
       'В выбранной папке уже существуют 5 Notebook.',
       'В выбранной папке уже существует 21 Notebook.'
     ])
+  })
+
+  it('detects Brazilian Portuguese for main-process surfaces', async () => {
+    const owner = new LocalePreferenceOwner(['pt-BR', 'en-US'], await createRepository())
+
+    expect(owner.snapshot()).toEqual({ preference: 'system', locale: 'pt-BR' })
   })
 
   it('updates native translations before a preference change resolves', async () => {

@@ -10,6 +10,7 @@ const valid = {
     de: 'Versionshinweise',
     'zh-Hans': '更新说明',
     ja: '更新内容',
+    'pt-BR': 'Notas da versão',
     es: 'Notas de la versión'
   },
   downloads: { 'mac-arm64': { url: 'https://cdn/a.dmg', size: 1, sha256: 'a'.repeat(64) } }
@@ -23,6 +24,7 @@ describe('parseManifest', () => {
         de: 'Versionshinweise',
         'zh-Hans': '更新说明',
         ja: '更新内容',
+        'pt-BR': 'Notas da versão',
         es: 'Notas de la versión'
       }
     })

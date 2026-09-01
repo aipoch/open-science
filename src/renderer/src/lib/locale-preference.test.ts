@@ -50,9 +50,20 @@ describe('stored preference', () => {
   })
 
   it('round-trips a persisted choice', () => {
+    persistPreference('pt-BR')
+    expect(getStoredPreference()).toBe('pt-BR')
+    expect(resolvePreference()).toBe('pt-BR')
+
     persistPreference('es')
     expect(getStoredPreference()).toBe('es')
     expect(resolvePreference()).toBe('es')
+  })
+
+  it('migrates the legacy Portuguese preference to Brazilian Portuguese', () => {
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, 'pt')
+
+    expect(getStoredPreference()).toBe('pt-BR')
+    expect(localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBe('pt-BR')
   })
 
   it('ignores a stored value that is not a known preference', () => {
@@ -106,6 +117,16 @@ describe('resolveInitialLocale', () => {
     expect(resolveInitialLocale()).toBe('fr')
   })
 
+  it('detects Brazilian Portuguese from the device', () => {
+    stubLanguages(['pt-BR', 'en'])
+    expect(resolveInitialLocale()).toBe('pt-BR')
+  })
+
+  it('does not apply Brazilian Portuguese to a European Portuguese device', () => {
+    stubLanguages(['pt-PT', 'fr-FR', 'en'])
+    expect(resolveInitialLocale()).toBe('fr')
+  })
+
   it('detects Spanish regional tags from the device', () => {
     stubLanguages(['es-MX', 'en'])
     expect(resolveInitialLocale()).toBe('es')
@@ -132,6 +153,8 @@ describe('applyHtmlLang', () => {
     expect(document.documentElement.lang).toBe('en')
     applyHtmlLang('fr')
     expect(document.documentElement.lang).toBe('fr')
+    applyHtmlLang('pt-BR')
+    expect(document.documentElement.lang).toBe('pt-BR')
     applyHtmlLang('de')
     expect(document.documentElement.lang).toBe('de')
     applyHtmlLang('es')

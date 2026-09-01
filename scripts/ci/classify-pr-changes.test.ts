@@ -381,6 +381,7 @@ describe('pull request change classification', () => {
     ['renderer locale catalog', 'src/shared/i18n/locales/ja.json'],
     ['Korean locale catalog', 'src/shared/i18n/locales/ko.json'],
     ['French locale catalog', 'src/shared/i18n/locales/fr.json'],
+    ['Brazilian Portuguese locale catalog', 'src/shared/i18n/locales/pt-BR.json'],
     ['Spanish locale catalog', 'src/shared/i18n/locales/es.json'],
     ['German locale catalog', 'src/shared/i18n/locales/de.json'],
     ['shared contract', 'src/shared/acp.ts'],

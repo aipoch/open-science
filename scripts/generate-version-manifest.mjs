@@ -33,7 +33,7 @@ const KEY_RULES = [
 // Non-installer files that legitimately live in the release dir; skipped without a warning.
 const IGNORED = [/\.zip$/, /^SHA256SUMS\.txt$/, /^version\.json$/, /\.ya?ml$/, /\.blockmap$/]
 
-const LOCALIZED_NOTE_LOCALES = ['zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru', 'de', 'es']
+const LOCALIZED_NOTE_LOCALES = ['zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'pt-BR', 'ru', 'de', 'es']
 const NOTE_LOCALES = new Set(['en', ...LOCALIZED_NOTE_LOCALES])
 
 // Read the repository-owned, already-condensed notes for one release. English is the stable fallback
