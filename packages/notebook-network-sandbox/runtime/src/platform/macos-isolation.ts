@@ -78,8 +78,11 @@ const seatbeltProfile = (request: MacLaunchRequest): string => {
 
 const shellArguments = (shell: string, command: string): readonly string[] => {
   const name = basename(shell).toLowerCase()
-  if (name === 'bash' || name === 'bash.exe' || name === 'zsh' || name === 'zsh.exe') {
+  if (name === 'bash' || name === 'bash.exe') {
     return [shell, '--noprofile', '--norc', '-c', command]
+  }
+  if (name === 'zsh' || name === 'zsh.exe') {
+    return [shell, '-d', '-f', '-c', command]
   }
   return [shell, '-c', command]
 }

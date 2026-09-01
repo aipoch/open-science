@@ -1,4 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -73,42 +81,52 @@ describe('Notebook filesystem policy', () => {
     expect(profile).not.toContain('(deny system-socket')
   })
 
+  const expectMacosShellLaunch = (shell: string, extraFlags: readonly string[]): void => {
+    const root = mkdtempSync(join(tmpdir(), 'open-science-shell-rc-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+
+    try {
+      const launch = macosLaunch({
+        command: '/usr/bin/curl --silent http://example.com/',
+        gatewayPort: 4312,
+        gatewayCredentials: { username: 'command', password: 'secret' },
+        shell,
+        env: { PATH: '/usr/bin:/bin' },
+        filesystem: {
+          privateRoot: root,
+          readOnlyRoots: ['/bin', '/usr/bin'],
+          readWriteRoots: [workspace],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+
+      expect(launch.argv).toEqual([
+        '/usr/bin/sandbox-exec',
+        '-p',
+        expect.any(String),
+        shell,
+        ...extraFlags,
+        '-c',
+        '/usr/bin/curl --silent http://example.com/'
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+
   it.skipIf(process.platform === 'win32')(
     'launches bash without reading profile or rc files',
     () => {
-      const root = mkdtempSync(join(tmpdir(), 'open-science-bash-rc-'))
-      const workspace = join(root, 'workspace')
-      mkdirSync(workspace)
+      expectMacosShellLaunch('/bin/bash', ['--noprofile', '--norc'])
+    }
+  )
 
-      try {
-        const launch = macosLaunch({
-          command: '/usr/bin/curl --silent http://example.com/',
-          gatewayPort: 4312,
-          gatewayCredentials: { username: 'command', password: 'secret' },
-          shell: '/bin/bash',
-          env: { PATH: '/usr/bin:/bin' },
-          filesystem: {
-            privateRoot: root,
-            readOnlyRoots: ['/bin', '/usr/bin'],
-            readWriteRoots: [workspace],
-            deniedReadRoots: [],
-            deniedWriteRoots: []
-          }
-        })
-
-        expect(launch.argv).toEqual([
-          '/usr/bin/sandbox-exec',
-          '-p',
-          expect.any(String),
-          '/bin/bash',
-          '--noprofile',
-          '--norc',
-          '-c',
-          '/usr/bin/curl --silent http://example.com/'
-        ])
-      } finally {
-        rmSync(root, { recursive: true, force: true })
-      }
+  it.skipIf(process.platform === 'win32' || !existsSync('/bin/zsh'))(
+    'launches zsh without reading profile or rc files',
+    () => {
+      expectMacosShellLaunch('/bin/zsh', ['-d', '-f'])
     }
   )
 
