@@ -335,6 +335,40 @@ describe('ACP runtime event normalization', () => {
     expect(JSON.stringify(persisted)).not.toContain('test-authorization-secret')
   })
 
+  it('redacts credentials embedded in raw tool payload strings', () => {
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-string-secret',
+        kind: 'execute',
+        status: 'completed',
+        rawInput: {
+          command:
+            'curl "https://example.test/data?token=test-url-secret" --header "Authorization: Bearer test-header-secret"'
+        },
+        rawOutput: '{"apiKey":"test-json-secret"}'
+      }
+    }
+
+    const event = toAcpRuntimeEvent(notification, 'event-string-secret', 1710000000006)
+    const persisted = sanitizeToolActivity({
+      ...event,
+      sortIndex: 1,
+      eventIds: [event.id],
+      createdAt: event.timestamp,
+      updatedAt: event.timestamp
+    })
+
+    expect(JSON.stringify(event)).not.toContain('test-url-secret')
+    expect(JSON.stringify(event)).not.toContain('test-header-secret')
+    expect(JSON.stringify(event)).not.toContain('test-json-secret')
+    expect(JSON.stringify(event)).toContain('[redacted]')
+    expect(JSON.stringify(persisted)).not.toContain('test-url-secret')
+    expect(JSON.stringify(persisted)).not.toContain('test-header-secret')
+    expect(JSON.stringify(persisted)).not.toContain('test-json-secret')
+  })
+
   it('bounds large tool detail fields before they enter runtime snapshots', () => {
     const event = new AcpRuntimeSnapshotOwner('/workspace').appendEvent(
       toAcpRuntimeEvent(

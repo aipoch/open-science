@@ -1,6 +1,7 @@
+import { REDACTED_MARKER, redactSensitiveText } from './diagnostic-redaction'
+
 const MAX_TOOL_DETAIL_TEXT_CHARS = 16_000
 const MAX_TOOL_DETAIL_CONTENT_CHARS = 32_000
-const REDACTED_MARKER = '[redacted]'
 const SENSITIVE_FIELD_PATTERN =
   /(authorization|cookie|credential|password|secret|token|api[_-]?key)/iu
 
@@ -104,9 +105,10 @@ const sanitizeRawToolPayload = (
   if (value === undefined || value === null) return undefined
 
   try {
-    const serialized = JSON.stringify(value, (key, nestedValue) =>
-      key && SENSITIVE_FIELD_PATTERN.test(key) ? REDACTED_MARKER : nestedValue
-    )
+    const serialized = JSON.stringify(value, (key, nestedValue) => {
+      if (key && SENSITIVE_FIELD_PATTERN.test(key)) return REDACTED_MARKER
+      return typeof nestedValue === 'string' ? redactSensitiveText(nestedValue) : nestedValue
+    })
 
     if (serialized === undefined || serialized.length > maxSerializedChars) return undefined
 
