@@ -4040,9 +4040,9 @@ const createApplicationModules = async (
     }
   }
 
-  // The shared coordinator remains the sole ACP + Side Chat + Notebook teardown owner. Register
-  // command routing after it so reverse disposal removes adapters, then the router, before any
-  // underlying owner stops.
+  // The shared coordinator remains the sole ACP + Notebook teardown owner.
+  // It also coordinates Side Chat suspension/shutdown. Register command routing after it so reverse
+  // disposal removes adapters, then the router, before any underlying owner stops.
   await modules.add({ shutdownCoordinator }, ({ shutdownCoordinator: coordinator }) => ({
     name: 'backend-shutdown-coordinator',
     capability: undefined,
