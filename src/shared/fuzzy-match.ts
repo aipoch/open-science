@@ -23,14 +23,14 @@ const MAX_GAP_PENALTY = 3
 const foldTargetWithSourcePositions = (
   target: string
 ): { folded: string; sourcePositions: number[] } => {
-  let folded = ''
+  const folded = target.toLowerCase()
   const sourcePositions: number[] = []
   let sourceOffset = 0
 
-  // Lowercase expansion can change UTF-16 length, so retain the original index for every unit.
+  // Lowercase the full string for context-sensitive mappings, while retaining the original index
+  // for every independently expanded UTF-16 unit.
   for (const character of target) {
     const foldedCharacter = character.toLowerCase()
-    folded += foldedCharacter
     for (let index = 0; index < foldedCharacter.length; index += 1) {
       sourcePositions.push(sourceOffset + Math.min(index, character.length - 1))
     }

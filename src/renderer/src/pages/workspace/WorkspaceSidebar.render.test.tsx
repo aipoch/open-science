@@ -180,6 +180,7 @@ const mountProjectSidebar = async (
 ): Promise<{
   cleanup: () => void
   openMenu: () => void
+  rerenderProjects: (projects: readonly SidebarProject[]) => Promise<void>
   rerenderSessions: (sessions: ChatSession[]) => Promise<void>
 }> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
@@ -187,12 +188,14 @@ const mountProjectSidebar = async (
   document.body.appendChild(container)
   const root = createRoot(container)
 
-  const render = (sessions: ChatSession[]): void => {
+  let renderedProjects = otherProjects
+  let renderedSessions = [createSession({ id: 'session-a' })]
+  const render = (): void => {
     root.render(
       <WorkspaceSidebar
         projectName="Example project"
-        otherProjects={otherProjects}
-        sessions={sessions}
+        otherProjects={renderedProjects}
+        sessions={renderedSessions}
         activeSessionId="session-a"
         canCreateConversation
         canMutateConversations
@@ -217,7 +220,7 @@ const mountProjectSidebar = async (
   }
 
   await act(async () => {
-    render([createSession({ id: 'session-a' })])
+    render()
   })
 
   return {
@@ -227,8 +230,13 @@ const mountProjectSidebar = async (
     },
     openMenu: () =>
       openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]')),
+    rerenderProjects: async (projects) => {
+      renderedProjects = projects
+      await act(async () => render())
+    },
     rerenderSessions: async (sessions) => {
-      await act(async () => render(sessions))
+      renderedSessions = sessions
+      await act(async () => render())
     }
   }
 }
@@ -1221,6 +1229,84 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(search?.value).toBe('')
       expect(document.activeElement).toBe(search)
       expect(document.body.querySelector('[aria-label="Project actions"]')).not.toBeNull()
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('keeps keyboard navigation moving when project search has no results', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'no matches')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const clearButton = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Clear search"]'
+      )
+      const newProjectItem = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim() === 'New project')
+
+      await act(async () => {
+        search?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(clearButton)
+
+      await act(async () => {
+        clearButton?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
+        )
+      })
+      expect(document.activeElement).toBe(newProjectItem)
+
+      await act(async () => {
+        newProjectItem?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })
+        )
+      })
+      expect(document.activeElement).toBe(search)
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('clears a hidden project query when the search threshold is no longer met', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'Project 6')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(1)
+
+      await mounted.rerenderProjects(projects.slice(0, 5))
+      expect(document.body.querySelector('[aria-label="Search projects"]')).toBeNull()
+      expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(5)
+
+      await mounted.rerenderProjects(projects)
+      expect(
+        document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')?.value
+      ).toBe('')
     } finally {
       mounted.cleanup()
     }

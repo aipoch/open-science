@@ -25,6 +25,10 @@ describe('fuzzyScore', () => {
     expect(fuzzyScore('İs', 'İstanbul')?.positions).toEqual([0, 1])
   })
 
+  it('uses context-sensitive lowercase matching', () => {
+    expect(fuzzyScore('ος', 'ΟΣ')?.positions).toEqual([0, 1])
+  })
+
   it('returns null when the query is not an ordered subsequence', () => {
     expect(fuzzyScore('zz', 'Literature Review')).toBeNull()
     // Right chars, wrong order.

@@ -137,6 +137,7 @@ const sessionStatusLabelKeys = {
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
 const EMPTY_CREDENTIAL_SESSION_IDS = new Set<string>()
 const INITIAL_PROJECT_MENU_LIMIT = 5
+const FIRST_PROJECT_MENU_DESTINATION_SELECTOR = '[data-project-id], [data-project-new]'
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
@@ -484,7 +485,7 @@ const WorkspaceSidebarView = ({
                           event.preventDefault()
                           event.currentTarget
                             .closest<HTMLElement>('[role="menu"]')
-                            ?.querySelector<HTMLElement>('[data-project-id]')
+                            ?.querySelector<HTMLElement>(FIRST_PROJECT_MENU_DESTINATION_SELECTOR)
                             ?.focus()
                           event.stopPropagation()
                           return
@@ -507,7 +508,9 @@ const WorkspaceSidebarView = ({
                           const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
                           const nextTarget = projectQuery
                             ? menu?.querySelector<HTMLElement>('[data-project-clear]')
-                            : menu?.querySelector<HTMLElement>('[data-project-id]')
+                            : menu?.querySelector<HTMLElement>(
+                                FIRST_PROJECT_MENU_DESTINATION_SELECTOR
+                              )
                           nextTarget?.focus()
                           event.stopPropagation()
                           return
@@ -541,7 +544,7 @@ const WorkspaceSidebarView = ({
                             event.preventDefault()
                             event.currentTarget
                               .closest<HTMLElement>('[role="menu"]')
-                              ?.querySelector<HTMLElement>('[data-project-id]')
+                              ?.querySelector<HTMLElement>(FIRST_PROJECT_MENU_DESTINATION_SELECTOR)
                               ?.focus()
                             event.stopPropagation()
                             return
@@ -647,7 +650,21 @@ const WorkspaceSidebarView = ({
                   </DropdownMenuItem>
                 ) : null}
                 {otherProjects.length > 0 ? <DropdownMenuSeparator /> : null}
-                <DropdownMenuItem className="gap-2" onSelect={() => onNewProject()}>
+                <DropdownMenuItem
+                  data-project-new
+                  className="gap-2"
+                  onSelect={() => onNewProject()}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'ArrowUp') return
+                    const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
+                    if (menu?.querySelector('[data-project-id]')) return
+                    const search = menu?.querySelector<HTMLInputElement>('[data-project-search]')
+                    if (!search) return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    search.focus()
+                  }}
+                >
                   <span className={sessionMenuIconClassName}>
                     <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
                   </span>
@@ -1039,9 +1056,15 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
   const [showAllProjects, setShowAllProjects] = useState(false)
   const [projectQuery, setProjectQuery] = useState('')
+  const canSearchProjects = (props.otherProjects?.length ?? 0) > INITIAL_PROJECT_MENU_LIMIT
+  const effectiveProjectQuery = canSearchProjects ? projectQuery : ''
+  if (!canSearchProjects && (projectQuery || showAllProjects)) {
+    setProjectQuery('')
+    setShowAllProjects(false)
+  }
   const projectMatches = useMemo(
-    () => matchProjects(props.otherProjects ?? [], projectQuery),
-    [props.otherProjects, projectQuery]
+    () => matchProjects(props.otherProjects ?? [], effectiveProjectQuery),
+    [effectiveProjectQuery, props.otherProjects]
   )
   const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
   const isMac = window.api?.platform === 'darwin'
@@ -1120,7 +1143,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       }}
       showAllProjects={showAllProjects}
       onShowAllProjectsChange={setShowAllProjects}
-      projectQuery={projectQuery}
+      projectQuery={effectiveProjectQuery}
       projectMatches={projectMatches}
       onProjectQueryChange={(query) => {
         setProjectQuery(query)
