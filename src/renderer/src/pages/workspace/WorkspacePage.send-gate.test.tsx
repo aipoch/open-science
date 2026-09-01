@@ -844,6 +844,27 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.conversation.availability.submit).toBe(false)
   })
 
+  it('keeps manual review locked until review history hydration establishes no active Fix Loop', async () => {
+    useReviewStore.setState(createInitialReviewState())
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    act(() => {
+      conversationProps.workflows.review.request()
+    })
+    expect(window.api.reviewer.run).not.toHaveBeenCalled()
+    expect(conversationProps.workflows.review.disabled).toBe(true)
+
+    await act(async () => {
+      useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
+    })
+    expect(conversationProps.workflows.review.disabled).toBe(false)
+  })
+
   it('disables sending while the runtime owns an otherwise idle session', async () => {
     await renderPage()
 
@@ -988,6 +1009,27 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.contextWindow.compactDisabledReason).toBe(
       'Resolve the current session error before compacting.'
     )
+  })
+
+  it('keeps context compaction locked until review history hydration establishes no active Fix Loop', async () => {
+    useReviewStore.setState(createInitialReviewState())
+    await renderPage()
+
+    act(() => {
+      conversationProps.contextWindow.compact()
+    })
+    expect(runtime.compactContext).not.toHaveBeenCalled()
+    expect(conversationProps.contextWindow.canCompact).toBe(false)
+
+    await act(async () => {
+      useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
+    })
+    expect(conversationProps.contextWindow.canCompact).toBe(true)
+
+    act(() => {
+      conversationProps.contextWindow.compact()
+    })
+    expect(runtime.compactContext).toHaveBeenCalledWith('sess-a')
   })
 
   it('surfaces restored permission retry errors without replacing the authorization card', async () => {

@@ -600,6 +600,7 @@ const WorkspacePage = ({
   const isRequestReviewDisabled = useReviewStore((state) => {
     if (!activeSessionId) return true
     if (!activeSession) return true
+    if (isReviewHistoryUnavailable) return true
     if (sessionAwaitsHistoryReplay(activeSession)) return true
     const lastAgentMessage = [...activeSession.messages].reverse().find((m) => m.role === 'agent')
     if (!lastAgentMessage) return true
@@ -681,6 +682,7 @@ const WorkspacePage = ({
     !conversation.queue.hasPendingWork
   const canCompactContext =
     isSessionPersistenceReady &&
+    !isReviewHistoryUnavailable &&
     activeSessionSupportsNativeCompaction &&
     activeSession?.status === 'idle' &&
     !activeSessionHasRuntimeInteraction &&
@@ -957,7 +959,7 @@ const WorkspacePage = ({
   }
 
   const requestManualReview = (): void => {
-    if (!activeSession) return
+    if (!activeSession || isReviewHistoryUnavailable) return
 
     const request = assembleReviewRunRequest(activeSession.id)
 
