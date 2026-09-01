@@ -19,6 +19,7 @@ type NotebookEnvironmentManager = {
   ) => Promise<EnvironmentInfo>
   listEnvironments: () => EnvironmentInfo[]
   removeEnvironment: (name: string) => void
+  removeManagedEnvironment?: (language: NotebookLanguage) => void
 }
 
 type EnvironmentManagementSession = {
@@ -35,6 +36,7 @@ type NotebookEnvironmentManagementOptions = {
   assertPrefixRecoverable: (prefix: string) => void
   environmentOperations: Pick<NotebookEnvironmentOperations, 'runMutation'>
   runtimeRepair: Pick<NotebookRuntimeRepairOwner, 'completeRemovedManagedEnvironment'>
+  isAgentEnvironmentCreationEnabled: () => Promise<boolean>
 }
 
 const isAppManagedEnvironment = (name: string): boolean =>
@@ -63,6 +65,12 @@ class NotebookEnvironmentManagementOwner {
 
     switch (request.action) {
       case 'create': {
+        if (!(await this.options.isAgentEnvironmentCreationEnabled())) {
+          throw new Error(
+            'AGENT_ENVIRONMENT_CREATION_DISABLED: creating Runtime Environments by the Agent is ' +
+              'disabled in Settings → Runtimes. Set up the Runtime there or enable Agent environment creation.'
+          )
+        }
         const name = assertSafeEnvName(request.name)
         if (request.language !== 'python' && request.language !== 'r') {
           throw new Error('Creating an environment requires a language of "python" or "r".')
@@ -125,6 +133,24 @@ class NotebookEnvironmentManagementOwner {
         })
       }
     }
+  }
+
+  async uninstallManagedEnvironment(
+    language: NotebookLanguage,
+    beforeRemove: (environmentName: string) => Promise<void>
+  ): Promise<void> {
+    const manager = this.manager
+    if (!manager?.removeManagedEnvironment) {
+      throw new Error('Managed Runtime uninstall is unavailable.')
+    }
+    const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+    await this.options.ensureRecovered()
+    this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, environmentName))
+    await this.options.environmentOperations.runMutation(environmentName, async () => {
+      await beforeRemove(environmentName)
+      manager.removeManagedEnvironment?.(language)
+      this.options.runtimeRepair.completeRemovedManagedEnvironment(environmentName)
+    })
   }
 
   private isLive(name: string): boolean {

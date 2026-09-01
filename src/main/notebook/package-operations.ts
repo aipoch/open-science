@@ -63,6 +63,7 @@ type NotebookPackageOperationsOptions = {
     language: NotebookLanguage,
     runtimeRoot: string
   ) => Promise<boolean>
+  isAgentEnvironmentCreationEnabled?: () => Promise<boolean>
   repairPolicy: NotebookRuntimeRepairPolicy
   runtimeRepair: Pick<
     NotebookRuntimeRepairOwner,
@@ -129,6 +130,7 @@ class NotebookPackageOperations {
       findSession: options.findSession,
       resolveRuntimeEnablement: options.resolveRuntimeEnablement,
       isDefaultEnvironmentDisabled: options.isDefaultEnvironmentDisabled,
+      isAgentEnvironmentCreationEnabled: options.isAgentEnvironmentCreationEnabled,
       repairPolicy: options.repairPolicy,
       environmentOperations: options.environmentOperations,
       recovery: options.recovery,

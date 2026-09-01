@@ -407,6 +407,14 @@ class SettingsService {
     return this.notebookRuntimeSettings.setInstallAuthorized(language, envId, authorized)
   }
 
+  async getAgentEnvironmentCreationEnabled(): Promise<boolean> {
+    return this.notebookRuntimeSettings.getAgentEnvironmentCreationEnabled()
+  }
+
+  async setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean> {
+    return this.notebookRuntimeSettings.setAgentEnvironmentCreationEnabled(enabled)
+  }
+
   async getManualInterpreters(language: NotebookLanguage): Promise<string[]> {
     return (await this.notebookRuntimeSettings.getSnapshot(language)).manualInterpreters
   }

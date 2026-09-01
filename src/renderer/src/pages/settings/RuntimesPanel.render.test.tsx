@@ -78,6 +78,7 @@ beforeEach(() => {
   useRuntimeSettingsStore.setState({
     envs: null,
     enablement: {},
+    agentEnvironmentCreationEnabled: true,
     loaded: false,
     checkedAt: null,
     busy: false,
@@ -130,11 +131,14 @@ beforeEach(() => {
       listPackages,
       listPackageCounts,
       getEnablement,
+      getAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
       describeUsage,
       setEnvironmentEnabled,
+      setAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
       setInstallAuthorized,
       registerInterpreter,
-      pickInterpreter
+      pickInterpreter,
+      uninstallManagedEnvironment: vi.fn().mockResolvedValue(undefined)
     },
     notebookEnv: {
       getStatus: vi.fn().mockResolvedValue(provisionStatus),
@@ -313,6 +317,38 @@ describe('RuntimesPanel', () => {
     const userToggle = container.querySelector('[aria-label="Enable System Python"]')
     expect(managedToggle?.getAttribute('data-state')).toBe('checked')
     expect(userToggle?.getAttribute('data-state')).toBe('unchecked')
+  })
+
+  it('persists the Agent environment-creation toggle', async () => {
+    await render()
+    const toggle = container.querySelector('[aria-label="Allow Agent to create environments"]')
+
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+    await click(toggle)
+
+    expect(window.api.runtime.setAgentEnvironmentCreationEnabled).toHaveBeenCalledWith({
+      enabled: false
+    })
+  })
+
+  it('offers uninstall only for app-managed environments and confirms by language', async () => {
+    await render()
+
+    const uninstallButtons = container.querySelectorAll('[data-testid="runtime-uninstall-button"]')
+    expect(uninstallButtons).toHaveLength(1)
+    expect(uninstallButtons[0]?.closest('[data-testid="runtime-card"]')?.textContent).toContain(
+      'Python 3.12 (managed)'
+    )
+
+    await click(uninstallButtons[0] ?? null)
+    const dialog = document.querySelector('[data-testid="runtime-uninstall-dialog"]')
+    expect(dialog?.textContent).toContain('Uninstall Python 3.12 (managed)?')
+    const confirm = Array.from(dialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Uninstall'
+    )
+    await click(confirm ?? null)
+
+    expect(window.api.runtime.uninstallManagedEnvironment).toHaveBeenCalledWith('python')
   })
 
   it('does not offer package-install authorization for an agent-created environment', async () => {

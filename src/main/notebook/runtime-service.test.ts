@@ -10256,6 +10256,90 @@ describe('v4 runtime bindings & agent tools', () => {
     })
   })
 
+  it('uninstalls the managed default after closing idle kernels and marks bindings missing', async () => {
+    const root = await createStorageRoot()
+    const runtimeId = pythonBin(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))
+    const managedRuntime: DiscoveredInterpreter = {
+      ...managedPy,
+      envId: runtimeId,
+      interpreterPath: runtimeId
+    }
+    const terminations: string[] = []
+    const removeManagedEnvironment = vi.fn()
+    const service = bindingService(root, {
+      discovered: [managedRuntime],
+      terminations,
+      environmentManager: {
+        createNamedEnvironment: vi.fn(),
+        listEnvironments: vi.fn(() => []),
+        removeEnvironment: vi.fn(() => []),
+        removeManagedEnvironment
+      }
+    })
+    const session = { sessionId: 's', workspaceCwd: root } as const
+    await service.bindRuntime({ ...session, language: 'python', runtimeId })
+    await service.execute({ ...session, language: 'python', code: '1' })
+
+    await service.uninstallManagedEnvironment('python')
+
+    expect(removeManagedEnvironment).toHaveBeenCalledWith('python')
+    expect(terminations).toEqual([`python:${DEFAULT_PY_ENV}`])
+    expect((await service.state(session)).runtimeBindings.python).toMatchObject({
+      status: 'unavailable',
+      reason: 'missing'
+    })
+  })
+
+  it('refuses managed uninstall when a default-Runtime cell is running', async () => {
+    const root = await createStorageRoot()
+    let finishExecution: ((result: NotebookExecutionResult) => void) | undefined
+    const removeManagedEnvironment = vi.fn()
+    const terminate = vi.fn(async () => undefined)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentManager: {
+        createNamedEnvironment: vi.fn(),
+        listEnvironments: vi.fn(() => []),
+        removeEnvironment: vi.fn(() => []),
+        removeManagedEnvironment
+      },
+      executorFactory: () => ({
+        execute: (request) =>
+          new Promise<NotebookExecutionResult>((resolve) => {
+            finishExecution = resolve
+          }).then((result) => ({ ...result, cwdAfter: request.cwd })),
+        shutdown: async () => ({ reaped: true }),
+        terminate
+      })
+    })
+    const run = service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'long_running()'
+    })
+    await vi.waitFor(() => expect(finishExecution).toBeDefined())
+
+    await expect(service.uninstallManagedEnvironment('python')).rejects.toThrow(
+      'RUNTIME_UNINSTALL_IN_USE'
+    )
+    expect(removeManagedEnvironment).not.toHaveBeenCalled()
+    expect(terminate).not.toHaveBeenCalled()
+
+    finishExecution?.({
+      status: 'completed',
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: root,
+      outputs: []
+    })
+    await run
+  })
+
   it('force-stop disable aborts the running cell and records it cancelled (WS10 force-stop)', async () => {
     const root = await createStorageRoot()
     // A blocking executor: execute() stays pending until terminate() rejects it (a killed kernel).

@@ -11,11 +11,13 @@ type RuntimeEnablements = Partial<Record<NotebookLanguage, RuntimeEnablement>>
 type RuntimeRegistrySnapshot = {
   envs: RuntimeEnvironmentLists
   enablement: RuntimeEnablements
+  agentEnvironmentCreationEnabled: boolean
 }
 
 type RuntimeSettingsState = {
   envs: RuntimeEnvironmentLists | null
   enablement: RuntimeEnablements
+  agentEnvironmentCreationEnabled: boolean
   loaded: boolean
   checkedAt: number | null
   busy: boolean
@@ -27,6 +29,7 @@ type RuntimeSettingsState = {
   setBusy: (busy: boolean) => void
   setError: (error: string | null) => void
   setEnablement: (language: NotebookLanguage, enablement: RuntimeEnablement) => void
+  setAgentEnvironmentCreationEnabled: (enabled: boolean) => void
   updatePackageCount: (envId: string, count: number) => void
 }
 
@@ -39,8 +42,13 @@ const fetchRegistry = (): Promise<RuntimeRegistrySnapshot> =>
   Promise.all([
     window.api.runtime.listEnvironments(),
     window.api.runtime.getEnablement('python'),
-    window.api.runtime.getEnablement('r')
-  ]).then(([envs, python, r]) => ({ envs, enablement: { python, r } }))
+    window.api.runtime.getEnablement('r'),
+    window.api.runtime.getAgentEnvironmentCreationEnabled()
+  ]).then(([envs, python, r, agentEnvironmentCreationEnabled]) => ({
+    envs,
+    enablement: { python, r },
+    agentEnvironmentCreationEnabled
+  }))
 
 const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
   const loadPackageCounts = (snapshot: RuntimeRegistrySnapshot, generation: number): void => {
@@ -85,7 +93,11 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
   const refresh = (force: boolean): Promise<RuntimeRegistrySnapshot> => {
     const state = get()
     if (!force && state.loaded && state.envs) {
-      return Promise.resolve({ envs: state.envs, enablement: state.enablement })
+      return Promise.resolve({
+        envs: state.envs,
+        enablement: state.enablement,
+        agentEnvironmentCreationEnabled: state.agentEnvironmentCreationEnabled
+      })
     }
     if (registryRequest) return registryRequest
 
@@ -105,6 +117,7 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
           set({
             envs: snapshot.envs,
             enablement: snapshot.enablement,
+            agentEnvironmentCreationEnabled: snapshot.agentEnvironmentCreationEnabled,
             loaded: true,
             checkedAt: Date.now(),
             busy: false,
@@ -137,6 +150,7 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
   return {
     envs: null,
     enablement: {},
+    agentEnvironmentCreationEnabled: true,
     loaded: false,
     checkedAt: null,
     busy: false,
@@ -149,6 +163,8 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
     setError: (error) => set({ error }),
     setEnablement: (language, enablement) =>
       set((state) => ({ enablement: { ...state.enablement, [language]: enablement } })),
+    setAgentEnvironmentCreationEnabled: (agentEnvironmentCreationEnabled) =>
+      set({ agentEnvironmentCreationEnabled }),
     updatePackageCount: (envId, count) =>
       set((state) => ({ packageCounts: { ...state.packageCounts, [envId]: count } }))
   }

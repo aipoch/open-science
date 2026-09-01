@@ -20,7 +20,8 @@ const manager = (): NotebookEnvironmentManager => ({
     isDefault: false
   })),
   listEnvironments: vi.fn(() => []),
-  removeEnvironment: vi.fn(() => [])
+  removeEnvironment: vi.fn(() => []),
+  removeManagedEnvironment: vi.fn()
 })
 
 const session = (
@@ -69,6 +70,7 @@ const harness = (
     runtimeRepair: {
       completeRemovedManagedEnvironment: vi.fn()
     },
+    isAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
     ...overrides
   }
   return {
@@ -167,6 +169,22 @@ describe('NotebookEnvironmentManagementOwner', () => {
       })
     )
     expect(options.assertPrefixRecoverable).toHaveBeenCalledWith(envPrefix('/runtime', 'analysis'))
+  })
+
+  it('refuses Agent environment creation when the persisted policy is disabled', async () => {
+    const {
+      owner,
+      manager: configured,
+      options
+    } = harness({
+      isAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(false)
+    })
+
+    await expect(
+      owner.manage({ action: 'create', language: 'python', name: 'analysis' })
+    ).rejects.toThrow('AGENT_ENVIRONMENT_CREATION_DISABLED')
+    expect(configured?.createNamedEnvironment).not.toHaveBeenCalled()
+    expect(options.ensureRecovered).not.toHaveBeenCalled()
   })
 
   it('rejects invalid create and remove names before lifecycle side effects', async () => {
@@ -354,5 +372,46 @@ describe('NotebookEnvironmentManagementOwner', () => {
     )
 
     expect(options.runtimeRepair.completeRemovedManagedEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('uninstalls only the exact managed default under recovery and mutation ownership', async () => {
+    const order: string[] = []
+    const configured = manager()
+    vi.mocked(configured.removeManagedEnvironment!).mockImplementation((language) => {
+      order.push(`remove-managed:${language}`)
+    })
+    const { owner } = harness({
+      manager: configured,
+      ensureRecovered: vi.fn(async () => {
+        order.push('recovery')
+      }),
+      assertPrefixRecoverable: vi.fn(() => {
+        order.push('recoverable')
+      }),
+      environmentOperations: {
+        runMutation: vi.fn(async (environment, operation) => {
+          order.push(`mutation:${environment}`)
+          return operation()
+        })
+      },
+      runtimeRepair: {
+        completeRemovedManagedEnvironment: vi.fn((environment) => {
+          order.push(`repair:${environment}`)
+        })
+      }
+    })
+
+    await owner.uninstallManagedEnvironment('python', async (environment) => {
+      order.push(`sessions:${environment}`)
+    })
+
+    expect(order).toEqual([
+      'recovery',
+      'recoverable',
+      'mutation:default-python',
+      'sessions:default-python',
+      'remove-managed:python',
+      'repair:default-python'
+    ])
   })
 })

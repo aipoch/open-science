@@ -18,6 +18,8 @@ import {
 } from './environment-discovery'
 import { listEnvPackages } from './package-listing'
 import { RuntimeRegistry } from './runtime-registry'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
+import { managedRuntimeIdentity } from './runtime-target'
 import { prepareExternalPythonRuntime, type AppOwnedExternalSelection } from './venv-overlay'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 
@@ -50,6 +52,8 @@ type RuntimeSelectionSettings = {
     envId: string,
     authorized: boolean
   ): Promise<RuntimeEnablement>
+  getAgentEnvironmentCreationEnabled(): Promise<boolean>
+  setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean>
   getManualInterpreters(language: NotebookLanguage): Promise<string[]>
   addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
   removeManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
@@ -70,6 +74,7 @@ type RuntimeSelectionWorkflowDeps = {
   onRuntimeDisabled?: (language: NotebookLanguage, envId: string, force?: boolean) => Promise<void>
   // Optional because sessions may not be composed yet during startup; absence means no live usage.
   describeRuntimeUsage?: (language: NotebookLanguage, envId: string) => RuntimeUsage
+  uninstallManagedEnvironment?: (language: NotebookLanguage) => Promise<void>
   // Injectable for tests so the package-listing workflows never spawn micromamba/pip/Rscript;
   // production defaults to listEnvPackages against the real env.
   listPackages?: (env: DiscoveredInterpreter) => Promise<EnvPackage[]>
@@ -88,6 +93,8 @@ type RuntimeSelectionWorkflows = {
   // omitted). Non-runnable envs get no entry.
   listPackageCounts(request: { language: NotebookLanguage }): Promise<Record<string, number | null>>
   getEnablement(request: { language: NotebookLanguage }): Promise<RuntimeEnablement>
+  getAgentEnvironmentCreationEnabled(): Promise<boolean>
+  setAgentEnvironmentCreationEnabled(request: { enabled: boolean }): Promise<boolean>
   describeUsage(request: { language: NotebookLanguage; envId: string }): Promise<RuntimeUsage>
   setSelection(request: {
     language: NotebookLanguage
@@ -104,6 +111,7 @@ type RuntimeSelectionWorkflows = {
     envId: string
     authorized: boolean
   }): Promise<RuntimeEnablement>
+  uninstallManagedEnvironment(request: { language: NotebookLanguage }): Promise<void>
   register(request: { language: NotebookLanguage; path: string }): Promise<string[]>
   unregister(request: { language: NotebookLanguage; path: string }): Promise<string[]>
 }
@@ -227,6 +235,10 @@ const createRuntimeSelectionWorkflows = (
       return counts
     },
     getEnablement: (request) => deps.settingsService.getRuntimeEnablement(request.language),
+    getAgentEnvironmentCreationEnabled: () =>
+      deps.settingsService.getAgentEnvironmentCreationEnabled(),
+    setAgentEnvironmentCreationEnabled: (request) =>
+      deps.settingsService.setAgentEnvironmentCreationEnabled(request.enabled),
     describeUsage: async (request) =>
       deps.describeRuntimeUsage?.(request.language, request.envId) ?? {
         running: 0,
@@ -285,6 +297,38 @@ const createRuntimeSelectionWorkflows = (
         request.envId,
         request.authorized
       ),
+    uninstallManagedEnvironment: async (request) => {
+      if (!deps.uninstallManagedEnvironment) {
+        throw new Error('Managed Runtime uninstall is unavailable.')
+      }
+      const environmentName = request.language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+      const rawRuntimeId = managedRuntimeIdentity(
+        deps.runtimeRoot(),
+        request.language,
+        environmentName
+      ).runtimeId
+      const managed = (await discoverLanguageEnvs(request.language)).find(
+        (environment) => environment.provenance === 'app-managed'
+      )
+      if (managed) {
+        const usage = deps.describeRuntimeUsage?.(request.language, managed.envId) ?? {
+          running: 0,
+          idle: 0,
+          dormant: 0
+        }
+        if (usage.running > 0) {
+          throw new Error(
+            `RUNTIME_UNINSTALL_IN_USE: the ${request.language} Runtime is running work. Wait for it to finish before uninstalling.`
+          )
+        }
+        await deps.settingsService.setEnvironmentEnabled(request.language, managed.envId, false)
+      }
+      if (!managed || managed.envId !== rawRuntimeId) {
+        await deps.settingsService.setEnvironmentEnabled(request.language, rawRuntimeId, false)
+      }
+      await deps.uninstallManagedEnvironment(request.language)
+      invalidateDiscovery()
+    },
     register: async (request) => {
       const result = await deps.settingsService.addManualInterpreter(request.language, request.path)
       invalidateDiscovery()

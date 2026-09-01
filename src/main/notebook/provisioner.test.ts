@@ -102,6 +102,29 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
 }
 
 describe('DefaultRuntimeProvisioner.provisionPython', () => {
+  it('removes only the requested app-managed default and its readiness receipt', () => {
+    const root = makeRoot()
+    const managedPython = envPrefix(root, DEFAULT_PY_ENV)
+    const managedR = envPrefix(root, DEFAULT_R_ENV)
+    const named = envPrefix(root, 'analysis')
+    const userOwned = join(root, 'user-owned-python')
+    for (const directory of [managedPython, managedR, named, userOwned]) {
+      mkdirSync(directory, { recursive: true })
+      writeFileSync(join(directory, 'keep'), 'x')
+    }
+    writeReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
+    writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
+
+    new DefaultRuntimeProvisioner(makeDeps(root)).removeManagedEnvironment('python')
+
+    expect(existsSync(managedPython)).toBe(false)
+    expect(readReadyMarker(root)).toBeUndefined()
+    expect(existsSync(managedR)).toBe(true)
+    expect(readRReadyMarker(root)).toBeDefined()
+    expect(existsSync(named)).toBe(true)
+    expect(existsSync(userOwned)).toBe(true)
+  })
+
   it('maintains the package cache under the materialize journal after fetching the runtime', async () => {
     const root = makeRoot()
     const cachePath = join(root, 'pkgs')

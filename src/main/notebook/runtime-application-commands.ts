@@ -37,6 +37,7 @@ type RuntimeInstallAuthorizationRequest = Readonly<{
   authorized: boolean
 }>
 type RuntimeInterpreterRequest = Readonly<{ language: NotebookLanguage; path: string }>
+type RuntimeAgentEnvironmentCreationRequest = Readonly<{ enabled: boolean }>
 
 const runtimeApplicationCommands = Object.freeze({
   survey: defineApplicationCommand<'runtime:survey', readonly [], RuntimeSurvey[]>(
@@ -67,6 +68,11 @@ const runtimeApplicationCommands = Object.freeze({
     readonly [request: RuntimeLanguageRequest],
     RuntimeEnablement
   >('runtime:get-enablement'),
+  getAgentEnvironmentCreationEnabled: defineApplicationCommand<
+    'runtime:get-agent-environment-creation-enabled',
+    readonly [],
+    boolean
+  >('runtime:get-agent-environment-creation-enabled'),
   describeUsage: defineApplicationCommand<
     'runtime:describe-usage',
     readonly [request: RuntimeEnvironmentRequest],
@@ -82,6 +88,16 @@ const runtimeApplicationCommands = Object.freeze({
     readonly [request: RuntimeInstallAuthorizationRequest],
     RuntimeEnablement
   >('runtime:set-install-authorized'),
+  setAgentEnvironmentCreationEnabled: defineApplicationCommand<
+    'runtime:set-agent-environment-creation-enabled',
+    readonly [request: RuntimeAgentEnvironmentCreationRequest],
+    boolean
+  >('runtime:set-agent-environment-creation-enabled'),
+  uninstallManagedEnvironment: defineApplicationCommand<
+    'runtime:uninstall-managed-environment',
+    readonly [request: RuntimeLanguageRequest],
+    void
+  >('runtime:uninstall-managed-environment'),
   pickInterpreter: defineApplicationCommand<'runtime:pick-interpreter', readonly [], string | null>(
     'runtime:pick-interpreter'
   ),
@@ -99,16 +115,19 @@ const runtimeApplicationCommands = Object.freeze({
 
 const runtimeApplicationCommandGroup = defineApplicationCommandGroup('runtime', [
   runtimeApplicationCommands.describeUsage,
+  runtimeApplicationCommands.getAgentEnvironmentCreationEnabled,
   runtimeApplicationCommands.getEnablement,
   runtimeApplicationCommands.listEnvironments,
   runtimeApplicationCommands.listPackageCounts,
   runtimeApplicationCommands.listPackages,
   runtimeApplicationCommands.pickInterpreter,
   runtimeApplicationCommands.registerInterpreter,
+  runtimeApplicationCommands.setAgentEnvironmentCreationEnabled,
   runtimeApplicationCommands.setEnvironmentEnabled,
   runtimeApplicationCommands.setInstallAuthorized,
   runtimeApplicationCommands.setSelection,
   runtimeApplicationCommands.survey,
+  runtimeApplicationCommands.uninstallManagedEnvironment,
   runtimeApplicationCommands.unregisterInterpreter
 ] as const)
 
@@ -143,6 +162,8 @@ const registerRuntimeApplicationCommands = (
       },
       'runtime:get-enablement': (invocation) =>
         dependencies.workflows.getEnablement(invocation.args[0]),
+      'runtime:get-agent-environment-creation-enabled': () =>
+        dependencies.workflows.getAgentEnvironmentCreationEnabled(),
       'runtime:describe-usage': (invocation) =>
         dependencies.workflows.describeUsage(invocation.args[0]),
       'runtime:set-environment-enabled': (invocation) => {
@@ -152,6 +173,14 @@ const registerRuntimeApplicationCommands = (
       'runtime:set-install-authorized': (invocation) => {
         requireLocalCaller(invocation.callerContext)
         return dependencies.workflows.setInstallAuthorized(invocation.args[0])
+      },
+      'runtime:set-agent-environment-creation-enabled': (invocation) => {
+        requireLocalCaller(invocation.callerContext)
+        return dependencies.workflows.setAgentEnvironmentCreationEnabled(invocation.args[0])
+      },
+      'runtime:uninstall-managed-environment': (invocation) => {
+        requireLocalCaller(invocation.callerContext)
+        return dependencies.workflows.uninstallManagedEnvironment(invocation.args[0])
       },
       'runtime:pick-interpreter': async ({ callerContext }) => {
         requireLocalCaller(callerContext)

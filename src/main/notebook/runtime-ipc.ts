@@ -44,6 +44,10 @@ const registerRuntimeIpcHandlers = (
     workflows.getEnablement(request)
   )
 
+  ipcMainHandle('runtime:get-agent-environment-creation-enabled', () =>
+    workflows.getAgentEnvironmentCreationEnabled()
+  )
+
   ipcMainHandle(
     'runtime:describe-usage',
     (_event, request: { language: NotebookLanguage; envId: string }) =>
@@ -62,6 +66,17 @@ const registerRuntimeIpcHandlers = (
     'runtime:set-install-authorized',
     (_event, request: { language: NotebookLanguage; envId: string; authorized: boolean }) =>
       workflows.setInstallAuthorized(request)
+  )
+
+  ipcMainHandle(
+    'runtime:set-agent-environment-creation-enabled',
+    (_event, request: { enabled: boolean }) => workflows.setAgentEnvironmentCreationEnabled(request)
+  )
+
+  ipcMainHandle(
+    'runtime:uninstall-managed-environment',
+    (_event, request: { language: NotebookLanguage }) =>
+      workflows.uninstallManagedEnvironment(request)
   )
 
   ipcMainHandle('runtime:pick-interpreter', async (): Promise<string | null> => {

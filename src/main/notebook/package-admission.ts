@@ -5,7 +5,14 @@ import type { EnvironmentCaptureTarget } from './environment-state-tracker'
 import { boundedFailureDiagnostic } from './failure-diagnostic'
 import type { InstallRequest, InstallResult } from './package-manager'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix } from './runtime-paths'
+import {
+  DEFAULT_ENV_VERSION,
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  envPrefix,
+  pythonReady,
+  rReady
+} from './runtime-paths'
 import { runtimeTargetReceipt } from './runtime-target'
 import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import type {
@@ -25,6 +32,7 @@ type NotebookPackageAdmissionOwnerOptions = {
     language: NotebookLanguage,
     runtimeRoot: string
   ) => Promise<boolean>
+  isAgentEnvironmentCreationEnabled?: () => Promise<boolean>
   repairPolicy: Pick<
     NotebookRuntimeRepairPolicy,
     'blockKey' | 'markerKey' | 'registryKeys' | 'requirement' | 'runtimeId'
@@ -176,6 +184,24 @@ class NotebookPackageAdmissionOwner {
         `No enabled ${request.language} runtime: the app-managed default is disabled and no ` +
           'runtime is bound. Enable a runtime in Settings → Runtimes, or bind one with ' +
           'list_notebook_runtimes then notebook_bind_runtime, before installing packages.',
+        receipt
+      )
+    }
+
+    const defaultRuntimeMissing =
+      !binding &&
+      environmentName === defaultEnvironment(request.language) &&
+      (request.language === 'r'
+        ? !rReady(runtimeRoot, DEFAULT_ENV_VERSION)
+        : !pythonReady(runtimeRoot, DEFAULT_ENV_VERSION))
+    if (
+      defaultRuntimeMissing &&
+      this.options.isAgentEnvironmentCreationEnabled &&
+      !(await this.options.isAgentEnvironmentCreationEnabled())
+    ) {
+      return refusal(
+        'AGENT_ENVIRONMENT_CREATION_DISABLED: the Agent cannot prepare a missing Runtime ' +
+          'Environment because creation is disabled in Settings → Runtimes.',
         receipt
       )
     }

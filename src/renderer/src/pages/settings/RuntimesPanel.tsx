@@ -1,4 +1,4 @@
-import { CheckCircle2, FolderInput, Package, RefreshCw, Search, X } from 'lucide-react'
+import { CheckCircle2, FolderInput, Package, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { AlertDialog, Dialog } from 'radix-ui'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -60,6 +60,9 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const formatDate = useDateTimeFormat()
   const envs = useRuntimeSettingsStore((state) => state.envs)
   const enablement = useRuntimeSettingsStore((state) => state.enablement)
+  const agentEnvironmentCreationEnabled = useRuntimeSettingsStore(
+    (state) => state.agentEnvironmentCreationEnabled
+  )
   const loaded = useRuntimeSettingsStore((state) => state.loaded)
   const checkedAt = useRuntimeSettingsStore((state) => state.checkedAt)
   const busy = useRuntimeSettingsStore((state) => state.busy)
@@ -70,10 +73,19 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const setBusy = useRuntimeSettingsStore((state) => state.setBusy)
   const setError = useRuntimeSettingsStore((state) => state.setError)
   const setEnablement = useRuntimeSettingsStore((state) => state.setEnablement)
+  const setAgentEnvironmentCreationEnabled = useRuntimeSettingsStore(
+    (state) => state.setAgentEnvironmentCreationEnabled
+  )
   const updatePackageCount = useRuntimeSettingsStore((state) => state.updatePackageCount)
   const [managedOperations, setManagedOperations] = useState<
     Partial<Record<NotebookLanguage, boolean>>
   >({})
+  const [uninstallTarget, setUninstallTarget] = useState<{
+    language: NotebookLanguage
+    env: DiscoveredInterpreter
+  } | null>(null)
+  const dialogUninstallTarget = useRetainedDialogValue(uninstallTarget)
+  const [uninstalling, setUninstalling] = useState(false)
   // Set while confirming a disable that would affect live sessions (WS11): the runtime being disabled
   // plus its current usage, so the dialog can warn before revoking.
   const [disableImpact, setDisableImpact] = useState<{
@@ -244,6 +256,21 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     }
   }
 
+  const toggleAgentEnvironmentCreation = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const enabled = await window.api.runtime.setAgentEnvironmentCreationEnabled({
+        enabled: !agentEnvironmentCreationEnabled
+      })
+      setAgentEnvironmentCreationEnabled(enabled)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('Could not change Agent environment creation.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const addInterpreter = async (language: NotebookLanguage): Promise<void> => {
     setBusy(true)
     setError(null)
@@ -277,11 +304,36 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       await provisionEnv(language)
       // The provisioner updates files and registry metadata in the main process; reload both the
       // discovered environments and persisted enablement before rendering the completed card.
-      await recheckRuntimeSettings()
+      const snapshot = await recheckRuntimeSettings()
+      const managed = snapshot.envs[language].find(
+        (environment) => environment.provenance === 'app-managed'
+      )
+      if (managed) {
+        const next = await window.api.runtime.setEnvironmentEnabled(language, managed.envId, true)
+        setEnablement(language, next)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not refresh runtime readiness.'))
     } finally {
       setManagedOperations((current) => ({ ...current, [language]: false }))
+    }
+  }
+
+  const confirmUninstall = async (): Promise<void> => {
+    if (!uninstallTarget) return
+    const { language } = uninstallTarget
+    setUninstalling(true)
+    setBusy(true)
+    setError(null)
+    try {
+      await window.api.runtime.uninstallManagedEnvironment(language)
+      setUninstallTarget(null)
+      await recheckRuntimeSettings()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('Could not uninstall that runtime.'))
+    } finally {
+      setUninstalling(false)
+      setBusy(false)
     }
   }
 
@@ -356,28 +408,43 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           />
         </div>
 
-        {env.runnable ? (
-          <div className="mt-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="runtime-packages-button"
-              onClick={() => {
-                setPackages(null)
-                setPackagesError(null)
-                setPackagesFilter('')
-                setPackagesEnv(env)
-              }}
-            >
-              <Package aria-hidden="true" />
-              {t('Packages')}
-              {typeof packageCounts[env.envId] === 'number' ? (
-                <Badge variant="secondary" data-testid="runtime-packages-count">
-                  {packageCounts[env.envId]}
-                </Badge>
-              ) : null}
-            </Button>
+        {env.runnable || env.provenance === 'app-managed' ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {env.runnable ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="runtime-packages-button"
+                onClick={() => {
+                  setPackages(null)
+                  setPackagesError(null)
+                  setPackagesFilter('')
+                  setPackagesEnv(env)
+                }}
+              >
+                <Package aria-hidden="true" />
+                {t('Packages')}
+                {typeof packageCounts[env.envId] === 'number' ? (
+                  <Badge variant="secondary" data-testid="runtime-packages-count">
+                    {packageCounts[env.envId]}
+                  </Badge>
+                ) : null}
+              </Button>
+            ) : null}
+            {env.provenance === 'app-managed' ? (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                data-testid="runtime-uninstall-button"
+                disabled={busy || managedOperations[language] === true}
+                onClick={() => setUninstallTarget({ language, env })}
+              >
+                <Trash2 aria-hidden="true" />
+                {t('Uninstall')}
+              </Button>
+            ) : null}
           </div>
         ) : null}
 
@@ -460,6 +527,23 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             {error === 'Could not load runtimes.' ? t('Could not load runtimes.') : error}
           </p>
         )}
+        {!loading && envs !== null ? (
+          <SettingsRow
+            label={t('Allow Agent to create environments')}
+            description={t(
+              'Lets the Agent create named environments and prepare missing app-managed runtimes. Disable this to require setup from Settings.'
+            )}
+          >
+            <div className="flex justify-end">
+              <SettingsToggle
+                enabled={agentEnvironmentCreationEnabled}
+                onToggle={() => void toggleAgentEnvironmentCreation()}
+                disabled={busy}
+                aria-label={t('Allow Agent to create environments')}
+              />
+            </div>
+          </SettingsRow>
+        ) : null}
         {loading ? (
           <p className="text-sm text-muted-foreground">{t('Detecting runtimes…')}</p>
         ) : envs === null ? null : (
@@ -576,7 +660,9 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             <div
                               className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted"
                               role="progressbar"
-                              aria-label={t('Setting up {{language}} runtime', { language: label })}
+                              aria-label={t('Setting up {{language}} runtime', {
+                                language: label
+                              })}
                               aria-valuenow={Math.round(progress * 100)}
                               aria-valuemin={0}
                               aria-valuemax={100}
@@ -721,6 +807,69 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                   {t('Disable after current work')}
                 </Button>
               </AlertDialog.Action>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+
+      <AlertDialog.Root
+        open={uninstallTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !uninstalling) setUninstallTarget(null)
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            data-testid="runtime-uninstall-dialog"
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <div className="min-w-0">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Uninstall {{label}}?', { label: dialogUninstallTarget?.env.label ?? '' })}
+                </AlertDialog.Title>
+              </div>
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Close')}
+                  className={dialogCloseButtonClassName}
+                  disabled={uninstalling}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
+            </div>
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {t(
+                  'This removes the app-managed environment and closes its idle kernels. Running work must finish first. You can download it again later.'
+                )}
+              </AlertDialog.Description>
+            </div>
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
+                  disabled={uninstalling}
+                >
+                  {t('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={uninstalling}
+                onClick={() => void confirmUninstall()}
+              >
+                <Trash2 aria-hidden="true" />
+                {uninstalling ? t('Uninstalling…') : t('Uninstall')}
+              </Button>
             </div>
           </AlertDialog.Content>
         </AlertDialog.Portal>

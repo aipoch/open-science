@@ -289,6 +289,9 @@ export type StoredSettings = {
   // per-env package-install authorization, both keyed by envId (interpreter real path). Absent means
   // "use the provenance default" (app-managed/agent-created ON, user-own OFF). See RuntimeEnablement.
   notebookRuntimeEnablement?: Partial<Record<NotebookLanguage, RuntimeEnablement>>
+  // Global policy for Agent-created Notebook Runtime Environments. Absent in historical documents
+  // preserves the former behavior (allowed); only an explicit false blocks Agent-triggered creation.
+  agentEnvironmentCreationEnabled?: boolean
   // Per-language catalog of interpreter paths the user added manually via "Add interpreter…". These
   // are merged into environment discovery (probed + classified user-own) so a manually-picked
   // interpreter shows up as an enable-able runtime card even when it is not on PATH / in a conda root.

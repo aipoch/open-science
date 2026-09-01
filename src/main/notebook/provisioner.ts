@@ -1379,6 +1379,17 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     rmSync(envPrefix(this.deps.root, name, this.platform), { recursive: true, force: true })
   }
 
+  // Removes exactly one app-managed default plus its readiness receipt. Session teardown and the
+  // per-env mutation lock are owned by NotebookRuntimeService/EnvironmentManagementOwner; keeping
+  // this filesystem primitive narrow prevents renderer input from becoming deletion authority.
+  removeManagedEnvironment(language: NotebookLanguage): void {
+    const name = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+    rmSync(envPrefix(this.deps.root, name, this.platform), { recursive: true, force: true })
+    rmSync(language === 'r' ? rReadyMarkerPath(this.deps.root) : readyMarkerPath(this.deps.root), {
+      force: true
+    })
+  }
+
   // Keeps a healthy legacy R prefix additive, but replaces an invalid partial prefix from the lock.
   private async upgradeOrRebuildR(onProgress: (p: ProvisionProgress) => void): Promise<void> {
     const prefix = envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform)

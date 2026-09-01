@@ -192,6 +192,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // Stable, detached Settings capability used by runtime discovery and binding policy. Production
   // injects this named capability; isolated tests may omit it and receive a fail-safe empty policy.
   notebookRuntimeSettings?: Pick<NotebookRuntimeSettings, 'getSnapshot'>
+  // Read fresh at every Agent-triggered creation boundary. Historical settings resolve to true;
+  // a failed production read rejects creation rather than silently bypassing the user's policy.
+  getAgentEnvironmentCreationEnabled?: () => Promise<boolean>
   // Discovers the interpreters available for a language (app-managed + user-own). Injectable so tests
   // don't spawn real interpreters; production defaults to environment-discovery over the runtime root.
   discoverRuntimes?: (language: NotebookLanguage) => Promise<DiscoveredInterpreter[]>
@@ -359,6 +362,7 @@ class NotebookRuntimeService {
     ((binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>) | undefined
   private readonly runtimeEnablementResolver:
     ((language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>) | undefined
+  private readonly agentEnvironmentCreationEnabled: () => Promise<boolean>
   private readonly runtimeBindingOwner: NotebookRuntimeBindingOwner
   private readonly recoveryCoordinator: NotebookRecoveryCoordinator
   private readonly runtimeLogger: RuntimeDiagnosticLogger
@@ -398,6 +402,8 @@ class NotebookRuntimeService {
     const runtimeSettings = options.notebookRuntimeSettings ?? EMPTY_NOTEBOOK_RUNTIME_SETTINGS
     this.runtimeEnablementResolver = async (language) =>
       (await runtimeSettings.getSnapshot(language)).runtimeEnablement
+    this.agentEnvironmentCreationEnabled =
+      options.getAgentEnvironmentCreationEnabled ?? (() => Promise.resolve(true))
     this.runtimeBindingOwner = new NotebookRuntimeBindingOwner({
       dataRoot: options.dataRoot,
       repository: this.repository,
@@ -483,7 +489,8 @@ class NotebookRuntimeService {
       ensureRecovered: () => this.ensureRecovered(),
       assertPrefixRecoverable: (prefix) => this.assertPrefixRecoverable(prefix),
       environmentOperations: this.environmentOperations,
-      runtimeRepair: this.runtimeRepair
+      runtimeRepair: this.runtimeRepair,
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled
     })
     this.environmentStateTracker =
       options.environmentStateTracker ??
@@ -506,6 +513,7 @@ class NotebookRuntimeService {
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
       isDefaultEnvironmentDisabled: (language, candidateRuntimeRoot) =>
         this.isDefaultEnvDisabled(language, candidateRuntimeRoot),
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled,
       repairPolicy: this.repairPolicy,
       runtimeRepair: this.runtimeRepair,
       environmentOperations: this.environmentOperations,
@@ -534,6 +542,7 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       ensureRecovered: () => this.ensureRecovered(),
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled,
       repairPolicy: this.repairPolicy,
       platform: options.platform
     })
@@ -650,7 +659,10 @@ class NotebookRuntimeService {
     } catch {
       // Not on disk yet — keep the raw path.
     }
-    return enablement.enabled[envId] === false || enablement.enabled[interp] === false
+    const materializedChoice = enablement.enabled[envId]
+    return materializedChoice !== undefined
+      ? materializedChoice === false
+      : enablement.enabled[interp] === false
   }
 
   private defaultEnvNameFor(language: NotebookLanguage): string {
@@ -779,6 +791,77 @@ class NotebookRuntimeService {
     options: { force?: boolean } = {}
   ): Promise<void> {
     await this.environmentOperations.revokeRuntime(language, runtimeId, options)
+  }
+
+  async uninstallManagedEnvironment(language: NotebookLanguage): Promise<void> {
+    const environmentName = this.defaultEnvNameFor(language)
+    const initialTargets = Array.from(this.sessions.values()).filter((session) => {
+      const binding = session.runtimeBinding(language)
+      return (
+        binding?.source !== 'external' && this.resolveRunEnv(session, language) === environmentName
+      )
+    })
+    const targetProcessKey = dataProcessKey(language, environmentName)
+    if (initialTargets.some((session) => session.kernelStatus(targetProcessKey) === 'running')) {
+      throw new Error(
+        `RUNTIME_UNINSTALL_IN_USE: the ${language} Runtime is running work. Wait for it to finish before uninstalling.`
+      )
+    }
+
+    await this.environmentManagement.uninstallManagedEnvironment(
+      language,
+      async (lockedEnvironmentName) => {
+        const targets = Array.from(this.sessions.values()).filter((session) => {
+          const binding = session.runtimeBinding(language)
+          return (
+            binding?.source !== 'external' &&
+            this.resolveRunEnv(session, language) === lockedEnvironmentName
+          )
+        })
+        if (targets.some((session) => session.kernelStatus(targetProcessKey) === 'running')) {
+          throw new Error(
+            `RUNTIME_UNINSTALL_IN_USE: the ${language} Runtime is running work. Wait for it to finish before uninstalling.`
+          )
+        }
+
+        await this.runtimeBindingOwner.runWrites(
+          targets.map((session) => session.sessionId),
+          async () => {
+            for (const session of targets) {
+              const binding = session.runtimeBinding(language)
+              let bindingChanged = false
+              if (
+                binding?.source === 'managed' &&
+                binding.envName === lockedEnvironmentName &&
+                binding.reason !== 'missing'
+              ) {
+                bindingChanged = this.runtimeBindingOwner.markUnavailable(
+                  session,
+                  language,
+                  'missing'
+                )
+              }
+
+              const status = session.kernelStatus(targetProcessKey)
+              if (status !== undefined && status !== 'terminated') {
+                await session.terminateExecutor(
+                  language === 'r' ? 'r' : 'python',
+                  lockedEnvironmentName
+                )
+                await this.sessionLifecycle.clearPersistedKernelTermination(
+                  session,
+                  targetProcessKey
+                )
+                session.clearProcessState(targetProcessKey)
+              }
+              if (bindingChanged) await this.runtimeBindingOwner.persist(session)
+              if (bindingChanged || status !== undefined)
+                this.sessionLifecycle.notifyChanged(session)
+            }
+          }
+        )
+      }
+    )
   }
 
   // Clears the state of ONE (language, env) runtime after its kernel was torn down on switch: drops its

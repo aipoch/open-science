@@ -23,6 +23,7 @@ beforeEach(() => {
   useRuntimeSettingsStore.setState({
     envs: null,
     enablement: {},
+    agentEnvironmentCreationEnabled: true,
     loaded: false,
     checkedAt: null,
     busy: false,
@@ -37,6 +38,7 @@ describe('runtime settings store', () => {
     const runtime = {
       listEnvironments: vi.fn().mockResolvedValue({ python: [python], r: [] }),
       getEnablement: vi.fn().mockResolvedValue(enablement),
+      getAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
       listPackageCounts: vi.fn().mockResolvedValue({ [python.envId]: 42 })
     }
     setRuntimeApi(runtime)
@@ -59,6 +61,7 @@ describe('runtime settings store', () => {
     const runtime = {
       listEnvironments: vi.fn().mockResolvedValue({ python: [python], r: [] }),
       getEnablement: vi.fn().mockResolvedValue(enablement),
+      getAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(false),
       listPackageCounts: vi
         .fn()
         .mockResolvedValueOnce({ [python.envId]: 1 })
@@ -82,6 +85,7 @@ describe('runtime settings store', () => {
 
     expect(runtime.listEnvironments).toHaveBeenCalledTimes(2)
     expect(runtime.listPackageCounts).toHaveBeenCalledTimes(2)
+    expect(useRuntimeSettingsStore.getState().agentEnvironmentCreationEnabled).toBe(false)
     expect(useRuntimeSettingsStore.getState().checkedAt).toBeGreaterThan(1)
   })
 })

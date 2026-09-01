@@ -1341,6 +1341,8 @@ const createApplicationModules = async (
       projectId: DEFAULT_ARTIFACT_PROJECT_ID,
       repository: new NotebookRunRepository(resolveDataRoot()),
       getPackageMirror: () => settingsService.getPackageMirror(),
+      getAgentEnvironmentCreationEnabled: () =>
+        settingsService.getAgentEnvironmentCreationEnabled(),
       notebookRuntimeSettings,
       micromambaRunner,
       locale: app.getLocale(),
@@ -3329,6 +3331,8 @@ const createApplicationModules = async (
     // WS11: live-session usage of a runtime, for the disable-impact warning.
     describeRuntimeUsage: (language, envId) =>
       notebookService.describeRuntimeUsage(language, envId),
+    uninstallManagedEnvironment: (language) =>
+      notebookService.uninstallManagedEnvironment(language),
     prepareExternalPython: async (selection, root) => {
       const configuredMirror = await settingsService.getPackageMirror()
       const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())

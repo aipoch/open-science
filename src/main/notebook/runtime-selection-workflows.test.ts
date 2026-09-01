@@ -7,6 +7,8 @@ import type {
   RuntimeSelection
 } from '../../shared/notebook-runtime'
 import type { DiscoveredInterpreter } from './environment-discovery'
+import { DEFAULT_PY_ENV } from './runtime-paths'
+import { managedRuntimeIdentity } from './runtime-target'
 
 const discoveryState = vi.hoisted(() => ({
   python: [] as DiscoveredInterpreter[],
@@ -47,10 +49,12 @@ const fakeSettingsService = (): SettingsPort & {
   selections: Map<NotebookLanguage, RuntimeSelection>
   enablement: Map<NotebookLanguage, RuntimeEnablement>
   manual: Map<NotebookLanguage, string[]>
+  agentEnvironmentCreationEnabled: { value: boolean }
 } => {
   const selections = new Map<NotebookLanguage, RuntimeSelection>()
   const enablement = new Map<NotebookLanguage, RuntimeEnablement>()
   const manual = new Map<NotebookLanguage, string[]>()
+  const agentEnvironmentCreationEnabled = { value: true }
   const readEnablement = (language: NotebookLanguage): RuntimeEnablement =>
     enablement.get(language) ?? emptyEnablement()
 
@@ -58,6 +62,7 @@ const fakeSettingsService = (): SettingsPort & {
     selections,
     enablement,
     manual,
+    agentEnvironmentCreationEnabled,
     getRuntimeSelection: async (language) => selections.get(language),
     setRuntimeSelection: async (language, selection) => {
       if (selection === null) {
@@ -85,6 +90,11 @@ const fakeSettingsService = (): SettingsPort & {
       }
       enablement.set(language, next)
       return next
+    },
+    getAgentEnvironmentCreationEnabled: async () => agentEnvironmentCreationEnabled.value,
+    setAgentEnvironmentCreationEnabled: async (enabled) => {
+      agentEnvironmentCreationEnabled.value = enabled
+      return enabled
     },
     getManualInterpreters: async (language) => manual.get(language) ?? [],
     addManualInterpreter: async (language, path) => {
@@ -272,6 +282,89 @@ describe('runtime selection workflows', () => {
 
     expect(result.enabled['/user/python']).toBe(true)
     expect(onRuntimeDisabled).not.toHaveBeenCalled()
+  })
+
+  it('persists the Agent environment-creation policy', async () => {
+    const settingsService = fakeSettingsService()
+    const workflows = createRuntimeSelectionWorkflows({
+      settingsService,
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry()
+    })
+
+    await expect(workflows.getAgentEnvironmentCreationEnabled()).resolves.toBe(true)
+    await expect(workflows.setAgentEnvironmentCreationEnabled({ enabled: false })).resolves.toBe(
+      false
+    )
+    await expect(workflows.getAgentEnvironmentCreationEnabled()).resolves.toBe(false)
+  })
+
+  it('uninstalls only the discovered app-managed default and leaves it disabled', async () => {
+    const settingsService = fakeSettingsService()
+    const materializedRuntimeId = '/data/runtime/envs/default-python-3.13/bin/python'
+    const rawRuntimeId = managedRuntimeIdentity('/data/runtime', 'python', DEFAULT_PY_ENV).runtimeId
+    discoveryState.python = [
+      {
+        language: 'python',
+        provenance: 'app-managed',
+        envId: materializedRuntimeId,
+        interpreterPath: materializedRuntimeId,
+        label: 'Managed Python',
+        runnable: true
+      },
+      {
+        language: 'python',
+        provenance: 'user-own',
+        envId: '/usr/bin/python3',
+        interpreterPath: '/usr/bin/python3',
+        label: 'System Python',
+        runnable: true
+      }
+    ]
+    const uninstallManagedEnvironment = vi.fn(async () => undefined)
+    const workflows = createRuntimeSelectionWorkflows({
+      settingsService,
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry(),
+      uninstallManagedEnvironment
+    })
+
+    await workflows.uninstallManagedEnvironment({ language: 'python' })
+
+    expect(uninstallManagedEnvironment).toHaveBeenCalledWith('python')
+    expect(settingsService.enablement.get('python')?.enabled).toMatchObject({
+      [materializedRuntimeId]: false,
+      [rawRuntimeId]: false
+    })
+    expect(settingsService.enablement.get('python')?.enabled['/usr/bin/python3']).toBeUndefined()
+  })
+
+  it('refuses managed uninstall while work is running before changing persisted state', async () => {
+    const settingsService = fakeSettingsService()
+    discoveryState.python = [
+      {
+        language: 'python',
+        provenance: 'app-managed',
+        envId: '/managed/python',
+        interpreterPath: '/managed/python',
+        label: 'Managed Python',
+        runnable: true
+      }
+    ]
+    const uninstallManagedEnvironment = vi.fn(async () => undefined)
+    const workflows = createRuntimeSelectionWorkflows({
+      settingsService,
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry(),
+      describeRuntimeUsage: () => ({ running: 1, idle: 0, dormant: 0 }),
+      uninstallManagedEnvironment
+    })
+
+    await expect(workflows.uninstallManagedEnvironment({ language: 'python' })).rejects.toThrow(
+      'RUNTIME_UNINSTALL_IN_USE'
+    )
+    expect(settingsService.enablement.has('python')).toBe(false)
+    expect(uninstallManagedEnvironment).not.toHaveBeenCalled()
   })
 
   it('discovers both languages from one manual-catalog and runtime-root snapshot', async () => {

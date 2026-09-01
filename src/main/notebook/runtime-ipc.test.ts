@@ -73,6 +73,7 @@ const fakeSettingsService = (): SettingsPort & {
   const selections = new Map<NotebookLanguage, RuntimeSelection>()
   const enablement = new Map<NotebookLanguage, RuntimeEnablement>()
   const manual = new Map<NotebookLanguage, string[]>()
+  let agentEnvironmentCreationEnabled = true
   const readEnablement = (language: NotebookLanguage): RuntimeEnablement =>
     enablement.get(language) ?? { enabled: {}, installAuthorized: {} }
 
@@ -107,6 +108,11 @@ const fakeSettingsService = (): SettingsPort & {
       }
       enablement.set(language, next)
       return next
+    },
+    getAgentEnvironmentCreationEnabled: async () => agentEnvironmentCreationEnabled,
+    setAgentEnvironmentCreationEnabled: async (enabled) => {
+      agentEnvironmentCreationEnabled = enabled
+      return enabled
     },
     getManualInterpreters: async (language) => manual.get(language) ?? [],
     addManualInterpreter: async (language, path) => {
@@ -157,19 +163,23 @@ describe('runtime IPC adapter', () => {
       'runtime:list-package-counts',
       'runtime:set-selection',
       'runtime:get-enablement',
+      'runtime:get-agent-environment-creation-enabled',
       'runtime:describe-usage',
       'runtime:set-environment-enabled',
       'runtime:set-install-authorized',
+      'runtime:set-agent-environment-creation-enabled',
+      'runtime:uninstall-managed-environment',
       'runtime:pick-interpreter',
       'runtime:register-interpreter',
       'runtime:unregister-interpreter'
     ])
   })
 
-  it('routes all nine application commands through their existing payloads', async () => {
+  it('routes Runtime application commands through their existing payloads', async () => {
     const settingsService = fakeSettingsService()
     const usage = { running: 1, idle: 2, dormant: 3 }
     const onRuntimeDisabled = vi.fn().mockResolvedValue(undefined)
+    const uninstallManagedEnvironment = vi.fn().mockResolvedValue(undefined)
     discoveryState.python = [
       {
         language: 'python',
@@ -184,7 +194,8 @@ describe('runtime IPC adapter', () => {
       fakeDeps({
         settingsService,
         describeRuntimeUsage: () => usage,
-        onRuntimeDisabled
+        onRuntimeDisabled,
+        uninstallManagedEnvironment
       })
     )
 
@@ -200,6 +211,10 @@ describe('runtime IPC adapter', () => {
       enabled: {},
       installAuthorized: {}
     })
+    await expect(invoke('runtime:get-agent-environment-creation-enabled')).resolves.toBe(true)
+    await expect(
+      invoke('runtime:set-agent-environment-creation-enabled', { enabled: false })
+    ).resolves.toBe(false)
     await expect(
       invoke('runtime:describe-usage', { language: 'python', envId: '/usr/bin/python3' })
     ).resolves.toBe(usage)
@@ -219,6 +234,10 @@ describe('runtime IPC adapter', () => {
         authorized: true
       })
     ).resolves.toMatchObject({ installAuthorized: { '/usr/bin/python3': true } })
+    await expect(
+      invoke('runtime:uninstall-managed-environment', { language: 'python' })
+    ).resolves.toBeUndefined()
+    expect(uninstallManagedEnvironment).toHaveBeenCalledWith('python')
     await expect(
       invoke('runtime:register-interpreter', {
         language: 'python',

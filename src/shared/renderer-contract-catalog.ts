@@ -1388,6 +1388,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'runtime.describeUsage': callable<
     (language: NotebookLanguage, envId: string) => Promise<RuntimeUsage>
   >()('runtime', ['runtime:describe-usage', WEB, RUNTIME_LANGUAGE_ENV]),
+  'runtime.getAgentEnvironmentCreationEnabled': callable<() => Promise<boolean>>()('runtime', [
+    'runtime:get-agent-environment-creation-enabled',
+    WEB
+  ]),
   'runtime.getEnablement': callable<(language: NotebookLanguage) => Promise<RuntimeEnablement>>()(
     'runtime',
     ['runtime:get-enablement', WEB, RUNTIME_LANGUAGE]
@@ -1408,6 +1412,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'runtime.registerInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
   >()('runtime', ['runtime:register-interpreter', LOCAL, RUNTIME_INTERPRETER]),
+  'runtime.setAgentEnvironmentCreationEnabled': callable<
+    (request: { enabled: boolean }) => Promise<boolean>
+  >()('runtime', ['runtime:set-agent-environment-creation-enabled', LOCAL]),
   'runtime.setEnvironmentEnabled': callable<
     (
       language: NotebookLanguage,
@@ -1423,6 +1430,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (language: NotebookLanguage, selection: RuntimeSelection | null) => Promise<RuntimeSurvey>
   >()('runtime', ['runtime:set-selection', LOCAL, RUNTIME_SELECTION]),
   'runtime.survey': callable<() => Promise<RuntimeSurvey[]>>()('runtime', ['runtime:survey']),
+  'runtime.uninstallManagedEnvironment': callable<(language: NotebookLanguage) => Promise<void>>()(
+    'runtime',
+    ['runtime:uninstall-managed-environment', LOCAL, RUNTIME_LANGUAGE]
+  ),
   'runtime.unregisterInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
   >()('runtime', ['runtime:unregister-interpreter', LOCAL, RUNTIME_INTERPRETER]),
