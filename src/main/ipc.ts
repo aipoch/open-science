@@ -3050,7 +3050,7 @@ const createApplicationModules = async (
     notebook: notebookService,
     sideChat: {
       shutdown: () => sideChatRuntime.shutdown(),
-      suspendAll: () => sideChatRuntime.suspendAll()
+      suspendAll: (options) => sideChatRuntime.suspendAll(options)
     },
     log: createLogger('shutdown')
   })
@@ -3075,7 +3075,10 @@ const createApplicationModules = async (
     createDurableInstallGate(
       createDataRootResearchSafeInstallGate(
         detectResearchBlockers,
-        () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
+        () =>
+          shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
+            holdSideChatAdmission: true
+          }),
         confirmedInterruption
       ),
       async () => {
@@ -3597,14 +3600,24 @@ const createApplicationModules = async (
     acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
     notifyDataRootHandoffAborted: () => {
       try {
-        notifyRendererDurabilityAborted()
+        sideChatRuntime.resumeAfterHandoff()
       } finally {
-        webSessionPersistenceFlush.notifyAborted()
+        try {
+          notifyRendererDurabilityAborted()
+        } finally {
+          webSessionPersistenceFlush.notifyAborted()
+        }
       }
     },
     prepareDataRootHandoff: async (target, confirmedInterruption) => {
-      const readiness = await durableDataRootHandoffGate(target, confirmedInterruption)
-      return readiness.completed && readiness.reaped
+      let prepared = false
+      try {
+        const readiness = await durableDataRootHandoffGate(target, confirmedInterruption)
+        prepared = readiness.completed && readiness.reaped
+        return prepared
+      } finally {
+        if (!prepared) sideChatRuntime.resumeAfterHandoff()
+      }
     },
     cleanupJournal: dataRootCleanupJournal
   })

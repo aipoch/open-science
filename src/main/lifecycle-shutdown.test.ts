@@ -159,6 +159,25 @@ describe('BackendShutdownCoordinator', () => {
     expect(suspendAll).toHaveBeenCalledOnce()
   })
 
+  it('holds Side Chat admission for a data-root handoff', async () => {
+    const suspendAll = vi.fn(async () => undefined)
+    const deps = makeDeps({
+      sideChat: {
+        shutdown: vi.fn(async () => undefined),
+        suspendAll
+      }
+    })
+    const coordinator = new BackendShutdownCoordinator(deps)
+
+    await expect(
+      coordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
+        holdSideChatAdmission: true
+      })
+    ).resolves.toEqual({ completed: true, reaped: true })
+
+    expect(suspendAll).toHaveBeenCalledWith({ holdAdmission: true })
+  })
+
   it('reports reaped:false when a tree kill was degraded', async () => {
     const deps = makeDeps({
       notebook: {

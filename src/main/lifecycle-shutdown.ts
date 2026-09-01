@@ -59,7 +59,7 @@ export type BackendShutdownDeps = QuitShutdownDeps & {
   sideChat: {
     shutdown: () => Promise<void>
     // Reusable Side Chat suspension for handoffs that may leave the current app running.
-    suspendAll: () => Promise<void>
+    suspendAll: (options?: { holdAdmission?: boolean }) => Promise<void>
   }
 }
 
@@ -195,11 +195,14 @@ export class BackendShutdownCoordinator {
     )
   }
 
-  runForUpdateGate(budgetMs: number = UPDATE_SHUTDOWN_BUDGET_MS): Promise<ShutdownOutcome> {
+  runForUpdateGate(
+    budgetMs: number = UPDATE_SHUTDOWN_BUDGET_MS,
+    options: { holdSideChatAdmission?: boolean } = {}
+  ): Promise<ShutdownOutcome> {
     return runBounded(
       withSideChatShutdown(
         this.deps.runtime.shutdownForUpdateGate(),
-        this.deps.sideChat.suspendAll()
+        this.deps.sideChat.suspendAll({ holdAdmission: options.holdSideChatAdmission === true })
       ),
       this.deps.notebook.shutdownAll(),
       budgetMs,

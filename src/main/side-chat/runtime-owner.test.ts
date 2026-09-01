@@ -1778,7 +1778,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(String(sent[1]?.historyPreamble)).not.toContain('Failed follow-up')
   })
 
-  it('keeps durable state and remains reusable when a handoff suspends a turn', async () => {
+  it('keeps durable state and blocks prompt admission until a handoff is released', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-'))
     const persistence = createPersistence()
     let runtimeOptions: AcpRuntimeOptions | undefined
@@ -1829,7 +1829,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       projectId: 'project-1',
       text: 'Still running'
     })
-    await owner.suspendAll()
+    await owner.suspendAll({ holdAdmission: true })
 
     expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'provider-shutdown' })
     expect(deleteSession).not.toHaveBeenCalled()
@@ -1855,7 +1855,17 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     ).resolves.toBeDefined()
 
     await expect(
+      owner.send({ sideSessionId: started.sideSessionId, text: 'Blocked during handoff' })
+    ).rejects.toThrow('Side chat is shutting down.')
+
+    owner.resumeAfterHandoff()
+    await expect(
       owner.send({ sideSessionId: started.sideSessionId, text: 'Continue after handoff' })
+    ).resolves.toBeUndefined()
+
+    await owner.suspendAll()
+    await expect(
+      owner.send({ sideSessionId: started.sideSessionId, text: 'Continue after ordinary suspension' })
     ).resolves.toBeUndefined()
     await owner.close({ sideSessionId: started.sideSessionId })
   })

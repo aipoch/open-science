@@ -289,6 +289,9 @@ class SideChatRuntimeOwner {
   private revision = 0
   private shuttingDown = false
   private suspension: Promise<void> | undefined
+  // Data-root handoffs keep admission closed after the drain completes; the existing abort path
+  // releases it only when the old root is authoritative again.
+  private handoffAdmissionHeld = false
 
   constructor(private readonly options: SideChatRuntimeOwnerOptions) {
     this.root = join(options.configRoot, 'runtime-support', 'side-chat')
@@ -371,7 +374,7 @@ class SideChatRuntimeOwner {
   }
 
   async start(request: SideChatRuntimeStartRequest): Promise<SideChatStartResponse> {
-    if (this.shuttingDown || this.suspension) throw new Error('Side chat is shutting down.')
+    if (this.isAdmissionSuspended()) throw new Error('Side chat is shutting down.')
     if (this.invalidatedParents.has(request.parentSessionId)) {
       throw new Error('The parent Session is unavailable.')
     }
@@ -748,15 +751,23 @@ class SideChatRuntimeOwner {
     }
   }
 
-  suspendAll(): Promise<void> {
+  suspendAll(options: { holdAdmission?: boolean } = {}): Promise<void> {
+    if (options.holdAdmission) this.handoffAdmissionHeld = true
     if (this.suspension) return this.suspension
     const suspension = this.drainActive()
     this.suspension = suspension
     const clear = (): void => {
       if (this.suspension === suspension) this.suspension = undefined
     }
-    void suspension.then(clear, clear)
+    void suspension.then(clear, () => {
+      clear()
+      this.handoffAdmissionHeld = false
+    })
     return suspension
+  }
+
+  resumeAfterHandoff(): void {
+    if (!this.shuttingDown) this.handoffAdmissionHeld = false
   }
 
   shutdown(): Promise<void> {
@@ -792,7 +803,7 @@ class SideChatRuntimeOwner {
   ): Promise<void> {
     const text = requirePromptText(request.text)
     const active = await this.ensureActive(request.sideSessionId)
-    if (this.shuttingDown || this.suspension) throw new Error('Side chat is shutting down.')
+    if (this.isAdmissionSuspended()) throw new Error('Side chat is shutting down.')
     if (active.turn || active.running) throw new Error('A Side chat prompt is already running.')
     await this.flushQueuedPersistence(active)
     let historyPreamble = request.historyPreamble
@@ -901,7 +912,7 @@ class SideChatRuntimeOwner {
   }
 
   private async activateDormant(dormant: DormantSideChat): Promise<ActiveSideChat> {
-    if (this.shuttingDown || this.suspension) throw new Error('Side chat is shutting down.')
+    if (this.isAdmissionSuspended()) throw new Error('Side chat is shutting down.')
     const sideChat = dormant.sideChat
     const jobRoot = join(this.root, sideChat.id)
     const cwd = join(jobRoot, 'cwd')
@@ -1083,6 +1094,10 @@ class SideChatRuntimeOwner {
       this.dormantByParent.set(dormant.parentSessionId, dormant)
       throw error
     }
+  }
+
+  private isAdmissionSuspended(): boolean {
+    return this.shuttingDown || Boolean(this.suspension) || this.handoffAdmissionHeld
   }
 
   private applyProviderIdentity(
