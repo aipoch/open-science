@@ -193,6 +193,45 @@ describe('NotebookEnvironmentOperations', () => {
     expect(provisionPython).not.toHaveBeenCalled()
   })
 
+  it('drains admitted default provisioning and rejects new provisioning before removal', async () => {
+    const { owner } = await createOwner()
+    const order: string[] = []
+    let releaseProvision!: () => void
+    owner.setDefaultEnvProvisioner({
+      provisionPython: () =>
+        new Promise<void>((resolve) => {
+          order.push('provision')
+          releaseProvision = resolve
+        }),
+      provisionR: async () => undefined
+    })
+    const input = {
+      language: 'python' as const,
+      environment: 'default-python',
+      runtimeRoot: join(storageRoot!, 'runtime'),
+      sessionId: 'session-1',
+      ensureRecovered: async () => undefined,
+      assertRecoverable: () => undefined
+    }
+
+    const provision = owner.ensureDefaultEnvironmentReady(input)
+    await vi.waitFor(() => expect(releaseProvision).toBeTypeOf('function'))
+    const removal = owner.withRemovalBarrier('default-python', () =>
+      owner.runRemoval('default-python', async () => {
+        order.push('remove')
+      })
+    )
+
+    await expect(owner.ensureDefaultEnvironmentReady(input)).rejects.toThrow(
+      'RUNTIME_ENVIRONMENT_REMOVING'
+    )
+    expect(order).toEqual(['provision'])
+
+    releaseProvision()
+    await Promise.all([provision, removal])
+    expect(order).toEqual(['provision', 'remove'])
+  })
+
   it('marks a binding unavailable before tracking its background revocation drain', async () => {
     let releaseDrain!: () => void
     const terminations: string[] = []

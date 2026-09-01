@@ -188,9 +188,10 @@ class NotebookPackageAdmissionOwner {
       )
     }
 
+    const targetsManagedDefault =
+      binding?.source !== 'external' && environmentName === defaultEnvironment(request.language)
     const defaultRuntimeMissing =
-      !binding &&
-      environmentName === defaultEnvironment(request.language) &&
+      targetsManagedDefault &&
       (request.language === 'r'
         ? !rReady(runtimeRoot, DEFAULT_ENV_VERSION)
         : !pythonReady(runtimeRoot, DEFAULT_ENV_VERSION))

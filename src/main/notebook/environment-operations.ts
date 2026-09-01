@@ -147,6 +147,9 @@ export class NotebookEnvironmentOperations {
   private readonly revocationDrains = new Set<Promise<void>>()
   private readonly repairBlocks = new Set<string>()
   private readonly removals = new Set<string>()
+  // A separate reservation avoids holding a shared env lease while the provisioner later takes its
+  // exclusive prefix lease. Closing the removal barrier makes this set finite before it is drained.
+  private readonly provisionDrains = new Map<string, Set<Promise<void>>>()
   private provisioner: DefaultEnvProvisioner | undefined
   private reportProvisionProgress: (progress: ProvisionProgress) => void = () => undefined
   private progress: ProvisionProgress | undefined
@@ -190,7 +193,7 @@ export class NotebookEnvironmentOperations {
       this.progress = scoped
       this.reportProvisionProgress(scoped)
     }
-    await this.track('provision', input.environment, async () => {
+    await this.runProvision(input.environment, async () => {
       try {
         if (input.language === 'r') await provisioner.provisionR(report)
         else await provisioner.provisionPython(report)
@@ -232,6 +235,8 @@ export class NotebookEnvironmentOperations {
     if (this.removals.has(environment)) throw this.removalInProgress(environment)
     this.removals.add(environment)
     try {
+      const admittedProvisions = this.provisionDrains.get(environment)
+      if (admittedProvisions) await Promise.all(admittedProvisions)
       return await operation()
     } finally {
       this.removals.delete(environment)
@@ -460,6 +465,24 @@ export class NotebookEnvironmentOperations {
     } finally {
       lease.release()
     }
+  }
+
+  private runProvision<T>(environment: string, operation: () => Promise<T>): Promise<T> {
+    if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
+
+    let resolveDrain!: () => void
+    const drain = new Promise<void>((resolve) => {
+      resolveDrain = resolve
+    })
+    const drains = this.provisionDrains.get(environment) ?? new Set<Promise<void>>()
+    drains.add(drain)
+    this.provisionDrains.set(environment, drains)
+
+    return this.track('provision', environment, operation).finally(() => {
+      drains.delete(drain)
+      if (drains.size === 0) this.provisionDrains.delete(environment)
+      resolveDrain()
+    })
   }
 
   private async track<T>(
