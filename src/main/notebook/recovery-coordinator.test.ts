@@ -7,11 +7,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import {
+  addRepairRequired,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  managedRepairRegistryKey,
   pythonBin,
   rBin,
+  readRepairRequired,
   readyMarkerPath
 } from './runtime-paths'
 
@@ -74,6 +77,39 @@ describe('NotebookRecoveryCoordinator', () => {
     expect(existsSync(prefix)).toBe(false)
     expect(existsSync(marker)).toBe(false)
     expect(existsSync(preserved)).toBe(true)
+    expect(await journal.pending()).toEqual([])
+  })
+
+  it('clears durable managed repair aliases before completing recovered removal', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const marker = readyMarkerPath(runtimeRoot)
+    await Promise.all([
+      mkdir(prefix, { recursive: true }),
+      mkdir(dirname(marker), { recursive: true })
+    ])
+    await writeFile(marker, 'ready')
+    for (const repairKey of [
+      DEFAULT_PY_ENV,
+      managedRepairRegistryKey(DEFAULT_PY_ENV, 'python'),
+      managedRepairRegistryKey(DEFAULT_PY_ENV, 'r'),
+      pythonBin(prefix)
+    ]) {
+      addRepairRequired(runtimeRoot, repairKey)
+    }
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'remove-repair-aliases-after-crash',
+      kind: 'remove',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'remove-python',
+      startedAt: 100,
+      targetPaths: [prefix, marker]
+    })
+
+    await new NotebookRecoveryCoordinator(runtimeRoot).recover()
+
+    expect(readRepairRequired(runtimeRoot)).toEqual([])
     expect(await journal.pending()).toEqual([])
   })
 

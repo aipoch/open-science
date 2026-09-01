@@ -23,7 +23,16 @@ import {
   assertManagedRuntimeRemovalOwnership,
   parseManagedRuntimeRemovalTargets
 } from './managed-runtime-removal'
-import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
+import {
+  addRepairRequired,
+  clearRepairRequired,
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  managedRepairRegistryKey,
+  pythonBin,
+  rBin,
+  readRepairRequired
+} from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 
 const log = createLogger('notebook:recovery')
@@ -313,6 +322,17 @@ export class NotebookRecoveryCoordinator {
         )
         assertManagedRuntimeRemovalOwnership(this.runtimeRoot, removal)
         for (const target of removal.targets) await rm(target, { recursive: true, force: true })
+        const repairKeys = new Set([
+          removal.environmentName,
+          managedRepairRegistryKey(removal.environmentName, 'python'),
+          managedRepairRegistryKey(removal.environmentName, 'r')
+        ])
+        for (const runtimeId of readRepairRequired(this.runtimeRoot)) {
+          if (removal.prefixes.some((prefix) => isPathInside(prefix, runtimeId))) {
+            repairKeys.add(runtimeId)
+          }
+        }
+        for (const repairKey of repairKeys) clearRepairRequired(this.runtimeRoot, repairKey)
       },
       blockUnknownChildTarget: async (record) => {
         if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)

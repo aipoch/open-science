@@ -336,6 +336,58 @@ describe('NotebookEnvironmentOperations', () => {
     expect(order).toEqual(['execution', 'remove'])
   })
 
+  it('rejects an execution queued before managed removal closes admission', async () => {
+    const { owner } = await createOwner()
+    const order: string[] = []
+    let releaseMutation!: () => void
+    const mutation = owner.runMutation(
+      'default-python',
+      () =>
+        new Promise<void>((resolve) => {
+          order.push('mutation')
+          releaseMutation = resolve
+        })
+    )
+    await vi.waitFor(() => expect(releaseMutation).toBeTypeOf('function'))
+
+    const execution = owner.runShared('execution', 'default-python', async () => {
+      order.push('execution')
+    })
+    const executionOutcome = expect(execution).rejects.toThrow('RUNTIME_ENVIRONMENT_REMOVING')
+    const removal = owner.runRemoval('default-python', () =>
+      owner.runMutation('default-python', async () => {
+        order.push('remove')
+      })
+    )
+
+    releaseMutation()
+    await Promise.all([mutation, executionOutcome, removal])
+    expect(order).toEqual(['mutation', 'remove'])
+  })
+
+  it('rejects new shared work while managed removal is active', async () => {
+    const { owner } = await createOwner()
+    let releaseRemoval!: () => void
+    const removal = owner.runRemoval(
+      'default-python',
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRemoval = resolve
+        })
+    )
+    await vi.waitFor(() => expect(releaseRemoval).toBeTypeOf('function'))
+
+    await expect(
+      owner.runShared('execution', 'default-python', async () => undefined)
+    ).rejects.toThrow('RUNTIME_ENVIRONMENT_REMOVING')
+    await expect(
+      owner.runShared('inspection', 'default-python', async () => undefined)
+    ).rejects.toThrow('RUNTIME_ENVIRONMENT_REMOVING')
+
+    releaseRemoval()
+    await removal
+  })
+
   it('keeps restart, repair, recovery, and redacted diagnostics in one snapshot', async () => {
     const { owner } = await createOwner()
 

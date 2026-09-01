@@ -185,10 +185,11 @@ const serializeProvisioner = (provisioner: RuntimeProvisioner): RuntimeProvision
       ? {
           removeManagedEnvironment: (
             language: NotebookLanguage,
-            beforeRemove?: () => Promise<void>
+            beforeRemove?: () => Promise<void>,
+            afterRemove?: () => Promise<void> | void
           ) =>
             serializeLanguage(language, () =>
-              provisioner.removeManagedEnvironment!(language, beforeRemove)
+              provisioner.removeManagedEnvironment!(language, beforeRemove, afterRemove)
             )
         }
       : {}),

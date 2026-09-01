@@ -209,7 +209,11 @@ export class NotebookEnvironmentOperations {
     environment: string,
     operation: () => Promise<T>
   ): Promise<T> {
-    return this.withLease(kind, environment, 'shared', operation)
+    if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
+    return this.withLease(kind, environment, 'shared', async () => {
+      if (this.removals.has(environment)) throw this.removalInProgress(environment)
+      return operation()
+    })
   }
 
   runMutation<T>(environment: string, operation: () => Promise<T>): Promise<T> {

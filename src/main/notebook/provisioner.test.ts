@@ -116,6 +116,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
 
     const order: string[] = []
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(root))
     await new DefaultRuntimeProvisioner(
       makeDeps(root, {
         withPrefixLock: async (environment, operation) => {
@@ -125,10 +126,18 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
           return result
         }
       })
-    ).removeManagedEnvironment('python', async () => {
-      order.push('sessions')
-      expect(existsSync(managedPython)).toBe(true)
-    })
+    ).removeManagedEnvironment(
+      'python',
+      async () => {
+        order.push('sessions')
+        expect(existsSync(managedPython)).toBe(true)
+      },
+      async () => {
+        order.push('repair')
+        expect(existsSync(managedPython)).toBe(false)
+        expect(await journal.pending()).toHaveLength(1)
+      }
+    )
 
     expect(existsSync(managedPython)).toBe(false)
     expect(readReadyMarker(root)).toBeUndefined()
@@ -136,8 +145,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     expect(readRReadyMarker(root)).toBeDefined()
     expect(existsSync(named)).toBe(true)
     expect(existsSync(userOwned)).toBe(true)
-    expect(await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).toEqual([])
-    expect(order).toEqual(['lock:default-python', 'sessions', 'unlock'])
+    expect(await journal.pending()).toEqual([])
+    expect(order).toEqual(['lock:default-python', 'sessions', 'repair', 'unlock'])
   })
 
   it('removes both validated Windows default layouts when short and legacy prefixes coexist', async () => {

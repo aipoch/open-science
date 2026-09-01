@@ -96,9 +96,10 @@ describe('serializeProvisioner', () => {
             releaseStartup = resolve
           })
       ),
-      removeManagedEnvironment: vi.fn(async (_language, beforeRemove) => {
+      removeManagedEnvironment: vi.fn(async (_language, beforeRemove, afterRemove) => {
         await beforeRemove?.()
         order.push('remove')
+        await afterRemove?.()
       })
     })
     const provisioner = serializeProvisioner(base)

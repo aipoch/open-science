@@ -330,7 +330,8 @@ export interface RuntimeProvisioner {
   // this hook through the same serialized mutation queue as startup, UI setup, and lazy provisioning.
   removeManagedEnvironment?(
     language: NotebookLanguage,
-    beforeRemove?: () => Promise<void>
+    beforeRemove?: () => Promise<void>,
+    afterRemove?: () => Promise<void> | void
   ): Promise<void>
   // `force` = explicit user recovery: clears a recovery quarantine (block + retained journal record +
   // sidecar) before rebuilding, so a stuck/uncertain runtime can be reset. Auto/startup repair omits it
@@ -1404,7 +1405,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   // the lock is held without giving renderer input filesystem deletion authority.
   async removeManagedEnvironment(
     language: NotebookLanguage,
-    beforeRemove?: () => Promise<void>
+    beforeRemove?: () => Promise<void>,
+    afterRemove?: () => Promise<void> | void
   ): Promise<void> {
     const name = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
     await this.withEnvPrefixLock(name, async () => {
@@ -1423,6 +1425,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       })
       try {
         for (const target of removal.targets) rmSync(target, { recursive: true, force: true })
+        await afterRemove?.()
         await journal.complete(operationId)
       } catch (error) {
         // Keep the durable intent for startup retry and prevent this provisioner from recreating the

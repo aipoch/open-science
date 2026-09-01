@@ -6,6 +6,7 @@ import {
   NotebookEnvironmentManagementOwner,
   type NotebookEnvironmentManager
 } from './environment-management'
+import { managedRuntimeRemovalTargets } from './managed-runtime-removal'
 import { envPrefix, pythonBin } from './runtime-paths'
 
 type OwnerOptions = ConstructorParameters<typeof NotebookEnvironmentManagementOwner>[0]
@@ -21,7 +22,10 @@ const manager = (): NotebookEnvironmentManager => ({
   })),
   listEnvironments: vi.fn(() => []),
   removeEnvironment: vi.fn(() => []),
-  removeManagedEnvironment: vi.fn(async (_language, beforeRemove) => beforeRemove())
+  removeManagedEnvironment: vi.fn(async (_language, beforeRemove, afterRemove) => {
+    await beforeRemove()
+    await afterRemove()
+  })
 })
 
 const session = (
@@ -378,9 +382,10 @@ describe('NotebookEnvironmentManagementOwner', () => {
     const order: string[] = []
     const configured = manager()
     vi.mocked(configured.removeManagedEnvironment!).mockImplementation(
-      async (language, beforeRemove) => {
+      async (language, beforeRemove, afterRemove) => {
         order.push(`remove-managed:${language}`)
         await beforeRemove()
+        await afterRemove()
       }
     )
     const { owner } = harness({
@@ -410,7 +415,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
 
     expect(order).toEqual([
       'recovery',
-      'recoverable',
+      ...managedRuntimeRemovalTargets('/runtime', 'python').prefixes.map(() => 'recoverable'),
       'remove-managed:python',
       'sessions:default-python',
       'repair:default-python'
