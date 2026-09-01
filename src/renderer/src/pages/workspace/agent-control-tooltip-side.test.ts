@@ -26,6 +26,12 @@ describe('resolveAgentControlTooltipSide', () => {
     ).toBe('top')
   })
 
+  it('accounts for the tooltip width, offset, and collision padding', () => {
+    expect(
+      resolveAgentControlTooltipSide('left', horizontalRect(300, 600), horizontalRect(0, 700))
+    ).toBe('top')
+  })
+
   it('moves above the item when a narrow session panel fits neither horizontal side', () => {
     expect(
       resolveAgentControlTooltipSide('left', horizontalRect(24, 312), horizontalRect(0, 360))

@@ -15,7 +15,6 @@ import { DropdownMenuContent } from '@/components/ui/dropdown-menu'
 type AgentControlMenuItemTooltipProps = {
   children: ReactElement
   description: string
-  disabled?: boolean
   submenu?: boolean
 }
 
@@ -28,18 +27,18 @@ const AgentControlMenuContent = ({
 }: ComponentProps<typeof DropdownMenuContent> & {
   boundary: HTMLElement | null
 }): React.JSX.Element => (
-  <AgentControlMenuTooltipBoundaryContext.Provider value={boundary}>
-    <DropdownMenuContent {...props}>{children}</DropdownMenuContent>
-  </AgentControlMenuTooltipBoundaryContext.Provider>
+  <TooltipProvider delayDuration={300}>
+    <AgentControlMenuTooltipBoundaryContext.Provider value={boundary}>
+      <DropdownMenuContent {...props}>{children}</DropdownMenuContent>
+    </AgentControlMenuTooltipBoundaryContext.Provider>
+  </TooltipProvider>
 )
 
 // Keeps agent controls compact while preserving their explanatory copy on hover and keyboard
-// focus. Disabled Radix menu items use pointer-events: none, so they get an outer hover target that
-// does not change the item's disabled selection semantics.
+// focus. Callers keep standing-disabled rows focusable with aria-disabled and neutralized selection.
 const AgentControlMenuItemTooltip = ({
   children,
   description,
-  disabled = false,
   submenu = false
 }: AgentControlMenuItemTooltipProps): React.JSX.Element => {
   const collisionBoundary = useContext(AgentControlMenuTooltipBoundaryContext)
@@ -64,30 +63,27 @@ const AgentControlMenuItemTooltip = ({
     )
   }
 
+  const handleFocus = (event: React.FocusEvent<HTMLButtonElement>): void => {
+    updateSide()
+    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+  }
+
   return (
-    <TooltipProvider delayDuration={300}>
-      <Tooltip>
-        {disabled ? (
-          <TooltipTrigger asChild ref={triggerRef} onPointerEnter={updateSide} onFocus={updateSide}>
-            <div className="rounded-lg">{children}</div>
-          </TooltipTrigger>
-        ) : (
-          <TooltipTrigger asChild ref={triggerRef} onPointerEnter={updateSide} onFocus={updateSide}>
-            {children}
-          </TooltipTrigger>
-        )}
-        <TooltipContent
-          side={resolvedSide}
-          sideOffset={8}
-          collisionBoundary={collisionBoundary ?? undefined}
-          collisionPadding={8}
-          sticky="always"
-          className="max-w-72 text-[11px] leading-4"
-        >
-          {description}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild ref={triggerRef} onPointerEnter={updateSide} onFocus={handleFocus}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent
+        side={resolvedSide}
+        sideOffset={8}
+        collisionBoundary={collisionBoundary ?? undefined}
+        collisionPadding={8}
+        sticky="always"
+        className="max-w-72 text-[11px] leading-4"
+      >
+        {description}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

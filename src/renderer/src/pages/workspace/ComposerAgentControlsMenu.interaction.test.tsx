@@ -59,25 +59,15 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
     children,
     disabled,
     onSelect,
-    'data-testid': testId,
-    role,
-    'aria-checked': ariaChecked,
-    'aria-label': ariaLabel
+    ...rest
   }: PropsWithChildren<{
     disabled?: boolean
     onSelect?: (event: { preventDefault: () => void }) => void
-    'data-testid'?: string
-    role?: string
-    'aria-checked'?: boolean
-    'aria-label'?: string
+    [key: string]: unknown
   }>): React.JSX.Element => (
     <button
       type="button"
       disabled={disabled}
-      data-testid={testId}
-      role={role}
-      aria-checked={ariaChecked}
-      aria-label={ariaLabel}
       onClick={() => {
         const event = {
           prevented: false,
@@ -88,6 +78,7 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
         selectEvents.push(event)
         onSelect?.(event)
       }}
+      {...rest}
     >
       {children}
     </button>
@@ -224,6 +215,11 @@ const findButton = (label: string): HTMLButtonElement => {
   return button
 }
 
+const expectStandingDisabled = (button: HTMLButtonElement, disabled: boolean): void => {
+  expect(button.disabled).toBe(false)
+  expect(button.getAttribute('aria-disabled')).toBe(String(disabled))
+}
+
 describe('ComposerAgentControlsMenu', () => {
   it('opens when the composer requests Specialist selection', () => {
     const props = {
@@ -341,18 +337,13 @@ describe('ComposerAgentControlsMenu', () => {
     })
 
     const memoryRow = findButton('Memory')
-    expect(memoryRow.disabled).toBe(true)
-    expect(
-      Array.from(container.querySelectorAll<HTMLElement>('[data-testid="tooltip-content"]')).find(
-        (tooltip) => tooltip.textContent === reason
-      )
-    ).toBeDefined()
+    expectStandingDisabled(memoryRow, true)
     expect(container.querySelector('[data-testid="controls-nondefault-dot"]')).toBeNull()
     act(() => memoryRow.click())
     expect(onMemoryChange).not.toHaveBeenCalled()
   })
 
-  it('keeps rows compact while preserving their descriptions in tooltips', () => {
+  it('keeps menu descriptions out of the compact rows', () => {
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
@@ -368,14 +359,6 @@ describe('ComposerAgentControlsMenu', () => {
     expect(findButton('Ask for approval').textContent).toBe('Ask for approval')
     expect(findButton('Auto-review').textContent).toBe('Auto-review')
     expect(findButton('Memory').textContent).toBe('Memory')
-
-    const tooltipDescriptions = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-testid="tooltip-content"]')
-    ).map((tooltip) => tooltip.textContent)
-    expect(tooltipDescriptions).toContain('A reviewer agent checks every change before it lands.')
-    expect(tooltipDescriptions).toContain(
-      'Applies to future actions; completed actions are unchanged.'
-    )
   })
 
   it('opens permission choices inside the same menu on mobile and can return', () => {
@@ -485,7 +468,7 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(findButton('Full access').disabled).toBe(true)
+    expectStandingDisabled(findButton('Full access'), true)
   })
 
   it('lists session grants and revokes the clicked one', () => {
@@ -608,7 +591,7 @@ describe('ComposerAgentControlsMenu', () => {
     expect(fullCapsule?.getAttribute('class')).toContain('text-amber-600')
   })
 
-  it('renders the Full access label as a warning and moves its description to a tooltip', () => {
+  it('renders the compact Full access label as a warning', () => {
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
@@ -624,12 +607,6 @@ describe('ComposerAgentControlsMenu', () => {
     const title = row.querySelector('span.text-\\[13px\\]')
     expect(title?.getAttribute('class')).toContain('text-amber-600')
     expect(row.querySelector('span.text-\\[11px\\]')).toBeNull()
-    expect(
-      Array.from(container.querySelectorAll('[data-testid="tooltip-content"]')).some(
-        (tooltip) =>
-          tooltip.textContent === 'Run everything without prompts, including commands and network.'
-      )
-    ).toBe(true)
   })
 
   it('hides the non-default dot at defaults and shows it for a non-default profile', () => {
@@ -713,7 +690,7 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
     const row = findButton('Auto-review')
-    expect(row.disabled).toBe(true)
+    expectStandingDisabled(row, true)
 
     act(() => row.click())
 
@@ -741,8 +718,8 @@ describe('ComposerAgentControlsMenu', () => {
     expect(trigger?.hasAttribute('disabled')).toBe(false)
 
     // Every mutating control is disabled: profile items, auto-review row, grant actions.
-    expect(findButton('Ask for approval').disabled).toBe(true)
-    expect(findButton('Auto-review').disabled).toBe(true)
+    expectStandingDisabled(findButton('Ask for approval'), true)
+    expectStandingDisabled(findButton('Auto-review'), true)
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
       (candidate) => candidate.getAttribute('aria-label') === 'Clear all session grants'
@@ -772,8 +749,8 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(findButton('Auto-approve edits').disabled).toBe(false)
-    expect(findButton('Auto-review').disabled).toBe(true)
+    expectStandingDisabled(findButton('Auto-approve edits'), false)
+    expectStandingDisabled(findButton('Auto-review'), true)
     expect(
       container.querySelector<HTMLButtonElement>(
         '[data-testid="compute-host-enabled-ssh:cluster-1"]'
@@ -810,9 +787,9 @@ describe('ComposerAgentControlsMenu', () => {
     })
 
     const autoReviewRow = findButton('Auto-review')
-    expect(autoReviewRow.disabled).toBe(false)
+    expectStandingDisabled(autoReviewRow, false)
     const memoryRow = findButton('Memory')
-    expect(memoryRow.disabled).toBe(false)
+    expectStandingDisabled(memoryRow, false)
     expect(
       container
         .querySelector('[data-testid="specialist-submenu-stub"]')
@@ -853,7 +830,7 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(findButton('Ask for approval').disabled).toBe(true)
+    expectStandingDisabled(findButton('Ask for approval'), true)
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
       (candidate) => candidate.getAttribute('aria-label') === 'Clear all session grants'

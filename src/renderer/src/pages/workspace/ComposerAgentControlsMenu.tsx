@@ -204,6 +204,7 @@ const ComposerAgentControlsMenu = ({
     profile !== DEFAULT_PERMISSION_PROFILE ||
     autoReviewEnabled ||
     (!memoryEnabled && !memoryDisabledReason)
+  const autoReviewItemDisabled = autoReviewReadOnly || autoReviewDisabled
 
   useEffect(() => {
     if (openRequest === undefined || openRequest === previousOpenRequest.current) return
@@ -276,15 +277,17 @@ const ComposerAgentControlsMenu = ({
           : t(candidate.descriptionKey)
 
         return (
-          <AgentControlMenuItemTooltip
-            key={candidate.id}
-            description={description}
-            disabled={itemDisabled}
-          >
+          <AgentControlMenuItemTooltip key={candidate.id} description={description}>
             <DropdownMenuItem
-              disabled={itemDisabled}
-              className="items-center gap-2 px-2 py-1.5"
-              onSelect={() => selectProfile(candidate.id)}
+              aria-disabled={itemDisabled}
+              className="items-center gap-2 px-2 py-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              onSelect={(event) => {
+                if (itemDisabled) {
+                  event.preventDefault()
+                  return
+                }
+                selectProfile(candidate.id)
+              }}
             >
               <ProfileIcon
                 className={cn(
@@ -494,14 +497,13 @@ const ComposerAgentControlsMenu = ({
               {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
               <AgentControlMenuItemTooltip
                 description={t('A reviewer agent checks every change before it lands.')}
-                disabled={autoReviewReadOnly || autoReviewDisabled}
               >
                 <DropdownMenuItem
-                  disabled={autoReviewReadOnly || autoReviewDisabled}
-                  className="items-center gap-2 px-2 py-1.5"
+                  aria-disabled={autoReviewItemDisabled}
+                  className="items-center gap-2 px-2 py-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                   onSelect={(event) => {
                     event.preventDefault()
-                    onAutoReviewChange(!autoReviewEnabled)
+                    if (!autoReviewItemDisabled) onAutoReviewChange(!autoReviewEnabled)
                   }}
                 >
                   <ScanEye
@@ -527,14 +529,13 @@ const ComposerAgentControlsMenu = ({
                   memoryDisabledReason ??
                   t('Let the agent recall and save memory in this conversation.')
                 }
-                disabled={memoryReadOnly}
               >
                 <DropdownMenuItem
-                  disabled={memoryReadOnly}
-                  className="items-center gap-2 px-2 py-1.5"
+                  aria-disabled={memoryReadOnly}
+                  className="items-center gap-2 px-2 py-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                   onSelect={(event) => {
                     event.preventDefault()
-                    onMemoryChange(!memoryEnabled)
+                    if (!memoryReadOnly) onMemoryChange(!memoryEnabled)
                   }}
                 >
                   <BrainCircuit

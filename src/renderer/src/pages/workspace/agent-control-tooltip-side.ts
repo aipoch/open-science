@@ -1,7 +1,8 @@
 type TooltipSide = 'left' | 'right' | 'top'
 type HorizontalRect = Pick<DOMRect, 'left' | 'right'>
 
-const MINIMUM_SIDE_SPACE = 224
+// max-w-72 content + 8px side offset + 8px collision padding.
+const MINIMUM_SIDE_SPACE = 304
 
 const resolveAgentControlTooltipSide = (
   preferredSide: 'left' | 'right',
