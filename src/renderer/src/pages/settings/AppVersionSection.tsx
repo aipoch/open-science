@@ -22,7 +22,16 @@ type AppVersionSectionProps = {
 }
 
 const resourceLinkClassName =
-  'flex min-h-14 w-full gap-3 rounded-lg px-1 py-3 text-foreground no-underline transition-[color,background-color,transform] duration-150 ease-out motion-reduce:transition-none hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px'
+  'group flex min-h-14 w-full gap-3 rounded-lg px-1 py-3 text-foreground no-underline transition-[color,background-color,transform] duration-150 ease-out motion-reduce:transition-none hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px'
+
+const resourceIconClassName =
+  'size-5 shrink-0 text-muted-foreground transition-colors duration-150 motion-reduce:transition-none group-hover:text-primary group-focus-visible:text-primary group-[.is-hover]:text-primary group-[.is-focus]:text-primary'
+
+const resourceTitleClassName =
+  'block whitespace-nowrap text-sm font-medium transition-transform duration-150 ease-out motion-reduce:transition-none [@media(hover:hover)]:translate-y-2.5 [@media(hover:hover)]:group-hover:translate-y-0 [@media(hover:hover)]:group-focus-visible:translate-y-0 group-[.is-hover]:translate-y-0 group-[.is-focus]:translate-y-0'
+
+const resourceDescriptionClassName =
+  'mt-0.5 block text-[13px] leading-5 text-muted-foreground transition-opacity duration-150 ease-out motion-reduce:transition-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-visible:opacity-100 group-[.is-hover]:opacity-100 group-[.is-focus]:opacity-100'
 
 // App identity + update control in Settings→General. Reads the shared update store so it stays in
 // sync with the external capsule; the update button opens the shared dialog (version + notes +
@@ -43,9 +52,9 @@ const AppVersionSection = ({
   const hasUpdate = status.state === 'available' || isDownloading || status.state === 'ready'
   const helpPreviewClassName =
     previewState === 'hover'
-      ? 'bg-muted'
+      ? 'is-hover bg-muted'
       : previewState === 'focus'
-        ? 'ring-3 ring-ring/50'
+        ? 'is-focus ring-3 ring-ring/50'
         : previewState === 'active'
           ? 'translate-y-px'
           : ''
@@ -130,10 +139,16 @@ const AppVersionSection = ({
           aria-label={t('Open Help Center in your browser')}
           className={`${resourceLinkClassName} ${helpPreviewClassName}`}
         >
-          <CircleHelp className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <CircleHelp
+            data-slot="about-resource-icon"
+            className={resourceIconClassName}
+            aria-hidden="true"
+          />
           <span className="min-w-0 flex-1">
-            <span className="block whitespace-nowrap text-sm font-medium">{t('Help Center')}</span>
-            <span className="mt-0.5 block text-[13px] leading-5 text-muted-foreground">
+            <span data-slot="about-resource-title" className={resourceTitleClassName}>
+              {t('Help Center')}
+            </span>
+            <span data-slot="about-resource-description" className={resourceDescriptionClassName}>
               {t('Read setup guides and troubleshooting.')}
             </span>
           </span>
@@ -144,12 +159,16 @@ const AppVersionSection = ({
           aria-label={t('Open release notes in your browser')}
           className={resourceLinkClassName}
         >
-          <FileText className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <FileText
+            data-slot="about-resource-icon"
+            className={resourceIconClassName}
+            aria-hidden="true"
+          />
           <span className="min-w-0 flex-1">
-            <span className="block whitespace-nowrap text-sm font-medium">
+            <span data-slot="about-resource-title" className={resourceTitleClassName}>
               {t('Release notes')}
             </span>
-            <span className="mt-0.5 block text-[13px] leading-5 text-muted-foreground">
+            <span data-slot="about-resource-description" className={resourceDescriptionClassName}>
               {t('See changes and fixes in every version.')}
             </span>
           </span>

@@ -60,6 +60,52 @@ describe('AppVersionSection', () => {
     expect(links.every((link) => link.target === '_blank' && link.rel === 'noreferrer')).toBe(true)
   })
 
+  it('reveals resource details and primary-colored icons on pointer hover or keyboard focus', () => {
+    act(() => {
+      root.render(<AppVersionSection />)
+    })
+
+    const links = Array.from(container.querySelectorAll('a'))
+    const icons = Array.from(container.querySelectorAll('[data-slot="about-resource-icon"]'))
+    const titles = Array.from(container.querySelectorAll('[data-slot="about-resource-title"]'))
+    const descriptions = Array.from(
+      container.querySelectorAll('[data-slot="about-resource-description"]')
+    )
+
+    expect(links).toHaveLength(2)
+    expect(links.every((link) => link.classList.contains('group'))).toBe(true)
+    expect(icons).toHaveLength(2)
+    expect(
+      icons.every(
+        (icon) =>
+          icon.classList.contains('group-hover:text-primary') &&
+          icon.classList.contains('group-focus-visible:text-primary')
+      )
+    ).toBe(true)
+    expect(titles).toHaveLength(2)
+    expect(titles.every((title) => !title.classList.contains('translate-y-2.5'))).toBe(true)
+    expect(
+      titles.every(
+        (title) =>
+          title.classList.contains('[@media(hover:hover)]:translate-y-2.5') &&
+          title.classList.contains('[@media(hover:hover)]:group-hover:translate-y-0') &&
+          title.classList.contains('[@media(hover:hover)]:group-focus-visible:translate-y-0')
+      )
+    ).toBe(true)
+    expect(descriptions).toHaveLength(2)
+    expect(descriptions.every((description) => !description.classList.contains('opacity-0'))).toBe(
+      true
+    )
+    expect(
+      descriptions.every(
+        (description) =>
+          description.classList.contains('[@media(hover:hover)]:opacity-0') &&
+          description.classList.contains('[@media(hover:hover)]:group-hover:opacity-100') &&
+          description.classList.contains('[@media(hover:hover)]:group-focus-visible:opacity-100')
+      )
+    ).toBe(true)
+  })
+
   it('switches the About logo with an explicit app Theme', () => {
     act(() => {
       root.render(<AppVersionSection />)
