@@ -772,19 +772,19 @@ class NotebookRuntimeService {
     )
   }
 
-  // WS11: how many live sessions are bound to a runtime, split by kernel state, so Settings can warn
-  // before disabling it. Counts only sessions whose binding for this language IS this runtime; a
-  // running cell → running, a live-but-idle kernel → idle, a bound session with no live kernel →
-  // dormant (nothing to drain). Purely in-memory (no disk read).
+  // WS11: how many live sessions select a runtime, explicitly or through the unbound app-managed
+  // default, split by kernel state so Settings can warn before disabling it. A running cell → running,
+  // a live-but-idle kernel → idle, and a selected runtime with no live kernel → dormant. Purely
+  // in-memory (no disk read).
   describeRuntimeUsage(language: NotebookLanguage, runtimeId: string): RuntimeUsage {
     return this.environmentOperations.describeRuntimeUsage(language, runtimeId)
   }
 
-  // WS10: a runtime was DISABLED in Settings. Revoke it from every session bound to it — mark the
-  // binding unavailable/disabled so subsequent execute/install REJECT with RUNTIME_BINDING_UNAVAILABLE
-  // (no silent fallback); an in-flight run is left to finish (its kernel drains, then idle-times out —
-  // explicit post-drain kernel teardown is WS5). The agent recovers via list_notebook_runtimes ->
-  // notebook_switch_runtime. See [[notebook-runtime-disable-binding-lifecycle]].
+  // WS10: a runtime was DISABLED in Settings. Revoke it from every session selecting it. Explicit
+  // bindings become unavailable/disabled so subsequent execute/install rejects without silent fallback;
+  // unbound sessions using the app-managed default have that implicit kernel closed too. The agent
+  // recovers via list_notebook_runtimes -> notebook_switch_runtime. See
+  // [[notebook-runtime-disable-binding-lifecycle]].
   async revokeRuntime(
     language: NotebookLanguage,
     runtimeId: string,

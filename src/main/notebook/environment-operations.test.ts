@@ -8,6 +8,7 @@ import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import { NotebookEnvironmentOperations } from './environment-operations'
 import { createRootNotebookLane, type NotebookLaneIdentity } from './lane-identity'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { managedRuntimeIdentity } from './runtime-target'
 
 let storageRoot: string | undefined
 
@@ -26,6 +27,7 @@ const createRoot = async (): Promise<string> => {
 type TestSession = {
   projectId: string
   sessionId: string
+  runtimeRoot?: string
   lane: NotebookLaneIdentity
   bindings: Partial<Record<NotebookLanguage, NotebookSessionRuntimeBinding>>
   statuses: Map<string, 'idle' | 'running' | 'terminated'>
@@ -413,6 +415,50 @@ describe('NotebookEnvironmentOperations', () => {
     releaseTermination()
     await Promise.all([execution, revocation, removal])
     expect(order).toEqual(['terminate', 'clear', 'remove'])
+  })
+
+  it('reports and revokes an unbound session using the implicit managed default', async () => {
+    const runtimeRoot = join(tmpdir(), 'open-science-implicit-default-runtime')
+    const runtimeId = managedRuntimeIdentity(runtimeRoot, 'python', 'default-python').runtimeId
+    const session: TestSession = {
+      projectId: 'project',
+      sessionId: 'session-1',
+      runtimeRoot,
+      lane: createRootNotebookLane('project', 'session-1', 'root-frame-session-1'),
+      bindings: {},
+      statuses: new Map([['python:default-python', 'running']]),
+      runtimeBinding(language) {
+        return this.bindings[language]
+      },
+      setRuntimeBinding(language, binding) {
+        this.bindings[language] = binding
+      },
+      kernelStatus(processKey) {
+        return this.statuses.get(processKey)
+      },
+      markForceStopped: vi.fn(),
+      drainExecution: async () => undefined,
+      terminateExecutor: vi.fn(async () => undefined),
+      clearProcessState(processKey) {
+        this.statuses.delete(processKey)
+      }
+    }
+    const { owner, notifyChanged, clearKernelTermination } = await createOwner([session])
+
+    expect(owner.describeRuntimeUsage('python', runtimeId)).toEqual({
+      running: 1,
+      idle: 0,
+      dormant: 0
+    })
+
+    await owner.revokeRuntime('python', runtimeId, { force: true })
+
+    expect(session.markForceStopped).toHaveBeenCalledWith('python:default-python')
+    expect(session.terminateExecutor).toHaveBeenCalledWith('python', 'default-python')
+    expect(clearKernelTermination).toHaveBeenCalledWith(session, 'python:default-python')
+    expect(session.statuses.has('python:default-python')).toBe(false)
+    expect(session.bindings).toEqual({})
+    expect(notifyChanged).toHaveBeenCalledTimes(1)
   })
 
   it('rejects a queued package mutation after managed removal closes admission', async () => {

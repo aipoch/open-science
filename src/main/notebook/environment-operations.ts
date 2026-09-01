@@ -125,6 +125,21 @@ const runEnvironment = (
   return defaultEnvironment(language)
 }
 
+const implicitManagedRuntimeTarget = (
+  session: EnvironmentOperationSession,
+  language: NotebookLanguage,
+  runtimeId: string
+): { environment: string; processKey: string } | undefined => {
+  if (session.runtimeBinding(language) !== undefined || session.runtimeRoot === undefined) {
+    return undefined
+  }
+  const environment = defaultEnvironment(language)
+  if (managedRuntimeIdentity(session.runtimeRoot, language, environment).runtimeId !== runtimeId) {
+    return undefined
+  }
+  return { environment, processKey: processKey(language, environment) }
+}
+
 const cloneDiagnosticValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(cloneDiagnosticValue)
   if (value === null || typeof value !== 'object') return value
@@ -300,9 +315,7 @@ export class NotebookEnvironmentOperations {
       const environment = runEnvironment(session, language)
       const matchesBinding = binding?.runtimeId === runtimeId
       const matchesImplicitManagedDefault =
-        session.runtimeRoot !== undefined &&
-        binding?.source !== 'external' &&
-        managedRuntimeIdentity(session.runtimeRoot, language, environment).runtimeId === runtimeId
+        implicitManagedRuntimeTarget(session, language, runtimeId) !== undefined
       if (!matchesBinding && !matchesImplicitManagedDefault) continue
       const targetProcessKey = processKey(language, environment)
       const status = session.kernelStatus(targetProcessKey)
@@ -321,7 +334,10 @@ export class NotebookEnvironmentOperations {
   ): Promise<void> {
     const targetSessions = Array.from(this.options.sessions()).filter((session) => {
       const binding = session.runtimeBinding(language)
-      return binding?.runtimeId === runtimeId && binding.status !== 'unavailable'
+      return (
+        (binding?.runtimeId === runtimeId && binding.status !== 'unavailable') ||
+        implicitManagedRuntimeTarget(session, language, runtimeId) !== undefined
+      )
     })
     const reservation = this.reserveRevocations(
       targetSessions.map((session) => runEnvironment(session, language))
@@ -336,7 +352,7 @@ export class NotebookEnvironmentOperations {
               (candidate) => candidate.sessionId === session.sessionId
             )
             if (current !== session) continue
-            const revocation = await this.options.bindings.revoke(
+            const bindingRevocation = await this.options.bindings.revoke(
               session,
               language,
               runtimeId,
@@ -345,10 +361,12 @@ export class NotebookEnvironmentOperations {
                 return { environment, processKey: processKey(language, environment) }
               }
             )
+            const revocation =
+              bindingRevocation ?? implicitManagedRuntimeTarget(session, language, runtimeId)
             if (!revocation) continue
 
             const { environment, processKey: revokedProcessKey } = revocation
-            this.options.notifyChanged(session)
+            if (bindingRevocation) this.options.notifyChanged(session)
             if (options.force) {
               if (session.kernelStatus(revokedProcessKey) === 'running') {
                 session.markForceStopped(revokedProcessKey)
