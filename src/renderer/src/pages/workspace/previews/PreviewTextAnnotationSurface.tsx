@@ -4,14 +4,8 @@ import { Check, Copy, ListCollapse, MessageCircleQuestionMark, Quote } from 'luc
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type { Annotation, PdfAnnotation, TextAnnotation } from '../../../../../shared/annotations'
-import {
-  createArtifactVersionLocator,
-  parseArtifactVersionLocator
-} from '../../../../../shared/artifact-provenance'
-import {
-  createUploadVersionReference,
-  parseUploadVersionReference
-} from '../../../../../shared/uploads'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
+import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileRendererProps } from './preview-types'
 import {
   revealTextAnnotationRange,
@@ -177,22 +171,6 @@ const projectFileVersionId = (
     ? parseUploadVersionReference(item.path)?.versionId
     : parseArtifactVersionLocator(item.path)?.versionId)
 
-const projectFileAnnotationPath = (item: PreviewFileItem, versionId?: string): string => {
-  if (!item.projectId || !item.managedFileId || !versionId) return item.path
-  return item.source === 'upload'
-    ? createUploadVersionReference(versionId, {
-        projectId: item.projectId,
-        sessionId: item.sessionId,
-        fileId: item.managedFileId
-      })
-    : createArtifactVersionLocator({
-        projectId: item.projectId,
-        appSessionId: item.sessionId,
-        artifactId: item.managedFileId,
-        versionId
-      })
-}
-
 const projectFileSource = (
   item: PreviewFileItem,
   pageNumber?: number,
@@ -205,8 +183,14 @@ const projectFileSource = (
   return {
     kind: 'project-file',
     projectId: item.projectId,
-    path: projectFileAnnotationPath(item, versionId),
+    path: item.path,
     name: item.name,
+    ...(item.managedFileId
+      ? {
+          fileSource: item.source === 'upload' ? ('upload' as const) : ('artifact' as const),
+          sourceFileId: item.managedFileId
+        }
+      : {}),
     ...(versionId ? { versionId } : {}),
     ...(item.sessionId ? { sessionId: item.sessionId } : {})
   }
@@ -221,18 +205,17 @@ const belongsToPreview = (
   const source = annotation.source
   if (source.kind !== 'project-file' || !item.projectId) return false
   const versionId = projectFileVersionId(item, annotationVersionId)
-  const canonicalPath = projectFileAnnotationPath(item, versionId)
-  const matchesLegacyRawPath = source.path === item.path
-  if (
-    source.projectId !== item.projectId ||
-    (source.path !== canonicalPath && !matchesLegacyRawPath)
-  ) {
+  const artifactIdentity = parseArtifactVersionLocator(source.path)
+  const uploadIdentity = parseUploadVersionReference(source.path)
+  const sourceFileId = source.sourceFileId ?? artifactIdentity?.artifactId ?? uploadIdentity?.fileId
+  const fileSource =
+    source.fileSource ?? (artifactIdentity ? 'artifact' : uploadIdentity ? 'upload' : undefined)
+  const itemSource = item.source === 'upload' ? 'upload' : 'artifact'
+  const matchesLogicalIdentity =
+    Boolean(sourceFileId) && sourceFileId === item.managedFileId && fileSource === itemSource
+  if (source.projectId !== item.projectId || (!matchesLogicalIdentity && source.path !== item.path))
     return false
-  }
-  if (source.versionId || versionId) {
-    if (!source.versionId && matchesLegacyRawPath) return pageNumber === undefined
-    if (source.versionId !== versionId) return false
-  }
+  if (source.versionId && versionId && source.versionId !== versionId) return false
   return pageNumber === undefined
 }
 

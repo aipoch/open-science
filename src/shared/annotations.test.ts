@@ -182,6 +182,31 @@ describe('annotations', () => {
     )
   })
 
+  it('preserves complete managed project-file identity and rejects partial identity', () => {
+    const annotation = textAnnotation({
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: '/stale/report.md',
+        name: 'report.md',
+        fileSource: 'artifact',
+        sourceFileId: 'artifact-1',
+        versionId: 'version-2'
+      }
+    })
+
+    expect(sanitizeAnnotations([annotation])).toEqual([annotation])
+    expect(
+      sanitizeAnnotations([
+        {
+          ...annotation,
+          source: { ...annotation.source, sourceFileId: undefined }
+        }
+      ])
+    ).toEqual([])
+  })
+
   it('keeps immutable PDF text anchors in persisted and Agent context', () => {
     const annotation = pdfAnnotation()
 

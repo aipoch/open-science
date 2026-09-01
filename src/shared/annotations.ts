@@ -38,6 +38,8 @@ export type TextAnnotationSource =
       projectId: string
       path: string
       name?: string
+      fileSource?: 'artifact' | 'upload'
+      sourceFileId?: string
       versionId?: string
       sessionId?: string
     }>
@@ -356,12 +358,19 @@ const sanitizeTextSource = (value: unknown): TextAnnotationSource | undefined =>
     const path = trimmed(value.path)
     if (!projectId || !path) return undefined
     const name = trimmed(value.name)
+    const fileSource =
+      value.fileSource === 'artifact' || value.fileSource === 'upload'
+        ? value.fileSource
+        : undefined
+    const sourceFileId = trimmed(value.sourceFileId)
+    if (Boolean(fileSource) !== Boolean(sourceFileId)) return undefined
     const versionId = trimmed(value.versionId)
     return {
       kind,
       projectId,
       path,
       ...(name ? { name } : {}),
+      ...(fileSource && sourceFileId ? { fileSource, sourceFileId } : {}),
       ...(versionId ? { versionId } : {}),
       ...(trimmed(value.sessionId) ? { sessionId: trimmed(value.sessionId) } : {})
     }

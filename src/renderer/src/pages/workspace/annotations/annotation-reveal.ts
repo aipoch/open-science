@@ -68,10 +68,49 @@ const retryPendingAnnotationReveal = (): void => {
   }
 }
 
+const managedAnnotationIdentity = (
+  source: NonNullable<ReturnType<typeof fileAnnotationSource>>
+): { fileSource: 'artifact' | 'upload'; fileId: string } | undefined => {
+  const artifact = parseArtifactVersionLocator(source.path)
+  const upload = parseUploadVersionReference(source.path)
+  const explicitFileSource = 'fileSource' in source ? source.fileSource : undefined
+  const explicitFileId = 'sourceFileId' in source ? source.sourceFileId : undefined
+  const locatorFileSource = artifact ? 'artifact' : upload?.fileId ? 'upload' : undefined
+  const locatorFileId = artifact?.artifactId ?? upload?.fileId
+
+  // Explicit identity supports managed tabs whose presentation path predates Version locators.
+  if (Boolean(explicitFileSource) !== Boolean(explicitFileId)) return undefined
+  if (explicitFileSource && explicitFileId) {
+    if (
+      locatorFileSource &&
+      (locatorFileSource !== explicitFileSource || locatorFileId !== explicitFileId)
+    ) {
+      return undefined
+    }
+    return { fileSource: explicitFileSource, fileId: explicitFileId }
+  }
+  return locatorFileSource && locatorFileId
+    ? { fileSource: locatorFileSource, fileId: locatorFileId }
+    : undefined
+}
+
+const hasExplicitManagedIdentity = (
+  source: NonNullable<ReturnType<typeof fileAnnotationSource>>
+): boolean =>
+  'fileSource' in source && (source.fileSource !== undefined || source.sourceFileId !== undefined)
+
 const fileSourceMatchesItem = (annotation: Annotation, item: PreviewFileItem): boolean => {
   const source = fileAnnotationSource(annotation)
   if (!source) return false
-  if (item.projectId !== source.projectId || item.path !== source.path) return false
+  if (item.projectId !== source.projectId) return false
+  const managedIdentity = managedAnnotationIdentity(source)
+  if (hasExplicitManagedIdentity(source) && !managedIdentity) return false
+  const itemFileSource = item.source === 'upload' ? 'upload' : 'artifact'
+  const matchesManagedIdentity =
+    managedIdentity !== undefined &&
+    managedIdentity.fileId === item.managedFileId &&
+    managedIdentity.fileSource === itemFileSource
+  if (!matchesManagedIdentity && item.path !== source.path) return false
   const itemVersionId =
     item.selectedVersionId ??
     parseArtifactVersionLocator(item.path)?.versionId ??
@@ -89,6 +128,8 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
 
   const artifact = parseArtifactVersionLocator(source.path)
   const upload = parseUploadVersionReference(source.path)
+  const managedIdentity = managedAnnotationIdentity(source)
+  if (hasExplicitManagedIdentity(source) && !managedIdentity) return undefined
   const projectId = source.projectId
   const sessionId = source.sessionId ?? artifact?.appSessionId ?? upload?.sessionId
   if (!sessionId) return undefined
@@ -96,12 +137,18 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
   const name = sourceName(source.path, source.name)
   const versionId = source.versionId ?? artifact?.versionId ?? upload?.versionId
   // A reopened managed tab keeps the stable logical file identity separate from its exact Version.
-  const uploadFileId = upload?.fileId
-  const managedFileId = artifact?.artifactId ?? uploadFileId
+  const uploadFileId = managedIdentity?.fileSource === 'upload' ? managedIdentity.fileId : undefined
+  const artifactFileId =
+    managedIdentity?.fileSource === 'artifact' ? managedIdentity.fileId : undefined
+  const managedFileId = artifactFileId ?? uploadFileId
   return createPreviewFileItem({
     id:
-      artifact?.artifactId ??
-      (upload ? `upload:${uploadFileId ?? upload.versionId}` : `file:${projectId}:${source.path}`),
+      artifactFileId ??
+      (uploadFileId
+        ? `upload:${uploadFileId}`
+        : upload
+          ? `upload:${upload.versionId}`
+          : `file:${projectId}:${source.path}`),
     projectId,
     sessionId,
     path: source.path,
@@ -112,10 +159,10 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
         : annotation.kind === 'pdf'
           ? 'application/pdf'
           : undefined,
-    source: upload ? 'upload' : undefined,
-    artifactId: artifact?.artifactId,
+    source: uploadFileId ? 'upload' : undefined,
+    artifactId: artifactFileId,
     managedFileId,
-    selectedVersionId: artifact || uploadFileId ? versionId : undefined
+    selectedVersionId: managedFileId ? versionId : undefined
   })
 }
 

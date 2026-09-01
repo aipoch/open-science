@@ -266,18 +266,19 @@ describe('PreviewTextAnnotationSurface', () => {
     )
   })
 
-  it('records a logical Version locator when the managed Artifact tab keeps a raw path', async () => {
+  it('keeps a managed annotation marker while Version inspection reloads', async () => {
     const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    const previewItem = item({
+      id: 'artifact-9',
+      path: '/stale/managed-file-projection.md',
+      artifactId: 'artifact-9',
+      managedFileId: 'artifact-9',
+      selectedVersionId: undefined
+    })
     await renderSurface({
       onAddAnnotation,
       annotationVersionId: 'version-3',
-      previewItem: item({
-        id: 'artifact-9',
-        path: '/stale/managed-file-projection.md',
-        artifactId: 'artifact-9',
-        managedFileId: 'artifact-9',
-        selectedVersionId: undefined
-      })
+      previewItem
     })
     await selectQuote()
     await confirmAnnotation()
@@ -285,16 +286,26 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(onAddAnnotation).toHaveBeenCalledWith(
       expect.objectContaining({
         source: expect.objectContaining({
-          path: createArtifactVersionLocator({
-            projectId: 'project-1',
-            appSessionId: 'session-1',
-            artifactId: 'artifact-9',
-            versionId: 'version-3'
-          }),
+          path: '/stale/managed-file-projection.md',
+          fileSource: 'artifact',
+          sourceFileId: 'artifact-9',
           versionId: 'version-3'
         })
       })
     )
+
+    const created = onAddAnnotation.mock.calls[0]![0]
+    await renderSurface({
+      activeAnnotations: [created],
+      onAddAnnotation,
+      previewItem
+    })
+    expect(
+      container
+        .querySelector('[data-preview-text-annotation-surface="true"]')
+        ?.getAttribute('data-annotation-active')
+    ).toBe('true')
+    expect(container.querySelector('[data-text-annotation-edit="true"]')).not.toBeNull()
   })
 
   it('explains why an editable historical version cannot be annotated', async () => {
